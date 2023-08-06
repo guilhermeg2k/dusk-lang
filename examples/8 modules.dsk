@@ -27,6 +27,7 @@ let main = ()
   InputOutput.open("file.txt", "r")
 
 
-### To mark a function, type or trait as public you can use the keyword "pub" ###
+### By default all functions, types and traits are private
+    to make them public you must use the keyword pub ###
 
 pub let add = (x,y: Number) => x+y

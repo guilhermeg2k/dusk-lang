@@ -2,6 +2,7 @@
 Types can only have basic types and other types as fields
 Which means it can't have functions 
 To mark a field as optional you can use the ? operator
+When a type is optional it can be null 
 ###
 
 type Animal
@@ -11,12 +12,15 @@ type Animal
 
 let animal = Animal(
   name = "Dog",
-  age = 10,
 )
 
-### 
+echo(animal.name) # "Dog"
+echo(animal.age) # 1
+echo(animal.race) # null
+
+###
 Type Composition
-When a type composes another type it inherits all of its fields
+When a type composes another type it gets all of its fields
 and can be used as the composed type 
 ###
 
@@ -29,7 +33,7 @@ type Mammal
 ### Inline
 let dog = Mammal(name = "Dog", age=10, furColor="brown")
 
-### Multiple lines
+### Multi lines
 let dog = Mammal(
   name = "Dog"
   age = 10
@@ -39,8 +43,7 @@ let dog = Mammal(
 let screamAnimalName = (animal: Animal)
   echo(animal.name.toUpperCase())
 
-let main = ()
-  screamAnimalName(dog)
+screamAnimalName(dog) # "DOG"
 
 
 

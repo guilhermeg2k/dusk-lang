@@ -24,9 +24,8 @@ Eater for Person
 
 let eat = (e: Eater) => e.eat()
 
-let main = ()
-  let a = Animal("Bob")
-  let p = Person("John", "Doe")
+let a = Animal("Bob")
+let p = Person("John", "Doe")
 
-  eat(a) # nom nom nom
-  eat(p) # nhame nhame nhame
+eat(a) # nom nom nom
+eat(p) # nhame nhame nhame
