@@ -1,0 +1,73 @@
+# List
+let list: List<T>
+let list: List<Number> = [1, 2, 3]
+
+# List Methods
+list.add(value: T) => void
+list.remove(value: T) => void
+list.removeAt(1) => void
+list.clear() => void
+list.contains(1) => Boolean
+list.indexOf(1) => Number
+list.isEmpty() => Boolean
+list.count() => Number
+list.first() => T
+list.last() => T
+
+list.map<U>((T) => U) => List<U>
+list.reduce<U>((U, T) => U) => U
+list.filter((T) => Boolean) => void
+list.sort((T, T) => Number) => void
+list.each((T) => void) => void
+list.every((T) => Boolean) => Boolean
+list.some((T) => Boolean) => Boolean
+
+
+# Map
+let map: Map<K, V>
+let map: Map<Number, String> = {
+  0: "hello",
+}
+
+# Map Methods
+map[k] = v 
+map.remove(key: K)
+map.clear()
+map.contains(key: K)
+map.containsValue(value: V)
+map.isEmpty()
+map.count()
+map.keys()
+map.values()
+map.toList() => List<Tuple<K, V>>
+
+# Tuple
+let tuple: Tuple<T, U>
+let tuple: Tuple<Number, String> = (1, "hello")
+
+# Tuple Methods
+tuple.first()
+tuple.second()
+
+# Sets
+let set: Set<T>
+let set: Set<Number> = [1, 2, 3]
+
+set.add(value: T) => void
+set.remove(value: T) => void
+set.removeAt(1) => void
+set.clear() => void
+set.contains(1) => Boolean
+set.indexOf(1) => Number
+set.isEmpty() => Boolean
+set.count() => Number
+set.first() => T
+set.last() => T
+
+set.map<U>((T) => U) => List<U>
+set.reduce<U>((U, T) => U) => U
+set.filter((T) => Boolean) => void
+set.sort((T, T) => Number) => void
+set.each((T) => void) => void
+set.every((T) => Boolean) => Boolean
+set.some((T) => Boolean) => Boolean

@@ -1,0 +1,71 @@
+# One line comment
+
+### 
+  Multi line comment
+###
+
+let main = ()
+  ### 
+    Basic Types, variables and consts
+    By default all values are initialized
+  ###
+
+  let x, y, z: Number;
+  let x: Number = 2
+  let y: Boolean = false
+  let z: String = "Hello"
+  let str = "START"
+  let v = "Hello idiots"
+  let x, y, z = 1, 2, 3
+  let optional: string? = null
+
+  # Consts needs to be const at compile time 
+  const PI = 3.14
+
+  # Control Flow
+  if x > y
+    echo("Hello bitches")
+  
+  if x > y or x > z
+    echo("X is bigger")
+  
+  if x > y and y > z
+    echo("Y is bigger")
+
+  if (x > z or x > y) and z > y
+    echo("idk what i'm doing")
+  
+  if x > z
+    echo("x > z")
+  else if x > y
+    echo("x > y")
+  else 
+    echo("x")
+
+  match str
+    "START" => echo("Starting")
+    "1" or "2" or "3" => echo("Its a Number between 1 and 3")
+    "2" and "3" => echo("Thats basically impossible")
+    _ => echo("Invalid cmd")
+
+  let m: Number = match x
+    2 => 4 
+    3 or 6 => 6
+    _ => 0
+  
+  # Loops
+  for x > y
+    echo(x)
+    x++
+
+  for j = 0; j < 2; j++
+    y--
+  
+  for (i, v) in [1,2,3]: 
+    echo(i, v)
+  
+  for (_, v) in [1,2,3]:
+    echo(v)
+  
+  for
+    echo("I'm infinity")

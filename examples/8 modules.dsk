@@ -1,0 +1,32 @@
+### 
+Every file must have a mod name at top of the file
+Modules can be imported with the keyword use
+When importing a module every public function, type or trait is imported
+###
+
+mod Name
+
+use "std"
+
+use (
+    "std"
+    "io"
+)
+
+let main = ()
+  open("file.txt", "r")
+
+### 
+If are conflicting functions, types or treats  between modules
+you can use "as" to create a namespace to the module
+###
+
+use "io" as "InputOutput"
+
+let main = ()
+  InputOutput.open("file.txt", "r")
+
+
+### To mark a function, type or trait as public you can use the keyword "pub" ###
+
+pub let add = (x,y: Number) => x+y

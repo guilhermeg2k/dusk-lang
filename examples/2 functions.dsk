@@ -1,0 +1,23 @@
+### 
+The return type needs to be explicitly declared 
+if is not the return type is void 
+###
+
+let main = ()
+  echo("Hello, World!")
+
+let add = (a: Number, b: Number) => Number
+  return a + b
+
+# Arguments can be chained
+let add = (a, b: Number) => Number
+  return a + b
+
+###
+You can omit the return keyword
+by putting the return expression after the arrow sign =>
+therefore the type will be inferred
+###
+
+let add = (a, b: Number) => a + b
+
