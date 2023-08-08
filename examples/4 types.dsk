@@ -2,13 +2,12 @@
 Types can only have basic types and other types as fields
 Which means it can't have functions 
 To mark a field as optional you can use the ? operator
-When a type is optional it can be null 
 ###
 
 type Animal
   name: String
   age = 1
-  race: String?
+  race: String
 
 let animal = Animal(
   name = "Dog",

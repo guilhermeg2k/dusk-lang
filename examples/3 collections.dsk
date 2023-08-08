@@ -10,7 +10,7 @@ list.clear() => void
 list.contains(1) => Boolean
 list.indexOf(1) => Number
 list.isEmpty() => Boolean
-list.count() => Number
+list.length => Number
 list.first() => T
 list.last() => T
 
@@ -36,7 +36,7 @@ map.clear()
 map.contains(key: K)
 map.containsValue(value: V)
 map.isEmpty()
-map.count()
+map.length
 map.keys()
 map.values()
 map.toList() => List<Tuple<K, V>>
@@ -60,7 +60,7 @@ set.clear() => void
 set.contains(1) => Boolean
 set.indexOf(1) => Number
 set.isEmpty() => Boolean
-set.count() => Number
+set.length => Number
 set.first() => T
 set.last() => T
 

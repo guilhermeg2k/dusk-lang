@@ -12,7 +12,7 @@ let main = ()
   ###
 
   let x, y, z: Number;
-  let x: Number = 2
+  let x: Number = 2;
   let y: Boolean = false
   let z: String = "Hello"
   let str = "START"
