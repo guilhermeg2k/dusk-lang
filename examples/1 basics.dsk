@@ -6,8 +6,9 @@
 
 let main = ()
   ### 
-    Basic Types, variables and consts
+    Basic Types and variables
     By default all values are initialized
+    All variables are immutable by default to make it mutable use the keyword mut
   ###
 
   let x, y, z: Number;
@@ -15,12 +16,13 @@ let main = ()
   let y: Boolean = false
   let z: String = "Hello"
   let str = "START"
-  let v = "Hello idiots"
-  let x, y, z = 1, 2, 3
-  let optional: string? = null
 
-  # Consts needs to be const at compile time 
-  const PI = 3.14
+  let mut v = "Hello idiots"
+  v = "Olá idiotas"
+  
+  let x, y, z = 1, 2, 3
+
+
 
   # Control Flow
   if x > y
