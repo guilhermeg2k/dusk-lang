@@ -22,8 +22,6 @@ let main = ()
   
   let x, y, z = 1, 2, 3
 
-
-
   # Control Flow
   if x > y
     echo("Hello bitches")
