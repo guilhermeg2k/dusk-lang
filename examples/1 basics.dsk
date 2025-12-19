@@ -61,10 +61,10 @@ let main = ()
   for j = 0; j < 2; j++
     y--
   
-  for (i, v) in [1,2,3]: 
+  for (i, v) in [1,2,3]:
     echo(i, v)
   
-  for (_, v) in [1,2,3]:
+  for (_, v) in [1,2,3]
     echo(v)
   
   for

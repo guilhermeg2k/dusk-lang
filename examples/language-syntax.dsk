@@ -1,0 +1,175 @@
+# One line comment
+
+### 
+  Multi line comment
+###
+
+# Identation + new lines are used to define code blocks similar to python
+
+### 
+    Basic Types and variables
+###
+
+let x, y, z: number
+let x: number = 2
+let y: bool = false
+let z: string = 'Hello'
+
+# Type can be infered
+let str = 'START'
+
+# By default all variables are initialized
+# Initial values
+
+let x: number = 0;
+let y: string = '';
+let z: boolean = false;
+
+
+#All variables are immutable by default to make it mutable use the keyword mut
+let mut v = 'Hello idiots'
+v = 'Olá idiotas'
+
+let x, y, z = 1, 2, 3
+
+# Control Flow
+if x > y
+    echo('Hello bitches')
+
+if x > y or x > z
+    echo('X is bigger')
+
+if x > y and y > z
+    echo('Y is bigger')
+
+if (x > z or x > y) and z > y
+    echo('idk what i\'m doing')
+
+if x == z
+    echo('x == z')
+else if x > y
+    echo('x > y')
+else 
+    echo('x')
+
+
+#Ternary operator
+let x = y == 2 ? 'yes' : 'false'
+
+# Match operator
+#
+let err = match res.err
+    404 -> 'Not found'
+    500..599 -> 'Internal Server Error'
+    default -> 'Unkown Error'
+
+let err = match res.err
+    500..599 
+        return 'Internal Server Error'
+    default
+        return 'Unkown Error'
+
+match status
+    'START'
+        echo('Start')
+    'RUNNNING' or 'WAITING'
+        echo("Runing or Waiting")
+    default
+        echo('Invalid status')
+
+
+# Loops
+#
+for let mut i = 0; i < 2; i++
+    echo(i)
+
+for x > y
+    echo(x)
+    x++
+
+for
+    echo('I\'m infinity')
+
+### 
+  Functions
+###
+
+let main = () -> void
+  echo('Hello, World!')
+
+###
+  Return types needs to be expliced declared 
+###
+
+let add = (a: number, b: number) -> number
+  return a + b
+
+# Arguments can be chained if all are of the same type
+let add = (a, b: number) -> number
+    return a + b
+
+# Inline return
+let add = (a, b: number) return a + b
+
+### 
+    Function return can be piped to another function
+    by the pipe operator |>
+###
+
+let result = add(1,2)
+    |> double
+    |> fixTo
+
+
+###
+    Structs
+    The language is not gonna have a heavy oop orientation
+    Structs are like the regular C structs but also can have
+    functions
+###
+
+
+## Defining a struct
+#
+struct Animal
+    id: number
+    name: string
+
+    to_string: ()
+        return this.name 
+
+# Instanciating a struct object
+
+let animal = Animal(id = 1, name = 'José')
+
+let animal2 = Animal(
+  id = 1, 
+  name = 'José'
+)
+
+# Composition
+# A struct can be composed of other structs 
+
+struct Dog
+    ...Animal
+
+let dog = Dog(id=1, name='Geromel')
+
+# As Dog is composed of Animal
+# Any Dog object can be used an Animal object
+
+let whatIsMyName = (animal: Animal) 
+    return animal.name
+
+echo(whatIsMyName(dog))
+
+# Null Safety
+# Any type can be marked as a potential null value by the ? mark
+#
+let b: ?number = null;
+let b: number = null;
+
+# You can capture the value 
+#
+
+# A null vale can be direct accessed

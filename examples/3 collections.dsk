@@ -11,14 +11,13 @@ list.contains(1) => Boolean
 list.indexOf(1) => Number
 list.isEmpty() => Boolean
 list.length => Number
-list.first() => T
-list.last() => T
+list.first() => T | null
+list.last() => T | null
 
 list.map<U>((T) => U) => List<U>
 list.reduce<U>((U, T) => U) => U
 list.filter((T) => Boolean) => void
 list.sort((T, T) => Number) => void
-list.each((T) => void) => void
 list.every((T) => Boolean) => Boolean
 list.some((T) => Boolean) => Boolean
 
@@ -43,7 +42,7 @@ map.toList() => List<Tuple<K, V>>
 
 # Tuple
 let tuple: Tuple<T, U>
-let tuple: Tuple<Number, String> = (1, "hello")
+let tuple: Tuple<Number, String> = [1, "hello"]
 
 # Tuple Methods
 tuple.first()
@@ -68,6 +67,5 @@ set.map<U>((T) => U) => List<U>
 set.reduce<U>((U, T) => U) => U
 set.filter((T) => Boolean) => void
 set.sort((T, T) => Number) => void
-set.each((T) => void) => void
 set.every((T) => Boolean) => Boolean
 set.some((T) => Boolean) => Boolean

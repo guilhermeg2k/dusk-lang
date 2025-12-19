@@ -9,7 +9,7 @@ let main = ()
 let add = (a: Number, b: Number) => Number
   return a + b
 
-# Arguments can be chained
+# Arguments can be chained if all are of the same type
 let add = (a, b: Number) => Number
   return a + b
 
@@ -20,4 +20,13 @@ therefore the type will be inferred
 ###
 
 let add = (a, b: Number) => a + b
+
+### 
+  Function return can be piped to another function
+###
+#
+
+let result = add(1,2)
+  |> double
+  |> fixTo
 

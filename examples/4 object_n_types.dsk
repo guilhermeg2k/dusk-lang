@@ -43,6 +43,3 @@ let screamAnimalName = (animal: Animal)
   echo(animal.name.toUpperCase())
 
 screamAnimalName(dog) # "DOG"
-
-
-
