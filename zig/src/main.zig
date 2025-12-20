@@ -1,27 +1,236 @@
 const std = @import("std");
 const zig = @import("zig");
 
-pub fn main() !void {
-    // Prints to stderr, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-    try zig.bufferedPrint();
-}
+pub const Tag = enum {
+    let,
+    mut,
+    kw_string,
+    kw_number,
+    kw_void,
+    kw_bool,
+    identifier,
+    string_literal,
+    number_literal,
+    true_lit,
+    false_lit,
+    if_kw,
+    else_kw,
+    for_kw,
+    and_kw,
+    or_kw,
+    return_kw,
+    equals,
+    not_equals,
+    colon,
+    comma,
+    assign,
+    less_than,
+    greater_than,
+    greater_or_equal,
+    less_or_equal,
+    l_paren,
+    r_paren,
+    arrow,
+    plus,
+    minus,
+    star,
+    slash,
+    indent,
+    dedent,
+    new_line,
+    eof,
+    err,
+};
 
-test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+const LexerError = error{
+    InvalidIndentation,
+};
 
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
+const Loc = struct {
+    start: usize,
+    end: usize,
+};
+
+const Token = struct {
+    const Self = @This();
+    tag: Tag,
+    loc: Loc,
+
+    pub fn value(self: Token, source: []const u8) []const u8 {
+        if (self.tag == Tag.eof) {
+            return "EOF";
         }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+
+        return source[self.loc.start..self.loc.end];
+    }
+
+    pub fn make(tag: Tag, start: usize, end: usize) Self {
+        return Self{
+            .tag = tag,
+            .loc = .{ .start = start, .end = end },
+        };
+    }
+};
+
+const keywords = std.StaticStringMap(Tag).initComptime(.{
+    .{ "let", .Let },
+    .{ "mut", .Mut },
+    .{ "if", .If },
+    .{ "else", .Else },
+    .{ "return", .Return },
+    .{ "echo", .Echo },
+});
+
+const INDENTATION_WIDTH = 4;
+
+const Lexer = struct {
+    const Self = @This();
+
+    source: []const u8,
+    index: usize = 0,
+    indent_stack: [64]u8 = [_]u8{0} ** 64,
+    stack_top: usize = 0,
+    last_indentation_level: usize = 0,
+    pending_dedents: usize = 0,
+
+    pub fn init(source: []const u8) Self {
+        return Self{ .source = source };
+    }
+
+    pub fn next(self: *Self) Token {
+        if (self.pending_dedents != 0) {
+            self.pending_dedents -= 1;
+            return Token.make(Tag.dedent, self.index, self.index);
+        }
+
+        if (self.index == self.source.len) {
+            return Token.make(Tag.eof, self.index, self.index + 1);
+        }
+
+        const start = self.index;
+        self.skipWhiteSpace();
+
+        const char = self.source[self.index];
+        if (char == '\n') {
+            const token = self.readNewLine() catch {
+                return Token.make(Tag.err, start, self.index);
+            };
+
+            if (token) |tk| {
+                return tk;
+            }
+
+            return self.next();
+        }
+
+        switch (char) {
+            '(' => {
+                defer self.walk();
+                return Token.make(Tag.l_paren, self.index, self.index + 1);
+            },
+            ')' => {
+                defer self.walk();
+                return Token.make(Tag.r_paren, self.index, self.index + 1);
+            },
+            ':' => {
+                defer self.walk();
+                return Token.make(Tag.colon, self.index, self.index + 1);
+            },
+            ',' => {
+                defer self.walk();
+                return Token.make(Tag.comma, self.index, self.index + 1);
+            },
+            '+' => {
+                defer self.walk();
+                return Token.make(Tag.plus, self.index, self.index + 1);
+            },
+            '-' => {
+                defer self.walk();
+                return Token.make(Tag.minus, self.index, self.index + 1);
+            },
+            '*' => {
+                defer self.walk();
+                return Token.make(Tag.star, self.index, self.index + 1);
+            },
+            '/' => {
+                defer self.walk();
+                return Token.make(Tag.slash, self.index, self.index + 1);
+            },
+            else => {
+                std.debug.print("else {c}", .{char});
+                return Token.make(Tag.err, self.index, self.index + 1);
+            },
+        }
+
+        return Token.make(Tag.eof, start, self.index);
+    }
+
+    fn skipWhiteSpace(self: *Self) void {
+        while (self.index < self.source.len and self.source[self.index] == ' ') {
+            self.walk();
+        }
+    }
+
+    fn readNewLine(self: *Self) !?Token {
+        self.walk();
+        const start = self.index;
+        var spaces: usize = 0;
+        while (self.index < self.source.len and self.source[self.index] == ' ') {
+            spaces += 1;
+            self.walk();
+        }
+
+        if (spaces % INDENTATION_WIDTH != 0) {
+            return LexerError.InvalidIndentation;
+        }
+
+        const indentation_level = spaces / INDENTATION_WIDTH;
+
+        if (indentation_level > self.last_indentation_level) {
+            if (indentation_level - 1 > self.last_indentation_level) {
+                return LexerError.InvalidIndentation;
+            }
+            self.last_indentation_level = indentation_level;
+            return Token.make(Tag.indent, start, self.index);
+        }
+
+        if (indentation_level < self.last_indentation_level) {
+            self.pending_dedents = self.last_indentation_level - indentation_level;
+            self.last_indentation_level = indentation_level;
+            return null;
+        }
+
+        return Token.make(Tag.new_line, start, self.index);
+    }
+
+    fn walk(self: *Self) void {
+        self.index += 1;
+    }
+
+    fn peek(self: *Self) u8 {
+        if (self.index + 1 == self.source.len) {
+            return 0;
+        }
+
+        return self.source[self.index + 1];
+    }
+};
+
+pub fn main() void {
+    const src =
+        \\():
+        \\        ():
+        \\():
+        \\():
+    ;
+    var lexer = Lexer.init(src);
+
+    var tk = lexer.next();
+
+    while (tk.tag != Tag.eof and tk.tag != Tag.err) {
+        std.debug.print("tk {any} = {s}\n", .{ tk.tag, tk.value(src) });
+        tk = lexer.next();
+    }
+
+    std.debug.print("tk {any} = {s}\n", .{ tk.tag, tk.value(src) });
 }

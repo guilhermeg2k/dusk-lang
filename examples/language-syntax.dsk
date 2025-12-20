@@ -21,9 +21,9 @@ let str = 'START'
 # By default all variables are initialized
 # Initial values
 
-let x: number = 0;
-let y: string = '';
-let z: boolean = false;
+let x: number = 0
+let y: string = ''
+let z: boolean = false
 
 
 #All variables are immutable by default to make it mutable use the keyword mut
@@ -32,11 +32,15 @@ v = 'Olá idiotas'
 
 let x, y, z = 1, 2, 3
 
+# String interpolation
+#
+let str = 'User name is #{user.name}'
+
 # Null Safety
 # Any type can be marked as a potential null value by the ? mark
 #
-let b: ?number = null;
-let b: number = null;
+let b: ?number = null
+let b: number = null
 
 # Control Flow
 if x > y
