@@ -73,12 +73,11 @@ const Token = struct {
 };
 
 const keywords = std.StaticStringMap(Tag).initComptime(.{
-    .{ "let", .Let },
-    .{ "mut", .Mut },
-    .{ "if", .If },
-    .{ "else", .Else },
-    .{ "return", .Return },
-    .{ "echo", .Echo },
+    .{ "let", Tag.let },
+    .{ "mut", Tag.mut },
+    .{ "if", Tag.if_kw },
+    .{ "else", Tag.else_kw },
+    .{ "return", Tag.return_kw },
 });
 
 const INDENTATION_WIDTH = 4;
@@ -156,6 +155,19 @@ const Lexer = struct {
                 defer self.walk();
                 return Token.make(Tag.slash, self.index, self.index + 1);
             },
+            '=' => {
+                defer self.walk();
+                return Token.make(Tag.equals, self.index, self.index + 1);
+            },
+            'a'...'z', 'A'...'Z', '_' => {
+                return self.readWord();
+            },
+            '0'...'9' => {
+                return self.readNumberLiteral();
+            },
+            '\'' => {
+                return self.readStringLiteral();
+            },
             else => {
                 std.debug.print("else {c}", .{char});
                 return Token.make(Tag.err, self.index, self.index + 1);
@@ -169,6 +181,54 @@ const Lexer = struct {
         while (self.index < self.source.len and self.source[self.index] == ' ') {
             self.walk();
         }
+    }
+
+    fn readNumberLiteral(self: *Self) Token {
+        const start = self.index;
+        while (self.index < self.source.len) {
+            const curr = self.source[self.index];
+            if (std.ascii.isDigit(curr) or curr == '.') {
+                self.walk();
+            } else {
+                break;
+            }
+        }
+
+        return Token.make(Tag.number_literal, start, self.index);
+    }
+
+    fn readStringLiteral(self: *Self) Token {
+        const start = self.index;
+        self.walk();
+
+        while (self.index < self.source.len) {
+            const curr = self.source[self.index];
+            self.walk();
+            if (curr == '\'') {
+                break;
+            }
+        }
+
+        return Token.make(Tag.string_literal, start, self.index);
+    }
+
+    fn readWord(self: *Self) Token {
+        const start = self.index;
+        while (self.index < self.source.len) {
+            const curr = self.source[self.index];
+            if (std.ascii.isAlphanumeric(curr) or curr == '_') {
+                self.walk();
+            } else {
+                break;
+            }
+        }
+
+        const word = self.source[start..self.index];
+        if (keywords.get(word)) |tag| {
+            return Token.make(tag, start, self.index);
+        }
+
+        return Token.make(Tag.identifier, start, self.index);
     }
 
     fn readNewLine(self: *Self) !?Token {
@@ -218,9 +278,10 @@ const Lexer = struct {
 
 pub fn main() void {
     const src =
-        \\():
-        \\        ():
-        \\():
+        \\let main = ():
+        \\    let mut x = 444.44
+        \\    let mut x = 444.44
+        \\    let mut y = 'salve coronel 213121\1'
         \\():
     ;
     var lexer = Lexer.init(src);
