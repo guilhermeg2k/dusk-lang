@@ -82,6 +82,9 @@ pub const Lexer = struct {
                 '/' => {
                     return Token.init(Tag.slash, self.cur_index, self.cur_index);
                 },
+                '%' => {
+                    return Token.init(Tag.percent, self.cur_index, self.cur_index);
+                },
                 '=' => {
                     return self.readComplexSymbol('=', Tag.equals, Tag.assign);
                 },
@@ -92,7 +95,7 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('=', Tag.less_than_or_equal, Tag.less_than);
                 },
                 '!' => {
-                    return self.readComplexSymbol('=', Tag.not_equals, Tag.err);
+                    return self.readComplexSymbol('=', Tag.not_equals, Tag.not);
                 },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
@@ -120,7 +123,7 @@ pub const Lexer = struct {
         const start = self.cur_index;
         var spaces: usize = 0;
 
-        while (self.peek_next() == ' ') {
+        while (self.peekNext() == ' ') {
             spaces += 1;
             self.walk();
         }
@@ -129,7 +132,7 @@ pub const Lexer = struct {
             return Token.init(Tag.err, start, self.cur_index);
         }
 
-        if (self.peek_next() == '\n') {
+        if (self.peekNext() == '\n') {
             if (spaces > 0) {
                 return Token.init(Tag.err, start, self.cur_index);
             }
@@ -170,7 +173,7 @@ pub const Lexer = struct {
     }
 
     fn readLessThanSymbol(self: *Self) Token {
-        const next_char = self.peek_next();
+        const next_char = self.peekNext();
 
         if (next_char == '=') {
             const start = self.cur_index;
@@ -182,7 +185,7 @@ pub const Lexer = struct {
     }
 
     fn readEqualsSymbol(self: *Self) Token {
-        const next_char = self.peek_next();
+        const next_char = self.peekNext();
 
         if (next_char == '=') {
             const start = self.cur_index;
@@ -195,11 +198,11 @@ pub const Lexer = struct {
 
     fn readNumberLiteral(self: *Self) Token {
         const start = self.cur_index;
-        var next_char = self.peek_next();
+        var next_char = self.peekNext();
 
         while (std.ascii.isDigit(next_char) or next_char == '.') {
             self.walk();
-            next_char = self.peek_next();
+            next_char = self.peekNext();
         }
 
         return Token.init(Tag.number_literal, start, self.cur_index);
@@ -208,7 +211,7 @@ pub const Lexer = struct {
     fn readStringLiteral(self: *Self) Token {
         const start = self.cur_index;
 
-        while (self.peek_next() != '\'') {
+        while (self.peekNext() != '\'') {
             self.walk();
         }
 
@@ -219,10 +222,10 @@ pub const Lexer = struct {
     fn readWord(self: *Self) Token {
         const start = self.cur_index;
 
-        var next_char = self.peek_next();
+        var next_char = self.peekNext();
         while (std.ascii.isAlphanumeric(next_char) or next_char == '_') {
             self.walk();
-            next_char = self.peek_next();
+            next_char = self.peekNext();
         }
 
         const word = self.source[start .. self.cur_index + 1];
@@ -235,7 +238,7 @@ pub const Lexer = struct {
     }
 
     fn readComplexSymbol(self: *Self, expected_next: u8, return_tag: Tag, fallback_tag: Tag) Token {
-        if (self.peek_next() == expected_next) {
+        if (self.peekNext() == expected_next) {
             const start = self.cur_index;
             self.walk();
             return Token.init(return_tag, start, self.cur_index);
@@ -257,7 +260,7 @@ pub const Lexer = struct {
         self.cur_index += 1;
     }
 
-    fn peek_next(self: *Self) u8 {
+    fn peekNext(self: *Self) u8 {
         if (self.cur_index + 1 == self.source.len) {
             return 0;
         }
@@ -318,6 +321,7 @@ pub const Tag = enum {
     true_literal,
     false_literal,
     equals,
+    not,
     not_equals,
     colon,
     comma,
@@ -333,6 +337,7 @@ pub const Tag = enum {
     minus,
     star,
     slash,
+    percent,
     indent,
     dedent,
     new_line,
@@ -376,8 +381,8 @@ test "Keywords" {
 }
 
 test "Symbols " {
-    const src = "():,+-*/=>< >= <= != ->";
-    try expectTags(src, &.{ Tag.l_paren, Tag.r_paren, Tag.colon, Tag.comma, Tag.plus, Tag.minus, Tag.star, Tag.slash, Tag.assign, Tag.greater_than, Tag.less_than, Tag.greater_than_or_equal, Tag.less_than_or_equal, Tag.not_equals, Tag.arrow, Tag.eof });
+    const src = "():,+-*/ = > < >= <= != -> % !";
+    try expectTags(src, &.{ Tag.l_paren, Tag.r_paren, Tag.colon, Tag.comma, Tag.plus, Tag.minus, Tag.star, Tag.slash, Tag.assign, Tag.greater_than, Tag.less_than, Tag.greater_than_or_equal, Tag.less_than_or_equal, Tag.not_equals, Tag.arrow, Tag.percent, Tag.not, Tag.eof });
 }
 
 test "String Literals" {
