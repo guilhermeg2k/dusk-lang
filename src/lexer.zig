@@ -1,4 +1,4 @@
-const Lexer = struct {
+pub const Lexer = struct {
     const Self = @This();
 
     const INDENTATION_WIDTH: usize = 4;
@@ -17,6 +17,7 @@ const Lexer = struct {
         .{ "for", Tag.for_kw },
         .{ "true", Tag.true_literal },
         .{ "false", Tag.false_literal },
+        .{ "fn", Tag.fn_kw },
         .{ "return", Tag.return_kw },
     });
 
@@ -264,7 +265,7 @@ const Lexer = struct {
     }
 };
 
-const Token = struct {
+pub const Token = struct {
     const Self = @This();
     tag: Tag,
     loc: Loc,
@@ -297,7 +298,7 @@ const Token = struct {
     }
 };
 
-const Tag = enum {
+pub const Tag = enum {
     identifier,
     let_kw,
     mut_kw,
@@ -310,6 +311,7 @@ const Tag = enum {
     for_kw,
     and_kw,
     or_kw,
+    fn_kw,
     return_kw,
     string_literal,
     number_literal,
