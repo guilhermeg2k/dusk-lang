@@ -1,7 +1,6 @@
-const std = @import("std");
-const zig = @import("zig");
+const LexerError = error{ InvalidIndentation, TrailingWhiteSpace };
 
-pub const Tag = enum {
+const Tag = enum {
     let,
     mut,
     kw_string,
@@ -42,10 +41,6 @@ pub const Tag = enum {
     err,
 };
 
-const LexerError = error{
-    InvalidIndentation,
-};
-
 const Loc = struct {
     start: usize,
     end: usize,
@@ -59,6 +54,18 @@ const Token = struct {
     pub fn value(self: Token, source: []const u8) []const u8 {
         if (self.tag == Tag.eof) {
             return "EOF";
+        }
+
+        if (self.tag == Tag.new_line) {
+            return "NL";
+        }
+
+        if (self.tag == Tag.dedent) {
+            return "DEDENT";
+        }
+
+        if (self.tag == Tag.indent) {
+            return "INDENT";
         }
 
         return source[self.loc.start .. self.loc.end + 1];
@@ -82,7 +89,7 @@ const keywords = std.StaticStringMap(Tag).initComptime(.{
 
 const INDENTATION_WIDTH = 4;
 
-const Lexer = struct {
+pub const Lexer = struct {
     const Self = @This();
 
     source: []const u8,
@@ -101,6 +108,12 @@ const Lexer = struct {
         }
 
         if (self.cur_index == self.source.len) {
+            if (self.last_indentation_level > 0) {
+                self.pending_dedents = self.last_indentation_level - 1;
+                self.last_indentation_level = 0;
+                return Token.init(Tag.dedent, self.cur_index, self.cur_index);
+            }
+
             return Token.init(Tag.eof, self.cur_index, self.cur_index);
         }
 
@@ -264,7 +277,7 @@ const Lexer = struct {
             }
         }
 
-        return Token.init(Tag.number_literal, start, self.cur_index);
+        return Token.init(Tag.number_literal, start, self.cur_index - 1);
     }
 
     fn readStringLiteral(self: *Self) Token {
@@ -298,13 +311,14 @@ const Lexer = struct {
             return Token.init(tag, start, self.cur_index);
         }
 
-        return Token.init(Tag.identifier, start, self.cur_index);
+        return Token.init(Tag.identifier, start, self.cur_index - 1);
     }
 
     fn readNewLine(self: *Self) !?Token {
         self.walk();
         const start = self.cur_index;
         var spaces: usize = 0;
+
         while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
             spaces += 1;
             self.walk();
@@ -312,6 +326,14 @@ const Lexer = struct {
 
         if (spaces % INDENTATION_WIDTH != 0) {
             return LexerError.InvalidIndentation;
+        }
+
+        if (self.cur_index < self.source.len and self.source[self.cur_index] == '\n') {
+            if (spaces > 0) {
+                return LexerError.TrailingWhiteSpace;
+            } else {
+                return self.next();
+            }
         }
 
         const indentation_level = spaces / INDENTATION_WIDTH;
@@ -348,13 +370,10 @@ const Lexer = struct {
 
 pub fn main() void {
     const src =
-        \\let main = ()
-        \\    let mut x = 444.44
-        \\    let mut x = 444.44
-        \\    let mut y = 'salve coronel 213121\1'
-        \\    if x > 2 <
-        \\    >= <= != ==
-        \\():
+        \\if x:
+        \\    if y:
+        \\        z
+        \\x
     ;
     var lexer = Lexer.init(src);
 
@@ -367,3 +386,91 @@ pub fn main() void {
 
     std.debug.print("tk {any} = {s}\n", .{ tk.tag, tk.value(src) });
 }
+
+fn expectTags(source: []const u8, expected: []const Tag) !void {
+    var lex = Lexer.init(source);
+    for (expected) |expected_tag| {
+        const token = lex.next();
+        try testing.expectEqual(expected_tag, token.tag);
+    }
+}
+
+test "Keywords" {
+    const src = "let mut if else return";
+    try expectTags(src, &.{ .let, .mut, .if_kw, .else_kw, .return_kw, .eof });
+}
+
+test "Symbols " {
+    const src = "():,+-*/=>< >= <= != ->";
+    try expectTags(src, &.{ .l_paren, .r_paren, .colon, .comma, .plus, .minus, .star, .slash, .assign, .greater_than, .less_than, .greater_or_equal, .less_or_equal, .not_equals, .arrow, .eof });
+}
+
+test "String Literals" {
+    const src = "'hello world' 'foo'";
+    try expectTags(src, &.{ .string_literal, .string_literal, .eof });
+}
+
+test "Number Literals" {
+    const src = "3333.33 33333";
+    try expectTags(src, &.{ .number_literal, .number_literal, .eof });
+}
+
+test "Basic Indentation" {
+    const src =
+        \\if x:
+        \\    return
+    ;
+
+    try expectTags(src, &.{
+        .if_kw,  .identifier, .colon,
+        .indent, .return_kw,
+    });
+}
+
+test "Double Dedent" {
+    const src =
+        \\if x:
+        \\    if y:
+        \\        z
+        \\x
+    ;
+
+    try expectTags(src, &.{
+        .if_kw,  .identifier, .colon,
+        .indent, .if_kw,      .identifier,
+        .colon,  .indent,     .identifier,
+        .dedent, .dedent,     .identifier,
+        .eof,
+    });
+}
+
+test "Flush dedent before eof" {
+    const src =
+        \\if x:
+        \\    if y:
+        \\        z
+    ;
+
+    try expectTags(src, &.{
+        .if_kw,  .identifier, .colon,
+        .indent, .if_kw,      .identifier,
+        .colon,  .indent,     .identifier,
+        .dedent, .dedent,     .eof,
+    });
+}
+
+test "Empty Lines Should Be Ignored" {
+    const src =
+        \\let x = 1
+        \\
+        \\let y = 2
+    ;
+
+    try expectTags(src, &.{
+        .let, .identifier, .assign, .number_literal, .new_line,
+        .let, .identifier, .assign, .number_literal, .eof,
+    });
+}
+
+const std = @import("std");
+const testing = std.testing;
