@@ -61,7 +61,7 @@ const Token = struct {
             return "EOF";
         }
 
-        return source[self.loc.start..self.loc.end];
+        return source[self.loc.start .. self.loc.end + 1];
     }
 
     pub fn make(tag: Tag, start: usize, end: usize) Self {
@@ -86,9 +86,7 @@ const Lexer = struct {
     const Self = @This();
 
     source: []const u8,
-    index: usize = 0,
-    indent_stack: [64]u8 = [_]u8{0} ** 64,
-    stack_top: usize = 0,
+    cur_index: usize = 0,
     last_indentation_level: usize = 0,
     pending_dedents: usize = 0,
 
@@ -99,20 +97,20 @@ const Lexer = struct {
     pub fn next(self: *Self) Token {
         if (self.pending_dedents != 0) {
             self.pending_dedents -= 1;
-            return Token.make(Tag.dedent, self.index, self.index);
+            return Token.make(Tag.dedent, self.cur_index, self.cur_index);
         }
 
-        if (self.index == self.source.len) {
-            return Token.make(Tag.eof, self.index, self.index + 1);
+        if (self.cur_index == self.source.len) {
+            return Token.make(Tag.eof, self.cur_index, self.cur_index + 1);
         }
 
-        const start = self.index;
-        self.skipWhiteSpace();
+        const start = self.cur_index;
+        self.readWhiteSpaces();
 
-        const char = self.source[self.index];
+        const char = self.source[self.cur_index];
         if (char == '\n') {
             const token = self.readNewLine() catch {
-                return Token.make(Tag.err, start, self.index);
+                return Token.make(Tag.err, start, self.cur_index);
             };
 
             if (token) |tk| {
@@ -125,39 +123,39 @@ const Lexer = struct {
         switch (char) {
             '(' => {
                 defer self.walk();
-                return Token.make(Tag.l_paren, self.index, self.index + 1);
+                return Token.make(Tag.l_paren, self.cur_index, self.cur_index + 1);
             },
             ')' => {
                 defer self.walk();
-                return Token.make(Tag.r_paren, self.index, self.index + 1);
+                return Token.make(Tag.r_paren, self.cur_index, self.cur_index + 1);
             },
             ':' => {
                 defer self.walk();
-                return Token.make(Tag.colon, self.index, self.index + 1);
+                return Token.make(Tag.colon, self.cur_index, self.cur_index + 1);
             },
             ',' => {
                 defer self.walk();
-                return Token.make(Tag.comma, self.index, self.index + 1);
+                return Token.make(Tag.comma, self.cur_index, self.cur_index + 1);
             },
             '+' => {
                 defer self.walk();
-                return Token.make(Tag.plus, self.index, self.index + 1);
+                return Token.make(Tag.plus, self.cur_index, self.cur_index + 1);
             },
             '-' => {
                 defer self.walk();
-                return Token.make(Tag.minus, self.index, self.index + 1);
+                return Token.make(Tag.minus, self.cur_index, self.cur_index + 1);
             },
             '*' => {
                 defer self.walk();
-                return Token.make(Tag.star, self.index, self.index + 1);
+                return Token.make(Tag.star, self.cur_index, self.cur_index + 1);
             },
             '/' => {
                 defer self.walk();
-                return Token.make(Tag.slash, self.index, self.index + 1);
+                return Token.make(Tag.slash, self.cur_index, self.cur_index + 1);
             },
             '=' => {
                 defer self.walk();
-                return Token.make(Tag.equals, self.index, self.index + 1);
+                return Token.make(Tag.equals, self.cur_index, self.cur_index + 1);
             },
             'a'...'z', 'A'...'Z', '_' => {
                 return self.readWord();
@@ -170,23 +168,23 @@ const Lexer = struct {
             },
             else => {
                 std.debug.print("else {c}", .{char});
-                return Token.make(Tag.err, self.index, self.index + 1);
+                return Token.make(Tag.err, self.cur_index, self.cur_index + 1);
             },
         }
 
-        return Token.make(Tag.eof, start, self.index);
+        return Token.make(Tag.eof, start, self.cur_index);
     }
 
-    fn skipWhiteSpace(self: *Self) void {
-        while (self.index < self.source.len and self.source[self.index] == ' ') {
+    fn readWhiteSpaces(self: *Self) void {
+        while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
             self.walk();
         }
     }
 
     fn readNumberLiteral(self: *Self) Token {
-        const start = self.index;
-        while (self.index < self.source.len) {
-            const curr = self.source[self.index];
+        const start = self.cur_index;
+        while (self.cur_index < self.source.len) {
+            const curr = self.source[self.cur_index];
             if (std.ascii.isDigit(curr) or curr == '.') {
                 self.walk();
             } else {
@@ -194,28 +192,28 @@ const Lexer = struct {
             }
         }
 
-        return Token.make(Tag.number_literal, start, self.index);
+        return Token.make(Tag.number_literal, start, self.cur_index);
     }
 
     fn readStringLiteral(self: *Self) Token {
-        const start = self.index;
+        const start = self.cur_index;
         self.walk();
 
-        while (self.index < self.source.len) {
-            const curr = self.source[self.index];
+        while (self.cur_index < self.source.len) {
+            const curr = self.source[self.cur_index];
             self.walk();
             if (curr == '\'') {
                 break;
             }
         }
 
-        return Token.make(Tag.string_literal, start, self.index);
+        return Token.make(Tag.string_literal, start, self.cur_index);
     }
 
     fn readWord(self: *Self) Token {
-        const start = self.index;
-        while (self.index < self.source.len) {
-            const curr = self.source[self.index];
+        const start = self.cur_index;
+        while (self.cur_index < self.source.len) {
+            const curr = self.source[self.cur_index];
             if (std.ascii.isAlphanumeric(curr) or curr == '_') {
                 self.walk();
             } else {
@@ -223,19 +221,19 @@ const Lexer = struct {
             }
         }
 
-        const word = self.source[start..self.index];
+        const word = self.source[start..self.cur_index];
         if (keywords.get(word)) |tag| {
-            return Token.make(tag, start, self.index);
+            return Token.make(tag, start, self.cur_index);
         }
 
-        return Token.make(Tag.identifier, start, self.index);
+        return Token.make(Tag.identifier, start, self.cur_index);
     }
 
     fn readNewLine(self: *Self) !?Token {
         self.walk();
-        const start = self.index;
+        const start = self.cur_index;
         var spaces: usize = 0;
-        while (self.index < self.source.len and self.source[self.index] == ' ') {
+        while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
             spaces += 1;
             self.walk();
         }
@@ -251,7 +249,7 @@ const Lexer = struct {
                 return LexerError.InvalidIndentation;
             }
             self.last_indentation_level = indentation_level;
-            return Token.make(Tag.indent, start, self.index);
+            return Token.make(Tag.indent, start, self.cur_index);
         }
 
         if (indentation_level < self.last_indentation_level) {
@@ -260,19 +258,19 @@ const Lexer = struct {
             return null;
         }
 
-        return Token.make(Tag.new_line, start, self.index);
+        return Token.make(Tag.new_line, start, self.cur_index);
     }
 
     fn walk(self: *Self) void {
-        self.index += 1;
+        self.cur_index += 1;
     }
 
     fn peek(self: *Self) u8 {
-        if (self.index + 1 == self.source.len) {
+        if (self.cur_index + 1 == self.source.len) {
             return 0;
         }
 
-        return self.source[self.index + 1];
+        return self.source[self.cur_index + 1];
     }
 };
 
