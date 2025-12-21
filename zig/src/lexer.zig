@@ -4,10 +4,19 @@ const Lexer = struct {
     const INDENTATION_WIDTH: usize = 4;
 
     const keywords = std.StaticStringMap(Tag).initComptime(.{
-        .{ "let", Tag.let },
-        .{ "mut", Tag.mut },
+        .{ "let", Tag.let_kw },
+        .{ "mut", Tag.mut_kw },
+        .{ "number", Tag.number_kw },
+        .{ "string", Tag.string_kw },
+        .{ "bool", Tag.bool_kw },
+        .{ "void", Tag.void_kw },
         .{ "if", Tag.if_kw },
         .{ "else", Tag.else_kw },
+        .{ "and", Tag.and_kw },
+        .{ "or", Tag.or_kw },
+        .{ "for", Tag.for_kw },
+        .{ "true", Tag.true_literal },
+        .{ "false", Tag.false_literal },
         .{ "return", Tag.return_kw },
     });
 
@@ -22,13 +31,12 @@ const Lexer = struct {
 
     pub fn next(self: *Self) Token {
         while (true) {
-            const should_pop_dedent = self.pending_dedents != 0;
-            if (should_pop_dedent) {
+            const has_pending_dedent = self.pending_dedents != 0;
+            if (has_pending_dedent) {
                 return self.popPendingDedent();
             }
 
             const is_eof = self.cur_index == self.source.len;
-
             if (is_eof and self.last_indentation_level > 0) {
                 self.flushIndentation();
                 continue;
@@ -217,6 +225,7 @@ const Lexer = struct {
         }
 
         const word = self.source[start .. self.cur_index + 1];
+
         if (keywords.get(word)) |tag| {
             return Token.init(tag, start, self.cur_index);
         }
@@ -289,23 +298,23 @@ const Token = struct {
 };
 
 const Tag = enum {
-    let,
-    mut,
-    kw_string,
-    kw_number,
-    kw_void,
-    kw_bool,
     identifier,
-    string_literal,
-    number_literal,
-    true_lit,
-    false_lit,
+    let_kw,
+    mut_kw,
+    string_kw,
+    number_kw,
+    void_kw,
+    bool_kw,
     if_kw,
     else_kw,
     for_kw,
     and_kw,
     or_kw,
     return_kw,
+    string_literal,
+    number_literal,
+    true_literal,
+    false_literal,
     equals,
     not_equals,
     colon,
@@ -360,8 +369,8 @@ fn expectTags(source: []const u8, expected: []const Tag) !void {
 }
 
 test "Keywords" {
-    const src = "let mut if else return";
-    try expectTags(src, &.{ Tag.let, Tag.mut, Tag.if_kw, Tag.else_kw, Tag.return_kw, Tag.eof });
+    const src = "let mut if else number string bool return void and or for";
+    try expectTags(src, &.{ Tag.let_kw, Tag.mut_kw, Tag.if_kw, Tag.else_kw, Tag.number_kw, Tag.string_kw, Tag.bool_kw, Tag.return_kw, Tag.void_kw, Tag.and_kw, Tag.or_kw, Tag.for_kw, Tag.eof });
 }
 
 test "Symbols " {
@@ -379,6 +388,11 @@ test "Number Literals" {
     try expectTags(src, &.{ Tag.number_literal, Tag.number_literal, Tag.eof });
 }
 
+test "Bool Literals" {
+    const src = "true false";
+    try expectTags(src, &.{ Tag.true_literal, Tag.false_literal, Tag.eof });
+}
+
 test "Basic Indentation" {
     const src =
         \\if x:
@@ -387,9 +401,7 @@ test "Basic Indentation" {
 
     try expectTags(src, &.{
         Tag.if_kw,  Tag.identifier, Tag.colon,
-        Tag.indent,
-        Tag.return_kw,
-            // Note: Depending on your logic, you might expect Tag.dedent and Tag.eof here too
+        Tag.indent, Tag.return_kw,
     });
 }
 
@@ -446,8 +458,8 @@ test "Empty Lines Should Be Ignored" {
     ;
 
     try expectTags(src, &.{
-        Tag.let, Tag.identifier, Tag.assign, Tag.number_literal, Tag.new_line,
-        Tag.let, Tag.identifier, Tag.assign, Tag.number_literal, Tag.eof,
+        Tag.let_kw, Tag.identifier, Tag.assign, Tag.number_literal, Tag.new_line,
+        Tag.let_kw, Tag.identifier, Tag.assign, Tag.number_literal, Tag.eof,
     });
 }
 
