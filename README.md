@@ -6,7 +6,7 @@
 
 # DuskLang (Version 0.X Bocchi)
 
-## Version: 0.1 
+## Version: 0.1
 
 **Core Philosophy:** Explicit, Top-down, Script-like execution. No "magic" (no inference, no hoisting).
 
@@ -15,27 +15,33 @@
 ## 1. Program Structure
 
 ### Script Execution
-* **Entry Point:** No main function is required. The compiler reads the file from top to bottom and executes statements immediately.
-* **Strict Ordering:** You must define a variable or function before you use it. (No hoisting).
+
+- **Entry Point:** No main function is required. The compiler reads the file from top to bottom and executes statements immediately.
+- **Strict Ordering:** You must define a variable or function before you use it. (No hoisting).
 
 ---
 
 ## 2. Variables & Data
 
 ### Declaration
-* **Keyword:** let
-* **Type Annotations:** MANDATORY for all data variables.
-* **Mutability:** Variables are immutable by default.
-* **Initial Value:** Variables has a initial value by default
+
+- **Keyword:** let
+- **Type Annotations:** MANDATORY for all data variables.
+- **Mutability:** Variables are immutable by default.
+- **Initial Value:** Variables has a initial value by default
 
 ### Primitives
-* number: 64-bit float/int (unified for JS target).
-* string: Double or single quoted literals. No interpolation (#{}) in v0.1.
-* bool: true / false.
-* void: Used for function return types.
+
+- number: 64-bit float/int (unified for JS target).
+- string: single quoted literals. No interpolation (#{}) in v0.1.
+- bool: true / false.
+- void: Used for function return types.
+- fn: used for defining functions
 
 **Syntax:**
+
 #### VALID
+
 ```
 let mut x: number = 10
 let name: string = 'Dusk'
@@ -43,6 +49,7 @@ let is_valid: bool = true
 ```
 
 #### INVALID in v0.1
+
 ```
 let x = 10              # Error: Missing type annotation
 let msg = "Val: #{x}"   # Error: Interpolation not supported yet
@@ -53,39 +60,47 @@ let msg = "Val: #{x}"   # Error: Interpolation not supported yet
 ## 3. Functions (First-Class)
 
 ### Definition
-* **Syntax:** Uses let binding with the fn keyword.
-* **Parameters:** Types are mandatory.
-* **Return Type:** Mandatory after ->.
+
+- **Syntax:** Uses let binding with the fn keyword.
+- **Parameters:** Types are mandatory.
+- **Return Type:** Mandatory after ->.
 
 ### Body
-* **Indentation:** Uses Python-style indentation (INDENT/DEDENT).
-* **Return:** Explicit return keyword is required.
+
+- **Indentation:** Uses Python-style indentation (INDENT/DEDENT).
+- **Return:** Explicit return keyword is required.
 
 **Syntax:**
+
 ### Function Definition
+
 ```
 let add: fn = fn(a: number, b: number) -> number
     return a + b
 ```
 
 ### Empty Function
+
 ```
 let start_engine: fn = fn() -> void
     echo('Engine started')
 ```
 
 ### Call
+
 ```
 let result: number = add(5, 10)
 ```
+
 ---
 
 ## 4. Control Flow
 
 ### Conditionals
-* Standard if, else if, else.
-* Parentheses around conditions are optional.
-* 
+
+- Standard if, else if, else.
+- Parentheses around conditions are optional.
+-
 
 ```
 if x > 10
@@ -95,8 +110,9 @@ else
 ```
 
 ### Loops
-* **Strategy:** Only the Condition Loop (While-style) is supported in v0.1.
-* **Syntax:** Uses for keyword followed by a boolean expression.
+
+- **Strategy:** Only the Condition Loop (While-style) is supported in v0.1.
+- **Syntax:** Uses for keyword followed by a boolean expression.
 
 ```
 let i: number = 0
@@ -105,24 +121,25 @@ for i < 10
     echo(i)
     i = i + 1
 ```
+
 ---
 
 ## 5. Output (Intrinsics)
 
-* **echo(expression)**: A built-in intrinsic function.
-* **Behavior:** Prints the string representation of the primitive to stdout (compiles to console.log in JS).
+- **echo(expression)**: A built-in intrinsic function.
+- **Behavior:** Prints the string representation of the primitive to stdout (compiles to console.log in JS).
 
 ---
 
 ## 6. Operators
+
 **This version gonna only support simple binary operations**
 
 **By that i mean only \<value> \<operator> \<value> is supported**
 
-* **Math:** +, -, *, /.
-* **Logic:** and, or.
-* **Comparison:** ==, !=, <, >, <=, >=.
-* **Grouping:** ( ) supported for precedence.
+- **Math:** +, -, \*, /.
+- **Logic:** and, or.
+- **Comparison:** ==, !=, <, >, <=, >=.
 
 ---
 
@@ -131,22 +148,23 @@ for i < 10
 1. Lexer: Generates Tokens + INDENT/DEDENT tokens.
 2. Parser: Recursive descent; produces AST.
 3. Semantic Analysis:
-    * Validates types (e.g. number + number).
-    * Resolves symbols (checks if variable exists).
-    * Generates Universal IR (High-Level).
+   - Validates types (e.g. number + number).
+   - Resolves symbols (checks if variable exists).
+   - Generates Universal IR (High-Level).
 4. Backend (Bun):
-    * Transpiles Universal IR to JavaScript.
-    * Executes via bun run.
+   - Transpiles Universal IR to JavaScript.
+   - Executes via bun run.
 
 ---
 
 # Roadmap
+
 ### Version: 0.2
 
 - Full support for expressions and operators
 
-### Version: 0.3 
+### Version: 0.3
+
 - Type inference
 - Remove the need of the keyword fn for functions
 - Comments
-    
