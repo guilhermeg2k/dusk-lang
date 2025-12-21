@@ -64,7 +64,7 @@ const Token = struct {
         return source[self.loc.start .. self.loc.end + 1];
     }
 
-    pub fn make(tag: Tag, start: usize, end: usize) Self {
+    pub fn init(tag: Tag, start: usize, end: usize) Self {
         return Self{
             .tag = tag,
             .loc = .{ .start = start, .end = end },
@@ -97,11 +97,11 @@ const Lexer = struct {
     pub fn next(self: *Self) Token {
         if (self.pending_dedents != 0) {
             self.pending_dedents -= 1;
-            return Token.make(Tag.dedent, self.cur_index, self.cur_index);
+            return Token.init(Tag.dedent, self.cur_index, self.cur_index);
         }
 
         if (self.cur_index == self.source.len) {
-            return Token.make(Tag.eof, self.cur_index, self.cur_index + 1);
+            return Token.init(Tag.eof, self.cur_index, self.cur_index);
         }
 
         const start = self.cur_index;
@@ -110,7 +110,7 @@ const Lexer = struct {
         const char = self.source[self.cur_index];
         if (char == '\n') {
             const token = self.readNewLine() catch {
-                return Token.make(Tag.err, start, self.cur_index);
+                return Token.init(Tag.err, start, self.cur_index);
             };
 
             if (token) |tk| {
@@ -123,39 +123,46 @@ const Lexer = struct {
         switch (char) {
             '(' => {
                 defer self.walk();
-                return Token.make(Tag.l_paren, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.l_paren, self.cur_index, self.cur_index);
             },
             ')' => {
                 defer self.walk();
-                return Token.make(Tag.r_paren, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.r_paren, self.cur_index, self.cur_index);
             },
             ':' => {
                 defer self.walk();
-                return Token.make(Tag.colon, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.colon, self.cur_index, self.cur_index);
             },
             ',' => {
                 defer self.walk();
-                return Token.make(Tag.comma, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.comma, self.cur_index, self.cur_index);
             },
             '+' => {
                 defer self.walk();
-                return Token.make(Tag.plus, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.plus, self.cur_index, self.cur_index);
             },
             '-' => {
-                defer self.walk();
-                return Token.make(Tag.minus, self.cur_index, self.cur_index + 1);
+                return self.readMinusSymbol();
             },
             '*' => {
                 defer self.walk();
-                return Token.make(Tag.star, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.star, self.cur_index, self.cur_index);
             },
             '/' => {
                 defer self.walk();
-                return Token.make(Tag.slash, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.slash, self.cur_index, self.cur_index);
             },
             '=' => {
-                defer self.walk();
-                return Token.make(Tag.equals, self.cur_index, self.cur_index + 1);
+                return self.readEqualsSymbol();
+            },
+            '>' => {
+                return self.readGreaterSymbol();
+            },
+            '<' => {
+                return self.readLessThanSymbol();
+            },
+            '!' => {
+                return self.readExclamationMarkSymbol();
             },
             'a'...'z', 'A'...'Z', '_' => {
                 return self.readWord();
@@ -168,11 +175,76 @@ const Lexer = struct {
             },
             else => {
                 std.debug.print("else {c}", .{char});
-                return Token.make(Tag.err, self.cur_index, self.cur_index + 1);
+                return Token.init(Tag.err, self.cur_index, self.cur_index);
             },
         }
 
-        return Token.make(Tag.eof, start, self.cur_index);
+        return Token.init(Tag.eof, start, self.cur_index);
+    }
+
+    fn readExclamationMarkSymbol(self: *Self) Token {
+        defer self.walk();
+        const next_char = self.peek();
+
+        if (next_char == '=') {
+            const start = self.cur_index;
+            self.walk();
+            return Token.init(Tag.not_equals, start, self.cur_index);
+        }
+
+        return Token.init(Tag.err, self.cur_index, self.cur_index);
+    }
+
+    fn readMinusSymbol(self: *Self) Token {
+        defer self.walk();
+        const next_char = self.peek();
+
+        if (next_char == '>') {
+            const start = self.cur_index;
+            self.walk();
+            return Token.init(Tag.arrow, start, self.cur_index);
+        }
+
+        return Token.init(Tag.minus, self.cur_index, self.cur_index);
+    }
+
+    fn readGreaterSymbol(self: *Self) Token {
+        defer self.walk();
+        const next_char = self.peek();
+
+        if (next_char == '=') {
+            const start = self.cur_index;
+            self.walk();
+            return Token.init(Tag.greater_or_equal, start, self.cur_index);
+        }
+
+        return Token.init(Tag.greater_than, self.cur_index, self.cur_index);
+    }
+
+    fn readLessThanSymbol(self: *Self) Token {
+        defer self.walk();
+        const next_char = self.peek();
+
+        if (next_char == '=') {
+            const start = self.cur_index;
+            self.walk();
+            return Token.init(Tag.less_or_equal, start, self.cur_index);
+        }
+
+        return Token.init(Tag.less_than, self.cur_index, self.cur_index);
+    }
+
+    fn readEqualsSymbol(self: *Self) Token {
+        defer self.walk();
+        const next_char = self.peek();
+
+        if (next_char == '=') {
+            const start = self.cur_index;
+            self.walk();
+            return Token.init(Tag.equals, start, self.cur_index);
+        }
+
+        return Token.init(Tag.assign, self.cur_index, self.cur_index);
     }
 
     fn readWhiteSpaces(self: *Self) void {
@@ -192,7 +264,7 @@ const Lexer = struct {
             }
         }
 
-        return Token.make(Tag.number_literal, start, self.cur_index);
+        return Token.init(Tag.number_literal, start, self.cur_index);
     }
 
     fn readStringLiteral(self: *Self) Token {
@@ -207,7 +279,7 @@ const Lexer = struct {
             }
         }
 
-        return Token.make(Tag.string_literal, start, self.cur_index);
+        return Token.init(Tag.string_literal, start, self.cur_index);
     }
 
     fn readWord(self: *Self) Token {
@@ -223,10 +295,10 @@ const Lexer = struct {
 
         const word = self.source[start..self.cur_index];
         if (keywords.get(word)) |tag| {
-            return Token.make(tag, start, self.cur_index);
+            return Token.init(tag, start, self.cur_index);
         }
 
-        return Token.make(Tag.identifier, start, self.cur_index);
+        return Token.init(Tag.identifier, start, self.cur_index);
     }
 
     fn readNewLine(self: *Self) !?Token {
@@ -249,7 +321,7 @@ const Lexer = struct {
                 return LexerError.InvalidIndentation;
             }
             self.last_indentation_level = indentation_level;
-            return Token.make(Tag.indent, start, self.cur_index);
+            return Token.init(Tag.indent, start, self.cur_index - 1);
         }
 
         if (indentation_level < self.last_indentation_level) {
@@ -258,7 +330,7 @@ const Lexer = struct {
             return null;
         }
 
-        return Token.make(Tag.new_line, start, self.cur_index);
+        return Token.init(Tag.new_line, start, self.cur_index - 1);
     }
 
     fn walk(self: *Self) void {
@@ -276,10 +348,12 @@ const Lexer = struct {
 
 pub fn main() void {
     const src =
-        \\let main = ():
+        \\let main = ()
         \\    let mut x = 444.44
         \\    let mut x = 444.44
         \\    let mut y = 'salve coronel 213121\1'
+        \\    if x > 2 <
+        \\    >= <= != ==
         \\():
     ;
     var lexer = Lexer.init(src);
