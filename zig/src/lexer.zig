@@ -1,94 +1,15 @@
-const Tag = enum {
-    let,
-    mut,
-    kw_string,
-    kw_number,
-    kw_void,
-    kw_bool,
-    identifier,
-    string_literal,
-    number_literal,
-    true_lit,
-    false_lit,
-    if_kw,
-    else_kw,
-    for_kw,
-    and_kw,
-    or_kw,
-    return_kw,
-    equals,
-    not_equals,
-    colon,
-    comma,
-    assign,
-    less_than,
-    greater_than,
-    greater_or_equal,
-    less_or_equal,
-    l_paren,
-    r_paren,
-    arrow,
-    plus,
-    minus,
-    star,
-    slash,
-    indent,
-    dedent,
-    new_line,
-    eof,
-    err,
-};
-
-const Loc = struct {
-    start: usize,
-    end: usize,
-};
-
-const Token = struct {
+const Lexer = struct {
     const Self = @This();
-    tag: Tag,
-    loc: Loc,
 
-    pub fn value(self: Token, source: []const u8) []const u8 {
-        if (self.tag == Tag.eof) {
-            return "EOF";
-        }
+    const INDENTATION_WIDTH: usize = 4;
 
-        if (self.tag == Tag.new_line) {
-            return "NL";
-        }
-
-        if (self.tag == Tag.dedent) {
-            return "DEDENT";
-        }
-
-        if (self.tag == Tag.indent) {
-            return "INDENT";
-        }
-
-        return source[self.loc.start .. self.loc.end + 1];
-    }
-
-    pub fn init(tag: Tag, start: usize, end: usize) Self {
-        return Self{
-            .tag = tag,
-            .loc = .{ .start = start, .end = end },
-        };
-    }
-};
-
-const keywords = std.StaticStringMap(Tag).initComptime(.{
-    .{ "let", Tag.let },
-    .{ "mut", Tag.mut },
-    .{ "if", Tag.if_kw },
-    .{ "else", Tag.else_kw },
-    .{ "return", Tag.return_kw },
-});
-
-const INDENTATION_WIDTH = 4;
-
-pub const Lexer = struct {
-    const Self = @This();
+    const keywords = std.StaticStringMap(Tag).initComptime(.{
+        .{ "let", Tag.let },
+        .{ "mut", Tag.mut },
+        .{ "if", Tag.if_kw },
+        .{ "else", Tag.else_kw },
+        .{ "return", Tag.return_kw },
+    });
 
     source: []const u8,
     cur_index: usize = 0,
@@ -99,16 +20,6 @@ pub const Lexer = struct {
         return Self{ .source = source };
     }
 
-    pub fn popPendingDedent(self: *Self) Token {
-        self.pending_dedents -= 1;
-        return Token.init(Tag.dedent, self.cur_index, self.cur_index);
-    }
-
-    pub fn flushIndentation(self: *Self) void {
-        self.pending_dedents = self.last_indentation_level;
-        self.last_indentation_level = 0;
-    }
-
     pub fn next(self: *Self) Token {
         while (true) {
             const should_pop_dedent = self.pending_dedents != 0;
@@ -117,6 +28,7 @@ pub const Lexer = struct {
             }
 
             const is_eof = self.cur_index == self.source.len;
+
             if (is_eof and self.last_indentation_level > 0) {
                 self.flushIndentation();
                 continue;
@@ -153,7 +65,7 @@ pub const Lexer = struct {
                     return Token.init(Tag.plus, self.cur_index, self.cur_index);
                 },
                 '-' => {
-                    return self.readMinusSymbol();
+                    return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
                 },
                 '*' => {
                     return Token.init(Tag.star, self.cur_index, self.cur_index);
@@ -162,16 +74,16 @@ pub const Lexer = struct {
                     return Token.init(Tag.slash, self.cur_index, self.cur_index);
                 },
                 '=' => {
-                    return self.readEqualsSymbol();
+                    return self.readComplexSymbol('=', Tag.equals, Tag.assign);
                 },
                 '>' => {
-                    return self.readGreaterSymbol();
+                    return self.readComplexSymbol('=', Tag.greater_than_or_equal, Tag.greater_than);
                 },
                 '<' => {
-                    return self.readLessThanSymbol();
+                    return self.readComplexSymbol('=', Tag.less_than_or_equal, Tag.less_than);
                 },
                 '!' => {
-                    return self.readExclamationMarkSymbol();
+                    return self.readComplexSymbol('=', Tag.not_equals, Tag.err);
                 },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
@@ -189,38 +101,63 @@ pub const Lexer = struct {
         }
     }
 
-    fn readExclamationMarkSymbol(self: *Self) Token {
-        if (self.peek_next() == '=') {
-            const start = self.cur_index;
+    fn readWhiteSpaces(self: *Self) void {
+        while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
             self.walk();
-            return Token.init(Tag.not_equals, start, self.cur_index);
+        }
+    }
+
+    fn readNewLine(self: *Self) ?Token {
+        const start = self.cur_index;
+        var spaces: usize = 0;
+
+        while (self.peek_next() == ' ') {
+            spaces += 1;
+            self.walk();
         }
 
-        return Token.init(Tag.err, self.cur_index, self.cur_index);
+        if (spaces % INDENTATION_WIDTH != 0) {
+            return Token.init(Tag.err, start, self.cur_index);
+        }
+
+        if (self.peek_next() == '\n') {
+            if (spaces > 0) {
+                return Token.init(Tag.err, start, self.cur_index);
+            }
+            return null;
+        }
+
+        const indentation_level = spaces / INDENTATION_WIDTH;
+        const is_isvalid_indentation = indentation_level > 1 and (indentation_level - self.last_indentation_level) > 1;
+
+        if (is_isvalid_indentation) {
+            return Token.init(Tag.err, start, self.cur_index);
+        }
+
+        if (indentation_level > self.last_indentation_level) {
+            self.last_indentation_level = indentation_level;
+            return Token.init(Tag.indent, start, self.cur_index);
+        }
+
+        if (indentation_level < self.last_indentation_level) {
+            self.pending_dedents = self.last_indentation_level - indentation_level;
+            self.last_indentation_level = indentation_level;
+            return null;
+        }
+
+        return Token.init(Tag.new_line, start, self.cur_index);
+    }
+
+    fn readExclamationMarkSymbol(self: *Self) Token {
+        return self.readComplexSymbol('=', Tag.not_equals, Tag.err);
     }
 
     fn readMinusSymbol(self: *Self) Token {
-        const next_char = self.peek_next();
-
-        if (next_char == '>') {
-            const start = self.cur_index;
-            self.walk();
-            return Token.init(Tag.arrow, start, self.cur_index);
-        }
-
-        return Token.init(Tag.minus, self.cur_index, self.cur_index);
+        return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
     }
 
     fn readGreaterSymbol(self: *Self) Token {
-        const next_char = self.peek_next();
-
-        if (next_char == '=') {
-            const start = self.cur_index;
-            self.walk();
-            return Token.init(Tag.greater_or_equal, start, self.cur_index);
-        }
-
-        return Token.init(Tag.greater_than, self.cur_index, self.cur_index);
+        return self.readComplexSymbol('=', Tag.greater_than_or_equal, Tag.greater_than);
     }
 
     fn readLessThanSymbol(self: *Self) Token {
@@ -229,7 +166,7 @@ pub const Lexer = struct {
         if (next_char == '=') {
             const start = self.cur_index;
             self.walk();
-            return Token.init(Tag.less_or_equal, start, self.cur_index);
+            return Token.init(Tag.less_than_or_equal, start, self.cur_index);
         }
 
         return Token.init(Tag.less_than, self.cur_index, self.cur_index);
@@ -247,22 +184,13 @@ pub const Lexer = struct {
         return Token.init(Tag.assign, self.cur_index, self.cur_index);
     }
 
-    fn readWhiteSpaces(self: *Self) void {
-        while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
-            self.walk();
-        }
-    }
-
     fn readNumberLiteral(self: *Self) Token {
         const start = self.cur_index;
+        var next_char = self.peek_next();
 
-        while (self.cur_index < self.source.len) {
-            const next_char = self.peek_next();
-            if (std.ascii.isDigit(next_char) or next_char == '.') {
-                self.walk();
-            } else {
-                break;
-            }
+        while (std.ascii.isDigit(next_char) or next_char == '.') {
+            self.walk();
+            next_char = self.peek_next();
         }
 
         return Token.init(Tag.number_literal, start, self.cur_index);
@@ -282,13 +210,10 @@ pub const Lexer = struct {
     fn readWord(self: *Self) Token {
         const start = self.cur_index;
 
-        while (self.cur_index < self.source.len) {
-            const next_char = self.peek_next();
-            if (std.ascii.isAlphanumeric(next_char) or next_char == '_') {
-                self.walk();
-            } else {
-                break;
-            }
+        var next_char = self.peek_next();
+        while (std.ascii.isAlphanumeric(next_char) or next_char == '_') {
+            self.walk();
+            next_char = self.peek_next();
         }
 
         const word = self.source[start .. self.cur_index + 1];
@@ -299,45 +224,23 @@ pub const Lexer = struct {
         return Token.init(Tag.identifier, start, self.cur_index);
     }
 
-    fn readNewLine(self: *Self) ?Token {
-        defer self.walk();
-        const start = self.cur_index;
-        var spaces: usize = 0;
-
-        while (self.peek_next() == ' ') {
-            spaces += 1;
+    fn readComplexSymbol(self: *Self, expected_next: u8, return_tag: Tag, fallback_tag: Tag) Token {
+        if (self.peek_next() == expected_next) {
+            const start = self.cur_index;
             self.walk();
+            return Token.init(return_tag, start, self.cur_index);
         }
+        return Token.init(fallback_tag, self.cur_index, self.cur_index);
+    }
 
-        if (spaces % INDENTATION_WIDTH != 0) {
-            return Token.init(Tag.err, start, self.cur_index);
-        }
+    fn popPendingDedent(self: *Self) Token {
+        self.pending_dedents -= 1;
+        return Token.init(Tag.dedent, self.cur_index, self.cur_index);
+    }
 
-        if (self.peek_next() == '\n') {
-            if (spaces > 0) {
-                return Token.init(Tag.err, start, self.cur_index);
-            } else {
-                return null;
-            }
-        }
-
-        const indentation_level = spaces / INDENTATION_WIDTH;
-
-        if (indentation_level > self.last_indentation_level) {
-            if (indentation_level - 1 > self.last_indentation_level) {
-                return Token.init(Tag.err, start, self.cur_index);
-            }
-            self.last_indentation_level = indentation_level;
-            return Token.init(Tag.indent, start, self.cur_index);
-        }
-
-        if (indentation_level < self.last_indentation_level) {
-            self.pending_dedents = self.last_indentation_level - indentation_level;
-            self.last_indentation_level = indentation_level;
-            return null;
-        }
-
-        return Token.init(Tag.new_line, start, self.cur_index);
+    fn flushIndentation(self: *Self) void {
+        self.pending_dedents = self.last_indentation_level;
+        self.last_indentation_level = 0;
     }
 
     fn walk(self: *Self) void {
@@ -348,9 +251,87 @@ pub const Lexer = struct {
         if (self.cur_index + 1 == self.source.len) {
             return 0;
         }
-
         return self.source[self.cur_index + 1];
     }
+};
+
+const Token = struct {
+    const Self = @This();
+    tag: Tag,
+    loc: Loc,
+
+    pub fn value(self: Token, source: []const u8) []const u8 {
+        if (self.tag == Tag.eof) {
+            return "EOF";
+        }
+
+        if (self.tag == Tag.new_line) {
+            return "NL";
+        }
+
+        if (self.tag == Tag.dedent) {
+            return "DEDENT";
+        }
+
+        if (self.tag == Tag.indent) {
+            return "INDENT";
+        }
+
+        return source[self.loc.start .. self.loc.end + 1];
+    }
+
+    pub fn init(tag: Tag, start: usize, end: usize) Self {
+        return Self{
+            .tag = tag,
+            .loc = .{ .start = start, .end = end },
+        };
+    }
+};
+
+const Tag = enum {
+    let,
+    mut,
+    kw_string,
+    kw_number,
+    kw_void,
+    kw_bool,
+    identifier,
+    string_literal,
+    number_literal,
+    true_lit,
+    false_lit,
+    if_kw,
+    else_kw,
+    for_kw,
+    and_kw,
+    or_kw,
+    return_kw,
+    equals,
+    not_equals,
+    colon,
+    comma,
+    assign,
+    less_than,
+    less_than_or_equal,
+    greater_than,
+    greater_than_or_equal,
+    l_paren,
+    r_paren,
+    arrow,
+    plus,
+    minus,
+    star,
+    slash,
+    indent,
+    dedent,
+    new_line,
+    eof,
+    err,
+};
+
+const Loc = struct {
+    start: usize,
+    end: usize,
 };
 
 pub fn main() void {
@@ -380,22 +361,22 @@ fn expectTags(source: []const u8, expected: []const Tag) !void {
 
 test "Keywords" {
     const src = "let mut if else return";
-    try expectTags(src, &.{ .let, .mut, .if_kw, .else_kw, .return_kw, .eof });
+    try expectTags(src, &.{ Tag.let, Tag.mut, Tag.if_kw, Tag.else_kw, Tag.return_kw, Tag.eof });
 }
 
 test "Symbols " {
     const src = "():,+-*/=>< >= <= != ->";
-    try expectTags(src, &.{ .l_paren, .r_paren, .colon, .comma, .plus, .minus, .star, .slash, .assign, .greater_than, .less_than, .greater_or_equal, .less_or_equal, .not_equals, .arrow, .eof });
+    try expectTags(src, &.{ Tag.l_paren, Tag.r_paren, Tag.colon, Tag.comma, Tag.plus, Tag.minus, Tag.star, Tag.slash, Tag.assign, Tag.greater_than, Tag.less_than, Tag.greater_than_or_equal, Tag.less_than_or_equal, Tag.not_equals, Tag.arrow, Tag.eof });
 }
 
 test "String Literals" {
     const src = "'hello world' 'foo'";
-    try expectTags(src, &.{ .string_literal, .string_literal, .eof });
+    try expectTags(src, &.{ Tag.string_literal, Tag.string_literal, Tag.eof });
 }
 
 test "Number Literals" {
     const src = "3333.33 33333";
-    try expectTags(src, &.{ .number_literal, .number_literal, .eof });
+    try expectTags(src, &.{ Tag.number_literal, Tag.number_literal, Tag.eof });
 }
 
 test "Basic Indentation" {
@@ -405,8 +386,10 @@ test "Basic Indentation" {
     ;
 
     try expectTags(src, &.{
-        .if_kw,  .identifier, .colon,
-        .indent, .return_kw,
+        Tag.if_kw,  Tag.identifier, Tag.colon,
+        Tag.indent,
+        Tag.return_kw,
+            // Note: Depending on your logic, you might expect Tag.dedent and Tag.eof here too
     });
 }
 
@@ -419,11 +402,11 @@ test "Double Dedent" {
     ;
 
     try expectTags(src, &.{
-        .if_kw,  .identifier, .colon,
-        .indent, .if_kw,      .identifier,
-        .colon,  .indent,     .identifier,
-        .dedent, .dedent,     .identifier,
-        .eof,
+        Tag.if_kw,  Tag.identifier, Tag.colon,
+        Tag.indent, Tag.if_kw,      Tag.identifier,
+        Tag.colon,  Tag.indent,     Tag.identifier,
+        Tag.dedent, Tag.dedent,     Tag.identifier,
+        Tag.eof,
     });
 }
 
@@ -435,10 +418,23 @@ test "Flush dedent before eof" {
     ;
 
     try expectTags(src, &.{
-        .if_kw,  .identifier, .colon,
-        .indent, .if_kw,      .identifier,
-        .colon,  .indent,     .identifier,
-        .dedent, .dedent,     .eof,
+        Tag.if_kw,  Tag.identifier, Tag.colon,
+        Tag.indent, Tag.if_kw,      Tag.identifier,
+        Tag.colon,  Tag.indent,     Tag.identifier,
+        Tag.dedent, Tag.dedent,     Tag.eof,
+    });
+}
+
+test "Not allow invalid indent" {
+    const src =
+        \\if x:
+        \\        if y:
+        \\        z
+    ;
+
+    try expectTags(src, &.{
+        Tag.if_kw, Tag.identifier, Tag.colon,
+        Tag.err,
     });
 }
 
@@ -450,8 +446,8 @@ test "Empty Lines Should Be Ignored" {
     ;
 
     try expectTags(src, &.{
-        .let, .identifier, .assign, .number_literal, .new_line,
-        .let, .identifier, .assign, .number_literal, .eof,
+        Tag.let, Tag.identifier, Tag.assign, Tag.number_literal, Tag.new_line,
+        Tag.let, Tag.identifier, Tag.assign, Tag.number_literal, Tag.eof,
     });
 }
 
