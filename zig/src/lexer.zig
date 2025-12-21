@@ -117,6 +117,7 @@ pub const Lexer = struct {
             return Token.init(Tag.eof, self.cur_index, self.cur_index);
         }
 
+        defer self.walk();
         const start = self.cur_index;
         self.readWhiteSpaces();
 
@@ -135,34 +136,27 @@ pub const Lexer = struct {
 
         switch (char) {
             '(' => {
-                defer self.walk();
                 return Token.init(Tag.l_paren, self.cur_index, self.cur_index);
             },
             ')' => {
-                defer self.walk();
                 return Token.init(Tag.r_paren, self.cur_index, self.cur_index);
             },
             ':' => {
-                defer self.walk();
                 return Token.init(Tag.colon, self.cur_index, self.cur_index);
             },
             ',' => {
-                defer self.walk();
                 return Token.init(Tag.comma, self.cur_index, self.cur_index);
             },
             '+' => {
-                defer self.walk();
                 return Token.init(Tag.plus, self.cur_index, self.cur_index);
             },
             '-' => {
                 return self.readMinusSymbol();
             },
             '*' => {
-                defer self.walk();
                 return Token.init(Tag.star, self.cur_index, self.cur_index);
             },
             '/' => {
-                defer self.walk();
                 return Token.init(Tag.slash, self.cur_index, self.cur_index);
             },
             '=' => {
@@ -187,7 +181,6 @@ pub const Lexer = struct {
                 return self.readStringLiteral();
             },
             else => {
-                std.debug.print("else {c}", .{char});
                 return Token.init(Tag.err, self.cur_index, self.cur_index);
             },
         }
@@ -196,7 +189,6 @@ pub const Lexer = struct {
     }
 
     fn readExclamationMarkSymbol(self: *Self) Token {
-        defer self.walk();
         const next_char = self.peek();
 
         if (next_char == '=') {
@@ -209,7 +201,6 @@ pub const Lexer = struct {
     }
 
     fn readMinusSymbol(self: *Self) Token {
-        defer self.walk();
         const next_char = self.peek();
 
         if (next_char == '>') {
@@ -222,7 +213,6 @@ pub const Lexer = struct {
     }
 
     fn readGreaterSymbol(self: *Self) Token {
-        defer self.walk();
         const next_char = self.peek();
 
         if (next_char == '=') {
@@ -235,7 +225,6 @@ pub const Lexer = struct {
     }
 
     fn readLessThanSymbol(self: *Self) Token {
-        defer self.walk();
         const next_char = self.peek();
 
         if (next_char == '=') {
@@ -248,7 +237,6 @@ pub const Lexer = struct {
     }
 
     fn readEqualsSymbol(self: *Self) Token {
-        defer self.walk();
         const next_char = self.peek();
 
         if (next_char == '=') {
@@ -269,27 +257,23 @@ pub const Lexer = struct {
     fn readNumberLiteral(self: *Self) Token {
         const start = self.cur_index;
         while (self.cur_index < self.source.len) {
-            const curr = self.source[self.cur_index];
-            if (std.ascii.isDigit(curr) or curr == '.') {
+            const next_char = self.peek();
+            if (std.ascii.isDigit(next_char) or next_char == '.') {
                 self.walk();
             } else {
                 break;
             }
         }
 
-        return Token.init(Tag.number_literal, start, self.cur_index - 1);
+        return Token.init(Tag.number_literal, start, self.cur_index);
     }
 
     fn readStringLiteral(self: *Self) Token {
         const start = self.cur_index;
         self.walk();
 
-        while (self.cur_index < self.source.len) {
-            const curr = self.source[self.cur_index];
+        while (self.peek() != '\'') {
             self.walk();
-            if (curr == '\'') {
-                break;
-            }
         }
 
         return Token.init(Tag.string_literal, start, self.cur_index);
@@ -297,29 +281,30 @@ pub const Lexer = struct {
 
     fn readWord(self: *Self) Token {
         const start = self.cur_index;
+
         while (self.cur_index < self.source.len) {
-            const curr = self.source[self.cur_index];
-            if (std.ascii.isAlphanumeric(curr) or curr == '_') {
+            const next_char = self.peek();
+            if (std.ascii.isAlphanumeric(next_char) or next_char == '_') {
                 self.walk();
             } else {
                 break;
             }
         }
 
-        const word = self.source[start..self.cur_index];
+        const word = self.source[start .. self.cur_index + 1];
         if (keywords.get(word)) |tag| {
             return Token.init(tag, start, self.cur_index);
         }
 
-        return Token.init(Tag.identifier, start, self.cur_index - 1);
+        return Token.init(Tag.identifier, start, self.cur_index);
     }
 
     fn readNewLine(self: *Self) !?Token {
-        self.walk();
+        defer self.walk();
         const start = self.cur_index;
         var spaces: usize = 0;
 
-        while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
+        while (self.peek() == ' ') {
             spaces += 1;
             self.walk();
         }
@@ -328,7 +313,7 @@ pub const Lexer = struct {
             return LexerError.InvalidIndentation;
         }
 
-        if (self.cur_index < self.source.len and self.source[self.cur_index] == '\n') {
+        if (self.peek() == '\n') {
             if (spaces > 0) {
                 return LexerError.TrailingWhiteSpace;
             } else {
@@ -343,7 +328,7 @@ pub const Lexer = struct {
                 return LexerError.InvalidIndentation;
             }
             self.last_indentation_level = indentation_level;
-            return Token.init(Tag.indent, start, self.cur_index - 1);
+            return Token.init(Tag.indent, start, self.cur_index);
         }
 
         if (indentation_level < self.last_indentation_level) {
@@ -352,7 +337,7 @@ pub const Lexer = struct {
             return null;
         }
 
-        return Token.init(Tag.new_line, start, self.cur_index - 1);
+        return Token.init(Tag.new_line, start, self.cur_index);
     }
 
     fn walk(self: *Self) void {
@@ -373,7 +358,7 @@ pub fn main() void {
         \\if x:
         \\    if y:
         \\        z
-        \\x
+        \\4
     ;
     var lexer = Lexer.init(src);
 
