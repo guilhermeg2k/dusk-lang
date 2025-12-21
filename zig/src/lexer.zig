@@ -122,6 +122,7 @@ pub const Lexer = struct {
         self.readWhiteSpaces();
 
         const char = self.source[self.cur_index];
+
         if (char == '\n') {
             const token = self.readNewLine() catch {
                 return Token.init(Tag.err, start, self.cur_index);
@@ -130,8 +131,6 @@ pub const Lexer = struct {
             if (token) |tk| {
                 return tk;
             }
-
-            return self.next();
         }
 
         switch (char) {
