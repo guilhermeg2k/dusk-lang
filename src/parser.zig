@@ -11,9 +11,14 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self) !ast.Root {
+        return self.parseBlock();
+    }
+
+    pub fn parseBlock(self: *Self) !ast.Block {
         var statements: std.ArrayList(ast.Statement) = .empty;
 
-        while (self.peekCurrent().tag != .eof) {
+        var current_tk = self.peekCurrent();
+        while (current_tk.tag != .eof and current_tk.tag != .dedent) : (current_tk = self.peekCurrent()) {
             const stmt = try self.parseStmt();
             try statements.append(self.allocator, stmt);
         }
@@ -22,11 +27,19 @@ pub const Parser = struct {
     }
 
     fn parseStmt(self: *Self) !ast.Statement {
+        if (self.peekCurrent().tag == .new_line) {
+            self.walk();
+        }
+
         const token = self.tokens.items[self.cur_index];
+        std.debug.print("tk = {any}\n", .{token.tag});
 
         switch (token.tag) {
             .let_kw => {
                 return ast.Statement{ .let_stmt = try self.parserLetStmt() };
+            },
+            .if_kw => {
+                return ast.Statement{ .if_stmt = try self.parseIfStmt() };
             },
             else => {
                 return ParserError.UnexpectedToken;
@@ -47,7 +60,24 @@ pub const Parser = struct {
         return ast.LetStmt{ .identifier = identifier_token.value(self.src), .is_mut = is_mutable, .type_annotation = type_annotation, .value = value };
     }
 
-    fn parseExpression(self: *Self) !*ast.Exp {
+    fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {
+        self.walk();
+        const exp = try self.parseExpression();
+        var else_block: ?ast.Block = null;
+
+        _ = try self.expect(.indent);
+        const then_block = try self.parseBlock();
+        _ = try self.expect(.dedent);
+
+        const has_else = self.match(.else_kw);
+        if (has_else) {
+            else_block = try self.parseBlock();
+        }
+
+        return ast.IfStmt{ .condition = exp, .then_block = then_block, .else_block = else_block };
+    }
+
+    fn parseExpression(self: *Self) ParserError!*ast.Exp {
         defer self.walk();
         const tk = self.peekCurrent();
 
@@ -83,14 +113,16 @@ pub const Parser = struct {
     }
 
     //temporary while pratt's not impl
-    fn parseLiteral(self: *Self) !*ast.Exp {
+    fn parseLiteral(self: *Self) ParserError!*ast.Exp {
         const token = self.peekCurrent();
         return switch (token.tag) {
             .identifier => {
                 return ast.Exp.init(self.allocator, .{ .identifier = token.value(self.src) });
             },
             .number_literal => {
-                const value = try std.fmt.parseFloat(f64, token.value(self.src));
+                const value = std.fmt.parseFloat(f64, token.value(self.src)) catch {
+                    return ParserError.UnexpectedToken;
+                };
                 return ast.Exp.init(self.allocator, .{ .number_literal = value });
             },
             .string_literal => {
@@ -168,6 +200,7 @@ pub const ParserError = error{
 
 const std = @import("std");
 const lexer = @import("lexer.zig");
+const parser = @import("parser.zig");
 const ast = @import("ast.zig");
 const Token = lexer.Token;
 const Tag = lexer.Tag;

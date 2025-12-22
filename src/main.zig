@@ -7,7 +7,7 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
-    const src = "let mut xyz: number = !100";
+    const src = "let mut xyz: number = 100\nif x > 10\n    let mut y: number = 0\n    let x: number = 10\n";
 
     var token_list: std.ArrayList(Token) = .empty;
     var lexer = Lexer.init(src);
