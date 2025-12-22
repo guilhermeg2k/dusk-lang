@@ -98,7 +98,7 @@ let result: number = add(5, 10)
 
 ### Conditionals
 
-- Standard if, else if, else.
+- Standard if, else.
 
 ```
 if x > 10
@@ -164,5 +164,9 @@ for i < 10
 ### Version: 0.3
 
 - Type inference
-- Remove the need of the keyword fn for functions
 - Comments
+
+### Version 0.4
+
+- Remove the need of the keyword fn for functions
+- Support for else if
