@@ -16,13 +16,21 @@ pub const TypeAnnotation = struct {
 };
 
 pub const Exp = union(enum) {
+    const Self = @This();
+
     number_literal: f64,
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
 
-    unary: UnaryExp,
-    binary: BinaryExp,
+    unary_exp: UnaryExp,
+    binary_exp: BinaryExp,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const expPtr = try allocator.create(Self);
+        expPtr.* = exp;
+        return expPtr;
+    }
 };
 
 pub const UnaryExp = struct {
@@ -84,8 +92,9 @@ pub const BinaryOp = enum {
     }
 };
 
-const AstError = error{InvalidTag};
+const AstError = error{ InvalidTag, InvalidToken };
 
 const std = @import("std");
 const lex = @import("lexer.zig");
 const Tag = lex.Tag;
+const Token = lex.Token;
