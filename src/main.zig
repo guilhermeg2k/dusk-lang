@@ -7,7 +7,7 @@ pub fn main() !void {
 
     const allocator = arena.allocator();
 
-    const src = "let x: number = 100";
+    const src = "let xyz: number = 100";
 
     var token_list: std.ArrayList(Token) = .empty;
     var lexer = Lexer.init(src);
@@ -23,8 +23,9 @@ pub fn main() !void {
 
     var parser = Parser.init(allocator, src, token_list);
     const ast = try parser.parse();
-
-    std.debug.print("AST: {any}\n", .{ast});
+    for (ast.items) |stmt| {
+        std.debug.print("{any}:\n", .{stmt});
+    }
 }
 
 const std = @import("std");

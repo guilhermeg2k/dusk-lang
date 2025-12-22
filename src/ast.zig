@@ -8,7 +8,7 @@ pub const LetStmt = struct {
     identifier: []const u8,
     is_mut: bool,
     type_annotation: TypeAnnotation,
-    value: Exp,
+    value: *Exp,
 };
 
 pub const TypeAnnotation = struct {
@@ -40,7 +40,7 @@ pub const UnaryOp = enum {
     neg,
     not,
 
-    pub fn fromTag(tag: Tag) ?UnaryOp {
+    pub fn fromTag(tag: Tag) !UnaryOp {
         return switch (tag) {
             .minus => .neg,
             .not => .not,
@@ -74,9 +74,9 @@ pub const BinaryOp = enum {
             .equals => .eq,
             .not_equals => .not_eq,
             .less_than => .lt,
-            .less_or_equal => .lt_or_eq,
+            .less_than_or_equal => .lt_or_eq,
             .greater_than => .gt,
-            .greater_or_equal => .gt_or_eq,
+            .greater_than_or_equal => .gt_or_eq,
             .or_kw => .bool_or,
             .and_kw => .bool_and,
             else => AstError.InvalidTag,
