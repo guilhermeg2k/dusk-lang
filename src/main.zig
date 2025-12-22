@@ -22,8 +22,8 @@ pub fn main() !void {
     std.debug.print("Tokens: {any}\n\n", .{token_list.items});
 
     var parser = Parser.init(allocator, src, token_list);
-    const ast = try parser.parse();
-    for (ast.items) |stmt| {
+    const root = try parser.parse();
+    for (root.statements.items) |stmt| {
         std.debug.print("{any}:\n", .{stmt});
     }
 }

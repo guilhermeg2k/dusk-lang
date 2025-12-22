@@ -1,7 +1,12 @@
-pub const Root = std.ArrayList(Statement);
+pub const Root = Block;
+
+pub const Block = struct {
+    statements: std.ArrayList(Statement),
+};
 
 pub const Statement = union(enum) {
     let_stmt: LetStmt,
+    if_stmt: IfStmt,
 };
 
 pub const LetStmt = struct {
@@ -9,6 +14,12 @@ pub const LetStmt = struct {
     is_mut: bool,
     type_annotation: TypeAnnotation,
     value: *Exp,
+};
+
+pub const IfStmt = struct {
+    condition: *Exp,
+    then_block: Block,
+    else_block: ?Block,
 };
 
 pub const TypeAnnotation = struct {

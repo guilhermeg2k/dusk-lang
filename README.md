@@ -99,8 +99,6 @@ let result: number = add(5, 10)
 ### Conditionals
 
 - Standard if, else if, else.
-- Parentheses around conditions are optional.
--
 
 ```
 if x > 10

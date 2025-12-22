@@ -18,7 +18,7 @@ pub const Parser = struct {
             try statements.append(self.allocator, stmt);
         }
 
-        return statements;
+        return .{ .statements = statements };
     }
 
     fn parseStmt(self: *Self) !ast.Statement {
@@ -40,7 +40,7 @@ pub const Parser = struct {
         const is_mutable = self.match(.mut_kw);
         const identifier_token = try self.expect(.identifier);
         _ = try self.expect(.colon);
-        const type_annotation = try self.parseType();
+        const type_annotation = try self.parseTypeAnnotation();
         _ = try self.expect(.assign);
         const value = try self.parseExpression();
 
@@ -108,7 +108,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseType(self: *Self) !ast.TypeAnnotation {
+    fn parseTypeAnnotation(self: *Self) !ast.TypeAnnotation {
         defer self.walk();
         const token = self.peekCurrent();
 
