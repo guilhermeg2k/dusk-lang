@@ -10,6 +10,7 @@ pub const Statement = union(enum) {
     for_stmt: ForStmt,
     assign_stmt: AssignStmt,
     fn_call_stmt: FnCall,
+    return_stmt: ReturnStmt,
 };
 
 pub const LetStmt = struct {
@@ -85,6 +86,10 @@ pub const FnArg = struct {
 pub const FnCall = struct {
     identifier: []const u8,
     arguments: std.ArrayList(*Exp),
+};
+
+pub const ReturnStmt = struct {
+    exp: *Exp,
 };
 
 pub const UnaryOp = enum {

@@ -49,6 +49,9 @@ pub const Parser = struct {
                 }
                 return ast.Statement{ .fn_call_stmt = try self.parseFnCall() };
             },
+            .return_kw => {
+                return ast.Statement{ .return_stmt = try self.parseReturnStmt() };
+            },
             else => {
                 std.debug.print("{any}\n", .{self.peekCurrent().tag});
                 return ParserError.UnexpectedToken;
@@ -180,6 +183,10 @@ pub const Parser = struct {
         }
 
         return arguments;
+    }
+
+    fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
+        return ast.ReturnStmt{ .exp = try self.parseExpression() };
     }
 
     fn parseExpression(self: *Self) ParserError!*ast.Exp {
