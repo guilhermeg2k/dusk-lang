@@ -48,7 +48,7 @@ pub const Exp = union(enum) {
     bool_literal: bool,
     identifier: []const u8,
     fn_def: FnDef,
-    fn_call_stmt: FnCall,
+    fn_call: FnCall,
 
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -89,7 +89,7 @@ pub const FnCall = struct {
 };
 
 pub const ReturnStmt = struct {
-    exp: *Exp,
+    exp: ?*Exp,
 };
 
 pub const UnaryOp = enum {

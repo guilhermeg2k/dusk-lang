@@ -172,6 +172,11 @@ for i < 10
 - Support for else if
 - Support for C loops (With var inicialization)
 
-### Version 0.5
-
--- Support function named parameters
+### Version 0.X
+- Support function call with named parameters
+- Upgrade FnCall
+  - Currently function calls only allow simple calls as `identifier()` 
+  - Which means things like that does not works:
+    - getCallback()() 
+    - my_array[0]() 
+    - (fn(x) { x + 1 })(10)

@@ -143,7 +143,6 @@ pub const Parser = struct {
     }
 
     fn parseFnArg(self: *Self) ParserError!ast.FnArg {
-        defer self.walk();
         const tk = try self.expect(.identifier);
         const id = tk.value(self.src);
 
@@ -186,6 +185,7 @@ pub const Parser = struct {
     }
 
     fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
+        self.walk();
         return ast.ReturnStmt{ .exp = try self.parseExpression() };
     }
 
@@ -198,7 +198,7 @@ pub const Parser = struct {
                 const next_tk = self.peekNext();
                 switch (next_tk.tag) {
                     .l_paren => {
-                        return ast.Exp.init(self.allocator, .{ .fn_call_stmt = try self.parseFnCall() });
+                        return ast.Exp.init(self.allocator, .{ .fn_call = try self.parseFnCall() });
                     },
                     .minus, .plus, .star, .slash, .percent, .equals, .not_equals, .greater_than, .greater_than_or_equal, .less_than, .less_than_or_equal => {
                         const bin_exp = try self.parseBinaryExp();
