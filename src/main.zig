@@ -8,6 +8,7 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const src =
+        \\let mut x: number = main()
         \\x=2
         \\let main: fn = fn() -> void
         \\    let mut x: number = 1
@@ -18,6 +19,7 @@ pub fn main() !void {
         \\        let z: number = 10
         \\    for
         \\        let q: number = 10
+        \\let mut x: number = main()
         \\main()
     ;
 

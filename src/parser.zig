@@ -50,6 +50,7 @@ pub const Parser = struct {
                 return ast.Statement{ .fn_call_stmt = try self.parseFnCall() };
             },
             else => {
+                std.debug.print("{any}\n", .{self.peekCurrent().tag});
                 return ParserError.UnexpectedToken;
             },
         }
@@ -155,7 +156,6 @@ pub const Parser = struct {
     }
 
     fn parseFnCall(self: *Self) ParserError!ast.FnCall {
-        defer self.walk();
         const tk = try self.expect(.identifier);
         const id = tk.value(self.src);
         var arguments: std.ArrayList(*ast.Exp) = .empty;
@@ -187,18 +187,27 @@ pub const Parser = struct {
         const tk = self.peekCurrent();
 
         switch (tk.tag) {
-            .number_literal, .string_literal, .true_literal, .false_literal, .identifier => {
+            .identifier => {
+                const next_tk = self.peekNext();
+                switch (next_tk.tag) {
+                    .l_paren => {
+                        return ast.Exp.init(self.allocator, .{ .fn_call_stmt = try self.parseFnCall() });
+                    },
+                    .minus, .plus, .star, .slash, .percent, .equals, .not_equals, .greater_than, .greater_than_or_equal, .less_than, .less_than_or_equal => {
+                        const bin_exp = try self.parseBinaryExp();
+                        return ast.Exp.init(self.allocator, .{ .binary_exp = bin_exp });
+                    },
+                    else => {
+                        return self.parseLiteral();
+                    },
+                }
+            },
+            .number_literal, .string_literal, .true_literal, .false_literal => {
                 const next_tk = self.peekNext();
                 switch (next_tk.tag) {
                     .minus, .plus, .star, .slash, .percent, .equals, .not_equals, .greater_than, .greater_than_or_equal, .less_than, .less_than_or_equal => {
-                        const left = try self.parseLiteral();
-                        self.walk();
-
-                        const op = try ast.BinaryOp.fromTag(self.peekCurrent().tag);
-                        self.walk();
-
-                        const right = try self.parseLiteral();
-                        return ast.Exp.init(self.allocator, .{ .binary_exp = .{ .left = left, .op = op, .right = right } });
+                        const bin_exp = try self.parseBinaryExp();
+                        return ast.Exp.init(self.allocator, .{ .binary_exp = bin_exp });
                     },
                     else => {
                         return self.parseLiteral();
@@ -218,6 +227,17 @@ pub const Parser = struct {
                 return ParserError.UnexpectedToken;
             },
         }
+    }
+
+    fn parseBinaryExp(self: *Self) ParserError!ast.BinaryExp {
+        const left = try self.parseLiteral();
+        self.walk();
+
+        const op = try ast.BinaryOp.fromTag(self.peekCurrent().tag);
+        self.walk();
+
+        const right = try self.parseLiteral();
+        return ast.BinaryExp{ .left = left, .op = op, .right = right };
     }
 
     //temporary while pratt's not impl
@@ -293,11 +313,15 @@ pub const Parser = struct {
     }
 
     fn peekNext(self: *Self) Token {
-        if (self.cur_index + 1 >= self.tokens.items.len) {
+        return self.peekNextN(1);
+    }
+
+    fn peekNextN(self: *Self, n: usize) Token {
+        if (self.cur_index + n >= self.tokens.items.len) {
             return Token.init(Tag.eof, 0, 0);
         }
 
-        return self.tokens.items[self.cur_index + 1];
+        return self.tokens.items[self.cur_index + n];
     }
 };
 

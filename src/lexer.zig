@@ -25,6 +25,7 @@ pub const Lexer = struct {
     cur_index: usize = 0,
     last_indentation_level: usize = 0,
     pending_dedents: usize = 0,
+    is_first_line: bool = true,
 
     pub fn init(source: []const u8) Self {
         return Self{ .source = source };
@@ -32,6 +33,15 @@ pub const Lexer = struct {
 
     pub fn next(self: *Self) Token {
         while (true) {
+            if (self.is_first_line) {
+                const cur_char = self.peekCurrent();
+                const is_first_char_white_space = cur_char == ' ' or cur_char == '\t';
+                if (is_first_char_white_space) {
+                    return Token.init(Tag.err, self.cur_index, self.cur_index);
+                }
+                self.is_first_line = false;
+            }
+
             const has_pending_dedent = self.pending_dedents != 0;
             if (has_pending_dedent) {
                 return self.popPendingDedent();
@@ -49,7 +59,7 @@ pub const Lexer = struct {
 
             defer self.walk();
             self.readWhiteSpaces();
-            const cur_char = self.source[self.cur_index];
+            const cur_char = self.peekCurrent();
             switch (cur_char) {
                 '\n' => {
                     const token = self.readNewLine();
@@ -114,7 +124,8 @@ pub const Lexer = struct {
     }
 
     fn readWhiteSpaces(self: *Self) void {
-        while (self.cur_index < self.source.len and self.source[self.cur_index] == ' ') {
+        var cur_char = self.peekCurrent();
+        while (cur_char == ' ') : (cur_char = self.peekCurrent()) {
             self.walk();
         }
     }
@@ -260,8 +271,15 @@ pub const Lexer = struct {
         self.cur_index += 1;
     }
 
+    fn peekCurrent(self: *Self) u8 {
+        if (self.cur_index >= self.source.len) {
+            return 0;
+        }
+        return self.source[self.cur_index];
+    }
+
     fn peekNext(self: *Self) u8 {
-        if (self.cur_index + 1 == self.source.len) {
+        if (self.cur_index + 1 >= self.source.len) {
             return 0;
         }
         return self.source[self.cur_index + 1];
