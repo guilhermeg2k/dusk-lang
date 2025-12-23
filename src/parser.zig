@@ -41,6 +41,9 @@ pub const Parser = struct {
             .if_kw => {
                 return ast.Statement{ .if_stmt = try self.parseIfStmt() };
             },
+            .for_kw => {
+                return ast.Statement{ .for_stmt = try self.parseForStmt() };
+            },
             else => {
                 return ParserError.UnexpectedToken;
             },
@@ -75,6 +78,19 @@ pub const Parser = struct {
         }
 
         return ast.IfStmt{ .condition = exp, .then_block = then_block, .else_block = else_block };
+    }
+
+    fn parseForStmt(self: *Self) ParserError!ast.ForStmt {
+        self.walk();
+        var condition: ?*ast.Exp = null;
+        if (self.peekCurrent().tag != .indent) {
+            condition = try self.parseExpression();
+        }
+
+        _ = try self.expect(.indent);
+        const do_block = try self.parseBlock();
+        _ = try self.expect(.dedent);
+        return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
     fn parseExpression(self: *Self) ParserError!*ast.Exp {
