@@ -163,7 +163,7 @@ for i < 10
 
 ### Version: 0.3
 
-- Type inference
+- Type inference (also for func args)
 - Comments
 
 ### Version 0.4

@@ -32,7 +32,6 @@ pub const Parser = struct {
         }
 
         const token = self.tokens.items[self.cur_index];
-        std.debug.print("tk = {any}\n", .{token.tag});
 
         switch (token.tag) {
             .let_kw => {
@@ -93,6 +92,54 @@ pub const Parser = struct {
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
+    fn parseFnDef(self: *Self) ParserError!ast.FnDef {
+        var arguments: std.ArrayList(ast.FnArg) = .empty;
+        self.walk();
+
+        _ = try self.expect(.l_paren);
+        if (self.peekCurrent().tag != .r_paren) {
+            arguments = try self.parseFnArgs();
+        }
+        _ = try self.expect(.r_paren);
+
+        _ = try self.expect(.arrow);
+        std.debug.print("tk = {any}\n", .{self.peekCurrent().tag});
+        const return_type = try self.parseTypeAnnotation();
+
+        _ = try self.expect(.indent);
+        const body_block = try self.parseBlock();
+
+        return ast.FnDef{ .arguments = arguments, .body_block = body_block, .return_type = return_type };
+    }
+
+    fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnArg) {
+        var arguments: std.ArrayList(ast.FnArg) = .empty;
+        while (true) {
+            const arg = try self.parseFnArg();
+            try arguments.append(self.allocator, arg);
+            if (self.peekCurrent().tag != .comma) {
+                break;
+            }
+        }
+        return arguments;
+    }
+
+    fn parseFnArg(self: *Self) ParserError!ast.FnArg {
+        defer self.walk();
+        const tk = try self.expect(.identifier);
+        const id = tk.value(self.src);
+
+        _ = try self.expect(.colon);
+        const type_annotation = try self.parseTypeAnnotation();
+
+        var default_value: ?*ast.Exp = null;
+        if (self.match(.assign)) {
+            default_value = try self.parseExpression();
+        }
+
+        return ast.FnArg{ .identifier = id, .type_annotation = type_annotation, .default_value = default_value };
+    }
+
     fn parseExpression(self: *Self) ParserError!*ast.Exp {
         defer self.walk();
         const tk = self.peekCurrent();
@@ -121,6 +168,9 @@ pub const Parser = struct {
                 self.walk();
                 const right = try self.parseLiteral();
                 return ast.Exp.init(self.allocator, .{ .unary_exp = .{ .op = op, .right = right } });
+            },
+            .fn_kw => {
+                return ast.Exp.init(self.allocator, .{ .fn_def = try self.parseFnDef() });
             },
             else => {
                 return ParserError.UnexpectedToken;
@@ -161,7 +211,7 @@ pub const Parser = struct {
         const token = self.peekCurrent();
 
         return switch (token.tag) {
-            .string_kw, .number_kw, .bool_kw, .fn_kw => ast.TypeAnnotation{
+            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation{
                 .name = token.value(self.src),
             },
             else => ParserError.UnexpectedToken,

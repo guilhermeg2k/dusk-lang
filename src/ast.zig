@@ -39,6 +39,7 @@ pub const Exp = union(enum) {
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
+    fn_def: FnDef,
 
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -59,6 +60,18 @@ pub const BinaryExp = struct {
     left: *Exp,
     op: BinaryOp,
     right: *Exp,
+};
+
+pub const FnDef = struct {
+    arguments: std.ArrayList(FnArg),
+    return_type: TypeAnnotation,
+    body_block: Block,
+};
+
+pub const FnArg = struct {
+    identifier: []const u8,
+    type_annotation: TypeAnnotation,
+    default_value: ?*Exp,
 };
 
 pub const UnaryOp = enum {

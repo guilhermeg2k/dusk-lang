@@ -8,14 +8,15 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const src =
-        \\let mut x: number = 1
+        \\ let main: fn = fn() -> void
+        \\    let mut x: number = 1
         \\
-        \\if x > 10
-        \\    let mut y: number = 0
-        \\for x > 10
-        \\    let z: number = 10
-        \\for
-        \\    let q: number = 10
+        \\    if x > 10
+        \\        let mut y: number = 0
+        \\    for x > 10
+        \\        let z: number = 10
+        \\    for
+        \\        let q: number = 10
     ;
 
     var token_list: std.ArrayList(Token) = .empty;

@@ -115,6 +115,10 @@ let main = () -> void
 let add = (a: number, b: number) -> number
   return a + b
 
+# Default values
+let add = (a: number, b: number = 2) -> number
+  return a + b
+
 # Arguments can be chained if all are of the same type
 let add = (a, b: number) -> number
     return a + b
