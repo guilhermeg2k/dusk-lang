@@ -65,6 +65,20 @@ pub const SemaAnalyzer = struct {
         try self.analyzeBlock(&fnDef.body_block);
     }
 
+    pub fn visitReturnStmt(self: *Self, returnStmt: *ast.ReturnStmt) !void {
+        if (returnStmt.exp) |exp| {
+            const exp_type = self.anaylizeExpression(exp);
+            if (exp_type != self.scope.return_type.current) {
+                return SemaError.InvalidReturnType;
+            }
+            return;
+        }
+
+        if (self.scope.return_type.current != .void) {
+            return SemaError.InvalidReturnType;
+        }
+    }
+
     pub fn visitIdentifier(self: *Self, id: []const u8) !Type {
         return self.current_scope.getOrThrow(id);
     }
@@ -216,6 +230,7 @@ pub const SemaError = error{
     NotDefined,
     InvalidExpressionType,
     InvalidOperation,
+    InvalidReturnType,
     OutOfMemory,
 };
 
