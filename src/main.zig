@@ -18,6 +18,7 @@ pub fn main() !void {
         \\        let z: number = 10
         \\    for
         \\        let q: number = 10
+        \\main()
     ;
 
     var token_list: std.ArrayList(Token) = .empty;

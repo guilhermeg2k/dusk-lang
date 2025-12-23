@@ -44,7 +44,10 @@ pub const Parser = struct {
                 return ast.Statement{ .for_stmt = try self.parseForStmt() };
             },
             .identifier => {
-                return ast.Statement{ .assign_stmt = try self.parseAssignStmt() };
+                if (self.peekNext().tag == .assign) {
+                    return ast.Statement{ .assign_stmt = try self.parseAssignStmt() };
+                }
+                return ast.Statement{ .fn_call_stmt = try self.parseFnCall() };
             },
             else => {
                 return ParserError.UnexpectedToken;
@@ -151,6 +154,34 @@ pub const Parser = struct {
         return ast.FnArg{ .identifier = id, .type_annotation = type_annotation, .default_value = default_value };
     }
 
+    fn parseFnCall(self: *Self) ParserError!ast.FnCall {
+        defer self.walk();
+        const tk = try self.expect(.identifier);
+        const id = tk.value(self.src);
+        var arguments: std.ArrayList(*ast.Exp) = .empty;
+
+        _ = try self.expect(.l_paren);
+        if (self.peekCurrent().tag != .r_paren) {
+            arguments = try self.parseFnCallArgs();
+        }
+        _ = try self.expect(.r_paren);
+
+        return ast.FnCall{ .identifier = id, .arguments = arguments };
+    }
+
+    fn parseFnCallArgs(self: *Self) ParserError!std.ArrayList(*ast.Exp) {
+        var arguments: std.ArrayList(*ast.Exp) = .empty;
+        while (true) {
+            const arg = try self.parseExpression();
+            try arguments.append(self.allocator, arg);
+            if (self.peekCurrent().tag != .comma) {
+                break;
+            }
+        }
+
+        return arguments;
+    }
+
     fn parseExpression(self: *Self) ParserError!*ast.Exp {
         defer self.walk();
         const tk = self.peekCurrent();
@@ -254,7 +285,7 @@ pub const Parser = struct {
     }
 
     fn peekCurrent(self: *Self) Token {
-        if (self.cur_index == self.src.len) {
+        if (self.cur_index >= self.tokens.items.len) {
             return Token.init(Tag.eof, 0, 0);
         }
 
@@ -262,7 +293,7 @@ pub const Parser = struct {
     }
 
     fn peekNext(self: *Self) Token {
-        if (self.cur_index + 1 == self.src.len) {
+        if (self.cur_index + 1 >= self.tokens.items.len) {
             return Token.init(Tag.eof, 0, 0);
         }
 

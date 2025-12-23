@@ -171,3 +171,7 @@ for i < 10
 - Remove the need of the keyword fn for functions
 - Support for else if
 - Support for C loops (With var inicialization)
+
+### Version 0.5
+
+-- Support function named parameters

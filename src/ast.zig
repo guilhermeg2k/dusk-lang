@@ -9,6 +9,7 @@ pub const Statement = union(enum) {
     if_stmt: IfStmt,
     for_stmt: ForStmt,
     assign_stmt: AssignStmt,
+    fn_call_stmt: FnCall,
 };
 
 pub const LetStmt = struct {
@@ -46,6 +47,7 @@ pub const Exp = union(enum) {
     bool_literal: bool,
     identifier: []const u8,
     fn_def: FnDef,
+    fn_call_stmt: FnCall,
 
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -78,6 +80,11 @@ pub const FnArg = struct {
     identifier: []const u8,
     type_annotation: TypeAnnotation,
     default_value: ?*Exp,
+};
+
+pub const FnCall = struct {
+    identifier: []const u8,
+    arguments: std.ArrayList(*Exp),
 };
 
 pub const UnaryOp = enum {
