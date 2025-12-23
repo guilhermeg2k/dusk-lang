@@ -22,7 +22,7 @@ pub fn main() !void {
         \\        let z: number = 10
         \\    for
         \\        let q: number = 10
-        \\    let z = !x
+        \\    let z: number = !false
         \\let mut x: number = main()
         \\main()
         \\return x

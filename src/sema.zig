@@ -2,10 +2,10 @@ pub const SemaAnalyzer = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    current_scope: *SymbolTable,
+    scope: Scope,
 
     pub fn init(allocator: std.mem.Allocator) Self {
-        return Self{ .allocator = allocator, .current_scope = try SymbolTable.init(allocator) };
+        return Self{ .allocator = allocator, .scope = try Scope.init(allocator) };
     }
 
     pub fn deinit(self: *Self) void {
@@ -15,7 +15,9 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    pub fn analyze(self: *Self, root: *ast.Root) !void {}
+    // pub fn analyze(self: *Self, root: *ast.Root) !void {}
+    //
+    pub fn analyzeBlock(self: *Self, block: *ast.Block) !void {}
 
     pub fn anaylizeExpression(_: *Self, exp: *ast.Exp) !Type {
         switch (exp) {
@@ -40,15 +42,63 @@ pub const SemaAnalyzer = struct {
             return SemaError.InvalidExpressionType;
         }
 
-        self.current_scope.put(.{ .id = letStmt.identifier, .type = var_type });
+        self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type });
+    }
+
+    pub fn visitFnDef(self: *Self, fnDef: *ast.FnDef) !void {
+        const argument_types: std.ArrayList(Type) = .empty;
+        const return_type = Type.fromString(fnDef.return_type.name);
+        self.scope.enter(return_type);
+        defer self.scope.exit();
+
+        for (fnDef.arguments.items) |arg| {
+            const arg_type = Type.fromString(arg.type_annotation);
+            argument_types.append(self.allocator, arg_type);
+            self.current_scope.put(.{
+                .id = arg.identifier,
+                //todo: later this can also be passed as argument
+                .is_mut = false,
+                .type = arg_type,
+            });
+        }
+
+        try self.analyzeBlock(&fnDef.body_block);
     }
 
     pub fn visitIdentifier(self: *Self, id: []const u8) !Type {
         return self.current_scope.getOrThrow(id);
     }
 
-    pub fn visitBinaryExp(self: *Self, bin_exp: *ast.BinaryOp) {
-        
+    pub fn visitBinaryExp(self: *Self, bin_exp: *ast.BinaryExp) !Type {
+        const left_type = self.anaylizeExpression(bin_exp.left);
+        const right_type = self.anaylizeExpression(bin_exp.right);
+
+        if (left_type != right_type) {
+            return SemaError.InvalidExpressionType;
+        }
+
+        switch (bin_exp.op) {
+            .add, .sub, .mult, .div, .mod => {
+                if (left_type != .number) {
+                    return SemaError.InvalidOperation;
+                }
+                return .number;
+            },
+
+            .eq, .not_eq, .lt, .lt_or_eq, .gt, .gt_or_eq => {
+                if (left_type == .boolean) {
+                    return SemaError.InvalidOperation;
+                }
+                return left_type;
+            },
+
+            .bool_or, .bool_and => {
+                if (left_type != .boolean) {
+                    return SemaError.InvalidOperation;
+                }
+                return .boolean;
+            },
+        }
     }
 
     pub fn enterScope(self: *Self) !void {
@@ -59,6 +109,34 @@ pub const SemaAnalyzer = struct {
         if (self.current_scope.parent) |parent_scope| {
             self.current_scope = parent_scope;
         }
+    }
+};
+
+pub const Scope = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    symbol_table: *SymbolTable,
+    return_type: struct {
+        current: Type = void,
+        previous: ?Type,
+    },
+
+    pub fn init(allocator: std.mem.Allocator, return_type: Type) Self {
+        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator), .return_type = .{
+            .current = return_type,
+            .previous = null,
+        } };
+    }
+
+    pub fn enter(self: *Self) !void {
+        self.return_type.previous = self.return_type.current;
+        self.symbol_table = try SymbolTable.init(self.allocator, self.symbol_table);
+    }
+
+    pub fn exit(self: *Self) !void {
+        if (self.return_type.previous) |return_type| self.return_type.previous = return_type;
+        if (self.current_scope.parent) |parent_scope| self.current_scope = parent_scope;
     }
 };
 
@@ -106,6 +184,13 @@ pub const Symbol = struct {
     id: []const u8,
     type: Type,
     is_mut: bool,
+
+    metadata: ?FnMetadata,
+};
+
+pub const FnMetadata = struct {
+    param_types: std.ArrayList(Type),
+    return_type: Type,
 };
 
 pub const Type = enum {
@@ -130,6 +215,7 @@ pub const SemaError = error{
     AlreadyDefined,
     NotDefined,
     InvalidExpressionType,
+    InvalidOperation,
     OutOfMemory,
 };
 
