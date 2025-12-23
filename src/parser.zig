@@ -188,6 +188,11 @@ pub const Parser = struct {
 
     fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
         self.walk();
+        const cur_tk = self.peekCurrent();
+        if (cur_tk.tag == .new_line or cur_tk.tag == .dedent or cur_tk.tag == .eof) {
+            return ast.ReturnStmt{ .exp = null };
+        }
+
         return ast.ReturnStmt{ .exp = try self.parseExpression() };
     }
 

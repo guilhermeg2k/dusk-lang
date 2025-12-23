@@ -26,6 +26,7 @@ pub fn main() !void {
         \\let mut x: number = main()
         \\main()
         \\return x
+        \\return
     ;
 
     var token_list: std.ArrayList(Token) = .empty;
