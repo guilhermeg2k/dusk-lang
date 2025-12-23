@@ -196,22 +196,7 @@ pub const Parser = struct {
         const tk = self.peekCurrent();
 
         switch (tk.tag) {
-            .identifier => {
-                const next_tk = self.peekNext();
-                switch (next_tk.tag) {
-                    .l_paren => {
-                        return ast.Exp.init(self.allocator, .{ .fn_call = try self.parseFnCall() });
-                    },
-                    .minus, .plus, .star, .slash, .percent, .equals, .not_equals, .greater_than, .greater_than_or_equal, .less_than, .less_than_or_equal => {
-                        const bin_exp = try self.parseBinaryExp();
-                        return ast.Exp.init(self.allocator, .{ .binary_exp = bin_exp });
-                    },
-                    else => {
-                        return self.parseLiteral();
-                    },
-                }
-            },
-            .number_literal, .string_literal, .true_literal, .false_literal => {
+            .identifier, .number_literal, .string_literal, .true_literal, .false_literal => {
                 const next_tk = self.peekNext();
                 switch (next_tk.tag) {
                     .minus, .plus, .star, .slash, .percent, .equals, .not_equals, .greater_than, .greater_than_or_equal, .less_than, .less_than_or_equal => {
@@ -254,6 +239,10 @@ pub const Parser = struct {
         const token = self.peekCurrent();
         return switch (token.tag) {
             .identifier => {
+                const next_tk = self.peekNext();
+                if (next_tk.tag == .l_paren) {
+                    return ast.Exp.init(self.allocator, .{ .fn_call = try self.parseFnCall() });
+                }
                 return ast.Exp.init(self.allocator, .{ .identifier = token.value(self.src) });
             },
             .number_literal => {
