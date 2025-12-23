@@ -4,9 +4,9 @@
 
 </div>
 
-# DuskLang (Version 0.X Bocchi)
+# DuskLang
 
-## Version: 0.1
+## Version: 0.1 - Bocchi
 
 **Core Philosophy:** Explicit, Top-down, Script-like execution. No "magic" (no inference, no hoisting).
 
@@ -157,23 +157,18 @@ for i < 10
 
 # Roadmap
 
-### Version: 0.2
+### Version: 0.2 - Rukia
 
-- Add possibility to error tracking
 - Full support for expressions and operators
-
-### Version: 0.3
-
+- Add possibility to error tracking
+- Arrays
 - Type inference (also for func args)
-- Comments
-
-### Version 0.4
-
 - Remove the need of the keyword fn for functions
+- Comments
 - Support for else if
 - Support for C loops (With var inicialization)
 
-### Version 0.X
+### Features Backlog
 
 - Support function call with named parameters
 - Upgrade FnCall
@@ -183,4 +178,11 @@ for i < 10
     - my_array[0]()
     - (fn(x) { x + 1 })(10)
 - Optionals
+- Pattern match
 - Inline returns
+- Error Handling
+- String interpolation
+- Ternary operator
+- Structs
+- Modules
+- Pipe operator
