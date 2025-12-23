@@ -15,7 +15,9 @@ pub fn main() !void {
     //     \\
     //     \\let main2: fn = fn(n: number) -> void
     //     \\    if x > 10
-    //     \\        let mut y: number = 0
+    //     \\        return x
+    //     \\    else
+    //     \\        return main(1)
     //     \\    for x > 10
     //     \\        let z: number = 10
     //     \\    for

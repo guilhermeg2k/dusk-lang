@@ -83,7 +83,9 @@ pub const Parser = struct {
 
         const has_else = self.match(.else_kw);
         if (has_else) {
+            _ = try self.expect(.indent);
             else_block = try self.parseBlock();
+            _ = try self.expect(.dedent);
         }
 
         return ast.IfStmt{ .condition = exp, .then_block = then_block, .else_block = else_block };
