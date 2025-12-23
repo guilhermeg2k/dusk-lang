@@ -8,6 +8,7 @@ pub const Statement = union(enum) {
     let_stmt: LetStmt,
     if_stmt: IfStmt,
     for_stmt: ForStmt,
+    assign_stmt: AssignStmt,
 };
 
 pub const LetStmt = struct {
@@ -26,6 +27,11 @@ pub const IfStmt = struct {
 pub const ForStmt = struct {
     condition: ?*Exp,
     do_block: Block,
+};
+
+pub const AssignStmt = struct {
+    identifier: []const u8,
+    exp: *Exp,
 };
 
 pub const TypeAnnotation = struct {

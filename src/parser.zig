@@ -35,7 +35,7 @@ pub const Parser = struct {
 
         switch (token.tag) {
             .let_kw => {
-                return ast.Statement{ .let_stmt = try self.parserLetStmt() };
+                return ast.Statement{ .let_stmt = try self.parseLetStmt() };
             },
             .if_kw => {
                 return ast.Statement{ .if_stmt = try self.parseIfStmt() };
@@ -43,13 +43,16 @@ pub const Parser = struct {
             .for_kw => {
                 return ast.Statement{ .for_stmt = try self.parseForStmt() };
             },
+            .identifier => {
+                return ast.Statement{ .assign_stmt = try self.parseAssignStmt() };
+            },
             else => {
                 return ParserError.UnexpectedToken;
             },
         }
     }
 
-    fn parserLetStmt(self: *Self) !ast.LetStmt {
+    fn parseLetStmt(self: *Self) !ast.LetStmt {
         self.walk();
 
         const is_mutable = self.match(.mut_kw);
@@ -92,6 +95,15 @@ pub const Parser = struct {
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
+    fn parseAssignStmt(self: *Self) ParserError!ast.AssignStmt {
+        const tk = self.peekCurrent();
+        const id = tk.value(self.src);
+        self.walk();
+        _ = try self.expect(.assign);
+        const exp = try self.parseExpression();
+        return ast.AssignStmt{ .identifier = id, .exp = exp };
+    }
+
     fn parseFnDef(self: *Self) ParserError!ast.FnDef {
         var arguments: std.ArrayList(ast.FnArg) = .empty;
         self.walk();
@@ -103,7 +115,6 @@ pub const Parser = struct {
         _ = try self.expect(.r_paren);
 
         _ = try self.expect(.arrow);
-        std.debug.print("tk = {any}\n", .{self.peekCurrent().tag});
         const return_type = try self.parseTypeAnnotation();
 
         _ = try self.expect(.indent);

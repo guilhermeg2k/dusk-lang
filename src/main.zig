@@ -8,7 +8,8 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const src =
-        \\ let main: fn = fn() -> void
+        \\x=2
+        \\let main: fn = fn() -> void
         \\    let mut x: number = 1
         \\
         \\    if x > 10
