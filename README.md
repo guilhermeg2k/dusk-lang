@@ -168,16 +168,17 @@ for i < 10
 - Support for else if
 - Support for C loops (With var inicialization)
 
-### Features Backlog
+# Features Backlog
 
 - Support function call with named parameters
 - Upgrade FnCall
   - Currently function calls only allow simple calls as `identifier()`
   - Which means things like that does not works:
     - getCallback()()
-    - my_array[0]()
+    - my_array\[0]()
     - (fn(x) { x + 1 })(10)
 - Optionals
+  - Optional fn args
 - Pattern match
 - Inline returns
 - Error Handling
@@ -186,3 +187,4 @@ for i < 10
 - Structs
 - Modules
 - Pipe operator
+- Enum

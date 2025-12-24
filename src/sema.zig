@@ -15,9 +15,36 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    // pub fn analyze(self: *Self, root: *ast.Root) !void {}
-    //
-    pub fn analyzeBlock(self: *Self, block: *ast.Block) !void {}
+    pub fn analyze(self: *Self, root: *ast.Root) !void {
+        self.visitBlock(&root);
+    }
+
+    pub fn visitBlock(self: *Self, block: *ast.Block) !void {
+        for (block.statements.items) |stmt| {
+            switch (stmt) {
+                .let_stmt => {
+                    return self.visitLetStmt(&stmt);
+                },
+                .if_stmt => {
+                    return self.visitIfStmt(&stmt);
+                },
+                .for_stmt => {
+                    return self.visitForStmt(&stmt);
+                },
+                .assign_stmt => {
+                    return self.visitAssignStmt(&stmt);
+                },
+                .fn_call_stmt => {
+                    try self.analyzeFnCall(&stmt);
+                    return;
+                },
+                .return_stmt => {
+                    return self.visitReturnStmt(&stmt);
+                },
+                else => unreachable,
+            }
+        }
+    }
 
     pub fn anaylizeExpression(_: *Self, exp: *ast.Exp) !Type {
         switch (exp) {
@@ -45,6 +72,65 @@ pub const SemaAnalyzer = struct {
         self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type });
     }
 
+    pub fn visitIfStmt(self: *Self, ifStmt: *ast.IfStmt) !void {
+        const exp_type = try self.anaylizeExpression(ifStmt.condition);
+        if (exp_type != .boolean) {
+            return SemaError.InvalidExpressionType;
+        }
+
+        try self.visitBlock(ifStmt.then_block);
+
+        if (ifStmt.else_block) |else_blc| {
+            try self.visitBlock(else_blc);
+        }
+    }
+
+    fn visitAssignStmt(self: *Self, assignStmt: *ast.AssignStmt) !void {
+        const identifier_symbol = try self.visitIdentifier(assignStmt.identifier);
+        const exp_type = try self.anaylizeExpression(assignStmt.exp);
+
+        if (!identifier_symbol.is_mut) {
+            return SemaError.InvalidAssignment;
+        }
+
+        if (identifier_symbol.type != exp_type) {
+            return SemaError.InvalidAssignment;
+        }
+    }
+
+    fn analyzeFnCall(self: *Self, fnCall: *ast.FnCall) !Type {
+        const func_symbol = try self.visitIdentifier(fnCall.identifier);
+        if (func_symbol.type != .function) {
+            return SemaError.InvalidFunction;
+        }
+
+        if (func_symbol.metadata) |fn_data| {
+            if (fn_data.param_types.items.len != fnCall.arguments.items.len) {
+                return SemaError.InvalidFunctionParameter;
+            }
+
+            for (fn_data.param_types.items, 0..) |param_type, i| {
+                const fn_call_param_type = try self.anaylizeExpression(fnCall.arguments.items[i]);
+                if (fn_call_param_type != param_type) {
+                    return SemaError.InvalidFunctionParameter;
+                }
+            }
+
+            return fn_data.return_type;
+        }
+
+        unreachable;
+    }
+
+    pub fn visitForStmt(self: *Self, forStmt: *ast.ForStmt) !void {
+        const exp_type = try self.anaylizeExpression(forStmt.condition);
+        if (exp_type != .boolean) {
+            return SemaError.InvalidExpressionType;
+        }
+
+        try self.visitBlock(forStmt.do_block);
+    }
+
     pub fn visitFnDef(self: *Self, fnDef: *ast.FnDef) !void {
         const argument_types: std.ArrayList(Type) = .empty;
         const return_type = Type.fromString(fnDef.return_type.name);
@@ -62,7 +148,7 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        try self.analyzeBlock(&fnDef.body_block);
+        try self.visitBlock(&fnDef.body_block);
     }
 
     pub fn visitReturnStmt(self: *Self, returnStmt: *ast.ReturnStmt) !void {
@@ -79,11 +165,11 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    pub fn visitIdentifier(self: *Self, id: []const u8) !Type {
+    pub fn visitIdentifier(self: *Self, id: []const u8) !Symbol {
         return self.current_scope.getOrThrow(id);
     }
 
-    pub fn visitBinaryExp(self: *Self, bin_exp: *ast.BinaryExp) !Type {
+    pub fn analyzeBinaryExp(self: *Self, bin_exp: *ast.BinaryExp) !Type {
         const left_type = self.anaylizeExpression(bin_exp.left);
         const right_type = self.anaylizeExpression(bin_exp.right);
 
@@ -112,16 +198,6 @@ pub const SemaAnalyzer = struct {
                 }
                 return .boolean;
             },
-        }
-    }
-
-    pub fn enterScope(self: *Self) !void {
-        self.current_scope = try SymbolTable.init(self.allocator, self.current_scope);
-    }
-
-    pub fn exitScope(self: *Self) !void {
-        if (self.current_scope.parent) |parent_scope| {
-            self.current_scope = parent_scope;
         }
     }
 };
@@ -231,6 +307,9 @@ pub const SemaError = error{
     InvalidExpressionType,
     InvalidOperation,
     InvalidReturnType,
+    InvalidAssignment,
+    InvalidFunction,
+    InvalidFunctionParameter,
     OutOfMemory,
 };
 
