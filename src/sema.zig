@@ -32,7 +32,7 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    fn analyzeExpression(self: *Self, exp: *const ast.Exp) SemaError!Type {
+    fn evaluateExpression(self: *Self, exp: *const ast.Exp) SemaError!Type {
         switch (exp.*) {
             .number_literal => {
                 return .number;
@@ -54,16 +54,16 @@ pub const SemaAnalyzer = struct {
                 return .function;
             },
             .unary_exp => {
-                return self.analyzeUnaryExp(&exp.unary_exp);
+                return self.evaluateUnaryExp(&exp.unary_exp);
             },
             .binary_exp => {
-                return self.analyzeBinaryExp(&exp.binary_exp);
+                return self.evaluateBinaryExp(&exp.binary_exp);
             },
         }
     }
 
     fn visitLetStmt(self: *Self, letStmt: *const ast.LetStmt) !void {
-        const expression_type = try self.analyzeExpression(letStmt.value);
+        const expression_type = try self.evaluateExpression(letStmt.value);
         const var_type = try Type.fromString(letStmt.type_annotation.name);
 
         if (expression_type != var_type) {
@@ -78,7 +78,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitIfStmt(self: *Self, ifStmt: *const ast.IfStmt) SemaError!void {
-        const exp_type = try self.analyzeExpression(ifStmt.condition);
+        const exp_type = try self.evaluateExpression(ifStmt.condition);
         if (exp_type != .boolean) {
             return SemaError.InvalidExpressionType;
         }
@@ -92,7 +92,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitAssignStmt(self: *Self, assignStmt: *const ast.AssignStmt) !void {
         const identifier_symbol = try self.visitIdentifier(assignStmt.identifier);
-        const exp_type = try self.analyzeExpression(assignStmt.exp);
+        const exp_type = try self.evaluateExpression(assignStmt.exp);
 
         if (!identifier_symbol.is_mut) {
             return SemaError.InvalidAssignment;
@@ -115,7 +115,7 @@ pub const SemaAnalyzer = struct {
             }
 
             for (fn_data.params_types.items, 0..) |param_type, i| {
-                const fn_call_param_type = try self.analyzeExpression(fnCall.arguments.items[i]);
+                const fn_call_param_type = try self.evaluateExpression(fnCall.arguments.items[i]);
                 if (fn_call_param_type != param_type) {
                     return SemaError.InvalidFunctionParameter;
                 }
@@ -129,7 +129,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitForStmt(self: *Self, forStmt: *const ast.ForStmt) SemaError!void {
         if (forStmt.condition) |condition| {
-            const exp_type = try self.analyzeExpression(condition);
+            const exp_type = try self.evaluateExpression(condition);
             if (exp_type != .boolean) {
                 return SemaError.InvalidExpressionType;
             }
@@ -169,7 +169,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitReturnStmt(self: *Self, returnStmt: *const ast.ReturnStmt) !void {
         if (returnStmt.exp) |exp| {
-            const exp_type = try self.analyzeExpression(exp);
+            const exp_type = try self.evaluateExpression(exp);
             if (exp_type != self.scope.return_type) {
                 return SemaError.InvalidReturnType;
             }
@@ -185,8 +185,8 @@ pub const SemaAnalyzer = struct {
         return self.scope.symbol_table.getOrThrow(id);
     }
 
-    fn analyzeUnaryExp(self: *Self, unary_exp: *const ast.UnaryExp) !Type {
-        const exp_type = try self.analyzeExpression(unary_exp.right);
+    fn evaluateUnaryExp(self: *Self, unary_exp: *const ast.UnaryExp) !Type {
+        const exp_type = try self.evaluateExpression(unary_exp.right);
 
         switch (unary_exp.op) {
             .neg => {
@@ -204,9 +204,9 @@ pub const SemaAnalyzer = struct {
         return exp_type;
     }
 
-    fn analyzeBinaryExp(self: *Self, bin_exp: *const ast.BinaryExp) !Type {
-        const left_type = try self.analyzeExpression(bin_exp.left);
-        const right_type = try self.analyzeExpression(bin_exp.right);
+    fn evaluateBinaryExp(self: *Self, bin_exp: *const ast.BinaryExp) !Type {
+        const left_type = try self.evaluateExpression(bin_exp.left);
+        const right_type = try self.evaluateExpression(bin_exp.right);
 
         if (left_type != right_type) {
             return SemaError.InvalidExpressionType;
@@ -357,7 +357,7 @@ const FnMetadata = struct {
     }
 };
 
-const Type = enum {
+pub const Type = enum {
     number,
     string,
     boolean,
