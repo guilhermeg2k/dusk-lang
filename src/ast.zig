@@ -111,12 +111,14 @@ pub const BinaryOp = enum {
     mult,
     div,
     mod,
+
     eq,
     not_eq,
     lt,
     lt_or_eq,
     gt,
     gt_or_eq,
+
     bool_or,
     bool_and,
 

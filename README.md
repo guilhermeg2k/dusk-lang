@@ -167,6 +167,7 @@ for i < 10
 - Comments
 - Support for else if
 - Support for C loops (With var inicialization)
+- Improve memory management (We are using arena but still doinga lot of deinits)
 
 # Features Backlog
 

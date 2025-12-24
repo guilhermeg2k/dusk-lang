@@ -37,7 +37,7 @@ pub fn main() !void {
     try dump(allocator, ast, "ast_dump.json");
 
     var sema = try SemaAnalyzer.init(allocator);
-    try sema.analyze(&ast);
+    _ = try sema.analyze(&ast);
 }
 
 fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void {

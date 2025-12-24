@@ -8,29 +8,29 @@ pub const Program = struct {
     }
 };
 
-const Func = struct {
-    id: usize,
-    name: []const u8,
+pub const Func = struct {
+    uid: usize,
+    identifier: []const u8,
     args: std.ArrayList(FuncArg),
     return_type: Type,
     body: InstructionBlock,
 };
 
-const FuncArg = struct {
-    id: usize,
+pub const FuncArg = struct {
+    uid: usize,
     type: Type,
 };
 
-const Instruction = union(enum) {
+pub const Instruction = union(enum) {
     store_var: struct {
-        id: usize,
+        uid: usize,
         type: Type,
-        value: Value,
+        value: *Value,
     },
 
     update_var: struct {
-        id: usize,
-        value: Value,
+        var_uid: usize,
+        value: *Value,
     },
 
     branch_if: struct {
@@ -45,7 +45,7 @@ const Instruction = union(enum) {
     },
 
     return_stmt: struct {
-        value: *Value,
+        value: ?*Value,
     },
 
     expression_stmt: struct {
@@ -55,13 +55,15 @@ const Instruction = union(enum) {
 
 const InstructionBlock = std.ArrayList(Instruction);
 
-const Value = union(enum) {
+pub const Value = union(enum) {
+    const Self = @This();
+
     i_float: f64,
     i_bool: bool,
     i_string: []const u8,
     i_void: void,
 
-    load: struct { id: usize, type: Type },
+    identifier: struct { uid: usize, type: Type },
 
     binary_op: struct {
         kind: BinaryOpKind,
@@ -76,11 +78,34 @@ const Value = union(enum) {
         right: *Value,
     },
 
+    fn_def: void,
+
     fn_call: struct {
-        id: usize,
+        fn_uid: usize,
         args: std.ArrayList(*Value),
         return_type: Type,
     },
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
+    }
+
+    pub fn toType(self: *Self) Type {
+        return switch (self) {
+            .i_float => .number,
+            .i_bool => .bool,
+            .i_string => .string,
+            .i_void => .void,
+            .fn_def => .function,
+            .identifier => self.identifier.type,
+            .binary_op => self.binary_op.type,
+            .unary_op => self.unary_op.type,
+            .fn_call => self.fn_call.return_type,
+            else => SemaError.InvalidOperation,
+        };
+    }
 };
 
 pub const UnaryOpKind = enum {
@@ -95,15 +120,19 @@ pub const BinaryOpKind = enum {
     div,
     mod,
 
-    b_and,
-    b_or,
-
     cmp_eq,
     cmp_neq,
+
     cmp_lt,
+    cmp_let,
+    cmp_get,
     cmp_gt,
+
+    b_and,
+    b_or,
 };
 
 const std = @import("std");
 const sema = @import("sema.zig");
+const SemaError = sema.SemaError;
 const Type = sema.Type;
