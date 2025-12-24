@@ -79,12 +79,18 @@ pub const SemaAnalyzer = struct {
     fn visitLetStmt(self: *Self, letStmt: *ast.LetStmt) !void {
         const expression_type = try self.anaylizeExpression(letStmt.value);
         const var_type = Type.fromString(letStmt.type_annotation.name);
+        const metadata: ?FnMetadata = null;
 
         if (expression_type != var_type) {
             return SemaError.InvalidExpressionType;
         }
 
-        self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type });
+        if (expression_type == .function) {
+            const fn_metadata = try self.visitFnDef(letStmt.value);
+            metadata = fn_metadata;
+        }
+
+        self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type, .metadata = metadata });
     }
 
     fn visitIfStmt(self: *Self, ifStmt: *ast.IfStmt) !void {
@@ -146,7 +152,7 @@ pub const SemaAnalyzer = struct {
         try self.visitBlock(forStmt.do_block);
     }
 
-    fn visitFnDef(self: *Self, fnDef: *ast.FnDef) !void {
+    fn visitFnDef(self: *Self, fnDef: *ast.FnDef) !FnMetadata {
         const argument_types: std.ArrayList(Type) = .empty;
         const return_type = Type.fromString(fnDef.return_type.name);
         self.scope.enter(return_type);
@@ -155,7 +161,7 @@ pub const SemaAnalyzer = struct {
         for (fnDef.arguments.items) |arg| {
             const arg_type = Type.fromString(arg.type_annotation);
             argument_types.append(self.allocator, arg_type);
-            self.current_scope.put(.{
+            self.scope.symbol_table.put(.{
                 .id = arg.identifier,
                 //todo: later this can also be passed as argument
                 .is_mut = false,
@@ -164,6 +170,11 @@ pub const SemaAnalyzer = struct {
         }
 
         try self.visitBlock(&fnDef.body_block);
+
+        return FnMetadata{
+            .param_types = argument_types,
+            .return_type = return_type,
+        };
     }
 
     fn visitReturnStmt(self: *Self, returnStmt: *ast.ReturnStmt) !void {

@@ -8,25 +8,13 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const src =
-        \\let mut x: number = main()
-        \\x=2
-        \\let main: fn = fn() -> void
-        \\    let mut x: number = 1
+        \\let fib: fn = fn(n: number) -> number
+        \\    if n < 2
+        \\        return n
         \\
-        \\let main2: fn = fn(n: number) -> void
-        \\    if x > 10
-        \\        return x
-        \\    else
-        \\        return main(1)
-        \\    for x > 10
-        \\        let z: number = 10
-        \\    for
-        \\        let q: number = 10
-        \\    let z: number = !false
-        \\let mut x: number = main()
-        \\main()
-        \\return x
-        \\return
+        \\    let a: number = fib(n - 1)
+        \\    let b: number = fib(n - 2)
+        \\    return a - b
     ;
 
     var token_list: std.ArrayList(Token) = .empty;

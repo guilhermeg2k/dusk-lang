@@ -35,10 +35,12 @@ pub const Lexer = struct {
         while (true) {
             if (self.is_first_line) {
                 const cur_char = self.peekCurrent();
+
                 const is_first_char_white_space = cur_char == ' ' or cur_char == '\t';
                 if (is_first_char_white_space) {
                     return Token.init(Tag.err, self.cur_index, self.cur_index);
                 }
+
                 self.is_first_line = false;
             }
 
@@ -47,7 +49,7 @@ pub const Lexer = struct {
                 return self.popPendingDedent();
             }
 
-            const is_eof = self.cur_index == self.source.len;
+            const is_eof = self.cur_index >= self.source.len;
             if (is_eof and self.last_indentation_level > 0) {
                 self.flushIndentation();
                 continue;
