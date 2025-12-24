@@ -9,10 +9,7 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        var next = self.current_scope;
-        while (next != null) {
-            next = self.current_scope.deinit();
-        }
+        self.scope.deinit();
     }
 
     pub fn analyze(self: *Self, root: *const ast.Root) !void {
@@ -20,27 +17,17 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn visitBlock(self: *Self, block: *const ast.Block) !void {
+        try self.scope.enter(self.scope.return_type);
+        defer self.scope.exit(self.scope.return_type);
+
         for (block.statements.items) |stmt| {
             switch (stmt) {
-                .let_stmt => {
-                    return self.visitLetStmt(&stmt.let_stmt);
-                },
-                .if_stmt => {
-                    return self.visitIfStmt(&stmt.if_stmt);
-                },
-                .for_stmt => {
-                    return self.visitForStmt(&stmt.for_stmt);
-                },
-                .assign_stmt => {
-                    return self.visitAssignStmt(&stmt.assign_stmt);
-                },
-                .fn_call_stmt => {
-                    _ = try self.analyzeFnCall(&stmt.fn_call_stmt);
-                    return;
-                },
-                .return_stmt => {
-                    return self.visitReturnStmt(&stmt.return_stmt);
-                },
+                .let_stmt => try self.visitLetStmt(&stmt.let_stmt),
+                .if_stmt => try self.visitIfStmt(&stmt.if_stmt),
+                .for_stmt => try self.visitForStmt(&stmt.for_stmt),
+                .assign_stmt => try self.visitAssignStmt(&stmt.assign_stmt),
+                .fn_call_stmt => _ = try self.analyzeFnCall(&stmt.fn_call_stmt),
+                .return_stmt => try self.visitReturnStmt(&stmt.return_stmt),
             }
         }
     }
@@ -125,11 +112,11 @@ pub const SemaAnalyzer = struct {
         }
 
         if (func_symbol.metadata) |fn_data| {
-            if (fn_data.param_types.items.len != fnCall.arguments.items.len) {
+            if (fn_data.params_types.items.len != fnCall.arguments.items.len) {
                 return SemaError.InvalidFunctionParameter;
             }
 
-            for (fn_data.param_types.items, 0..) |param_type, i| {
+            for (fn_data.params_types.items, 0..) |param_type, i| {
                 const fn_call_param_type = try self.anaylizeExpression(fnCall.arguments.items[i]);
                 if (fn_call_param_type != param_type) {
                     return SemaError.InvalidFunctionParameter;
@@ -154,11 +141,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitFnDef(self: *Self, fnDef: *const ast.FnDef) SemaError!FnMetadata {
+        const old_return_type = self.scope.return_type;
         var argument_types: std.ArrayList(Type) = .empty;
         const return_type = try Type.fromString(fnDef.return_type.name);
 
-        try self.scope.enter(fnDef.return_type.name);
-        defer self.scope.exit();
+        try self.scope.enter(return_type);
+        defer self.scope.exit(old_return_type);
 
         for (fnDef.arguments.items) |arg| {
             const arg_type = try Type.fromString(arg.type_annotation.name);
@@ -174,22 +162,19 @@ pub const SemaAnalyzer = struct {
 
         try self.visitBlock(&fnDef.body_block);
 
-        return FnMetadata{
-            .param_types = argument_types,
-            .return_type = return_type,
-        };
+        return FnMetadata.init(self.allocator, argument_types, return_type);
     }
 
     fn visitReturnStmt(self: *Self, returnStmt: *const ast.ReturnStmt) !void {
         if (returnStmt.exp) |exp| {
             const exp_type = try self.anaylizeExpression(exp);
-            if (exp_type != self.scope.return_type.current) {
+            if (exp_type != self.scope.return_type) {
                 return SemaError.InvalidReturnType;
             }
             return;
         }
 
-        if (self.scope.return_type.current != .void) {
+        if (self.scope.return_type != .void) {
             return SemaError.InvalidReturnType;
         }
     }
@@ -237,7 +222,7 @@ pub const SemaAnalyzer = struct {
                 if (left_type == .boolean) {
                     return SemaError.InvalidOperation;
                 }
-                return left_type;
+                return .boolean;
             },
 
             .bool_or, .bool_and => {
@@ -255,27 +240,31 @@ const Scope = struct {
 
     allocator: std.mem.Allocator,
     symbol_table: *SymbolTable,
-    return_type: struct {
-        current: Type,
-        previous: ?Type,
-    },
+    return_type: Type,
 
     pub fn init(allocator: std.mem.Allocator, return_type: Type) !Self {
-        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = .{
-            .current = return_type,
-            .previous = null,
-        } };
+        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = return_type };
     }
 
-    pub fn enter(self: *Self, return_type: []const u8) !void {
-        self.return_type.previous = self.return_type.current;
-        self.return_type.current = try Type.fromString(return_type);
+    pub fn deinit(self: *Self) void {
+        var current_ptr: ?*SymbolTable = self.symbol_table;
+        while (current_ptr) |table| {
+            const parent = table.parent;
+            table.deinit();
+            current_ptr = parent;
+        }
+    }
+
+    pub fn enter(self: *Self, return_type: Type) !void {
+        self.return_type = return_type;
         self.symbol_table = try SymbolTable.init(self.allocator, self.symbol_table);
     }
 
-    pub fn exit(self: *Self) void {
-        defer self.symbol_table.deinit();
-        if (self.return_type.previous) |return_type| self.return_type.current = return_type;
+    pub fn exit(self: *Self, return_type: Type) void {
+        const scope_to_destroy = self.symbol_table;
+        defer scope_to_destroy.deinit();
+
+        self.return_type = return_type;
         if (self.symbol_table.parent) |parent_scope| self.symbol_table = parent_scope;
     }
 };
@@ -294,8 +283,14 @@ const SymbolTable = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        defer self.allocator.destroy(self);
+
+        var symbol_it = self.symbols.iterator();
+        while (symbol_it.next()) |symbol| {
+            symbol.value_ptr.deinit();
+        }
+
         self.symbols.deinit();
-        self.allocator.destroy(self);
     }
 
     pub fn put(self: *Self, symbol: Symbol) !void {
@@ -321,16 +316,37 @@ const SymbolTable = struct {
 };
 
 const Symbol = struct {
+    const Self = @This();
     id: []const u8,
     type: Type,
     is_mut: bool,
-
     metadata: ?FnMetadata,
+
+    fn deinit(self: *Self) void {
+        if (self.metadata) |*metadata| {
+            metadata.deinit();
+        }
+    }
 };
 
 const FnMetadata = struct {
-    param_types: std.ArrayList(Type),
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    params_types: std.ArrayList(Type),
     return_type: Type,
+
+    fn init(allocator: std.mem.Allocator, params_types: std.ArrayList(Type), return_type: Type) Self {
+        return Self{
+            .allocator = allocator,
+            .params_types = params_types,
+            .return_type = return_type,
+        };
+    }
+
+    fn deinit(self: *Self) void {
+        self.params_types.deinit(self.allocator);
+    }
 };
 
 const Type = enum {
@@ -366,7 +382,3 @@ pub const SemaError = error{
 
 const std = @import("std");
 const ast = @import("ast.zig");
-// const lexer = @import("lexer.zig");
-// const parser = @import("parser.zig");
-// const Token = lexer.Token;
-// const Tag = lexer.Tag;
