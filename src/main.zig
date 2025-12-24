@@ -35,6 +35,9 @@ pub fn main() !void {
     const ast = try parser.parse();
 
     try dump(allocator, ast, "ast_dump.json");
+
+    var sema = try SemaAnalyzer.init(allocator);
+    try sema.analyze(&ast);
 }
 
 fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void {
@@ -50,8 +53,10 @@ fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void
 const std = @import("std");
 const lexer_mod = @import("lexer.zig");
 const parser_mod = @import("parser.zig");
+const sema_mod = @import("sema.zig");
 
 const Lexer = lexer_mod.Lexer;
 const Parser = parser_mod.Parser;
 const Token = lexer_mod.Token;
 const Tag = lexer_mod.Tag;
+const SemaAnalyzer = sema_mod.SemaAnalyzer;
