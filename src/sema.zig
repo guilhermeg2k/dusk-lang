@@ -46,7 +46,7 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    pub fn anaylizeExpression(_: *Self, exp: *ast.Exp) !Type {
+    fn anaylizeExpression(self: *Self, exp: *ast.Exp) !Type {
         switch (exp) {
             .number_literal => {
                 return .number;
@@ -57,11 +57,26 @@ pub const SemaAnalyzer = struct {
             .bool_literal => {
                 return .boolean;
             },
-            else => unreachable,
+            .identifier => {
+                const id_symbol = try self.visitIdentifier(&exp);
+                return id_symbol.type;
+            },
+            .fn_call => {
+                return self.analyzeFnCall(&exp);
+            },
+            .fn_def => {
+                return .function;
+            },
+            .unary_exp => {
+                return self.analyzeUnaryExp(&exp);
+            },
+            .binary_exp => {
+                return self.analyzeBinaryExp(&exp);
+            },
         }
     }
 
-    pub fn visitLetStmt(self: *Self, letStmt: *ast.LetStmt) !void {
+    fn visitLetStmt(self: *Self, letStmt: *ast.LetStmt) !void {
         const expression_type = try self.anaylizeExpression(letStmt.value);
         const var_type = Type.fromString(letStmt.type_annotation.name);
 
@@ -72,7 +87,7 @@ pub const SemaAnalyzer = struct {
         self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type });
     }
 
-    pub fn visitIfStmt(self: *Self, ifStmt: *ast.IfStmt) !void {
+    fn visitIfStmt(self: *Self, ifStmt: *ast.IfStmt) !void {
         const exp_type = try self.anaylizeExpression(ifStmt.condition);
         if (exp_type != .boolean) {
             return SemaError.InvalidExpressionType;
@@ -122,7 +137,7 @@ pub const SemaAnalyzer = struct {
         unreachable;
     }
 
-    pub fn visitForStmt(self: *Self, forStmt: *ast.ForStmt) !void {
+    fn visitForStmt(self: *Self, forStmt: *ast.ForStmt) !void {
         const exp_type = try self.anaylizeExpression(forStmt.condition);
         if (exp_type != .boolean) {
             return SemaError.InvalidExpressionType;
@@ -131,7 +146,7 @@ pub const SemaAnalyzer = struct {
         try self.visitBlock(forStmt.do_block);
     }
 
-    pub fn visitFnDef(self: *Self, fnDef: *ast.FnDef) !void {
+    fn visitFnDef(self: *Self, fnDef: *ast.FnDef) !void {
         const argument_types: std.ArrayList(Type) = .empty;
         const return_type = Type.fromString(fnDef.return_type.name);
         self.scope.enter(return_type);
@@ -151,7 +166,7 @@ pub const SemaAnalyzer = struct {
         try self.visitBlock(&fnDef.body_block);
     }
 
-    pub fn visitReturnStmt(self: *Self, returnStmt: *ast.ReturnStmt) !void {
+    fn visitReturnStmt(self: *Self, returnStmt: *ast.ReturnStmt) !void {
         if (returnStmt.exp) |exp| {
             const exp_type = self.anaylizeExpression(exp);
             if (exp_type != self.scope.return_type.current) {
@@ -165,11 +180,30 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    pub fn visitIdentifier(self: *Self, id: []const u8) !Symbol {
+    fn visitIdentifier(self: *Self, id: []const u8) !Symbol {
         return self.current_scope.getOrThrow(id);
     }
 
-    pub fn analyzeBinaryExp(self: *Self, bin_exp: *ast.BinaryExp) !Type {
+    fn analyzeUnaryExp(self: *Self, unary_exp: *ast.UnaryExp) !Type {
+        const exp_type = try self.anaylizeExpression(unary_exp.right);
+
+        switch (unary_exp.op) {
+            .neg => {
+                if (exp_type != .number) {
+                    return SemaError.InvalidExpressionType;
+                }
+            },
+            .not => {
+                if (exp_type != .boolean) {
+                    return SemaError.InvalidExpressionType;
+                }
+            },
+        }
+
+        return exp_type;
+    }
+
+    fn analyzeBinaryExp(self: *Self, bin_exp: *ast.BinaryExp) !Type {
         const left_type = self.anaylizeExpression(bin_exp.left);
         const right_type = self.anaylizeExpression(bin_exp.right);
 
@@ -202,7 +236,7 @@ pub const SemaAnalyzer = struct {
     }
 };
 
-pub const Scope = struct {
+const Scope = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -230,7 +264,7 @@ pub const Scope = struct {
     }
 };
 
-pub const SymbolTable = struct {
+const SymbolTable = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -270,7 +304,7 @@ pub const SymbolTable = struct {
     }
 };
 
-pub const Symbol = struct {
+const Symbol = struct {
     id: []const u8,
     type: Type,
     is_mut: bool,
@@ -283,7 +317,7 @@ pub const FnMetadata = struct {
     return_type: Type,
 };
 
-pub const Type = enum {
+const Type = enum {
     number,
     string,
     boolean,
