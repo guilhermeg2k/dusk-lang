@@ -32,7 +32,7 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    fn anaylizeExpression(self: *Self, exp: *const ast.Exp) SemaError!Type {
+    fn analyzeExpression(self: *Self, exp: *const ast.Exp) SemaError!Type {
         switch (exp.*) {
             .number_literal => {
                 return .number;
@@ -63,24 +63,22 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitLetStmt(self: *Self, letStmt: *const ast.LetStmt) !void {
-        const expression_type = try self.anaylizeExpression(letStmt.value);
+        const expression_type = try self.analyzeExpression(letStmt.value);
         const var_type = try Type.fromString(letStmt.type_annotation.name);
 
         if (expression_type != var_type) {
             return SemaError.InvalidExpressionType;
         }
 
-        var metadata: ?FnMetadata = null;
-        if (expression_type == .function) {
-            const fn_metadata = try self.visitFnDef(&letStmt.value.fn_def);
-            metadata = fn_metadata;
-        }
+        try self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type, .metadata = null });
 
-        try self.scope.symbol_table.put(.{ .id = letStmt.identifier, .is_mut = letStmt.is_mut, .type = var_type, .metadata = metadata });
+        if (expression_type == .function) {
+            try self.visitFnDef(&letStmt.value.fn_def, letStmt.identifier);
+        }
     }
 
     fn visitIfStmt(self: *Self, ifStmt: *const ast.IfStmt) SemaError!void {
-        const exp_type = try self.anaylizeExpression(ifStmt.condition);
+        const exp_type = try self.analyzeExpression(ifStmt.condition);
         if (exp_type != .boolean) {
             return SemaError.InvalidExpressionType;
         }
@@ -94,7 +92,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitAssignStmt(self: *Self, assignStmt: *const ast.AssignStmt) !void {
         const identifier_symbol = try self.visitIdentifier(assignStmt.identifier);
-        const exp_type = try self.anaylizeExpression(assignStmt.exp);
+        const exp_type = try self.analyzeExpression(assignStmt.exp);
 
         if (!identifier_symbol.is_mut) {
             return SemaError.InvalidAssignment;
@@ -117,7 +115,7 @@ pub const SemaAnalyzer = struct {
             }
 
             for (fn_data.params_types.items, 0..) |param_type, i| {
-                const fn_call_param_type = try self.anaylizeExpression(fnCall.arguments.items[i]);
+                const fn_call_param_type = try self.analyzeExpression(fnCall.arguments.items[i]);
                 if (fn_call_param_type != param_type) {
                     return SemaError.InvalidFunctionParameter;
                 }
@@ -131,7 +129,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitForStmt(self: *Self, forStmt: *const ast.ForStmt) SemaError!void {
         if (forStmt.condition) |condition| {
-            const exp_type = try self.anaylizeExpression(condition);
+            const exp_type = try self.analyzeExpression(condition);
             if (exp_type != .boolean) {
                 return SemaError.InvalidExpressionType;
             }
@@ -140,17 +138,23 @@ pub const SemaAnalyzer = struct {
         try self.visitBlock(&forStmt.do_block);
     }
 
-    fn visitFnDef(self: *Self, fnDef: *const ast.FnDef) SemaError!FnMetadata {
+    fn visitFnDef(self: *Self, fnDef: *const ast.FnDef, identifier: []const u8) SemaError!void {
         const old_return_type = self.scope.return_type;
         var argument_types: std.ArrayList(Type) = .empty;
         const return_type = try Type.fromString(fnDef.return_type.name);
+
+        for (fnDef.arguments.items) |arg| {
+            const arg_type = try Type.fromString(arg.type_annotation.name);
+            try argument_types.append(self.allocator, arg_type);
+        }
+
+        try self.scope.symbol_table.replace(.{ .id = identifier, .is_mut = false, .type = .function, .metadata = FnMetadata.init(self.allocator, argument_types, return_type) });
 
         try self.scope.enter(return_type);
         defer self.scope.exit(old_return_type);
 
         for (fnDef.arguments.items) |arg| {
             const arg_type = try Type.fromString(arg.type_annotation.name);
-            try argument_types.append(self.allocator, arg_type);
             try self.scope.symbol_table.put(.{
                 .id = arg.identifier,
                 //todo: later this can also be passed as argument
@@ -161,13 +165,11 @@ pub const SemaAnalyzer = struct {
         }
 
         try self.visitBlock(&fnDef.body_block);
-
-        return FnMetadata.init(self.allocator, argument_types, return_type);
     }
 
     fn visitReturnStmt(self: *Self, returnStmt: *const ast.ReturnStmt) !void {
         if (returnStmt.exp) |exp| {
-            const exp_type = try self.anaylizeExpression(exp);
+            const exp_type = try self.analyzeExpression(exp);
             if (exp_type != self.scope.return_type) {
                 return SemaError.InvalidReturnType;
             }
@@ -184,7 +186,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn analyzeUnaryExp(self: *Self, unary_exp: *const ast.UnaryExp) !Type {
-        const exp_type = try self.anaylizeExpression(unary_exp.right);
+        const exp_type = try self.analyzeExpression(unary_exp.right);
 
         switch (unary_exp.op) {
             .neg => {
@@ -203,8 +205,8 @@ pub const SemaAnalyzer = struct {
     }
 
     fn analyzeBinaryExp(self: *Self, bin_exp: *const ast.BinaryExp) !Type {
-        const left_type = try self.anaylizeExpression(bin_exp.left);
-        const right_type = try self.anaylizeExpression(bin_exp.right);
+        const left_type = try self.analyzeExpression(bin_exp.left);
+        const right_type = try self.analyzeExpression(bin_exp.right);
 
         if (left_type != right_type) {
             return SemaError.InvalidExpressionType;
@@ -282,7 +284,7 @@ const SymbolTable = struct {
         return self;
     }
 
-    pub fn deinit(self: *Self) void {
+    fn deinit(self: *Self) void {
         defer self.allocator.destroy(self);
 
         var symbol_it = self.symbols.iterator();
@@ -293,7 +295,7 @@ const SymbolTable = struct {
         self.symbols.deinit();
     }
 
-    pub fn put(self: *Self, symbol: Symbol) !void {
+    fn put(self: *Self, symbol: Symbol) !void {
         if (self.symbols.get(symbol.id)) |_| {
             return SemaError.AlreadyDefined;
         }
@@ -301,7 +303,13 @@ const SymbolTable = struct {
         try self.symbols.put(symbol.id, symbol);
     }
 
-    pub fn get(self: *Self, id: []const u8) ?Symbol {
+    fn replace(self: *Self, symbol: Symbol) !void {
+        var old_symbol = try self.getOrThrow(symbol.id);
+        old_symbol.deinit();
+        try self.symbols.put(symbol.id, symbol);
+    }
+
+    fn get(self: *Self, id: []const u8) ?Symbol {
         if (self.symbols.get(id)) |s| return s;
         if (self.parent) |parent| {
             return parent.get(id);
@@ -309,7 +317,7 @@ const SymbolTable = struct {
         return null;
     }
 
-    pub fn getOrThrow(self: *Self, id: []const u8) !Symbol {
+    fn getOrThrow(self: *Self, id: []const u8) !Symbol {
         if (self.get(id)) |s| return s;
         return SemaError.NotDefined;
     }
