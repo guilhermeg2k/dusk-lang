@@ -168,6 +168,7 @@ for i < 10
 - Support for else if
 - Support for C loops (With var inicialization)
 - Improve memory management (We are using arena but still doinga lot of deinits)
+- Improve the Echo function support any type and organize better internals functions
 
 # Features Backlog
 

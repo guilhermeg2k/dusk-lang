@@ -356,7 +356,7 @@ const Scope = struct {
     next_uid: usize,
 
     pub fn init(allocator: std.mem.Allocator, return_type: Type) !Self {
-        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = return_type, .next_uid = 0 };
+        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = return_type, .next_uid = 10 };
     }
 
     pub fn deinit(self: *Self) void {
@@ -379,9 +379,6 @@ const Scope = struct {
     }
 
     pub fn exit(self: *Self, return_type: Type) void {
-        const scope_to_destroy = self.symbol_table;
-        defer scope_to_destroy.deinit();
-
         self.return_type = return_type;
         if (self.symbol_table.parent) |parent_scope| self.symbol_table = parent_scope;
     }
@@ -395,20 +392,17 @@ const SymbolTable = struct {
     symbols: std.StringHashMap(Symbol),
 
     pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable) !*Self {
-        const self = try allocator.create(Self);
-        self.* = Self{ .allocator = allocator, .parent = parent, .symbols = std.StringHashMap(Symbol).init(allocator) };
-        return self;
-    }
+        const ptr = try allocator.create(Self);
 
-    fn deinit(self: *Self) void {
-        defer self.allocator.destroy(self);
+        var symbols = std.StringHashMap(Symbol).init(allocator);
+        var echo_params: std.ArrayList(Type) = .empty;
 
-        var symbol_it = self.symbols.iterator();
-        while (symbol_it.next()) |symbol| {
-            symbol.value_ptr.deinit();
-        }
+        try echo_params.append(allocator, .number);
 
-        self.symbols.deinit();
+        try symbols.put("echo", .{ .uid = 0, .identifier = "echo", .type = .function, .is_mut = false, .metadata = FnMetadata.init(ptr.allocator, echo_params, .void) });
+
+        ptr.* = Self{ .allocator = allocator, .parent = parent, .symbols = symbols };
+        return ptr;
     }
 
     fn put(self: *Self, symbol: Symbol) !void {

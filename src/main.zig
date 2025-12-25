@@ -15,7 +15,8 @@ pub fn main() !void {
         \\    let a: number = fib(n - 1)
         \\    let b: number = fib(n - 2)
         \\    return a + b
-        \\fib(10)
+        \\let res: number = fib(10)
+        \\echo(res)
     ;
 
     // const src =
