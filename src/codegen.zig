@@ -212,9 +212,10 @@ pub const Generator = struct {
 
         try writer.print("{s}(", .{fn_name});
 
-        for (fnCall.args.items) |arg| {
+        for (fnCall.args.items, 0..) |arg, i| {
             const arg_value = try self.genValue(arg);
-            try writer.print("{s},", .{arg_value});
+            if (i > 0) try writer.writeAll(",");
+            try writer.print("{s}", .{arg_value});
         }
 
         try writer.print(")", .{});
@@ -229,9 +230,10 @@ pub const Generator = struct {
         const fn_name = try self.genName(func.uid, func.identifier);
         try writer.print("function {s}(", .{fn_name});
 
-        for (func.args.items) |arg| {
+        for (func.args.items, 0..) |arg, i| {
             const arg_name = try self.genName(arg.uid, arg.identifier);
-            try writer.print("{s},", .{arg_name});
+            if (i > 0) try writer.writeAll(",");
+            try writer.print("{s}", .{arg_name});
         }
 
         try writer.writeAll(")");
