@@ -159,7 +159,7 @@ pub const Generator = struct {
         switch (value.*) {
             .i_float => try buf.print(self.allocator, "{d}", .{value.i_float}),
             .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
-            .i_string => try buf.print(self.allocator, "\"{s}\"", .{value.i_string}),
+            .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
 
             .identifier => {

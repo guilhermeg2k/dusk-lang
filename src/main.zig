@@ -18,9 +18,9 @@ pub fn main() !void {
         \\let mut i: number = 1
         \\
         \\for i < 20
-        \\    echo('hello world')
         \\    echo(fib(i))
         \\    i = i + 1
+        \\echo("Hello world")
     ;
 
     // const src =

@@ -115,7 +115,7 @@ pub const Lexer = struct {
                 '0'...'9' => {
                     return self.readNumberLiteral();
                 },
-                '\'' => {
+                '"' => {
                     return self.readStringLiteral();
                 },
                 else => {
@@ -224,7 +224,7 @@ pub const Lexer = struct {
     fn readStringLiteral(self: *Self) Token {
         const start = self.cur_index;
 
-        while (self.peekNext() != '\'') {
+        while (self.peekNext() != '"') {
             self.walk();
         }
 
