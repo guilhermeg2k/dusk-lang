@@ -162,7 +162,7 @@ for i < 10
 - Single Line Comments
 - Full support for expressions and operators
 - Add possibility to error tracking
-- Arrays
+- Fixed sized Arrays
 - Organize better internals functions
 
 ### Version: 0.3 - Maki

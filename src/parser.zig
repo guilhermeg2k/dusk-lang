@@ -1,16 +1,14 @@
 pub const Parser = struct {
     const Self = @This();
 
-    tokens: std.ArrayList(Token),
     allocator: std.mem.Allocator,
-    src: []const u8,
+    tokens: std.ArrayList(Token) = .empty,
+    src: []const u8 = "",
     cur_index: usize = 0,
 
-    pub fn init(allococator: std.mem.Allocator, src: []const u8, tokens: std.ArrayList(Token)) Self {
-        return Self{ .allocator = allococator, .src = src, .tokens = tokens, .cur_index = 0 };
-    }
-
-    pub fn parse(self: *Self) !ast.Root {
+    pub fn parse(self: *Self, src: []const u8, tokens: std.ArrayList(Token)) !ast.Root {
+        self.src = src;
+        self.tokens = tokens;
         return self.parseBlock();
     }
 

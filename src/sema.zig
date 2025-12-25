@@ -146,6 +146,9 @@ pub const SemaAnalyzer = struct {
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
         if (func_symbol.metadata) |fn_data| {
+            //if arg[0] is unknown it disables any check for the fn_call
+            //currently this is only useful for allowing anything on the echo function
+            //when echo function propertly implemented this should be modified
             const is_arg_unknown = fn_data.params_types.items.len == 1 and fn_data.params_types.items[0] == .unknown;
 
             if (!is_arg_unknown and fn_data.params_types.items.len != fn_call.arguments.items.len) {

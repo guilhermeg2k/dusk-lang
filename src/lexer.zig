@@ -21,14 +21,29 @@ pub const Lexer = struct {
         .{ "return", Tag.return_kw },
     });
 
-    source: []const u8,
+    src: []const u8 = "",
     cur_index: usize = 0,
     last_indentation_level: usize = 0,
     pending_dedents: usize = 0,
     is_first_line: bool = true,
 
-    pub fn init(source: []const u8) Self {
-        return Self{ .source = source };
+    pub fn list(self: *Self, allocator: std.mem.Allocator, src: []const u8) !std.ArrayList(Token) {
+        self.src = src;
+        var token_list: std.ArrayList(Token) = .empty;
+
+        while (true) {
+            const token = self.next();
+            try token_list.append(allocator, token);
+
+            if (token.tag == Tag.eof) break;
+
+            if (token.tag == Tag.err) {
+                std.debug.print("Unexpected token = {s}\n", .{token.value(self.src)});
+                return;
+            }
+        }
+
+        return token_list;
     }
 
     pub fn next(self: *Self) Token {
@@ -49,7 +64,7 @@ pub const Lexer = struct {
                 return self.popPendingDedent();
             }
 
-            const is_eof = self.cur_index >= self.source.len;
+            const is_eof = self.cur_index >= self.src.len;
             if (is_eof and self.last_indentation_level > 0) {
                 self.flushIndentation();
                 continue;
@@ -241,7 +256,7 @@ pub const Lexer = struct {
             next_char = self.peekNext();
         }
 
-        const word = self.source[start .. self.cur_index + 1];
+        const word = self.src[start .. self.cur_index + 1];
 
         if (keywords.get(word)) |tag| {
             return Token.init(tag, start, self.cur_index);
@@ -274,17 +289,17 @@ pub const Lexer = struct {
     }
 
     fn peekCurrent(self: *Self) u8 {
-        if (self.cur_index >= self.source.len) {
+        if (self.cur_index >= self.src.len) {
             return 0;
         }
-        return self.source[self.cur_index];
+        return self.src[self.cur_index];
     }
 
     fn peekNext(self: *Self) u8 {
-        if (self.cur_index + 1 >= self.source.len) {
+        if (self.cur_index + 1 >= self.src.len) {
             return 0;
         }
-        return self.source[self.cur_index + 1];
+        return self.src[self.cur_index + 1];
     }
 };
 
@@ -293,7 +308,7 @@ pub const Token = struct {
     tag: Tag,
     loc: Loc,
 
-    pub fn value(self: Token, source: []const u8) []const u8 {
+    pub fn value(self: Token, src: []const u8) []const u8 {
         if (self.tag == Tag.eof) {
             return "EOF";
         }
@@ -310,7 +325,7 @@ pub const Token = struct {
             return "INDENT";
         }
 
-        return source[self.loc.start .. self.loc.end + 1];
+        return src[self.loc.start .. self.loc.end + 1];
     }
 
     pub fn init(tag: Tag, start: usize, end: usize) Self {
@@ -387,8 +402,8 @@ pub fn main() void {
     std.debug.print("tk {any} = {s}\n", .{ tk.tag, tk.value(src) });
 }
 
-fn expectTags(source: []const u8, expected: []const Tag) !void {
-    var lex = Lexer.init(source);
+fn expectTags(src: []const u8, expected: []const Tag) !void {
+    var lex = Lexer.init(src);
     for (expected) |expected_tag| {
         const token = lex.next();
         try testing.expectEqual(expected_tag, token.tag);

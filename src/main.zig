@@ -8,19 +8,16 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const src =
-        \\let fib: fn = fn(n: number, n2: number) -> number
+        \\let fib: fn = fn(n: number) -> number
         \\    if n < 2
         \\        return n
         \\
-        \\    let a: number = fib(n - 1, 0)
-        \\    let b: number = fib(n - 2, 0)
+        \\    let a: number = fib(n - 1)
+        \\    let b: number = fib(n - 2)
         \\    return a + b
         \\let mut i: number = 1
         \\
-        \\for i < 20
-        \\    echo(fib(i, 0))
-        \\    i = i + 1
-        \\    echo("Hello world")
+        \\echo("fib of 1 = ", fib(10))
     ;
 
     // const src =
@@ -55,7 +52,7 @@ pub fn main() !void {
         //todo: lexer errors for sure needs improvement
         if (token.tag == Tag.eof) break;
         if (token.tag == Tag.err) {
-            std.debug.print("Invalid token = {any}\n", .{token.value(src)});
+            std.debug.print("Unexpected token = {s}\n", .{token.value(src)});
             return;
         }
     }
