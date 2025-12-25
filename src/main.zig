@@ -15,7 +15,12 @@ pub fn main() !void {
         \\    let a: number = fib(n - 1)
         \\    let b: number = fib(n - 2)
         \\    return a + b
-        \\echo(fib(2), fib(1))
+        \\let mut i: number = 1
+        \\
+        \\for i < 20
+        \\    echo('hello world')
+        \\    echo(fib(i))
+        \\    i = i + 1
     ;
 
     // const src =

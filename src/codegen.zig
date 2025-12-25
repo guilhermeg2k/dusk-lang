@@ -18,7 +18,7 @@ pub const Generator = struct {
     fn genFunctions(self: *Self, functions: std.ArrayList(ir.Func)) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
 
-        try buf.appendSlice(self.allocator, "function echo_0(msg) {console.log(msg);}\n");
+        try buf.appendSlice(self.allocator, "function echo_0(...msg) {console.log(...msg);}\n");
 
         for (functions.items) |func| {
             const signature = try self.genFuncSignature(func);
@@ -27,7 +27,7 @@ pub const Generator = struct {
             try buf.appendSlice(self.allocator, signature);
             try buf.appendSlice(self.allocator, "{\n");
             try buf.appendSlice(self.allocator, body);
-            try buf.appendSlice(self.allocator, "}\n\n");
+            try buf.appendSlice(self.allocator, "}\n");
         }
 
         return buf.toOwnedSlice(self.allocator);

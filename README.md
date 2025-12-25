@@ -159,12 +159,15 @@ for i < 10
 
 ### Version: 0.2 - Rukia
 
+- Single Line Comments
 - Full support for expressions and operators
 - Add possibility to error tracking
 - Arrays
+
+### Version: 0.3 - Maki
+
 - Type inference (also for func args)
 - Remove the need of the keyword fn for functions
-- Comments
 - Support for else if
 - Support for C loops (With var inicialization)
 - Improve memory management (We are using arena but still doinga lot of deinits)
@@ -173,6 +176,7 @@ for i < 10
 # Features Backlog
 
 - Support function call with named parameters
+- Multi Line Comments
 - Upgrade FnCall
   - Currently function calls only allow simple calls as `identifier()`
   - Which means things like that does not works:

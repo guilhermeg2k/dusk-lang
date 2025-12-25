@@ -146,13 +146,15 @@ pub const SemaAnalyzer = struct {
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
         if (func_symbol.metadata) |fn_data| {
-            if (fn_data.params_types.items.len != fnCall.arguments.items.len) {
+            const is_arg_unknown = fn_data.params_types.items.len == 1 and fn_data.params_types.items[0] == .unknown;
+
+            if (!is_arg_unknown and fn_data.params_types.items.len != fnCall.arguments.items.len) {
                 return SemaError.InvalidFunctionParameter;
             }
 
             for (fn_data.params_types.items, 0..) |param_type, i| {
                 const fn_call_arg = try self.evaluateExpression(fnCall.arguments.items[i]);
-                if (fn_call_arg.toType() != param_type) {
+                if (!is_arg_unknown and fn_call_arg.toType() != param_type) {
                     return SemaError.InvalidFunctionParameter;
                 }
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg);
@@ -396,8 +398,7 @@ const SymbolTable = struct {
 
         var symbols = std.StringHashMap(Symbol).init(allocator);
         var echo_params: std.ArrayList(Type) = .empty;
-
-        try echo_params.append(allocator, .number);
+        try echo_params.append(allocator, .unknown);
 
         try symbols.put("echo", .{ .uid = 0, .identifier = "echo", .type = .function, .is_mut = false, .metadata = FnMetadata.init(ptr.allocator, echo_params, .void) });
 
@@ -473,6 +474,8 @@ pub const Type = enum {
     string,
     boolean,
     function,
+    //currently only used for internals
+    unknown,
     void,
 
     pub fn fromString(name: []const u8) !Type {
