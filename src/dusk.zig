@@ -40,8 +40,14 @@ pub const Dusk = struct {
 
     pub fn compile(self: *Self, src: []const u8) ![]const u8 {
         const tokens = try self.lexer.list(self.allocator, src);
+        try self.dump(tokens, "build/tokens.json");
+
         const ast = try self.parser.parse(src, tokens);
+        try self.dump(tokens, "build/ast.json");
+
         const ir = try self.analyzer.analyze(&ast);
+        try self.dump(tokens, "build/ir.json");
+
         const compiled_code = try self.codegen.generate(ir);
         return compiled_code;
     }
@@ -69,6 +75,16 @@ pub const Dusk = struct {
                 return error.RuntimeCrash;
             },
         }
+    }
+
+    fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
+        const file = try std.fs.cwd().createFile(file_name, .{});
+        defer file.close();
+
+        var out: std.io.Writer.Allocating = .init(self.allocator);
+        try std.json.Stringify.value(obj, .{ .whitespace = .indent_2 }, &out.writer);
+
+        try file.writeAll(try out.toOwnedSlice());
     }
 };
 

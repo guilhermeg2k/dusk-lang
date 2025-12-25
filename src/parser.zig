@@ -17,6 +17,14 @@ pub const Parser = struct {
 
         var current_tk = self.peekCurrent();
         while (current_tk.tag != .eof and current_tk.tag != .dedent) : (current_tk = self.peekCurrent()) {
+            if (self.peekCurrent().tag == .new_line) {
+                self.walk();
+            }
+
+            if (self.peekCurrent().tag == .eof) {
+                break;
+            }
+
             const stmt = try self.parseStmt();
             try statements.append(self.allocator, stmt);
         }
@@ -25,10 +33,6 @@ pub const Parser = struct {
     }
 
     fn parseStmt(self: *Self) !ast.Statement {
-        if (self.peekCurrent().tag == .new_line) {
-            self.walk();
-        }
-
         const token = self.tokens.items[self.cur_index];
 
         switch (token.tag) {
