@@ -15,6 +15,7 @@ pub fn main() !void {
         \\    let a: number = fib(n - 1)
         \\    let b: number = fib(n - 2)
         \\    return a + b
+        \\fib(10)
     ;
 
     // const src =
@@ -65,6 +66,16 @@ pub fn main() !void {
     const ir = try sema.analyze(&ast);
 
     try dump(allocator, ir, "ir_dump.json");
+
+    const file = try std.fs.cwd().createFile("code.js", .{});
+    defer file.close();
+
+    var code_generator = Generator{
+        .allocator = allocator,
+    };
+
+    const code = try code_generator.generate(ir);
+    try file.writeAll(code);
 }
 
 fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void {
@@ -81,9 +92,11 @@ const std = @import("std");
 const lexer_mod = @import("lexer.zig");
 const parser_mod = @import("parser.zig");
 const sema_mod = @import("sema.zig");
+const codegen_mod = @import("codegen.zig");
 
 const Lexer = lexer_mod.Lexer;
 const Parser = parser_mod.Parser;
 const Token = lexer_mod.Token;
 const Tag = lexer_mod.Tag;
 const SemaAnalyzer = sema_mod.SemaAnalyzer;
+const Generator = codegen_mod.Generator;

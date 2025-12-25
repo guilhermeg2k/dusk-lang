@@ -92,6 +92,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
+            .identifier = letStmt.identifier,
             .type = var_type,
             .value = expression_value,
         } };
@@ -130,6 +131,7 @@ pub const SemaAnalyzer = struct {
         }
 
         return ir.Instruction{ .update_var = .{
+            .identifier = identifier_symbol.identifier,
             .var_uid = identifier_symbol.uid,
             .value = exp_value,
         } };
@@ -212,6 +214,7 @@ pub const SemaAnalyzer = struct {
             });
             try arguments.append(self.allocator, .{
                 .uid = uid,
+                .identifier = arg.identifier,
                 .type = arg_type,
             });
         }
@@ -251,6 +254,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Value.init(self.allocator, .{ .identifier = .{
             .uid = id_symbol.uid,
+            .identifier = id_symbol.identifier,
             .type = id_symbol.type,
         } });
     }
