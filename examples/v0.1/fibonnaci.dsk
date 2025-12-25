@@ -1,0 +1,10 @@
+let fib: fn = fn(n: number) -> number
+    if n <= 1
+        return n
+    let a: number = fib(n - 1)
+    let b: number = fib(n - 2)
+    return a - b
+
+echo(fib(10))
+
+

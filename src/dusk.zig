@@ -1,4 +1,4 @@
-pub const DuskC = struct {
+pub const Dusk = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -7,19 +7,16 @@ pub const DuskC = struct {
     analyzer: SemaAnalyzer,
     codegen: Generator,
 
-    pub fn init(allocator: std.mem.Allocator) Self {
-        return .{ .allocator = allocator, .lexer = .{}, .parser = .{ .allocator = allocator }, .analyzer = SemaAnalyzer.init(allocator), .codegen = .{} };
+    pub fn init(allocator: std.mem.Allocator) !Self {
+        return .{ .allocator = allocator, .lexer = .{}, .parser = .{ .allocator = allocator }, .analyzer = try SemaAnalyzer.init(allocator), .codegen = .{ .allocator = allocator } };
     }
 
-    pub fn compile(self: *Self, src: []const u8) []const u8 {
-        const tokens = try self.lexer.list(src);
-        const ast = try self.parser.parse(src, tokens);
-        const ir = try self.analyzer.analyze(&ast);
-        const compiled_code = try self.codegen.generate(ir);
-        return compiled_code;
+    pub fn compileAndRunFile(self: *Self, file_path: []const u8) !void {
+        const compiled_file_path = try self.compileFile(file_path, null);
+        try self.bunRun(compiled_file_path);
     }
 
-    pub fn compileFile(self: *Self, file_path: []const u8, output_path: ?[]const u8) !void {
+    pub fn compileFile(self: *Self, file_path: []const u8, output_path: ?[]const u8) ![]const u8 {
         const input_file_content: []const u8 = try std.fs.cwd().readFileAlloc(self.allocator, file_path, std.math.maxInt(usize));
         const file_name = std.fs.path.stem(file_path);
 
@@ -31,17 +28,51 @@ pub const DuskC = struct {
 
         const output_file = try std.fs.cwd().createFile(output_file_path, .{});
         defer output_file.close();
-        const output_writer = output_file.writer(&.{});
+        var output_writer = output_file.writer(&.{});
 
         const compiled_code = try self.compile(input_file_content);
 
         try output_writer.interface.writeAll(compiled_code);
         try output_writer.interface.flush();
+
+        return output_file_path;
+    }
+
+    pub fn compile(self: *Self, src: []const u8) ![]const u8 {
+        const tokens = try self.lexer.list(self.allocator, src);
+        const ast = try self.parser.parse(src, tokens);
+        const ir = try self.analyzer.analyze(&ast);
+        const compiled_code = try self.codegen.generate(ir);
+        return compiled_code;
+    }
+
+    fn bunRun(self: *Self, file_path: []const u8) !void {
+        const argv = &[_][]const u8{ "bun", "run", file_path };
+        var child = std.process.Child.init(argv, self.allocator);
+
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
+
+        try child.spawn();
+        const term = try child.wait();
+
+        switch (term) {
+            .Exited => |code| {
+                if (code != 0) {
+                    std.debug.print("Runtime exited with error code: {d}\n", .{code});
+                    return error.RuntimeError;
+                }
+            },
+            else => {
+                std.debug.print("Runtime crashed or was signaled.\n", .{});
+                return error.RuntimeCrash;
+            },
+        }
     }
 };
 
 const std = @import("std");
-
 const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const sema = @import("sema.zig");

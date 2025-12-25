@@ -39,7 +39,7 @@ pub const Lexer = struct {
 
             if (token.tag == Tag.err) {
                 std.debug.print("Unexpected token = {s}\n", .{token.value(self.src)});
-                return;
+                return LexerError.UnexpectedToken;
             }
         }
 
@@ -385,22 +385,7 @@ const Loc = struct {
     end: usize,
 };
 
-pub fn main() void {
-    const src =
-        \\if x:
-        \\    return
-    ;
-    var lexer = Lexer.init(src);
-
-    var tk = lexer.next();
-
-    while (tk.tag != Tag.eof and tk.tag != Tag.err) {
-        std.debug.print("tk {any} = {s}\n", .{ tk.tag, tk.value(src) });
-        tk = lexer.next();
-    }
-
-    std.debug.print("tk {any} = {s}\n", .{ tk.tag, tk.value(src) });
-}
+const LexerError = error{UnexpectedToken};
 
 fn expectTags(src: []const u8, expected: []const Tag) !void {
     var lex = Lexer.init(src);
