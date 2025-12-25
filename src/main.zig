@@ -14,7 +14,7 @@ pub fn main() !void {
         \\
         \\    let a: number = fib(n - 1)
         \\    let b: number = fib(n - 2)
-        \\    return a - b
+        \\    return a + b
     ;
 
     var token_list: std.ArrayList(Token) = .empty;
@@ -37,7 +37,9 @@ pub fn main() !void {
     try dump(allocator, ast, "ast_dump.json");
 
     var sema = try SemaAnalyzer.init(allocator);
-    _ = try sema.analyze(&ast);
+    const ir = try sema.analyze(&ast);
+
+    try dump(allocator, ir, "ir_dump.json");
 }
 
 fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void {

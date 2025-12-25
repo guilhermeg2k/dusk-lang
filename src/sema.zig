@@ -17,7 +17,7 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn analyze(self: *Self, root: *const ast.Root) !ir.Program {
-        try self.visitBlock(root);
+        self.program.instructions = try self.visitBlock(root);
         return self.program;
     }
 
@@ -32,12 +32,12 @@ pub const SemaAnalyzer = struct {
                 .assign_stmt => try self.visitAssignStmt(&stmt.assign_stmt),
                 .if_stmt => try self.visitIfStmt(&stmt.if_stmt),
                 .for_stmt => try self.visitForStmt(&stmt.for_stmt),
-                .fn_call_stmt => _ = ir.Instruction{ .expression_stmt = .{ .value = try self.analyzeFnCall(&stmt.fn_call_stmt) } },
+                .fn_call_stmt => ir.Instruction{ .expression_stmt = .{ .value = try self.analyzeFnCall(&stmt.fn_call_stmt) } },
                 .return_stmt => try self.visitReturnStmt(&stmt.return_stmt),
             };
 
             if (instruction) |i| {
-                instructions.append(self.allocator, i);
+                try instructions.append(self.allocator, i);
             }
         }
 
@@ -55,11 +55,11 @@ pub const SemaAnalyzer = struct {
             .bool_literal => {
                 return ir.Value.init(self.allocator, .{ .i_bool = exp.bool_literal });
             },
-            .identifier => {
-                return ir.Value.init(self.allocator, .{ .identifier = try self.visitIdentifier(exp.identifier) });
-            },
             .fn_def => {
-                return ir.Value.init(self.allocator, .{ .fn_def = void });
+                return ir.Value.init(self.allocator, .{ .fn_def = {} });
+            },
+            .identifier => {
+                return self.visitIdentifier(exp.identifier);
             },
             .fn_call => {
                 return self.analyzeFnCall(&exp.fn_call);
@@ -141,7 +141,7 @@ pub const SemaAnalyzer = struct {
             return SemaError.InvalidFunction;
         }
 
-        var fn_call_argument_values: std.ArrayList(*ir.Value) = .empty;
+        var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
         if (func_symbol.metadata) |fn_data| {
             if (fn_data.params_types.items.len != fnCall.arguments.items.len) {
@@ -153,10 +153,10 @@ pub const SemaAnalyzer = struct {
                 if (fn_call_arg.toType() != param_type) {
                     return SemaError.InvalidFunctionParameter;
                 }
-                fn_call_argument_values.append(self.allocator, fn_call_arg);
+                try fn_call_arguments_values.append(self.allocator, fn_call_arg);
             }
 
-            return ir.Value.init(self.allocator, .{ .fn_call = .{ .fn_uid = func_symbol.uid, .return_type = fn_data.return_type, .arguments = .fn_call_arguments_values } });
+            return ir.Value.init(self.allocator, .{ .fn_call = .{ .fn_uid = func_symbol.uid, .return_type = fn_data.return_type, .args = fn_call_arguments_values } });
         }
 
         unreachable;
@@ -180,7 +180,7 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn visitFnDef(self: *Self, fnDef: *const ast.FnDef, identifier: []const u8) SemaError!ir.Func {
+    fn visitFnDef(self: *Self, fnDef: *const ast.FnDef, identifier: []const u8) SemaError!void {
         const old_return_type = self.scope.return_type;
         const return_type = try Type.fromString(fnDef.return_type.name);
 
@@ -214,14 +214,13 @@ pub const SemaAnalyzer = struct {
         }
 
         const body = try self.visitBlock(&fnDef.body_block);
-
-        return ir.Func{
+        try self.program.functions.append(self.allocator, ir.Func{
             .uid = self.scope.genUid(),
             .identifier = identifier,
             .args = arguments,
             .return_type = return_type,
             .body = body,
-        };
+        });
     }
 
     fn visitReturnStmt(self: *Self, returnStmt: *const ast.ReturnStmt) !ir.Instruction {
@@ -240,7 +239,7 @@ pub const SemaAnalyzer = struct {
         }
 
         return ir.Instruction{ .return_stmt = .{
-            .value = void,
+            .value = null,
         } };
     }
 
@@ -270,14 +269,15 @@ pub const SemaAnalyzer = struct {
             },
         }
 
-        return ir.Value.init(self.allocator, .{ .unary_op = .{ .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op), .type = exp_type, .value = exp_value } });
+        return ir.Value.init(self.allocator, .{ .unary_op = .{ .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op), .type = exp_type, .right = exp_value } });
     }
 
-    fn evaluateBinaryExp(self: *Self, bin_exp: *const ast.BinaryExp) !Type {
+    fn evaluateBinaryExp(self: *Self, bin_exp: *const ast.BinaryExp) !*ir.Value {
         const left_value = try self.evaluateExpression(bin_exp.left);
         const right_value = try self.evaluateExpression(bin_exp.right);
         const left_type = left_value.toType();
         const right_type = right_value.toType();
+        var op_type: Type = .void;
 
         if (left_type != right_type) {
             return SemaError.InvalidExpressionType;
@@ -288,27 +288,27 @@ pub const SemaAnalyzer = struct {
                 if (left_type != .number) {
                     return SemaError.InvalidOperation;
                 }
-                return .number;
+                op_type = .number;
             },
 
             .eq, .not_eq, .lt, .lt_or_eq, .gt, .gt_or_eq => {
                 if (left_type == .boolean) {
                     return SemaError.InvalidOperation;
                 }
-                return .boolean;
+                op_type = .boolean;
             },
 
             .bool_or, .bool_and => {
                 if (left_type != .boolean) {
                     return SemaError.InvalidOperation;
                 }
-                return .boolean;
+                op_type = .boolean;
             },
         }
 
         return ir.Value.init(self.allocator, .{ .binary_op = .{
             .kind = self.astBinOpToIrBinOpKind(bin_exp.op),
-            .type = left_type,
+            .type = op_type,
             .left = left_value,
             .right = right_value,
         } });
@@ -324,7 +324,7 @@ pub const SemaAnalyzer = struct {
             .eq => .cmp_eq,
             .not_eq => .cmp_neq,
             .lt => .cmp_lt,
-            .lt_or_eq => .cmo_let,
+            .lt_or_eq => .cmp_let,
             .gt => .cmp_gt,
             .gt_or_eq => .cmp_get,
             .bool_or => .b_and,
@@ -346,9 +346,10 @@ const Scope = struct {
     allocator: std.mem.Allocator,
     symbol_table: *SymbolTable,
     return_type: Type,
+    next_uid: usize,
 
     pub fn init(allocator: std.mem.Allocator, return_type: Type) !Self {
-        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = return_type };
+        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = return_type, .next_uid = 0 };
     }
 
     pub fn deinit(self: *Self) void {

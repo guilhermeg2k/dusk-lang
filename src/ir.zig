@@ -93,9 +93,9 @@ pub const Value = union(enum) {
     }
 
     pub fn toType(self: *Self) Type {
-        return switch (self) {
+        return switch (self.*) {
             .i_float => .number,
-            .i_bool => .bool,
+            .i_bool => .boolean,
             .i_string => .string,
             .i_void => .void,
             .fn_def => .function,
@@ -103,7 +103,6 @@ pub const Value = union(enum) {
             .binary_op => self.binary_op.type,
             .unary_op => self.unary_op.type,
             .fn_call => self.fn_call.return_type,
-            else => SemaError.InvalidOperation,
         };
     }
 };
