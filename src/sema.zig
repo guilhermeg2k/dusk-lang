@@ -187,35 +187,38 @@ pub const SemaAnalyzer = struct {
         var arguments: std.ArrayList(ir.FuncArg) = .empty;
         var argument_types: std.ArrayList(Type) = .empty;
 
+        const fn_uid = self.scope.genUid();
+
         for (fnDef.arguments.items) |arg| {
             const arg_type = try Type.fromString(arg.type_annotation.name);
             try argument_types.append(self.allocator, arg_type);
-            try arguments.append(self.allocator, .{
-                .uid = self.scope.genUid(),
-                .type = arg_type,
-            });
         }
 
-        try self.scope.symbol_table.replace(.{ .identifier = identifier, .uid = self.scope.genUid(), .is_mut = false, .type = .function, .metadata = FnMetadata.init(self.allocator, argument_types, return_type) });
+        try self.scope.symbol_table.replace(.{ .identifier = identifier, .uid = fn_uid, .is_mut = false, .type = .function, .metadata = FnMetadata.init(self.allocator, argument_types, return_type) });
 
         try self.scope.enter(return_type);
         defer self.scope.exit(old_return_type);
 
         for (fnDef.arguments.items) |arg| {
             const arg_type = try Type.fromString(arg.type_annotation.name);
+            const uid = self.scope.genUid();
             try self.scope.symbol_table.put(.{
-                .uid = self.scope.genUid(),
+                .uid = uid,
                 .identifier = arg.identifier,
                 //todo: later this can also be passed as argument
                 .is_mut = false,
                 .type = arg_type,
                 .metadata = null,
             });
+            try arguments.append(self.allocator, .{
+                .uid = uid,
+                .type = arg_type,
+            });
         }
 
         const body = try self.visitBlock(&fnDef.body_block);
         try self.program.functions.append(self.allocator, ir.Func{
-            .uid = self.scope.genUid(),
+            .uid = fn_uid,
             .identifier = identifier,
             .args = arguments,
             .return_type = return_type,
