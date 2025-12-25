@@ -15,8 +15,7 @@ pub fn main() !void {
         \\    let a: number = fib(n - 1)
         \\    let b: number = fib(n - 2)
         \\    return a + b
-        \\let res: number = fib(10)
-        \\echo(res)
+        \\echo(fib(2), fib(1))
     ;
 
     // const src =
@@ -68,7 +67,8 @@ pub fn main() !void {
 
     try dump(allocator, ir, "ir_dump.json");
 
-    const file = try std.fs.cwd().createFile("code.js", .{});
+    const js_file = "code.js";
+    const file = try std.fs.cwd().createFile(js_file, .{});
     defer file.close();
 
     var code_generator = Generator{
@@ -77,6 +77,8 @@ pub fn main() !void {
 
     const code = try code_generator.generate(ir);
     try file.writeAll(code);
+
+    try runJsFile(allocator, js_file);
 }
 
 fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void {
@@ -87,6 +89,31 @@ fn dump(allocator: std.mem.Allocator, obj: anytype, file_name: []const u8) !void
     try std.json.Stringify.value(obj, .{ .whitespace = .indent_2 }, &out.writer);
 
     try file.writeAll(try out.toOwnedSlice());
+}
+
+fn runJsFile(allocator: std.mem.Allocator, file_path: []const u8) !void {
+    const argv = &[_][]const u8{ "bun", "run", file_path };
+    var child = std.process.Child.init(argv, allocator);
+
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+
+    try child.spawn();
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                std.debug.print("Runtime exited with error code: {d}\n", .{code});
+                return error.RuntimeError;
+            }
+        },
+        else => {
+            std.debug.print("Runtime crashed or was signaled.\n", .{});
+            return error.RuntimeCrash;
+        },
+    }
 }
 
 const std = @import("std");

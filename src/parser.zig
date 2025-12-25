@@ -47,6 +47,7 @@ pub const Parser = struct {
                 if (self.peekNext().tag == .assign) {
                     return ast.Statement{ .assign_stmt = try self.parseAssignStmt() };
                 }
+                defer self.walk();
                 return ast.Statement{ .fn_call_stmt = try self.parseFnCall() };
             },
             .return_kw => {
@@ -165,20 +166,26 @@ pub const Parser = struct {
         var arguments: std.ArrayList(*ast.Exp) = .empty;
 
         _ = try self.expect(.l_paren);
+
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnCallArgs();
         }
-        _ = try self.expect(.r_paren);
+
+        if (self.peekCurrent().tag != .r_paren) {
+            return ParserError.UnexpectedToken;
+        }
 
         return ast.FnCall{ .identifier = id, .arguments = arguments };
     }
 
     fn parseFnCallArgs(self: *Self) ParserError!std.ArrayList(*ast.Exp) {
         var arguments: std.ArrayList(*ast.Exp) = .empty;
+
         while (true) {
             const arg = try self.parseExpression();
             try arguments.append(self.allocator, arg);
-            if (self.peekCurrent().tag != .comma) {
+
+            if (!self.match(.comma)) {
                 break;
             }
         }
@@ -242,6 +249,7 @@ pub const Parser = struct {
     //temporary while pratt's not impl
     fn parseLiteral(self: *Self) ParserError!*ast.Exp {
         const token = self.peekCurrent();
+
         return switch (token.tag) {
             .identifier => {
                 const next_tk = self.peekNext();
