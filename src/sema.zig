@@ -156,7 +156,7 @@ pub const SemaAnalyzer = struct {
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg);
             }
 
-            return ir.Value.init(self.allocator, .{ .fn_call = .{ .fn_uid = func_symbol.uid, .return_type = fn_data.return_type, .args = fn_call_arguments_values } });
+            return ir.Value.init(self.allocator, .{ .fn_call = .{ .fn_uid = func_symbol.uid, .identifier = func_symbol.identifier, .return_type = fn_data.return_type, .args = fn_call_arguments_values } });
         }
 
         unreachable;
@@ -327,9 +327,9 @@ pub const SemaAnalyzer = struct {
             .eq => .cmp_eq,
             .not_eq => .cmp_neq,
             .lt => .cmp_lt,
-            .lt_or_eq => .cmp_let,
+            .lt_or_eq => .cmp_le,
             .gt => .cmp_gt,
-            .gt_or_eq => .cmp_get,
+            .gt_or_eq => .cmp_ge,
             .bool_or => .b_and,
             .bool_and => .b_or,
         };
@@ -437,8 +437,8 @@ const SymbolTable = struct {
 
 const Symbol = struct {
     const Self = @This();
-    identifier: []const u8,
     uid: usize,
+    identifier: []const u8,
     type: Type,
     is_mut: bool,
     metadata: ?FnMetadata,

@@ -17,6 +17,27 @@ pub fn main() !void {
         \\    return a + b
     ;
 
+    // const src =
+    //     \\let factorial: fn = fn (n: number) -> number
+    //     \\    let mut result: number = 1
+    //     \\    let mut i: number = 1
+    //     \\
+    //     \\    for i <= n
+    //     \\        result = result * i
+    //     \\        i = i + 1
+    //     \\
+    //     \\    return result
+    // ;
+
+    // const src =
+    //     \\let test_shadow : fn = fn() -> number
+    //     \\    let x: number = 10
+    //     \\    if true
+    //     \\        let x: number = 999
+    //     \\        return x
+    //     \\    return x
+    // ;
+
     var token_list: std.ArrayList(Token) = .empty;
     var lexer = Lexer.init(src);
 
@@ -26,7 +47,11 @@ pub fn main() !void {
 
         //todo: remember currently the lexer keep parsing even an error
         //todo: lexer errors for sure needs improvement
-        if (token.tag == Tag.eof or token.tag == .err) break;
+        if (token.tag == Tag.eof) break;
+        if (token.tag == Tag.err) {
+            std.debug.print("Invalid token = {any}\n", .{token.value(src)});
+            return;
+        }
     }
 
     try dump(allocator, token_list.items, "tokens_dump.json");

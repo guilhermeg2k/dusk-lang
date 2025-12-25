@@ -82,6 +82,7 @@ pub const Value = union(enum) {
 
     fn_call: struct {
         fn_uid: usize,
+        identifier: []const u8,
         args: std.ArrayList(*Value),
         return_type: Type,
     },
@@ -123,8 +124,8 @@ pub const BinaryOpKind = enum {
     cmp_neq,
 
     cmp_lt,
-    cmp_let,
-    cmp_get,
+    cmp_le,
+    cmp_ge,
     cmp_gt,
 
     b_and,
