@@ -137,8 +137,8 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn analyzeFnCall(self: *Self, fnCall: *const ast.FnCall) !*ir.Value {
-        const func_symbol = try self.scope.symbol_table.getOrThrow(fnCall.identifier);
+    fn analyzeFnCall(self: *Self, fn_call: *const ast.FnCall) !*ir.Value {
+        const func_symbol = try self.scope.symbol_table.getOrThrow(fn_call.identifier);
         if (func_symbol.type != .function) {
             return SemaError.InvalidFunction;
         }
@@ -148,16 +148,18 @@ pub const SemaAnalyzer = struct {
         if (func_symbol.metadata) |fn_data| {
             const is_arg_unknown = fn_data.params_types.items.len == 1 and fn_data.params_types.items[0] == .unknown;
 
-            if (!is_arg_unknown and fn_data.params_types.items.len != fnCall.arguments.items.len) {
+            if (!is_arg_unknown and fn_data.params_types.items.len != fn_call.arguments.items.len) {
                 return SemaError.InvalidFunctionParameter;
             }
 
-            for (fn_data.params_types.items, 0..) |param_type, i| {
-                const fn_call_arg = try self.evaluateExpression(fnCall.arguments.items[i]);
-                if (!is_arg_unknown and fn_call_arg.toType() != param_type) {
+            for (fn_call.arguments.items, 0..) |arg, i| {
+                const fn_call_arg_value = try self.evaluateExpression(arg);
+
+                if (!is_arg_unknown and fn_data.params_types.items[i] != fn_call_arg_value.toType()) {
                     return SemaError.InvalidFunctionParameter;
                 }
-                try fn_call_arguments_values.append(self.allocator, fn_call_arg);
+
+                try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
             }
 
             return ir.Value.init(self.allocator, .{ .fn_call = .{ .fn_uid = func_symbol.uid, .identifier = func_symbol.identifier, .return_type = fn_data.return_type, .args = fn_call_arguments_values } });

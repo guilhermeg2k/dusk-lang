@@ -141,6 +141,7 @@ pub const Parser = struct {
             if (self.peekCurrent().tag != .comma) {
                 break;
             }
+            self.walk();
         }
         return arguments;
     }
@@ -308,6 +309,7 @@ pub const Parser = struct {
             return token;
         }
 
+        std.debug.print("{any}\n", .{self.peekCurrent().tag});
         return ParserError.UnexpectedToken;
     }
 

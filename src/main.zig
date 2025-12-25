@@ -8,19 +8,19 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     const src =
-        \\let fib: fn = fn(n: number) -> number
+        \\let fib: fn = fn(n: number, n2: number) -> number
         \\    if n < 2
         \\        return n
         \\
-        \\    let a: number = fib(n - 1)
-        \\    let b: number = fib(n - 2)
+        \\    let a: number = fib(n - 1, 0)
+        \\    let b: number = fib(n - 2, 0)
         \\    return a + b
         \\let mut i: number = 1
         \\
         \\for i < 20
-        \\    echo(fib(i))
+        \\    echo(fib(i, 0))
         \\    i = i + 1
-        \\echo("Hello world")
+        \\    echo("Hello world")
     ;
 
     // const src =
