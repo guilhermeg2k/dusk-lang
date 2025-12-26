@@ -29,24 +29,24 @@ pub const Lexer = struct {
 
     pub fn list(self: *Self, allocator: std.mem.Allocator, src: []const u8) !std.ArrayList(Token) {
         self.src = src;
-        var token_list: std.ArrayList(Token) = .empty;
+        var tokens: std.ArrayList(Token) = .empty;
 
         while (true) {
-            const token = self.next();
-            try token_list.append(allocator, token);
+            const tkn = self.next();
+            try tokens.append(allocator, tkn);
 
-            if (token.tag == Tag.eof) break;
+            if (tkn.tag == Tag.eof) break;
 
-            if (token.tag == Tag.err) {
-                std.debug.print("Unexpected token = {s}\n", .{token.value(self.src)});
+            if (tkn.tag == Tag.err) {
+                std.debug.print("Unexpected token = {s}\n", .{tkn.value(self.src)});
                 return LexerError.UnexpectedToken;
             }
         }
 
-        return token_list;
+        return tokens;
     }
 
-    pub fn next(self: *Self) Token {
+    fn next(self: *Self) Token {
         while (true) {
             if (self.is_first_line) {
                 const cur_char = self.peekCurrent();
