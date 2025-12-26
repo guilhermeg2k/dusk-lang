@@ -13,12 +13,12 @@ test "Test: Compile and Run" {
 
     const cases = [_]TestCase{
         .{
-            .name = "Echo 2",
-            .src_file = "test/echo2.dsk",
+            .name = "echo-2",
+            .src_file = "test/echo-2.dsk",
             .expected_output = "Ecoing\n",
         },
         .{
-            .name = "Count",
+            .name = "count",
             .src_file = "test/count.dsk",
             .expected_output =
             \\0
@@ -49,17 +49,17 @@ test "Test: Compile and Run" {
             ,
         },
         .{
-            .name = "Fibonacci Recursion",
+            .name = "fibonacci",
             .src_file = "test/fibonnaci.dsk",
             .expected_output = "1\n1\n2\n55\n610\n6765\n",
         },
         .{
-            .name = "Is Prime",
+            .name = "is-prime",
             .src_file = "test/is-prime.dsk",
             .expected_output = "false\ntrue\ntrue\ntrue\nfalse\nfalse\n",
         },
         .{
-            .name = "Power",
+            .name = "power",
             .src_file = "test/power.dsk",
             .expected_output = "1\n8\n25\n81\n",
         },
