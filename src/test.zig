@@ -76,7 +76,10 @@ test "Test: Compile and Run" {
 
         const output_filename = try std.fmt.allocPrint(arena.allocator(), "test_build/{s}.js", .{case.name});
 
-        const compiled_path = try dusk.compileFile(case.src_file, output_filename);
+        const compiled_path = dusk.compileFile(case.src_file, output_filename) catch |e| {
+            std.debug.print("Test Failed: {s}\n", .{case.name});
+            return e;
+        };
         const output = try dusk.runCaptured(compiled_path);
 
         try testing.expectEqualStrings(std.mem.trim(u8, case.expected_output, "\n\r "), std.mem.trim(u8, output, "\n\r "));

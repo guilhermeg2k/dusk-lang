@@ -33,7 +33,8 @@ pub const Parser = struct {
     }
 
     fn parseStmt(self: *Self) !ast.Statement {
-        const token = self.tokens.items[self.cur_index];
+        const token = self.peekCurrent();
+        self.walk();
 
         switch (token.tag) {
             .let_kw => {
@@ -47,10 +48,8 @@ pub const Parser = struct {
             },
             .identifier => {
                 if (self.peekCurrent().tag == .assign) {
-                    return ast.Statement{ .assign_stmt = try self.parseAssignStmt() };
+                    return ast.Statement{ .assign_stmt = try self.parseAssignStmt(token.value(self.src)) };
                 }
-
-                _ = try self.expect(.l_paren);
 
                 return ast.Statement{ .fn_call_stmt = try self.parseFnCall(token.value(self.src)) };
             },
@@ -58,15 +57,13 @@ pub const Parser = struct {
                 return ast.Statement{ .return_stmt = try self.parseReturnStmt() };
             },
             else => {
-                std.debug.print("{any}\n", .{self.peekCurrent().tag});
+                std.debug.print("{any} = {s}\n", .{ token.tag, token.value(self.src) });
                 return ParserError.UnexpectedToken;
             },
         }
     }
 
     fn parseLetStmt(self: *Self) !ast.LetStmt {
-        self.walk();
-
         const is_mutable = self.match(.mut_kw);
         const identifier_token = try self.expect(.identifier);
         _ = try self.expect(.colon);
@@ -78,7 +75,6 @@ pub const Parser = struct {
     }
 
     fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {
-        self.walk();
         const exp = try self.parseExpression(0);
         var else_block: ?ast.Block = null;
 
@@ -97,7 +93,6 @@ pub const Parser = struct {
     }
 
     fn parseForStmt(self: *Self) ParserError!ast.ForStmt {
-        self.walk();
         var condition: ?*ast.Exp = null;
         if (self.peekCurrent().tag != .indent) {
             condition = try self.parseExpression(0);
@@ -109,10 +104,7 @@ pub const Parser = struct {
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
-    fn parseAssignStmt(self: *Self) ParserError!ast.AssignStmt {
-        const tk = self.peekCurrent();
-        const id = tk.value(self.src);
-        self.walk();
+    fn parseAssignStmt(self: *Self, id: []const u8) ParserError!ast.AssignStmt {
         _ = try self.expect(.assign);
         const exp = try self.parseExpression(0);
         return ast.AssignStmt{ .identifier = id, .exp = exp };
@@ -132,6 +124,7 @@ pub const Parser = struct {
 
         _ = try self.expect(.indent);
         const body_block = try self.parseBlock();
+        _ = try self.expect(.dedent);
 
         return ast.FnDef{ .arguments = arguments, .body_block = body_block, .return_type = return_type };
     }
@@ -194,7 +187,6 @@ pub const Parser = struct {
     }
 
     fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
-        self.walk();
         const cur_tk = self.peekCurrent();
         if (cur_tk.tag == .new_line or cur_tk.tag == .dedent or cur_tk.tag == .eof) {
             return ast.ReturnStmt{ .exp = null };
@@ -204,7 +196,6 @@ pub const Parser = struct {
     }
 
     fn parseExpression(self: *Self, min_bp: u8) ParserError!*ast.Exp {
-        std.debug.print("{s}\n", .{self.peekCurrent().value(self.src)});
         var exp = try self.parsePrefix();
 
         while (true) {
@@ -277,7 +268,7 @@ pub const Parser = struct {
             .and_kw => 20,
             .equals, .not_equals, .gt, .ge, .lt, .le => 30,
             .plus, .minus => 40,
-            .star, .slash => 50,
+            .star, .slash, .percent => 50,
             .l_paren => 60,
             else => 0,
         };
@@ -312,7 +303,6 @@ pub const Parser = struct {
             return token;
         }
 
-        std.debug.print("{any}\n", .{self.peekCurrent().tag});
         return ParserError.UnexpectedToken;
     }
 
