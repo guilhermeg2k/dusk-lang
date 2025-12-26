@@ -63,6 +63,7 @@ test "Test: Compile and Run" {
             .src_file = "test/power.dsk",
             .expected_output = "1\n8\n25\n81\n",
         },
+        .{ .name = "expressions", .src_file = "test/expressions.dsk", .expected_output = "7\n9\n11\n1\n5\n11\n-2\n-8\n5\ntrue\ntrue\nfalse\nfalse\n46\n8\n" },
     };
 
     try std.fs.cwd().makePath("test_build");

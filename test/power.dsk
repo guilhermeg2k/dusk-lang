@@ -5,14 +5,10 @@ let power: fn = fn(base: number, exp: number) -> number
 
     let x: number = exp % 2
     if x == 0
-        let aux: number = exp/2
-        let half: number = power(base, aux)
+        let half: number = power(base, exp / 2)
         return half * half
 
-    let aux: number = exp - 1
-    let p: number = power(base, aux)
-
-    return base * p
+    return base * power(base, exp - 1)
 
 echo(power(2, 0))
 echo(power(2, 3))

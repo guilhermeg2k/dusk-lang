@@ -193,7 +193,7 @@ pub const Generator = struct {
         const right = try self.genValue(binaryOp.right);
         const op = self.genBinaryOpSymbol(binaryOp.kind);
 
-        return std.fmt.allocPrint(self.allocator, "{s} {s} {s}", .{ left, op, right });
+        return std.fmt.allocPrint(self.allocator, "({s} {s} {s})", .{ left, op, right });
     }
 
     fn genBinaryOpSymbol(_: *Self, op: ir.BinaryOpKind) []const u8 {
@@ -220,7 +220,7 @@ pub const Generator = struct {
         const right = try self.genValue(unaryOp.right);
         const op = self.genUnaryOpSymbol(unaryOp.kind);
 
-        return std.fmt.allocPrint(self.allocator, "{s}{s}", .{ op, right });
+        return std.fmt.allocPrint(self.allocator, "({s}{s})", .{ op, right });
     }
 
     fn genUnaryOpSymbol(_: *Self, op: ir.UnaryOpKind) []const u8 {

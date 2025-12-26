@@ -3,9 +3,10 @@
 ### Version: 0.2 - Rukia
 
 - Single Line Comments
-- Full support for expressions and operators
+- [x] Full support for expressions and operators
 - Add possibility to error tracking
 - Fixed sized Arrays
+- Function return type check for all possible branches
 - Organize better internals functions
 
 ### Version: 0.3 - Maki
@@ -20,6 +21,7 @@
 # Features Backlog
 
 - Support function call with named parameters
+- Enum
 - Union (Zig-like)
 - Multi Line Comments
 - Upgrade FnCall
@@ -39,5 +41,4 @@
 - Modules
   - Caching starts to being a concern
 - Pipe operator
-- Enum
-
+- Fuzz testing

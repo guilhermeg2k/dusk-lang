@@ -249,7 +249,7 @@ pub const Parser = struct {
                 return exp;
             },
             .not, .minus => {
-                const op = try ast.UnaryOp.fromTag(self.peekCurrent().tag);
+                const op = try ast.UnaryOp.fromTag(token.tag);
                 const right = try self.parseExpression(100);
                 return ast.Exp.init(self.allocator, .{ .unary_exp = .{ .op = op, .right = right } });
             },

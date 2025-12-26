@@ -341,8 +341,8 @@ pub const SemaAnalyzer = struct {
             .lt_or_eq => .cmp_le,
             .gt => .cmp_gt,
             .gt_or_eq => .cmp_ge,
-            .bool_or => .b_and,
-            .bool_and => .b_or,
+            .bool_or => .b_or,
+            .bool_and => .b_and,
         };
     }
 

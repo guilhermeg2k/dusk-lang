@@ -3,15 +3,10 @@ let isPrime: fn = fn(n: number) -> bool
         return false
 
     let mut i: number = 2
-    let mut r: number = i * i
-
-    for r <= n
-        let comp: number = n % i
-        if comp == 0
+    for i * i <= n
+        if n % i == 0
             return false
-
         i = i + 1
-        r = i * i
 
     return true
 
