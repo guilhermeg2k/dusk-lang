@@ -1,0 +1,18 @@
+let isPrime: fn = fn(n: number) -> bool
+    if n < 2 
+        return false
+
+    let mut i: number = 2
+    let mut r: number = i * i
+
+    for r <= n
+        let comp: number = n % i
+        if comp == 0
+            return false
+
+        i = i + 1
+        r = i * i
+
+    return true
+
+echo(isPrime(4))

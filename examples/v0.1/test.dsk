@@ -1,0 +1,5 @@
+let echo2: fn = fn() -> void
+    echo("Ecoing")
+    return
+
+echo2()

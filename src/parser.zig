@@ -233,6 +233,7 @@ pub const Parser = struct {
                 return ast.Exp.init(self.allocator, .{ .fn_def = try self.parseFnDef() });
             },
             else => {
+                std.debug.print("{any}\n", .{tk});
                 return ParserError.UnexpectedToken;
             },
         }

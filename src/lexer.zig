@@ -168,7 +168,7 @@ pub const Lexer = struct {
         }
 
         const indentation_level = spaces / INDENTATION_WIDTH;
-        const is_isvalid_indentation = indentation_level > 1 and (indentation_level - self.last_indentation_level) > 1;
+        const is_isvalid_indentation = indentation_level > self.last_indentation_level and (indentation_level - self.last_indentation_level) > 1;
 
         if (is_isvalid_indentation) {
             return Token.init(Tag.err, start, self.cur_index);

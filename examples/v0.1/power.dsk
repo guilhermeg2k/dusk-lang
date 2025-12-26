@@ -1,0 +1,16 @@
+let power: fn = fn(base: number, exp: number) -> number
+    if exp == 0
+        return 1
+
+    let x: number = exp % 2
+    if x == 0
+        let aux: number = exp/2
+        let half: number = power(base, aux)
+        return half * half
+
+    let aux: number = exp - 1
+    let p: number = power(base, aux)
+
+    return base * p
+
+echo(power(2,4))

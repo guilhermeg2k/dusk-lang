@@ -43,10 +43,10 @@ pub const Dusk = struct {
         try self.dump(tokens, "build/tokens.json");
 
         const ast = try self.parser.parse(src, tokens);
-        try self.dump(tokens, "build/ast.json");
+        try self.dump(ast, "build/ast.json");
 
         const ir = try self.analyzer.analyze(&ast);
-        try self.dump(tokens, "build/ir.json");
+        try self.dump(ir, "build/ir.json");
 
         const compiled_code = try self.codegen.generate(ir);
         return compiled_code;
