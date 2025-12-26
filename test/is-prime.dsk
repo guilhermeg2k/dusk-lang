@@ -15,4 +15,9 @@ let isPrime: fn = fn(n: number) -> bool
 
     return true
 
-echo(isPrime(4))
+echo(isPrime(1))
+echo(isPrime(3))
+echo(isPrime(5))
+echo(isPrime(7))
+echo(isPrime(9))
+echo(isPrime(18))

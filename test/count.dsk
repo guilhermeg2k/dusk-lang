@@ -1,0 +1,11 @@
+let count: fn = fn(n: number) -> void
+    let mut x: number = 0
+    for
+        echo(x)
+        x = x + 1
+        if x > n
+            return 
+
+count(1)
+count(5)
+count(15)

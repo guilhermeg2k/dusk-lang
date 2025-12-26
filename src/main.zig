@@ -4,7 +4,6 @@ pub fn main() !void {
 
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
-
     const allocator = arena.allocator();
 
     var args = std.process.args();

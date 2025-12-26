@@ -168,6 +168,7 @@ for i < 10
 ### Version: 0.3 - Maki
 
 - Type inference (also for func args)
+- Loop controll flow
 - Remove the need of the keyword fn for functions
 - Support for else if
 - Support for C loops (With var inicialization)

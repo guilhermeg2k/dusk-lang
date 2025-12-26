@@ -1,0 +1,84 @@
+const std = @import("std");
+const Dusk = @import("dusk.zig").Dusk; // Import your main struct
+const testing = std.testing;
+
+const TestCase = struct {
+    name: []const u8,
+    src_file: []const u8,
+    expected_output: []const u8,
+};
+
+test "Test: Compile and Run" {
+    const allocator = testing.allocator;
+
+    const cases = [_]TestCase{
+        .{
+            .name = "Echo 2",
+            .src_file = "test/echo2.dsk",
+            .expected_output = "Ecoing\n",
+        },
+        .{
+            .name = "Count",
+            .src_file = "test/count.dsk",
+            .expected_output =
+            \\0
+            \\1
+            \\0
+            \\1
+            \\2
+            \\3
+            \\4
+            \\5
+            \\0
+            \\1
+            \\2
+            \\3
+            \\4
+            \\5
+            \\6
+            \\7
+            \\8
+            \\9
+            \\10
+            \\11
+            \\12
+            \\13
+            \\14
+            \\15
+            \\
+            ,
+        },
+        .{
+            .name = "Fibonacci Recursion",
+            .src_file = "test/fibonnaci.dsk",
+            .expected_output = "1\n1\n2\n55\n610\n6765\n",
+        },
+        .{
+            .name = "Is Prime",
+            .src_file = "test/is-prime.dsk",
+            .expected_output = "false\ntrue\ntrue\ntrue\nfalse\nfalse\n",
+        },
+        .{
+            .name = "Power",
+            .src_file = "test/power.dsk",
+            .expected_output = "1\n8\n25\n81\n",
+        },
+    };
+
+    try std.fs.cwd().makePath("test_build");
+
+    for (cases) |case| {
+        std.debug.print("Testing: {s}\n", .{case.name});
+
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var dusk = try Dusk.init(arena.allocator());
+
+        const output_filename = try std.fmt.allocPrint(arena.allocator(), "test_build/{s}.js", .{case.name});
+
+        const compiled_path = try dusk.compileFile(case.src_file, output_filename);
+        const output = try dusk.runCaptured(compiled_path);
+
+        try testing.expectEqualStrings(std.mem.trim(u8, case.expected_output, "\n\r "), std.mem.trim(u8, output, "\n\r "));
+    }
+}

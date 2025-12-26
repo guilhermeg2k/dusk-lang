@@ -52,6 +52,34 @@ pub const Dusk = struct {
         return compiled_code;
     }
 
+    pub fn runCaptured(self: *Self, file_path: []const u8) ![]u8 {
+        const argv = &[_][]const u8{ "bun", "run", file_path };
+        var child = std.process.Child.init(argv, self.allocator);
+
+        var env_map = try std.process.getEnvMap(self.allocator);
+        defer env_map.deinit();
+        try env_map.put("NO_COLOR", "1");
+
+        child.env_map = &env_map;
+        child.stdin_behavior = .Ignore;
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Inherit;
+
+        try child.spawn();
+
+        const stdout = try child.stdout.?.readToEndAlloc(self.allocator, 50 * 1024);
+
+        const term = try child.wait();
+        switch (term) {
+            .Exited => |code| {
+                if (code != 0) return error.RuntimeError;
+            },
+            else => return error.RuntimeCrash,
+        }
+
+        return stdout;
+    }
+
     fn bunRun(self: *Self, file_path: []const u8) !void {
         const argv = &[_][]const u8{ "bun", "run", file_path };
         var child = std.process.Child.init(argv, self.allocator);

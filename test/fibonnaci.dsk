@@ -5,4 +5,9 @@ let fib: fn = fn(n: number) -> number
     let b: number = fib(n - 2)
     return a + b
 
+echo(fib(1))
+echo(fib(2))
+echo(fib(3))
+echo(fib(10))
+echo(fib(15))
 echo(fib(20))
