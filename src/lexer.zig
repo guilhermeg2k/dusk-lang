@@ -78,6 +78,12 @@ pub const Lexer = struct {
             self.readWhiteSpaces();
             const cur_char = self.peekCurrent();
             switch (cur_char) {
+                '#',
+                => {
+                    while (self.peekCurrent() != '\n') {
+                        self.walk();
+                    }
+                },
                 '\n' => {
                     const token = self.readNewLine();
                     if (token) |tk| {

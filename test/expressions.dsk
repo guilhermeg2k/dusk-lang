@@ -1,4 +1,5 @@
-echo(1 + 2 * 3)
+echo(1 + 2 * 3) # Salve
+# Salve doutor
 echo((1 + 2) * 3)
 echo(10 + 5 % 2)
 echo((10 + 5) % 2)

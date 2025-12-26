@@ -135,6 +135,7 @@ let result = add(1,2)
     |> double
     |> fixTo
 
+
 ###
     Structs
     The language is not gonna have a heavy oop orientation
