@@ -116,10 +116,10 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('=', Tag.equals, Tag.assign);
                 },
                 '>' => {
-                    return self.readComplexSymbol('=', Tag.greater_than_or_equal, Tag.greater_than);
+                    return self.readComplexSymbol('=', Tag.ge, Tag.gt);
                 },
                 '<' => {
-                    return self.readComplexSymbol('=', Tag.less_than_or_equal, Tag.less_than);
+                    return self.readComplexSymbol('=', Tag.le, Tag.lt);
                 },
                 '!' => {
                     return self.readComplexSymbol('=', Tag.not_equals, Tag.not);
@@ -197,7 +197,7 @@ pub const Lexer = struct {
     }
 
     fn readGreaterSymbol(self: *Self) Token {
-        return self.readComplexSymbol('=', Tag.greater_than_or_equal, Tag.greater_than);
+        return self.readComplexSymbol('=', Tag.ge, Tag.gt);
     }
 
     fn readLessThanSymbol(self: *Self) Token {
@@ -206,10 +206,10 @@ pub const Lexer = struct {
         if (next_char == '=') {
             const start = self.cur_index;
             self.walk();
-            return Token.init(Tag.less_than_or_equal, start, self.cur_index);
+            return Token.init(Tag.le, start, self.cur_index);
         }
 
-        return Token.init(Tag.less_than, self.cur_index, self.cur_index);
+        return Token.init(Tag.lt, self.cur_index, self.cur_index);
     }
 
     fn readEqualsSymbol(self: *Self) Token {
@@ -361,10 +361,10 @@ pub const Tag = enum {
     colon,
     comma,
     assign,
-    less_than,
-    less_than_or_equal,
-    greater_than,
-    greater_than_or_equal,
+    lt,
+    le,
+    gt,
+    ge,
     l_paren,
     r_paren,
     arrow,
