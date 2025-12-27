@@ -33,14 +33,15 @@ pub const Lexer = struct {
 
         while (true) {
             const tkn = self.next();
-            try tokens.append(allocator, tkn);
-
-            if (tkn.tag == Tag.eof) break;
 
             if (tkn.tag == Tag.err) {
-                std.debug.print("Unexpected token = {s}\n", .{tkn.value(self.src)});
+                const fineLoc = try tkn.fineLoc(self.src);
+                std.log.err("Unexpected token \"{s}\" at line {d} col {d}\n", .{ tkn.value(self.src), fineLoc.line, fineLoc.col.start });
                 return LexerError.UnexpectedToken;
             }
+
+            try tokens.append(allocator, tkn);
+            if (tkn.tag == Tag.eof) break;
         }
 
         return tokens;
@@ -334,6 +335,36 @@ pub const Token = struct {
         return src[self.loc.start .. self.loc.end + 1];
     }
 
+    fn fineLoc(self: *const Self, src: []const u8) !FineLoc {
+        var line_count: usize = 1;
+        var last_line_start_at: usize = 0;
+
+        var i: usize = 0;
+        while (true) {
+            if (i == self.loc.start) break;
+            if (i >= src.len) return LexerError.UnableToFindToken;
+            if (src[i] == '\n') {
+                last_line_start_at = i + 1;
+                line_count += 1;
+            }
+            i += 1;
+        }
+
+        var col_count: usize = 1;
+        i = last_line_start_at;
+        while (true) {
+            if (i == self.loc.start) break;
+            if (i >= src.len) return LexerError.UnableToFindToken;
+            col_count += 1;
+            i += 1;
+        }
+
+        return .{ .line = line_count, .col = .{
+            .start = col_count,
+            .end = col_count + (self.loc.end - self.loc.start),
+        } };
+    }
+
     pub fn init(tag: Tag, start: usize, end: usize) Self {
         return Self{
             .tag = tag,
@@ -391,6 +422,11 @@ const Loc = struct {
     end: usize,
 };
 
-const LexerError = error{UnexpectedToken};
+const FineLoc = struct { line: usize, col: struct {
+    start: usize,
+    end: usize,
+} };
+
+const LexerError = error{ UnexpectedToken, UnableToFindToken };
 
 const std = @import("std");
