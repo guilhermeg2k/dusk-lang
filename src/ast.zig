@@ -100,7 +100,7 @@ pub const UnaryOp = enum {
         return switch (tag) {
             .minus => .neg,
             .not => .not,
-            else => ParserError.UnexpectedToken,
+            else => AstError.UnexpectedToken,
         };
     }
 };
@@ -137,16 +137,16 @@ pub const BinaryOp = enum {
             .ge => .gt_or_eq,
             .or_kw => .bool_or,
             .and_kw => .bool_and,
-            else => ParserError.UnexpectedToken,
+            else => AstError.UnexpectedToken,
         };
     }
 };
 
-const AstError = error{ InvalidTag, InvalidToken };
-
-const std = @import("std");
-const lex = @import("lexer.zig");
-const parser = @import("parser.zig");
 const Tag = lex.Tag;
 const Token = lex.Token;
-const ParserError = parser.ParserError;
+const AstError = err.AllError;
+
+const lex = @import("lexer.zig");
+const parser = @import("parser.zig");
+const err = @import("error.zig");
+const std = @import("std");

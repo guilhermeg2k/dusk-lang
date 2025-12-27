@@ -12,7 +12,7 @@ pub const Parser = struct {
         return self.parseBlock();
     }
 
-    pub fn parseBlock(self: *Self) !ast.Block {
+    pub fn parseBlock(self: *Self) ParserError!ast.Block {
         var statements: std.ArrayList(ast.Statement) = .empty;
 
         var current_tk = self.peekCurrent();
@@ -57,8 +57,7 @@ pub const Parser = struct {
                 return ast.Statement{ .return_stmt = try self.parseReturnStmt() };
             },
             else => {
-                std.debug.print("{any} = {s}\n", .{ token.tag, token.value(self.src) });
-                return ParserError.UnexpectedToken;
+                return Error.parser("let, if, for, return, ...", token, self.src);
             },
         }
     }
@@ -230,7 +229,7 @@ pub const Parser = struct {
             },
             .number_literal => {
                 const value = std.fmt.parseFloat(f64, token.value(self.src)) catch {
-                    return ParserError.UnexpectedToken;
+                    return Error.parser("number literal", token, self.src);
                 };
                 return ast.Exp.init(self.allocator, .{ .number_literal = value });
             },
@@ -257,7 +256,7 @@ pub const Parser = struct {
                 return ast.Exp.init(self.allocator, .{ .fn_def = try self.parseFnDef() });
             },
             else => {
-                return ParserError.UnexpectedToken;
+                return Error.parser("valid expression", token, self.src);
             },
         };
     }
@@ -276,13 +275,15 @@ pub const Parser = struct {
 
     fn parseTypeAnnotation(self: *Self) !ast.TypeAnnotation {
         defer self.walk();
-        const token = self.peekCurrent();
+        const tk = self.peekCurrent();
 
-        return switch (token.tag) {
+        return switch (tk.tag) {
             .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation{
-                .name = token.value(self.src),
+                .name = tk.value(self.src),
             },
-            else => ParserError.UnexpectedToken,
+            else => {
+                return Error.parser("type string, number, bool, fn, void, ...", tk, self.src);
+            },
         };
     }
 
@@ -303,7 +304,7 @@ pub const Parser = struct {
             return token;
         }
 
-        return ParserError.UnexpectedToken;
+        return Error.parser(@tagName(tag), token, self.src);
     }
 
     fn walk(self: *Self) void {
@@ -331,14 +332,13 @@ pub const Parser = struct {
     }
 };
 
-pub const ParserError = error{
-    UnexpectedToken,
-    OutOfMemory,
-};
+const Token = lexer.Token;
+const Tag = lexer.Tag;
+const Error = err.Error;
+const ParserError = err.AllError;
 
-const std = @import("std");
 const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const ast = @import("ast.zig");
-const Token = lexer.Token;
-const Tag = lexer.Tag;
+const err = @import("error.zig");
+const std = @import("std");
