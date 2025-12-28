@@ -31,12 +31,12 @@ pub const Dusk = struct {
     }
 
     pub fn compile(self: *Self, src: []const u8) ![]const u8 {
-        var d_lexer = Lexer.init(self.allocator, src);
-        const tokens = try d_lexer.list();
+        var dusk_lexer = Lexer.init(self.allocator, src);
+        const tokens = try dusk_lexer.list();
         try self.dump(tokens, "build/tokens.json");
 
-        var d_parser = Parser.init(self.allocator, src, tokens.items);
-        const ast = try d_parser.parse();
+        var dusk_parser = Parser.init(self.allocator, src, tokens.items);
+        const ast = try dusk_parser.parse();
         try self.dump(ast, "build/ast.json");
 
         var sema_analyzer = try SemaAnalyzer.init(self.allocator, src, &ast);

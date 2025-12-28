@@ -20,26 +20,26 @@
 
 ## Features Backlog
 
-- Multi Line Comments
 - Optionals
   - Optional fn args
-- Error Handling
-- String interpolation
-- Ternary operator
-- Structs
-- Collections: Lists, Sets, HashMaps, Tuples
-- Support function call with named parameters
-- Modules
-  - Caching starts to being a concern
 - Enum
 - Union (Zig-like)
+- Error Handling
 - Closures (& fn as argument)
+- Pattern match
+- Pipe operator
+- Ternary operator
+- String interpolation
+- Structs
+- Support function call with named parameters
+- Modules
+  - Compilation speed starts to being a concern
+- Multi Line Comments
+- Collections: Lists, Sets, HashMaps, Tuples
 - Upgrade FnCall
   - Currently function calls only allow simple calls as `identifier()`
   - Which means things like that does not works:
     - getCallback()()
     - my_array\[0]()
     - (fn(x) { x + 1 })(10)
-- Pattern match
-- Pipe operator
 - Fuzz testing
