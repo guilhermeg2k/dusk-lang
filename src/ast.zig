@@ -112,7 +112,7 @@ pub const UnaryOp = enum {
         return switch (tag) {
             .minus => .neg,
             .not => .not,
-            else => AstError.UnexpectedToken,
+            else => err.Errors.ParserError,
         };
     }
 };
@@ -149,14 +149,13 @@ pub const BinaryOp = enum {
             .ge => .gt_or_eq,
             .or_kw => .bool_or,
             .and_kw => .bool_and,
-            else => AstError.UnexpectedToken,
+            else => err.Errors.ParserError,
         };
     }
 };
 
 const Tag = lex.Tag;
 const Token = lex.Token;
-const AstError = err.AllError;
 
 const lex = @import("lexer.zig");
 const parser = @import("parser.zig");

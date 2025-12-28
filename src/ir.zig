@@ -148,5 +148,5 @@ pub const BinaryOpKind = enum {
 
 const std = @import("std");
 const sema = @import("sema.zig");
-const SemaError = sema.SemaError;
+const SemaError = sema.Errors;
 const Type = sema.Type;

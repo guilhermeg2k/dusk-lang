@@ -8,7 +8,7 @@ pub const Dusk = struct {
     codegen: Generator,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
-        return .{ .allocator = allocator, .lexer = .{}, .parser = .{ .allocator = allocator }, .analyzer = try SemaAnalyzer.init(allocator), .codegen = .{ .allocator = allocator } };
+        return .{ .allocator = allocator, .lexer = .{ .allocator = allocator }, .parser = .{ .allocator = allocator }, .analyzer = try SemaAnalyzer.init(allocator, ""), .codegen = .{ .allocator = allocator } };
     }
 
     pub fn compileAndRunFile(self: *Self, file_path: []const u8) !void {
@@ -39,13 +39,13 @@ pub const Dusk = struct {
     }
 
     pub fn compile(self: *Self, src: []const u8) ![]const u8 {
-        const tokens = try self.lexer.list(self.allocator, src);
+        const tokens = try self.lexer.list(src);
         try self.dump(tokens, "build/tokens.json");
 
-        const ast = try self.parser.parse(src, tokens);
+        const ast = try self.parser.parse(src, tokens.items);
         try self.dump(ast, "build/ast.json");
 
-        const ir = try self.analyzer.analyze(&ast);
+        const ir = try self.analyzer.analyze(src, &ast);
         try self.dump(ir, "build/ir.json");
 
         const compiled_code = try self.codegen.generate(ir);

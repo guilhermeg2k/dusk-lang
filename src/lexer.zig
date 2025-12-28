@@ -2,7 +2,6 @@ pub const Lexer = struct {
     const Self = @This();
 
     const INDENTATION_WIDTH: usize = 4;
-
     const keywords = std.StaticStringMap(Tag).initComptime(.{
         .{ "let", Tag.let_kw },
         .{ "mut", Tag.mut_kw },
@@ -21,24 +20,26 @@ pub const Lexer = struct {
         .{ "return", Tag.return_kw },
     });
 
+    allocator: std.mem.Allocator,
     src: []const u8 = "",
     cur_index: usize = 0,
     last_indentation_level: usize = 0,
     pending_dedents: usize = 0,
     is_first_line: bool = true,
 
-    pub fn list(self: *Self, allocator: std.mem.Allocator, src: []const u8) !std.ArrayList(Token) {
-        self.src = src;
+    pub fn list(self: *Self, src: []const u8) !std.ArrayList(Token) {
+        const err_dispatcher = err.ErrorDispatcher{ .src = src };
         var tokens: std.ArrayList(Token) = .empty;
+        self.src = src;
 
         while (true) {
             const tkn = self.next();
 
             if (tkn.tag == Tag.err) {
-                return Error.lexer(tkn, self.src);
+                return err_dispatcher.unexpectedToken(tkn);
             }
 
-            try tokens.append(allocator, tkn);
+            try tokens.append(self.allocator, tkn);
             if (tkn.tag == Tag.eof) break;
         }
 
@@ -333,44 +334,6 @@ pub const Token = struct {
         return src[self.loc.start .. self.loc.end + 1];
     }
 
-    pub fn fineLoc(self: *const Self, src: []const u8) !FineLoc {
-        var line_count: usize = 1;
-        var line_start: usize = 0;
-        var line_end: usize = 0;
-
-        var i: usize = 0;
-        var should_break_in_next_line = false;
-        while (true) {
-            if (i == self.loc.start) should_break_in_next_line = true;
-            if (i >= src.len) return LexerError.UnableToFindToken;
-            if (src[i] == '\n') {
-                if (should_break_in_next_line) {
-                    line_end = i;
-                    break;
-                }
-
-                line_start = i + 1;
-                line_count += 1;
-            }
-            i += 1;
-        }
-
-        var col_count: usize = 1;
-        i = line_start;
-        while (true) {
-            if (i == self.loc.start) break;
-            if (i >= src.len) return LexerError.UnableToFindToken;
-            col_count += 1;
-            i += 1;
-        }
-
-        return .{ .line = .{
-            .count = line_count,
-            .start = line_start,
-            .end = line_end,
-        }, .col = col_count };
-    }
-
     pub fn init(tag: Tag, start: usize, end: usize) Self {
         return Self{
             .tag = tag,
@@ -428,13 +391,6 @@ const Loc = struct {
     end: usize,
 };
 
-const FineLoc = struct { line: struct {
-    count: usize,
-    start: usize,
-    end: usize,
-}, col: usize };
-
-const Error = err.Error;
-const LexerError = err.AllError;
+const LexerError = err.Errors;
 const err = @import("error.zig");
 const std = @import("std");

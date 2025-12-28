@@ -2,21 +2,30 @@ pub const SemaAnalyzer = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    scope: Scope,
+    src: []const u8,
     program: ir.Program,
+    scope: Scope,
+    err_dispatcher: err.ErrorDispatcher,
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
-        return Self{ .allocator = allocator, .scope = try Scope.init(allocator, .void), .program = .{
-            .instructions = .empty,
-            .functions = .empty,
-        } };
+    pub fn init(allocator: std.mem.Allocator, src: []const u8) !Self {
+        return Self{
+            .allocator = allocator,
+            .src = src,
+            .program = .{
+                .instructions = .empty,
+                .functions = .empty,
+            },
+            .scope = try Scope.init(allocator, .void),
+            .err_dispatcher = .{ .src = src },
+        };
     }
 
     pub fn deinit(self: *Self) void {
         self.scope.deinit();
     }
 
-    pub fn analyze(self: *Self, root: *const ast.Root) !ir.Program {
+    pub fn analyze(self: *Self, src: []const u8, root: *const ast.Root) !ir.Program {
+        self.src = src;
         self.program.instructions = try self.visitBlock(root);
         return self.program;
     }
@@ -50,11 +59,18 @@ pub const SemaAnalyzer = struct {
         const let_stmt = stmt.data.let_stmt;
         const expression_value = try self.evalExpression(let_stmt.value);
         const expression_type = expression_value.toType();
-        const var_type = try Type.fromString(let_stmt.type_annotation.name);
+
+        const var_type = Type.fromString(let_stmt.type_annotation.name);
+        if (var_type == null) {
+            return self.err_dispatcher.typeNotDefined(var_type, stmt.loc_start);
+        }
+
         const uid = self.scope.genUid();
 
         if (expression_type != var_type) {
-            return SemaError.InvalidExpressionType;
+            return self.err_dispatcher.invalidType(var_type, expression_type, "Invalid expression type expected {s} found {s}", .{
+                var_type,
+            }, stmt.data, self.src);
         }
 
         try self.scope.symbol_table.put(.{ .identifier = let_stmt.identifier, .uid = uid, .is_mut = let_stmt.is_mut, .type = var_type, .metadata = null });
@@ -72,11 +88,12 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) SemaError!ir.Instruction {
+    fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const if_stmt = stmt.data.if_stmt;
         const condition_value = try self.evalExpression(if_stmt.condition);
-        if (condition_value.toType() != .boolean) {
-            return SemaError.InvalidExpressionType;
+        const condition_value_type = condition_value.toType();
+        if (condition_value_type != .boolean) {
+            return self.err_dispatcher.invalidType("boolean", condition_value_type, stmt.loc_start);
         }
 
         const then_block = try self.visitBlock(&if_stmt.then_block);
@@ -95,15 +112,20 @@ pub const SemaAnalyzer = struct {
 
     fn visitAssignStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const assign_stmt = stmt.data.assign_stmt;
-        const identifier_symbol = try self.scope.symbol_table.getOrThrow(assign_stmt.identifier);
-        const exp_value = try self.evalExpression(assign_stmt.exp);
-
-        if (!identifier_symbol.is_mut) {
-            return SemaError.InvalidAssignment;
+        const identifier_symbol = self.scope.symbol_table.get(assign_stmt.identifier);
+        if (identifier_symbol == null) {
+            return self.err_dispatcher.notDefined(assign_stmt.identifier, stmt.loc_start);
         }
 
-        if (identifier_symbol.type != exp_value.toType()) {
-            return SemaError.InvalidAssignment;
+        const exp_value = try self.evalExpression(assign_stmt.exp);
+        const exp_value_type = exp_value.toType();
+
+        if (!identifier_symbol.is_mut) {
+            return self.err_dispatcher.notMutable(assign_stmt.identifier, stmt.loc_start);
+        }
+
+        if (identifier_symbol.type != exp_value_type) {
+            return self.err_dispatcher.invalidType(identifier_symbol.type, exp_value, stmt.loc_start);
         }
 
         return ir.Instruction{ .update_var = .{
@@ -113,14 +135,15 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn visitForStmt(self: *Self, stmt: *const ast.StatementNode) SemaError!ir.Instruction {
+    fn visitForStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const for_stmt = stmt.data.for_stmt;
         var condition_value: ?*ir.Value = null;
+
         if (for_stmt.condition) |condition| {
-            const exp_value = try self.evalExpression(condition);
-            condition_value = exp_value;
-            if (exp_value.toType() != .boolean) {
-                return SemaError.InvalidExpressionType;
+            condition_value = try self.evalExpression(condition);
+            const condition_value_type = condition_value.toType();
+            if (condition_value_type != .boolean) {
+                return self.err_dispatcher.invalidType("boolean", condition_value_type, stmt.loc_start);
             }
         }
 
@@ -132,18 +155,26 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn visitFnDef(self: *Self, fnDef: *const ast.FnDef, identifier: []const u8) SemaError!void {
+    fn visitFnDef(self: *Self, exp: *const ast.ExpNode, identifier: []const u8) Errors!void {
+        const fn_def = exp.data.fn_def;
         const old_return_type = self.scope.return_type;
-        const return_type = try Type.fromString(fnDef.return_type.name);
+        const return_type = Type.fromString(fn_def.return_type.name);
+        if (return_type == null) {
+            return self.err_dispatcher.typeNotDefined(return_type, exp.loc_start);
+        }
 
         var arguments: std.ArrayList(ir.FuncArg) = .empty;
         var argument_types: std.ArrayList(Type) = .empty;
 
         const fn_uid = self.scope.genUid();
 
-        for (fnDef.arguments.items) |arg| {
-            const arg_type = try Type.fromString(arg.type_annotation.name);
-            try argument_types.append(self.allocator, arg_type);
+        for (fn_def.arguments.items) |arg| {
+            const arg_type = Type.fromString(arg.type_annotation.name);
+            if (arg_type == null) {
+                return self.err_dispatcher.typeNotDefined(arg_type, exp.loc_start);
+            }
+
+            try argument_types.append(self.allocator, arg_type.?);
         }
 
         try self.scope.symbol_table.replace(.{ .identifier = identifier, .uid = fn_uid, .is_mut = false, .type = .function, .metadata = FuncMetadata.init(self.allocator, argument_types, return_type) });
@@ -151,9 +182,10 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(return_type);
         defer self.scope.exit(old_return_type);
 
-        for (fnDef.arguments.items) |arg| {
-            const arg_type = try Type.fromString(arg.type_annotation.name);
+        for (fn_def.arguments.items) |arg| {
+            const arg_type = Type.fromString(arg.type_annotation.name).?;
             const uid = self.scope.genUid();
+
             try self.scope.symbol_table.put(.{
                 .uid = uid,
                 .identifier = arg.identifier,
@@ -162,6 +194,7 @@ pub const SemaAnalyzer = struct {
                 .type = arg_type,
                 .metadata = null,
             });
+
             try arguments.append(self.allocator, .{
                 .uid = uid,
                 .identifier = arg.identifier,
@@ -169,7 +202,7 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        const body = try self.visitBlock(&fnDef.body_block);
+        const body = try self.visitBlock(&fn_def.body_block);
         try self.program.functions.append(self.allocator, ir.Func{
             .uid = fn_uid,
             .identifier = identifier,
@@ -181,18 +214,30 @@ pub const SemaAnalyzer = struct {
 
     fn visitReturnStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const return_stmt = stmt.data.return_stmt;
+
         if (return_stmt.exp) |exp| {
             const exp_value = try self.evalExpression(exp);
-            if (exp_value.toType() != self.scope.return_type) {
-                return SemaError.InvalidReturnType;
+            const exp_value_type = exp_value.toType();
+
+            if (exp_value_type != self.scope.return_type) {
+                return self.err_dispatcher.invalidType(
+                    @tagName(self.scope.return_type),
+                    @tagName(exp_value_type),
+                    stmt.loc_start,
+                );
             }
+
             return ir.Instruction{ .return_stmt = .{
                 .value = exp_value,
             } };
         }
 
         if (self.scope.return_type != .void) {
-            return SemaError.InvalidReturnType;
+            return self.err_dispatcher.invalidType(
+                @tagName(self.scope.return_type),
+                "void",
+                stmt.loc_start,
+            );
         }
 
         return ir.Instruction{ .return_stmt = .{
@@ -200,7 +245,7 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn evalExpression(self: *Self, exp: *const ast.ExpNode) SemaError!*ir.Value {
+    fn evalExpression(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
             .number_literal => {
                 return ir.Value.init(self.allocator, .{ .i_float = exp.data.number_literal });
@@ -215,7 +260,7 @@ pub const SemaAnalyzer = struct {
                 return ir.Value.init(self.allocator, .{ .fn_def = {} });
             },
             .identifier => {
-                return self.evalIdentifier(exp.data.identifier);
+                return self.evalIdentifier(exp);
             },
             .fn_call => {
                 return self.evalFnCall(&exp.data.fn_call, exp.loc_start);
@@ -229,10 +274,10 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, start_loc: usize) !*ir.Value {
+    fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
         const func_symbol = try self.scope.symbol_table.getOrThrow(fn_call.identifier);
         if (func_symbol.type != .function) {
-            return SemaError.InvalidFunction;
+            return self.err_dispatcher.invalidType("function", @tagName(func_symbol.type), loc_start, self.src);
         }
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
@@ -242,16 +287,20 @@ pub const SemaAnalyzer = struct {
             //currently this is only useful for allowing anything as arg for the echo function
             //when echo function be propertly implemented this should be modified
             const is_arg_unknown = fn_data.params_types.items.len == 1 and fn_data.params_types.items[0] == .unknown;
+            const args_len = fn_call.arguments.items.len;
+            const fn_params_len = fn_data.params_types.items.len;
 
-            if (!is_arg_unknown and fn_data.params_types.items.len != fn_call.arguments.items.len) {
-                return SemaError.InvalidFunctionParameter;
+            if (!is_arg_unknown and fn_params_len != args_len) {
+                return self.err_dispatcher.invalidNumberOfArgs(args_len, fn_params_len, loc_start);
             }
 
             for (fn_call.arguments.items, 0..) |arg, i| {
                 const fn_call_arg_value = try self.evalExpression(arg);
 
-                if (!is_arg_unknown and fn_data.params_types.items[i] != fn_call_arg_value.toType()) {
-                    return SemaError.InvalidFunctionParameter;
+                const param_type = fn_data.params_types.items[i];
+                const arg_type = fn_call_arg_value.toType();
+                if (!is_arg_unknown and arg_type != param_type) {
+                    return self.err_dispatcher.invalidType(param_type, arg_type, loc_start);
                 }
 
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
@@ -263,8 +312,12 @@ pub const SemaAnalyzer = struct {
         unreachable;
     }
 
-    fn evalIdentifier(self: *Self, id: []const u8) !*ir.Value {
-        const id_symbol = try self.scope.symbol_table.getOrThrow(id);
+    fn evalIdentifier(self: *Self, exp: *ast.ExpNode) !*ir.Value {
+        const id = exp.data.identifier;
+        const id_symbol = self.scope.symbol_table.get(id);
+        if (id_symbol == null) {
+            return self.err_dispatcher.notDefined(id_symbol, exp.loc_start);
+        }
 
         return ir.Value.init(self.allocator, .{ .identifier = .{
             .uid = id_symbol.uid,
@@ -281,12 +334,12 @@ pub const SemaAnalyzer = struct {
         switch (unary_exp.op) {
             .neg => {
                 if (exp_type != .number) {
-                    return SemaError.InvalidExpressionType;
+                    return self.err_dispatcher.invalidType("number", @tagName(exp_type), exp.loc_start);
                 }
             },
             .not => {
                 if (exp_type != .boolean) {
-                    return SemaError.InvalidExpressionType;
+                    return self.err_dispatcher.invalidType("boolean", @tagName(exp_type), exp.loc_start);
                 }
             },
         }
@@ -303,27 +356,28 @@ pub const SemaAnalyzer = struct {
         var op_type: Type = .void;
 
         if (left_type != right_type) {
-            return SemaError.InvalidExpressionType;
+            return self.err_dispatcher.invalidType(left_type, right_type, exp.loc_start);
         }
 
         switch (bin_exp.op) {
             .add, .sub, .mult, .div, .mod => {
                 if (left_type != .number) {
-                    return SemaError.InvalidOperation;
+                    return self.err_dispatcher.invalidType("number", left_type, exp.loc_start);
                 }
                 op_type = .number;
             },
 
+            //warn: this makes support string comparison by operators
             .eq, .not_eq, .lt, .lt_or_eq, .gt, .gt_or_eq => {
                 if (left_type == .boolean) {
-                    return SemaError.InvalidOperation;
+                    return self.err_dispatcher.invalidType("string, number", left_type, exp.loc_start);
                 }
                 op_type = .boolean;
             },
 
             .bool_or, .bool_and => {
                 if (left_type != .boolean) {
-                    return SemaError.InvalidOperation;
+                    return self.err_dispatcher.invalidType("boolean", left_type, exp.loc_start);
                 }
                 op_type = .boolean;
             },
@@ -422,7 +476,7 @@ const SymbolTable = struct {
 
     fn put(self: *Self, symbol: Symbol) !void {
         if (self.symbols.get(symbol.identifier)) |_| {
-            return SemaError.AlreadyDefined;
+            return Errors.AlreadyDefined;
         }
 
         try self.symbols.put(symbol.identifier, symbol);
@@ -444,7 +498,7 @@ const SymbolTable = struct {
 
     fn getOrThrow(self: *Self, id: []const u8) !Symbol {
         if (self.get(id)) |s| return s;
-        return SemaError.NotDefined;
+        return Errors.SemaError;
     }
 };
 
@@ -492,29 +546,20 @@ pub const Type = enum {
     unknown,
     void,
 
-    pub fn fromString(name: []const u8) !Type {
+    pub fn fromString(name: []const u8) Type {
         if (std.mem.eql(u8, name, "number")) return .number;
         if (std.mem.eql(u8, name, "bool")) return .boolean;
         if (std.mem.eql(u8, name, "string")) return .string;
         if (std.mem.eql(u8, name, "fn")) return .function;
         if (std.mem.eql(u8, name, "void")) return .void;
-        return SemaError.InvalidType;
+        return null;
     }
 };
 
-pub const SemaError = error{
-    OutOfMemory,
-    AlreadyDefined,
-    NotDefined,
-    InvalidExpressionType,
-    InvalidOperation,
-    InvalidReturnType,
-    InvalidAssignment,
-    InvalidFunction,
-    InvalidFunctionParameter,
-    InvalidType,
-};
+pub const Errors = err.Errors;
 
-const std = @import("std");
-const ast = @import("ast.zig");
+const err = @import("error.zig");
 const ir = @import("ir.zig");
+const ast = @import("ast.zig");
+const std = @import("std");
+const allocPrint = std.fmt.allocPrint;
