@@ -13,7 +13,7 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Self) ParserError!ast.Block {
-        var statements: std.ArrayList(ast.Statement) = .empty;
+        var statements: std.ArrayList(ast.StatementNode) = .empty;
 
         var current_tk = self.peekCurrent();
         while (current_tk.tag != .eof and current_tk.tag != .dedent) : (current_tk = self.peekCurrent()) {
@@ -32,29 +32,29 @@ pub const Parser = struct {
         return .{ .statements = statements };
     }
 
-    fn parseStmt(self: *Self) !ast.Statement {
+    fn parseStmt(self: *Self) !ast.StatementNode {
         const token = self.peekCurrent();
         self.walk();
 
         switch (token.tag) {
             .let_kw => {
-                return ast.Statement{ .let_stmt = try self.parseLetStmt() };
+                return ast.StatementNode{ .data = .{ .let_stmt = try self.parseLetStmt() }, .loc_start = token.loc.start };
             },
             .if_kw => {
-                return ast.Statement{ .if_stmt = try self.parseIfStmt() };
+                return ast.StatementNode{ .data = .{ .if_stmt = try self.parseIfStmt() }, .loc_start = token.loc.start };
             },
             .for_kw => {
-                return ast.Statement{ .for_stmt = try self.parseForStmt() };
+                return ast.StatementNode{ .data = .{ .for_stmt = try self.parseForStmt() }, .loc_start = token.loc.start };
             },
             .identifier => {
                 if (self.peekCurrent().tag == .assign) {
-                    return ast.Statement{ .assign_stmt = try self.parseAssignStmt(token.value(self.src)) };
+                    return ast.StatementNode{ .data = .{ .assign_stmt = try self.parseAssignStmt(token.value(self.src)) }, .loc_start = token.loc.start };
                 }
 
-                return ast.Statement{ .fn_call_stmt = try self.parseFnCall(token.value(self.src)) };
+                return ast.StatementNode{ .data = .{ .fn_call_stmt = try self.parseFnCall(token.value(self.src)) }, .loc_start = token.loc.start };
             },
             .return_kw => {
-                return ast.Statement{ .return_stmt = try self.parseReturnStmt() };
+                return ast.StatementNode{ .data = .{ .return_stmt = try self.parseReturnStmt() }, .loc_start = token.loc.start };
             },
             else => {
                 return Error.parser("let, if, for, return, ...", token, self.src);
@@ -92,7 +92,7 @@ pub const Parser = struct {
     }
 
     fn parseForStmt(self: *Self) ParserError!ast.ForStmt {
-        var condition: ?*ast.Exp = null;
+        var condition: ?*ast.ExpNode = null;
         if (self.peekCurrent().tag != .indent) {
             condition = try self.parseExpression(0);
         }
@@ -148,7 +148,7 @@ pub const Parser = struct {
         _ = try self.expect(.colon);
         const type_annotation = try self.parseTypeAnnotation();
 
-        var default_value: ?*ast.Exp = null;
+        var default_value: ?*ast.ExpNode = null;
         if (self.match(.assign)) {
             default_value = try self.parseExpression(0);
         }
@@ -157,7 +157,7 @@ pub const Parser = struct {
     }
 
     fn parseFnCall(self: *Self, id: []const u8) ParserError!ast.FnCall {
-        var arguments: std.ArrayList(*ast.Exp) = .empty;
+        var arguments: std.ArrayList(*ast.ExpNode) = .empty;
 
         _ = try self.expect(.l_paren);
 
@@ -170,8 +170,8 @@ pub const Parser = struct {
         return ast.FnCall{ .identifier = id, .arguments = arguments };
     }
 
-    fn parseFnCallArgs(self: *Self) ParserError!std.ArrayList(*ast.Exp) {
-        var arguments: std.ArrayList(*ast.Exp) = .empty;
+    fn parseFnCallArgs(self: *Self) ParserError!std.ArrayList(*ast.ExpNode) {
+        var arguments: std.ArrayList(*ast.ExpNode) = .empty;
 
         while (true) {
             const arg = try self.parseExpression(0);
@@ -194,7 +194,7 @@ pub const Parser = struct {
         return ast.ReturnStmt{ .exp = try self.parseExpression(0) };
     }
 
-    fn parseExpression(self: *Self, min_bp: u8) ParserError!*ast.Exp {
+    fn parseExpression(self: *Self, min_bp: u8) ParserError!*ast.ExpNode {
         var exp = try self.parsePrefix();
 
         while (true) {
@@ -209,38 +209,38 @@ pub const Parser = struct {
             self.walk();
             const right = try self.parseExpression(op_bp);
 
-            exp = try ast.Exp.init(self.allocator, .{ .binary_exp = .{ .left = exp, .op = op, .right = right } });
+            exp = try ast.ExpNode.init(self.allocator, .{ .data = .{ .binary_exp = .{ .left = exp, .op = op, .right = right } }, .loc_start = tk.loc.start });
         }
 
         return exp;
     }
 
-    fn parsePrefix(self: *Self) ParserError!*ast.Exp {
-        const token = self.peekCurrent();
+    fn parsePrefix(self: *Self) ParserError!*ast.ExpNode {
+        const tk = self.peekCurrent();
         self.walk();
 
-        return switch (token.tag) {
+        return switch (tk.tag) {
             .identifier => {
                 const next_tk = self.peekCurrent();
                 if (next_tk.tag == .l_paren) {
-                    return ast.Exp.init(self.allocator, .{ .fn_call = try self.parseFnCall(token.value(self.src)) });
+                    return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_call = try self.parseFnCall(tk.value(self.src)) }, .loc_start = tk.loc.start });
                 }
-                return ast.Exp.init(self.allocator, .{ .identifier = token.value(self.src) });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = tk.value(self.src) }, .loc_start = tk.loc.start });
             },
             .number_literal => {
-                const value = std.fmt.parseFloat(f64, token.value(self.src)) catch {
-                    return Error.parser("number literal", token, self.src);
+                const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
+                    return Error.parser("number literal", tk, self.src);
                 };
-                return ast.Exp.init(self.allocator, .{ .number_literal = value });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .number_literal = value }, .loc_start = tk.loc.start });
             },
             .string_literal => {
-                return ast.Exp.init(self.allocator, .{ .string_literal = token.value(self.src) });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = tk.value(self.src) }, .loc_start = tk.loc.start });
             },
             .true_literal => {
-                return ast.Exp.init(self.allocator, .{ .bool_literal = true });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc_start = tk.loc.start });
             },
             .false_literal => {
-                return ast.Exp.init(self.allocator, .{ .bool_literal = false });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = false }, .loc_start = tk.loc.start });
             },
             .l_paren => {
                 const exp = try self.parseExpression(0);
@@ -248,15 +248,15 @@ pub const Parser = struct {
                 return exp;
             },
             .not, .minus => {
-                const op = try ast.UnaryOp.fromTag(token.tag);
+                const op = try ast.UnaryOp.fromTag(tk.tag);
                 const right = try self.parseExpression(100);
-                return ast.Exp.init(self.allocator, .{ .unary_exp = .{ .op = op, .right = right } });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .unary_exp = .{ .op = op, .right = right } }, .loc_start = tk.loc.start });
             },
             .fn_kw => {
-                return ast.Exp.init(self.allocator, .{ .fn_def = try self.parseFnDef() });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_def = try self.parseFnDef() }, .loc_start = tk.loc.start });
             },
             else => {
-                return Error.parser("valid expression", token, self.src);
+                return Error.parser("valid expression", tk, self.src);
             },
         };
     }

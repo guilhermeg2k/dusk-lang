@@ -1,7 +1,12 @@
 pub const Root = Block;
 
 pub const Block = struct {
-    statements: std.ArrayList(Statement),
+    statements: std.ArrayList(StatementNode),
+};
+
+pub const StatementNode = struct {
+    data: Statement,
+    loc_start: usize,
 };
 
 pub const Statement = union(enum) {
@@ -17,27 +22,40 @@ pub const LetStmt = struct {
     identifier: []const u8,
     is_mut: bool,
     type_annotation: TypeAnnotation,
-    value: *Exp,
+    value: *ExpNode,
 };
 
 pub const IfStmt = struct {
-    condition: *Exp,
+    condition: *ExpNode,
     then_block: Block,
     else_block: ?Block,
 };
 
 pub const ForStmt = struct {
-    condition: ?*Exp,
+    condition: ?*ExpNode,
     do_block: Block,
 };
 
 pub const AssignStmt = struct {
     identifier: []const u8,
-    exp: *Exp,
+    exp: *ExpNode,
 };
 
 pub const TypeAnnotation = struct {
     name: []const u8,
+};
+
+pub const ExpNode = struct {
+    const Self = @This();
+
+    data: Exp,
+    loc_start: usize,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const expPtr = try allocator.create(Self);
+        expPtr.* = exp;
+        return expPtr;
+    }
 };
 
 pub const Exp = union(enum) {
@@ -52,23 +70,17 @@ pub const Exp = union(enum) {
 
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
-
-    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
-        const expPtr = try allocator.create(Self);
-        expPtr.* = exp;
-        return expPtr;
-    }
 };
 
 pub const UnaryExp = struct {
     op: UnaryOp,
-    right: *Exp,
+    right: *ExpNode,
 };
 
 pub const BinaryExp = struct {
-    left: *Exp,
+    left: *ExpNode,
     op: BinaryOp,
-    right: *Exp,
+    right: *ExpNode,
 };
 
 pub const FnDef = struct {
@@ -80,16 +92,16 @@ pub const FnDef = struct {
 pub const FnArg = struct {
     identifier: []const u8,
     type_annotation: TypeAnnotation,
-    default_value: ?*Exp,
+    default_value: ?*ExpNode,
 };
 
 pub const FnCall = struct {
     identifier: []const u8,
-    arguments: std.ArrayList(*Exp),
+    arguments: std.ArrayList(*ExpNode),
 };
 
 pub const ReturnStmt = struct {
-    exp: ?*Exp,
+    exp: ?*ExpNode,
 };
 
 pub const UnaryOp = enum {
