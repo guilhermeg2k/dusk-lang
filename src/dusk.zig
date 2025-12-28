@@ -2,14 +2,6 @@ pub const Dusk = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    lexer: Lexer,
-    parser: Parser,
-    analyzer: SemaAnalyzer,
-    codegen: Generator,
-
-    pub fn init(allocator: std.mem.Allocator) !Self {
-        return .{ .allocator = allocator, .lexer = .{ .allocator = allocator }, .parser = .{ .allocator = allocator }, .analyzer = try SemaAnalyzer.init(allocator, ""), .codegen = .{ .allocator = allocator } };
-    }
 
     pub fn compileAndRunFile(self: *Self, file_path: []const u8) !void {
         const compiled_file_path = try self.compileFile(file_path, null);
@@ -39,16 +31,20 @@ pub const Dusk = struct {
     }
 
     pub fn compile(self: *Self, src: []const u8) ![]const u8 {
-        const tokens = try self.lexer.list(src);
+        var d_lexer = Lexer.init(self.allocator, src);
+        const tokens = try d_lexer.list();
         try self.dump(tokens, "build/tokens.json");
 
-        const ast = try self.parser.parse(src, tokens.items);
+        var d_parser = Parser.init(self.allocator, src, tokens.items);
+        const ast = try d_parser.parse();
         try self.dump(ast, "build/ast.json");
 
-        const ir = try self.analyzer.analyze(src, &ast);
+        var sema_analyzer = try SemaAnalyzer.init(self.allocator, src, &ast);
+        const ir = try sema_analyzer.analyze();
         try self.dump(ir, "build/ir.json");
 
-        const compiled_code = try self.codegen.generate(ir);
+        var js_code_gen = Generator{ .allocator = self.allocator };
+        const compiled_code = try js_code_gen.generate(ir);
         return compiled_code;
     }
 

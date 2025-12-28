@@ -10,7 +10,7 @@ pub fn main() !void {
     _ = args.next();
     const file_name = args.next();
 
-    var dusk_c = try Dusk.init(allocator);
+    var dusk_c = Dusk{ .allocator = allocator };
     if (file_name) |name| {
         try dusk_c.compileAndRunFile(name);
     }

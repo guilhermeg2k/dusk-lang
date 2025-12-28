@@ -5,12 +5,21 @@ pub const Parser = struct {
     tokens: []const Token = &.{},
     src: []const u8 = "",
     cur_index: usize = 0,
-    err_dispatcher: err.ErrorDispatcher = &.{},
+    err_dispatcher: err.ErrorDispatcher,
 
-    pub fn parse(self: *Self, src: []const u8, tokens: []const Token) !ast.Root {
-        self.src = src;
-        self.err_dispatcher.src = src;
-        self.tokens = tokens;
+    pub fn init(allocator: std.mem.Allocator, src: []const u8, tokens: []const Token) Self {
+        return Self{
+            .allocator = allocator,
+            .src = src,
+            .tokens = tokens,
+            .err_dispatcher = .{
+                .allocator = allocator,
+                .src = src,
+            },
+        };
+    }
+
+    pub fn parse(self: *Self) !ast.Root {
         return self.parseBlock();
     }
 
@@ -258,7 +267,7 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_def = try self.parseFnDef() }, .loc_start = tk.loc.start });
             },
             else => {
-                return Error.invalidSyntax("valid expression", tk, self.src);
+                return self.err_dispatcher.invalidSyntax("valid expression", tk);
             },
         };
     }
@@ -284,7 +293,7 @@ pub const Parser = struct {
                 .name = tk.value(self.src),
             },
             else => {
-                return Error.invalidSyntax("type string, number, bool, fn, void, ...", tk, self.src);
+                return self.err_dispatcher.invalidSyntax("type string, number, bool, fn, void, ...", tk);
             },
         };
     }

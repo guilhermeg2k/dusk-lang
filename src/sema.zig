@@ -3,20 +3,22 @@ pub const SemaAnalyzer = struct {
 
     allocator: std.mem.Allocator,
     src: []const u8,
+    ast_root: *const ast.Root,
     program: ir.Program,
     scope: Scope,
     err_dispatcher: err.ErrorDispatcher,
 
-    pub fn init(allocator: std.mem.Allocator, src: []const u8) !Self {
+    pub fn init(allocator: std.mem.Allocator, src: []const u8, ast_root: *const ast.Root) !Self {
         return Self{
             .allocator = allocator,
             .src = src,
+            .ast_root = ast_root,
             .program = .{
                 .instructions = .empty,
                 .functions = .empty,
             },
             .scope = try Scope.init(allocator, .void),
-            .err_dispatcher = .{ .src = src },
+            .err_dispatcher = .{ .allocator = allocator, .src = src },
         };
     }
 
@@ -24,9 +26,8 @@ pub const SemaAnalyzer = struct {
         self.scope.deinit();
     }
 
-    pub fn analyze(self: *Self, src: []const u8, root: *const ast.Root) !ir.Program {
-        self.src = src;
-        self.program.instructions = try self.visitBlock(root);
+    pub fn analyze(self: *Self) !ir.Program {
+        self.program.instructions = try self.visitBlock(self.ast_root);
         return self.program;
     }
 
@@ -62,28 +63,26 @@ pub const SemaAnalyzer = struct {
 
         const var_type = Type.fromString(let_stmt.type_annotation.name);
         if (var_type == null) {
-            return self.err_dispatcher.typeNotDefined(var_type, stmt.loc_start);
+            return self.err_dispatcher.typeNotDefined(@tagName(var_type.?), stmt.loc_start);
         }
 
         const uid = self.scope.genUid();
 
         if (expression_type != var_type) {
-            return self.err_dispatcher.invalidType(var_type, expression_type, "Invalid expression type expected {s} found {s}", .{
-                var_type,
-            }, stmt.data, self.src);
+            return self.err_dispatcher.invalidType(@tagName(var_type.?), @tagName(expression_type), stmt.loc_start);
         }
 
-        try self.scope.symbol_table.put(.{ .identifier = let_stmt.identifier, .uid = uid, .is_mut = let_stmt.is_mut, .type = var_type, .metadata = null });
+        try self.scope.symbol_table.put(.{ .identifier = let_stmt.identifier, .uid = uid, .is_mut = let_stmt.is_mut, .type = var_type.?, .metadata = null });
 
         if (expression_type == .function) {
-            try self.visitFnDef(&let_stmt.value.data.fn_def, let_stmt.identifier);
+            try self.visitFnDef(let_stmt.value, let_stmt.identifier);
             return null;
         }
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
             .identifier = let_stmt.identifier,
-            .type = var_type,
+            .type = var_type.?,
             .value = expression_value,
         } };
     }
@@ -93,7 +92,7 @@ pub const SemaAnalyzer = struct {
         const condition_value = try self.evalExpression(if_stmt.condition);
         const condition_value_type = condition_value.toType();
         if (condition_value_type != .boolean) {
-            return self.err_dispatcher.invalidType("boolean", condition_value_type, stmt.loc_start);
+            return self.err_dispatcher.invalidType("boolean", @tagName(condition_value_type), stmt.loc_start);
         }
 
         const then_block = try self.visitBlock(&if_stmt.then_block);
@@ -113,26 +112,27 @@ pub const SemaAnalyzer = struct {
     fn visitAssignStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const assign_stmt = stmt.data.assign_stmt;
         const identifier_symbol = self.scope.symbol_table.get(assign_stmt.identifier);
-        if (identifier_symbol == null) {
-            return self.err_dispatcher.notDefined(assign_stmt.identifier, stmt.loc_start);
+
+        if (identifier_symbol) |symbol| {
+            const exp_value = try self.evalExpression(assign_stmt.exp);
+            const exp_value_type = exp_value.toType();
+
+            if (!symbol.is_mut) {
+                return self.err_dispatcher.notMutable(assign_stmt.identifier, stmt.loc_start);
+            }
+
+            if (symbol.type != exp_value_type) {
+                return self.err_dispatcher.invalidType(@tagName(symbol.type), @tagName(exp_value_type), stmt.loc_start);
+            }
+
+            return ir.Instruction{ .update_var = .{
+                .identifier = symbol.identifier,
+                .var_uid = symbol.uid,
+                .value = exp_value,
+            } };
         }
 
-        const exp_value = try self.evalExpression(assign_stmt.exp);
-        const exp_value_type = exp_value.toType();
-
-        if (!identifier_symbol.is_mut) {
-            return self.err_dispatcher.notMutable(assign_stmt.identifier, stmt.loc_start);
-        }
-
-        if (identifier_symbol.type != exp_value_type) {
-            return self.err_dispatcher.invalidType(identifier_symbol.type, exp_value, stmt.loc_start);
-        }
-
-        return ir.Instruction{ .update_var = .{
-            .identifier = identifier_symbol.identifier,
-            .var_uid = identifier_symbol.uid,
-            .value = exp_value,
-        } };
+        return self.err_dispatcher.notDefined(assign_stmt.identifier, stmt.loc_start);
     }
 
     fn visitForStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
@@ -140,10 +140,12 @@ pub const SemaAnalyzer = struct {
         var condition_value: ?*ir.Value = null;
 
         if (for_stmt.condition) |condition| {
-            condition_value = try self.evalExpression(condition);
-            const condition_value_type = condition_value.toType();
+            const condition_exp = try self.evalExpression(condition);
+            condition_value = condition_exp;
+            const condition_value_type = condition_exp.toType();
+
             if (condition_value_type != .boolean) {
-                return self.err_dispatcher.invalidType("boolean", condition_value_type, stmt.loc_start);
+                return self.err_dispatcher.invalidType("boolean", @tagName(condition_value_type), stmt.loc_start);
             }
         }
 
@@ -160,7 +162,7 @@ pub const SemaAnalyzer = struct {
         const old_return_type = self.scope.return_type;
         const return_type = Type.fromString(fn_def.return_type.name);
         if (return_type == null) {
-            return self.err_dispatcher.typeNotDefined(return_type, exp.loc_start);
+            return self.err_dispatcher.typeNotDefined(fn_def.return_type.name, exp.loc_start);
         }
 
         var arguments: std.ArrayList(ir.FuncArg) = .empty;
@@ -171,29 +173,41 @@ pub const SemaAnalyzer = struct {
         for (fn_def.arguments.items) |arg| {
             const arg_type = Type.fromString(arg.type_annotation.name);
             if (arg_type == null) {
-                return self.err_dispatcher.typeNotDefined(arg_type, exp.loc_start);
+                return self.err_dispatcher.typeNotDefined(arg.type_annotation.name, exp.loc_start);
             }
 
             try argument_types.append(self.allocator, arg_type.?);
         }
 
-        try self.scope.symbol_table.replace(.{ .identifier = identifier, .uid = fn_uid, .is_mut = false, .type = .function, .metadata = FuncMetadata.init(self.allocator, argument_types, return_type) });
+        try self.scope.symbol_table.replace(.{
+            .identifier = identifier,
+            .uid = fn_uid,
+            .is_mut = false,
+            .type = .function,
+            .metadata = FuncMetadata.init(
+                self.allocator,
+                argument_types,
+                return_type.?,
+            ),
+        });
 
-        try self.scope.enter(return_type);
+        try self.scope.enter(return_type.?);
         defer self.scope.exit(old_return_type);
 
         for (fn_def.arguments.items) |arg| {
             const arg_type = Type.fromString(arg.type_annotation.name).?;
             const uid = self.scope.genUid();
 
-            try self.scope.symbol_table.put(.{
+            self.scope.symbol_table.put(.{
                 .uid = uid,
                 .identifier = arg.identifier,
                 //todo: later this can also be passed as argument
                 .is_mut = false,
                 .type = arg_type,
                 .metadata = null,
-            });
+            }) catch {
+                return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
+            };
 
             try arguments.append(self.allocator, .{
                 .uid = uid,
@@ -207,7 +221,7 @@ pub const SemaAnalyzer = struct {
             .uid = fn_uid,
             .identifier = identifier,
             .args = arguments,
-            .return_type = return_type,
+            .return_type = return_type.?,
             .body = body,
         });
     }
@@ -277,7 +291,7 @@ pub const SemaAnalyzer = struct {
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
         const func_symbol = try self.scope.symbol_table.getOrThrow(fn_call.identifier);
         if (func_symbol.type != .function) {
-            return self.err_dispatcher.invalidType("function", @tagName(func_symbol.type), loc_start, self.src);
+            return self.err_dispatcher.invalidType("function", @tagName(func_symbol.type), loc_start);
         }
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
@@ -300,7 +314,7 @@ pub const SemaAnalyzer = struct {
                 const param_type = fn_data.params_types.items[i];
                 const arg_type = fn_call_arg_value.toType();
                 if (!is_arg_unknown and arg_type != param_type) {
-                    return self.err_dispatcher.invalidType(param_type, arg_type, loc_start);
+                    return self.err_dispatcher.invalidType(@tagName(param_type), @tagName(arg_type), loc_start);
                 }
 
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
@@ -312,18 +326,19 @@ pub const SemaAnalyzer = struct {
         unreachable;
     }
 
-    fn evalIdentifier(self: *Self, exp: *ast.ExpNode) !*ir.Value {
+    fn evalIdentifier(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const id = exp.data.identifier;
         const id_symbol = self.scope.symbol_table.get(id);
-        if (id_symbol == null) {
-            return self.err_dispatcher.notDefined(id_symbol, exp.loc_start);
+
+        if (id_symbol) |symbol| {
+            return ir.Value.init(self.allocator, .{ .identifier = .{
+                .uid = symbol.uid,
+                .identifier = symbol.identifier,
+                .type = symbol.type,
+            } });
         }
 
-        return ir.Value.init(self.allocator, .{ .identifier = .{
-            .uid = id_symbol.uid,
-            .identifier = id_symbol.identifier,
-            .type = id_symbol.type,
-        } });
+        return self.err_dispatcher.notDefined(id, exp.loc_start);
     }
 
     fn evalUnaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -356,13 +371,13 @@ pub const SemaAnalyzer = struct {
         var op_type: Type = .void;
 
         if (left_type != right_type) {
-            return self.err_dispatcher.invalidType(left_type, right_type, exp.loc_start);
+            return self.err_dispatcher.invalidType(@tagName(left_type), @tagName(right_type), exp.loc_start);
         }
 
         switch (bin_exp.op) {
             .add, .sub, .mult, .div, .mod => {
                 if (left_type != .number) {
-                    return self.err_dispatcher.invalidType("number", left_type, exp.loc_start);
+                    return self.err_dispatcher.invalidType("number", @tagName(left_type), exp.loc_start);
                 }
                 op_type = .number;
             },
@@ -370,14 +385,14 @@ pub const SemaAnalyzer = struct {
             //warn: this makes support string comparison by operators
             .eq, .not_eq, .lt, .lt_or_eq, .gt, .gt_or_eq => {
                 if (left_type == .boolean) {
-                    return self.err_dispatcher.invalidType("string, number", left_type, exp.loc_start);
+                    return self.err_dispatcher.invalidType("string, number", @tagName(left_type), exp.loc_start);
                 }
                 op_type = .boolean;
             },
 
             .bool_or, .bool_and => {
                 if (left_type != .boolean) {
-                    return self.err_dispatcher.invalidType("boolean", left_type, exp.loc_start);
+                    return self.err_dispatcher.invalidType("boolean", @tagName(left_type), exp.loc_start);
                 }
                 op_type = .boolean;
             },
@@ -476,7 +491,7 @@ const SymbolTable = struct {
 
     fn put(self: *Self, symbol: Symbol) !void {
         if (self.symbols.get(symbol.identifier)) |_| {
-            return Errors.AlreadyDefined;
+            return Errors.SemaError;
         }
 
         try self.symbols.put(symbol.identifier, symbol);
@@ -546,7 +561,7 @@ pub const Type = enum {
     unknown,
     void,
 
-    pub fn fromString(name: []const u8) Type {
+    pub fn fromString(name: []const u8) ?Type {
         if (std.mem.eql(u8, name, "number")) return .number;
         if (std.mem.eql(u8, name, "bool")) return .boolean;
         if (std.mem.eql(u8, name, "string")) return .string;

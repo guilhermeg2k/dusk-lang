@@ -22,21 +22,28 @@ pub const Lexer = struct {
 
     allocator: std.mem.Allocator,
     src: []const u8 = "",
+    err_dispatcher: err.ErrorDispatcher,
     cur_index: usize = 0,
     last_indentation_level: usize = 0,
     pending_dedents: usize = 0,
     is_first_line: bool = true,
 
-    pub fn list(self: *Self, src: []const u8) !std.ArrayList(Token) {
-        const err_dispatcher = err.ErrorDispatcher{ .src = src };
+    pub fn init(allocator: std.mem.Allocator, src: []const u8) Self {
+        return Self{
+            .allocator = allocator,
+            .src = src,
+            .err_dispatcher = .{ .allocator = allocator, .src = src },
+        };
+    }
+
+    pub fn list(self: *Self) err.Errors!std.ArrayList(Token) {
         var tokens: std.ArrayList(Token) = .empty;
-        self.src = src;
 
         while (true) {
             const tkn = self.next();
 
             if (tkn.tag == Tag.err) {
-                return err_dispatcher.unexpectedToken(tkn);
+                return self.err_dispatcher.unexpectedToken(tkn);
             }
 
             try tokens.append(self.allocator, tkn);
