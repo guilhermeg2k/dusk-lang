@@ -4,7 +4,7 @@
 
 - [x] Single Line Comments
 - [x] Full support for expressions and operators
-- Add possibility to error tracking
+- [x] Improve error messages
 - Fixed sized Arrays
 - Function return type check for all possible branches
 - Organize better internals functions
