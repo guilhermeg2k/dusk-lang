@@ -73,7 +73,7 @@ test "Test: Compile and Run" {
 
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        var dusk = try Dusk.init(arena.allocator());
+        var dusk = Dusk{ .allocator = arena.allocator() };
 
         const output_filename = try std.fmt.allocPrint(arena.allocator(), "test_build/{s}.js", .{case.name});
 
