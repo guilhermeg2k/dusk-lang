@@ -71,6 +71,8 @@ pub const Value = union(enum) {
     i_string: []const u8,
     i_void: void,
 
+    i_array: Array,
+
     identifier: struct { uid: usize, identifier: []const u8, type: Type },
 
     binary_op: BinaryOp,
@@ -81,9 +83,9 @@ pub const Value = union(enum) {
 
     fn_call: FnCall,
 
-    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+    pub fn init(allocator: std.mem.Allocator, value: Self) !*Self {
         const ptr = try allocator.create(Self);
-        ptr.* = exp;
+        ptr.* = value;
         return ptr;
     }
 
@@ -97,10 +99,14 @@ pub const Value = union(enum) {
             .identifier => self.identifier.type,
             .binary_op => self.binary_op.type,
             .unary_op => self.unary_op.type,
+            //warn: this is wrong
+            .i_array => self.i_array.type,
             .fn_call => self.fn_call.return_type,
         };
     }
 };
+
+pub const Array = struct { type: Type, values: []const *Value };
 
 pub const BinaryOp = struct {
     kind: BinaryOpKind,

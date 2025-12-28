@@ -273,6 +273,9 @@ pub const SemaAnalyzer = struct {
             .fn_def => {
                 return ir.Value.init(self.allocator, .{ .fn_def = {} });
             },
+            .array_literal => {
+                return self.evalArrayLiteral(exp);
+            },
             .identifier => {
                 return self.evalIdentifier(exp);
             },
@@ -339,6 +342,37 @@ pub const SemaAnalyzer = struct {
         }
 
         return self.err_dispatcher.notDefined(id, exp.loc_start);
+    }
+
+    fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+        var values: std.ArrayList(*ir.Value) = .empty;
+        const array_literal = exp.data.array_literal;
+        var array_literal_type: Type = .void;
+
+        for (array_literal.exps) |e| {
+            const exp_value = try self.evalExpression(e);
+            const exp_value_type = exp_value.toType();
+
+            if (array_literal_type == .void) {
+                array_literal_type = exp_value_type;
+            }
+
+            if (exp_value_type != array_literal_type) {
+                return self.err_dispatcher.invalidType(@tagName(array_literal_type), @tagName(exp_value_type), exp.loc_start);
+            }
+
+            try values.append(self.allocator, exp_value);
+        }
+
+        return ir.Value.init(
+            self.allocator,
+            .{
+                .i_array = .{
+                    .type = array_literal_type,
+                    .values = try values.toOwnedSlice(self.allocator),
+                },
+            },
+        );
     }
 
     fn evalUnaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {

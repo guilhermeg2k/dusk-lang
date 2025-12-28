@@ -161,6 +161,10 @@ pub const Generator = struct {
             .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
             .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
+            .i_array => {
+                const i_array = try self.genImmediateArray(value.i_array);
+                try buf.appendSlice(self.allocator, i_array);
+            },
 
             .identifier => {
                 const name = try self.genName(value.identifier.uid, value.identifier.identifier);
@@ -216,6 +220,19 @@ pub const Generator = struct {
         };
     }
 
+    fn genImmediateArray(self: *Self, array: ir.Array) ![]const u8 {
+        var buf: std.ArrayList(u8) = .empty;
+
+        try buf.append(self.allocator, '[');
+        for (array.values, 0..) |v, i| {
+            if (i > 0) try buf.append(self.allocator, ',');
+            try buf.appendSlice(self.allocator, try self.genValue(v));
+        }
+
+        try buf.append(self.allocator, ']');
+        return buf.toOwnedSlice(self.allocator);
+    }
+
     fn genUnaryOp(self: *Self, unaryOp: ir.UnaryOp) ![]const u8 {
         const right = try self.genValue(unaryOp.right);
         const op = self.genUnaryOpSymbol(unaryOp.kind);
@@ -237,8 +254,7 @@ pub const Generator = struct {
         try buf.print(self.allocator, "{s}(", .{fn_name});
 
         for (fnCall.args.items, 0..) |arg, i| {
-            if (i > 0) try buf.appendSlice(self.allocator, ", ");
-
+            if (i > 0) try buf.append(self.allocator, ',');
             const arg_value = try self.genValue(arg);
             try buf.appendSlice(self.allocator, arg_value);
         }

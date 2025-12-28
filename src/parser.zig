@@ -181,6 +181,32 @@ pub const Parser = struct {
         return ast.FnCall{ .identifier = id, .arguments = arguments };
     }
 
+    fn parseArrayLiteral(self: *Self) ParserError!ast.ArrayLiteral {
+        var exps: []const *ast.ExpNode = &.{};
+        if (self.peekCurrent().tag != .r_bracket) {
+            exps = try self.parseExpList();
+        }
+
+        _ = try self.expect(.r_bracket);
+
+        return ast.ArrayLiteral{ .exps = exps };
+    }
+
+    fn parseExpList(self: *Self) ParserError![]const *ast.ExpNode {
+        var exps: std.ArrayList(*ast.ExpNode) = .empty;
+
+        while (true) {
+            const exp = try self.parseExpression(0);
+            try exps.append(self.allocator, exp);
+            if (!self.match(.comma)) {
+                break;
+            }
+        }
+
+        return exps.toOwnedSlice(self.allocator);
+    }
+
+    //warn: returning std.ArrayList
     fn parseFnCallArgs(self: *Self) ParserError!std.ArrayList(*ast.ExpNode) {
         var arguments: std.ArrayList(*ast.ExpNode) = .empty;
 
@@ -234,7 +260,13 @@ pub const Parser = struct {
             .identifier => {
                 const next_tk = self.peekCurrent();
                 if (next_tk.tag == .l_paren) {
-                    return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_call = try self.parseFnCall(tk.value(self.src)) }, .loc_start = tk.loc.start });
+                    return ast.ExpNode.init(
+                        self.allocator,
+                        .{
+                            .data = .{ .fn_call = try self.parseFnCall(tk.value(self.src)) },
+                            .loc_start = tk.loc.start,
+                        },
+                    );
                 }
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = tk.value(self.src) }, .loc_start = tk.loc.start });
             },
@@ -252,6 +284,15 @@ pub const Parser = struct {
             },
             .false_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = false }, .loc_start = tk.loc.start });
+            },
+            .l_bracket => {
+                return ast.ExpNode.init(
+                    self.allocator,
+                    .{
+                        .data = .{ .array_literal = try self.parseArrayLiteral() },
+                        .loc_start = tk.loc.start,
+                    },
+                );
             },
             .l_paren => {
                 const exp = try self.parseExpression(0);

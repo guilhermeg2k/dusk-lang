@@ -65,11 +65,16 @@ pub const Exp = union(enum) {
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
+    array_literal: ArrayLiteral,
     fn_def: FnDef,
     fn_call: FnCall,
 
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
+};
+
+pub const ArrayLiteral = struct {
+    exps: []const *ExpNode,
 };
 
 pub const UnaryExp = struct {

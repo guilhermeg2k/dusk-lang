@@ -104,6 +104,12 @@ pub const Lexer = struct {
                 ')' => {
                     return Token.init(Tag.r_paren, self.cur_index, self.cur_index);
                 },
+                '[' => {
+                    return Token.init(Tag.l_bracket, self.cur_index, self.cur_index);
+                },
+                ']' => {
+                    return Token.init(Tag.r_bracket, self.cur_index, self.cur_index);
+                },
                 ':' => {
                     return Token.init(Tag.colon, self.cur_index, self.cur_index);
                 },
@@ -378,6 +384,8 @@ pub const Tag = enum {
     le,
     gt,
     ge,
+    l_bracket,
+    r_bracket,
     l_paren,
     r_paren,
     arrow,
