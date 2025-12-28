@@ -1,6 +1,6 @@
 pub const Program = struct {
-    instructions: std.ArrayList(Instruction),
-    functions: std.ArrayList(Func),
+    instructions: []const Instruction,
+    functions: []const Func,
 
     pub fn deinit(self: *Program) void {
         self.instructions.deinit();
@@ -11,15 +11,15 @@ pub const Program = struct {
 pub const Func = struct {
     uid: usize,
     identifier: []const u8,
-    args: std.ArrayList(FuncArg),
-    return_type: Type,
-    body: std.ArrayList(Instruction),
+    args: []const FuncArg,
+    return_type: *Type,
+    body: []const Instruction,
 };
 
 pub const FuncArg = struct {
     uid: usize,
     identifier: []const u8,
-    type: Type,
+    type: *Type,
 };
 
 pub const Instruction = union(enum) {
@@ -34,7 +34,7 @@ pub const Instruction = union(enum) {
 pub const StoreVar = struct {
     uid: usize,
     identifier: []const u8,
-    type: Type,
+    type: *Type,
     value: *Value,
 };
 
@@ -46,13 +46,13 @@ pub const UpdateVar = struct {
 
 pub const BranchIf = struct {
     condition: *Value,
-    then_block: std.ArrayList(Instruction),
-    else_block: std.ArrayList(Instruction),
+    then_block: []const Instruction,
+    else_block: []const Instruction,
 };
 
 pub const Loop = struct {
     condition: ?*Value,
-    do_block: std.ArrayList(Instruction),
+    do_block: []const Instruction,
 };
 
 pub const ReturnStmt = struct {
@@ -73,7 +73,7 @@ pub const Value = union(enum) {
 
     i_array: Array,
 
-    identifier: struct { uid: usize, identifier: []const u8, type: Type },
+    identifier: struct { uid: usize, identifier: []const u8, type: *Type },
 
     binary_op: BinaryOp,
 
@@ -88,44 +88,28 @@ pub const Value = union(enum) {
         ptr.* = value;
         return ptr;
     }
-
-    pub fn toType(self: *Self) Type {
-        return switch (self.*) {
-            .i_float => .number,
-            .i_bool => .boolean,
-            .i_string => .string,
-            .i_void => .void,
-            .fn_def => .function,
-            .identifier => self.identifier.type,
-            .binary_op => self.binary_op.type,
-            .unary_op => self.unary_op.type,
-            //warn: this is wrong
-            .i_array => self.i_array.type,
-            .fn_call => self.fn_call.return_type,
-        };
-    }
 };
 
-pub const Array = struct { type: Type, values: []const *Value };
+pub const Array = struct { type: *Type, values: []const *Value };
 
 pub const BinaryOp = struct {
     kind: BinaryOpKind,
-    type: Type,
+    type: *Type,
     left: *Value,
     right: *Value,
 };
 
 pub const UnaryOp = struct {
     kind: UnaryOpKind,
-    type: Type,
+    type: *Type,
     right: *Value,
 };
 
 pub const FnCall = struct {
     fn_uid: usize,
     identifier: []const u8,
-    args: std.ArrayList(*Value),
-    return_type: Type,
+    args: []const *Value,
+    return_type: *Type,
 };
 
 pub const UnaryOpKind = enum {

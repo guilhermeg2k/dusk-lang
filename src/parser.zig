@@ -178,7 +178,7 @@ pub const Parser = struct {
 
         _ = try self.expect(.r_paren);
 
-        return ast.FnCall{ .identifier = id, .arguments = arguments };
+        return ast.FnCall{ .identifier = id, .arguments = try arguments.toOwnedSlice(self.allocator) };
     }
 
     fn parseArrayLiteral(self: *Self) ParserError!ast.ArrayLiteral {
@@ -325,13 +325,18 @@ pub const Parser = struct {
         };
     }
 
-    fn parseTypeAnnotation(self: *Self) !ast.TypeAnnotation {
-        defer self.walk();
+    fn parseTypeAnnotation(self: *Self) !*ast.TypeAnnotation {
         const tk = self.peekCurrent();
+        self.walk();
 
         return switch (tk.tag) {
-            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation{
-                .name = tk.value(self.src),
+            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{ .name = tk.value(self.src) }),
+            .l_bracket => {
+                _ = try self.expect(.r_bracket);
+                const arr_type = try self.parseTypeAnnotation();
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .array = arr_type,
+                });
             },
             else => {
                 return self.err_dispatcher.invalidSyntax("type string, number, bool, fn, void, ...", tk);

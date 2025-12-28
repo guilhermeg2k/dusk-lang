@@ -21,7 +21,7 @@ pub const Statement = union(enum) {
 pub const LetStmt = struct {
     identifier: []const u8,
     is_mut: bool,
-    type_annotation: TypeAnnotation,
+    type_annotation: *TypeAnnotation,
     value: *ExpNode,
 };
 
@@ -41,8 +41,16 @@ pub const AssignStmt = struct {
     exp: *ExpNode,
 };
 
-pub const TypeAnnotation = struct {
+pub const TypeAnnotation = union(enum) {
+    const Self = @This();
     name: []const u8,
+    array: *TypeAnnotation,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
+    }
 };
 
 pub const ExpNode = struct {
@@ -52,9 +60,9 @@ pub const ExpNode = struct {
     loc_start: usize,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
-        const expPtr = try allocator.create(Self);
-        expPtr.* = exp;
-        return expPtr;
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
     }
 };
 
@@ -90,19 +98,19 @@ pub const BinaryExp = struct {
 
 pub const FnDef = struct {
     arguments: std.ArrayList(FnArg),
-    return_type: TypeAnnotation,
+    return_type: *TypeAnnotation,
     body_block: Block,
 };
 
 pub const FnArg = struct {
     identifier: []const u8,
-    type_annotation: TypeAnnotation,
+    type_annotation: *TypeAnnotation,
     default_value: ?*ExpNode,
 };
 
 pub const FnCall = struct {
     identifier: []const u8,
-    arguments: std.ArrayList(*ExpNode),
+    arguments: []const *ExpNode,
 };
 
 pub const ReturnStmt = struct {
