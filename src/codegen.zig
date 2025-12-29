@@ -46,6 +46,10 @@ pub const Generator = struct {
                     const str = try self.genUpdateVar(instruction.update_var);
                     try buf.appendSlice(self.allocator, str);
                 },
+                .update_indexed => {
+                    const str = try self.genStoreVar(instruction.store_var);
+                    try buf.appendSlice(self.allocator, str);
+                },
                 .branch_if => {
                     const str = try self.genBranchIf(instruction.branch_if);
                     try buf.appendSlice(self.allocator, str);
@@ -85,6 +89,16 @@ pub const Generator = struct {
         const value = try self.genValue(update_var.value);
 
         try buf.print(self.allocator, "{s} = {s};\n", .{ var_name, value });
+        return buf.toOwnedSlice(self.allocator);
+    }
+
+    fn genUpdateIndexed(self: *Self, update_indexed: ir.UpdateIndexed) ![]const u8 {
+        var buf: std.ArrayList(u8) = .empty;
+
+        const target = try self.genValue(update_indexed.value);
+        const value = try self.genValue(update_indexed.value);
+
+        try buf.print(self.allocator, "{s} = {s};\n", .{ target, value });
         return buf.toOwnedSlice(self.allocator);
     }
 
@@ -161,11 +175,16 @@ pub const Generator = struct {
             .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
             .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
+            .index_exp => {
+                const target = value.index_exp.target.identifier;
+                const index = value.index_exp.index.i_float;
+                const name = try self.genName(target.uid, target.identifier);
+                try buf.print(self.allocator, "{s}[{d}]", .{ name, index });
+            },
             .i_array => {
                 const i_array = try self.genImmediateArray(value.i_array);
                 try buf.appendSlice(self.allocator, i_array);
             },
-
             .identifier => {
                 const name = try self.genName(value.identifier.uid, value.identifier.identifier);
                 try buf.appendSlice(self.allocator, name);

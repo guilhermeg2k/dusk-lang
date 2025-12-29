@@ -45,7 +45,6 @@ pub const Parser = struct {
 
     fn parseStmt(self: *Self) !ast.StatementNode {
         const tk = self.peekCurrent();
-        self.walk();
 
         switch (tk.tag) {
             .let_kw => {
@@ -58,11 +57,20 @@ pub const Parser = struct {
                 return ast.StatementNode{ .data = .{ .for_stmt = try self.parseForStmt() }, .loc_start = tk.loc.start };
             },
             .identifier => {
-                if (self.peekCurrent().tag == .assign) {
-                    return ast.StatementNode{ .data = .{ .assign_stmt = try self.parseAssignStmt(tk.value(self.src)) }, .loc_start = tk.loc.start };
+                const expr = try self.parseExp(0);
+
+                if (self.match(.assign)) {
+                    const assign_exp = try self.parseExp(0);
+                    return ast.StatementNode{
+                        .data = .{ .assign_stmt = .{
+                            .target = expr,
+                            .exp = assign_exp,
+                        } },
+                        .loc_start = expr.loc_start,
+                    };
                 }
 
-                return ast.StatementNode{ .data = .{ .fn_call_stmt = try self.parseFnCall(tk.value(self.src)) }, .loc_start = tk.loc.start };
+                return ast.StatementNode{ .data = .{ .expression_stmt = expr }, .loc_start = tk.loc.start };
             },
             .return_kw => {
                 return ast.StatementNode{ .data = .{ .return_stmt = try self.parseReturnStmt() }, .loc_start = tk.loc.start };
@@ -74,18 +82,20 @@ pub const Parser = struct {
     }
 
     fn parseLetStmt(self: *Self) !ast.LetStmt {
+        self.walk();
         const is_mutable = self.match(.mut_kw);
         const identifier_token = try self.expect(.identifier);
         _ = try self.expect(.colon);
         const type_annotation = try self.parseTypeAnnotation();
         _ = try self.expect(.assign);
-        const value = try self.parseExpression(0);
+        const value = try self.parseExp(0);
 
         return ast.LetStmt{ .identifier = identifier_token.value(self.src), .is_mut = is_mutable, .type_annotation = type_annotation, .value = value };
     }
 
     fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {
-        const exp = try self.parseExpression(0);
+        self.walk();
+        const exp = try self.parseExp(0);
         var else_block: ?ast.Block = null;
 
         _ = try self.expect(.indent);
@@ -103,9 +113,10 @@ pub const Parser = struct {
     }
 
     fn parseForStmt(self: *Self) ParserError!ast.ForStmt {
+        self.walk();
         var condition: ?*ast.ExpNode = null;
         if (self.peekCurrent().tag != .indent) {
-            condition = try self.parseExpression(0);
+            condition = try self.parseExp(0);
         }
 
         _ = try self.expect(.indent);
@@ -116,7 +127,7 @@ pub const Parser = struct {
 
     fn parseAssignStmt(self: *Self, id: []const u8) ParserError!ast.AssignStmt {
         _ = try self.expect(.assign);
-        const exp = try self.parseExpression(0);
+        const exp = try self.parseexpression(0);
         return ast.AssignStmt{ .identifier = id, .exp = exp };
     }
 
@@ -161,24 +172,10 @@ pub const Parser = struct {
 
         var default_value: ?*ast.ExpNode = null;
         if (self.match(.assign)) {
-            default_value = try self.parseExpression(0);
+            default_value = try self.parseExp(0);
         }
 
         return ast.FnArg{ .identifier = id, .type_annotation = type_annotation, .default_value = default_value };
-    }
-
-    fn parseFnCall(self: *Self, id: []const u8) ParserError!ast.FnCall {
-        var arguments: std.ArrayList(*ast.ExpNode) = .empty;
-
-        _ = try self.expect(.l_paren);
-
-        if (self.peekCurrent().tag != .r_paren) {
-            arguments = try self.parseFnCallArgs();
-        }
-
-        _ = try self.expect(.r_paren);
-
-        return ast.FnCall{ .identifier = id, .arguments = try arguments.toOwnedSlice(self.allocator) };
     }
 
     fn parseArrayLiteral(self: *Self) ParserError!ast.ArrayLiteral {
@@ -196,7 +193,7 @@ pub const Parser = struct {
         var exps: std.ArrayList(*ast.ExpNode) = .empty;
 
         while (true) {
-            const exp = try self.parseExpression(0);
+            const exp = try self.parseExp(0);
             try exps.append(self.allocator, exp);
             if (!self.match(.comma)) {
                 break;
@@ -206,33 +203,28 @@ pub const Parser = struct {
         return exps.toOwnedSlice(self.allocator);
     }
 
-    //warn: returning std.ArrayList
-    fn parseFnCallArgs(self: *Self) ParserError!std.ArrayList(*ast.ExpNode) {
-        var arguments: std.ArrayList(*ast.ExpNode) = .empty;
-
-        while (true) {
-            const arg = try self.parseExpression(0);
-            try arguments.append(self.allocator, arg);
-
-            if (!self.match(.comma)) {
-                break;
-            }
+    fn parseFnCallArgs(self: *Self) ParserError![]const *ast.ExpNode {
+        if (self.peekCurrent().tag == .r_paren) {
+            return &.{};
         }
 
-        return arguments;
+        return self.parseExpList();
     }
 
     fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
+        self.walk();
         const cur_tk = self.peekCurrent();
+
         if (cur_tk.tag == .new_line or cur_tk.tag == .dedent or cur_tk.tag == .eof) {
             return ast.ReturnStmt{ .exp = null };
         }
 
-        return ast.ReturnStmt{ .exp = try self.parseExpression(0) };
+        return ast.ReturnStmt{ .exp = try self.parseExp(0) };
     }
 
-    fn parseExpression(self: *Self, min_bp: u8) ParserError!*ast.ExpNode {
+    fn parseExp(self: *Self, min_bp: u8) ParserError!*ast.ExpNode {
         var exp = try self.parsePrefix();
+        exp = try self.parsePostfix(exp);
 
         while (true) {
             const tk = self.peekCurrent();
@@ -244,7 +236,7 @@ pub const Parser = struct {
             const op = try ast.BinaryOp.fromTag(op_token.tag);
 
             self.walk();
-            const right = try self.parseExpression(op_bp);
+            const right = try self.parseExp(op_bp);
 
             exp = try ast.ExpNode.init(self.allocator, .{ .data = .{ .binary_exp = .{ .left = exp, .op = op, .right = right } }, .loc_start = tk.loc.start });
         }
@@ -258,16 +250,6 @@ pub const Parser = struct {
 
         return switch (tk.tag) {
             .identifier => {
-                const next_tk = self.peekCurrent();
-                if (next_tk.tag == .l_paren) {
-                    return ast.ExpNode.init(
-                        self.allocator,
-                        .{
-                            .data = .{ .fn_call = try self.parseFnCall(tk.value(self.src)) },
-                            .loc_start = tk.loc.start,
-                        },
-                    );
-                }
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = tk.value(self.src) }, .loc_start = tk.loc.start });
             },
             .number_literal => {
@@ -295,13 +277,13 @@ pub const Parser = struct {
                 );
             },
             .l_paren => {
-                const exp = try self.parseExpression(0);
+                const exp = try self.parseExp(0);
                 _ = try self.expect(.r_paren);
                 return exp;
             },
             .not, .minus => {
                 const op = try ast.UnaryOp.fromTag(tk.tag);
-                const right = try self.parseExpression(100);
+                const right = try self.parseExp(100);
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .unary_exp = .{ .op = op, .right = right } }, .loc_start = tk.loc.start });
             },
             .fn_kw => {
@@ -311,6 +293,53 @@ pub const Parser = struct {
                 return self.err_dispatcher.invalidSyntax("valid expression", tk);
             },
         };
+    }
+
+    fn parsePostfix(self: *Self, left: *ast.ExpNode) ParserError!*ast.ExpNode {
+        var node = left;
+
+        while (true) {
+            const tk = self.peekCurrent();
+
+            if (tk.tag == .l_paren) {
+                self.walk();
+                const args = try self.parseFnCallArgs();
+                _ = try self.expect(.r_paren);
+
+                const call_node = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{
+                        .fn_call = .{
+                            .identifier = node.data.identifier,
+                            .arguments = args,
+                        },
+                    },
+                    .loc_start = node.loc_start,
+                });
+
+                node = call_node;
+                //warn: this is supporting only simple fn calls
+                continue;
+            }
+
+            if (tk.tag == .l_bracket) {
+                self.walk();
+
+                const index = try self.parseExp(0);
+                _ = try self.expect(.r_bracket);
+
+                const index_node = try ast.ExpNode.init(self.allocator, .{ .data = .{ .index_exp = .{
+                    .target = node,
+                    .index = index,
+                } }, .loc_start = node.loc_start });
+
+                node = index_node;
+                continue;
+            }
+
+            break;
+        }
+
+        return node;
     }
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {
@@ -381,11 +410,11 @@ pub const Parser = struct {
     }
 
     fn peekNextN(self: *Self, n: usize) Token {
-        if (self.cur_index + n >= self.tokens.items.len) {
+        if (self.cur_index + n >= self.tokens.len) {
             return Token.init(Tag.eof, 0, 0);
         }
 
-        return self.tokens.items[self.cur_index + n];
+        return self.tokens[self.cur_index + n];
     }
 };
 

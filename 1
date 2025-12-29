@@ -14,8 +14,8 @@ pub const Statement = union(enum) {
     if_stmt: IfStmt,
     for_stmt: ForStmt,
     assign_stmt: AssignStmt,
+    fn_call_stmt: FnCall,
     return_stmt: ReturnStmt,
-    expression_stmt: *ExpNode,
 };
 
 pub const LetStmt = struct {
@@ -98,7 +98,6 @@ pub const BinaryExp = struct {
 };
 
 pub const FnDef = struct {
-    //warn: array
     arguments: std.ArrayList(FnArg),
     return_type: *TypeAnnotation,
     body_block: Block,

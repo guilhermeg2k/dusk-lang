@@ -25,7 +25,7 @@
 - Enum
 - Union (Zig-like)
 - Error Handling
-- Closures (& fn as argument)
+- Closures (& fn as anything (argument, item, etc))
 - Pattern match
 - Pipe operator
 - Ternary operator

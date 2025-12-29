@@ -29,6 +29,13 @@ pub const Instruction = union(enum) {
     loop: Loop,
     return_stmt: ReturnStmt,
     expression_stmt: ExpressionStmt,
+    update_indexed: UpdateIndexed,
+};
+
+pub const UpdateIndexed = struct {
+    target: *Value,
+    index: *Value,
+    value: *Value,
 };
 
 pub const StoreVar = struct {
@@ -75,6 +82,8 @@ pub const Value = union(enum) {
 
     identifier: struct { uid: usize, identifier: []const u8, type: *Type },
 
+    index_exp: IndexedValue,
+
     binary_op: BinaryOp,
 
     unary_op: UnaryOp,
@@ -97,6 +106,11 @@ pub const BinaryOp = struct {
     type: *Type,
     left: *Value,
     right: *Value,
+};
+
+pub const IndexedValue = struct {
+    target: *Value,
+    index: *Value,
 };
 
 pub const UnaryOp = struct {

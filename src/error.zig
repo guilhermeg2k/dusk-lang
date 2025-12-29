@@ -16,7 +16,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "Expected {s} found \"{s}\"",
+                "Invalid Syntax: expected {s} found \"{s}\"",
                 .{ expected, token.value(self.src) },
             ),
             token.loc.start,
@@ -29,6 +29,42 @@ pub const ErrorDispatcher = struct {
             try allocPrint(
                 self.allocator,
                 "Invalid type: expected {s} found {s}",
+                .{ expected, found },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
+    pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Invalid expression: expected {s} found {s}",
+                .{ expected, found },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
+    pub fn invalidIndexing(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Invalid indexing: expected {s} found {s}",
+                .{ expected, found },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
+    pub fn invalidAssignment(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Invalid assignment: expected {s} found {s}",
                 .{ expected, found },
             ),
             loc,

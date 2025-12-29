@@ -1,3 +1,5 @@
-let arr: []number = [1,2,3,4]
+let mut arr: []number = [1,2,3,4]
+arr[1] = 2
+echo(arr)
 
 

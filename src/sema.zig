@@ -58,9 +58,7 @@ pub const SemaAnalyzer = struct {
                 .assign_stmt => try self.visitAssignStmt(&stmt),
                 .if_stmt => try self.visitIfStmt(&stmt),
                 .for_stmt => try self.visitForStmt(&stmt),
-                .fn_call_stmt => ir.Instruction{
-                    .expression_stmt = .{ .value = try self.evalFnCall(&stmt.data.fn_call_stmt, stmt.loc_start) },
-                },
+                .expression_stmt => try self.visitExpressionStmt(&stmt),
                 .return_stmt => try self.visitReturnStmt(&stmt),
             };
 
@@ -72,9 +70,21 @@ pub const SemaAnalyzer = struct {
         return instructions.toOwnedSlice(self.allocator);
     }
 
+    fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
+        const expression_stmt = stmt.data.expression_stmt;
+
+        if (expression_stmt.data != .fn_call) {
+            return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), stmt.loc_start);
+        }
+
+        return ir.Instruction{
+            .expression_stmt = .{ .value = try self.evalFnCall(&expression_stmt.data.fn_call, stmt.loc_start) },
+        };
+    }
+
     fn visitLetStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
         const let_stmt = stmt.data.let_stmt;
-        const expression_value = try self.evalExpression(let_stmt.value);
+        const expression_value = try self.evalExp(let_stmt.value);
         const expression_type = self.resolveValueType(expression_value);
 
         //warn: this maybe crash
@@ -111,7 +121,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const if_stmt = stmt.data.if_stmt;
-        const condition_value = try self.evalExpression(if_stmt.condition);
+        const condition_value = try self.evalExp(if_stmt.condition);
         const condition_value_type = self.resolveValueType(condition_value);
         if (!condition_value_type.eql(self.bool_type)) {
             return self.err_dispatcher.invalidType("boolean", try condition_value_type.name(self.allocator), stmt.loc_start);
@@ -133,28 +143,74 @@ pub const SemaAnalyzer = struct {
 
     fn visitAssignStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const assign_stmt = stmt.data.assign_stmt;
-        const identifier_symbol = self.scope.symbol_table.get(assign_stmt.identifier);
 
-        if (identifier_symbol) |symbol| {
-            const exp_value = try self.evalExpression(assign_stmt.exp);
-            const exp_value_type = self.resolveValueType(exp_value);
+        switch (assign_stmt.target.data) {
+            .identifier => {
+                const id = assign_stmt.target.data.identifier;
+                const id_symbol = self.scope.symbol_table.getOrThrow(id) catch {
+                    return self.err_dispatcher.notDefined(id, stmt.loc_start);
+                };
 
-            if (!symbol.is_mut) {
-                return self.err_dispatcher.notMutable(assign_stmt.identifier, stmt.loc_start);
-            }
+                const assignment_value = try self.evalExp(assign_stmt.exp);
+                const assignment_value_type = self.resolveValueType(assignment_value);
 
-            if (!symbol.type.eql(exp_value_type)) {
-                return self.err_dispatcher.invalidType(try symbol.type.name(self.allocator), try exp_value_type.name(self.allocator), stmt.loc_start);
-            }
+                if (!id_symbol.is_mut) {
+                    return self.err_dispatcher.notMutable(id, stmt.loc_start);
+                }
 
-            return ir.Instruction{ .update_var = .{
-                .identifier = symbol.identifier,
-                .var_uid = symbol.uid,
-                .value = exp_value,
-            } };
+                if (!id_symbol.type.eql(assignment_value_type)) {
+                    return self.err_dispatcher.invalidType(
+                        try id_symbol.type.name(self.allocator),
+                        try assignment_value_type.name(self.allocator),
+                        stmt.loc_start,
+                    );
+                }
+
+                return ir.Instruction{ .update_var = .{
+                    .identifier = id_symbol.identifier,
+                    .var_uid = id_symbol.uid,
+                    .value = assignment_value,
+                } };
+            },
+            .index_exp => {
+                const index_exp = assign_stmt.target.data.index_exp;
+                const id = index_exp.target.data.identifier;
+                const target_symbol = self.scope.symbol_table.getOrThrow(id) catch {
+                    return self.err_dispatcher.notDefined(id, stmt.loc_start);
+                };
+
+                if (!target_symbol.is_mut) {
+                    return self.err_dispatcher.notMutable(id, stmt.loc_start);
+                }
+
+                const assignment_value = try self.evalExp(assign_stmt.exp);
+                const assignment_value_type = self.resolveValueType(assignment_value);
+
+                if (!target_symbol.type.eql(assignment_value_type)) {
+                    return self.err_dispatcher.invalidType(
+                        try target_symbol.type.name(self.allocator),
+                        try assignment_value_type.name(self.allocator),
+                        stmt.loc_start,
+                    );
+                }
+
+                const target_exp = try self.evalExp(index_exp.target);
+                const index = try self.evalExp(index_exp.index);
+
+                return ir.Instruction{ .update_indexed = .{
+                    .target = target_exp,
+                    .index = index,
+                    .value = assignment_value,
+                } };
+            },
+            else => {
+                return self.err_dispatcher.invalidAssignment(
+                    "identifier or identifier[n]",
+                    @tagName(assign_stmt.target.data),
+                    stmt.loc_start,
+                );
+            },
         }
-
-        return self.err_dispatcher.notDefined(assign_stmt.identifier, stmt.loc_start);
     }
 
     fn visitForStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
@@ -162,7 +218,7 @@ pub const SemaAnalyzer = struct {
         var condition_value: ?*ir.Value = null;
 
         if (for_stmt.condition) |condition| {
-            const condition_exp = try self.evalExpression(condition);
+            const condition_exp = try self.evalExp(condition);
             condition_value = condition_exp;
             const condition_value_type = self.resolveValueType(condition_exp);
 
@@ -258,7 +314,7 @@ pub const SemaAnalyzer = struct {
         const return_stmt = stmt.data.return_stmt;
 
         if (return_stmt.exp) |exp| {
-            const exp_value = try self.evalExpression(exp);
+            const exp_value = try self.evalExp(exp);
             const exp_value_type = self.resolveValueType(exp_value);
 
             if (!exp_value_type.eql(self.scope.return_type)) {
@@ -274,7 +330,7 @@ pub const SemaAnalyzer = struct {
             } };
         }
 
-        if (self.scope.return_type.eql(self.void_type)) {
+        if (!self.scope.return_type.eql(self.void_type)) {
             return self.err_dispatcher.invalidType(
                 try self.scope.return_type.name(self.allocator),
                 "void",
@@ -287,7 +343,7 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn evalExpression(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
+    fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
             .number_literal => {
                 return ir.Value.init(self.allocator, .{ .i_float = exp.data.number_literal });
@@ -310,6 +366,9 @@ pub const SemaAnalyzer = struct {
             .fn_call => {
                 return self.evalFnCall(&exp.data.fn_call, exp.loc_start);
             },
+            .index_exp => {
+                return self.evalIndexedExp(exp);
+            },
             .unary_exp => {
                 return self.evalUnaryExp(exp);
             },
@@ -320,7 +379,10 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
-        const func_symbol = try self.scope.symbol_table.getOrThrow(fn_call.identifier);
+        const func_symbol = self.scope.symbol_table.getOrThrow(fn_call.identifier) catch {
+            return self.err_dispatcher.notDefined(fn_call.identifier, loc_start);
+        };
+
         if (!func_symbol.type.eql(self.type_fn)) {
             return self.err_dispatcher.invalidType(
                 "function",
@@ -344,7 +406,7 @@ pub const SemaAnalyzer = struct {
             }
 
             for (fn_call.arguments, 0..) |arg, i| {
-                const fn_call_arg_value = try self.evalExpression(arg);
+                const fn_call_arg_value = try self.evalExp(arg);
 
                 const param_type = fn_data.params_types[i];
                 const arg_type = self.resolveValueType(fn_call_arg_value);
@@ -359,6 +421,33 @@ pub const SemaAnalyzer = struct {
         }
 
         unreachable;
+    }
+
+    fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+        const index_exp = exp.data.index_exp;
+        const target = try self.evalExp(index_exp.target);
+        const target_type = self.resolveValueType(target);
+
+        if (target.* != .identifier) {
+            return self.err_dispatcher.invalidExpression("identifier", @tagName(target.*), exp.loc_start);
+        }
+
+        if (target_type.* != .array) {
+            return self.err_dispatcher.invalidType("array", try target_type.name(self.allocator), exp.loc_start);
+        }
+
+        const index = try self.evalExp(index_exp.target);
+
+        if (index.* != .i_float) {
+            return self.err_dispatcher.invalidIndexing("number", @tagName(index.*), exp.loc_start);
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .index_exp = .{
+                .target = target,
+                .index = index,
+            },
+        });
     }
 
     fn evalIdentifier(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -382,7 +471,7 @@ pub const SemaAnalyzer = struct {
         var array_literal_type: *Type = self.void_type;
 
         for (array_literal.exps) |e| {
-            const exp_value = try self.evalExpression(e);
+            const exp_value = try self.evalExp(e);
             const exp_value_type = self.resolveValueType(exp_value);
 
             if (array_literal_type.eql(self.void_type)) {
@@ -400,7 +489,7 @@ pub const SemaAnalyzer = struct {
             self.allocator,
             .{
                 .i_array = .{
-                    .type = array_literal_type,
+                    .type = try Type.init(self.allocator, .{ .array = array_literal_type }),
                     .values = try values.toOwnedSlice(self.allocator),
                 },
             },
@@ -409,7 +498,7 @@ pub const SemaAnalyzer = struct {
 
     fn evalUnaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const unary_exp = exp.data.unary_exp;
-        const exp_value = try self.evalExpression(unary_exp.right);
+        const exp_value = try self.evalExp(unary_exp.right);
         const exp_type = self.resolveValueType(exp_value);
 
         switch (unary_exp.op) {
@@ -438,8 +527,8 @@ pub const SemaAnalyzer = struct {
 
     fn evalBinaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const bin_exp = exp.data.binary_exp;
-        const left_value = try self.evalExpression(bin_exp.left);
-        const right_value = try self.evalExpression(bin_exp.right);
+        const left_value = try self.evalExp(bin_exp.left);
+        const right_value = try self.evalExp(bin_exp.right);
         const left_type = self.resolveValueType(left_value);
         const right_type = self.resolveValueType(right_value);
         var op_type: *Type = self.void_type;
@@ -527,6 +616,8 @@ pub const SemaAnalyzer = struct {
             .identifier => value.identifier.type,
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
+            //warn: wrong
+            .index_exp => value.index_exp.target.identifier.type,
             .i_array => value.i_array.type,
             .fn_call => value.fn_call.return_type,
         };
