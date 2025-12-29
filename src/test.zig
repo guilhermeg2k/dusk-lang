@@ -68,7 +68,31 @@ test "Test: Compile and Run" {
             .src_file = "test/expressions.dsk",
             .expected_output = "7\n9\n11\n1\n5\n11\n-2\n-8\n5\ntrue\ntrue\nfalse\nfalse\n46\n8\n",
         },
-        .{ .name = "mut array", .src_file = "test/mut-array.dsk", .expected_output = "[ 1, 3, 5, 7 ]" },
+        .{
+            .name = "mut array",
+            .src_file = "test/mut-array.dsk",
+            .expected_output = "[ 1, 3, 5, 7 ]",
+        },
+        .{
+            .name = "bubble sort",
+            .src_file = "test/bubble-sort.dsk",
+            .expected_output = "[ 1, 2, 22, 51, 100, 321, 500, 21312, 21312 ]",
+        },
+        .{
+            .name = "filter evens",
+            .src_file = "test/filter-evens.dsk",
+            .expected_output = "[ 10, 34, 100, 20, 10, 40 ]",
+        },
+        .{
+            .name = "reverse array",
+            .src_file = "test/reverse-array.dsk",
+            .expected_output = "[ \"Não\", \"Eu\", \"Hoje\", \"Doutor\", \"General\", \"Salve\" ]",
+        },
+        .{
+            .name = "find-max",
+            .src_file = "test/find-max.dsk",
+            .expected_output = "21312312321\n0\n10000\n1",
+        },
     };
 
     try std.fs.cwd().makePath("test_build");

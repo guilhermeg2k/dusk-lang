@@ -1,0 +1,21 @@
+let find_max: fn = fn(arr: []number) -> number
+    let n: number = len(arr)
+
+    if n == 0
+        return 0 
+
+    let mut max_val: number = arr[0]
+    let mut i: number = 1
+
+    for i < n
+        let current: number = arr[i]
+        if current > max_val
+            max_val = current
+
+        i = i + 1
+
+    return max_val
+echo(find_max([10, 50, 5, 213, 2131, 21312312321, 321321]))
+echo(find_max([]))
+echo(find_max([10000]))
+echo(find_max([0, 0, 0, 0, 0, 0, 0, 1]))

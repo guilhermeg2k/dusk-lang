@@ -13,7 +13,7 @@ pub const SemaAnalyzer = struct {
     bool_type: *Type,
     type_fn: *Type,
     void_type: *Type,
-    unkown_type: *Type,
+    anytype_type: *Type,
 
     pub fn init(allocator: std.mem.Allocator, src: []const u8, ast_root: *const ast.Root) !Self {
         const void_type = try Type.init(allocator, .void);
@@ -33,7 +33,7 @@ pub const SemaAnalyzer = struct {
             .bool_type = try Type.init(allocator, .boolean),
             .type_fn = try Type.init(allocator, .function),
             .void_type = void_type,
-            .unkown_type = try Type.init(allocator, .unknown),
+            .anytype_type = try Type.init(allocator, ._anytype),
         };
     }
 
@@ -94,7 +94,7 @@ pub const SemaAnalyzer = struct {
 
         const uid = self.scope.genUid();
 
-        if (!expression_type.eql(var_type)) {
+        if (!expression_type.eql(var_type) and !expression_type.eql(var_type)) {
             return self.err_dispatcher.invalidType(try var_type.name(self.allocator), try expression_type.name(self.allocator), stmt.loc_start);
         }
 
@@ -283,7 +283,8 @@ pub const SemaAnalyzer = struct {
         try self.scope.symbol_table.replace(.{
             .identifier = identifier,
             .uid = fn_uid,
-            .is_mut = false,
+            //warn: this needs to be passed
+            .is_mut = true,
             .type = self.type_fn,
             .metadata = .{
                 .params_types = try argument_types.toOwnedSlice(self.allocator),
@@ -305,7 +306,7 @@ pub const SemaAnalyzer = struct {
                 .uid = uid,
                 .identifier = arg.identifier,
                 //todo: later this can also be passed as argument
-                .is_mut = false,
+                .is_mut = true,
                 .type = arg_type,
                 .metadata = null,
             }) catch {
@@ -416,11 +417,11 @@ pub const SemaAnalyzer = struct {
             //if arg[0] is unknown it disables any check for the fn_call
             //currently this is only useful for allowing anything as arg for the echo function
             //when echo function be propertly implemented this should be modified
-            const is_arg_unknown = fn_data.params_types.len == 1 and fn_data.params_types[0].eql(self.unkown_type);
+            const is_arg_anytype = fn_data.params_types.len > 0 and fn_data.params_types[0].eql(self.anytype_type);
             const args_len = fn_call.arguments.len;
             const fn_params_len = fn_data.params_types.len;
 
-            if (!is_arg_unknown and fn_params_len != args_len) {
+            if (!is_arg_anytype and fn_params_len != args_len) {
                 return self.err_dispatcher.invalidNumberOfArgs(args_len, fn_params_len, loc_start);
             }
 
@@ -429,7 +430,7 @@ pub const SemaAnalyzer = struct {
 
                 const param_type = fn_data.params_types[i];
                 const arg_type = self.resolveValueType(fn_call_arg_value);
-                if (!is_arg_unknown and arg_type != param_type) {
+                if (!is_arg_anytype and !arg_type.eql(param_type)) {
                     return self.err_dispatcher.invalidType(try param_type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
                 }
 
@@ -488,7 +489,7 @@ pub const SemaAnalyzer = struct {
     fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         var values: std.ArrayList(*ir.Value) = .empty;
         const array_literal = exp.data.array_literal;
-        var array_literal_type: *Type = self.void_type;
+        var array_literal_type: *Type = self.anytype_type;
 
         for (array_literal.exps) |e| {
             const exp_value = try self.evalExp(e);
@@ -614,7 +615,7 @@ pub const SemaAnalyzer = struct {
                 if (std.mem.eql(u8, type_annotation.name, "bool")) return self.bool_type;
                 if (std.mem.eql(u8, type_annotation.name, "fn")) return self.type_fn;
                 if (std.mem.eql(u8, type_annotation.name, "void")) return Type.init(self.allocator, .void);
-                if (std.mem.eql(u8, type_annotation.name, "unkown")) return self.unkown_type;
+                if (std.mem.eql(u8, type_annotation.name, "_anytype")) return self.anytype_type;
 
                 return Errors.SemaError;
             },
@@ -718,8 +719,9 @@ const SymbolTable = struct {
         const ptr = try allocator.create(Self);
 
         var symbols = std.StringHashMap(Symbol).init(allocator);
-        const unknown_t = try Type.init(allocator, .unknown);
-        const params = try allocator.dupe(*Type, &.{unknown_t});
+        const _anytype = try Type.init(allocator, ._anytype);
+        const params = try allocator.dupe(*Type, &.{_anytype});
+        const params2 = try allocator.dupe(*Type, &.{ _anytype, _anytype });
 
         try symbols.put("echo", .{
             .uid = 0,
@@ -738,7 +740,7 @@ const SymbolTable = struct {
             .type = try Type.init(allocator, .function),
             .is_mut = false,
             .metadata = .{
-                .params_types = params,
+                .params_types = params2,
                 .return_type = try Type.init(allocator, .void),
             },
         });
@@ -809,7 +811,7 @@ pub const Type = union(enum) {
     boolean,
     function,
     //currently only used for internals
-    unknown,
+    _anytype,
     void,
     array: *Type,
 
@@ -825,7 +827,8 @@ pub const Type = union(enum) {
             .string => return other.* == .string,
             .boolean => return other.* == .boolean,
             .void => return other.* == .void,
-            .unknown => return other.* == .unknown,
+            //warn: !!
+            ._anytype => return true,
             .function => return other.* == .function,
             .array => |inner| {
                 if (other.* != .array) return false;
@@ -840,7 +843,7 @@ pub const Type = union(enum) {
             .string => "string",
             .boolean => "boolean",
             .void => "void",
-            .unknown => "unkown",
+            ._anytype => "anytype",
             .function => "function",
 
             .array => |inner| {

@@ -1,0 +1,17 @@
+let reverse_list: fn = fn(arr: []string) -> []string
+    let result: []string = []
+    let n: number = len(arr)
+    let mut i: number = n - 1
+
+    for i > -1
+        let val: string = arr[i]
+        append(result, val)
+        i = i - 1
+
+    return result
+
+let arr: []string = ["Salve", "General", "Doutor", "Hoje", "Eu", "Não"]
+let reversed: []string = reverse_list(arr)
+echo(reversed)
+
+
