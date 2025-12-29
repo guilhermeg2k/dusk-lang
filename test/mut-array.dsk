@@ -1,0 +1,14 @@
+let mut arr: []number = [1,2,3,4]
+
+let mut i: number = 0
+for i < 4
+    arr[i] = arr[i] + i
+    i = i + 1
+
+for i < 4
+    arr[i] = arr[i] + i
+    i = i + 1
+
+echo(arr)
+
+

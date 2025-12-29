@@ -97,10 +97,11 @@ pub const Generator = struct {
 
         const id = update_indexed.target.identifier;
         const target_name = try self.genName(id.uid, id.identifier);
-        const target_index = update_indexed.index.i_float;
-        const value = try self.genValue(update_indexed.value);
 
-        try buf.print(self.allocator, "{s}[{d}] = {s};\n", .{ target_name, target_index, value });
+        const value = try self.genValue(update_indexed.value);
+        const index = try self.genValue(update_indexed.index);
+
+        try buf.print(self.allocator, "{s}[{s}] = {s};\n", .{ target_name, index, value });
         return buf.toOwnedSlice(self.allocator);
     }
 
@@ -179,9 +180,11 @@ pub const Generator = struct {
             .i_void => {},
             .index_exp => {
                 const target = value.index_exp.target.identifier;
-                const index = value.index_exp.index.i_float;
-                const name = try self.genName(target.uid, target.identifier);
-                try buf.print(self.allocator, "{s}[{d}]", .{ name, index });
+                const target_name = try self.genName(target.uid, target.identifier);
+
+                const index = try self.genValue(value.index_exp.index);
+
+                try buf.print(self.allocator, "{s}[{s}]", .{ target_name, index });
             },
             .i_array => {
                 const i_array = try self.genImmediateArray(value.i_array);

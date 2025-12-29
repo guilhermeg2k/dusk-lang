@@ -1,7 +1,0 @@
-let mut arr: []number = [1,2,3,4]
-
-arr[1] = 10
-
-echo(arr)
-
-

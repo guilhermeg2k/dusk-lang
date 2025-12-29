@@ -174,6 +174,25 @@ pub const SemaAnalyzer = struct {
             },
             .index_exp => {
                 const index_exp = assign_stmt.target.data.index_exp;
+                const target = try self.evalExp(index_exp.target);
+                const target_type = self.resolveValueType(target);
+
+                if (target.* != .identifier) {
+                    return self.err_dispatcher.invalidExpression(
+                        "identifier",
+                        @tagName(target.*),
+                        assign_stmt.exp.loc_start,
+                    );
+                }
+
+                if (target_type.* != .array) {
+                    return self.err_dispatcher.invalidType(
+                        "array",
+                        try target_type.name(self.allocator),
+                        assign_stmt.exp.loc_start,
+                    );
+                }
+
                 const id = index_exp.target.data.identifier;
                 const target_symbol = self.scope.symbol_table.getOrThrow(id) catch {
                     return self.err_dispatcher.notDefined(id, stmt.loc_start);
@@ -436,9 +455,10 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidType("array", try target_type.name(self.allocator), exp.loc_start);
         }
 
-        const index = try self.evalExp(index_exp.target);
+        const index = try self.evalExp(index_exp.index);
+        const index_type = self.resolveValueType(index);
 
-        if (index.* != .i_float) {
+        if (!index_type.eql(self.number_type)) {
             return self.err_dispatcher.invalidIndexing("number", @tagName(index.*), exp.loc_start);
         }
 
@@ -531,6 +551,7 @@ pub const SemaAnalyzer = struct {
         const right_value = try self.evalExp(bin_exp.right);
         const left_type = self.resolveValueType(left_value);
         const right_type = self.resolveValueType(right_value);
+
         var op_type: *Type = self.void_type;
 
         if (!left_type.eql(right_type)) {
@@ -616,8 +637,8 @@ pub const SemaAnalyzer = struct {
             .identifier => value.identifier.type,
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
-            //warn: wrong
-            .index_exp => value.index_exp.target.identifier.type,
+            //warn: this should be a switch
+            .index_exp => value.index_exp.target.identifier.type.array,
             .i_array => value.i_array.type,
             .fn_call => value.fn_call.return_type,
         };
