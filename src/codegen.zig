@@ -47,7 +47,7 @@ pub const Generator = struct {
                     try buf.appendSlice(self.allocator, str);
                 },
                 .update_indexed => {
-                    const str = try self.genStoreVar(instruction.store_var);
+                    const str = try self.genUpdateIndexed(instruction.update_indexed);
                     try buf.appendSlice(self.allocator, str);
                 },
                 .branch_if => {
@@ -95,10 +95,12 @@ pub const Generator = struct {
     fn genUpdateIndexed(self: *Self, update_indexed: ir.UpdateIndexed) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
 
-        const target = try self.genValue(update_indexed.value);
+        const id = update_indexed.target.identifier;
+        const target_name = try self.genName(id.uid, id.identifier);
+        const target_index = update_indexed.index.i_float;
         const value = try self.genValue(update_indexed.value);
 
-        try buf.print(self.allocator, "{s} = {s};\n", .{ target, value });
+        try buf.print(self.allocator, "{s}[{d}] = {s};\n", .{ target_name, target_index, value });
         return buf.toOwnedSlice(self.allocator);
     }
 

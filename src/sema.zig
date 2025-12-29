@@ -186,7 +186,7 @@ pub const SemaAnalyzer = struct {
                 const assignment_value = try self.evalExp(assign_stmt.exp);
                 const assignment_value_type = self.resolveValueType(assignment_value);
 
-                if (!target_symbol.type.eql(assignment_value_type)) {
+                if (!target_symbol.type.array.eql(assignment_value_type)) {
                     return self.err_dispatcher.invalidType(
                         try target_symbol.type.name(self.allocator),
                         try assignment_value_type.name(self.allocator),
