@@ -9,6 +9,6 @@ for i < 4
     arr[i] = arr[i] + i
     i = i + 1
 
-echo(arr)
+echo(len(arr))
 
 

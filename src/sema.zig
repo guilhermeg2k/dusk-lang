@@ -718,8 +718,8 @@ const SymbolTable = struct {
         const ptr = try allocator.create(Self);
 
         var symbols = std.StringHashMap(Symbol).init(allocator);
-        var echo_params: std.ArrayList(*Type) = .empty;
-        try echo_params.append(allocator, try Type.init(allocator, .unknown));
+        const unknown_t = try Type.init(allocator, .unknown);
+        const params = try allocator.dupe(*Type, &.{unknown_t});
 
         try symbols.put("echo", .{
             .uid = 0,
@@ -727,8 +727,30 @@ const SymbolTable = struct {
             .type = try Type.init(allocator, .function),
             .is_mut = false,
             .metadata = .{
-                .params_types = try echo_params.toOwnedSlice(allocator),
+                .params_types = params,
                 .return_type = try Type.init(allocator, .void),
+            },
+        });
+
+        try symbols.put("append", .{
+            .uid = 1,
+            .identifier = "append",
+            .type = try Type.init(allocator, .function),
+            .is_mut = false,
+            .metadata = .{
+                .params_types = params,
+                .return_type = try Type.init(allocator, .void),
+            },
+        });
+
+        try symbols.put("len", .{
+            .uid = 2,
+            .identifier = "len",
+            .type = try Type.init(allocator, .function),
+            .is_mut = false,
+            .metadata = .{
+                .params_types = params,
+                .return_type = try Type.init(allocator, .number),
             },
         });
 

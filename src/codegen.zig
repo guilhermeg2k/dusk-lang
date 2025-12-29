@@ -19,6 +19,8 @@ pub const Generator = struct {
         var buf: std.ArrayList(u8) = .empty;
 
         try buf.appendSlice(self.allocator, "function echo_0(...msg) {console.log(...msg);}\n");
+        try buf.appendSlice(self.allocator, "function append_1(arr, item) {return arr.push(item);}\n");
+        try buf.appendSlice(self.allocator, "function len_2(arr) {return arr.length;}\n");
 
         for (functions) |func| {
             const signature = try self.genFuncSignature(func);
