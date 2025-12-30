@@ -5,9 +5,9 @@
 - [x] Single Line Comments
 - [x] Full support for expressions and operators
 - [x] Improve error messages
-- Fixed sized Arrays
+- [x] Arrays
+- [x] Organize better internals functions
 - Function return type check for all possible branches
-- Organize better internals functions
 
 ## Version: 0.3 - Maki
 
