@@ -1,5 +1,5 @@
 const std = @import("std");
-const Dusk = @import("dusk.zig").Dusk; // Import your main struct
+const Dusk = @import("dusk.zig").Dusk;
 const testing = std.testing;
 
 const TestCase = struct {

@@ -17,10 +17,9 @@ pub const Generator = struct {
 
     fn genFunctions(self: *Self, functions: []const ir.Func) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
-
-        try buf.appendSlice(self.allocator, "function echo_0(...msg) {console.log(...msg);}\n");
-        try buf.appendSlice(self.allocator, "function append_1(arr, item) {return arr.push(item);}\n");
-        try buf.appendSlice(self.allocator, "function len_2(arr) {return arr.length;}\n");
+        for (built_in_functions) |func| {
+            try buf.appendSlice(self.allocator, func.code);
+        }
 
         for (functions) |func| {
             const signature = try self.genFuncSignature(func);
@@ -307,12 +306,14 @@ pub const Generator = struct {
         return buf.toOwnedSlice(self.allocator);
     }
 
-    fn genName(self: *Self, uid: usize, identifier: []const u8) ![]const u8 {
+    pub fn genName(self: *Self, uid: usize, identifier: []const u8) ![]const u8 {
         return std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ identifier, uid });
     }
 };
 
 const GeneratorError = error{OutOfMemory};
 
-const std = @import("std");
 const ir = @import("ir.zig");
+const builtin = @import("built-in.zig");
+const built_in_functions = builtin.built_in_functions;
+const std = @import("std");

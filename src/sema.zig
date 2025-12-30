@@ -414,14 +414,10 @@ pub const SemaAnalyzer = struct {
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
         if (func_symbol.metadata) |fn_data| {
-            //if arg[0] is unknown it disables any check for the fn_call
-            //currently this is only useful for allowing anything as arg for the echo function
-            //when echo function be propertly implemented this should be modified
-            const is_arg_anytype = fn_data.params_types.len > 0 and fn_data.params_types[0].eql(self.anytype_type);
             const args_len = fn_call.arguments.len;
             const fn_params_len = fn_data.params_types.len;
 
-            if (!is_arg_anytype and fn_params_len != args_len) {
+            if (fn_params_len != args_len) {
                 return self.err_dispatcher.invalidNumberOfArgs(args_len, fn_params_len, loc_start);
             }
 
@@ -430,7 +426,7 @@ pub const SemaAnalyzer = struct {
 
                 const param_type = fn_data.params_types[i];
                 const arg_type = self.resolveValueType(fn_call_arg_value);
-                if (!is_arg_anytype and !arg_type.eql(param_type)) {
+                if (!arg_type.eql(param_type)) {
                     return self.err_dispatcher.invalidType(try param_type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
                 }
 
@@ -719,42 +715,10 @@ const SymbolTable = struct {
         const ptr = try allocator.create(Self);
 
         var symbols = std.StringHashMap(Symbol).init(allocator);
-        const _anytype = try Type.init(allocator, ._anytype);
-        const params = try allocator.dupe(*Type, &.{_anytype});
-        const params2 = try allocator.dupe(*Type, &.{ _anytype, _anytype });
 
-        try symbols.put("echo", .{
-            .uid = 0,
-            .identifier = "echo",
-            .type = try Type.init(allocator, .function),
-            .is_mut = false,
-            .metadata = .{
-                .params_types = params,
-                .return_type = try Type.init(allocator, .void),
-            },
-        });
-
-        try symbols.put("append", .{
-            .uid = 1,
-            .identifier = "append",
-            .type = try Type.init(allocator, .function),
-            .is_mut = false,
-            .metadata = .{
-                .params_types = params2,
-                .return_type = try Type.init(allocator, .void),
-            },
-        });
-
-        try symbols.put("len", .{
-            .uid = 2,
-            .identifier = "len",
-            .type = try Type.init(allocator, .function),
-            .is_mut = false,
-            .metadata = .{
-                .params_types = params,
-                .return_type = try Type.init(allocator, .number),
-            },
-        });
+        for (built_in_functions) |func| {
+            try symbols.put(func.symbol.identifier, func.symbol);
+        }
 
         ptr.* = Self{ .allocator = allocator, .parent = parent, .symbols = symbols };
         return ptr;
@@ -787,7 +751,7 @@ const SymbolTable = struct {
     }
 };
 
-const Symbol = struct {
+pub const Symbol = struct {
     const Self = @This();
     uid: usize,
     identifier: []const u8,
@@ -821,13 +785,14 @@ pub const Type = union(enum) {
         return ptr;
     }
 
+    //warn: anytype
     pub fn eql(self: *Self, other: *Type) bool {
+        if (other.* == ._anytype) return true;
         switch (self.*) {
             .number => return other.* == .number,
             .string => return other.* == .string,
             .boolean => return other.* == .boolean,
             .void => return other.* == .void,
-            //warn: !!
             ._anytype => return true,
             .function => return other.* == .function,
             .array => |inner| {
@@ -855,8 +820,10 @@ pub const Type = union(enum) {
 
 pub const Errors = err.Errors;
 
+const built_in_functions = builtin.built_in_functions;
+const builtin = @import("built-in.zig");
 const err = @import("error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
-const std = @import("std");
 const allocPrint = std.fmt.allocPrint;
+const std = @import("std");
