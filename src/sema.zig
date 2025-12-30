@@ -33,7 +33,7 @@ pub const SemaAnalyzer = struct {
             .bool_type = try Type.init(allocator, .boolean),
             .type_fn = try Type.init(allocator, .function),
             .void_type = void_type,
-            .anytype_type = try Type.init(allocator, ._anytype),
+            .anytype_type = try Type.init(allocator, .dynamic),
         };
     }
 
@@ -775,7 +775,7 @@ pub const Type = union(enum) {
     boolean,
     function,
     //currently only used for internals
-    _anytype,
+    dynamic,
     void,
     array: *Type,
 
@@ -785,15 +785,14 @@ pub const Type = union(enum) {
         return ptr;
     }
 
-    //warn: anytype
     pub fn eql(self: *Self, other: *Type) bool {
-        if (other.* == ._anytype) return true;
+        if (other.* == .dynamic) return true;
         switch (self.*) {
             .number => return other.* == .number,
             .string => return other.* == .string,
             .boolean => return other.* == .boolean,
             .void => return other.* == .void,
-            ._anytype => return true,
+            .dynamic => return true,
             .function => return other.* == .function,
             .array => |inner| {
                 if (other.* != .array) return false;
@@ -808,7 +807,7 @@ pub const Type = union(enum) {
             .string => "string",
             .boolean => "boolean",
             .void => "void",
-            ._anytype => "anytype",
+            .dynamic => "anytype",
             .function => "function",
 
             .array => |inner| {

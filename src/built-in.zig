@@ -72,7 +72,7 @@ pub fn len() BuiltInFn {
 var fn_type = Type{ .function = {} };
 var void_type = Type{ .void = {} };
 var number_type = Type{ .number = {} };
-var _anytype = Type{ ._anytype = {} };
+var _anytype = Type{ .dynamic = {} };
 var any_array_type = Type{ .array = &_anytype };
 
 const echo_params: []const *Type = &[_]*Type{
