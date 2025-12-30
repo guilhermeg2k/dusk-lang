@@ -22,7 +22,7 @@ fn echo() BuiltInFn {
     };
 
     const code = std.fmt.comptimePrint(
-        "function {s}_{d}(...msg) {{console.log(...msg);}}\n",
+        "function {s}_{d}(...msg) {{echo(...msg);}}\n",
         .{ symbol.identifier, symbol.uid },
     );
 

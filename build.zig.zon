@@ -3,7 +3,12 @@
     .version = "0.1.0",
     .fingerprint = 0x194887165dc2592d,
     .minimum_zig_version = "0.15.2",
-    .dependencies = .{},
+    .dependencies = .{
+        .quickjs = .{
+            .url = "https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz",
+            .hash = "N-V-__8AACqwMQCi8sTo6aY0hGNBtx0A1peq9Vq56UpKfVdL",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

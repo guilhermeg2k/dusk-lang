@@ -12,7 +12,7 @@ pub const Generator = struct {
         try buf.appendSlice(self.allocator, "\n");
         try buf.appendSlice(self.allocator, instructions);
 
-        return buf.toOwnedSlice(self.allocator);
+        return buf.toOwnedSliceSentinel(self.allocator, 0);
     }
 
     fn genFunctions(self: *Self, functions: []const ir.Func) ![]const u8 {
