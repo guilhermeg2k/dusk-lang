@@ -1,4 +1,4 @@
-let bubble_sort: fn = fn(arr: []number) -> void
+let bubble_sort: fn = (arr: []number) -> void
     let n: number = len(arr) 
     let mut i: number = 0
 

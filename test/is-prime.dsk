@@ -1,4 +1,4 @@
-let isPrime: fn = fn(n: number) -> bool
+let isPrime: fn = (n: number) -> bool
     if n < 2 
         return false
 

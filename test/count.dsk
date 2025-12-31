@@ -1,4 +1,4 @@
-let count: fn = fn(n: number) -> void
+let count: fn = (n: number) -> void
     let mut x: number = 0
     for
         echo(x)

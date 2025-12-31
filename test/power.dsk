@@ -1,5 +1,5 @@
 
-let power: fn = fn(base: number, exp: number) -> number
+let power: fn = (base: number, exp: number) -> number
     if exp == 0
         return 1
 

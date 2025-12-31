@@ -1,4 +1,4 @@
-let echo2: fn = fn() -> void
+let echo2: fn = () -> void
     echo("Ecoing")
     return
 
