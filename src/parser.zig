@@ -133,8 +133,6 @@ pub const Parser = struct {
 
     fn parseFnDef(self: *Self) ParserError!ast.FnDef {
         var arguments: std.ArrayList(ast.FnArg) = .empty;
-
-        _ = try self.expect(.l_paren);
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnArgs();
         }
@@ -277,6 +275,12 @@ pub const Parser = struct {
                 );
             },
             .l_paren => {
+                const is_function_def = self.isFuncDef();
+
+                if (is_function_def) {
+                    return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_def = try self.parseFnDef() }, .loc_start = tk.loc.start });
+                }
+
                 const exp = try self.parseExp(0);
                 _ = try self.expect(.r_paren);
                 return exp;
@@ -293,6 +297,31 @@ pub const Parser = struct {
                 return self.err_dispatcher.invalidSyntax("valid expression", tk);
             },
         };
+    }
+
+    fn isFuncDef(self: *Self) bool {
+        const start_id = self.cur_index;
+        defer self.cur_index = start_id;
+
+        var paren_depth: usize = 1;
+        while (paren_depth != 0) {
+            switch (self.peekCurrent().tag) {
+                .l_paren => {
+                    paren_depth += 1;
+                },
+                .r_paren => {
+                    paren_depth -= 1;
+                },
+                .new_line => {
+                    break;
+                },
+                else => {},
+            }
+            self.walk();
+        }
+
+        const tk = self.peekCurrent();
+        return tk.tag == .arrow or tk.tag == .return_kw;
     }
 
     fn parsePostfix(self: *Self, left: *ast.ExpNode) ParserError!*ast.ExpNode {

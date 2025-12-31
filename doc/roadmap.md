@@ -7,13 +7,15 @@
 - [x] Improve error messages
 - [x] Arrays
 - [x] Organize better internals functions
-- Function return type check for all possible branches
+- [x] quickjs runtime
+- Remove the need of the keyword fn for functions
 
 ## Version: 0.3 - Maki
 
 - Type inference (also for func args)
 - Loop controll flow
-- Remove the need of the keyword fn for functions
+- Function return type check for all possible branches
+- Support for the operators: += -+
 - Support for else if
 - Support for C loops (With var inicialization)
 - Inline returns
