@@ -7,6 +7,8 @@ pub const built_in_functions = [_]BuiltInFn{
     echo(),
     append(),
     len(),
+    floor(),
+    concat(),
 };
 
 fn echo() BuiltInFn {
@@ -69,9 +71,50 @@ pub fn len() BuiltInFn {
     return BuiltInFn{ .symbol = symbol, .code = code[0..] };
 }
 
+fn floor() BuiltInFn {
+    const symbol = Symbol{
+        .uid = 3,
+        .identifier = "floor",
+        .type = &fn_type,
+        .is_mut = false,
+        .metadata = .{
+            .params_types = floor_params,
+            .return_type = &number_type,
+        },
+    };
+
+    const code = std.fmt.comptimePrint(
+        "function {s}_{d}(n) {{return Math.floor(n)}}\n",
+        .{ symbol.identifier, symbol.uid },
+    );
+
+    return BuiltInFn{ .symbol = symbol, .code = code[0..] };
+}
+
+fn concat() BuiltInFn {
+    const symbol = Symbol{
+        .uid = 4,
+        .identifier = "concat",
+        .type = &fn_type,
+        .is_mut = false,
+        .metadata = .{
+            .params_types = concat_params,
+            .return_type = &string_type,
+        },
+    };
+
+    const code = std.fmt.comptimePrint(
+        "function {s}_{d}(s1, s2) {{return s1+s2;}}\n",
+        .{ symbol.identifier, symbol.uid },
+    );
+
+    return BuiltInFn{ .symbol = symbol, .code = code[0..] };
+}
+
 var fn_type = Type{ .function = {} };
 var void_type = Type{ .void = {} };
 var number_type = Type{ .number = {} };
+var string_type = Type{ .string = {} };
 var _anytype = Type{ .dynamic = {} };
 var any_array_type = Type{ .array = &_anytype };
 
@@ -84,6 +127,15 @@ const len_params: []const *Type = &[_]*Type{
 };
 
 const append_params: []const *Type = &[_]*Type{ &any_array_type, &_anytype };
+
+const floor_params: []const *Type = &[_]*Type{
+    &number_type,
+};
+
+const concat_params: []const *Type = &[_]*Type{
+    &string_type,
+    &string_type,
+};
 
 const sema = @import("sema.zig");
 const Symbol = sema.Symbol;

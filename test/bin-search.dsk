@@ -1,0 +1,16 @@
+let bin_search: fn = (arr: []number, target: number) -> number
+    let mut low: number = 0
+    let mut high: number = len(arr) - 1
+
+    for low <= high
+        let mid: number = floor((low + high) / 2)
+        if arr[mid] == target
+            return mid
+        if arr[mid] < target
+            low = mid + 1
+        else
+            high = mid - 1
+
+    return -1
+
+echo(bin_search([1,2,3,4,10,20,24,50,90,203,404], 203))

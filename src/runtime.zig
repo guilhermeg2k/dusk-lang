@@ -37,6 +37,7 @@ pub const QjsRuntime = struct {
             defer c.JS_FreeValue(self.ctx, ex);
 
             const str = c.JS_ToCString(self.ctx, ex);
+            std.log.err("Runtime: {s}\n", .{str});
             defer c.JS_FreeCString(self.ctx, str);
 
             return error.ExecutionFailed;

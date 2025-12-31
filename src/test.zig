@@ -57,6 +57,16 @@ test "Test: Compile and Run" {
             .src_file = "test/find-max.dsk",
             .expected_output = "21312312321\n0\n10000\n1",
         },
+        .{
+            .name = "bin search",
+            .src_file = "test/bin-search.dsk",
+            .expected_output = "9",
+        },
+        .{
+            .name = "concat",
+            .src_file = "test/concat.dsk",
+            .expected_output = "Hello World",
+        },
     };
 
     for (cases) |case| {
