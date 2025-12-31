@@ -3,8 +3,8 @@
 ## Version: 0.3 - Maki
 
 - Type inference (also for func args)
-- Loop controll flow
 - Function return type check for all possible branches
+- Loop controll flow
 - Support for the operators: += -+
 - Support for else if
 - Support for C loops (With var inicialization)
@@ -23,12 +23,12 @@
   - Optional fn args
 - Error Handling
 
-## Features Backlog
+## Backlog
 
 - Enum
 - Union (Zig-like)
-- Pattern match
 - Generics
+- Pattern match
 - Ternary operator
 - String interpolation
 - Support function call with named parameters
@@ -43,3 +43,4 @@
     - my_array\[0]()
     - (fn(x) { x + 1 })(10)
 - Fuzz testing
+- Replace quickjs with VM

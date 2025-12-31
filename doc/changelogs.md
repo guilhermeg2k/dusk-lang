@@ -2,13 +2,13 @@
 
 ## v0.2 - Rukia
 
-- [x] Single Line Comments
-- [x] Full support for expressions and operators
-- [x] Improve error messages
-- [x] Arrays
-- [x] Organize better internals functions
-- [x] quickjs as embbed runtime
-- [x] Remove the need of the keyword fn for function declaration
+- Single Line Comments
+- Full support for expressions and operators
+- Improve error messages
+- Arrays
+- Organize better internals functions
+- quickjs as embbed runtime
+- Remove the need of the keyword fn for function declaration
 
 ## v0.1 - Bocchi
 
