@@ -4,16 +4,16 @@
 
 # Dusk Programming Language
 
-## Versions
+A small/lightweight statically typed scripting language written in Zig
 
-[Version 0.1 - Bocchi](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/version/0.1.md)
+[Language Reference](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/language-ref.md)
 
-## Roadmap
+[Changelogs](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/changelogs.md)
 
 [Roadmap](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/roadmap.md)
 
-## License
+[Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/contributing.md)
 
-[MIT License](https://github.com/guilhermeg2k/dusk-lang/blob/main/LICENSE)
+[License](https://github.com/guilhermeg2k/dusk-lang/blob/main/LICENSE)
 
 Made by Guilherme (~\_^)

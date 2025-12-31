@@ -11,7 +11,13 @@ pub const Dusk = struct {
     }
 
     pub fn compileFile(self: *Self, input_path: []const u8, output_path: ?[]const u8) ![]const u8 {
-        const input_file_content: []const u8 = try std.fs.cwd().readFileAlloc(self.allocator, input_path, std.math.maxInt(usize));
+        const abs_path = try std.fs.cwd().realpathAlloc(self.allocator, input_path);
+        defer self.allocator.free(abs_path);
+
+        const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
+        defer file.close();
+
+        const input_file_content = try file.readToEndAlloc(self.allocator, std.math.maxInt(usize));
 
         const compiled_code = try self.compile(input_file_content);
 

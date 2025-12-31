@@ -1,15 +1,5 @@
 # Roadmap
 
-## Version: 0.2 - Rukia
-
-- [x] Single Line Comments
-- [x] Full support for expressions and operators
-- [x] Improve error messages
-- [x] Arrays
-- [x] Organize better internals functions
-- [x] quickjs runtime
-- Remove the need of the keyword fn for functions
-
 ## Version: 0.3 - Maki
 
 - Type inference (also for func args)
@@ -20,19 +10,27 @@
 - Support for C loops (With var inicialization)
 - Inline returns
 
-## Features Backlog
+## Version: 0.4 - Chisato
 
+- Structs
+- Pipe operator
+- Support line breaks (ex: on operations chain)
+
+## Version: 0.5 - Takina
+
+- Closures (& fn as anything (argument, item, etc))
 - Optionals
   - Optional fn args
+- Error Handling
+
+## Features Backlog
+
 - Enum
 - Union (Zig-like)
-- Error Handling
-- Closures (& fn as anything (argument, item, etc))
 - Pattern match
-- Pipe operator
+- Generics
 - Ternary operator
 - String interpolation
-- Structs
 - Support function call with named parameters
 - Modules
   - Compilation speed starts to being a concern

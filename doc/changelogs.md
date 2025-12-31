@@ -1,38 +1,49 @@
-# Dusk Version: 0.1 - Bocchi
+# Changelogs
 
-**Core Philosophy:** Explicit, Top-down, Script-like execution. No "magic" (no inference, no hoisting).
+## v0.2 - Rukia
+
+- [x] Single Line Comments
+- [x] Full support for expressions and operators
+- [x] Improve error messages
+- [x] Arrays
+- [x] Organize better internals functions
+- [x] quickjs as embbed runtime
+- [x] Remove the need of the keyword fn for function declaration
+
+## v0.1 - Bocchi
+
+**Core Philosophy:** Explicit, Top-down, Script-like execution. 
 
 ---
 
-## 1. Program Structure
+### 1. Program Structure
 
-### Script Execution
+#### Script Execution
 
 - **Entry Point:** No main function is required. The compiler reads the file from top to bottom and executes statements immediately.
 - **Strict Ordering:** You must define a variable or function before you use it. (No hoisting).
 
 ---
 
-## 2. Variables & Data
+### 2. Variables & Data
 
-### Declaration
+#### Declaration
 
 - **Keyword:** let
 - **Type Annotations:** MANDATORY for all data variables.
 - **Mutability:** Variables are immutable by default.
-- **Initial Value:** Variables has a initial value by default
 
-### Primitives
+#### Primitives
 
 - number: 64-bit float/int (unified for JS target).
-- string: single quoted literals. No interpolation (#{}) in v0.1.
+- string: double quoted literals. No interpolation (#{}) in v0.1.
 - bool: true / false.
 - void: Used for function return types.
 - fn: used for defining functions
 
 **Syntax:**
 
-#### VALID
+##### VALID
 
 ```
 let mut x: number = 10
@@ -40,7 +51,7 @@ let name: string = 'Dusk'
 let is_valid: bool = true
 ```
 
-#### INVALID in v0.1
+##### INVALID in v0.1
 
 ```
 let x = 10              # Error: Missing type annotation
