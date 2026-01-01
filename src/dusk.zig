@@ -12,7 +12,6 @@ pub const Dusk = struct {
 
     pub fn compileFile(self: *Self, input_path: []const u8, output_path: ?[]const u8) ![]const u8 {
         const abs_path = try std.fs.cwd().realpathAlloc(self.allocator, input_path);
-        std.log.warn("{s} {s}\n", .{ abs_path, input_path });
         defer self.allocator.free(abs_path);
 
         const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
@@ -40,15 +39,15 @@ pub const Dusk = struct {
     pub fn compile(self: *Self, src: []const u8) ![]const u8 {
         var dusk_lexer = Lexer.init(self.allocator, src);
         const tokens = try dusk_lexer.list();
-        try self.dump(tokens, "out/tokens.json");
+        try self.dump(tokens, "dump/tokens.json");
 
         var dusk_parser = Parser.init(self.allocator, src, tokens.items);
         const ast = try dusk_parser.parse();
-        try self.dump(ast, "out/ast.json");
+        try self.dump(ast, "dump/ast.json");
 
         var sema_analyzer = try SemaAnalyzer.init(self.allocator, src, &ast);
         const ir = try sema_analyzer.analyze();
-        try self.dump(ir, "out/ir.json");
+        try self.dump(ir, "dump/ir.json");
 
         var js_code_gen = Generator{ .allocator = self.allocator };
         const compiled_code = try js_code_gen.generate(ir);

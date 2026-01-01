@@ -85,12 +85,22 @@ pub const Parser = struct {
         self.walk();
         const is_mutable = self.match(.mut_kw);
         const identifier_token = try self.expect(.identifier);
-        _ = try self.expect(.colon);
-        const type_annotation = try self.parseTypeAnnotation();
+        var type_annotation: ?*ast.TypeAnnotation = null;
+
+        const has_type_annotation = self.match(.colon);
+        if (has_type_annotation) {
+            type_annotation = try self.parseTypeAnnotation();
+        }
+
         _ = try self.expect(.assign);
         const value = try self.parseExp(0);
 
-        return ast.LetStmt{ .identifier = identifier_token.value(self.src), .is_mut = is_mutable, .type_annotation = type_annotation, .value = value };
+        return ast.LetStmt{
+            .identifier = identifier_token.value(self.src),
+            .is_mut = is_mutable,
+            .type_annotation = type_annotation,
+            .value = value,
+        };
     }
 
     fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {

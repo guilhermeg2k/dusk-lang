@@ -83,14 +83,19 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitLetStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
+        var var_type: *Type = undefined;
         const let_stmt = stmt.data.let_stmt;
         const expression_value = try self.evalExp(let_stmt.value);
         const expression_type = self.resolveValueType(expression_value);
 
         //warn: this maybe crash
-        const var_type = self.resolveTypeAnnotation(let_stmt.type_annotation) catch {
-            return self.err_dispatcher.typeNotDefined(let_stmt.type_annotation.name, stmt.loc_start);
-        };
+        if (let_stmt.type_annotation) |type_annotation| {
+            var_type = self.resolveTypeAnnotation(type_annotation) catch {
+                return self.err_dispatcher.typeNotDefined(type_annotation.name, stmt.loc_start);
+            };
+        } else {
+            var_type = expression_type;
+        }
 
         const uid = self.scope.genUid();
 

@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for the **current state** of Dusk programming language.
+This document provides a reference for **v0.2::Rukia** of Dusk programming language.
 
 ## 1. Comments
 

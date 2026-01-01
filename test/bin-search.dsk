@@ -1,9 +1,9 @@
-let bin_search: fn = (arr: []number, target: number) -> number
-    let mut low: number = 0
-    let mut high: number = len(arr) - 1
+let bin_search = (arr: []number, target: number) -> number
+    let mut low = 0
+    let mut high = len(arr) - 1
 
     for low <= high
-        let mid: number = floor((low + high) / 2)
+        let mid = floor((low + high) / 2)
         if arr[mid] == target
             return mid
         if arr[mid] < target

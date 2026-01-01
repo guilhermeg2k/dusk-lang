@@ -21,7 +21,7 @@ pub const Statement = union(enum) {
 pub const LetStmt = struct {
     identifier: []const u8,
     is_mut: bool,
-    type_annotation: *TypeAnnotation,
+    type_annotation: ?*TypeAnnotation,
     value: *ExpNode,
 };
 

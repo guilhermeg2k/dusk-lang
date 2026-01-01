@@ -1,6 +1,6 @@
 .zig-cache
 zig-out
-build
+dump/
 test_build
 *_dump.json
 code.js
