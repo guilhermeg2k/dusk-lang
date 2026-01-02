@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.2::Rukia** of Dusk programming language.
+This document provides a reference for **v0.3::Maki** of Dusk programming language.
 
 ## 1. Comments
 
@@ -15,10 +15,15 @@ let x: number = 10 # Inline comment
 
 ### Declaration
 
-Variables are declared using the `let` keyword. Type annotations are **mandatory**.
+Variables are declared using the `let` keyword. Type annotations are **optional** if the type can be inferred from the value.
 
 ```rust
-let variable_name: type = value
+# Type is inferred from the value
+let name = "Dusk" # string
+let count = 100   # number
+
+# Explicit type annotation still works
+let is_active: bool = true
 ```
 
 ### Mutability
@@ -89,13 +94,17 @@ let names: []string = ["Alice", "Bob"]
 
 Dusk uses indentation (4 spaces) to define blocks.
 
-### If / Else
+### If / Else If / Else
+
+Dusk supports `else if` for multiple conditions.
 
 ```rust
 if x > 10
     echo("Greater than 10")
+else if x > 0
+    echo("Between 1 and 10")
 else
-    echo("10 or less")
+    echo("0 or less")
 ```
 
 ### Loops
@@ -121,13 +130,25 @@ for
 
 ## 5. Functions
 
-Functions are first-class citizens and are defined using `let` with the `fn` type.
+Functions are first-class citizens, return types are only inferred for inline returns
+otherwise are mandatory
+
 
 ### Definition
 
+The compiler can infer that `add` is a function.
+
 ```rust
-let add: fn = (a: number, b: number) -> number
+let add = (a: number, b: number) -> number
     return a + b
+```
+
+### Inline Return
+
+For functions with a single return expression, you can use the inline `return`
+
+```rust
+let add = (a: number, b: number) -> return a + b
 ```
 
 ### Void Functions
@@ -137,6 +158,20 @@ If a function does not return a value, use `void`.
 ```rust
 let greet: fn = (name: string) -> void
     echo(concat("Hello ", name))
+```
+
+### Mutable Parameters
+
+By default, function parameters are immutable. To allow a function to modify a parameter (like an array), you can use the `mut` keyword. This is especially useful for in-place modifications.
+
+```rust
+# The 'mut' keyword allows this function to modify 'list'
+let add_one = (mut list: []number) -> void
+    append(list, 1)
+
+let mut my_list = [10, 20]
+add_one(my_list)
+echo(my_list) # Prints [10, 20, 1]
 ```
 
 ### Calling Functions
@@ -164,3 +199,8 @@ Dusk provides a set of intrinsic functions.
 - **Scope**: Variables must be defined before use.
 ## 8. Runtime
 - Currently it transpiles to JS and evals it using embed [quickjs](https://bellard.org/quickjs/).
+
+
+
+
+

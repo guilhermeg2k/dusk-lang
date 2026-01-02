@@ -72,6 +72,11 @@ test "Test: Compile and Run" {
             .src_file = "test/inline-return.dsk",
             .expected_output = "20",
         },
+        .{
+            .name = "else if",
+            .src_file = "test/else-if.dsk",
+            .expected_output = "negative\n-23",
+        },
     };
 
     for (cases) |case| {

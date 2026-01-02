@@ -2,17 +2,10 @@
 
 > This is moving target and can change anytime
 
-## Version: 0.3 - Maki
+## Version: 0.4 - Himeno
 
-- [x] Type inference
-- [x] Support for else if
-- [x] Inline function returns
 - Loop controll flow
-
-## Version: 0.4 - Kanade
-
 - Support for C loops (With var inicialization)
-- Function parameter mut modifier
 - Function parameter default value with inference
 - Function return type check for all possible branches
 
@@ -45,6 +38,7 @@
   - Compilation speed starts to being a concern
 - Multi Line Comments
 - Collections: Lists, Sets, HashMaps, Tuples
+- Fancy fors (ex: for in)
 - Upgrade FnCall
   - Currently function calls only allow simple calls as `identifier()`
   - Which means things like that does not works:

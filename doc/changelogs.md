@@ -1,5 +1,12 @@
 # Changelogs
 
+## v0.3 - Maki
+
+- let type inference
+- Support for else if
+- Inline function returns
+- Function parameter mut modifier
+
 ## v0.2 - Rukia
 
 - Single Line Comments
@@ -12,7 +19,7 @@
 
 ## v0.1 - Bocchi
 
-**Core Philosophy:** Explicit, Top-down, Script-like execution. 
+**Core Philosophy:** Explicit, Top-down, Script-like execution.
 
 ---
 
