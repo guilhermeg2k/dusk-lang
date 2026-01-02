@@ -45,8 +45,6 @@ pub const QjsRuntime = struct {
     }
 
     fn jsEchoFn(ctx: ?*c.JSContext, _: c.JSValue, argc: c_int, argv: [*c]c.JSValue) callconv(.c) c.JSValue {
-        defer stdout_writer.flush() catch {};
-
         var i: i32 = 0;
         while (i < argc) : (i += 1) {
             if (i > 0) {
@@ -60,7 +58,8 @@ pub const QjsRuntime = struct {
             c.JS_FreeCString(ctx, str_ptr);
         }
 
-        QjsRuntime.stdout_writer.writeAll("\n") catch {};
+        stdout_writer.writeAll("\n") catch {};
+        stdout_writer.flush() catch {};
 
         return c.JSValue{
             .u = .{ .int32 = 0 },

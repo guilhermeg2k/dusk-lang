@@ -276,7 +276,7 @@ pub const SemaAnalyzer = struct {
         //create a temporary scope just for inline return type inference
         try self.scope.enter(old_return_type);
 
-        for (fn_def.arguments.items) |arg| {
+        for (fn_def.arguments) |arg| {
             const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
                 return self.err_dispatcher.typeNotDefined(
                     arg.type_annotation.name,
@@ -308,7 +308,7 @@ pub const SemaAnalyzer = struct {
             return_type = self.resolveValueType(return_value);
         }
 
-        //back old scope
+        //restore main scope
         self.scope.exit(old_return_type);
 
         try self.scope.symbol_table.replace(.{
@@ -325,7 +325,7 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(return_type);
         defer self.scope.exit(old_return_type);
 
-        for (fn_def.arguments.items) |arg| {
+        for (fn_def.arguments) |arg| {
             const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
                 return self.err_dispatcher.typeNotDefined(
                     arg.type_annotation.name,

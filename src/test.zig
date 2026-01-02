@@ -67,6 +67,11 @@ test "Test: Compile and Run" {
             .src_file = "test/concat.dsk",
             .expected_output = "Hello World",
         },
+        .{
+            .name = "inline return",
+            .src_file = "test/inline-return.dsk",
+            .expected_output = "20",
+        },
     };
 
     for (cases) |case| {

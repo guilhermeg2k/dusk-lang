@@ -178,7 +178,11 @@ pub const Parser = struct {
             _ = try self.expect(.dedent);
         }
 
-        return ast.FnDef{ .arguments = arguments, .body_block = body_block, .return_type = return_type };
+        return ast.FnDef{
+            .arguments = try arguments.toOwnedSlice(self.allocator),
+            .body_block = body_block,
+            .return_type = return_type,
+        };
     }
 
     fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnArg) {

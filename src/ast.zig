@@ -98,8 +98,7 @@ pub const BinaryExp = struct {
 };
 
 pub const FnDef = struct {
-    //warn: array
-    arguments: std.ArrayList(FnArg),
+    arguments: []const FnArg,
     return_type: ?*TypeAnnotation,
     body_block: Block,
 };
