@@ -59,6 +59,12 @@ pub const Generator = struct {
                     const str = try self.genLoop(instruction.loop);
                     try buf.appendSlice(self.allocator, str);
                 },
+                .break_stmt => {
+                    try buf.appendSlice(self.allocator, "break;");
+                },
+                .continue_stmt => {
+                    try buf.appendSlice(self.allocator, "continue;");
+                },
                 .return_stmt => {
                     const str = try self.genReturn(instruction.return_stmt);
                     try buf.appendSlice(self.allocator, str);

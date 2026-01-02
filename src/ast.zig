@@ -16,6 +16,8 @@ pub const Statement = union(enum) {
     assign_stmt: AssignStmt,
     return_stmt: ReturnStmt,
     expression_stmt: *ExpNode,
+    break_stmt: void,
+    continue_stmt: void,
 };
 
 pub const LetStmt = struct {

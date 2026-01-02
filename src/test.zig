@@ -77,6 +77,11 @@ test "Test: Compile and Run" {
             .src_file = "test/else-if.dsk",
             .expected_output = "negative\n-23",
         },
+        .{
+            .name = "count odd",
+            .src_file = "test/echo-odd.dsk",
+            .expected_output = "1\n1\n1\n3\n1\n5\n1\n7\n1\n",
+        },
     };
 
     for (cases) |case| {

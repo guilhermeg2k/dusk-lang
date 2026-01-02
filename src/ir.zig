@@ -30,6 +30,8 @@ pub const Instruction = union(enum) {
     return_stmt: ReturnStmt,
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
+    break_stmt: void,
+    continue_stmt: void,
 };
 
 pub const UpdateIndexed = struct {

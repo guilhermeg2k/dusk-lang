@@ -59,6 +59,8 @@ pub const SemaAnalyzer = struct {
                 .if_stmt => try self.visitIfStmt(&stmt),
                 .for_stmt => try self.visitForStmt(&stmt),
                 .expression_stmt => try self.visitExpressionStmt(&stmt),
+                .break_stmt => ir.Instruction{ .break_stmt = {} },
+                .continue_stmt => ir.Instruction{ .continue_stmt = {} },
                 .return_stmt => try self.visitReturnStmt(&stmt),
             };
 

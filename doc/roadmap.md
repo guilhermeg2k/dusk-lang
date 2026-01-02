@@ -1,10 +1,10 @@
 # Roadmap
 
-> This is moving target and can change anytime
+> This is a moving target and can change anytime
 
 ## Version: 0.4 - Himeno
 
-- Loop controll flow
+- [x] Loop controll flow
 - Support for C loops (With var inicialization)
 - Function parameter default value with inference
 - Function return type check for all possible branches
@@ -23,6 +23,7 @@
 - Optionals
   - Optional fn args
 - Error Handling
+- Mut modifer added to the type data
 
 ## Backlog
 

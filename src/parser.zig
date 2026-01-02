@@ -2,10 +2,11 @@ pub const Parser = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
+    err_dispatcher: err.ErrorDispatcher,
     tokens: []const Token = &.{},
     src: []const u8 = "",
     cur_index: usize = 0,
-    err_dispatcher: err.ErrorDispatcher,
+    loop_depth: usize = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -76,6 +77,20 @@ pub const Parser = struct {
 
                 return ast.StatementNode{ .data = .{ .expression_stmt = expr }, .loc_start = tk.loc.start };
             },
+            .break_kw => {
+                if (self.loop_depth == 0) {
+                    return self.err_dispatcher.invalidSyntax("break called outside a loop", tk);
+                }
+                self.walk();
+                return ast.StatementNode{ .data = .{ .break_stmt = {} }, .loc_start = tk.loc.start };
+            },
+            .continue_kw => {
+                if (self.loop_depth == 0) {
+                    return self.err_dispatcher.invalidSyntax("continue called outside a loop", tk);
+                }
+                self.walk();
+                return ast.StatementNode{ .data = .{ .continue_stmt = {} }, .loc_start = tk.loc.start };
+            },
             .return_kw => {
                 return ast.StatementNode{ .data = .{ .return_stmt = try self.parseReturnStmt() }, .loc_start = tk.loc.start };
             },
@@ -133,6 +148,10 @@ pub const Parser = struct {
 
     fn parseForStmt(self: *Self) ParserError!ast.ForStmt {
         self.walk();
+
+        self.loop_depth += 1;
+        defer self.loop_depth -= 1;
+
         var condition: ?*ast.ExpNode = null;
         if (self.peekCurrent().tag != .indent) {
             condition = try self.parseExp(0);
