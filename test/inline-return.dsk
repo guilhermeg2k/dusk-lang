@@ -1,0 +1,4 @@
+let add = (a: number, b: number) -> return a + b
+
+echo(add(10,10))
+

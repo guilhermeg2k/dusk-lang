@@ -267,29 +267,54 @@ pub const SemaAnalyzer = struct {
         const fn_def = exp.data.fn_def;
         const old_return_type = self.scope.return_type;
 
-        //warn: this may crash
-        const return_type = self.resolveTypeAnnotation(fn_def.return_type) catch {
-            return self.err_dispatcher.typeNotDefined(fn_def.return_type.name, exp.loc_start);
-        };
-
+        var return_type: *Type = undefined;
         var arguments: std.ArrayList(ir.FuncArg) = .empty;
         var argument_types: std.ArrayList(*Type) = .empty;
 
         const fn_uid = self.scope.genUid();
 
+        //create a temporary scope just for inline return type inference
+        try self.scope.enter(old_return_type);
+
         for (fn_def.arguments.items) |arg| {
             const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
-                return self.err_dispatcher.typeNotDefined(fn_def.return_type.name, exp.loc_start);
+                return self.err_dispatcher.typeNotDefined(
+                    arg.type_annotation.name,
+                    exp.loc_start,
+                );
+            };
+
+            const arg_uid = self.scope.genUid();
+
+            self.scope.symbol_table.put(.{
+                .uid = arg_uid,
+                .identifier = arg.identifier,
+                .is_mut = arg.is_mut,
+                .type = arg_type,
+                .metadata = null,
+            }) catch {
+                return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
             };
 
             try argument_types.append(self.allocator, arg_type);
         }
 
+        if (fn_def.return_type) |r_type| {
+            return_type = self.resolveTypeAnnotation(r_type) catch {
+                return self.err_dispatcher.typeNotDefined(r_type.name, exp.loc_start);
+            };
+        } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
+            const return_value = try self.evalExp(return_exp);
+            return_type = self.resolveValueType(return_value);
+        }
+
+        //back old scope
+        self.scope.exit(old_return_type);
+
         try self.scope.symbol_table.replace(.{
             .identifier = identifier,
             .uid = fn_uid,
-            //warn: this needs to be passed
-            .is_mut = true,
+            .is_mut = false,
             .type = self.type_fn,
             .metadata = .{
                 .params_types = try argument_types.toOwnedSlice(self.allocator),
@@ -302,16 +327,17 @@ pub const SemaAnalyzer = struct {
 
         for (fn_def.arguments.items) |arg| {
             const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
-                return self.err_dispatcher.typeNotDefined(fn_def.return_type.name, exp.loc_start);
+                return self.err_dispatcher.typeNotDefined(
+                    arg.type_annotation.name,
+                    exp.loc_start,
+                );
             };
-
-            const uid = self.scope.genUid();
+            const arg_uid = self.scope.genUid();
 
             self.scope.symbol_table.put(.{
-                .uid = uid,
+                .uid = arg_uid,
                 .identifier = arg.identifier,
-                //todo: later this can also be passed as argument
-                .is_mut = true,
+                .is_mut = arg.is_mut,
                 .type = arg_type,
                 .metadata = null,
             }) catch {
@@ -319,13 +345,14 @@ pub const SemaAnalyzer = struct {
             };
 
             try arguments.append(self.allocator, .{
-                .uid = uid,
+                .uid = arg_uid,
                 .identifier = arg.identifier,
                 .type = arg_type,
             });
         }
 
         const body = try self.visitBlock(&fn_def.body_block);
+
         try self.functions.append(self.allocator, ir.Func{
             .uid = fn_uid,
             .identifier = identifier,
@@ -735,6 +762,14 @@ const SymbolTable = struct {
         }
 
         try self.symbols.put(symbol.identifier, symbol);
+    }
+
+    fn remove(self: *Self, symbol: Symbol) !void {
+        if (self.symbols.get(symbol.identifier)) |_| {
+            return Errors.SemaError;
+        }
+
+        try self.symbols.remove(symbol.identifier);
     }
 
     fn replace(self: *Self, symbol: Symbol) !void {

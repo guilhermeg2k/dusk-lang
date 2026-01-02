@@ -2,13 +2,14 @@
 
 ## Version: 0.3 - Maki
 
-- Type inference (also for func args)
-- Function return type check for all possible branches
+- [x] Type inference
+- [x] Support for else if
+- [x] Inline function returns
+- Function parameter mut modifier
+- Function parameter default value with inference
 - Loop controll flow
-- Support for the operators: += -+
-- Support for else if
 - Support for C loops (With var inicialization)
-- Inline returns
+- Function return type check for all possible branches
 
 ## Version: 0.4 - Chisato
 
@@ -25,6 +26,7 @@
 
 ## Backlog
 
+- Support for the operators: += -+
 - Enum
 - Union (Zig-like)
 - Generics

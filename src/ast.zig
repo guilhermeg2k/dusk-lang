@@ -100,7 +100,7 @@ pub const BinaryExp = struct {
 pub const FnDef = struct {
     //warn: array
     arguments: std.ArrayList(FnArg),
-    return_type: *TypeAnnotation,
+    return_type: ?*TypeAnnotation,
     body_block: Block,
 };
 
@@ -108,6 +108,7 @@ pub const FnArg = struct {
     identifier: []const u8,
     type_annotation: *TypeAnnotation,
     default_value: ?*ExpNode,
+    is_mut: bool,
 };
 
 pub const FnCall = struct {

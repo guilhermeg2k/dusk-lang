@@ -7,7 +7,11 @@ pub const Parser = struct {
     cur_index: usize = 0,
     err_dispatcher: err.ErrorDispatcher,
 
-    pub fn init(allocator: std.mem.Allocator, src: []const u8, tokens: []const Token) Self {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        src: []const u8,
+        tokens: []const Token,
+    ) Self {
         return Self{
             .allocator = allocator,
             .src = src,
@@ -148,17 +152,31 @@ pub const Parser = struct {
 
     fn parseFnDef(self: *Self) ParserError!ast.FnDef {
         var arguments: std.ArrayList(ast.FnArg) = .empty;
+        var body_block: ast.Block = undefined;
+        var return_type: ?*ast.TypeAnnotation = null;
+
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnArgs();
         }
+
         _ = try self.expect(.r_paren);
-
         _ = try self.expect(.arrow);
-        const return_type = try self.parseTypeAnnotation();
 
-        _ = try self.expect(.indent);
-        const body_block = try self.parseBlock();
-        _ = try self.expect(.dedent);
+        const tk = self.peekCurrent();
+        if (tk.tag == .return_kw) {
+            var statements: std.ArrayList(ast.StatementNode) = .empty;
+            const return_stmt = ast.StatementNode{
+                .data = .{ .return_stmt = try self.parseReturnStmt() },
+                .loc_start = tk.loc.start,
+            };
+            try statements.append(self.allocator, return_stmt);
+            body_block = .{ .statements = statements };
+        } else {
+            return_type = try self.parseTypeAnnotation();
+            _ = try self.expect(.indent);
+            body_block = try self.parseBlock();
+            _ = try self.expect(.dedent);
+        }
 
         return ast.FnDef{ .arguments = arguments, .body_block = body_block, .return_type = return_type };
     }
@@ -177,18 +195,25 @@ pub const Parser = struct {
     }
 
     fn parseFnArg(self: *Self) ParserError!ast.FnArg {
-        const tk = try self.expect(.identifier);
-        const id = tk.value(self.src);
+        var default_value: ?*ast.ExpNode = null;
+        const is_mut = self.match(.mut_kw);
+
+        const id_tk = try self.expect(.identifier);
+        const id = id_tk.value(self.src);
 
         _ = try self.expect(.colon);
         const type_annotation = try self.parseTypeAnnotation();
 
-        var default_value: ?*ast.ExpNode = null;
         if (self.match(.assign)) {
             default_value = try self.parseExp(0);
         }
 
-        return ast.FnArg{ .identifier = id, .type_annotation = type_annotation, .default_value = default_value };
+        return ast.FnArg{
+            .identifier = id,
+            .type_annotation = type_annotation,
+            .default_value = default_value,
+            .is_mut = is_mut,
+        };
     }
 
     fn parseArrayLiteral(self: *Self) ParserError!ast.ArrayLiteral {
