@@ -1,25 +1,32 @@
 # Roadmap
 
+> This is moving target and can change anytime
+
 ## Version: 0.3 - Maki
 
 - [x] Type inference
 - [x] Support for else if
 - [x] Inline function returns
+- Loop controll flow
+
+## Version: 0.4 - Kanade
+
+- Support for C loops (With var inicialization)
 - Function parameter mut modifier
 - Function parameter default value with inference
-- Loop controll flow
-- Support for C loops (With var inicialization)
 - Function return type check for all possible branches
 
-## Version: 0.4 - Chisato
+## Version: 0.5 - Chisato
 
 - Structs
-- Pipe operator
-- Support line breaks (ex: on operations chain)
 
-## Version: 0.5 - Takina
+## Version: 0.6 - Takina
 
 - Closures (& fn as anything (argument, item, etc))
+- Pipe operator
+
+## Version: 0.7 - Shinobu
+
 - Optionals
   - Optional fn args
 - Error Handling
