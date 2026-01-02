@@ -10,9 +10,9 @@ A small/lightweight statically typed scripting language inspired by Lua, Python,
 
 [Bulding & Running](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/build.md)
 
-[Changelogs](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/changelogs.md)
-
 [Roadmap](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/roadmap.md)
+
+[Changelogs](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/changelogs.md)
 
 [Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/contributing.md)
 

@@ -1,0 +1,12 @@
+let x = -23
+
+if x > 5
+    echo(x)
+else if x > 1
+    echo(3)
+else if x > 0
+    echo(10)
+else
+    echo("negative")
+    echo(x)
+
