@@ -87,8 +87,7 @@ pub const Lexer = struct {
             self.readWhiteSpaces();
             const cur_char = self.peekCurrent();
             switch (cur_char) {
-                '#',
-                => {
+                '#' => {
                     while (self.peekCurrent() != '\n') {
                         self.walk();
                     }
@@ -119,10 +118,13 @@ pub const Lexer = struct {
                     return Token.init(Tag.comma, self.cur_index, self.cur_index);
                 },
                 '+' => {
-                    return Token.init(Tag.plus, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol('=', Tag.plus_eq, Tag.plus);
                 },
                 '-' => {
-                    return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
+                    if (self.peekNext() == '>') {
+                        return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
+                    }
+                    return self.readComplexSymbol('=', Tag.minus_eq, Tag.minus);
                 },
                 '*' => {
                     return Token.init(Tag.star, self.cur_index, self.cur_index);
@@ -134,7 +136,7 @@ pub const Lexer = struct {
                     return Token.init(Tag.percent, self.cur_index, self.cur_index);
                 },
                 '=' => {
-                    return self.readComplexSymbol('=', Tag.equals, Tag.assign);
+                    return self.readComplexSymbol('=', Tag.double_eq, Tag.eq);
                 },
                 '>' => {
                     return self.readComplexSymbol('=', Tag.ge, Tag.gt);
@@ -143,7 +145,7 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('=', Tag.le, Tag.lt);
                 },
                 '!' => {
-                    return self.readComplexSymbol('=', Tag.not_equals, Tag.not);
+                    return self.readComplexSymbol('=', Tag.not_eq, Tag.not);
                 },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
@@ -210,7 +212,7 @@ pub const Lexer = struct {
     }
 
     fn readExclamationMarkSymbol(self: *Self) Token {
-        return self.readComplexSymbol('=', Tag.not_equals, Tag.err);
+        return self.readComplexSymbol('=', Tag.not_eq, Tag.err);
     }
 
     fn readMinusSymbol(self: *Self) Token {
@@ -239,10 +241,10 @@ pub const Lexer = struct {
         if (next_char == '=') {
             const start = self.cur_index;
             self.walk();
-            return Token.init(Tag.equals, start, self.cur_index);
+            return Token.init(Tag.eq, start, self.cur_index);
         }
 
-        return Token.init(Tag.assign, self.cur_index, self.cur_index);
+        return Token.init(Tag.double_eq, self.cur_index, self.cur_index);
     }
 
     fn readNumberLiteral(self: *Self) Token {
@@ -378,12 +380,14 @@ pub const Tag = enum {
     number_literal,
     true_literal,
     false_literal,
-    equals,
+    eq,
+    double_eq,
+    plus_eq,
+    minus_eq,
     not,
-    not_equals,
+    not_eq,
     colon,
     comma,
-    assign,
     lt,
     le,
     gt,

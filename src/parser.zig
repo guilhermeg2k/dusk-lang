@@ -63,19 +63,66 @@ pub const Parser = struct {
             },
             .identifier => {
                 const expr = try self.parseExp(0);
+                const cur_tk = self.peekCurrent();
 
-                if (self.match(.assign)) {
-                    const assign_exp = try self.parseExp(0);
-                    return ast.StatementNode{
-                        .data = .{ .assign_stmt = .{
-                            .target = expr,
-                            .exp = assign_exp,
-                        } },
-                        .loc_start = expr.loc_start,
-                    };
+                switch (cur_tk.tag) {
+                    .eq => {
+                        self.walk();
+                        const assign_exp = try self.parseExp(0);
+                        return ast.StatementNode{
+                            .data = .{ .assign_stmt = .{
+                                .target = expr,
+                                .exp = assign_exp,
+                            } },
+                            .loc_start = expr.loc_start,
+                        };
+                    },
+
+                    .plus_eq => {
+                        self.walk();
+                        const right_exp = try self.parseExp(0);
+                        const bin_exp = try ast.ExpNode.init(self.allocator, .{
+                            .data = .{ .binary_exp = .{
+                                .left = expr,
+                                .op = .add,
+                                .right = right_exp,
+                            } },
+                            .loc_start = tk.loc.start,
+                        });
+
+                        return ast.StatementNode{
+                            .data = .{ .assign_stmt = .{
+                                .target = expr,
+                                .exp = bin_exp,
+                            } },
+                            .loc_start = expr.loc_start,
+                        };
+                    },
+
+                    .minus_eq => {
+                        self.walk();
+                        const right_exp = try self.parseExp(0);
+                        const bin_exp = try ast.ExpNode.init(self.allocator, .{
+                            .data = .{ .binary_exp = .{
+                                .left = expr,
+                                .op = .sub,
+                                .right = right_exp,
+                            } },
+                            .loc_start = tk.loc.start,
+                        });
+
+                        return ast.StatementNode{
+                            .data = .{ .assign_stmt = .{
+                                .target = expr,
+                                .exp = bin_exp,
+                            } },
+                            .loc_start = expr.loc_start,
+                        };
+                    },
+                    else => {
+                        return ast.StatementNode{ .data = .{ .expression_stmt = expr }, .loc_start = tk.loc.start };
+                    },
                 }
-
-                return ast.StatementNode{ .data = .{ .expression_stmt = expr }, .loc_start = tk.loc.start };
             },
             .break_kw => {
                 if (self.loop_depth == 0) {
@@ -111,7 +158,7 @@ pub const Parser = struct {
             type_annotation = try self.parseTypeAnnotation();
         }
 
-        _ = try self.expect(.assign);
+        _ = try self.expect(.eq);
         const value = try self.parseExp(0);
 
         return ast.LetStmt{
@@ -224,7 +271,7 @@ pub const Parser = struct {
         _ = try self.expect(.colon);
         const type_annotation = try self.parseTypeAnnotation();
 
-        if (self.match(.assign)) {
+        if (self.match(.eq)) {
             default_value = try self.parseExp(0);
         }
 
@@ -296,7 +343,14 @@ pub const Parser = struct {
             self.walk();
             const right = try self.parseExp(op_bp);
 
-            exp = try ast.ExpNode.init(self.allocator, .{ .data = .{ .binary_exp = .{ .left = exp, .op = op, .right = right } }, .loc_start = tk.loc.start });
+            exp = try ast.ExpNode.init(self.allocator, .{
+                .data = .{ .binary_exp = .{
+                    .left = exp,
+                    .op = op,
+                    .right = right,
+                } },
+                .loc_start = tk.loc.start,
+            });
         }
 
         return exp;
@@ -435,7 +489,7 @@ pub const Parser = struct {
         return switch (tag) {
             .or_kw => 10,
             .and_kw => 20,
-            .equals, .not_equals, .gt, .ge, .lt, .le => 30,
+            .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,
             .plus, .minus => 40,
             .star, .slash, .percent => 50,
             .l_paren => 60,
