@@ -82,6 +82,11 @@ test "Test: Compile and Run" {
             .src_file = "test/echo-odd.dsk",
             .expected_output = "1\n1\n1\n3\n1\n5\n1\n7\n1\n",
         },
+        .{
+            .name = "reverse count",
+            .src_file = "test/reverse-count.dsk",
+            .expected_output = "9\n8\n7\n6\n5\n4\n3\n2\n1\n",
+        },
     };
 
     for (cases) |case| {

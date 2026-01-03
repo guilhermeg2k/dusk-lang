@@ -19,6 +19,7 @@ pub const Func = struct {
 pub const FuncArg = struct {
     uid: usize,
     identifier: []const u8,
+    default_value: ?*Value,
     type: *Type,
 };
 

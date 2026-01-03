@@ -1,0 +1,9 @@
+let count: fn = (n: number) -> void
+    let mut x: number = n
+    for true
+        echo(x)
+        x -= 1
+        if x < 1
+            break
+
+count(9)

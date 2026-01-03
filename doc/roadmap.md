@@ -5,9 +5,9 @@
 ## Version: 0.4 - Himeno
 
 - [x] Loop controll flow
-- Support for C loops (With var inicialization)
-- Function parameter default value with inference
-- Function return type check for all possible branches
+- [x] Support for the operators: += -+
+- Function parameter default value
+- [x] Function return type check for all possible branches
 
 ## Version: 0.5 - Chisato
 
@@ -16,18 +16,18 @@
 ## Version: 0.6 - Takina
 
 - Closures (& fn as anything (argument, item, etc))
+- Inference for function arguments (When it has defualt value)
 - Pipe operator
 
 ## Version: 0.7 - Shinobu
 
+- Mut modifer added to the type data
 - Optionals
   - Optional fn args
 - Error Handling
-- Mut modifer added to the type data
 
 ## Backlog
 
-- Support for the operators: += -+
 - Enum
 - Union (Zig-like)
 - Generics

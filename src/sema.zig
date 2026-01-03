@@ -330,6 +330,22 @@ pub const SemaAnalyzer = struct {
                     exp.loc_start,
                 );
             };
+
+            var arg_default_value: ?*ir.Value = null;
+
+            if (arg.default_value) |default_value| {
+                arg_default_value = try self.evalExp(default_value);
+                const default_value_type = self.resolveValueType(arg_default_value.?);
+
+                if (!arg_type.eql(default_value_type)) {
+                    return self.err_dispatcher.invalidType(
+                        try arg_type.name(self.allocator),
+                        try default_value_type.name(self.allocator),
+                        default_value.loc_start,
+                    );
+                }
+            }
+
             const arg_uid = self.scope.genUid();
 
             self.scope.symbol_table.put(.{
@@ -346,6 +362,7 @@ pub const SemaAnalyzer = struct {
                 .uid = arg_uid,
                 .identifier = arg.identifier,
                 .type = arg_type,
+                .default_value = arg_default_value,
             });
         }
 

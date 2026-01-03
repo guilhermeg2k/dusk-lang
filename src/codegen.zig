@@ -306,6 +306,10 @@ pub const Generator = struct {
 
             const arg_name = try self.genName(arg.uid, arg.identifier);
             try buf.appendSlice(self.allocator, arg_name);
+            if (arg.default_value) |default_value| {
+                const value = try self.genValue(default_value);
+                try buf.print(self.allocator, "= {s}", .{value});
+            }
         }
 
         try buf.appendSlice(self.allocator, ")");
