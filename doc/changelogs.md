@@ -1,5 +1,11 @@
 # Changelogs
 
+## v0.4 - Himeno
+
+- Loop controll flow (break, continue)
+- Support for the operators: += -+
+- Infinite loops now requires condition "true"
+
 ## v0.3 - Maki
 
 - let type inference

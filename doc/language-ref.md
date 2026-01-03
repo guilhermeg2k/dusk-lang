@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.3::Maki** of Dusk programming language.
+This document provides a reference for **v0.4::Himeno** of Dusk programming language.
 
 ## 1. Comments
 
@@ -40,12 +40,12 @@ y = 20    # OK
 
 ### Primitive Types
 
-| Type | Description | Example |
-| :--- | :--- | :--- |
+| Type     | Description                                       | Example             |
+| :------- | :------------------------------------------------ | :------------------ |
 | `number` | 64-bit floating-point number (doubles as integer) | `42`, `3.14`, `-10` |
-| `string` | Sequence of characters (double quotes) | `"Hello World"` |
-| `bool` | Boolean value | `true`, `false` |
-| `void` | Represents no value (mostly for return types) | `void` |
+| `string` | Sequence of characters (double quotes)            | `"Hello World"`     |
+| `bool`   | Boolean value                                     | `true`, `false`     |
+| `void`   | Represents no value (mostly for return types)     | `void`              |
 
 ### Arrays
 
@@ -63,32 +63,39 @@ let names: []string = ["Alice", "Bob"]
 
 ### Arithmetic
 
-| Operator | Description |
-| :--- | :--- |
-| `+` | Addition |
-| `-` | Subtraction |
-| `*` | Multiplication |
-| `/` | Division |
-| `%` | Modulo |
+| Operator | Description    |
+| :------- | :------------- |
+| `+`      | Addition       |
+| `-`      | Subtraction    |
+| `*`      | Multiplication |
+| `/`      | Division       |
+| `%`      | Modulo         |
 
 ### Comparison
 
-| Operator | Description |
-| :--- | :--- |
-| `==` | Equal to |
-| `!=` | Not equal to |
-| `<` | Less than |
-| `<=` | Less than or equal to |
-| `>` | Greater than |
-| `>=` | Greater than or equal to |
+| Operator | Description              |
+| :------- | :----------------------- |
+| `==`     | Equal to                 |
+| `!=`     | Not equal to             |
+| `<`      | Less than                |
+| `<=`     | Less than or equal to    |
+| `>`      | Greater than             |
+| `>=`     | Greater than or equal to |
 
 ### Logical
 
 | Operator | Description |
-| :--- | :--- |
-| `and` | Logical AND |
-| `or` | Logical OR |
-| `!` | Logical NOT |
+| :------- | :---------- |
+| `and`    | Logical AND |
+| `or`     | Logical OR  |
+| `!`      | Logical NOT |
+
+### Assignment
+
+| Operator | Description         | Equivalent to |
+| :------- | :------------------ | :------------ |
+| `+=`     | Add and assign      | `a = a + b`   |
+| `-=`     | Subtract and assign | `a = a - b`   |
 
 ## 4. Control Flow
 
@@ -109,7 +116,7 @@ else
 
 ### Loops
 
-Dusk currently supports `for` loops which act like `while` loops.
+Dusk supports `for` loops, which can be conditional (like a `while` loop) or infinite.
 
 **Conditional Loop:**
 
@@ -117,22 +124,48 @@ Dusk currently supports `for` loops which act like `while` loops.
 let mut i: number = 0
 for i < 5
     echo(i)
-    i = i + 1
+    i += 1
 ```
 
 **Infinite Loop:**
 
+An infinite loop is created using `for true`.
+
 ```rust
-for
-    echo("Running forever...")
-    # Use return to exit function, no break statement yet
+let mut x = 10
+for true
+    echo(x)
+    x -= 1
+    if x < 1
+        break # exit the loop
+```
+
+### Loop Control Statements
+
+Dusk provides `break` and `continue` to control loop execution.
+
+- **`break`**: Immediately terminates the innermost loop.
+- **`continue`**: Skips the current iteration and proceeds to the next one.
+
+**Example with `continue` and `break`:**
+
+```rust
+let mut i = 0
+for i < 10
+    i += 1
+    if i % 2 == 0
+        continue # Skip even numbers
+
+    if i > 7
+        break # Exit loop
+
+    echo(i) # Only prints 1, 3, 5, 7
 ```
 
 ## 5. Functions
 
 Functions are first-class citizens, return types are only inferred for inline returns
 otherwise are mandatory
-
 
 ### Definition
 
@@ -185,22 +218,19 @@ greet("Dusk")
 
 Dusk provides a set of intrinsic functions.
 
-| Function | Signature | Description |
-| :--- | :--- | :--- |
-| `echo` | `echo(msg: dynamic) -> void` | Prints a value to stdout, followed by a newline. |
-| `len` | `len(arr: []dynamic) -> number` | Returns the length of an array. |
-| `append` | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array. |
-| `floor` | `floor(n: number) -> number` | Rounds a number down to the nearest integer |
-| `concat` | `concat(s1: string, s2: string) -> string` | Concatenates two strings. |
+| Function | Signature                                       | Description                                      |
+| :------- | :---------------------------------------------- | :----------------------------------------------- |
+| `echo`   | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
+| `len`    | `len(arr: []dynamic) -> number`                 | Returns the length of an array.                  |
+| `append` | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
+| `floor`  | `floor(n: number) -> number`                    | Rounds a number down to the nearest integer      |
+| `concat` | `concat(s1: string, s2: string) -> string`      | Concatenates two strings.                        |
 
 ## 7. Program Structure
 
 - **Entry Point**: The program executes from top to bottom. There is no `main` function requirement.
 - **Scope**: Variables must be defined before use.
+
 ## 8. Runtime
-- Currently it transpiles to JS and evals it using embed [quickjs](https://bellard.org/quickjs/).
 
-
-
-
-
+- Currently it transpiles to JS and evals it using embed [quickjs](https://bellard.org/quickjs/)
