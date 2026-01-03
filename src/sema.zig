@@ -241,20 +241,16 @@ pub const SemaAnalyzer = struct {
 
     fn visitForStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const for_stmt = stmt.data.for_stmt;
-        var condition_value: ?*ir.Value = null;
 
-        if (for_stmt.condition) |condition| {
-            const condition_exp = try self.evalExp(condition);
-            condition_value = condition_exp;
-            const condition_value_type = self.resolveValueType(condition_exp);
+        const condition_value = try self.evalExp(for_stmt.condition);
+        const condition_value_type = self.resolveValueType(condition_value);
 
-            if (!condition_value_type.eql(self.bool_type)) {
-                return self.err_dispatcher.invalidType(
-                    "boolean",
-                    try condition_value_type.name(self.allocator),
-                    stmt.loc_start,
-                );
-            }
+        if (!condition_value_type.eql(self.bool_type)) {
+            return self.err_dispatcher.invalidType(
+                "boolean",
+                try condition_value_type.name(self.allocator),
+                stmt.loc_start,
+            );
         }
 
         const block = try self.visitBlock(&for_stmt.do_block);

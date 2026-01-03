@@ -40,6 +40,7 @@
 - Multi Line Comments
 - Collections: Lists, Sets, HashMaps, Tuples
 - Fancy fors (ex: for in)
+- coroutines
 - Upgrade FnCall
   - Currently function calls only allow simple calls as `identifier()`
   - Which means things like that does not works:

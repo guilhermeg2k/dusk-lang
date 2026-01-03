@@ -152,14 +152,11 @@ pub const Parser = struct {
         self.loop_depth += 1;
         defer self.loop_depth -= 1;
 
-        var condition: ?*ast.ExpNode = null;
-        if (self.peekCurrent().tag != .indent) {
-            condition = try self.parseExp(0);
-        }
-
+        const condition = try self.parseExp(0);
         _ = try self.expect(.indent);
         const do_block = try self.parseBlock();
         _ = try self.expect(.dedent);
+
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 

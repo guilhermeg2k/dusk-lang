@@ -34,7 +34,7 @@ pub const IfStmt = struct {
 };
 
 pub const ForStmt = struct {
-    condition: ?*ExpNode,
+    condition: *ExpNode,
     do_block: Block,
 };
 

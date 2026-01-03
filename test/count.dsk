@@ -1,10 +1,10 @@
 let count: fn = (n: number) -> void
     let mut x: number = 0
-    for
+    for true
         echo(x)
         x = x + 1
         if x > n
-            return 
+            break
 
 count(1)
 count(5)
