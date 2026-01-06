@@ -29,12 +29,14 @@
 - Union (Zig-like)
 - Generics
 - Pattern match
-- Ternary operator
-- String interpolation
-- Support function call with named parameters
+- Defer
 - Modules
   - Compilation speed starts to being a concern
+- Support function call with named parameters
 - Multi Line Comments
+- Ternary operator
+- String interpolation
+- Multline strings
 - Collections: Lists, Sets, HashMaps, Tuples
 - Fancy fors (ex: for in)
 - Coroutines
