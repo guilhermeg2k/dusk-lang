@@ -1,0 +1,12 @@
+let User = struct
+    id: number
+    auth_id: string
+    username: string
+    auth_provider: string
+
+    to_string: (self: @, id: number) -> string
+        return
+
+    change_id: (self: @, id: number) -> string
+        return
+

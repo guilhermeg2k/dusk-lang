@@ -207,6 +207,10 @@ pub const Generator = struct {
                 try buf.appendSlice(self.allocator, call);
             },
 
+            .struct_def => {
+                unreachable;
+            },
+
             .binary_op => {
                 const op = try self.genBinaryOp(value.binary_op);
                 try buf.appendSlice(self.allocator, op);

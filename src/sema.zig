@@ -12,6 +12,7 @@ pub const SemaAnalyzer = struct {
     str_type: *Type,
     bool_type: *Type,
     type_fn: *Type,
+    type_struct: *Type,
     void_type: *Type,
     anytype_type: *Type,
 
@@ -32,6 +33,7 @@ pub const SemaAnalyzer = struct {
             .str_type = try Type.init(allocator, .string),
             .bool_type = try Type.init(allocator, .boolean),
             .type_fn = try Type.init(allocator, .function),
+            .type_struct = try Type.init(allocator, .struct_type),
             .void_type = void_type,
             .anytype_type = try Type.init(allocator, .dynamic),
         };
@@ -433,6 +435,9 @@ pub const SemaAnalyzer = struct {
             .fn_call => {
                 return self.evalFnCall(&exp.data.fn_call, exp.loc_start);
             },
+            .struct_def => {
+                return ir.Value.init(self.allocator, .{ .struct_def = {} });
+            },
             .index_exp => {
                 return self.evalIndexedExp(exp);
             },
@@ -668,6 +673,9 @@ pub const SemaAnalyzer = struct {
                     .array = inner_type,
                 });
             },
+            .struct_self => {
+                return Type.init(self.allocator, .struct_self);
+            },
         }
     }
 
@@ -678,6 +686,7 @@ pub const SemaAnalyzer = struct {
             .i_string => self.str_type,
             .i_void => self.bool_type,
             .fn_def => self.type_fn,
+            .struct_def => self.type_struct,
             .identifier => value.identifier.type,
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
@@ -829,9 +838,11 @@ pub const Type = union(enum) {
     string,
     boolean,
     function,
+    struct_type,
     //currently only used for internals
     dynamic,
     void,
+    struct_self,
     array: *Type,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
@@ -849,6 +860,8 @@ pub const Type = union(enum) {
             .void => return other.* == .void,
             .dynamic => return true,
             .function => return other.* == .function,
+            .struct_self => unreachable,
+            .struct_type => unreachable,
             .array => |inner| {
                 if (other.* != .array) return false;
                 return inner.eql(other.array);
@@ -864,6 +877,8 @@ pub const Type = union(enum) {
             .void => "void",
             .dynamic => "anytype",
             .function => "function",
+            .struct_type => "struct",
+            .struct_self => "@",
 
             .array => |inner| {
                 return std.fmt.allocPrint(allocator, "[]{s}", .{try inner.name(allocator)});

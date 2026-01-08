@@ -5,10 +5,16 @@
 ## Version: 0.5 - Chisato
 
 - Structs
+- Mut modifer added to the type data
+- Support function call with named parameters
+- Support for multiple line statements
+  - Struct definition
+  - Struct inicialziation
+  - Function definition
+  - Function call
 
 ## Version: 0.6 - Takina
 
-- Mut modifer added to the type data
 - Optionals
   - Optional fn args
 - Function parameter default value
@@ -32,7 +38,6 @@
 - Defer
 - Modules
   - Compilation speed starts to being a concern
-- Support function call with named parameters
 - Multi Line Comments
 - Ternary operator
 - String interpolation

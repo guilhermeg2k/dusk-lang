@@ -221,6 +221,43 @@ pub const Parser = struct {
         return ast.AssignStmt{ .identifier = id, .exp = exp };
     }
 
+    fn parseStructDef(self: *Self) ParserError!ast.StructDef {
+        var tk = try self.expect(.indent);
+        var fields: std.ArrayList(ast.StructField) = .empty;
+        var funcs: std.ArrayList(ast.StructFn) = .empty;
+
+        while (tk.tag != .dedent and tk.tag != .eof) : (tk = self.peekCurrent()) {
+            std.debug.print("{any}\n", .{tk.value(self.src)});
+
+            const identifier = try self.expect(.identifier);
+            _ = try self.expect(.colon);
+            const is_fn = self.match(.l_paren);
+
+            std.debug.print("2 = {s}\n", .{tk.value(self.src)});
+
+            if (is_fn) {
+                const fn_def = try self.parseFnDef();
+                try funcs.append(self.allocator, .{
+                    .identifier = identifier.value(self.src),
+                    .def = fn_def,
+                });
+                continue;
+            }
+
+            const field_type = try self.parseTypeAnnotation();
+            try fields.append(self.allocator, .{
+                .identifier = identifier.value(self.src),
+                .type = field_type,
+            });
+            self.walk();
+        }
+
+        return ast.StructDef{
+            .funcs = try funcs.toOwnedSlice(self.allocator),
+            .fields = try fields.toOwnedSlice(self.allocator),
+        };
+    }
+
     fn parseFnDef(self: *Self) ParserError!ast.FnDef {
         var arguments: std.ArrayList(ast.FnArg) = .empty;
         var body_block: ast.Block = undefined;
@@ -415,6 +452,9 @@ pub const Parser = struct {
             .fn_kw => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_def = try self.parseFnDef() }, .loc_start = tk.loc.start });
             },
+            .struct_kw => {
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .struct_def = try self.parseStructDef() }, .loc_start = tk.loc.start });
+            },
             else => {
                 return self.err_dispatcher.invalidSyntax("valid expression", tk);
             },
@@ -511,6 +551,7 @@ pub const Parser = struct {
 
         return switch (tk.tag) {
             .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{ .name = tk.value(self.src) }),
+            .at => ast.TypeAnnotation.init(self.allocator, .{ .struct_self = {} }),
             .l_bracket => {
                 _ = try self.expect(.r_bracket);
                 const arr_type = try self.parseTypeAnnotation();

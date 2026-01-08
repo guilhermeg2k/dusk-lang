@@ -47,6 +47,7 @@ pub const TypeAnnotation = union(enum) {
     const Self = @This();
     name: []const u8,
     array: *TypeAnnotation,
+    struct_self: void,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -78,6 +79,8 @@ pub const Exp = union(enum) {
     array_literal: ArrayLiteral,
     fn_def: FnDef,
     fn_call: FnCall,
+
+    struct_def: StructDef,
 
     index_exp: IndexExp,
     unary_exp: UnaryExp,
@@ -124,6 +127,21 @@ pub const ReturnStmt = struct {
 pub const IndexExp = struct {
     target: *ExpNode,
     index: *ExpNode,
+};
+
+pub const StructDef = struct {
+    fields: []const StructField,
+    funcs: []const StructFn,
+};
+
+pub const StructField = struct {
+    identifier: []const u8,
+    type: *TypeAnnotation,
+};
+
+pub const StructFn = struct {
+    identifier: []const u8,
+    def: FnDef,
 };
 
 pub const UnaryOp = enum {

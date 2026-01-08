@@ -92,6 +92,7 @@ pub const Value = union(enum) {
     unary_op: UnaryOp,
 
     fn_def: void,
+    struct_def: void,
 
     fn_call: FnCall,
 
