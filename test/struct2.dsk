@@ -5,6 +5,7 @@ let User = struct
     auth_provider: string
 
     to_string: (self: @, id: number) -> string
+        self.id.name = 2
         return
 
     change_id: (self: @, id: number) -> string

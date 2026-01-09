@@ -227,13 +227,9 @@ pub const Parser = struct {
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
         while (tk.tag != .dedent and tk.tag != .eof) : (tk = self.peekCurrent()) {
-            std.debug.print("{any}\n", .{tk.value(self.src)});
-
             const identifier = try self.expect(.identifier);
             _ = try self.expect(.colon);
             const is_fn = self.match(.l_paren);
-
-            std.debug.print("2 = {s}\n", .{tk.value(self.src)});
 
             if (is_fn) {
                 const fn_def = try self.parseFnDef();
@@ -522,6 +518,21 @@ pub const Parser = struct {
                     .target = node,
                     .index = index,
                 } }, .loc_start = node.loc_start });
+
+                node = index_node;
+                continue;
+            }
+
+            if (tk.tag == .dot) {
+                self.walk();
+                const index = try self.parseExp(0);
+
+                const index_node = try ast.ExpNode.init(self.allocator, .{ .data = .{
+                    .index_exp = .{
+                        .target = node,
+                        .index = index,
+                    },
+                }, .loc_start = node.loc_start });
 
                 node = index_node;
                 continue;
