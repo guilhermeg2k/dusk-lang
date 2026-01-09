@@ -215,12 +215,6 @@ pub const Parser = struct {
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
-    fn parseAssignStmt(self: *Self, id: []const u8) ParserError!ast.AssignStmt {
-        _ = try self.expect(.assign);
-        const exp = try self.parseexpression(0);
-        return ast.AssignStmt{ .identifier = id, .exp = exp };
-    }
-
     fn parseStructDef(self: *Self) ParserError!ast.StructDef {
         var tk = try self.expect(.indent);
         var fields: std.ArrayList(ast.StructField) = .empty;
@@ -341,6 +335,7 @@ pub const Parser = struct {
         while (true) {
             const exp = try self.parseExp(0);
             try exps.append(self.allocator, exp);
+
             if (!self.match(.comma)) {
                 break;
             }
@@ -349,12 +344,56 @@ pub const Parser = struct {
         return exps.toOwnedSlice(self.allocator);
     }
 
-    fn parseFnCallArgs(self: *Self) ParserError![]const *ast.ExpNode {
+    fn parseFnCallArgs(self: *Self) ParserError![]const ast.FnCallArg {
         if (self.peekCurrent().tag == .r_paren) {
             return &.{};
         }
 
-        return self.parseExpList();
+        var are_arguments_named = false;
+        var args: std.ArrayList(ast.FnCallArg) = .empty;
+
+        var i: usize = 0;
+        while (true) : (i += 1) {
+            const prev_tk = self.peekCurrent();
+            const exp = try self.parseExp(0);
+            const tk = self.peekCurrent();
+
+            if (i == 0 and tk.tag == .eq) {
+                are_arguments_named = true;
+            }
+
+            if (are_arguments_named) {
+                std.debug.print("NAMED\n", .{});
+                if (tk.tag != .eq) {
+                    return self.err_dispatcher.invalidSyntax("=", tk);
+                }
+
+                if (exp.data != .identifier) {
+                    return self.err_dispatcher.invalidSyntax("identifier", prev_tk);
+                }
+
+                self.walk();
+                const value = try self.parseExp(0);
+                std.debug.print("blau {any}\n", .{self.peekCurrent().tag});
+                try args.append(self.allocator, .{
+                    .identifier = exp.data.identifier,
+                    .value = value,
+                });
+            } else {
+                try args.append(self.allocator, .{
+                    .identifier = null,
+                    .value = exp,
+                });
+            }
+
+            if (self.peekCurrent().tag != .comma) {
+                break;
+            }
+
+            self.walk();
+        }
+
+        return args.toOwnedSlice(self.allocator);
     }
 
     fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
@@ -496,6 +535,7 @@ pub const Parser = struct {
                 const call_node = try ast.ExpNode.init(self.allocator, .{
                     .data = .{
                         .fn_call = .{
+                            .are_arguments_named = args.len > 0 and args[0].identifier != null,
                             .identifier = node.data.identifier,
                             .arguments = args,
                         },

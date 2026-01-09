@@ -117,7 +117,13 @@ pub const FnArg = struct {
 
 pub const FnCall = struct {
     identifier: []const u8,
-    arguments: []const *ExpNode,
+    are_arguments_named: bool,
+    arguments: []const FnCallArg,
+};
+
+pub const FnCallArg = struct {
+    identifier: ?[]const u8,
+    value: *ExpNode,
 };
 
 pub const ReturnStmt = struct {

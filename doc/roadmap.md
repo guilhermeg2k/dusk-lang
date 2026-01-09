@@ -53,3 +53,4 @@
     - (fn(x) { x + 1 })(10)
 - Fuzz testing
 - Replace quickjs with own VM
+- Improve errors message

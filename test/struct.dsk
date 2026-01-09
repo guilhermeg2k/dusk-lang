@@ -12,9 +12,7 @@ let User = struct
     change_id: (mut self: @, id: number) -> string
         self.id = id
 
-
-
-let user = User(id: 1, oauth_id: 3, username: "Geromel", auth_provider: "discord")
+let user = User(id=1, oauth_id=3, username="Geromel", auth_provider="discord")
 
 let user = User(
     id: 1
