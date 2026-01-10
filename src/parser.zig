@@ -368,7 +368,6 @@ pub const Parser = struct {
             }
 
             if (are_arguments_named) {
-                std.debug.print("NAMED\n", .{});
                 if (tk.tag != .eq) {
                     return self.err_dispatcher.invalidSyntax("=", tk);
                 }
@@ -379,7 +378,6 @@ pub const Parser = struct {
 
                 self.walk();
                 const value = try self.parseExp(0);
-                std.debug.print("blau {any}\n", .{self.peekCurrent().tag});
                 try args.append(self.allocator, .{
                     .identifier = exp.data.identifier,
                     .value = value,

@@ -17,10 +17,10 @@ fn echo() BuiltInFn {
         .identifier = "echo",
         .type = &fn_type,
         .is_mut = false,
-        .metadata = .{
+        .metadata = .{ .func = .{
             .params = echo_params,
             .return_type = &void_type,
-        },
+        } },
     };
 
     const code = std.fmt.comptimePrint(
@@ -38,8 +38,10 @@ pub fn append() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params = append_params[0..],
-            .return_type = &void_type,
+            .func = .{
+                .params = append_params,
+                .return_type = &void_type,
+            },
         },
     };
 
@@ -58,8 +60,10 @@ pub fn len() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params = len_params[0..],
-            .return_type = &number_type,
+            .func = .{
+                .params = len_params,
+                .return_type = &number_type,
+            },
         },
     };
 
@@ -78,8 +82,10 @@ fn floor() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params = floor_params,
-            .return_type = &number_type,
+            .func = .{
+                .params = floor_params,
+                .return_type = &number_type,
+            },
         },
     };
 
@@ -98,8 +104,10 @@ fn concat() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params = concat_params,
-            .return_type = &string_type,
+            .func = .{
+                .params = concat_params,
+                .return_type = &string_type,
+            },
         },
     };
 
@@ -115,26 +123,29 @@ var fn_type = Type{ .function = {} };
 var void_type = Type{ .void = {} };
 var number_type = Type{ .number = {} };
 var string_type = Type{ .string = {} };
-var _anytype = Type{ .dynamic = {} };
-var any_array_type = Type{ .array = &_anytype };
+var anytype_ = Type{ .dynamic = {} };
+var any_array_type = Type{ .array = &anytype_ };
 
-const echo_params: []const *Type = &[_]*Type{
-    &_anytype,
+const echo_params: []const sema.FuncParamMetadata = &.{
+    .{ .identifier = "msgs", .type = &anytype_ },
 };
 
-const len_params: []const *Type = &[_]*Type{
-    &any_array_type,
+const len_params: []const sema.FuncParamMetadata = &.{
+    .{ .identifier = "array", .type = &any_array_type },
 };
 
-const append_params: []const *Type = &[_]*Type{ &any_array_type, &_anytype };
-
-const floor_params: []const *Type = &[_]*Type{
-    &number_type,
+const append_params: []const sema.FuncParamMetadata = &.{
+    .{ .identifier = "array", .type = &any_array_type },
+    .{ .identifier = "value", .type = &anytype_ },
 };
 
-const concat_params: []const *Type = &[_]*Type{
-    &string_type,
-    &string_type,
+const floor_params: []const sema.FuncParamMetadata = &.{
+    .{ .identifier = "n", .type = &number_type },
+};
+
+const concat_params: []const sema.FuncParamMetadata = &.{
+    .{ .identifier = "str1", .type = &string_type },
+    .{ .identifier = "str2", .type = &string_type },
 };
 
 const sema = @import("sema.zig");

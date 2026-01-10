@@ -185,11 +185,11 @@ pub const Generator = struct {
             .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
             .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
-            .index_exp => {
-                const target = value.index_exp.target.identifier;
+            .indexed => {
+                const target = value.indexed.target.identifier;
                 const target_name = try self.genName(target.uid, target.identifier);
 
-                const index = try self.genValue(value.index_exp.index);
+                const index = try self.genValue(value.indexed.index);
 
                 try buf.print(self.allocator, "{s}[{s}]", .{ target_name, index });
             },
@@ -305,7 +305,7 @@ pub const Generator = struct {
         const fn_name = try self.genName(func.uid, func.identifier);
         try buf.print(self.allocator, "function {s}(", .{fn_name});
 
-        for (func.args, 0..) |arg, i| {
+        for (func.params, 0..) |arg, i| {
             if (i > 0) try buf.appendSlice(self.allocator, ", ");
 
             const arg_name = try self.genName(arg.uid, arg.identifier);

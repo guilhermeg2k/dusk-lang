@@ -13,7 +13,7 @@ pub const Struct = struct {
     uid: usize,
     identifier: []const u8,
     fields: []const StructField,
-    functions: []const Func,
+    funcs: []const Func,
 };
 
 pub const StructField = struct {
@@ -98,7 +98,7 @@ pub const Value = union(enum) {
 
     identifier: struct { uid: usize, identifier: []const u8, type: *Type },
 
-    index_exp: IndexedValue,
+    indexed: IndexedValue,
 
     binary_op: BinaryOp,
 

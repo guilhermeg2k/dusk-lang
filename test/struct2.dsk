@@ -1,2 +1,14 @@
+let User = struct
+    id: number
+    auth_id: string
+    username: string
+    auth_provider: string
+
+    to_string: (self: @, id: number) -> string
+        return "Hello"
+
+    change_id: (mut self: @, id: number) -> string
+        return "World"
+
 let user = User(id=0, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
 
