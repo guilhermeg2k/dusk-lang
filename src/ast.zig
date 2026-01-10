@@ -104,12 +104,12 @@ pub const BinaryExp = struct {
 };
 
 pub const FnDef = struct {
-    arguments: []const FnArg,
+    params: []const FnParam,
     return_type: ?*TypeAnnotation,
     body_block: Block,
 };
 
-pub const FnArg = struct {
+pub const FnParam = struct {
     identifier: []const u8,
     type_annotation: *TypeAnnotation,
     default_value: ?*ExpNode,

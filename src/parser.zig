@@ -254,7 +254,7 @@ pub const Parser = struct {
     }
 
     fn parseFnDef(self: *Self) ParserError!ast.FnDef {
-        var arguments: std.ArrayList(ast.FnArg) = .empty;
+        var arguments: std.ArrayList(ast.FnParam) = .empty;
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
 
@@ -282,14 +282,14 @@ pub const Parser = struct {
         }
 
         return ast.FnDef{
-            .arguments = try arguments.toOwnedSlice(self.allocator),
+            .params = try arguments.toOwnedSlice(self.allocator),
             .body_block = body_block,
             .return_type = return_type,
         };
     }
 
-    fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnArg) {
-        var arguments: std.ArrayList(ast.FnArg) = .empty;
+    fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnParam) {
+        var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
             const arg = try self.parseFnArg();
             try arguments.append(self.allocator, arg);
@@ -301,7 +301,7 @@ pub const Parser = struct {
         return arguments;
     }
 
-    fn parseFnArg(self: *Self) ParserError!ast.FnArg {
+    fn parseFnArg(self: *Self) ParserError!ast.FnParam {
         var default_value: ?*ast.ExpNode = null;
         const is_mut = self.match(.mut_kw);
 
@@ -315,7 +315,7 @@ pub const Parser = struct {
             default_value = try self.parseExp(0);
         }
 
-        return ast.FnArg{
+        return ast.FnParam{
             .identifier = id,
             .type_annotation = type_annotation,
             .default_value = default_value,
