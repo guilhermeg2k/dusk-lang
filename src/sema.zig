@@ -51,6 +51,90 @@ pub const SemaAnalyzer = struct {
         };
     }
 
+    pub fn visitSymbols(self: *Self, root: *ast.Root) !void {
+        for (root.statements.items) |stmt| {
+            if (stmt.data.let_stmt) {
+                var var_type: *Type = undefined;
+                const let_stmt = stmt.data.let_stmt;
+                const expression_value = try self.evalExp(let_stmt.value);
+                const expression_type = self.resolveValueType(expression_value);
+
+                if (let_stmt.type_annotation) |type_annotation| {
+                    var_type = self.resolveTypeAnnotation(type_annotation) catch {
+                        return self.err_dispatcher.typeNotDefined(type_annotation.name, stmt.loc_start);
+                    };
+                } else {
+                    var_type = expression_type;
+                }
+
+                if (!expression_type.eql(var_type) and !expression_type.eql(var_type)) {
+                    return self.err_dispatcher.invalidType(try var_type.name(self.allocator), try expression_type.name(self.allocator), stmt.loc_start);
+                }
+
+                if (var_type == .function) {
+                    const fn_def = let_stmt.value.data.fn_def;
+
+                    var return_type: *Type = undefined;
+                    var params_metadata: std.ArrayList(*FuncParamMetadata) = .empty;
+
+                    const fn_uid = self.scope.genUid();
+
+                    //create a temporary scope just for inline return type inference
+                    try self.scope.enter(self.void_type);
+
+                    for (fn_def.arguments) |arg| {
+                        const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
+                            return self.err_dispatcher.typeNotDefined(
+                                arg.type_annotation.name,
+                                fn_def.loc_start,
+                            );
+                        };
+
+                        const arg_uid = self.scope.genUid();
+
+                        self.scope.symbol_table.put(.{
+                            .uid = arg_uid,
+                            .identifier = arg.identifier,
+                            .is_mut = arg.is_mut,
+                            .type = arg_type,
+                            .metadata = null,
+                        }) catch {
+                            return self.err_dispatcher.alreadyDefined(arg.identifier, fn_def.loc_start);
+                        };
+
+                        try params_metadata.append(self.allocator, .{ .identifier = arg.identifier, .type = arg_type });
+                    }
+
+                    if (fn_def.return_type) |r_type| {
+                        return_type = self.resolveTypeAnnotation(r_type) catch {
+                            return self.err_dispatcher.typeNotDefined(r_type.name, fn_def.loc_start);
+                        };
+                    } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
+                        const return_value = try self.evalExp(return_exp);
+                        return_type = self.resolveValueType(return_value);
+                    }
+
+                    //restore main scope
+                    self.scope.exit(self.void_type);
+
+                    try self.scope.symbol_table.put(.{
+                        .identifier = let_stmt.identifier,
+                        .uid = fn_uid,
+                        //warn: mut setting by hand to false
+                        .is_mut = false,
+                        .type = self.type_fn,
+                        .metadata = .{
+                            .func = .{
+                                .params = try params_metadata.toOwnedSlice(self.allocator),
+                                .return_type = return_type,
+                            },
+                        },
+                    });
+                }
+            }
+        }
+    }
+
     pub fn visitBlock(self: *Self, block: *const ast.Block) ![]const ir.Instruction {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type);
@@ -103,19 +187,9 @@ pub const SemaAnalyzer = struct {
             var_type = expression_type;
         }
 
-        const uid = self.scope.genUid();
-
         if (!expression_type.eql(var_type) and !expression_type.eql(var_type)) {
             return self.err_dispatcher.invalidType(try var_type.name(self.allocator), try expression_type.name(self.allocator), stmt.loc_start);
         }
-
-        try self.scope.symbol_table.put(.{
-            .identifier = let_stmt.identifier,
-            .uid = uid,
-            .is_mut = let_stmt.is_mut,
-            .type = var_type,
-            .metadata = null,
-        });
 
         if (expression_type.eql(self.type_fn)) {
             const func = try self.visitFnDef(let_stmt.value, let_stmt.identifier);
@@ -128,6 +202,16 @@ pub const SemaAnalyzer = struct {
             try self.structs.append(self.allocator, struct_def);
             return null;
         }
+
+        const uid = self.scope.genUid();
+
+        try self.scope.symbol_table.put(.{
+            .identifier = let_stmt.identifier,
+            .uid = uid,
+            .is_mut = let_stmt.is_mut,
+            .type = var_type,
+            .metadata = null,
+        });
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
@@ -309,85 +393,29 @@ pub const SemaAnalyzer = struct {
 
     fn visitFnDef(self: *Self, exp: *const ast.ExpNode, identifier: []const u8) Errors!ir.Func {
         const fn_def = exp.data.fn_def;
+        const fn_symbol = self.scope.symbol_table.getOrThrow(identifier) catch {
+            return self.err_dispatcher.notDefined(identifier, exp.loc_start);
+        };
+
+        var params: std.ArrayList(ir.FuncArg) = .empty;
+        const func_metadata = if (fn_symbol.metadata) |metadata| metadata.func else unreachable;
+
         const old_return_type = self.scope.return_type;
-
-        var return_type: *Type = undefined;
-        var arguments: std.ArrayList(ir.FuncArg) = .empty;
-        var params_metadata: std.ArrayList(*FuncParamMetadata) = .empty;
-
-        const fn_uid = self.scope.genUid();
-
-        //create a temporary scope just for inline return type inference
-        try self.scope.enter(old_return_type);
-
-        for (fn_def.arguments) |arg| {
-            const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
-                return self.err_dispatcher.typeNotDefined(
-                    arg.type_annotation.name,
-                    exp.loc_start,
-                );
-            };
-
-            const arg_uid = self.scope.genUid();
-
-            self.scope.symbol_table.put(.{
-                .uid = arg_uid,
-                .identifier = arg.identifier,
-                .is_mut = arg.is_mut,
-                .type = arg_type,
-                .metadata = null,
-            }) catch {
-                return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
-            };
-
-            try params_metadata.append(self.allocator, .{ .identifier = arg.identifier, .type = arg_type });
-        }
-
-        if (fn_def.return_type) |r_type| {
-            return_type = self.resolveTypeAnnotation(r_type) catch {
-                return self.err_dispatcher.typeNotDefined(r_type.name, exp.loc_start);
-            };
-        } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
-            const return_value = try self.evalExp(return_exp);
-            return_type = self.resolveValueType(return_value);
-        }
-
-        //restore main scope
-        self.scope.exit(old_return_type);
-
-        try self.scope.symbol_table.replace(.{
-            .identifier = identifier,
-            .uid = fn_uid,
-            .is_mut = false,
-            .type = self.type_fn,
-            .metadata = .{
-                .func = .{
-                    .params = try params_metadata.toOwnedSlice(self.allocator),
-                    .return_type = return_type,
-                },
-            },
-        });
-
-        try self.scope.enter(return_type);
+        try self.scope.enter(fn_symbol.metadata.?.func.return_type);
         defer self.scope.exit(old_return_type);
 
-        for (fn_def.arguments) |arg| {
-            const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
-                return self.err_dispatcher.typeNotDefined(
-                    arg.type_annotation.name,
-                    exp.loc_start,
-                );
-            };
+        for (func_metadata.params) |param| {
+            const param_type = try self.resolveTypeAnnotation(param.type_annotation);
 
-            var arg_default_value: ?*ir.Value = null;
+            var param_default_value: ?*ir.Value = null;
 
-            if (arg.default_value) |default_value| {
-                arg_default_value = try self.evalExp(default_value);
-                const default_value_type = self.resolveValueType(arg_default_value.?);
+            if (param.default_value) |default_value| {
+                param_default_value = try self.evalExp(default_value);
+                const default_value_type = self.resolveValueType(param_default_value.?);
 
-                if (!arg_type.eql(default_value_type)) {
+                if (!param_type.eql(default_value_type)) {
                     return self.err_dispatcher.invalidType(
-                        try arg_type.name(self.allocator),
+                        try param_type.name(self.allocator),
                         try default_value_type.name(self.allocator),
                         default_value.loc_start,
                     );
@@ -396,31 +424,29 @@ pub const SemaAnalyzer = struct {
 
             const arg_uid = self.scope.genUid();
 
-            self.scope.symbol_table.put(.{
+            try self.scope.symbol_table.put(.{
                 .uid = arg_uid,
-                .identifier = arg.identifier,
-                .is_mut = arg.is_mut,
-                .type = arg_type,
+                .identifier = param.identifier,
+                .is_mut = param.is_mut,
+                .type = param_type,
                 .metadata = null,
-            }) catch {
-                return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
-            };
+            });
 
-            try arguments.append(self.allocator, .{
+            try params.append(self.allocator, .{
                 .uid = arg_uid,
-                .identifier = arg.identifier,
-                .type = arg_type,
-                .default_value = arg_default_value,
+                .identifier = param.identifier,
+                .type = param_type,
+                .default_value = param_default_value,
             });
         }
 
         const body = try self.visitBlock(&fn_def.body_block);
 
         return ir.Func{
-            .uid = fn_uid,
+            .uid = fn_symbol.uid,
             .identifier = identifier,
-            .args = try arguments.toOwnedSlice(self.allocator),
-            .return_type = return_type,
+            .params = try params.toOwnedSlice(self.allocator),
+            .return_type = func_metadata.return_type,
             .body = body,
         };
     }

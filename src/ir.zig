@@ -24,12 +24,12 @@ pub const StructField = struct {
 pub const Func = struct {
     uid: usize,
     identifier: []const u8,
-    args: []const FuncArg,
+    params: []const FuncParam,
     body: []const Instruction,
     return_type: *Type,
 };
 
-pub const FuncArg = struct {
+pub const FuncParam = struct {
     uid: usize,
     identifier: []const u8,
     default_value: ?*Value,

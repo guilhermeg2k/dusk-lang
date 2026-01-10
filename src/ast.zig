@@ -1,5 +1,6 @@
 pub const Root = Block;
 
+//warn: arraylist
 pub const Block = struct {
     statements: std.ArrayList(StatementNode),
 };
