@@ -147,7 +147,7 @@ pub const StructField = struct {
 
 pub const StructFn = struct {
     identifier: []const u8,
-    def: FnDef,
+    def: *ExpNode,
 };
 
 pub const UnaryOp = enum {

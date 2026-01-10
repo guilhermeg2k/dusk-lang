@@ -6,6 +6,7 @@
 
 - Structs
 - Mut modifer added to the type data
+- hoisting
 - Support function call with named parameters
 - Support for multiple line statements
   - Struct definition

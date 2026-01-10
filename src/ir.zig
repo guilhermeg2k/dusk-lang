@@ -1,6 +1,7 @@
 pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
+    structs: []const Struct,
 
     pub fn deinit(self: *Program) void {
         self.instructions.deinit();
@@ -8,12 +9,24 @@ pub const Program = struct {
     }
 };
 
+pub const Struct = struct {
+    uid: usize,
+    identifier: []const u8,
+    fields: []const StructField,
+    functions: []const Func,
+};
+
+pub const StructField = struct {
+    identifier: []const u8,
+    type: *Type,
+};
+
 pub const Func = struct {
     uid: usize,
     identifier: []const u8,
     args: []const FuncArg,
-    return_type: *Type,
     body: []const Instruction,
+    return_type: *Type,
 };
 
 pub const FuncArg = struct {

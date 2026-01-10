@@ -18,7 +18,7 @@ fn echo() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params_types = echo_params,
+            .params = echo_params,
             .return_type = &void_type,
         },
     };
@@ -38,7 +38,7 @@ pub fn append() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params_types = append_params[0..],
+            .params = append_params[0..],
             .return_type = &void_type,
         },
     };
@@ -58,7 +58,7 @@ pub fn len() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params_types = len_params[0..],
+            .params = len_params[0..],
             .return_type = &number_type,
         },
     };
@@ -78,7 +78,7 @@ fn floor() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params_types = floor_params,
+            .params = floor_params,
             .return_type = &number_type,
         },
     };
@@ -98,7 +98,7 @@ fn concat() BuiltInFn {
         .type = &fn_type,
         .is_mut = false,
         .metadata = .{
-            .params_types = concat_params,
+            .params = concat_params,
             .return_type = &string_type,
         },
     };

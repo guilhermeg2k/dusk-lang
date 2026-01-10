@@ -229,7 +229,12 @@ pub const Parser = struct {
                 const fn_def = try self.parseFnDef();
                 try funcs.append(self.allocator, .{
                     .identifier = identifier.value(self.src),
-                    .def = fn_def,
+                    .def = try ast.ExpNode.init(self.allocator, .{
+                        .loc_start = tk.loc.start,
+                        .data = .{
+                            .fn_def = fn_def,
+                        },
+                    }),
                 });
                 continue;
             }

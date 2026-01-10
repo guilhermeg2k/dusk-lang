@@ -1,2 +1,2 @@
-let user = User(0, auth_id="XWQ#@!#@!", "guig2k", auth_provider="discord")
+let user = User(id=0, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
 

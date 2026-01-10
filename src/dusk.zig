@@ -44,15 +44,14 @@ pub const Dusk = struct {
         var dusk_parser = Parser.init(self.allocator, src, tokens.items);
         const ast = try dusk_parser.parse();
         try self.dump(ast, "dump/ast.json");
-        return "";
 
-        // var sema_analyzer = try SemaAnalyzer.init(self.allocator, src, &ast);
-        // const ir = try sema_analyzer.analyze();
-        // try self.dump(ir, "dump/ir.json");
-        //
-        // var js_code_gen = Generator{ .allocator = self.allocator };
-        // const compiled_code = try js_code_gen.generate(ir);
-        // return compiled_code;
+        var sema_analyzer = try SemaAnalyzer.init(self.allocator, src, &ast);
+        const ir = try sema_analyzer.analyze();
+        try self.dump(ir, "dump/ir.json");
+
+        var js_code_gen = Generator{ .allocator = self.allocator };
+        const compiled_code = try js_code_gen.generate(ir);
+        return compiled_code;
     }
 
     fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
