@@ -10,7 +10,7 @@ let power: fn = (base: number, exp: number) -> number
 
     return base * power(base, exp - 1)
 
-echo(power(2, 0))
+echo(power(base=2, exp=0))
 echo(power(2, 3))
 echo(power(5, 2))
 echo(power(3, 4))

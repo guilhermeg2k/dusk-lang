@@ -26,6 +26,8 @@ pub const SemaAnalyzer = struct {
             .err_dispatcher = .{ .allocator = allocator, .src = "" },
             .functions = .empty,
             .structs = .empty,
+
+            //warn: change this to static outside the struct
             .type_number = try Type.init(allocator, .number),
             .type_str = try Type.init(allocator, .string),
             .type_bool = try Type.init(allocator, .boolean),
@@ -568,35 +570,57 @@ pub const SemaAnalyzer = struct {
 
     //todo: named fn calls
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
-        const func_symbol = self.scope.symbol_table.getOrThrow(fn_call.identifier) catch {
+        const fn_symbol = self.scope.symbol_table.getOrThrow(fn_call.identifier) catch {
             return self.err_dispatcher.notDefined(fn_call.identifier, loc_start);
         };
 
-        if (!func_symbol.type.eql(self.type_func)) {
+        if (!fn_symbol.type.eql(self.type_func)) {
             return self.err_dispatcher.invalidType(
                 "function",
-                try func_symbol.type.name(self.allocator),
+                try fn_symbol.type.name(self.allocator),
                 loc_start,
             );
         }
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
-        if (func_symbol.metadata) |fn_data| {
-            const args_len = fn_call.arguments.len;
-            const fn_params_len = fn_data.func.params.len;
+        if (fn_symbol.metadata) |metadata| {
+            var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
+            const call_args_len = fn_call.arguments.len;
+            const fn_params_len = metadata.func.params.len;
+            defer arg_exp_by_param_name.deinit();
 
-            if (fn_params_len != args_len) {
-                return self.err_dispatcher.invalidNumberOfArgs(args_len, fn_params_len, loc_start);
+            if (fn_params_len != call_args_len) {
+                return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, call_args_len, loc_start);
             }
 
-            for (fn_call.arguments, 0..) |arg, i| {
-                const fn_call_arg_value = try self.evalExp(arg.value);
+            if (fn_call.are_arguments_named) {
+                for (fn_call.arguments) |arg| {
+                    if (arg.identifier) |identifier| {
+                        try arg_exp_by_param_name.put(identifier, arg.exp);
+                    } else {
+                        unreachable;
+                    }
+                }
+            }
 
-                const param_type = fn_data.func.params[i].type;
+            for (metadata.func.params, 0..) |param, i| {
+                var arg_exp = fn_call.arguments[i].exp;
+
+                if (fn_call.are_arguments_named) {
+                    const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
+                    if (named_arg_exp) |exp| {
+                        arg_exp = exp;
+                    } else {
+                        return self.err_dispatcher.missingArgument(param.identifier, loc_start);
+                    }
+                }
+
+                const fn_call_arg_value = try self.evalExp(arg_exp);
                 const arg_type = self.resolveValueType(fn_call_arg_value);
-                if (!arg_type.eql(param_type)) {
-                    return self.err_dispatcher.invalidType(try param_type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
+
+                if (!arg_type.eql(param.type)) {
+                    return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
                 }
 
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
@@ -606,9 +630,9 @@ pub const SemaAnalyzer = struct {
                 self.allocator,
                 .{
                     .fn_call = .{
-                        .fn_uid = func_symbol.uid,
-                        .identifier = func_symbol.identifier,
-                        .return_type = fn_data.func.return_type,
+                        .fn_uid = fn_symbol.uid,
+                        .identifier = fn_symbol.identifier,
+                        .return_type = metadata.func.return_type,
                         .args = try fn_call_arguments_values.toOwnedSlice(self.allocator),
                     },
                 },
@@ -860,7 +884,17 @@ const Scope = struct {
     next_uid: usize,
 
     pub fn init(allocator: std.mem.Allocator, return_type: *Type) !Self {
-        return Self{ .allocator = allocator, .symbol_table = try SymbolTable.init(allocator, null), .return_type = return_type, .next_uid = 10 };
+        var symbols = std.StringHashMap(*const Symbol).init(allocator);
+        for (&built_in_functions) |*func| {
+            try symbols.put(func.symbol.identifier, &func.symbol);
+        }
+
+        return Self{
+            .allocator = allocator,
+            .symbol_table = try SymbolTable.init(allocator, null, symbols),
+            .return_type = return_type,
+            .next_uid = 10,
+        };
     }
 
     pub fn genUid(self: *Self) usize {
@@ -870,7 +904,7 @@ const Scope = struct {
 
     pub fn enter(self: *Self, return_type: *Type) !void {
         self.return_type = return_type;
-        self.symbol_table = try SymbolTable.init(self.allocator, self.symbol_table);
+        self.symbol_table = try SymbolTable.init(self.allocator, self.symbol_table, null);
     }
 
     pub fn exit(self: *Self, return_type: *Type) void {
@@ -886,16 +920,13 @@ const SymbolTable = struct {
     parent: ?*SymbolTable,
     symbols: std.StringHashMap(*const Symbol),
 
-    pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable) !*Self {
+    pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable, symbols: ?std.StringHashMap(*const Symbol)) !*Self {
         const ptr = try allocator.create(Self);
-
-        var symbols = std.StringHashMap(*const Symbol).init(allocator);
-
-        for (built_in_functions) |func| {
-            try symbols.put(func.symbol.identifier, &func.symbol);
-        }
-
-        ptr.* = Self{ .allocator = allocator, .parent = parent, .symbols = symbols };
+        ptr.* = Self{
+            .allocator = allocator,
+            .parent = parent,
+            .symbols = if (symbols) |s| s else std.StringHashMap(*const Symbol).init(allocator),
+        };
         return ptr;
     }
 

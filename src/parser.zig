@@ -380,12 +380,12 @@ pub const Parser = struct {
                 const value = try self.parseExp(0);
                 try args.append(self.allocator, .{
                     .identifier = exp.data.identifier,
-                    .value = value,
+                    .exp = value,
                 });
             } else {
                 try args.append(self.allocator, .{
                     .identifier = null,
-                    .value = exp,
+                    .exp = exp,
                 });
             }
 

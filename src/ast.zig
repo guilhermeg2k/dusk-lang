@@ -124,7 +124,7 @@ pub const FnCall = struct {
 
 pub const FnCallArg = struct {
     identifier: ?[]const u8,
-    value: *ExpNode,
+    exp: *ExpNode,
 };
 
 pub const ReturnStmt = struct {

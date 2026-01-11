@@ -92,6 +92,18 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn missingArgument(self: *Self, expected: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Missing argument \"{s}\"",
+                .{expected},
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: usize) Errors {
         self.log(try allocPrint(self.allocator, "Variable \"{s}\" already declared", .{identifier}), loc);
         return Errors.SemaError;
