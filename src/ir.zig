@@ -2,11 +2,18 @@ pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
     structs: []const Struct,
+};
 
-    pub fn deinit(self: *Program) void {
-        self.instructions.deinit();
-        self.functions.deinit();
-    }
+pub const Instruction = union(enum) {
+    store_var: StoreVar,
+    update_var: UpdateVar,
+    branch_if: BranchIf,
+    loop: Loop,
+    return_stmt: ReturnStmt,
+    expression_stmt: ExpressionStmt,
+    update_indexed: UpdateIndexed,
+    break_stmt: void,
+    continue_stmt: void,
 };
 
 pub const Struct = struct {
@@ -34,18 +41,6 @@ pub const FuncParam = struct {
     identifier: []const u8,
     default_value: ?*Value,
     type: *Type,
-};
-
-pub const Instruction = union(enum) {
-    store_var: StoreVar,
-    update_var: UpdateVar,
-    branch_if: BranchIf,
-    loop: Loop,
-    return_stmt: ReturnStmt,
-    expression_stmt: ExpressionStmt,
-    update_indexed: UpdateIndexed,
-    break_stmt: void,
-    continue_stmt: void,
 };
 
 pub const UpdateIndexed = struct {
@@ -105,6 +100,7 @@ pub const Value = union(enum) {
     unary_op: UnaryOp,
 
     fn_def: void,
+
     struct_def: void,
 
     fn_call: FnCall,

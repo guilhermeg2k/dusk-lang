@@ -5,9 +5,8 @@
 ## Version: 0.5 - Chisato
 
 - [x] Hoisting
+- [x] Support function call with named parameters
 - Structs
-- Mut modifer added to the type data
-- Support function call with named parameters
 - Support for multiple line statements
   - Struct definition
   - Struct inicialziation

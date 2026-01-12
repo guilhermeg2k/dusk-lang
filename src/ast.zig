@@ -141,14 +141,14 @@ pub const StructDef = struct {
     funcs: []const StructFn,
 };
 
-pub const StructField = struct {
-    identifier: []const u8,
-    type: *TypeAnnotation,
-};
-
 pub const StructFn = struct {
     identifier: []const u8,
     def: *ExpNode,
+};
+
+pub const StructField = struct {
+    identifier: []const u8,
+    type: *TypeAnnotation,
 };
 
 pub const UnaryOp = enum {

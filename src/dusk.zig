@@ -47,7 +47,7 @@ pub const Dusk = struct {
 
         var sema_analyzer = try SemaAnalyzer.init(self.allocator);
         const ir = try sema_analyzer.analyze(&ast, src);
-        try self.dump(ir, "dump/ir.json");
+        // try self.dump(ir, "dump/ir.json");
 
         var js_code_gen = Generator{ .allocator = self.allocator };
         const compiled_code = try js_code_gen.generate(ir);

@@ -17,7 +17,8 @@ pub const Generator = struct {
 
     fn genFunctions(self: *Self, functions: []const ir.Func) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
-        for (built_in_functions) |func| {
+        const builtin = BuiltIn{ .alloc = self.allocator };
+        for (try builtin.generate()) |func| {
             try buf.appendSlice(self.allocator, func.code);
         }
 
@@ -328,6 +329,5 @@ pub const Generator = struct {
 const GeneratorError = error{OutOfMemory};
 
 const ir = @import("ir.zig");
-const builtin = @import("built-in.zig");
-const built_in_functions = builtin.built_in_functions;
+const BuiltIn = @import("built-in.zig").BuiltIn;
 const std = @import("std");

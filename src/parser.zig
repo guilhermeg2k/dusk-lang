@@ -247,6 +247,8 @@ pub const Parser = struct {
             self.walk();
         }
 
+        _ = try self.expect(.dedent);
+
         return ast.StructDef{
             .funcs = try funcs.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),

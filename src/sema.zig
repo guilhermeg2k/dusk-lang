@@ -13,8 +13,8 @@ pub const SemaAnalyzer = struct {
     type_number: *Type,
     type_str: *Type,
     type_bool: *Type,
-    type_func: *Type,
-    type_struct: *Type,
+    type_func_def: *Type,
+    type_struct_def: *Type,
     type_void: *Type,
     type_dynamic: *Type,
 
@@ -31,8 +31,8 @@ pub const SemaAnalyzer = struct {
             .type_number = try Type.init(allocator, .number),
             .type_str = try Type.init(allocator, .string),
             .type_bool = try Type.init(allocator, .boolean),
-            .type_func = try Type.init(allocator, .function),
-            .type_struct = try Type.init(allocator, .struct_type),
+            .type_func_def = try Type.init(allocator, .function_def),
+            .type_struct_def = try Type.init(allocator, .struct_def),
             .type_void = void_type,
             .type_dynamic = try Type.init(allocator, .dynamic),
         };
@@ -53,41 +53,50 @@ pub const SemaAnalyzer = struct {
 
     pub fn hoistFunctionsAndStructs(self: *Self, root: *const ast.Root) !void {
         for (root.statements.items) |stmt| {
-            if (stmt.data == .let_stmt) {
-                var var_type: *Type = undefined;
-                const let_stmt = stmt.data.let_stmt;
-                const expression_value = try self.evalExp(let_stmt.value);
-                const expression_type = self.resolveValueType(expression_value);
+            if (stmt.data != .let_stmt) {
+                continue;
+            }
 
-                if (let_stmt.type_annotation) |type_annotation| {
-                    var_type = self.resolveTypeAnnotation(type_annotation) catch {
-                        return self.err_dispatcher.typeNotDefined(type_annotation.name, stmt.loc_start);
-                    };
-                } else {
-                    var_type = expression_type;
-                }
+            const let_stmt = stmt.data.let_stmt;
+            const expression_value = try self.evalExp(let_stmt.value);
+            const expression_type = self.resolveValueType(expression_value);
 
-                if (!expression_type.eql(var_type) and !expression_type.eql(var_type)) {
-                    return self.err_dispatcher.invalidType(try var_type.name(self.allocator), try expression_type.name(self.allocator), stmt.loc_start);
-                }
+            var var_type: *Type = expression_type;
+            if (let_stmt.type_annotation) |type_annotation| {
+                var_type = self.resolveTypeAnnotation(type_annotation) catch {
+                    return self.err_dispatcher.typeNotDefined(type_annotation.name, stmt.loc_start);
+                };
+            }
 
-                if (var_type.eql(self.type_func)) {
-                    const fn_symbol = try self.visitFnSymbol(let_stmt.identifier, let_stmt.value);
-                    try self.scope.symbol_table.put(fn_symbol);
-                }
+            if (!expression_type.eql(var_type) and !expression_type.eql(var_type)) {
+                return self.err_dispatcher.invalidType(
+                    try var_type.name(self.allocator),
+                    try expression_type.name(self.allocator),
+                    stmt.loc_start,
+                );
+            }
 
-                if (var_type.eql(self.type_struct)) {
-                    const struct_symbol = try self.visityStructSymbol(let_stmt.identifier, let_stmt.value);
-                    try self.scope.symbol_table.put(struct_symbol);
-                }
+            if (self.type_struct_def.eql(var_type)) {
+                const struct_symbol = try self.visitStructSymbol(
+                    let_stmt.identifier,
+                    let_stmt.value,
+                );
+                try self.scope.symbol_table.put(struct_symbol);
+            }
+
+            std.debug.print("{any} {any}\n", .{ self.type_struct_def, var_type });
+
+            if (self.type_func_def.eql(var_type)) {
+                const fn_symbol = try self.visitFnSymbol(let_stmt.identifier, let_stmt.value);
+                try self.scope.symbol_table.put(fn_symbol);
             }
         }
     }
 
-    fn visityStructSymbol(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !*Symbol {
+    fn visitStructSymbol(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !*Symbol {
         const struct_def = exp.data.struct_def;
-        var fields: std.ArrayList(StructFieldMetadata) = .empty;
-        var funcs = std.StringHashMap(*const Symbol).init(self.allocator);
+        var fields: std.ArrayList(TypedIdentifier) = .empty;
+        var funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
         for (struct_def.fields) |field| {
             const field_type = try self.resolveTypeAnnotation(field.type);
@@ -102,7 +111,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.funcs) |func| {
             const fn_symbol = try self.visitFnSymbol(func.identifier, func.def);
-            try funcs.put(func.identifier, fn_symbol);
+            try funcs.put(func.identifier, fn_symbol.type.function);
         }
 
         return Symbol.init(
@@ -112,13 +121,11 @@ pub const SemaAnalyzer = struct {
                 .uid = self.scope.genUid(),
                 //warn: mut setting by hand to false
                 .is_mut = false,
-                .type = self.type_struct,
-                .metadata = .{
-                    .struct_ = .{
-                        .fields = try fields.toOwnedSlice(self.allocator),
-                        .functions = funcs,
-                    },
-                },
+                .type = try Type.init(self.allocator, .{ .struct_ = .{
+                    .identifier = identifier,
+                    .fields = try fields.toOwnedSlice(self.allocator),
+                    .functions = funcs,
+                } }),
             },
         );
     }
@@ -126,7 +133,7 @@ pub const SemaAnalyzer = struct {
     fn visitFnSymbol(self: *Self, identifier: []const u8, exp: *ast.ExpNode) !*Symbol {
         const fn_def = exp.data.fn_def;
         var return_type: *Type = undefined;
-        var params_metadata: std.ArrayList(FuncParamMetadata) = .empty;
+        var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
 
         //create a temporary scope just for inline return type inference
         try self.scope.enter(self.type_void);
@@ -145,7 +152,6 @@ pub const SemaAnalyzer = struct {
                     .identifier = arg.identifier,
                     .is_mut = arg.is_mut,
                     .type = arg_type,
-                    .metadata = null,
                 }),
             ) catch {
                 return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
@@ -154,6 +160,7 @@ pub const SemaAnalyzer = struct {
             try params_metadata.append(self.allocator, .{ .identifier = arg.identifier, .type = arg_type });
         }
 
+        //warn:  need to catch the else case ?
         if (fn_def.return_type) |r_type| {
             return_type = self.resolveTypeAnnotation(r_type) catch {
                 return self.err_dispatcher.typeNotDefined(r_type.name, exp.loc_start);
@@ -171,13 +178,13 @@ pub const SemaAnalyzer = struct {
             .uid = self.scope.genUid(),
             //warn: mut setting by hand to false
             .is_mut = false,
-            .type = self.type_func,
-            .metadata = .{
-                .func = .{
+            .type = try Type.init(self.allocator, .{
+                .function = .{
+                    .identifier = identifier,
                     .params = try params_metadata.toOwnedSlice(self.allocator),
                     .return_type = return_type,
                 },
-            },
+            }),
         });
     }
 
@@ -230,16 +237,16 @@ pub const SemaAnalyzer = struct {
             var_type = expression_type;
         }
 
-        if (var_type.eql(self.type_func)) {
+        if (self.type_func_def.eql(var_type)) {
             const fn_symbol = self.scope.symbol_table.getOrThrow(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc_start);
             };
-            const func = try self.visitFnDef(let_stmt.value, fn_symbol);
+            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, fn_symbol.type.function);
             try self.functions.append(self.allocator, func);
             return null;
         }
 
-        if (var_type.eql(self.type_struct)) {
+        if (self.type_struct_def.eql(var_type)) {
             const struct_def = try self.visitStructDef(let_stmt.value, let_stmt.identifier);
             try self.structs.append(self.allocator, struct_def);
             return null;
@@ -254,7 +261,6 @@ pub const SemaAnalyzer = struct {
                 .uid = uid,
                 .is_mut = let_stmt.is_mut,
                 .type = var_type,
-                .metadata = null,
             },
         ));
 
@@ -424,8 +430,8 @@ pub const SemaAnalyzer = struct {
         }
 
         for (struct_def.funcs) |func| {
-            const fn_symbol = struct_symbol.metadata.?.struct_.functions.get(func.identifier);
-            const fn_def = try self.visitFnDef(func.def, fn_symbol.?);
+            const fn_metadata = if (struct_symbol.type.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
+            const fn_def = try self.visitFnDef(func.def, self.scope.genUid(), fn_metadata);
             try funcs.append(self.allocator, fn_def);
         }
 
@@ -437,17 +443,20 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn visitFnDef(self: *Self, exp: *const ast.ExpNode, fn_symbol: *const Symbol) Errors!ir.Func {
+    fn visitFnDef(
+        self: *Self,
+        exp: *const ast.ExpNode,
+        uid: usize,
+        metadata: FuncMetadata,
+    ) Errors!ir.Func {
         const fn_def = exp.data.fn_def;
-
         var params: std.ArrayList(ir.FuncParam) = .empty;
-        const func_metadata = if (fn_symbol.metadata) |metadata| metadata.func else unreachable;
 
         const old_return_type = self.scope.return_type;
-        try self.scope.enter(fn_symbol.metadata.?.func.return_type);
+        try self.scope.enter(metadata.return_type);
         defer self.scope.exit(old_return_type);
 
-        for (func_metadata.params) |param| {
+        for (metadata.params) |param| {
             const param_default_value: ?*ir.Value = null;
 
             //warn: not evaluating deafult values
@@ -474,7 +483,6 @@ pub const SemaAnalyzer = struct {
                     //warn: this is wrong
                     .is_mut = false,
                     .type = param.type,
-                    .metadata = null,
                 },
             ));
 
@@ -489,10 +497,10 @@ pub const SemaAnalyzer = struct {
         const body = try self.visitBlock(&fn_def.body_block);
 
         return ir.Func{
-            .uid = fn_symbol.uid,
-            .identifier = fn_symbol.identifier,
+            .uid = uid,
+            .identifier = metadata.identifier,
             .params = try params.toOwnedSlice(self.allocator),
-            .return_type = func_metadata.return_type,
+            .return_type = metadata.return_type,
             .body = body,
         };
     }
@@ -568,78 +576,80 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    //todo: named fn calls
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
-        const fn_symbol = self.scope.symbol_table.getOrThrow(fn_call.identifier) catch {
+        const symbol = self.scope.symbol_table.getOrThrow(fn_call.identifier) catch {
             return self.err_dispatcher.notDefined(fn_call.identifier, loc_start);
         };
 
-        if (!fn_symbol.type.eql(self.type_func)) {
+        const is_fn = symbol.type.* == .function;
+        const is_struct = symbol.type.* == .struct_;
+
+        if (!is_fn and !is_struct) {
             return self.err_dispatcher.invalidType(
-                "function",
-                try fn_symbol.type.name(self.allocator),
+                "function or struct",
+                try symbol.type.name(self.allocator),
                 loc_start,
             );
         }
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
-        if (fn_symbol.metadata) |metadata| {
-            var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
-            const call_args_len = fn_call.arguments.len;
-            const fn_params_len = metadata.func.params.len;
-            defer arg_exp_by_param_name.deinit();
+        const params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields;
+        const return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{
+            .struct_ = symbol.type.struct_,
+        });
 
-            if (fn_params_len != call_args_len) {
-                return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, call_args_len, loc_start);
-            }
+        var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
+        defer arg_exp_by_param_name.deinit();
 
-            if (fn_call.are_arguments_named) {
-                for (fn_call.arguments) |arg| {
-                    if (arg.identifier) |identifier| {
-                        try arg_exp_by_param_name.put(identifier, arg.exp);
-                    } else {
-                        unreachable;
-                    }
-                }
-            }
+        const call_args_len = fn_call.arguments.len;
+        const fn_params_len = params.len;
 
-            for (metadata.func.params, 0..) |param, i| {
-                var arg_exp = fn_call.arguments[i].exp;
-
-                if (fn_call.are_arguments_named) {
-                    const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
-                    if (named_arg_exp) |exp| {
-                        arg_exp = exp;
-                    } else {
-                        return self.err_dispatcher.missingArgument(param.identifier, loc_start);
-                    }
-                }
-
-                const fn_call_arg_value = try self.evalExp(arg_exp);
-                const arg_type = self.resolveValueType(fn_call_arg_value);
-
-                if (!arg_type.eql(param.type)) {
-                    return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
-                }
-
-                try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
-            }
-
-            return ir.Value.init(
-                self.allocator,
-                .{
-                    .fn_call = .{
-                        .fn_uid = fn_symbol.uid,
-                        .identifier = fn_symbol.identifier,
-                        .return_type = metadata.func.return_type,
-                        .args = try fn_call_arguments_values.toOwnedSlice(self.allocator),
-                    },
-                },
-            );
+        if (fn_params_len != call_args_len) {
+            return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, call_args_len, loc_start);
         }
 
-        unreachable;
+        if (fn_call.are_arguments_named) {
+            for (fn_call.arguments) |arg| {
+                if (arg.identifier) |identifier| {
+                    try arg_exp_by_param_name.put(identifier, arg.exp);
+                } else unreachable;
+            }
+        }
+
+        for (params, 0..) |param, i| {
+            var arg_exp = fn_call.arguments[i].exp;
+
+            if (fn_call.are_arguments_named) {
+                const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
+                if (named_arg_exp) |exp| {
+                    arg_exp = exp;
+                } else {
+                    return self.err_dispatcher.missingArgument(param.identifier, loc_start);
+                }
+            }
+
+            const fn_call_arg_value = try self.evalExp(arg_exp);
+            const arg_type = self.resolveValueType(fn_call_arg_value);
+
+            if (!arg_type.eql(param.type)) {
+                return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
+            }
+
+            try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
+        }
+
+        return ir.Value.init(
+            self.allocator,
+            .{
+                .fn_call = .{
+                    .fn_uid = symbol.uid,
+                    .identifier = symbol.identifier,
+                    .return_type = return_type,
+                    .args = try fn_call_arguments_values.toOwnedSlice(self.allocator),
+                },
+            },
+        );
     }
 
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -813,9 +823,9 @@ pub const SemaAnalyzer = struct {
                 if (std.mem.eql(u8, type_annotation.name, "number")) return self.type_number;
                 if (std.mem.eql(u8, type_annotation.name, "string")) return self.type_str;
                 if (std.mem.eql(u8, type_annotation.name, "bool")) return self.type_bool;
-                if (std.mem.eql(u8, type_annotation.name, "fn")) return self.type_func;
+                if (std.mem.eql(u8, type_annotation.name, "fn")) return self.type_func_def;
                 if (std.mem.eql(u8, type_annotation.name, "void")) return Type.init(self.allocator, .void);
-                if (std.mem.eql(u8, type_annotation.name, "_anytype")) return self.type_dynamic;
+                if (std.mem.eql(u8, type_annotation.name, "dynamic")) return self.type_dynamic;
 
                 return Errors.SemaError;
             },
@@ -832,13 +842,14 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn resolveValueType(self: *Self, value: *ir.Value) *Type {
+        //warn: func_def needs a better solving probably doing this when we have generics?
         return switch (value.*) {
             .i_float => self.type_number,
             .i_bool => self.type_bool,
             .i_string => self.type_str,
             .i_void => self.type_bool,
-            .fn_def => self.type_func,
-            .struct_def => self.type_struct,
+            .fn_def => self.type_func_def,
+            .struct_def => self.type_struct_def,
             .identifier => value.identifier.type,
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
@@ -883,15 +894,20 @@ const Scope = struct {
     return_type: *Type,
     next_uid: usize,
 
-    pub fn init(allocator: std.mem.Allocator, return_type: *Type) !Self {
-        var symbols = std.StringHashMap(*const Symbol).init(allocator);
-        for (&built_in_functions) |*func| {
-            try symbols.put(func.symbol.identifier, &func.symbol);
+    pub fn init(alloc: std.mem.Allocator, return_type: *Type) !Self {
+        const builtins = buildin.BuiltIn{
+            .alloc = alloc,
+        };
+
+        var symbols = std.StringHashMap(*const Symbol).init(alloc);
+
+        for (try builtins.generate()) |func| {
+            try symbols.put(func.symbol.identifier, func.symbol);
         }
 
         return Self{
-            .allocator = allocator,
-            .symbol_table = try SymbolTable.init(allocator, null, symbols),
+            .allocator = alloc,
+            .symbol_table = try SymbolTable.init(alloc, null, symbols),
             .return_type = return_type,
             .next_uid = 10,
         };
@@ -967,7 +983,6 @@ pub const Symbol = struct {
     identifier: []const u8,
     type: *Type,
     is_mut: bool,
-    metadata: ?SymbolMetadata,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -976,27 +991,19 @@ pub const Symbol = struct {
     }
 };
 
-pub const SymbolMetadata = union(enum) {
-    func: FuncMetadata,
-    struct_: StructMetadata,
-};
-
 const StructMetadata = struct {
-    fields: []const StructFieldMetadata,
-    functions: std.StringHashMap(*const Symbol),
-};
-
-const StructFieldMetadata = struct {
     identifier: []const u8,
-    type: *Type,
+    fields: []const TypedIdentifier,
+    functions: std.StringHashMap(FuncMetadata),
 };
 
 const FuncMetadata = struct {
-    params: []const FuncParamMetadata,
+    identifier: []const u8,
+    params: []const TypedIdentifier,
     return_type: *Type,
 };
 
-pub const FuncParamMetadata = struct {
+pub const TypedIdentifier = struct {
     identifier: []const u8,
     type: *Type,
 };
@@ -1007,11 +1014,17 @@ pub const Type = union(enum) {
     number,
     string,
     boolean,
-    function,
-    struct_type,
-    //currently only used for internals
-    dynamic,
     void,
+    //currently only used for built-in functions
+    dynamic,
+
+    //warn: later both os this type should take the metadata
+    function_def,
+    struct_def,
+
+    struct_: StructMetadata,
+    function: FuncMetadata,
+
     struct_self,
     array: *Type,
 
@@ -1029,10 +1042,14 @@ pub const Type = union(enum) {
             .boolean => return other.* == .boolean,
             .void => return other.* == .void,
             .dynamic => return true,
-            .function => return other.* == .function,
-            .struct_self => unreachable,
+
             //warn: this is wrong
-            .struct_type => return other.* == .struct_type,
+            .function_def => return other.* == .function_def,
+            .struct_def => return other.* == .struct_def,
+            .struct_ => return true,
+            .function => return true,
+
+            .struct_self => unreachable,
             .array => |inner| {
                 if (other.* != .array) return false;
                 return inner.eql(other.array);
@@ -1046,13 +1063,22 @@ pub const Type = union(enum) {
             .string => "string",
             .boolean => "boolean",
             .void => "void",
-            .dynamic => "anytype",
-            .function => "function",
-            .struct_type => "struct",
+            .dynamic => "dynamic",
+            .struct_def => "struct def",
+            .function_def => "function def",
+            .function => |metadata| {
+                return std.fmt.allocPrint(allocator, "function {s}", .{
+                    metadata.identifier,
+                });
+            },
+            .struct_ => |metadata| {
+                return std.fmt.allocPrint(allocator, "struct {s}", .{
+                    metadata.identifier,
+                });
+            },
             .struct_self => "@",
-
-            .array => |inner| {
-                return std.fmt.allocPrint(allocator, "[]{s}", .{try inner.name(allocator)});
+            .array => |inner_type| {
+                return std.fmt.allocPrint(allocator, "[]{s}", .{try inner_type.name(allocator)});
             },
         };
     }
@@ -1060,8 +1086,7 @@ pub const Type = union(enum) {
 
 pub const Errors = err.Errors;
 
-const built_in_functions = builtin.built_in_functions;
-const builtin = @import("built-in.zig");
+const buildin = @import("built-in.zig");
 const err = @import("error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
