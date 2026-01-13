@@ -12,3 +12,5 @@ let User = struct
 
 let user = User(id=0, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
 
+echo(stringify(user))
+

@@ -58,7 +58,14 @@ pub const SemaAnalyzer = struct {
             }
 
             const let_stmt = stmt.data.let_stmt;
-            const expression_value = try self.evalExp(let_stmt.value);
+            const expression_value = try switch (let_stmt.value.*.data) {
+                .fn_def => ir.Value.init(self.allocator, .{ .fn_def = {} }),
+                .struct_def => ir.Value.init(self.allocator, .{ .struct_def = {} }),
+                else => {
+                    continue;
+                },
+            };
+
             const expression_type = self.resolveValueType(expression_value);
 
             var var_type: *Type = expression_type;
@@ -68,7 +75,7 @@ pub const SemaAnalyzer = struct {
                 };
             }
 
-            if (!expression_type.eql(var_type) and !expression_type.eql(var_type)) {
+            if (!expression_type.eql(var_type)) {
                 return self.err_dispatcher.invalidType(
                     try var_type.name(self.allocator),
                     try expression_type.name(self.allocator),
@@ -83,8 +90,6 @@ pub const SemaAnalyzer = struct {
                 );
                 try self.scope.symbol_table.put(struct_symbol);
             }
-
-            std.debug.print("{any} {any}\n", .{ self.type_struct_def, var_type });
 
             if (self.type_func_def.eql(var_type)) {
                 const fn_symbol = try self.visitFnSymbol(let_stmt.identifier, let_stmt.value);
@@ -241,7 +246,7 @@ pub const SemaAnalyzer = struct {
             const fn_symbol = self.scope.symbol_table.getOrThrow(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc_start);
             };
-            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, fn_symbol.type.function);
+            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, fn_symbol.type.function, null);
             try self.functions.append(self.allocator, func);
             return null;
         }
@@ -370,11 +375,13 @@ pub const SemaAnalyzer = struct {
                 const target_exp = try self.evalExp(index_exp.target);
                 const index = try self.evalExp(index_exp.index);
 
-                return ir.Instruction{ .update_indexed = .{
-                    .target = target_exp,
-                    .index = index,
-                    .value = assignment_value,
-                } };
+                return ir.Instruction{
+                    .update_indexed = .{
+                        .target = target_exp,
+                        .index = index,
+                        .value = assignment_value,
+                    },
+                };
             },
             else => {
                 return self.err_dispatcher.invalidAssignment(
@@ -431,7 +438,8 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.funcs) |func| {
             const fn_metadata = if (struct_symbol.type.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
-            const fn_def = try self.visitFnDef(func.def, self.scope.genUid(), fn_metadata);
+            const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ struct_symbol.identifier, fn_metadata.identifier });
+            const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
         }
 
@@ -448,6 +456,7 @@ pub const SemaAnalyzer = struct {
         exp: *const ast.ExpNode,
         uid: usize,
         metadata: FuncMetadata,
+        override_name: ?[]const u8,
     ) Errors!ir.Func {
         const fn_def = exp.data.fn_def;
         var params: std.ArrayList(ir.FuncParam) = .empty;
@@ -456,7 +465,7 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(metadata.return_type);
         defer self.scope.exit(old_return_type);
 
-        for (metadata.params) |param| {
+        for (metadata.params, 0..) |param, i| {
             const param_default_value: ?*ir.Value = null;
 
             //warn: not evaluating deafult values
@@ -480,8 +489,7 @@ pub const SemaAnalyzer = struct {
                 .{
                     .uid = arg_uid,
                     .identifier = param.identifier,
-                    //warn: this is wrong
-                    .is_mut = false,
+                    .is_mut = fn_def.params[i].is_mut,
                     .type = param.type,
                 },
             ));
@@ -498,7 +506,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Func{
             .uid = uid,
-            .identifier = metadata.identifier,
+            .identifier = if (override_name) |name| name else metadata.identifier,
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = metadata.return_type,
             .body = body,

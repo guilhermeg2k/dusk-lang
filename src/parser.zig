@@ -319,9 +319,9 @@ pub const Parser = struct {
 
         return ast.FnParam{
             .identifier = id,
+            .is_mut = is_mut,
             .type_annotation = type_annotation,
             .default_value = default_value,
-            .is_mut = is_mut,
         };
     }
 
@@ -559,10 +559,13 @@ pub const Parser = struct {
                 const index = try self.parseExp(0);
                 _ = try self.expect(.r_bracket);
 
-                const index_node = try ast.ExpNode.init(self.allocator, .{ .data = .{ .index_exp = .{
-                    .target = node,
-                    .index = index,
-                } }, .loc_start = node.loc_start });
+                const index_node = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .index_exp = .{
+                        .target = node,
+                        .index = index,
+                    } },
+                    .loc_start = node.loc_start,
+                });
 
                 node = index_node;
                 continue;

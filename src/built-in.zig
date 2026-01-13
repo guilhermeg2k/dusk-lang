@@ -3,13 +3,14 @@ pub const BuiltIn = struct {
 
     alloc: std.mem.Allocator,
 
-    pub fn generate(self: *const Self) ![5]BuiltInFn {
+    pub fn generate(self: *const Self) ![6]BuiltInFn {
         return [_]BuiltInFn{
             try self.echo(),
             try self.append(),
             try self.len(),
             try self.floor(),
             try self.concat(),
+            try self.stringify(),
         };
     }
 
@@ -128,23 +129,39 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .code = code };
     }
 
-    var fn_type = Type{ .function_def = {} };
-    var void_type = Type{ .void = {} };
-    var number_type = Type{ .number = {} };
-    var string_type = Type{ .string = {} };
-    var dynamic = Type{ .dynamic = {} };
-    var any_array_type = Type{ .array = &dynamic };
+    fn stringify(self: *const Self) !BuiltInFn {
+        const symbol = try Symbol.init(self.alloc, .{
+            .uid = 5,
+            .identifier = "stringify",
+            .type = try Type.init(self.alloc, .{
+                .function = .{
+                    .identifier = "stringify",
+                    .params = stringify_params,
+                    .return_type = &string_type,
+                },
+            }),
+            .is_mut = false,
+        });
+
+        const code = try std.fmt.allocPrint(
+            self.alloc,
+            "function {s}_{d}(obj) {{try {{return JSON.stringify(obj);}} catch {{return \"INVALID JSON\";}};}}\n",
+            .{ symbol.identifier, symbol.uid },
+        );
+
+        return BuiltInFn{ .symbol = symbol, .code = code };
+    }
 
     const echo_params: []const sema.TypedIdentifier = &.{
         .{ .identifier = "msgs", .type = &dynamic },
     };
 
     const len_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "array", .type = &any_array_type },
+        .{ .identifier = "array", .type = &dynamic_array_type },
     };
 
     const append_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "array", .type = &any_array_type },
+        .{ .identifier = "array", .type = &dynamic_array_type },
         .{ .identifier = "value", .type = &dynamic },
     };
 
@@ -156,6 +173,17 @@ pub const BuiltIn = struct {
         .{ .identifier = "str1", .type = &string_type },
         .{ .identifier = "str2", .type = &string_type },
     };
+
+    const stringify_params: []const sema.TypedIdentifier = &.{
+        .{ .identifier = "obj", .type = &dynamic },
+    };
+
+    var fn_type = Type{ .function_def = {} };
+    var void_type = Type{ .void = {} };
+    var number_type = Type{ .number = {} };
+    var string_type = Type{ .string = {} };
+    var dynamic = Type{ .dynamic = {} };
+    var dynamic_array_type = Type{ .array = &dynamic };
 };
 
 const BuiltInFn = struct {
