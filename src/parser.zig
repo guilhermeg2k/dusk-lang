@@ -220,7 +220,7 @@ pub const Parser = struct {
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
-        while (tk.tag != .dedent and tk.tag != .eof) : (tk = self.peekCurrent()) {
+        while (true) : (tk = self.peekCurrent()) {
             const identifier = try self.expect(.identifier);
             _ = try self.expect(.colon);
             const is_fn = self.match(.l_paren);
@@ -244,6 +244,11 @@ pub const Parser = struct {
                 .identifier = identifier.value(self.src),
                 .type = field_type,
             });
+
+            tk = self.peekCurrent();
+            if (tk.tag == .dedent or tk.tag == .eof) {
+                break;
+            }
             self.walk();
         }
 
