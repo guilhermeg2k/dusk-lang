@@ -4,7 +4,11 @@ let User = struct
     username: string
     auth_provider: string
 
-let user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
+    hello_world: () -> string
+        return "Hello World"
 
-echo(stringify(user.id))
+
+
+let user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
+echo(stringify(user.hello_world()))
 

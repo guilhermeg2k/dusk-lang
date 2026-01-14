@@ -123,8 +123,20 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "\"{s}\" does not exists on struct\"{s}\"",
+                "\"{s}\" does not exists on struct \"{s}\"",
                 .{ member, struct_name },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
+    pub fn invalidStructFunction(self: *Self, struct_name: []const u8, function: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "function \"{s}\" does not exists on struct \"{s}\"",
+                .{ function, struct_name },
             ),
             loc,
         );

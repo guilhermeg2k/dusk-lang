@@ -83,7 +83,7 @@ pub const Exp = union(enum) {
 
     struct_def: StructDef,
 
-    index_exp: IndexExp,
+    indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
 };
@@ -117,7 +117,7 @@ pub const FnParam = struct {
 };
 
 pub const FnCall = struct {
-    identifier: []const u8,
+    target: *ExpNode,
     are_arguments_named: bool,
     arguments: []const FnCallArg,
 };
@@ -131,7 +131,7 @@ pub const ReturnStmt = struct {
     exp: ?*ExpNode,
 };
 
-pub const IndexExp = struct {
+pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
 };

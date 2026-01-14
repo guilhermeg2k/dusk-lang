@@ -333,9 +333,9 @@ pub const SemaAnalyzer = struct {
                     .value = assignment_value,
                 } };
             },
-            .index_exp => {
+            .indexed => {
                 //warn: don't supporting struct indexing
-                const index_exp = assign_stmt.target.data.index_exp;
+                const index_exp = assign_stmt.target.data.indexed;
                 const target = try self.evalExp(index_exp.target);
                 const target_type = self.resolveValueType(target);
 
@@ -441,7 +441,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.funcs) |func| {
             const fn_metadata = if (struct_symbol.type.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
-            const fn_name = try std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ struct_symbol.identifier, fn_metadata.identifier });
+            const fn_name = try self.allocPrintStructFnIdentifier(struct_symbol.identifier, fn_metadata.identifier);
             const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
         }
@@ -452,6 +452,10 @@ pub const SemaAnalyzer = struct {
             .fields = try fields.toOwnedSlice(self.allocator),
             .funcs = try funcs.toOwnedSlice(self.allocator),
         };
+    }
+
+    fn allocPrintStructFnIdentifier(self: *Self, struct_name: []const u8, fn_name: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ struct_name, fn_name });
     }
 
     fn visitFnDef(
@@ -575,7 +579,7 @@ pub const SemaAnalyzer = struct {
             .struct_def => {
                 return ir.Value.init(self.allocator, .{ .struct_def = {} });
             },
-            .index_exp => {
+            .indexed => {
                 return self.evalIndexedExp(exp);
             },
             .unary_exp => {
@@ -588,27 +592,69 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
-        const symbol = self.scope.symbol_table.getOrThrow(fn_call.identifier) catch {
-            return self.err_dispatcher.notDefined(fn_call.identifier, loc_start);
-        };
+        var fn_identifier: []const u8 = undefined;
+        var uid: usize = undefined;
+        var params: []const TypedIdentifier = undefined;
+        var return_type: *Type = undefined;
 
-        const is_fn = symbol.type.* == .function;
-        const is_struct = symbol.type.* == .struct_;
+        switch (fn_call.target.data) {
+            .identifier => |id| {
+                const symbol = self.scope.symbol_table.getOrThrow(id) catch {
+                    return self.err_dispatcher.notDefined(id, loc_start);
+                };
 
-        if (!is_fn and !is_struct) {
-            return self.err_dispatcher.invalidType(
-                "function or struct",
-                try symbol.type.name(self.allocator),
-                loc_start,
-            );
+                const is_fn = symbol.type.* == .function;
+                const is_struct = symbol.type.* == .struct_;
+
+                if (!is_fn and !is_struct) {
+                    return self.err_dispatcher.invalidType(
+                        "function or struct",
+                        try symbol.type.name(self.allocator),
+                        loc_start,
+                    );
+                }
+
+                //when identifier is a struct when turn into its a struct inicialization
+                fn_identifier = symbol.identifier;
+                uid = symbol.uid;
+                params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
+                return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{
+                    .struct_ = symbol.type.struct_,
+                });
+            },
+            .indexed => |indexed| {
+                const target = try self.evalExp(indexed.target);
+                const target_type = self.resolveValueType(target);
+
+                if (target_type.* != .struct_) {
+                    return self.err_dispatcher.invalidType(
+                        "a struct",
+                        try target_type.name(self.allocator),
+                        loc_start,
+                    );
+                }
+
+                const fn_name = indexed.index.data.identifier;
+
+                const fn_metadata = target_type.struct_.functions.get(fn_name) orelse {
+                    return self.err_dispatcher.invalidStructFunction(
+                        target_type.struct_.identifier,
+                        fn_name,
+                        loc_start,
+                    );
+                };
+
+                const target_symbol = try self.scope.symbol_table.getOrThrow(target_type.struct_.identifier);
+
+                params = fn_metadata.params;
+                return_type = fn_metadata.return_type;
+                uid = target_symbol.uid;
+                fn_identifier = try self.allocPrintStructFnIdentifier(target_symbol.identifier, fn_metadata.identifier);
+            },
+            else => unreachable,
         }
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
-
-        const params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
-        const return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{
-            .struct_ = symbol.type.struct_,
-        });
 
         var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
         defer arg_exp_by_param_name.deinit();
@@ -654,8 +700,8 @@ pub const SemaAnalyzer = struct {
             self.allocator,
             .{
                 .fn_call = .{
-                    .fn_uid = symbol.uid,
-                    .identifier = symbol.identifier,
+                    .fn_uid = uid,
+                    .identifier = fn_identifier,
                     .return_type = return_type,
                     .args = try fn_call_arguments_values.toOwnedSlice(self.allocator),
                 },
@@ -664,7 +710,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
-        const index_exp = exp.data.index_exp;
+        const index_exp = exp.data.indexed;
         const target = try self.evalExp(index_exp.target);
         const target_type = self.resolveValueType(target);
 
@@ -691,7 +737,6 @@ pub const SemaAnalyzer = struct {
             .struct_ => {
                 return switch (index_exp.index.*.data) {
                     .identifier => |struct_member| {
-                        //warn: not treating functions
                         const struct_symbol = try self.scope.symbol_table.getOrThrow(target.identifier.identifier);
                         const field_member = struct_symbol.type.struct_.fields.get(struct_member);
                         const function_member = struct_symbol.type.struct_.functions.get(struct_member);
@@ -891,12 +936,15 @@ pub const SemaAnalyzer = struct {
             .identifier => value.identifier.type,
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
-            //warn: this should be a switch
-            // .indexed => value.indexed.target.identifier.type.array,
             .indexed => |indexed| {
                 return switch (indexed.target.identifier.type.*) {
                     .array => |array| array,
-                    .struct_ => if (indexed.target.identifier.type.struct_.fields.get(indexed.index.i_string)) |member_type| member_type else unreachable,
+                    .struct_ => {
+                        if (indexed.target.identifier.type.struct_.fields.get(indexed.index.i_string)) |field_type| return field_type;
+                        //warn: func_def?
+                        if (indexed.target.identifier.type.struct_.functions.get(indexed.index.i_string) != null) return self.type_func_def;
+                        unreachable;
+                    },
                     else => unreachable,
                 };
             },
@@ -1015,6 +1063,7 @@ const SymbolTable = struct {
         return null;
     }
 
+    //warn: getOrError
     fn getOrThrow(self: *Self, id: []const u8) !*const Symbol {
         if (self.get(id)) |s| return s;
         return Errors.SemaError;

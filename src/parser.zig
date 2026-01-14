@@ -220,6 +220,7 @@ pub const Parser = struct {
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
+        //warn: looks like i'm doing something dumb with the break logic
         while (true) : (tk = self.peekCurrent()) {
             const identifier = try self.expect(.identifier);
             _ = try self.expect(.colon);
@@ -236,6 +237,12 @@ pub const Parser = struct {
                         },
                     }),
                 });
+
+                tk = self.peekCurrent();
+                if (tk.tag == .dedent or tk.tag == .eof) {
+                    break;
+                }
+                self.walk();
                 continue;
             }
 
@@ -546,7 +553,7 @@ pub const Parser = struct {
                     .data = .{
                         .fn_call = .{
                             .are_arguments_named = args.len > 0 and args[0].identifier != null,
-                            .identifier = node.data.identifier,
+                            .target = node,
                             .arguments = args,
                         },
                     },
@@ -565,7 +572,7 @@ pub const Parser = struct {
                 _ = try self.expect(.r_bracket);
 
                 const index_node = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .index_exp = .{
+                    .data = .{ .indexed = .{
                         .target = node,
                         .index = index,
                     } },
@@ -578,12 +585,17 @@ pub const Parser = struct {
 
             if (tk.tag == .dot) {
                 self.walk();
-                const index = try self.parseExp(0);
+
+                const id_token = try self.expect(.identifier);
+                const id_node = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = id_token.value(self.src) },
+                    .loc_start = id_token.loc.start,
+                });
 
                 const index_node = try ast.ExpNode.init(self.allocator, .{ .data = .{
-                    .index_exp = .{
+                    .indexed = .{
                         .target = node,
-                        .index = index,
+                        .index = id_node,
                     },
                 }, .loc_start = node.loc_start });
 
