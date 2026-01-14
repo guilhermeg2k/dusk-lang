@@ -100,18 +100,20 @@ pub const SemaAnalyzer = struct {
 
     fn visitStructSymbol(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !*Symbol {
         const struct_def = exp.data.struct_def;
-        var fields: std.ArrayList(TypedIdentifier) = .empty;
+        var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
+        var fields: std.StringHashMap(*Type) = .init(self.allocator);
         var funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
         for (struct_def.fields) |field| {
             const field_type = try self.resolveTypeAnnotation(field.type);
-            try fields.append(
+            try fields_in_order.append(
                 self.allocator,
                 .{
                     .identifier = field.identifier,
                     .type = field_type,
                 },
             );
+            try fields.put(field.identifier, field_type);
         }
 
         for (struct_def.funcs) |func| {
@@ -128,7 +130,8 @@ pub const SemaAnalyzer = struct {
                 .is_mut = false,
                 .type = try Type.init(self.allocator, .{ .struct_ = .{
                     .identifier = identifier,
-                    .fields = try fields.toOwnedSlice(self.allocator),
+                    .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+                    .fields = fields,
                     .functions = funcs,
                 } }),
             },
@@ -602,7 +605,7 @@ pub const SemaAnalyzer = struct {
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
 
-        const params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields;
+        const params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
         const return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{
             .struct_ = symbol.type.struct_,
         });
@@ -669,23 +672,49 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidExpression("identifier", @tagName(target.*), exp.loc_start);
         }
 
-        if (target_type.* != .array) {
-            return self.err_dispatcher.invalidType("array", try target_type.name(self.allocator), exp.loc_start);
-        }
+        switch (target_type.*) {
+            .array => {
+                const index = try self.evalExp(index_exp.index);
+                const index_type = self.resolveValueType(index);
 
-        const index = try self.evalExp(index_exp.index);
-        const index_type = self.resolveValueType(index);
+                if (!index_type.eql(self.type_number)) {
+                    return self.err_dispatcher.invalidIndexing("number", @tagName(index.*), exp.loc_start);
+                }
 
-        if (!index_type.eql(self.type_number)) {
-            return self.err_dispatcher.invalidIndexing("number", @tagName(index.*), exp.loc_start);
-        }
-
-        return ir.Value.init(self.allocator, .{
-            .indexed = .{
-                .target = target,
-                .index = index,
+                return ir.Value.init(self.allocator, .{
+                    .indexed = .{
+                        .target = target,
+                        .index = index,
+                    },
+                });
             },
-        });
+            .struct_ => {
+                return switch (index_exp.index.*.data) {
+                    .identifier => |struct_member| {
+                        //warn: not treating functions
+                        const struct_symbol = try self.scope.symbol_table.getOrThrow(target.identifier.identifier);
+                        const field_member = struct_symbol.type.struct_.fields.get(struct_member);
+                        const function_member = struct_symbol.type.struct_.functions.get(struct_member);
+
+                        if (field_member == null and function_member == null) {
+                            return self.err_dispatcher.invalidStructMember(target.identifier.identifier, struct_member, exp.loc_start);
+                        }
+
+                        return ir.Value.init(self.allocator, .{
+                            .indexed = .{
+                                .target = target,
+                                .index = try ir.Value.init(self.allocator, .{ .i_string = struct_member }),
+                            },
+                        });
+                    },
+                    else => unreachable,
+                };
+            },
+
+            else => {
+                return self.err_dispatcher.invalidType("array or struct", try target_type.name(self.allocator), exp.loc_start);
+            },
+        }
     }
 
     fn evalIdentifier(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -851,6 +880,7 @@ pub const SemaAnalyzer = struct {
 
     pub fn resolveValueType(self: *Self, value: *ir.Value) *Type {
         //warn: func_def needs a better solving probably doing this when we have generics?
+        //also missing struct
         return switch (value.*) {
             .i_float => self.type_number,
             .i_bool => self.type_bool,
@@ -862,7 +892,14 @@ pub const SemaAnalyzer = struct {
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
             //warn: this should be a switch
-            .indexed => value.indexed.target.identifier.type.array,
+            // .indexed => value.indexed.target.identifier.type.array,
+            .indexed => |indexed| {
+                return switch (indexed.target.identifier.type.*) {
+                    .array => |array| array,
+                    .struct_ => if (indexed.target.identifier.type.struct_.fields.get(indexed.index.i_string)) |member_type| member_type else unreachable,
+                    else => unreachable,
+                };
+            },
             .i_array => value.i_array.type,
             .fn_call => value.fn_call.return_type,
         };
@@ -1001,7 +1038,8 @@ pub const Symbol = struct {
 
 const StructMetadata = struct {
     identifier: []const u8,
-    fields: []const TypedIdentifier,
+    fields: std.StringHashMap(*Type),
+    fields_in_order: []const TypedIdentifier,
     functions: std.StringHashMap(FuncMetadata),
 };
 

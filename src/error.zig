@@ -119,6 +119,18 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn invalidStructMember(self: *Self, struct_name: []const u8, member: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "\"{s}\" does not exists on struct\"{s}\"",
+                .{ member, struct_name },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
     pub fn log(self: *Self, msg: []const u8, loc: usize) void {
         const exactLoc = self.findExactLoc(loc);
         const spaces = 6 + loc - exactLoc.line.start;

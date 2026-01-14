@@ -4,9 +4,10 @@
 
 ## Version: 0.5 - Chisato
 
-- [x] Hoisting
-- [x] Support function call with named parameters
 - Structs
+- [x] Support function call with named parameters
+- [x] Added stringify build-in function
+- [x] Hoisting functions and structs
 - Support for multiple line statements
   - Struct definition
   - Struct inicialziation

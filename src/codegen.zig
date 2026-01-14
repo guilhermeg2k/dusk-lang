@@ -266,10 +266,17 @@ pub const Generator = struct {
             .indexed => {
                 const target = value.indexed.target.identifier;
                 const target_name = try self.genName(target.uid, target.identifier);
-
                 const index = try self.genValue(value.indexed.index);
-
-                try buf.print(self.allocator, "{s}[{s}]", .{ target_name, index });
+                switch (value.indexed.index.*) {
+                    .i_string => {
+                        try buf.print(self.allocator, "{s}[\"{s}\"]", .{ target_name, index });
+                    },
+                    //warn: weird
+                    .i_float => {
+                        try buf.print(self.allocator, "{s}[{s}]", .{ target_name, index });
+                    },
+                    else => unreachable,
+                }
             },
             .i_array => {
                 const i_array = try self.genImmediateArray(value.i_array);
