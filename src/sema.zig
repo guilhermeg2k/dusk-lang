@@ -84,7 +84,7 @@ pub const SemaAnalyzer = struct {
             }
 
             if (self.type_struct_def.eql(var_type)) {
-                const struct_symbol = try self.visitStructSymbol(
+                const struct_symbol = try self.hoistStruct(
                     let_stmt.identifier,
                     let_stmt.value,
                 );
@@ -92,13 +92,13 @@ pub const SemaAnalyzer = struct {
             }
 
             if (self.type_func_def.eql(var_type)) {
-                const fn_symbol = try self.visitFnSymbol(let_stmt.identifier, let_stmt.value);
+                const fn_symbol = try self.hoistFn(let_stmt.identifier, let_stmt.value);
                 try self.scope.symbol_table.put(fn_symbol);
             }
         }
     }
 
-    fn visitStructSymbol(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !*Symbol {
+    fn hoistStruct(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !*Symbol {
         const struct_def = exp.data.struct_def;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(*Type) = .init(self.allocator);
@@ -117,28 +117,32 @@ pub const SemaAnalyzer = struct {
         }
 
         for (struct_def.funcs) |func| {
-            const fn_symbol = try self.visitFnSymbol(func.identifier, func.def);
+            const fn_symbol = try self.hoistFn(func.identifier, func.def);
             try funcs.put(func.identifier, fn_symbol.type.function);
         }
 
-        return Symbol.init(
+        const symbol = try Symbol.init(
             self.allocator,
             .{
                 .identifier = identifier,
                 .uid = self.scope.genUid(),
                 //warn: mut setting by hand to false
                 .is_mut = false,
-                .type = try Type.init(self.allocator, .{ .struct_ = .{
-                    .identifier = identifier,
-                    .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
-                    .fields = fields,
-                    .functions = funcs,
-                } }),
+                .type = undefined,
             },
         );
+
+        symbol.type = try Type.init(self.allocator, .{ .struct_ = .{
+            .symbol = symbol,
+            .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .fields = fields,
+            .functions = funcs,
+        } });
+
+        return symbol;
     }
 
-    fn visitFnSymbol(self: *Self, identifier: []const u8, exp: *ast.ExpNode) !*Symbol {
+    fn hoistFn(self: *Self, identifier: []const u8, exp: *ast.ExpNode) !*Symbol {
         const fn_def = exp.data.fn_def;
         var return_type: *Type = undefined;
         var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
@@ -181,19 +185,23 @@ pub const SemaAnalyzer = struct {
         //restore main scope
         self.scope.exit(self.type_void);
 
-        return Symbol.init(self.allocator, .{
+        const symbol = try Symbol.init(self.allocator, .{
             .identifier = identifier,
             .uid = self.scope.genUid(),
             //warn: mut setting by hand to false
             .is_mut = false,
-            .type = try Type.init(self.allocator, .{
-                .function = .{
-                    .identifier = identifier,
-                    .params = try params_metadata.toOwnedSlice(self.allocator),
-                    .return_type = return_type,
-                },
-            }),
+            .type = undefined,
         });
+
+        symbol.type = try Type.init(self.allocator, .{
+            .function = .{
+                .symbol = symbol,
+                .params = try params_metadata.toOwnedSlice(self.allocator),
+                .return_type = return_type,
+            },
+        });
+
+        return symbol;
     }
 
     pub fn visitBlock(self: *Self, block: *const ast.Block) ![]const ir.Instruction {
@@ -441,7 +449,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.funcs) |func| {
             const fn_metadata = if (struct_symbol.type.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
-            const fn_name = try self.allocPrintStructFnIdentifier(struct_symbol.identifier, fn_metadata.identifier);
+            const fn_name = try self.allocPrintStructFnIdentifier(struct_symbol.identifier, fn_metadata.symbol.identifier);
             const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
         }
@@ -513,7 +521,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Func{
             .uid = uid,
-            .identifier = if (override_name) |name| name else metadata.identifier,
+            .identifier = if (override_name) |name| name else metadata.symbol.identifier,
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = metadata.return_type,
             .body = body,
@@ -638,18 +646,18 @@ pub const SemaAnalyzer = struct {
 
                 const fn_metadata = target_type.struct_.functions.get(fn_name) orelse {
                     return self.err_dispatcher.invalidStructFunction(
-                        target_type.struct_.identifier,
+                        target_type.struct_.symbol.identifier,
                         fn_name,
                         loc_start,
                     );
                 };
 
-                const target_symbol = try self.scope.symbol_table.getOrThrow(target_type.struct_.identifier);
+                const target_symbol = target_type.struct_.symbol;
 
                 params = fn_metadata.params;
                 return_type = fn_metadata.return_type;
                 uid = target_symbol.uid;
-                fn_identifier = try self.allocPrintStructFnIdentifier(target_symbol.identifier, fn_metadata.identifier);
+                fn_identifier = try self.allocPrintStructFnIdentifier(target_symbol.identifier, fn_metadata.symbol.identifier);
             },
             else => unreachable,
         }
@@ -1086,14 +1094,14 @@ pub const Symbol = struct {
 };
 
 const StructMetadata = struct {
-    identifier: []const u8,
+    symbol: *Symbol,
     fields: std.StringHashMap(*Type),
     fields_in_order: []const TypedIdentifier,
     functions: std.StringHashMap(FuncMetadata),
 };
 
 const FuncMetadata = struct {
-    identifier: []const u8,
+    symbol: *Symbol,
     params: []const TypedIdentifier,
     return_type: *Type,
 };
@@ -1163,12 +1171,12 @@ pub const Type = union(enum) {
             .function_def => "function def",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{
-                    metadata.identifier,
+                    metadata.symbol.identifier,
                 });
             },
             .struct_ => |metadata| {
                 return std.fmt.allocPrint(allocator, "struct {s}", .{
-                    metadata.identifier,
+                    metadata.symbol.identifier,
                 });
             },
             .struct_self => "@",

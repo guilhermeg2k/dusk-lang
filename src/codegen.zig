@@ -271,11 +271,9 @@ pub const Generator = struct {
                     .i_string => {
                         try buf.print(self.allocator, "{s}[\"{s}\"]", .{ target_name, index });
                     },
-                    //warn: weird
-                    .i_float => {
+                    else => {
                         try buf.print(self.allocator, "{s}[{s}]", .{ target_name, index });
                     },
-                    else => unreachable,
                 }
             },
             .i_array => {

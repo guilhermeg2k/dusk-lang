@@ -18,14 +18,16 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 0,
             .identifier = "echo",
-            .type = try Type.init(self.alloc, .{
-                .function = .{
-                    .identifier = "echo",
-                    .params = echo_params,
-                    .return_type = &void_type,
-                },
-            }),
             .is_mut = false,
+            .type = undefined,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .function = .{
+                .symbol = symbol,
+                .params = echo_params,
+                .return_type = &void_type,
+            },
         });
 
         const code = try std.fmt.allocPrint(
@@ -41,14 +43,16 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 1,
             .identifier = "append",
-            .type = try Type.init(self.alloc, .{
-                .function = .{
-                    .identifier = "append",
-                    .params = append_params,
-                    .return_type = &void_type,
-                },
-            }),
+            .type = undefined,
             .is_mut = false,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .function = .{
+                .symbol = symbol,
+                .params = append_params,
+                .return_type = &void_type,
+            },
         });
 
         const code = try std.fmt.allocPrint(
@@ -64,14 +68,16 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 2,
             .identifier = "len",
-            .type = try Type.init(self.alloc, .{
-                .function = .{
-                    .identifier = "len",
-                    .params = len_params,
-                    .return_type = &number_type,
-                },
-            }),
             .is_mut = false,
+            .type = undefined,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .function = .{
+                .symbol = symbol,
+                .params = len_params,
+                .return_type = &number_type,
+            },
         });
 
         const code = try std.fmt.allocPrint(
@@ -87,14 +93,16 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 3,
             .identifier = "floor",
-            .type = try Type.init(self.alloc, .{
-                .function = .{
-                    .identifier = "floor",
-                    .params = floor_params,
-                    .return_type = &number_type,
-                },
-            }),
             .is_mut = false,
+            .type = undefined,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .function = .{
+                .symbol = symbol,
+                .params = floor_params,
+                .return_type = &number_type,
+            },
         });
 
         const code = try std.fmt.allocPrint(
@@ -110,14 +118,16 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 4,
             .identifier = "concat",
-            .type = try Type.init(self.alloc, .{
-                .function = .{
-                    .identifier = "concat",
-                    .params = concat_params,
-                    .return_type = &string_type,
-                },
-            }),
             .is_mut = false,
+            .type = undefined,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .function = .{
+                .symbol = symbol,
+                .params = concat_params,
+                .return_type = &string_type,
+            },
         });
 
         const code = try std.fmt.allocPrint(
@@ -133,14 +143,16 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 5,
             .identifier = "stringify",
-            .type = try Type.init(self.alloc, .{
-                .function = .{
-                    .identifier = "stringify",
-                    .params = stringify_params,
-                    .return_type = &string_type,
-                },
-            }),
+            .type = undefined,
             .is_mut = false,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .function = .{
+                .symbol = symbol,
+                .params = stringify_params,
+                .return_type = &string_type,
+            },
         });
 
         const code = try std.fmt.allocPrint(
