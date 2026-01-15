@@ -40,6 +40,7 @@
 - Modules
   - Compilation speed starts to being a concern
 - Multi Line Comments
+- Add int type
 - Ternary operator
 - String interpolation
 - Multline strings

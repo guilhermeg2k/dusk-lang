@@ -46,7 +46,9 @@ pub const AssignStmt = struct {
 
 pub const TypeAnnotation = union(enum) {
     const Self = @This();
+
     name: []const u8,
+    struct_: []const u8,
     array: *TypeAnnotation,
     struct_self: void,
 
@@ -54,6 +56,19 @@ pub const TypeAnnotation = union(enum) {
         const ptr = try allocator.create(Self);
         ptr.* = exp;
         return ptr;
+    }
+
+    pub fn value(self: *Self, alloc: std.mem.Allocator) ![]const u8 {
+        return switch (self.*) {
+            .name => self.name,
+            .struct_ => |struct_name| struct_name,
+            .array => {
+                return std.fmt.allocPrint(alloc, "[]{s}", .{try self.array.value(alloc)});
+            },
+            .struct_self => {
+                return "@";
+            },
+        };
     }
 };
 

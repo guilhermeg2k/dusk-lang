@@ -8,7 +8,7 @@ pub const ErrorDispatcher = struct {
     const padding = " " ** MAX_PADDING;
 
     pub fn unexpectedToken(self: *Self, token: Token) Errors {
-        self.log(try allocPrint(self.allocator, "Unexpected token \"{s}\"", .{token.value(self.src)}), token.loc.start);
+        self.log(try allocPrint(self.allocator, "Unexpected token '{s}'", .{token.value(self.src)}), token.loc.start);
         return Errors.LexerError;
     }
 
@@ -16,7 +16,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "Invalid Syntax: expected {s} found \"{s}\"",
+                "Invalid Syntax: expected {s} found '{s}'",
                 .{ expected, token.value(self.src) },
             ),
             token.loc.start,
@@ -74,7 +74,7 @@ pub const ErrorDispatcher = struct {
 
     pub fn typeNotDefined(self: *Self, found: []const u8, loc: usize) Errors {
         self.log(
-            try allocPrint(self.allocator, "Invalid type {s}", .{found}),
+            try allocPrint(self.allocator, "Invalid type '{s}'", .{found}),
             loc,
         );
         return Errors.SemaError;
@@ -96,7 +96,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "Missing argument \"{s}\"",
+                "Missing argument '{s}'",
                 .{expected},
             ),
             loc,
@@ -105,17 +105,17 @@ pub const ErrorDispatcher = struct {
     }
 
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: usize) Errors {
-        self.log(try allocPrint(self.allocator, "Variable \"{s}\" already declared", .{identifier}), loc);
+        self.log(try allocPrint(self.allocator, "Variable '{s}' already declared", .{identifier}), loc);
         return Errors.SemaError;
     }
 
     pub fn notDefined(self: *Self, identifier: []const u8, loc: usize) Errors {
-        self.log(try allocPrint(self.allocator, "Cannot find name \"{s}\"", .{identifier}), loc);
+        self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
         return Errors.SemaError;
     }
 
     pub fn notMutable(self: *Self, identifier: []const u8, loc: usize) Errors {
-        self.log(try allocPrint(self.allocator, "\"{s}\" is not mutable", .{identifier}), loc);
+        self.log(try allocPrint(self.allocator, "'{s}' is not mutable", .{identifier}), loc);
         return Errors.SemaError;
     }
 
@@ -123,7 +123,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "\"{s}\" does not exists on struct \"{s}\"",
+                "'{s}' does not exists on struct '{s}'",
                 .{ member, struct_name },
             ),
             loc,
@@ -135,7 +135,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "function \"{s}\" does not exists on struct \"{s}\"",
+                "function '{s}' does not exists on struct '{s}'",
                 .{ function, struct_name },
             ),
             loc,

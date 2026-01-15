@@ -627,6 +627,7 @@ pub const Parser = struct {
 
         return switch (tk.tag) {
             .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{ .name = tk.value(self.src) }),
+            .identifier => ast.TypeAnnotation.init(self.allocator, .{ .struct_ = tk.value(self.src) }),
             .at => ast.TypeAnnotation.init(self.allocator, .{ .struct_self = {} }),
             .l_bracket => {
                 _ = try self.expect(.r_bracket);

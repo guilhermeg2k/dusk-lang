@@ -52,53 +52,104 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn hoistFunctionsAndStructs(self: *Self, root: *const ast.Root) !void {
+        //first hoist only names
         for (root.statements.items) |stmt| {
             if (stmt.data != .let_stmt) {
                 continue;
             }
 
             const let_stmt = stmt.data.let_stmt;
-            const expression_value = try switch (let_stmt.value.*.data) {
-                .fn_def => ir.Value.init(self.allocator, .{ .fn_def = {} }),
-                .struct_def => ir.Value.init(self.allocator, .{ .struct_def = {} }),
-                else => {
-                    continue;
+            if (let_stmt.value.data != .fn_def and let_stmt.value.data != .struct_def) {
+                continue;
+            }
+
+            switch (let_stmt.value.data) {
+                .fn_def => {
+                    const symbol = try self.createIncompleteFuncSymbol(let_stmt.identifier);
+                    try self.scope.symbol_table.put(symbol);
                 },
-            };
+                .struct_def => {
+                    const symbol = try self.createIncompleteStructSymbol(let_stmt.identifier);
+                    try self.scope.symbol_table.put(symbol);
+                },
+                else => unreachable,
+            }
+        }
 
-            const expression_type = self.resolveValueType(expression_value);
-
-            var var_type: *Type = expression_type;
-            if (let_stmt.type_annotation) |type_annotation| {
-                var_type = self.resolveTypeAnnotation(type_annotation) catch {
-                    return self.err_dispatcher.typeNotDefined(type_annotation.name, stmt.loc_start);
-                };
+        //later complete the hoist fullfilling the types
+        for (root.statements.items) |stmt| {
+            if (stmt.data != .let_stmt) {
+                continue;
             }
 
-            if (!expression_type.eql(var_type)) {
-                return self.err_dispatcher.invalidType(
-                    try var_type.name(self.allocator),
-                    try expression_type.name(self.allocator),
-                    stmt.loc_start,
-                );
+            const let_stmt = stmt.data.let_stmt;
+            if (let_stmt.value.data != .fn_def and let_stmt.value.data != .struct_def) {
+                continue;
             }
 
-            if (self.type_struct_def.eql(var_type)) {
-                const struct_symbol = try self.hoistStruct(
-                    let_stmt.identifier,
-                    let_stmt.value,
-                );
-                try self.scope.symbol_table.put(struct_symbol);
-            }
-
-            if (self.type_func_def.eql(var_type)) {
-                const fn_symbol = try self.hoistFn(let_stmt.identifier, let_stmt.value);
-                try self.scope.symbol_table.put(fn_symbol);
+            switch (let_stmt.value.data) {
+                .fn_def => {
+                    const symbol = try self.scope.symbol_table.getOrThrow(let_stmt.identifier);
+                    try self.fulfillFuncType(symbol, let_stmt.value);
+                },
+                .struct_def => {
+                    const symbol = try self.scope.symbol_table.getOrThrow(let_stmt.identifier);
+                    try self.fulfillStructType(
+                        symbol,
+                        let_stmt.value,
+                    );
+                },
+                else => unreachable,
             }
         }
     }
 
-    fn hoistStruct(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !*Symbol {
+    fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !*Symbol {
+        var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
+        const symbol = try Symbol.init(self.allocator, .{
+            .identifier = identifier,
+            .uid = self.scope.genUid(),
+            //warn: mut setting by hand to false
+            .is_mut = false,
+            .type = undefined,
+        });
+
+        symbol.type = try Type.init(self.allocator, .{
+            .function = .{
+                .symbol = symbol,
+                .params = try params_metadata.toOwnedSlice(self.allocator),
+                .return_type = undefined,
+            },
+        });
+
+        return symbol;
+    }
+
+    fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !*Symbol {
+        const symbol = try Symbol.init(
+            self.allocator,
+            .{
+                .identifier = identifier,
+                .uid = self.scope.genUid(),
+                //warn: mut setting by hand to false
+                .is_mut = false,
+                .type = undefined,
+            },
+        );
+
+        var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
+
+        symbol.type = try Type.init(self.allocator, .{ .struct_ = .{
+            .symbol = symbol,
+            .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .fields = .init(self.allocator),
+            .functions = .init(self.allocator),
+        } });
+
+        return symbol;
+    }
+
+    fn fulfillStructType(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
         const struct_def = exp.data.struct_def;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(*Type) = .init(self.allocator);
@@ -117,32 +168,18 @@ pub const SemaAnalyzer = struct {
         }
 
         for (struct_def.funcs) |func| {
-            const fn_symbol = try self.hoistFn(func.identifier, func.def);
+            //warn: this is not optimal
+            const fn_symbol = try self.createIncompleteFuncSymbol(func.identifier);
+            try self.fulfillFuncType(fn_symbol, func.def);
             try funcs.put(func.identifier, fn_symbol.type.function);
         }
 
-        const symbol = try Symbol.init(
-            self.allocator,
-            .{
-                .identifier = identifier,
-                .uid = self.scope.genUid(),
-                //warn: mut setting by hand to false
-                .is_mut = false,
-                .type = undefined,
-            },
-        );
-
-        symbol.type = try Type.init(self.allocator, .{ .struct_ = .{
-            .symbol = symbol,
-            .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
-            .fields = fields,
-            .functions = funcs,
-        } });
-
-        return symbol;
+        struct_symbol.type.struct_.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
+        struct_symbol.type.struct_.fields = fields;
+        struct_symbol.type.struct_.functions = funcs;
     }
 
-    fn hoistFn(self: *Self, identifier: []const u8, exp: *ast.ExpNode) !*Symbol {
+    fn fulfillFuncType(self: *Self, fn_symbol: *Symbol, exp: *ast.ExpNode) !void {
         const fn_def = exp.data.fn_def;
         var return_type: *Type = undefined;
         var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
@@ -153,7 +190,7 @@ pub const SemaAnalyzer = struct {
         for (fn_def.params) |arg| {
             const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
                 return self.err_dispatcher.typeNotDefined(
-                    arg.type_annotation.name,
+                    try arg.type_annotation.value(self.allocator),
                     exp.loc_start,
                 );
             };
@@ -185,23 +222,8 @@ pub const SemaAnalyzer = struct {
         //restore main scope
         self.scope.exit(self.type_void);
 
-        const symbol = try Symbol.init(self.allocator, .{
-            .identifier = identifier,
-            .uid = self.scope.genUid(),
-            //warn: mut setting by hand to false
-            .is_mut = false,
-            .type = undefined,
-        });
-
-        symbol.type = try Type.init(self.allocator, .{
-            .function = .{
-                .symbol = symbol,
-                .params = try params_metadata.toOwnedSlice(self.allocator),
-                .return_type = return_type,
-            },
-        });
-
-        return symbol;
+        fn_symbol.type.function.return_type = return_type;
+        fn_symbol.type.function.params = try params_metadata.toOwnedSlice(self.allocator);
     }
 
     pub fn visitBlock(self: *Self, block: *const ast.Block) ![]const ir.Instruction {
@@ -919,6 +941,10 @@ pub const SemaAnalyzer = struct {
 
                 return Errors.SemaError;
             },
+            .struct_ => |struct_name| {
+                const struct_symbol = try self.scope.symbol_table.getOrThrow(struct_name);
+                return struct_symbol.type;
+            },
             .array => {
                 const inner_type = try self.resolveTypeAnnotation(type_annotation.array);
                 return Type.init(self.allocator, .{
@@ -1000,7 +1026,7 @@ const Scope = struct {
             .alloc = alloc,
         };
 
-        var symbols = std.StringHashMap(*const Symbol).init(alloc);
+        var symbols = std.StringHashMap(*Symbol).init(alloc);
 
         for (try builtins.generate()) |func| {
             try symbols.put(func.symbol.identifier, func.symbol);
@@ -1035,14 +1061,14 @@ const SymbolTable = struct {
 
     allocator: std.mem.Allocator,
     parent: ?*SymbolTable,
-    symbols: std.StringHashMap(*const Symbol),
+    symbols: std.StringHashMap(*Symbol),
 
-    pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable, symbols: ?std.StringHashMap(*const Symbol)) !*Self {
+    pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable, symbols: ?std.StringHashMap(*Symbol)) !*Self {
         const ptr = try allocator.create(Self);
         ptr.* = Self{
             .allocator = allocator,
             .parent = parent,
-            .symbols = if (symbols) |s| s else std.StringHashMap(*const Symbol).init(allocator),
+            .symbols = if (symbols) |s| s else std.StringHashMap(*Symbol).init(allocator),
         };
         return ptr;
     }
@@ -1063,7 +1089,7 @@ const SymbolTable = struct {
         try self.symbols.remove(symbol.identifier);
     }
 
-    fn get(self: *Self, id: []const u8) ?*const Symbol {
+    fn get(self: *Self, id: []const u8) ?*Symbol {
         if (self.symbols.get(id)) |s| return s;
         if (self.parent) |parent| {
             return parent.get(id);
@@ -1072,7 +1098,7 @@ const SymbolTable = struct {
     }
 
     //warn: getOrError
-    fn getOrThrow(self: *Self, id: []const u8) !*const Symbol {
+    fn getOrThrow(self: *Self, id: []const u8) !*Symbol {
         if (self.get(id)) |s| return s;
         return Errors.SemaError;
     }
