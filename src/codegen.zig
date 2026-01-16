@@ -264,15 +264,14 @@ pub const Generator = struct {
             .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
             .indexed => {
-                const target = value.indexed.target.identifier;
-                const target_name = try self.genName(target.uid, target.identifier);
-                const index = try self.genValue(value.indexed.index);
+                const target = try self.genValue(value.indexed.target);
                 switch (value.indexed.index.*) {
-                    .i_string => {
-                        try buf.print(self.allocator, "{s}[\"{s}\"]", .{ target_name, index });
+                    .i_string => |member_name| {
+                        try buf.print(self.allocator, "{s}[\"{s}\"]", .{ target, member_name });
                     },
                     else => {
-                        try buf.print(self.allocator, "{s}[{s}]", .{ target_name, index });
+                        const index_js = try self.genValue(value.indexed.index);
+                        try buf.print(self.allocator, "{s}[{s}]", .{ target, index_js });
                     },
                 }
             },

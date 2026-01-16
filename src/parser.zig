@@ -242,7 +242,6 @@ pub const Parser = struct {
                 if (tk.tag == .dedent or tk.tag == .eof) {
                     break;
                 }
-                self.walk();
                 continue;
             }
 

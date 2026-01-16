@@ -168,7 +168,7 @@ pub const SemaAnalyzer = struct {
         }
 
         for (struct_def.funcs) |func| {
-            //warn: this is not optimal
+            //warn: maybe this is not optimal because we only need the fn metadata
             const fn_symbol = try self.createIncompleteFuncSymbol(func.identifier);
             try self.fulfillFuncType(fn_symbol, func.def);
             try funcs.put(func.identifier, fn_symbol.type.function);
@@ -741,12 +741,9 @@ pub const SemaAnalyzer = struct {
 
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const index_exp = exp.data.indexed;
+
         const target = try self.evalExp(index_exp.target);
         const target_type = self.resolveValueType(target);
-
-        if (target.* != .identifier) {
-            return self.err_dispatcher.invalidExpression("identifier", @tagName(target.*), exp.loc_start);
-        }
 
         switch (target_type.*) {
             .array => {
@@ -754,7 +751,7 @@ pub const SemaAnalyzer = struct {
                 const index_type = self.resolveValueType(index);
 
                 if (!index_type.eql(self.type_number)) {
-                    return self.err_dispatcher.invalidIndexing("number", @tagName(index.*), exp.loc_start);
+                    return self.err_dispatcher.invalidIndexing("number", try index_type.name(self.allocator), exp.loc_start);
                 }
 
                 return ir.Value.init(self.allocator, .{
@@ -765,20 +762,21 @@ pub const SemaAnalyzer = struct {
                 });
             },
             .struct_ => {
-                return switch (index_exp.index.*.data) {
-                    .identifier => |struct_member| {
-                        const struct_symbol = try self.scope.symbol_table.getOrThrow(target.identifier.identifier);
-                        const field_member = struct_symbol.type.struct_.fields.get(struct_member);
-                        const function_member = struct_symbol.type.struct_.functions.get(struct_member);
+                const struct_metadata = target_type.struct_;
+
+                return switch (index_exp.index.data) {
+                    .identifier => |member_name| {
+                        const field_member = struct_metadata.fields.get(member_name);
+                        const function_member = struct_metadata.functions.get(member_name);
 
                         if (field_member == null and function_member == null) {
-                            return self.err_dispatcher.invalidStructMember(target.identifier.identifier, struct_member, exp.loc_start);
+                            return self.err_dispatcher.invalidStructMember(struct_metadata.symbol.identifier, member_name, exp.loc_start);
                         }
 
                         return ir.Value.init(self.allocator, .{
                             .indexed = .{
                                 .target = target,
-                                .index = try ir.Value.init(self.allocator, .{ .i_string = struct_member }),
+                                .index = try ir.Value.init(self.allocator, .{ .i_string = member_name }),
                             },
                         });
                     },
@@ -971,12 +969,24 @@ pub const SemaAnalyzer = struct {
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
             .indexed => |indexed| {
-                return switch (indexed.target.identifier.type.*) {
-                    .array => |array| array,
-                    .struct_ => {
-                        if (indexed.target.identifier.type.struct_.fields.get(indexed.index.i_string)) |field_type| return field_type;
-                        //warn: func_def?
-                        if (indexed.target.identifier.type.struct_.functions.get(indexed.index.i_string) != null) return self.type_func_def;
+                const target_type = self.resolveValueType(indexed.target);
+
+                return switch (target_type.*) {
+                    .array => |child_type| {
+                        return child_type;
+                    },
+                    .struct_ => |struct_metadata| {
+                        const field_name = indexed.index.i_string;
+
+                        if (struct_metadata.fields.get(field_name)) |field_type| {
+                            return field_type;
+                        }
+
+                        //warn: wrong
+                        if (struct_metadata.functions.get(field_name)) |_| {
+                            return self.type_func_def;
+                        }
+
                         unreachable;
                     },
                     else => unreachable,

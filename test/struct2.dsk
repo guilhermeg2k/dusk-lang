@@ -9,5 +9,6 @@ let User = struct
 
 
 let user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
+
 echo(stringify(user.who_iam(user)))
 
