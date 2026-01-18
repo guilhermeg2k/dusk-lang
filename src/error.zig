@@ -119,6 +119,11 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: usize) Errors {
+        self.log("@ cant be used outside of a struct", loc);
+        return Errors.SemaError;
+    }
+
     pub fn invalidStructMember(self: *Self, struct_name: []const u8, member: []const u8, loc: usize) Errors {
         self.log(
             try allocPrint(

@@ -34,6 +34,7 @@
 
 - Enum
 - Union (Zig-like)
+- Meta structs
 - Generics
 - Pattern match
 - Defer

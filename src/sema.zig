@@ -90,7 +90,7 @@ pub const SemaAnalyzer = struct {
             switch (let_stmt.value.data) {
                 .fn_def => {
                     const symbol = try self.scope.symbol_table.getOrThrow(let_stmt.identifier);
-                    try self.fulfillFuncType(symbol, let_stmt.value);
+                    try self.fulfillFuncType(symbol, let_stmt.value, null);
                 },
                 .struct_def => {
                     const symbol = try self.scope.symbol_table.getOrThrow(let_stmt.identifier);
@@ -170,7 +170,7 @@ pub const SemaAnalyzer = struct {
         for (struct_def.funcs) |func| {
             //warn: maybe this is not optimal because we only need the fn metadata
             const fn_symbol = try self.createIncompleteFuncSymbol(func.identifier);
-            try self.fulfillFuncType(fn_symbol, func.def);
+            try self.fulfillFuncType(fn_symbol, func.def, struct_symbol);
             try funcs.put(func.identifier, fn_symbol.type.function);
         }
 
@@ -179,7 +179,7 @@ pub const SemaAnalyzer = struct {
         struct_symbol.type.struct_.functions = funcs;
     }
 
-    fn fulfillFuncType(self: *Self, fn_symbol: *Symbol, exp: *ast.ExpNode) !void {
+    fn fulfillFuncType(self: *Self, fn_symbol: *Symbol, exp: *ast.ExpNode, struct_symbol: ?*Symbol) !void {
         const fn_def = exp.data.fn_def;
         var return_type: *Type = undefined;
         var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
@@ -188,12 +188,20 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(self.type_void);
 
         for (fn_def.params) |arg| {
-            const arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
+            var arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
                 return self.err_dispatcher.typeNotDefined(
                     try arg.type_annotation.value(self.allocator),
                     exp.loc_start,
                 );
             };
+
+            if (arg_type.* == .struct_self and struct_symbol == null) {
+                return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc_start);
+            }
+
+            if (arg_type.* == .struct_self) {
+                arg_type = struct_symbol.?.type;
+            }
 
             self.scope.symbol_table.put(
                 try Symbol.init(self.allocator, .{

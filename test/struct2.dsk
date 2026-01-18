@@ -4,20 +4,13 @@ let User = struct
     username: string
     auth_provider: string
 
-let User2 = struct
-    id: number
-    auth_id: string
-    username: string
-
-
+    who_iam: (self: @) -> string
+        return concat(self.auth_id, self.username)
 
 let user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
-let user2 = User2(id=1, auth_id="XWQ#@!#@!", username="guig2k")
 
-let who_iam = (self: User2) -> string
+let who_iam = (self: @) -> string
     return concat(self.auth_id, self.username)
 
-let b: number = user2
-
-echo(stringify(who_iam(user)))
+echo(stringify(user.who_iam(user)))
 
