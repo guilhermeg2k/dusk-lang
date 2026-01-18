@@ -275,7 +275,7 @@ pub const SemaAnalyzer = struct {
             var_type = expression_type;
         }
 
-        if (self.type_func_def.eql(var_type)) {
+        if (var_type.* == .function_def) {
             const fn_symbol = self.scope.symbol_table.getOrThrow(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc_start);
             };
@@ -284,15 +284,23 @@ pub const SemaAnalyzer = struct {
             return null;
         }
 
-        if (self.type_struct_def.eql(var_type)) {
+        if (var_type.* == .struct_def) {
             const struct_def = try self.visitStructDef(let_stmt.value, let_stmt.identifier);
             try self.structs.append(self.allocator, struct_def);
             return null;
         }
 
+        if (!var_type.eql(expression_type)) {
+            return self.err_dispatcher.invalidType(
+                try var_type.name(self.allocator),
+                try expression_type.name(self.allocator),
+                stmt.data.let_stmt.value.loc_start,
+            );
+        }
+
         const uid = self.scope.genUid();
 
-        try self.scope.symbol_table.put(try Symbol.init(
+        self.scope.symbol_table.put(try Symbol.init(
             self.allocator,
             .{
                 .identifier = let_stmt.identifier,
@@ -300,7 +308,9 @@ pub const SemaAnalyzer = struct {
                 .is_mut = let_stmt.is_mut,
                 .type = var_type,
             },
-        ));
+        )) catch {
+            return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc_start);
+        };
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
@@ -719,7 +729,7 @@ pub const SemaAnalyzer = struct {
             const fn_call_arg_value = try self.evalExp(arg_exp);
             const arg_type = self.resolveValueType(fn_call_arg_value);
 
-            if (!arg_type.eql(param.type)) {
+            if (!param.type.eql(arg_type)) {
                 return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
             }
 
@@ -972,8 +982,8 @@ pub const SemaAnalyzer = struct {
                 const target_type = self.resolveValueType(indexed.target);
 
                 return switch (target_type.*) {
-                    .array => |child_type| {
-                        return child_type;
+                    .array => |inner_type| {
+                        return inner_type;
                     },
                     .struct_ => |struct_metadata| {
                         const field_name = indexed.index.i_string;
@@ -1185,7 +1195,29 @@ pub const Type = union(enum) {
             //warn: this is wrong
             .function_def => return other.* == .function_def,
             .struct_def => return other.* == .struct_def,
-            .struct_ => return true,
+
+            .struct_ => |struct_| {
+                //duck
+                if (other.* != .struct_) {
+                    return false;
+                }
+
+                const other_struct = other.struct_;
+                for (struct_.fields_in_order) |field| {
+                    if (other_struct.fields.get(field.identifier) == null) {
+                        return false;
+                    }
+                }
+
+                var fn_its = struct_.functions.iterator();
+                while (fn_its.next()) |func| {
+                    if (other_struct.functions.get(func.key_ptr.*) == null) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
             .function => return true,
 
             .struct_self => unreachable,

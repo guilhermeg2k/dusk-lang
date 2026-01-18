@@ -105,7 +105,7 @@ pub const ErrorDispatcher = struct {
     }
 
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: usize) Errors {
-        self.log(try allocPrint(self.allocator, "Variable '{s}' already declared", .{identifier}), loc);
+        self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
         return Errors.SemaError;
     }
 
