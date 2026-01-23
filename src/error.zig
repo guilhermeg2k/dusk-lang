@@ -120,7 +120,7 @@ pub const ErrorDispatcher = struct {
     }
 
     pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: usize) Errors {
-        self.log("@ cant be used outside of a struct", loc);
+        self.log("@ cannot be used outside of a struct", loc);
         return Errors.SemaError;
     }
 

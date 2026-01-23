@@ -8,9 +8,7 @@ let User = struct
         return concat(self.auth_id, self.username)
 
 let user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
+user.username = "Salve"
+echo(user.who_iam())
 
-let who_iam = (self: @) -> string
-    return concat(self.auth_id, self.username)
-
-echo(stringify(user.who_iam(user)))
 

@@ -645,6 +645,11 @@ pub const SemaAnalyzer = struct {
         var params: []const TypedIdentifier = undefined;
         var return_type: *Type = undefined;
 
+        var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
+        defer arg_exp_by_param_name.deinit();
+
+        var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
+
         switch (fn_call.target.data) {
             .identifier => |id| {
                 const symbol = self.scope.symbol_table.getOrThrow(id) catch {
@@ -670,6 +675,7 @@ pub const SemaAnalyzer = struct {
                     .struct_ = symbol.type.struct_,
                 });
             },
+            //warn: not supporting functions stored in arrays
             .indexed => |indexed| {
                 const target = try self.evalExp(indexed.target);
                 const target_type = self.resolveValueType(target);
@@ -694,6 +700,20 @@ pub const SemaAnalyzer = struct {
 
                 const target_symbol = target_type.struct_.symbol;
 
+                //auto append struct to fn call if first argument of function is itself
+                if (fn_metadata.params.len > 0) {
+                    const first_argument_uid = switch (fn_metadata.params[0].type.*) {
+                        .struct_ => |struct_| struct_.symbol.uid,
+                        else => 0,
+                    };
+
+                    const target_uid = target_type.struct_.symbol.uid;
+
+                    if (first_argument_uid == target_uid) {
+                        try fn_call_arguments_values.append(self.allocator, target);
+                    }
+                }
+
                 params = fn_metadata.params;
                 return_type = fn_metadata.return_type;
                 uid = target_symbol.uid;
@@ -702,16 +722,13 @@ pub const SemaAnalyzer = struct {
             else => unreachable,
         }
 
-        var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
-
-        var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
-        defer arg_exp_by_param_name.deinit();
-
         const call_args_len = fn_call.arguments.len;
         const fn_params_len = params.len;
+        //call args + auto binded struct
+        const total_args_len = call_args_len + fn_call_arguments_values.items.len;
 
-        if (fn_params_len != call_args_len) {
-            return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, call_args_len, loc_start);
+        if (fn_params_len != total_args_len) {
+            return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, total_args_len, loc_start);
         }
 
         if (fn_call.are_arguments_named) {
@@ -723,6 +740,8 @@ pub const SemaAnalyzer = struct {
         }
 
         for (params, 0..) |param, i| {
+            if (i == 0 and fn_call_arguments_values.items.len == 1) continue;
+
             var arg_exp = fn_call.arguments[i].exp;
 
             if (fn_call.are_arguments_named) {
