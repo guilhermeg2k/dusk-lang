@@ -1,14 +1,22 @@
+let Address = struct
+    country: string
+    state: string
+    city: string
+
 let User = struct
     id: number
     auth_id: string
     username: string
     auth_provider: string
+    address: Address
 
     who_iam: (self: @) -> string
         return concat(self.auth_id, self.username)
 
-let user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord")
-user.username = "Salve"
-echo(user.who_iam())
+let mut user = User(id=1, auth_id="XWQ#@!#@!", username="guig2k", auth_provider="discord", address=Address(country="Brasil", state="DF", city="Brasília"))
+
+user.username = "Ronaldinho 2"
+user.address.city = "Tagua"
+echo(stringify(user))
 
 

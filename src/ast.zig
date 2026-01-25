@@ -93,8 +93,9 @@ pub const Exp = union(enum) {
     bool_literal: bool,
     identifier: []const u8,
     array_literal: ArrayLiteral,
-    fn_def: FnDef,
+
     fn_call: FnCall,
+    fn_def: FnDef,
 
     struct_def: StructDef,
 

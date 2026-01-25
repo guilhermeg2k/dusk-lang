@@ -56,9 +56,9 @@ pub const Generator = struct {
         for (struct_.fields) |field| {
             try buf.print(self.allocator, "{s}: {s},\n", .{ field.identifier, field.identifier });
         }
-        try buf.appendSlice(self.allocator, "};");
+        try buf.appendSlice(self.allocator, "};\n");
 
-        try buf.appendSlice(self.allocator, "return obj;");
+        try buf.appendSlice(self.allocator, "return obj;\n");
 
         return buf.toOwnedSlice(self.allocator);
     }
@@ -180,13 +180,10 @@ pub const Generator = struct {
     fn genUpdateIndexed(self: *Self, update_indexed: ir.UpdateIndexed) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
 
-        const id = update_indexed.target.identifier;
-        const target_name = try self.genName(id.uid, id.identifier);
-
+        const target = try self.genValue(update_indexed.target);
         const value = try self.genValue(update_indexed.value);
-        const index = try self.genValue(update_indexed.index);
 
-        try buf.print(self.allocator, "{s}[{s}] = {s};\n", .{ target_name, index, value });
+        try buf.print(self.allocator, "{s} = {s};\n", .{ target, value });
         return buf.toOwnedSlice(self.allocator);
     }
 

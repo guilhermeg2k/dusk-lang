@@ -382,54 +382,51 @@ pub const SemaAnalyzer = struct {
                 } };
             },
             .indexed => {
-                //warn: don't supporting struct indexing
                 const index_exp = assign_stmt.target.data.indexed;
                 const target = try self.evalExp(index_exp.target);
                 const target_type = self.resolveValueType(target);
-
-                if (target.* != .identifier) {
-                    return self.err_dispatcher.invalidExpression(
-                        "identifier",
-                        @tagName(target.*),
-                        assign_stmt.exp.loc_start,
-                    );
-                }
-
-                if (target_type.* != .array) {
-                    return self.err_dispatcher.invalidType(
-                        "array",
-                        try target_type.name(self.allocator),
-                        assign_stmt.exp.loc_start,
-                    );
-                }
-
-                const id = index_exp.target.data.identifier;
-                const target_symbol = self.scope.symbol_table.getOrThrow(id) catch {
-                    return self.err_dispatcher.notDefined(id, stmt.loc_start);
-                };
-
-                if (!target_symbol.is_mut) {
-                    return self.err_dispatcher.notMutable(id, stmt.loc_start);
-                }
-
                 const assignment_value = try self.evalExp(assign_stmt.exp);
                 const assignment_value_type = self.resolveValueType(assignment_value);
 
-                if (!target_symbol.type.array.eql(assignment_value_type)) {
-                    return self.err_dispatcher.invalidType(
-                        try target_symbol.type.name(self.allocator),
-                        try assignment_value_type.name(self.allocator),
-                        stmt.loc_start,
-                    );
+                var target_root = index_exp.target;
+                while (target_root.data == .indexed) {
+                    target_root = target_root.data.indexed.target;
                 }
 
-                const target_exp = try self.evalExp(index_exp.target);
-                const index = try self.evalExp(index_exp.index);
+                const target_symbol = self.scope.symbol_table.getOrThrow(target_root.data.identifier) catch {
+                    return self.err_dispatcher.notDefined(target_root.data.identifier, stmt.loc_start);
+                };
+
+                if (!target_symbol.is_mut) {
+                    return self.err_dispatcher.notMutable(target_root.data.identifier, stmt.loc_start);
+                }
+
+                switch (target_type.*) {
+                    .array => {
+                        if (!target_symbol.type.array.eql(assignment_value_type)) {
+                            return self.err_dispatcher.invalidType(
+                                try target_symbol.type.name(self.allocator),
+                                try assignment_value_type.name(self.allocator),
+                                stmt.loc_start,
+                            );
+                        }
+                    },
+                    .struct_ => |struct_| {
+                        const field = struct_.fields.get(index_exp.index.data.identifier) orelse unreachable;
+                        if (!field.eql(assignment_value_type)) {
+                            return self.err_dispatcher.invalidType(
+                                try field.name(self.allocator),
+                                try assignment_value_type.name(self.allocator),
+                                stmt.loc_start,
+                            );
+                        }
+                    },
+                    else => unreachable,
+                }
 
                 return ir.Instruction{
                     .update_indexed = .{
-                        .target = target_exp,
-                        .index = index,
+                        .target = try self.evalExp(assign_stmt.target),
                         .value = assignment_value,
                     },
                 };

@@ -45,7 +45,6 @@ pub const FuncParam = struct {
 
 pub const UpdateIndexed = struct {
     target: *Value,
-    index: *Value,
     value: *Value,
 };
 
