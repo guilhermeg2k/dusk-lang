@@ -9,10 +9,10 @@
 - [x] Added stringify build-in function
 - [x] Hoisting functions and structs
 - Support for multiple line statements
-  - Struct definition
-  - Struct inicialziation
+  - [x] Struct inicialziation
+  - [x] Struct definition
+  - [x] Function call
   - Function definition
-  - Function call
 
 ## Version: 0.6 - Takina
 
@@ -33,6 +33,7 @@
 ## Backlog
 
 - Enum
+- Multiarrays
 - Union (Zig-like)
 - Meta structs
 - Generics

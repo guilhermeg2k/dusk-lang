@@ -370,15 +370,23 @@ pub const Parser = struct {
         var are_arguments_named = false;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
-        var i: usize = 0;
-        while (true) : (i += 1) {
-            const prev_tk = self.peekCurrent();
+        //warn: this first_run seems to be dump
+        //i think we can just take the tk as var out but i'm not changing this now
+        var first_run: bool = true;
+        while (true) {
+            _ = self.match(.new_line);
+            const first_tk = self.peekCurrent();
+            if (first_tk.tag == .dedent) {
+                break;
+            }
+
             const exp = try self.parseExp(0);
             const tk = self.peekCurrent();
 
-            if (i == 0 and tk.tag == .eq) {
+            if (first_run and tk.tag == .eq) {
                 are_arguments_named = true;
             }
+            first_run = false;
 
             if (are_arguments_named) {
                 if (tk.tag != .eq) {
@@ -386,7 +394,7 @@ pub const Parser = struct {
                 }
 
                 if (exp.data != .identifier) {
-                    return self.err_dispatcher.invalidSyntax("identifier", prev_tk);
+                    return self.err_dispatcher.invalidSyntax("identifier", first_tk);
                 }
 
                 self.walk();
@@ -402,7 +410,8 @@ pub const Parser = struct {
                 });
             }
 
-            if (self.peekCurrent().tag != .comma) {
+            const cur = self.peekCurrent().tag;
+            if (cur != .comma) {
                 break;
             }
 
@@ -543,9 +552,12 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
 
+            //fnCall
             if (tk.tag == .l_paren) {
                 self.walk();
+                _ = self.match(.indent);
                 const args = try self.parseFnCallArgs();
+                _ = self.match(.dedent);
                 _ = try self.expect(.r_paren);
 
                 const call_node = try ast.ExpNode.init(self.allocator, .{
@@ -564,6 +576,7 @@ pub const Parser = struct {
                 continue;
             }
 
+            //arrays
             if (tk.tag == .l_bracket) {
                 self.walk();
 
@@ -582,6 +595,7 @@ pub const Parser = struct {
                 continue;
             }
 
+            //struct field member access
             if (tk.tag == .dot) {
                 self.walk();
 
