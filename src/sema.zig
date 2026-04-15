@@ -664,7 +664,7 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
-                //when identifier is a struct when turn into its a struct inicialization
+                //when identifier is a struct we turn it into a struct inicialization
                 fn_identifier = symbol.identifier;
                 uid = symbol.uid;
                 params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
@@ -736,10 +736,12 @@ pub const SemaAnalyzer = struct {
             }
         }
 
+        const has_first_argument_being_binded = fn_call_arguments_values.items.len == 1;
         for (params, 0..) |param, i| {
-            if (i == 0 and fn_call_arguments_values.items.len == 1) continue;
+            if (i == 0 and has_first_argument_being_binded) continue;
 
-            var arg_exp = fn_call.arguments[i].exp;
+            const index = if (has_first_argument_being_binded) i - 1 else i;
+            var arg_exp = fn_call.arguments[index].exp;
 
             if (fn_call.are_arguments_named) {
                 const named_arg_exp = arg_exp_by_param_name.get(param.identifier);

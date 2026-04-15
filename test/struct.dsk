@@ -1,32 +1,25 @@
 let User = struct
-    let DEFAULT_PROVIDER = "DISCORD"
-
-    id: number
+    id: string
     auth_id: string
     username: string
     auth_provider: string
 
-    to_string: (self: @, id: number) -> string
+    to_string: (self: @) -> string
         return concat(self.id, self.username)
 
-    change_id: (mut self: @, id: number) -> string
+    change_id: (mut self: @, id: string) -> string
         self.id = id
 
-let user = User(id=1, oauth_id=3, username="Geromel", auth_provider="discord")
+let user = User(id="1", auth_id="4", username="Geromel", auth_provider="discord")
 
-let user = User(
-    id: 1
-    oauth_id: 3
-    username: "Geromel"
-    auth_provider : "discord"
+let user2 = User(
+    id = "2",
+    auth_id = "312321123321x312-z032",
+    username = "Geromel",
+    auth_provider = "discord",
 )
 
-let user: User = @(
-    id: 1
-    oauth_id: 3
-    username: "Geromel"
-    auth_provider: "discord"
-)
+let user3 = User(id = "3", auth_id = "3", username = "Geromel", auth_provider = "discord")
 
-let user: User = @(id: 1, oauth_id: 3, username: "Geromel", auth_provider: "discord")
-
+echo(user3.change_id("salve"))
+echo(user3.id)

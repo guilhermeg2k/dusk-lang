@@ -3,7 +3,6 @@ let User = struct
     auth_id: string
     username: string
     auth_provider: string
-    d: D
 
     who_iam: (self: @) -> string
         return concat(self.auth_id, self.username)

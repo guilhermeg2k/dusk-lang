@@ -8,21 +8,23 @@
 - [x] Support function call with named parameters
 - [x] Added stringify build-in function
 - [x] Hoisting functions and structs
-- Support for multiple line statements
+- [x] Support for multiple line statements
   - [x] Struct inicialziation
   - [x] Struct definition
   - [x] Function call
-  - Function definition
 
 ## Version: 0.6 - Takina
+
+- Support for multiline function definition
+- Anonymous structs
+- Static struct methods & variables (consts)
+
+## Version: 0.7 - Mizuhara
 
 - Optionals
   - Optional fn args
 - Function parameter default value
 - Inference for function arguments (When it has defualt value)
-
-## Version: 0.7 - Mizuhara
-
 - Error Handling
 
 ## Version: 0.8 - Shinobu
