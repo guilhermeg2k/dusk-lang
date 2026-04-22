@@ -21,5 +21,5 @@ let user2 = User(
 
 let user3 = User(id = "3", auth_id = "3", username = "Geromel", auth_provider = "discord")
 
-echo(user3.change_id("salve"))
-echo(user3.id)
+user3.change_id("FSDF@!#W!@Z#!@")
+echo(user3.to_string())

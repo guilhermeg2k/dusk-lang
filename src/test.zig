@@ -87,6 +87,11 @@ test "Test: Compile and Run" {
             .src_file = "test/reverse-count.dsk",
             .expected_output = "9\n8\n7\n6\n5\n4\n3\n2\n1\n",
         },
+        .{
+            .name = "struct",
+            .src_file = "test/struct.dsk",
+            .expected_output = "FSDF@!#W!@Z#!@Geromel",
+        },
     };
 
     for (cases) |case| {

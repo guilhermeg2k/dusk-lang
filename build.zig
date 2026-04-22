@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // tests
-    const unit_tests = b.addTest(.{
+    const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/test.zig"),
             .target = target,
@@ -31,9 +31,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const run_unit_tests = b.addRunArtifact(unit_tests);
+    const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_tests.step);
 
     // quickjs
     const qjs_dep = b.dependency("quickjs", .{});
@@ -59,11 +59,11 @@ pub fn build(b: *std.Build) void {
     exe.root_module.link_libc = true;
     exe.addIncludePath(qjs_path);
 
-    unit_tests.addCSourceFiles(.{
+    tests.addCSourceFiles(.{
         .root = qjs_path,
         .files = qjs_files,
         .flags = qjs_flags,
     });
-    unit_tests.root_module.link_libc = true;
-    unit_tests.addIncludePath(qjs_path);
+    tests.root_module.link_libc = true;
+    tests.addIncludePath(qjs_path);
 }
