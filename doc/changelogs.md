@@ -1,5 +1,13 @@
 # Changelogs
 
+## v0.5 - Chisato
+
+- Structs (definition, initialization, methods)
+- Named parameters in function calls
+- Added `stringify` built-in function
+- Hoisting for functions and structs
+- Support for multiple line statements (structs and function calls)
+
 ## v0.4 - Himeno
 
 - Loop controll flow (break, continue)

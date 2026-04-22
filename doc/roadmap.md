@@ -2,17 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version: 0.5 - Chisato
-
-- Structs
-- [x] Support function call with named parameters
-- [x] Added stringify build-in function
-- [x] Hoisting functions and structs
-- [x] Support for multiple line statements
-  - [x] Struct inicialziation
-  - [x] Struct definition
-  - [x] Function call
-
 ## Version: 0.6 - Takina
 
 - Support for multiline function definition
@@ -25,9 +14,12 @@
   - Optional fn args
 - Function parameter default value
 - Inference for function arguments (When it has defualt value)
+
+## Version: 0.8 - Seras Victoria
+
 - Error Handling
 
-## Version: 0.8 - Shinobu
+## Version: 0.9 - Shinobu
 
 - Closures (& fn as anything (argument, item, etc))
 - Pipe operator
@@ -35,6 +27,7 @@
 ## Backlog
 
 - Enum
+- Floor division
 - Multiarrays
 - Union (Zig-like)
 - Meta structs

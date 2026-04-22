@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.4::Himeno** of Dusk programming language.
+This document provides a reference for **v0.5::Chisato** of Dusk programming language.
 
 ## 1. Comments
 
@@ -57,6 +57,54 @@ Arrays are dynamic lists of elements of the same type.
 ```rust
 let numbers: []number = [1, 2, 3, 4]
 let names: []string = ["Alice", "Bob"]
+```
+
+### Structs
+
+Structs are custom data types that group related data and methods.
+
+#### Definition
+
+Structs are defined using the `struct` keyword.
+
+```rust
+let User = struct
+    id: string
+    username: string
+
+    # Method
+    to_string: (self: @) -> string
+        return concat(self.id, self.username)
+
+    # Mutable Method
+    change_id: (mut self: @, id: string) -> void
+        self.id = id
+```
+
+The `@` symbol refers to the current struct type.
+
+#### Initialization
+
+Structs are initialized by calling the struct name as a function. Named parameters are supported and recommended for clarity.
+
+```rust
+let user = User(id="1", username="Geromel")
+
+# Multi-line initialization
+let user2 = User(
+    id = "2",
+    username = "Dusk",
+)
+```
+
+#### Accessing Fields and Methods
+
+Fields and methods are accessed using the dot (`.`) operator.
+
+```rust
+echo(user.username)
+user.change_id("100")
+echo(user.to_string())
 ```
 
 ## 3. Operators
@@ -198,7 +246,7 @@ let greet: fn = (name: string) -> void
 By default, function parameters are immutable. To allow a function to modify a parameter (like an array), you can use the `mut` keyword. This is especially useful for in-place modifications.
 
 ```rust
-# The 'mut' keyword allows this function to modify 'list'
+# The mut keyword allows this function to modify list
 let add_one = (mut list: []number) -> void
     append(list, 1)
 
@@ -209,27 +257,42 @@ echo(my_list) # Prints [10, 20, 1]
 
 ### Calling Functions
 
+Functions can be called using positional arguments or named parameters.
+
 ```rust
 let sum: number = add(5, 3)
 greet("Dusk")
+
+# Named parameters
+let result = add(a=10, b=20)
+```
+
+Dusk also supports multi-line function calls for better readability.
+
+```rust
+let total = add(
+    a = 5,
+    b = 15,
+)
 ```
 
 ## 6. Built-in Functions
 
 Dusk provides a set of intrinsic functions.
 
-| Function | Signature                                       | Description                                      |
-| :------- | :---------------------------------------------- | :----------------------------------------------- |
-| `echo`   | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
-| `len`    | `len(arr: []dynamic) -> number`                 | Returns the length of an array.                  |
-| `append` | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
-| `floor`  | `floor(n: number) -> number`                    | Rounds a number down to the nearest integer      |
-| `concat` | `concat(s1: string, s2: string) -> string`      | Concatenates two strings.                        |
+| Function    | Signature                                       | Description                                      |
+| :---------- | :---------------------------------------------- | :----------------------------------------------- |
+| `echo`      | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
+| `len`       | `len(arr: []dynamic) -> number`                 | Returns the length of an array.                  |
+| `append`    | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
+| `floor`     | `floor(n: number) -> number`                    | Rounds a number down to the nearest integer      |
+| `concat`    | `concat(s1: string, s2: string) -> string`      | Concatenates two strings.                        |
+| `stringify` | `stringify(obj: dynamic) -> string`             | Returns a JSON string representation of a value. |
 
 ## 7. Program Structure
 
 - **Entry Point**: The program executes from top to bottom. There is no `main` function requirement.
-- **Scope**: Variables must be defined before use.
+- **Scope**: Variables must be defined before use. However, **functions and structs are hoisted**, meaning they can be defined anywhere in the script and used before their declaration.
 
 ## 8. Runtime
 
