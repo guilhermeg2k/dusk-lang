@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const run_tests = b.addRunArtifact(tests);
-    const test_step = b.step("test", "Run unit tests");
+    const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);
 
     // quickjs

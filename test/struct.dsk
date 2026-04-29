@@ -19,7 +19,12 @@ let user2 = User(
     auth_provider = "discord",
 )
 
-let user3 = User(id = "3", auth_id = "3", username = "Geromel", auth_provider = "discord")
+let user3 = User(
+    id = "3",
+    auth_id = "3",
+    username = "Geromel",
+    auth_provider = "discord"
+)
 
 user3.change_id("FSDF@!#W!@Z#!@")
 echo(user3.to_string())

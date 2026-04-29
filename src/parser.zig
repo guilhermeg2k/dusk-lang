@@ -271,9 +271,11 @@ pub const Parser = struct {
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
 
+        _ = self.match(.indent);
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnArgs();
         }
+        _ = self.match(.dedent);
 
         _ = try self.expect(.r_paren);
         _ = try self.expect(.arrow);
@@ -301,9 +303,11 @@ pub const Parser = struct {
         };
     }
 
+    //warn: return std.ArrayList
     fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnParam) {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
+            _ = self.match(.new_line);
             const arg = try self.parseFnArg();
             try arguments.append(self.allocator, arg);
             if (self.peekCurrent().tag != .comma) {
@@ -370,7 +374,7 @@ pub const Parser = struct {
         var are_arguments_named = false;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
-        //warn: this first_run seems to be dump
+        //warn: this first_run seems to be dumb
         //i think we can just take the tk as var out but i'm not changing this now
         var first_run: bool = true;
         while (true) {
@@ -523,10 +527,12 @@ pub const Parser = struct {
 
     fn isFuncDef(self: *Self) bool {
         const start_id = self.cur_index;
+        const tokens_scan_limit = 500;
+        var tokens_scanned: usize = 0;
         defer self.cur_index = start_id;
 
         var paren_depth: usize = 1;
-        while (paren_depth != 0) {
+        while (paren_depth != 0 and tokens_scanned < tokens_scan_limit) {
             switch (self.peekCurrent().tag) {
                 .l_paren => {
                     paren_depth += 1;
@@ -534,12 +540,10 @@ pub const Parser = struct {
                 .r_paren => {
                     paren_depth -= 1;
                 },
-                .new_line => {
-                    break;
-                },
                 else => {},
             }
             self.walk();
+            tokens_scanned += 1;
         }
 
         const tk = self.peekCurrent();

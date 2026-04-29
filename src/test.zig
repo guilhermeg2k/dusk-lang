@@ -92,6 +92,11 @@ test "Test: Compile and Run" {
             .src_file = "test/struct.dsk",
             .expected_output = "FSDF@!#W!@Z#!@Geromel",
         },
+        .{
+            .name = "multi-line-fn-def",
+            .src_file = "test/multiline-fn.dsk",
+            .expected_output = "1\n8\n25\n81\n",
+        },
     };
 
     for (cases) |case| {

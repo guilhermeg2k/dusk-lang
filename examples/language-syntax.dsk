@@ -1,12 +1,16 @@
+# This file does not mean anything
+# I use it to keep some ideas
+# Does mean the things here are/gonna be implemented
+
 # One line comment
 
-### 
+###
   Multi line comment
 ###
 
 # Identation + new lines are used to define code blocks similar to python
 
-### 
+###
     Basic Types and variables
 ###
 
@@ -60,7 +64,7 @@ if x == z
     echo('x == z')
 else if x > y
     echo('x > y')
-else 
+else
     echo('x')
 
 
@@ -75,7 +79,7 @@ let err = match res.err
     default -> 'Unkown Error'
 
 let err = match res.err
-    500..599 
+    500..599
         return 'Internal Server Error'
     default
         return 'Unkown Error'
@@ -101,7 +105,7 @@ for x > y
 for
     echo('I\'m infinity')
 
-### 
+###
   Functions
 ###
 
@@ -109,7 +113,7 @@ let main = () -> void
   echo('Hello, World!')
 
 ###
-  Return types needs to be expliced declared 
+  Return types needs to be expliced declared
 ###
 
 let add = (a: number, b: number) -> number
@@ -126,7 +130,7 @@ let add = (a, b: number) -> number
 # Inline return
 let add = (a, b: number) return a + b
 
-### 
+###
     Function return can be piped to another function
     by the pipe operator |>
 ###
@@ -151,19 +155,19 @@ struct Animal
     name: string
 
     to_string: ()
-        return this.name 
+        return this.name
 
 # Instanciating a struct object
 
 let animal = Animal(id = 1, name = 'José')
 
 let animal2 = Animal(
-  id = 1, 
+  id = 1,
   name = 'José'
 )
 
 # Composition
-# A struct can be composed of other structs 
+# A struct can be composed of other structs
 
 struct Dog
     ...Animal
@@ -173,7 +177,7 @@ let dog = Dog(id=1, name='Geromel')
 # As Dog is composed of Animal
 # Any Dog object can be used an Animal object
 
-let whatIsMyName = (animal: Animal) 
+let whatIsMyName = (animal: Animal)
     return animal.name
 
 echo(whatIsMyName(dog))
@@ -200,13 +204,13 @@ pub let echo = (str: string) -> void
 let { echo } = use('modules/io');
 echo('Hello');
 
-# You can also define module namespaces 
+# You can also define module namespaces
 #
 pub mod io {
     let echo = (str: string) -> void
         io.write(std.out, str)
 
-    struct File 
+    struct File
         name: string
 }
 
