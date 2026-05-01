@@ -5,7 +5,7 @@ pub const Dusk = struct {
     stdout_writer: std.io.Writer,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
-        const compiled_code = try self.compileFile(file_path, null);
+        const compiled_code = try self.compileFile(file_path, "dump/compiled.js");
         var runtime = try QjsRunTime.init(self.stdout_writer);
         try runtime.eval(compiled_code);
     }
@@ -47,6 +47,7 @@ pub const Dusk = struct {
 
         var sema_analyzer = try SemaAnalyzer.init(self.allocator);
         const ir = try sema_analyzer.analyze(&ast, src);
+        //note: is not dupping prolly cause of a undefined
         // try self.dump(ir, "dump/ir.json");
 
         var js_code_gen = Generator{ .allocator = self.allocator };

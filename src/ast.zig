@@ -1,6 +1,6 @@
 pub const Root = Block;
 
-//warn: arraylist
+//note: arraylist
 pub const Block = struct {
     statements: std.ArrayList(StatementNode),
 };
@@ -98,6 +98,7 @@ pub const Exp = union(enum) {
     fn_def: FnDef,
 
     struct_def: StructDef,
+    anonymous_struct_inicialization: bool,
 
     indexed: IndexedExp,
     unary_exp: UnaryExp,
@@ -134,6 +135,11 @@ pub const FnParam = struct {
 
 pub const FnCall = struct {
     target: *ExpNode,
+    are_arguments_named: bool,
+    arguments: []const FnCallArg,
+};
+
+pub const AnonymousStructInicialization = struct {
     are_arguments_named: bool,
     arguments: []const FnCallArg,
 };

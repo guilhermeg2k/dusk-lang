@@ -220,7 +220,7 @@ pub const Parser = struct {
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
-        //warn: looks like i'm doing something dumb with the break logic
+        //note: looks like i'm doing something dumb with the break logic
         while (true) : (tk = self.peekCurrent()) {
             const identifier = try self.expect(.identifier);
             _ = try self.expect(.colon);
@@ -303,7 +303,7 @@ pub const Parser = struct {
         };
     }
 
-    //warn: return std.ArrayList
+    //note: return std.ArrayList
     fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnParam) {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
@@ -374,7 +374,7 @@ pub const Parser = struct {
         var are_arguments_named = false;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
-        //warn: this first_run seems to be dumb
+        //note: this first_run seems to be dumb
         //i think we can just take the tk as var out but i'm not changing this now
         var first_run: bool = true;
         while (true) {
@@ -514,7 +514,18 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .unary_exp = .{ .op = op, .right = right } }, .loc_start = tk.loc.start });
             },
             .fn_kw => {
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_def = try self.parseFnDef() }, .loc_start = tk.loc.start });
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .fn_def = try self.parseFnDef() },
+                    .loc_start = tk.loc.start,
+                });
+            },
+            .at => {
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{
+                        .anonymous_struct_inicialization = true,
+                    },
+                    .loc_start = tk.loc.start,
+                });
             },
             .struct_kw => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .struct_def = try self.parseStructDef() }, .loc_start = tk.loc.start });
@@ -576,7 +587,7 @@ pub const Parser = struct {
                 });
 
                 node = call_node;
-                //warn: this is supporting only simple fn calls
+                //note: this is supporting only simple fn calls
                 continue;
             }
 

@@ -51,5 +51,5 @@
     - my_array\[0]()
     - (fn(x) { x + 1 })(10)
 - Fuzz testing
-- Replace quickjs with own VM
 - Improve errors message
+- Replace quickjs with own VM
