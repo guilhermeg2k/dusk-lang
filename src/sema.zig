@@ -105,6 +105,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !*Symbol {
+        //note: dont use arraylist here
         var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
         const symbol = try Symbol.init(self.allocator, .{
             .identifier = identifier,
@@ -177,6 +178,7 @@ pub const SemaAnalyzer = struct {
                 self.allocator,
                 .{
                     .identifier = arg.identifier.?,
+                    .is_mut = true,
                     .type = field_type,
                 },
             );
@@ -200,6 +202,7 @@ pub const SemaAnalyzer = struct {
                 self.allocator,
                 .{
                     .identifier = field.identifier,
+                    .is_mut = true,
                     .type = field_type,
                 },
             );
@@ -253,7 +256,11 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
             };
 
-            try params_metadata.append(self.allocator, .{ .identifier = arg.identifier, .type = arg_type });
+            try params_metadata.append(self.allocator, .{
+                .identifier = arg.identifier,
+                .type = arg_type,
+                .is_mut = arg.is_mut,
+            });
         }
 
         //note:  need to catch the else case ?
@@ -708,7 +715,7 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    //note: refactor
+    //note: needs refactor
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;
@@ -772,7 +779,7 @@ pub const SemaAnalyzer = struct {
                     );
                 };
 
-                const target_symbol = target_type.struct_.symbol;
+                const target_type_symbol = target_type.struct_.symbol;
 
                 //auto append struct to fn call if first argument of function is itself
                 if (fn_metadata.params.len > 0) {
@@ -784,13 +791,19 @@ pub const SemaAnalyzer = struct {
                     const target_uid = target_type.struct_.symbol.uid;
 
                     if (first_argument_uid == target_uid) {
+                        if (fn_metadata.params[0].is_mut) {
+                            const symbol = try self.scope.symbol_table.getOrThrow(target.identifier.identifier);
+                            if (!symbol.is_mut) {
+                                return self.err_dispatcher.notMutable(indexed.target.data.identifier, indexed.target.loc_start);
+                            }
+                        }
                         try fn_call_arguments_values.append(self.allocator, target);
                     }
                 }
 
                 params = fn_metadata.params;
                 return_type = fn_metadata.return_type;
-                uid = target_symbol.uid;
+                uid = target_type_symbol.uid;
                 fn_identifier = fn_metadata.symbol.identifier;
             },
             else => unreachable,
@@ -836,6 +849,21 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
             }
 
+            if (param.type.* == .struct_ and param.is_mut) {
+                const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
+                std.log.debug("{s}\n", .{symbol.identifier});
+                if (!symbol.is_mut) {
+                    return self.err_dispatcher.notMutable(symbol.identifier, arg_exp.loc_start);
+                }
+            }
+
+            if (param.type.* == .array and param.is_mut and arg_exp.data != .array_literal) {
+                const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
+                if (!symbol.is_mut) {
+                    return self.err_dispatcher.notMutable(fn_call_arg_value.identifier.identifier, arg_exp.loc_start);
+                }
+            }
+
             try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
         }
 
@@ -844,7 +872,6 @@ pub const SemaAnalyzer = struct {
                 self.allocator,
                 .{
                     .struct_fn_call = .{
-                        .fn_uid = uid,
                         .target = fn_call_target,
                         .identifier = fn_identifier,
                         .return_type = return_type,
@@ -1274,6 +1301,7 @@ const FuncMetadata = struct {
 pub const TypedIdentifier = struct {
     identifier: []const u8,
     type: *Type,
+    is_mut: bool,
 };
 
 pub const Type = union(enum) {
@@ -1283,10 +1311,10 @@ pub const Type = union(enum) {
     string,
     boolean,
     void,
-    //currently only used for built-in functions
+    //note: currently only used for built-in functions
     dynamic,
 
-    //note: later both os this type should take the metadata
+    //note: later both of this type should take the metadata
     function_def,
     struct_def,
 
@@ -1303,7 +1331,8 @@ pub const Type = union(enum) {
     }
 
     pub fn eql(self: *Self, other: *Type) bool {
-        if (other.* == .dynamic) return true;
+        if (self.* == .dynamic or other.* == .dynamic) return true;
+
         switch (self.*) {
             .number => return other.* == .number,
             .string => return other.* == .string,
@@ -1328,6 +1357,7 @@ pub const Type = union(enum) {
                     }
                 }
 
+                //note: should verify all function signature
                 var fn_its = struct_.functions.iterator();
                 while (fn_its.next()) |func| {
                     if (other_struct.functions.get(func.key_ptr.*) == null) {

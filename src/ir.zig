@@ -141,9 +141,8 @@ pub const FnCall = struct {
 };
 
 pub const StructFnCall = struct {
-    fn_uid: usize,
-    identifier: []const u8,
     target: *Value,
+    identifier: []const u8,
     args: []const *Value,
     return_type: *Type,
 };

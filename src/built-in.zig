@@ -165,29 +165,29 @@ pub const BuiltIn = struct {
     }
 
     const echo_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "msgs", .type = &dynamic },
+        .{ .identifier = "msgs", .type = &dynamic, .is_mut = false },
     };
 
     const len_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "array", .type = &dynamic_array_type },
+        .{ .identifier = "array", .type = &dynamic_array_type, .is_mut = false },
     };
 
     const append_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "array", .type = &dynamic_array_type },
-        .{ .identifier = "value", .type = &dynamic },
+        .{ .identifier = "array", .type = &dynamic_array_type, .is_mut = true },
+        .{ .identifier = "value", .type = &dynamic, .is_mut = false },
     };
 
     const floor_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "n", .type = &number_type },
+        .{ .identifier = "n", .type = &number_type, .is_mut = false },
     };
 
     const concat_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "str1", .type = &string_type },
-        .{ .identifier = "str2", .type = &string_type },
+        .{ .identifier = "str1", .type = &string_type, .is_mut = false },
+        .{ .identifier = "str2", .type = &string_type, .is_mut = false },
     };
 
     const stringify_params: []const sema.TypedIdentifier = &.{
-        .{ .identifier = "obj", .type = &dynamic },
+        .{ .identifier = "obj", .type = &dynamic, .is_mut = false },
     };
 
     var fn_type = Type{ .function_def = {} };

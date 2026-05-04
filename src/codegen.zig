@@ -10,9 +10,9 @@ pub const Generator = struct {
         const instructions = try self.genInstructions(program.instructions);
         const structs = try self.genStructs(program.structs);
 
-        try buf.appendSlice(self.allocator, structs);
-        try buf.appendSlice(self.allocator, "\n");
         try buf.appendSlice(self.allocator, builtin_functions);
+        try buf.appendSlice(self.allocator, "\n");
+        try buf.appendSlice(self.allocator, structs);
         try buf.appendSlice(self.allocator, "\n");
         try buf.appendSlice(self.allocator, functions);
         try buf.appendSlice(self.allocator, "\n");

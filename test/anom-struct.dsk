@@ -1,4 +1,3 @@
-
 let User = struct
     id: string
     auth_id: string
@@ -28,18 +27,21 @@ let who_is = (user: User) -> string
 
 let point = @(x = 2, y = 3)
 
-let user: User = @(id="1", auth_id="4", username="Geromel", auth_provider="discord")
+let mut user: User = @(id="1", auth_id="4", username="Geromel", auth_provider="discord")
 
-let user2: User2 = @(
+let mut user2: User2 = @(
     id="1",
     auth_id="4",
     username="Geromel",
     auth_provider="discord"
 )
 
-let user3 = @(id="1", auth_id=4, username="Geromel", auth_provider="discord")
+let user3 = @(id="3", auth_id=4, username="Geromel", auth_provider="discord", user=user2)
 
 user.change_id("USER 1 - ")
-user2.change_id("USER 2 - ")
+user2.username = "USER 2 - "
+
 echo(who_is(user))
 echo(who_is(user2))
+echo(user3.id)
+echo(user3.user.to_string())
