@@ -104,6 +104,8 @@ pub const Value = union(enum) {
 
     fn_call: FnCall,
 
+    struct_fn_call: StructFnCall,
+
     pub fn init(allocator: std.mem.Allocator, value: Self) !*Self {
         const ptr = try allocator.create(Self);
         ptr.* = value;
@@ -134,6 +136,14 @@ pub const UnaryOp = struct {
 pub const FnCall = struct {
     fn_uid: usize,
     identifier: []const u8,
+    args: []const *Value,
+    return_type: *Type,
+};
+
+pub const StructFnCall = struct {
+    fn_uid: usize,
+    identifier: []const u8,
+    target: *Value,
     args: []const *Value,
     return_type: *Type,
 };

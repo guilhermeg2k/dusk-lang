@@ -561,7 +561,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.funcs) |func| {
             const fn_metadata = if (struct_symbol.type.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
-            const fn_name = try self.allocPrintStructFnIdentifier(struct_symbol.identifier, fn_metadata.symbol.identifier);
+            const fn_name = fn_metadata.symbol.identifier;
             const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
         }
@@ -572,10 +572,6 @@ pub const SemaAnalyzer = struct {
             .fields = try fields.toOwnedSlice(self.allocator),
             .funcs = try funcs.toOwnedSlice(self.allocator),
         };
-    }
-
-    fn allocPrintStructFnIdentifier(self: *Self, struct_name: []const u8, fn_name: []const u8) ![]const u8 {
-        return std.fmt.allocPrint(self.allocator, "{s}_{s}", .{ struct_name, fn_name });
     }
 
     fn visitFnDef(
@@ -712,11 +708,14 @@ pub const SemaAnalyzer = struct {
         }
     }
 
+    //note: refactor
     fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;
         var params: []const TypedIdentifier = undefined;
         var return_type: *Type = undefined;
+        var is_struct_fn_call = false;
+        var fn_call_target: *ir.Value = undefined;
 
         var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
         defer arg_exp_by_param_name.deinit();
@@ -761,6 +760,8 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
+                is_struct_fn_call = true;
+                fn_call_target = target;
                 const fn_name = indexed.index.data.identifier;
 
                 const fn_metadata = target_type.struct_.functions.get(fn_name) orelse {
@@ -790,11 +791,9 @@ pub const SemaAnalyzer = struct {
                 params = fn_metadata.params;
                 return_type = fn_metadata.return_type;
                 uid = target_symbol.uid;
-                fn_identifier = try self.allocPrintStructFnIdentifier(target_symbol.identifier, fn_metadata.symbol.identifier);
+                fn_identifier = fn_metadata.symbol.identifier;
             },
-            else => {
-                std.log.debug("Hello\n", .{});
-            },
+            else => unreachable,
         }
 
         const call_args_len = fn_call.arguments.len;
@@ -838,6 +837,21 @@ pub const SemaAnalyzer = struct {
             }
 
             try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
+        }
+
+        if (is_struct_fn_call) {
+            return ir.Value.init(
+                self.allocator,
+                .{
+                    .struct_fn_call = .{
+                        .fn_uid = uid,
+                        .target = fn_call_target,
+                        .identifier = fn_identifier,
+                        .return_type = return_type,
+                        .args = try fn_call_arguments_values.toOwnedSlice(self.allocator),
+                    },
+                },
+            );
         }
 
         return ir.Value.init(
@@ -1108,6 +1122,7 @@ pub const SemaAnalyzer = struct {
             },
             .i_array => value.i_array.type,
             .fn_call => value.fn_call.return_type,
+            .struct_fn_call => value.struct_fn_call.return_type,
         };
     }
 

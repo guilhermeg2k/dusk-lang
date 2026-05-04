@@ -5,10 +5,14 @@ pub const Generator = struct {
     pub fn generate(self: *Self, program: ir.Program) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
 
+        const builtin_functions = try self.genBuiltInFunctions();
         const functions = try self.genFunctions(program.functions);
         const instructions = try self.genInstructions(program.instructions);
         const structs = try self.genStructs(program.structs);
+
         try buf.appendSlice(self.allocator, structs);
+        try buf.appendSlice(self.allocator, "\n");
+        try buf.appendSlice(self.allocator, builtin_functions);
         try buf.appendSlice(self.allocator, "\n");
         try buf.appendSlice(self.allocator, functions);
         try buf.appendSlice(self.allocator, "\n");
@@ -17,19 +21,31 @@ pub const Generator = struct {
         return buf.toOwnedSliceSentinel(self.allocator, 0);
     }
 
+    fn genBuiltInFunctions(self: *Self) ![]const u8 {
+        var buf: std.ArrayList(u8) = .empty;
+        const builtin = BuiltIn{ .alloc = self.allocator };
+
+        for (try builtin.generate()) |func| {
+            try buf.appendSlice(self.allocator, func.code);
+        }
+
+        return buf.toOwnedSlice(self.allocator);
+    }
+
     fn genStructs(self: *Self, structs: []const ir.Struct) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
 
         for (structs) |struct_| {
+            const struct_fns = try self.genFunctions(struct_.funcs);
+            try buf.appendSlice(self.allocator, struct_fns);
+
             const signature = try self.genStructConstructorSignature(struct_);
             const body = try self.genStructConstructorBody(struct_);
+
             try buf.appendSlice(self.allocator, signature);
             try buf.appendSlice(self.allocator, "{\n");
             try buf.appendSlice(self.allocator, body);
             try buf.appendSlice(self.allocator, "}\n");
-
-            const struct_fns = try self.genFunctions(struct_.funcs);
-            try buf.appendSlice(self.allocator, struct_fns);
         }
 
         return buf.toOwnedSlice(self.allocator);
@@ -56,6 +72,11 @@ pub const Generator = struct {
         for (struct_.fields) |field| {
             try buf.print(self.allocator, "{s}: {s},\n", .{ field.identifier, field.identifier });
         }
+
+        for (struct_.funcs) |func| {
+            const fn_name = try self.genName(func.uid, func.identifier);
+            try buf.print(self.allocator, "{s}: {s},\n", .{ func.identifier, fn_name });
+        }
         try buf.appendSlice(self.allocator, "};\n");
 
         try buf.appendSlice(self.allocator, "return obj;\n");
@@ -65,10 +86,6 @@ pub const Generator = struct {
 
     fn genFunctions(self: *Self, functions: []const ir.Func) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
-        const builtin = BuiltIn{ .alloc = self.allocator };
-        for (try builtin.generate()) |func| {
-            try buf.appendSlice(self.allocator, func.code);
-        }
 
         for (functions) |func| {
             const fn_code = try self.genFunction(func);
@@ -286,6 +303,11 @@ pub const Generator = struct {
                 try buf.appendSlice(self.allocator, call);
             },
 
+            .struct_fn_call => {
+                const call = try self.genStructFnCall(value.struct_fn_call);
+                try buf.appendSlice(self.allocator, call);
+            },
+
             .binary_op => {
                 const op = try self.genBinaryOp(value.binary_op);
                 try buf.appendSlice(self.allocator, op);
@@ -363,6 +385,23 @@ pub const Generator = struct {
         const fn_name = try self.genName(fnCall.fn_uid, fnCall.identifier);
 
         try buf.print(self.allocator, "{s}(", .{fn_name});
+
+        for (fnCall.args, 0..) |arg, i| {
+            if (i > 0) try buf.append(self.allocator, ',');
+            const arg_value = try self.genValue(arg);
+            try buf.appendSlice(self.allocator, arg_value);
+        }
+
+        try buf.appendSlice(self.allocator, ")");
+
+        return buf.toOwnedSlice(self.allocator);
+    }
+
+    fn genStructFnCall(self: *Self, fnCall: ir.StructFnCall) ![]const u8 {
+        var buf: std.ArrayList(u8) = .empty;
+        const target = try self.genValue(fnCall.target);
+
+        try buf.print(self.allocator, "{s}.{s}(", .{ target, fnCall.identifier });
 
         for (fnCall.args, 0..) |arg, i| {
             if (i > 0) try buf.append(self.allocator, ',');
