@@ -13,43 +13,69 @@
 - Optionals
   - Optional fn args
 - Function parameter default value
-- Inference for function arguments (When it has defualt value)
+- Inference for function arguments (When it has default value)
 
 ## Version: 0.8 - Seras Victoria
 
 - Error Handling
 
-## Version: 0.9 - Shinobu
+## Version 0.9 - Shinobu
+
+- Fancy fors (ex: for in)
+- Pipe operator
+- Enum
+
+## Version: 0.10 - Power 
+
+- Unions 
+- Pattern match
+
+## Version 0.11 - Hiei
+
+- Int/Float type
+- Floor division
+- Defer
+- Ternary operator
+
+## Version 0.12 - Kanade
+
+- Multiline Comments
+- Multiline strings
+- Strings operations
+- String interpolation
+
+## Version 0.13 - Simon
+
+- Code Formatter
+
+## Version 0.14 - Frieren
+
+- Replace quickJS with Register-based VM
+
+## Version 0.15 - Garou
 
 - Closures (& fn as anything (argument, item, etc))
-- Pipe operator
+
+## Version 0.16 - Fujiwara
+
+- Meta structs
+- Generics
+
+## Version 0.17 - Enjin
+
+- Modules
+
+## Version 0.18 - Yoruichi
+
+- Collections: Lists, Sets, HashMaps, Tuples
+
+## Version 0.19 - Shigeo 
+
+- Coroutines
 
 ## Backlog
 
-- Enum
-- Floor division
-- Multiarrays
-- Union (Zig-like)
-- Meta structs
-- Generics
-- Pattern match
-- Defer
-- Modules
-  - Compilation speed starts to being a concern
-- Multi Line Comments
-- Add int type
-- Ternary operator
-- String interpolation
-- Multline strings
-- Collections: Lists, Sets, HashMaps, Tuples
-- Fancy fors (ex: for in)
-- Coroutines
-- Upgrade FnCall
-  - Currently function calls only allow simple calls as `identifier()`
-  - Which means things like that does not works:
-    - getCallback()()
-    - my_array\[0]()
-    - (fn(x) { x + 1 })(10)
+- stdlib:
+  - async io powered by libuv
 - Fuzz testing
 - Improve errors message
-- Replace quickjs with own VM
