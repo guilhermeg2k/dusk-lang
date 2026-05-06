@@ -4,8 +4,8 @@
 
 ## Version: 0.6 - Takina
 
-- Support for multiline function definition
-- Anonymous structs
+- [x] Support for multiline function definition
+- [x] Anonymous structs
 - Static struct methods & variables (consts)
 
 ## Version: 0.7 - Mizuhara
