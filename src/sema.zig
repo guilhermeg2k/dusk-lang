@@ -126,14 +126,11 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn createAnonymousStructSymbol(self: *Self, exp: *ast.ExpNode) !*Symbol {
+    fn createAnonymousStructSymbol(self: *Self, exp: *ast.ExpNode, is_mut: bool) !*Symbol {
         //note: this name may cause problems because
         var anom_struct_symbol = try self.createIncompleteStructSymbol("$ANONYMOUS_STRUCT");
         anom_struct_symbol.identifier = try allocPrint(self.allocator, "{s}_{d}", .{ anom_struct_symbol.identifier, anom_struct_symbol.uid });
-        try self.fulfillStructTypeFromFnCall(
-            anom_struct_symbol,
-            exp,
-        );
+        try self.fulfillStructTypeFromFnCall(anom_struct_symbol, exp, is_mut);
         return anom_struct_symbol;
     }
 
@@ -161,7 +158,7 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn fulfillStructTypeFromFnCall(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
+    fn fulfillStructTypeFromFnCall(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode, is_mut: bool) !void {
         const fn_call = exp.data.fn_call;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(*Type) = .init(self.allocator);
@@ -178,7 +175,7 @@ pub const SemaAnalyzer = struct {
                 self.allocator,
                 .{
                     .identifier = arg.identifier.?,
-                    .is_mut = true,
+                    .is_mut = is_mut,
                     .type = field_type,
                 },
             );
@@ -326,7 +323,7 @@ pub const SemaAnalyzer = struct {
             let_stmt.value.data.fn_call.target.data == .anonymous_struct_inicialization;
 
         if (is_anonymous_struct) {
-            const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStructSymbol(let_stmt.value) else null;
+            const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStructSymbol(let_stmt.value, let_stmt.is_mut) else null;
             if (anonymous_struct_symbol) |symbol| {
                 try self.scope.symbol_table.put(symbol);
 
@@ -363,6 +360,9 @@ pub const SemaAnalyzer = struct {
             var_type = try self.resolveTypeAnnotation(type_annotation);
         } else {
             var_type = expression_type;
+            if (var_type.* == .array and var_type.array.* == .dynamic) {
+                return self.err_dispatcher.cantInferArrayLiteralType(let_stmt.value.loc_start);
+            }
         }
 
         if (var_type.* == .function_def) {
@@ -595,7 +595,7 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(metadata.return_type);
         defer self.scope.exit(old_return_type);
 
-        for (metadata.params, 0..) |param, i| {
+        for (metadata.params) |param| {
             const param_default_value: ?*ir.Value = null;
 
             //note: not evaluating deafult values
@@ -614,12 +614,16 @@ pub const SemaAnalyzer = struct {
 
             const arg_uid = self.scope.genUid();
 
+            if (param.is_mut and param.type.* != .array and param.type.* != .struct_) {
+                return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc_start);
+            }
+
             try self.scope.symbol_table.put(try Symbol.init(
                 self.allocator,
                 .{
                     .uid = arg_uid,
                     .identifier = param.identifier,
-                    .is_mut = fn_def.params[i].is_mut,
+                    .is_mut = param.is_mut,
                     .type = param.type,
                 },
             ));
@@ -746,13 +750,16 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
-                //when identifier is a struct we turn it into a struct inicialization
                 fn_identifier = symbol.identifier;
                 uid = symbol.uid;
+                //when identifier is a struct we turn it into a struct inicialization
                 params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
-                return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{
-                    .struct_ = symbol.type.struct_,
-                });
+                return_type = if (is_fn) symbol.type.function.return_type else try Type.init(
+                    self.allocator,
+                    .{
+                        .struct_ = symbol.type.struct_,
+                    },
+                );
             },
             //note: not supporting functions stored in arrays
             .indexed => |indexed| {
@@ -851,7 +858,6 @@ pub const SemaAnalyzer = struct {
 
             if (param.type.* == .struct_ and param.is_mut) {
                 const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
-                std.log.debug("{s}\n", .{symbol.identifier});
                 if (!symbol.is_mut) {
                     return self.err_dispatcher.notMutable(symbol.identifier, arg_exp.loc_start);
                 }

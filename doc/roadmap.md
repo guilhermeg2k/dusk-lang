@@ -25,9 +25,9 @@
 - Pipe operator
 - Enum
 
-## Version: 0.10 - Power 
+## Version: 0.10 - Power
 
-- Unions 
+- Unions
 - Pattern match
 
 ## Version 0.11 - Hiei
@@ -46,6 +46,7 @@
 
 ## Version 0.13 - Simon
 
+- Upgrade to latest zig version
 - Code Formatter
 
 ## Version 0.14 - Frieren
@@ -69,7 +70,7 @@
 
 - Collections: Lists, Sets, HashMaps, Tuples
 
-## Version 0.19 - Shigeo 
+## Version 0.19 - Shigeo
 
 - Coroutines
 

@@ -157,6 +157,22 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn primitiveParamsCantBeMutable(self: *Self, loc: usize) Errors {
+        self.log(
+            "Primitive params can't be mutable",
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
+    pub fn cantInferArrayLiteralType(self: *Self, loc: usize) Errors {
+        self.log(
+            "Can't infer array literal type",
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
     pub fn log(self: *Self, msg: []const u8, loc: usize) void {
         const exactLoc = self.findExactLoc(loc);
         const spaces = 6 + loc - exactLoc.line.start;
