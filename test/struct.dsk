@@ -19,7 +19,7 @@ let user2 = User(
     auth_provider = "discord",
 )
 
-let user3 = User(
+let mut user3 = User(
     id = "3",
     auth_id = "3",
     username = "Geromel",

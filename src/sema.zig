@@ -126,7 +126,34 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn createAnonymousStructSymbol(self: *Self, exp: *ast.ExpNode, is_mut: bool) !*Symbol {
+    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !*Symbol {
+        const symbol = try self.createAnonymousStructSymbol(exp, is_mut);
+        try self.scope.symbol_table.put(symbol);
+        var fields: std.ArrayList(ir.StructField) = .empty;
+
+        var fieldsIt = symbol.type.struct_.fields.iterator();
+        while (fieldsIt.next()) |field| {
+            try fields.append(
+                self.allocator,
+                .{
+                    .identifier = field.key_ptr.*,
+                    .type = field.value_ptr.*,
+                },
+            );
+        }
+
+        const struct_def = ir.Struct{
+            .uid = symbol.uid,
+            .identifier = symbol.identifier,
+            .fields = try fields.toOwnedSlice(self.allocator),
+            .funcs = &.{},
+        };
+
+        try self.structs.append(self.allocator, struct_def);
+        return symbol;
+    }
+
+    fn createAnonymousStructSymbol(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !*Symbol {
         //note: this name may cause problems because
         var anom_struct_symbol = try self.createIncompleteStructSymbol("$ANONYMOUS_STRUCT");
         anom_struct_symbol.identifier = try allocPrint(self.allocator, "{s}_{d}", .{ anom_struct_symbol.identifier, anom_struct_symbol.uid });
@@ -310,7 +337,7 @@ pub const SemaAnalyzer = struct {
         }
 
         return ir.Instruction{
-            .expression_stmt = .{ .value = try self.evalFnCall(&expression_stmt.data.fn_call, stmt.loc_start) },
+            .expression_stmt = .{ .value = try self.evalFnCall(expression_stmt) },
         };
     }
 
@@ -323,32 +350,7 @@ pub const SemaAnalyzer = struct {
             let_stmt.value.data.fn_call.target.data == .anonymous_struct_inicialization;
 
         if (is_anonymous_struct) {
-            const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStructSymbol(let_stmt.value, let_stmt.is_mut) else null;
-            if (anonymous_struct_symbol) |symbol| {
-                try self.scope.symbol_table.put(symbol);
-
-                var fields: std.ArrayList(ir.StructField) = .empty;
-
-                var fieldsIt = symbol.type.struct_.fields.iterator();
-                while (fieldsIt.next()) |field| {
-                    try fields.append(
-                        self.allocator,
-                        .{
-                            .identifier = field.key_ptr.*,
-                            .type = field.value_ptr.*,
-                        },
-                    );
-                }
-
-                const struct_def = ir.Struct{
-                    .uid = symbol.uid,
-                    .identifier = symbol.identifier,
-                    .fields = try fields.toOwnedSlice(self.allocator),
-                    .funcs = &.{},
-                };
-                try self.structs.append(self.allocator, struct_def);
-            }
-
+            const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStruct(let_stmt.value, let_stmt.is_mut) else null;
             const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.struct_;
             let_stmt.value.data.fn_call.target.data = .{ .identifier = struct_identifier };
         }
@@ -701,7 +703,7 @@ pub const SemaAnalyzer = struct {
                 return self.evalIdentifier(exp);
             },
             .fn_call => {
-                return self.evalFnCall(&exp.data.fn_call, exp.loc_start);
+                return self.evalFnCall(exp);
             },
             .struct_def => {
                 return ir.Value.init(self.allocator, .{ .struct_def = {} });
@@ -720,7 +722,8 @@ pub const SemaAnalyzer = struct {
     }
 
     //note: needs refactor
-    fn evalFnCall(self: *Self, fn_call: *const ast.FnCall, loc_start: usize) !*ir.Value {
+    fn evalFnCall(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+        const fn_call = exp.data.fn_call;
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;
         var params: []const TypedIdentifier = undefined;
@@ -736,7 +739,7 @@ pub const SemaAnalyzer = struct {
         switch (fn_call.target.data) {
             .identifier => |id| {
                 const symbol = self.scope.symbol_table.getOrThrow(id) catch {
-                    return self.err_dispatcher.notDefined(id, loc_start);
+                    return self.err_dispatcher.notDefined(id, exp.loc_start);
                 };
 
                 const is_fn = symbol.type.* == .function;
@@ -746,7 +749,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "function or struct",
                         try symbol.type.name(self.allocator),
-                        loc_start,
+                        exp.loc_start,
                     );
                 }
 
@@ -754,12 +757,13 @@ pub const SemaAnalyzer = struct {
                 uid = symbol.uid;
                 //when identifier is a struct we turn it into a struct inicialization
                 params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
-                return_type = if (is_fn) symbol.type.function.return_type else try Type.init(
-                    self.allocator,
-                    .{
-                        .struct_ = symbol.type.struct_,
-                    },
-                );
+                return_type = if (is_fn) symbol.type.function.return_type else symbol.type;
+                // return_type = if (is_fn) symbol.type.function.return_type else try Type.init(
+                //     self.allocator,
+                //     .{
+                //         .struct_ = symbol.type.struct_,
+                //     },
+                // );
             },
             //note: not supporting functions stored in arrays
             .indexed => |indexed| {
@@ -770,7 +774,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "a struct",
                         try target_type.name(self.allocator),
-                        loc_start,
+                        exp.loc_start,
                     );
                 }
 
@@ -782,7 +786,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidStructFunction(
                         target_type.struct_.symbol.identifier,
                         fn_name,
-                        loc_start,
+                        exp.loc_start,
                     );
                 };
 
@@ -813,6 +817,13 @@ pub const SemaAnalyzer = struct {
                 uid = target_type_symbol.uid;
                 fn_identifier = fn_metadata.symbol.identifier;
             },
+            .anonymous_struct_inicialization => {
+                const anom_struct_symbol = try self.createAnonymousStruct(exp, true);
+                params = anom_struct_symbol.type.struct_.fields_in_order;
+                return_type = anom_struct_symbol.type;
+                uid = anom_struct_symbol.uid;
+                fn_identifier = anom_struct_symbol.identifier;
+            },
             else => unreachable,
         }
 
@@ -822,7 +833,7 @@ pub const SemaAnalyzer = struct {
         const total_args_len = call_args_len + fn_call_arguments_values.items.len;
 
         if (fn_params_len != total_args_len) {
-            return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, total_args_len, loc_start);
+            return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, total_args_len, exp.loc_start);
         }
 
         if (fn_call.are_arguments_named) {
@@ -842,10 +853,10 @@ pub const SemaAnalyzer = struct {
 
             if (fn_call.are_arguments_named) {
                 const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
-                if (named_arg_exp) |exp| {
-                    arg_exp = exp;
+                if (named_arg_exp) |named_arg| {
+                    arg_exp = named_arg;
                 } else {
-                    return self.err_dispatcher.missingArgument(param.identifier, loc_start);
+                    return self.err_dispatcher.missingArgument(param.identifier, exp.loc_start);
                 }
             }
 
@@ -853,7 +864,7 @@ pub const SemaAnalyzer = struct {
             const arg_type = self.resolveValueType(fn_call_arg_value);
 
             if (!param.type.eql(arg_type)) {
-                return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), loc_start);
+                return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), exp.loc_start);
             }
 
             if (param.type.* == .struct_ and param.is_mut) {
@@ -1351,11 +1362,12 @@ pub const Type = union(enum) {
             .struct_def => return other.* == .struct_def,
 
             .struct_ => |struct_| {
-                //duck
                 if (other.* != .struct_) {
                     return false;
                 }
 
+                //note: currently is structural typing
+                //should change to more stricter when meta structs be implemented
                 const other_struct = other.struct_;
                 for (struct_.fields_in_order) |field| {
                     if (other_struct.fields.get(field.identifier) == null) {

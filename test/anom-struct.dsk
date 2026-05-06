@@ -1,46 +1,15 @@
-let User = struct
-    id: string
-    auth_id: string
-    username: string
-    auth_provider: string
+let Point2D = struct
+    x: number
+    y: number
 
-    to_string: (self: @) -> string
-        return concat(self.id, self.username)
+let print_point = (point: Point2D) -> void
+    echo(stringify(point))
 
-    change_id: (mut self: @, id: string) -> string
-        self.id = id
+let point = Point2D(x = 10, y = 10)
+let point2: Point2D = @(x = 20, y = 20)
+let point3 = @(x = 30, y = 30)
 
-let User2 = struct
-    id: string
-    auth_id: string
-    username: string
-    auth_provider: string
-
-    to_string: (self: @) -> string
-        return concat(self.username, self.id)
-
-    change_id: (mut self: @, id: string) -> string
-        self.id = id
-
-let who_is = (user: User) -> string
-    return user.to_string()
-
-let point = @(x = 2, y = 3)
-
-let mut user: User = @(id="1", auth_id="4", username="Geromel", auth_provider="discord")
-
-let mut user2: User2 = @(
-    id="1",
-    auth_id="4",
-    username="Geromel",
-    auth_provider="discord"
-)
-
-let user3 = @(id="3", auth_id=4, username="Geromel", auth_provider="discord", user=user2)
-
-user.change_id("USER 1 - ")
-
-echo(who_is(user))
-echo(who_is(user2))
-user3.user.username = "salve"
-echo(user3.user.username)
+print_point(point)
+print_point(point2)
+print_point(point3)
+print_point(@(x=40,y=40))

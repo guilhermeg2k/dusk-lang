@@ -97,6 +97,12 @@ test "Test: Compile and Run" {
             .src_file = "test/multiline-fn.dsk",
             .expected_output = "1\n8\n25\n81\n",
         },
+        .{ .name = "anonymous structs", .src_file = "test/anom-struct.dsk", .expected_output = 
+        \\{"x":10,"y":10}
+        \\{"x":20,"y":20}
+        \\{"x":30,"y":30}
+        \\{"x":40,"y":40}
+        },
     };
 
     for (cases) |case| {

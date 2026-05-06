@@ -1,6 +1,6 @@
-let reverse_list: fn = (arr: []string) -> []string
-    let result: []string = []
+let reverse_list: fn = (mut arr: []string) -> []string
     let n: number = len(arr)
+    let mut result: []string = []
     let mut i: number = n - 1
 
     for i > -1
@@ -10,7 +10,7 @@ let reverse_list: fn = (arr: []string) -> []string
 
     return result
 
-let arr: []string = ["Salve", "General", "Doutor", "Hoje", "Eu", "Não"]
+let mut arr: []string = ["Salve", "General", "Doutor", "Hoje", "Eu", "Não"]
 let reversed: []string = reverse_list(arr)
 echo(reversed)
 
