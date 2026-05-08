@@ -217,52 +217,77 @@ pub const Parser = struct {
 
     fn parseStructDef(self: *Self) ParserError!ast.StructDef {
         var tk = try self.expect(.indent);
+        var static_fields: std.ArrayList(ast.StructField) = .empty;
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
-        //note: looks like i'm doing something dumb with the break logic
         while (true) : (tk = self.peekCurrent()) {
-            const identifier = try self.expect(.identifier);
-            _ = try self.expect(.colon);
-            const is_fn = self.match(.l_paren);
+            const next = self.peekCurrent();
+            switch (next.tag) {
+                .let_kw => {
+                    const let_stmt = try self.parseLetStmt();
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .initial_value = let_stmt.value,
+                    });
+                    self.walk();
+                },
+                .identifier => {
+                    self.walk();
+                    const identifier = next;
+                    const has_type_annotation = self.match(.colon);
+                    const is_fn = self.match(.l_paren);
 
-            if (is_fn) {
-                const fn_def = try self.parseFnDef();
-                try funcs.append(self.allocator, .{
-                    .identifier = identifier.value(self.src),
-                    .def = try ast.ExpNode.init(self.allocator, .{
-                        .loc_start = tk.loc.start,
-                        .data = .{
-                            .fn_def = fn_def,
-                        },
-                    }),
-                });
+                    if (is_fn) {
+                        const fn_def = try self.parseFnDef();
+                        try funcs.append(self.allocator, .{
+                            .identifier = identifier.value(self.src),
+                            .def = try ast.ExpNode.init(self.allocator, .{
+                                .loc_start = tk.loc.start,
+                                .data = .{
+                                    .fn_def = fn_def,
+                                },
+                            }),
+                        });
+                        continue;
+                    }
 
-                tk = self.peekCurrent();
-                if (tk.tag == .dedent or tk.tag == .eof) {
+                    var type_annotation: ?*ast.TypeAnnotation = null;
+                    if (has_type_annotation) {
+                        type_annotation = try self.parseTypeAnnotation();
+                    }
+
+                    const has_initial_value = self.match(.eq);
+                    var value: ?*ast.ExpNode = null;
+                    if (has_initial_value) {
+                        value = try self.parseExp(0);
+                    }
+
+                    try fields.append(self.allocator, .{
+                        .identifier = identifier.value(self.src),
+                        .is_mut = true,
+                        .type = type_annotation,
+                        .initial_value = value,
+                    });
+
+                    self.walk();
+                },
+                .dedent, .eof => {
+                    self.walk();
                     break;
-                }
-                continue;
+                },
+                else => {
+                    return self.err_dispatcher.invalidSyntax("let or an identifier", next);
+                },
             }
-
-            const field_type = try self.parseTypeAnnotation();
-            try fields.append(self.allocator, .{
-                .identifier = identifier.value(self.src),
-                .type = field_type,
-            });
-
-            tk = self.peekCurrent();
-            if (tk.tag == .dedent or tk.tag == .eof) {
-                break;
-            }
-            self.walk();
         }
-
-        _ = try self.expect(.dedent);
 
         return ast.StructDef{
             .funcs = try funcs.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
         };
     }
 
@@ -688,6 +713,10 @@ pub const Parser = struct {
         }
 
         return self.err_dispatcher.invalidSyntax(@tagName(tag), token);
+    }
+
+    fn walkBack(self: *Self) void {
+        self.cur_index = @max(0, self.cur_index - 1);
     }
 
     fn walk(self: *Self) void {

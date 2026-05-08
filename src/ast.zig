@@ -160,6 +160,7 @@ pub const IndexedExp = struct {
 
 pub const StructDef = struct {
     fields: []const StructField,
+    static_fields: []const StructField,
     funcs: []const StructFn,
 };
 
@@ -170,7 +171,9 @@ pub const StructFn = struct {
 
 pub const StructField = struct {
     identifier: []const u8,
-    type: *TypeAnnotation,
+    is_mut: bool,
+    type: ?*TypeAnnotation,
+    initial_value: ?*ExpNode,
 };
 
 pub const UnaryOp = enum {

@@ -137,7 +137,7 @@ pub const SemaAnalyzer = struct {
                 self.allocator,
                 .{
                     .identifier = field.key_ptr.*,
-                    .type = field.value_ptr.*,
+                    .type = field.value_ptr.*.type,
                 },
             );
         }
@@ -179,6 +179,7 @@ pub const SemaAnalyzer = struct {
             .symbol = symbol,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
             .fields = .init(self.allocator),
+            .static_fields = .init(self.allocator),
             .functions = .init(self.allocator),
         } });
 
@@ -188,7 +189,7 @@ pub const SemaAnalyzer = struct {
     fn fulfillStructTypeFromFnCall(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode, is_mut: bool) !void {
         const fn_call = exp.data.fn_call;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
-        var fields: std.StringHashMap(*Type) = .init(self.allocator);
+        var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
         const funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
         if (fn_call.are_arguments_named == false) {
@@ -198,15 +199,18 @@ pub const SemaAnalyzer = struct {
         for (fn_call.arguments) |arg| {
             const exp_value = try self.evalExp(arg.exp);
             const field_type = self.resolveValueType(exp_value);
+            const field: TypedIdentifier = .{
+                .identifier = arg.identifier.?,
+                .is_mut = is_mut,
+                .type = field_type,
+                //note: false
+                .has_default_value = false,
+            };
             try fields_in_order.append(
                 self.allocator,
-                .{
-                    .identifier = arg.identifier.?,
-                    .is_mut = is_mut,
-                    .type = field_type,
-                },
+                field,
             );
-            try fields.put(arg.identifier.?, field_type);
+            try fields.put(arg.identifier.?, field);
         }
 
         struct_symbol.type.struct_.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
@@ -217,20 +221,22 @@ pub const SemaAnalyzer = struct {
     fn fulfillStructType(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
         const struct_def = exp.data.struct_def;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
-        var fields: std.StringHashMap(*Type) = .init(self.allocator);
+        var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
+        var static_fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
         var funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
+        for (struct_def.static_fields) |field| {
+            const struct_field = try self.createStructField(exp, field);
+            try static_fields.put(field.identifier, struct_field);
+        }
+
         for (struct_def.fields) |field| {
-            const field_type = try self.resolveTypeAnnotation(field.type);
+            const struct_field = try self.createStructField(exp, field);
             try fields_in_order.append(
                 self.allocator,
-                .{
-                    .identifier = field.identifier,
-                    .is_mut = true,
-                    .type = field_type,
-                },
+                struct_field,
             );
-            try fields.put(field.identifier, field_type);
+            try fields.put(field.identifier, struct_field);
         }
 
         for (struct_def.funcs) |func| {
@@ -242,7 +248,40 @@ pub const SemaAnalyzer = struct {
 
         struct_symbol.type.struct_.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
         struct_symbol.type.struct_.fields = fields;
+        struct_symbol.type.struct_.static_fields = static_fields;
         struct_symbol.type.struct_.functions = funcs;
+    }
+
+    fn createStructField(self: *Self, exp: *const ast.ExpNode, field: ast.StructField) !TypedIdentifier {
+        var field_type: *Type = undefined;
+
+        if (field.type) |_type| {
+            field_type = try self.resolveTypeAnnotation(_type);
+        }
+
+        if (field.initial_value) |initial_value| {
+            const value = try self.evalExp(initial_value);
+            const value_type = self.resolveValueType(value);
+
+            if (field.type) |_type| {
+                if (!value_type.eql(field_type)) {
+                    return self.err_dispatcher.invalidType(
+                        try _type.value(self.allocator),
+                        @tagName(value_type.*),
+                        exp.loc_start,
+                    );
+                }
+            }
+
+            field_type = self.resolveValueType(value);
+        }
+
+        return TypedIdentifier{
+            .identifier = field.identifier,
+            .is_mut = true,
+            .type = field_type,
+            .has_default_value = false,
+        };
     }
 
     fn fulfillFuncType(self: *Self, fn_symbol: *Symbol, exp: *ast.ExpNode, struct_symbol: ?*Symbol) !void {
@@ -284,6 +323,8 @@ pub const SemaAnalyzer = struct {
                 .identifier = arg.identifier,
                 .type = arg_type,
                 .is_mut = arg.is_mut,
+                //note: false
+                .has_default_value = false,
             });
         }
 
@@ -497,9 +538,9 @@ pub const SemaAnalyzer = struct {
                     },
                     .struct_ => |struct_| {
                         const field = struct_.fields.get(index_exp.index.data.identifier) orelse unreachable;
-                        if (!field.eql(assignment_value_type)) {
+                        if (!field.type.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
-                                try field.name(self.allocator),
+                                try field.type.name(self.allocator),
                                 try assignment_value_type.name(self.allocator),
                                 stmt.loc_start,
                             );
@@ -558,7 +599,15 @@ pub const SemaAnalyzer = struct {
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (struct_def.fields) |field| {
-            const field_type = try self.resolveTypeAnnotation(field.type);
+            var field_type: *Type = undefined;
+            //note: maybe needs to treat when it can't infer type
+            if (field.type) |_type| {
+                field_type = try self.resolveTypeAnnotation(_type);
+            } else if (field.initial_value) |_value| {
+                const initial_value = try self.evalExp(_value);
+                field_type = self.resolveValueType(initial_value);
+            }
+
             try fields.append(
                 self.allocator,
                 .{
@@ -1151,7 +1200,7 @@ pub const SemaAnalyzer = struct {
                         const field_name = indexed.index.i_string;
 
                         if (struct_metadata.fields.get(field_name)) |field_type| {
-                            return field_type;
+                            return field_type.type;
                         }
 
                         //note: wrong
@@ -1304,7 +1353,8 @@ pub const Symbol = struct {
 
 const StructMetadata = struct {
     symbol: *Symbol,
-    fields: std.StringHashMap(*Type),
+    fields: std.StringHashMap(TypedIdentifier),
+    static_fields: std.StringHashMap(TypedIdentifier),
     fields_in_order: []const TypedIdentifier,
     functions: std.StringHashMap(FuncMetadata),
 };
@@ -1316,9 +1366,18 @@ const FuncMetadata = struct {
 };
 
 pub const TypedIdentifier = struct {
+    const Self = @This();
+
     identifier: []const u8,
     type: *Type,
     is_mut: bool,
+    has_default_value: bool,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
+    }
 };
 
 pub const Type = union(enum) {
