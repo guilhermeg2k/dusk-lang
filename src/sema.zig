@@ -129,7 +129,7 @@ pub const SemaAnalyzer = struct {
         try self.scope.symbol_table.put(symbol);
         var fields: std.ArrayList(ir.StructField) = .empty;
 
-        var fieldsIt = symbol.type.struct_.fields.iterator();
+        var fieldsIt = symbol.type.anonymous_struct.fields.iterator();
         while (fieldsIt.next()) |field| {
             try fields.append(
                 self.allocator,
@@ -154,11 +154,41 @@ pub const SemaAnalyzer = struct {
     }
 
     fn createAnonymousStructSymbol(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !*Symbol {
-        //note: this name may cause problems because
-        var anom_struct_symbol = try self.createIncompleteStructSymbol("$ANONYMOUS_STRUCT");
-        anom_struct_symbol.identifier = try allocPrint(self.allocator, "{s}_{d}", .{ anom_struct_symbol.identifier, anom_struct_symbol.uid });
-        try self.fulfillStructTypeFromFnCall(anom_struct_symbol, exp, is_mut);
+        const uid = self.scope.genUid();
+        const identifier = try allocPrint(self.allocator, "{s}_{d}", .{ "$ANONYMOUS_STRUCT", uid });
+        const anom_struct_symbol = try Symbol.init(
+            self.allocator,
+            .{
+                .identifier = identifier,
+                .uid = uid,
+                //note: mut setting by hand to false
+                .is_mut = false,
+                .type = try Type.init(self.allocator, .{ .anonymous_struct = .{
+                    .identifier = identifier,
+                    .fields_in_order = &.{},
+                    .fields = .init(self.allocator),
+                    .static_fields = .init(self.allocator),
+                    .functions = .init(self.allocator),
+                } }),
+            },
+        );
+        try self.fulfillAnonymousStructTypeFromFnCall(anom_struct_symbol, exp, is_mut);
         return anom_struct_symbol;
+    }
+
+    fn createIncompleteAnonymousStructSymbol(self: *Self, identifier: []const u8) !*Symbol {
+        const symbol = try Symbol.init(
+            self.allocator,
+            .{
+                .identifier = identifier,
+                .uid = self.scope.genUid(),
+                //note: mut setting by hand to false
+                .is_mut = false,
+                .type = undefined,
+            },
+        );
+
+        return symbol;
     }
 
     fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !*Symbol {
@@ -186,11 +216,10 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn fulfillStructTypeFromFnCall(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode, is_mut: bool) !void {
+    fn fulfillAnonymousStructTypeFromFnCall(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode, is_mut: bool) !void {
         const fn_call = exp.data.fn_call;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
-        const funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
         if (fn_call.are_arguments_named == false) {
             return self.err_dispatcher.cantInferAnonymousStruct(exp.loc_start);
@@ -213,9 +242,9 @@ pub const SemaAnalyzer = struct {
             try fields.put(arg.identifier.?, field);
         }
 
-        struct_symbol.type.struct_.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
-        struct_symbol.type.struct_.fields = fields;
-        struct_symbol.type.struct_.functions = funcs;
+        struct_symbol.type.anonymous_struct.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
+        struct_symbol.type.anonymous_struct.fields = fields;
+        struct_symbol.type.anonymous_struct.functions = .init(self.allocator);
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
@@ -812,28 +841,31 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notDefined(id, exp.loc_start);
                 };
 
-                const is_fn = symbol.type.* == .function;
-                const is_struct = symbol.type.* == .struct_;
-
-                if (!is_fn and !is_struct) {
-                    return self.err_dispatcher.invalidType(
-                        "function or struct",
-                        try symbol.type.name(self.allocator),
-                        exp.loc_start,
-                    );
-                }
-
                 fn_identifier = symbol.identifier;
                 uid = symbol.uid;
-                //when identifier is a struct we turn it into a struct inicialization
-                params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
-                return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{ .struct_instance = &symbol.type.struct_ });
-                // return_type = if (is_fn) symbol.type.function.return_type else try Type.init(
-                //     self.allocator,
-                //     .{
-                //         .struct_ = symbol.type.struct_,
-                //     },
-                // );
+
+                switch (symbol.type.*) {
+                    .function => {
+                        params = symbol.type.function.params;
+                        return_type = symbol.type.function.return_type;
+                    },
+                    //when identifier is a struct we turn it into a struct inicialization
+                    .struct_ => {
+                        params = symbol.type.struct_.fields_in_order;
+                        return_type = try Type.init(self.allocator, .{ .struct_instance = &symbol.type.struct_ });
+                    },
+                    .anonymous_struct => {
+                        params = symbol.type.anonymous_struct.fields_in_order;
+                        return_type = try Type.init(self.allocator, .{ .struct_instance = &symbol.type.anonymous_struct });
+                    },
+                    else => {
+                        return self.err_dispatcher.invalidType(
+                            "function or struct",
+                            try symbol.type.name(self.allocator),
+                            exp.loc_start,
+                        );
+                    },
+                }
             },
             //note: not supporting functions stored in arrays
             .indexed => |indexed| {
@@ -900,7 +932,7 @@ pub const SemaAnalyzer = struct {
             },
             .anonymous_struct_inicialization => {
                 const anom_struct_symbol = try self.createAnonymousStruct(exp, true);
-                params = anom_struct_symbol.type.struct_.fields_in_order;
+                params = anom_struct_symbol.type.anonymous_struct.fields_in_order;
                 return_type = anom_struct_symbol.type;
                 uid = anom_struct_symbol.uid;
                 fn_identifier = anom_struct_symbol.identifier;
@@ -943,7 +975,6 @@ pub const SemaAnalyzer = struct {
 
             const fn_call_arg_value = try self.evalExp(arg_exp);
             const arg_type = self.resolveValueType(fn_call_arg_value);
-            std.log.debug("{}\n", .{arg_type});
 
             if (!param.type.eql(arg_type)) {
                 return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), exp.loc_start);
@@ -1467,6 +1498,7 @@ pub const Type = union(enum) {
     struct_: StructMetadata,
     function: FuncMetadata,
 
+    anonymous_struct: StructMetadata,
     struct_instance: *StructMetadata,
 
     struct_self,
@@ -1494,6 +1526,7 @@ pub const Type = union(enum) {
 
             .struct_instance => |struct_instance| {
                 if (other.* != .struct_instance) {
+                    std.debug.print("HELLO0\n", .{});
                     return false;
                 }
 
@@ -1522,18 +1555,38 @@ pub const Type = union(enum) {
                 }
 
                 if (other.* == .struct_instance) {
-                    const struct_instance = other.struct_instance;
                     //note: currently is structural typing
                     //should change to more stricter when meta structs be implemented
                     const other_struct = other.struct_instance;
-                    for (struct_instance.fields_in_order) |field| {
+                    for (struct_.fields_in_order) |field| {
                         if (other_struct.fields.get(field.identifier) == null) {
                             return false;
                         }
                     }
 
                     //note: should verify all function signature
-                    var fn_its = struct_instance.functions.iterator();
+                    var fn_its = struct_.functions.iterator();
+                    while (fn_its.next()) |func| {
+                        if (other_struct.functions.get(func.key_ptr.*) == null) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                if (other.* == .anonymous_struct) {
+                    //note: currently is structural typing
+                    //should change to more stricter when meta structs be implemented
+                    const other_struct = other.anonymous_struct;
+                    for (struct_.fields_in_order) |field| {
+                        if (other_struct.fields.get(field.identifier) == null) {
+                            return false;
+                        }
+                    }
+
+                    //note: should verify all function signature
+                    var fn_its = struct_.functions.iterator();
                     while (fn_its.next()) |func| {
                         if (other_struct.functions.get(func.key_ptr.*) == null) {
                             return false;
@@ -1552,6 +1605,7 @@ pub const Type = union(enum) {
                 if (other.* != .array) return false;
                 return inner.eql(other.array);
             },
+            else => unreachable,
         }
     }
 
@@ -1571,6 +1625,11 @@ pub const Type = union(enum) {
             },
             .struct_instance => |metadata| {
                 return std.fmt.allocPrint(allocator, "struct {s}", .{
+                    metadata.identifier,
+                });
+            },
+            .anonymous_struct => |metadata| {
+                return std.fmt.allocPrint(allocator, "anonymous struct {s}", .{
                     metadata.identifier,
                 });
             },
