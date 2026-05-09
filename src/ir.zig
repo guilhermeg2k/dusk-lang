@@ -20,12 +20,14 @@ pub const Struct = struct {
     uid: usize,
     identifier: []const u8,
     fields: []const StructField,
+    static_fields: []const StructField,
     funcs: []const Func,
 };
 
 pub const StructField = struct {
     identifier: []const u8,
     type: *Type,
+    default_value: ?*Value,
 };
 
 pub const Func = struct {

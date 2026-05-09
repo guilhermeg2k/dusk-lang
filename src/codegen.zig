@@ -41,11 +41,13 @@ pub const Generator = struct {
 
             const signature = try self.genStructConstructorSignature(struct_);
             const body = try self.genStructConstructorBody(struct_);
+            const static_members = try self.genStructStaticMembers(struct_);
 
             try buf.appendSlice(self.allocator, signature);
             try buf.appendSlice(self.allocator, "{\n");
             try buf.appendSlice(self.allocator, body);
             try buf.appendSlice(self.allocator, "}\n");
+            try buf.appendSlice(self.allocator, static_members);
         }
 
         return buf.toOwnedSlice(self.allocator);
@@ -58,7 +60,12 @@ pub const Generator = struct {
 
         for (struct_.fields, 0..) |field, i| {
             if (i > 0) try buf.appendSlice(self.allocator, ", ");
-            try buf.appendSlice(self.allocator, field.identifier);
+            if (field.default_value) |default_value| {
+                const value = try self.genValue(default_value);
+                try buf.print(self.allocator, "{s} = {s}", .{ field.identifier, value });
+            } else {
+                try buf.appendSlice(self.allocator, field.identifier);
+            }
         }
 
         try buf.appendSlice(self.allocator, ")");
@@ -80,6 +87,27 @@ pub const Generator = struct {
         try buf.appendSlice(self.allocator, "};\n");
 
         try buf.appendSlice(self.allocator, "return obj;\n");
+
+        return buf.toOwnedSlice(self.allocator);
+    }
+
+    fn genStructStaticMembers(self: *Self, struct_: ir.Struct) ![]const u8 {
+        var buf: std.ArrayList(u8) = .empty;
+        const struct_fn_name = try self.genName(struct_.uid, struct_.identifier);
+
+        for (struct_.static_fields) |field| {
+            try buf.print(self.allocator, "{s}['{s}']", .{ struct_fn_name, field.identifier });
+            if (field.default_value) |default_value| {
+                const value = try self.genValue(default_value);
+                try buf.print(self.allocator, "= {s}", .{value});
+            }
+            try buf.appendSlice(self.allocator, "\n");
+        }
+
+        for (struct_.funcs) |func| {
+            const fn_name = try self.genName(func.uid, func.identifier);
+            try buf.print(self.allocator, "{s}['{s}'] = {s}", .{ struct_fn_name, func.identifier, fn_name });
+        }
 
         return buf.toOwnedSlice(self.allocator);
     }

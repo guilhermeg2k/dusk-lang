@@ -230,7 +230,7 @@ pub const Parser = struct {
                         .identifier = let_stmt.identifier,
                         .is_mut = let_stmt.is_mut,
                         .type = let_stmt.type_annotation,
-                        .initial_value = let_stmt.value,
+                        .default_value = let_stmt.value,
                     });
                     self.walk();
                 },
@@ -269,7 +269,7 @@ pub const Parser = struct {
                         .identifier = identifier.value(self.src),
                         .is_mut = true,
                         .type = type_annotation,
-                        .initial_value = value,
+                        .default_value = value,
                     });
 
                     self.walk();

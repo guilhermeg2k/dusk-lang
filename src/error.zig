@@ -124,6 +124,18 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn invalidStaticStructMember(self: *Self, struct_name: []const u8, member: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' is not a static member of struct '{s}'",
+                .{ member, struct_name },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
     pub fn invalidStructMember(self: *Self, struct_name: []const u8, member: []const u8, loc: usize) Errors {
         self.log(
             try allocPrint(

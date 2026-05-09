@@ -138,6 +138,7 @@ pub const SemaAnalyzer = struct {
                 .{
                     .identifier = field.key_ptr.*,
                     .type = field.value_ptr.*.type,
+                    .default_value = null,
                 },
             );
         }
@@ -146,6 +147,7 @@ pub const SemaAnalyzer = struct {
             .uid = symbol.uid,
             .identifier = symbol.identifier,
             .fields = try fields.toOwnedSlice(self.allocator),
+            .static_fields = &.{},
             .funcs = &.{},
         };
 
@@ -176,7 +178,7 @@ pub const SemaAnalyzer = struct {
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
 
         symbol.type = try Type.init(self.allocator, .{ .struct_ = .{
-            .symbol = symbol,
+            .identifier = identifier,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
             .fields = .init(self.allocator),
             .static_fields = .init(self.allocator),
@@ -259,7 +261,7 @@ pub const SemaAnalyzer = struct {
             field_type = try self.resolveTypeAnnotation(_type);
         }
 
-        if (field.initial_value) |initial_value| {
+        if (field.default_value) |initial_value| {
             const value = try self.evalExp(initial_value);
             const value_type = self.resolveValueType(value);
 
@@ -305,7 +307,7 @@ pub const SemaAnalyzer = struct {
             }
 
             if (arg_type.* == .struct_self) {
-                arg_type = struct_symbol.?.type;
+                arg_type = try Type.init(self.allocator, .{ .struct_instance = &struct_symbol.?.type.struct_ });
             }
 
             self.scope.symbol_table.put(
@@ -596,23 +598,33 @@ pub const SemaAnalyzer = struct {
 
         const struct_def = exp.data.struct_def;
         var fields: std.ArrayList(ir.StructField) = .empty;
+        var static_fields: std.ArrayList(ir.StructField) = .empty;
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (struct_def.fields) |field| {
-            var field_type: *Type = undefined;
-            //note: maybe needs to treat when it can't infer type
-            if (field.type) |_type| {
-                field_type = try self.resolveTypeAnnotation(_type);
-            } else if (field.initial_value) |_value| {
-                const initial_value = try self.evalExp(_value);
-                field_type = self.resolveValueType(initial_value);
-            }
+            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type) else self.resolveValueType(default_value.?);
 
             try fields.append(
                 self.allocator,
                 .{
                     .identifier = field.identifier,
                     .type = field_type,
+                    .default_value = default_value,
+                },
+            );
+        }
+
+        for (struct_def.static_fields) |field| {
+            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type) else self.resolveValueType(default_value.?);
+
+            try static_fields.append(
+                self.allocator,
+                .{
+                    .identifier = field.identifier,
+                    .type = field_type,
+                    .default_value = default_value,
                 },
             );
         }
@@ -628,6 +640,7 @@ pub const SemaAnalyzer = struct {
             .uid = struct_symbol.uid,
             .identifier = identifier,
             .fields = try fields.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
             .funcs = try funcs.toOwnedSlice(self.allocator),
         };
     }
@@ -806,7 +819,7 @@ pub const SemaAnalyzer = struct {
                 uid = symbol.uid;
                 //when identifier is a struct we turn it into a struct inicialization
                 params = if (is_fn) symbol.type.function.params else symbol.type.struct_.fields_in_order;
-                return_type = if (is_fn) symbol.type.function.return_type else symbol.type;
+                return_type = if (is_fn) symbol.type.function.return_type else try Type.init(self.allocator, .{ .struct_instance = &symbol.type.struct_ });
                 // return_type = if (is_fn) symbol.type.function.return_type else try Type.init(
                 //     self.allocator,
                 //     .{
@@ -833,22 +846,23 @@ pub const SemaAnalyzer = struct {
 
                 const fn_metadata = target_type.struct_.functions.get(fn_name) orelse {
                     return self.err_dispatcher.invalidStructFunction(
-                        target_type.struct_.symbol.identifier,
+                        target_type.struct_.identifier,
                         fn_name,
                         exp.loc_start,
                     );
                 };
 
-                const target_type_symbol = target_type.struct_.symbol;
+                const target_type_symbol = try self.scope.symbol_table.getOrThrow(target_type.struct_.identifier);
 
                 //auto append struct to fn call if first argument of function is itself
                 if (fn_metadata.params.len > 0) {
                     const first_argument_uid = switch (fn_metadata.params[0].type.*) {
-                        .struct_ => |struct_| struct_.symbol.uid,
+                        .struct_ => |struct_| (try self.scope.symbol_table.getOrThrow(struct_.identifier)).uid,
                         else => 0,
                     };
 
-                    const target_uid = target_type.struct_.symbol.uid;
+                    const target_symbol = try self.scope.symbol_table.getOrThrow(target_type.struct_.identifier);
+                    const target_uid = target_symbol.uid;
 
                     if (first_argument_uid == target_uid) {
                         if (fn_metadata.params[0].is_mut) {
@@ -982,8 +996,8 @@ pub const SemaAnalyzer = struct {
                     },
                 });
             },
-            .struct_ => {
-                const struct_metadata = target_type.struct_;
+            .struct_instance => {
+                const struct_metadata = target_type.struct_instance;
 
                 return switch (index_exp.index.data) {
                     .identifier => |member_name| {
@@ -991,7 +1005,29 @@ pub const SemaAnalyzer = struct {
                         const function_member = struct_metadata.functions.get(member_name);
 
                         if (field_member == null and function_member == null) {
-                            return self.err_dispatcher.invalidStructMember(struct_metadata.symbol.identifier, member_name, exp.loc_start);
+                            return self.err_dispatcher.invalidStructMember(struct_metadata.identifier, member_name, exp.loc_start);
+                        }
+
+                        return ir.Value.init(self.allocator, .{
+                            .indexed = .{
+                                .target = target,
+                                .index = try ir.Value.init(self.allocator, .{ .i_string = member_name }),
+                            },
+                        });
+                    },
+                    else => unreachable,
+                };
+            },
+            .struct_ => {
+                const struct_metadata = target_type.struct_;
+
+                return switch (index_exp.index.data) {
+                    .identifier => |member_name| {
+                        const field_member = struct_metadata.static_fields.get(member_name);
+                        const function_member = struct_metadata.functions.get(member_name);
+
+                        if (field_member == null and function_member == null) {
+                            return self.err_dispatcher.invalidStaticStructMember(struct_metadata.identifier, member_name, exp.loc_start);
                         }
 
                         return ir.Value.init(self.allocator, .{
@@ -1196,10 +1232,24 @@ pub const SemaAnalyzer = struct {
                     .array => |inner_type| {
                         return inner_type;
                     },
-                    .struct_ => |struct_metadata| {
+                    .struct_instance => |struct_metadata| {
                         const field_name = indexed.index.i_string;
 
                         if (struct_metadata.fields.get(field_name)) |field_type| {
+                            return field_type.type;
+                        }
+
+                        //note: wrong
+                        if (struct_metadata.functions.get(field_name)) |_| {
+                            return self.type_func_def;
+                        }
+
+                        unreachable;
+                    },
+                    .struct_ => |struct_metadata| {
+                        const field_name = indexed.index.i_string;
+
+                        if (struct_metadata.static_fields.get(field_name)) |field_type| {
                             return field_type.type;
                         }
 
@@ -1321,10 +1371,10 @@ const SymbolTable = struct {
         try self.symbols.remove(symbol.identifier);
     }
 
-    fn get(self: *Self, id: []const u8) ?*Symbol {
-        if (self.symbols.get(id)) |s| return s;
+    fn get(self: *Self, identifier: []const u8) ?*Symbol {
+        if (self.symbols.get(identifier)) |s| return s;
         if (self.parent) |parent| {
-            return parent.get(id);
+            return parent.get(identifier);
         }
         return null;
     }
@@ -1352,7 +1402,7 @@ pub const Symbol = struct {
 };
 
 const StructMetadata = struct {
-    symbol: *Symbol,
+    identifier: []const u8,
     fields: std.StringHashMap(TypedIdentifier),
     static_fields: std.StringHashMap(TypedIdentifier),
     fields_in_order: []const TypedIdentifier,
@@ -1391,11 +1441,14 @@ pub const Type = union(enum) {
     dynamic,
 
     //note: later both of this type should take the metadata
+    //i think this types are not needed specially the struct_def one not removing them now
     function_def,
     struct_def,
 
     struct_: StructMetadata,
     function: FuncMetadata,
+
+    struct_instance: *StructMetadata,
 
     struct_self,
     array: *Type,
@@ -1420,22 +1473,22 @@ pub const Type = union(enum) {
             .function_def => return other.* == .function_def,
             .struct_def => return other.* == .struct_def,
 
-            .struct_ => |struct_| {
-                if (other.* != .struct_) {
+            .struct_instance => |struct_instance| {
+                if (other.* != .struct_instance) {
                     return false;
                 }
 
                 //note: currently is structural typing
                 //should change to more stricter when meta structs be implemented
-                const other_struct = other.struct_;
-                for (struct_.fields_in_order) |field| {
+                const other_struct = other.struct_instance;
+                for (struct_instance.fields_in_order) |field| {
                     if (other_struct.fields.get(field.identifier) == null) {
                         return false;
                     }
                 }
 
                 //note: should verify all function signature
-                var fn_its = struct_.functions.iterator();
+                var fn_its = struct_instance.functions.iterator();
                 while (fn_its.next()) |func| {
                     if (other_struct.functions.get(func.key_ptr.*) == null) {
                         return false;
@@ -1443,6 +1496,13 @@ pub const Type = union(enum) {
                 }
 
                 return true;
+            },
+            .struct_ => |struct_| {
+                if (other.* != .struct_) {
+                    return false;
+                }
+
+                return std.mem.eql(u8, other.struct_.identifier, struct_.identifier);
             },
             .function => return true,
 
@@ -1468,9 +1528,14 @@ pub const Type = union(enum) {
                     metadata.symbol.identifier,
                 });
             },
+            .struct_instance => |metadata| {
+                return std.fmt.allocPrint(allocator, "struct {s}", .{
+                    metadata.identifier,
+                });
+            },
             .struct_ => |metadata| {
                 return std.fmt.allocPrint(allocator, "struct {s}", .{
-                    metadata.symbol.identifier,
+                    metadata.identifier,
                 });
             },
             .struct_self => "@",

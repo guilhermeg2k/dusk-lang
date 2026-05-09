@@ -2,14 +2,14 @@ let Api = struct
     #static member
     let base_url: string = "https://localhost:8080/"
 
-
     endpoint: string = ""
 
     fetch: (self: @) -> string
         return concat(Api.base_url, self.endpoint)
 
 
-
 let api = Api("/me")
-echo(Api.base_url)
-echo(Api.fetch(api))
+
+echo(api.fetch())
+
+

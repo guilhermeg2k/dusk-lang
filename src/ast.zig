@@ -173,7 +173,7 @@ pub const StructField = struct {
     identifier: []const u8,
     is_mut: bool,
     type: ?*TypeAnnotation,
-    initial_value: ?*ExpNode,
+    default_value: ?*ExpNode,
 };
 
 pub const UnaryOp = enum {
