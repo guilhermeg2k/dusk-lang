@@ -232,7 +232,6 @@ pub const Parser = struct {
                         .type = let_stmt.type_annotation,
                         .default_value = let_stmt.value,
                     });
-                    self.walk();
                 },
                 .identifier => {
                     self.walk();
@@ -271,7 +270,8 @@ pub const Parser = struct {
                         .type = type_annotation,
                         .default_value = value,
                     });
-
+                },
+                .new_line => {
                     self.walk();
                 },
                 .dedent, .eof => {

@@ -105,8 +105,6 @@ pub const SemaAnalyzer = struct {
     }
 
     fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !*Symbol {
-        //note: dont use arraylist here
-        var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
         const symbol = try Symbol.init(self.allocator, .{
             .identifier = identifier,
             .uid = self.scope.genUid(),
@@ -118,7 +116,7 @@ pub const SemaAnalyzer = struct {
         symbol.type = try Type.init(self.allocator, .{
             .function = .{
                 .symbol = symbol,
-                .params = try params_metadata.toOwnedSlice(self.allocator),
+                .params = &.{},
                 .return_type = undefined,
             },
         });
@@ -538,8 +536,18 @@ pub const SemaAnalyzer = struct {
                             );
                         }
                     },
+                    .struct_instance => |struct_instance| {
+                        const field = struct_instance.fields.get(index_exp.index.data.identifier) orelse unreachable;
+                        if (!field.type.eql(assignment_value_type)) {
+                            return self.err_dispatcher.invalidType(
+                                try field.type.name(self.allocator),
+                                try assignment_value_type.name(self.allocator),
+                                stmt.loc_start,
+                            );
+                        }
+                    },
                     .struct_ => |struct_| {
-                        const field = struct_.fields.get(index_exp.index.data.identifier) orelse unreachable;
+                        const field = struct_.static_fields.get(index_exp.index.data.identifier) orelse unreachable;
                         if (!field.type.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
                                 try field.type.name(self.allocator),
@@ -678,7 +686,7 @@ pub const SemaAnalyzer = struct {
 
             const arg_uid = self.scope.genUid();
 
-            if (param.is_mut and param.type.* != .array and param.type.* != .struct_) {
+            if (param.is_mut and param.type.* != .array and param.type.* != .struct_instance) {
                 return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc_start);
             }
 
@@ -832,7 +840,7 @@ pub const SemaAnalyzer = struct {
                 const target = try self.evalExp(indexed.target);
                 const target_type = self.resolveValueType(target);
 
-                if (target_type.* != .struct_) {
+                if (target_type.* != .struct_ and target_type.* != .struct_instance) {
                     return self.err_dispatcher.invalidType(
                         "a struct",
                         try target_type.name(self.allocator),
@@ -844,25 +852,35 @@ pub const SemaAnalyzer = struct {
                 fn_call_target = target;
                 const fn_name = indexed.index.data.identifier;
 
-                const fn_metadata = target_type.struct_.functions.get(fn_name) orelse {
-                    return self.err_dispatcher.invalidStructFunction(
-                        target_type.struct_.identifier,
-                        fn_name,
-                        exp.loc_start,
-                    );
+                const fn_metadata = switch (target_type.*) {
+                    .struct_ => |_struct| _struct.functions.get(fn_name) orelse {
+                        return self.err_dispatcher.invalidStructFunction(
+                            _struct.identifier,
+                            fn_name,
+                            exp.loc_start,
+                        );
+                    },
+                    .struct_instance => |struct_instance| struct_instance.functions.get(fn_name) orelse {
+                        return self.err_dispatcher.invalidStructFunction(
+                            struct_instance.identifier,
+                            fn_name,
+                            exp.loc_start,
+                        );
+                    },
+                    else => unreachable,
                 };
 
-                const target_type_symbol = try self.scope.symbol_table.getOrThrow(target_type.struct_.identifier);
+                const struct_symbol_identifier = if (target_type.* == .struct_instance) target_type.struct_instance.identifier else target_type.struct_.identifier;
+                const target_type_symbol = try self.scope.symbol_table.getOrThrow(struct_symbol_identifier);
 
                 //auto append struct to fn call if first argument of function is itself
-                if (fn_metadata.params.len > 0) {
+                if (fn_metadata.params.len > 0 and target_type.* == .struct_instance) {
                     const first_argument_uid = switch (fn_metadata.params[0].type.*) {
-                        .struct_ => |struct_| (try self.scope.symbol_table.getOrThrow(struct_.identifier)).uid,
+                        .struct_instance => |struct_instance| (try self.scope.symbol_table.getOrThrow(struct_instance.identifier)).uid,
                         else => 0,
                     };
 
-                    const target_symbol = try self.scope.symbol_table.getOrThrow(target_type.struct_.identifier);
-                    const target_uid = target_symbol.uid;
+                    const target_uid = target_type_symbol.uid;
 
                     if (first_argument_uid == target_uid) {
                         if (fn_metadata.params[0].is_mut) {
@@ -925,6 +943,7 @@ pub const SemaAnalyzer = struct {
 
             const fn_call_arg_value = try self.evalExp(arg_exp);
             const arg_type = self.resolveValueType(fn_call_arg_value);
+            std.log.debug("{}\n", .{arg_type});
 
             if (!param.type.eql(arg_type)) {
                 return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), exp.loc_start);
@@ -1498,11 +1517,33 @@ pub const Type = union(enum) {
                 return true;
             },
             .struct_ => |struct_| {
-                if (other.* != .struct_) {
-                    return false;
+                if (other.* == .struct_) {
+                    return std.mem.eql(u8, other.struct_.identifier, struct_.identifier);
                 }
 
-                return std.mem.eql(u8, other.struct_.identifier, struct_.identifier);
+                if (other.* == .struct_instance) {
+                    const struct_instance = other.struct_instance;
+                    //note: currently is structural typing
+                    //should change to more stricter when meta structs be implemented
+                    const other_struct = other.struct_instance;
+                    for (struct_instance.fields_in_order) |field| {
+                        if (other_struct.fields.get(field.identifier) == null) {
+                            return false;
+                        }
+                    }
+
+                    //note: should verify all function signature
+                    var fn_its = struct_instance.functions.iterator();
+                    while (fn_its.next()) |func| {
+                        if (other_struct.functions.get(func.key_ptr.*) == null) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                return false;
             },
             .function => return true,
 

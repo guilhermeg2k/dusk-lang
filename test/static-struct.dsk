@@ -1,9 +1,11 @@
 let Api = struct
-    #static member
-    let base_url: string = "https://localhost:8080/"
+    #Static fields
+    let base_url: string = "https://localhost:8080"
 
+    #Fields
     endpoint: string = ""
 
+    #Methods
     fetch: (self: @) -> string
         return concat(Api.base_url, self.endpoint)
 
@@ -11,5 +13,7 @@ let Api = struct
 let api = Api("/me")
 
 echo(api.fetch())
+echo(Api.fetch(api))
+echo(Api.base_url)
 
 

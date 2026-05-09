@@ -106,7 +106,7 @@ pub const Generator = struct {
 
         for (struct_.funcs) |func| {
             const fn_name = try self.genName(func.uid, func.identifier);
-            try buf.print(self.allocator, "{s}['{s}'] = {s}", .{ struct_fn_name, func.identifier, fn_name });
+            try buf.print(self.allocator, "{s}['{s}'] = {s}\n", .{ struct_fn_name, func.identifier, fn_name });
         }
 
         return buf.toOwnedSlice(self.allocator);
