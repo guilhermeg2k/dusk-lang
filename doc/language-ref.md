@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.5::Chisato** of Dusk programming language.
+This document provides a reference for **v0.6::Takina** of Dusk programming language.
 
 ## 1. Comments
 
@@ -105,6 +105,61 @@ Fields and methods are accessed using the dot (`.`) operator.
 echo(user.username)
 user.change_id("100")
 echo(user.to_string())
+```
+
+#### Static Fields and Methods
+
+Structs can have static fields and methods. Static fields are declared with `let` inside the struct body. Methods can be called statically by passing the instance as the first argument.
+
+**Note:** Struct members must follow a specific order:
+
+1. **Static fields** (declared with `let`)
+2. **Instance fields**
+3. **Methods**
+
+```rust
+let Api = struct
+    # Static fields
+    let ip: string = "127.0.0.1"
+    let mut port: string = "8080"
+
+    # Instance field
+    endpoint: string = ""
+
+    # Methods
+    fetch: (self: @) -> string
+        let base = concat(Api.ip, Api.port)
+        return concat(base, self.endpoint)
+
+# Accessing static fields
+Api.port = ":9090"
+
+let api = Api(endpoint="/me")
+echo(api.fetch())      # Instance call
+echo(Api.fetch(api))   # Static call
+```
+
+#### Anonymous Structs
+
+Dusk supports anonymous struct initialization using the `@(...)` syntax.
+
+```rust
+let Point2D = struct
+    x: number
+    y: number
+
+let print_point = (point: Point2D) -> void
+    echo(stringify(point))
+
+let point = Point2D(x = 10, y = 10)
+let point2: Point2D = @(x = 20, y = 20)
+let point3 = @(x = 30, y = 30)
+
+print_point(point)
+print_point(point2)
+print_point(point3)
+print_point(Point2D(x = 50, y = 50))
+print_point(@(x=40,y=40))
 ```
 
 ## 3. Operators
@@ -212,16 +267,27 @@ for i < 10
 
 ## 5. Functions
 
-Functions are first-class citizens, return types are only inferred for inline returns
-otherwise are mandatory
+Functions are first-class citizens. Return types are only inferred for inline returns; otherwise, they are mandatory.
 
 ### Definition
 
-The compiler can infer that `add` is a function.
+The compiler can infer function types in most cases.
 
 ```rust
 let add = (a: number, b: number) -> number
     return a + b
+```
+
+#### Multiline Definition
+
+Function parameters can be defined across multiple lines for better readability.
+
+```rust
+let power = (
+    base: number,
+    exp: number
+) -> number
+    # ...
 ```
 
 ### Inline Return
@@ -296,4 +362,4 @@ Dusk provides a set of intrinsic functions.
 
 ## 8. Runtime
 
-- Currently it transpiles to JS and evals it using embed [quickjs](https://bellard.org/quickjs/)
+- Currently, it transpiles to JS and evaluates it using embedded [quickjs](https://bellard.org/quickjs/).

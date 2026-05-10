@@ -104,6 +104,11 @@ test "Test: Compile and Run" {
         \\{"x":50,"y":50}
         \\{"x":40,"y":40}
         },
+        .{ .name = "static fields structs", .src_file = "test/static-struct.dsk", .expected_output = 
+        \\127.0.0.1:9090/me
+        \\127.0.0.1:9090/me
+        \\:9090
+        },
     };
 
     for (cases) |case| {

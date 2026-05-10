@@ -1,19 +1,24 @@
 let Api = struct
     #Static fields
-    let base_url: string = "https://localhost:8080"
+    let ip: string = "127.0.0.1"
+    let mut port: string = "8080"
 
     #Fields
     endpoint: string = ""
 
     #Methods
     fetch: (self: @) -> string
-        return concat(Api.base_url, self.endpoint)
+        let base = concat(Api.ip, Api.port)
+        return concat(base, self.endpoint)
 
 
 let api = Api("/me")
 
+Api.port = ":9090"
+
 echo(api.fetch())
 echo(Api.fetch(api))
-echo(Api.base_url)
+echo(Api.port)
+
 
 

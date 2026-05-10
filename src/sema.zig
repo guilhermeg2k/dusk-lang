@@ -307,7 +307,7 @@ pub const SemaAnalyzer = struct {
 
         return TypedIdentifier{
             .identifier = field.identifier,
-            .is_mut = true,
+            .is_mut = field.is_mut,
             .type = field_type,
             .has_default_value = false,
         };
@@ -335,6 +335,10 @@ pub const SemaAnalyzer = struct {
 
             if (arg_type.* == .struct_self) {
                 arg_type = try Type.init(self.allocator, .{ .struct_instance = &struct_symbol.?.type.struct_ });
+            }
+
+            if (arg_type.* == .struct_) {
+                arg_type = try Type.init(self.allocator, .{ .struct_instance = &arg_type.struct_ });
             }
 
             self.scope.symbol_table.put(
@@ -551,7 +555,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notDefined(target_root.data.identifier, stmt.loc_start);
                 };
 
-                if (!target_symbol.is_mut) {
+                if (!target_symbol.is_mut and target_type.* != .struct_) {
                     return self.err_dispatcher.notMutable(target_root.data.identifier, stmt.loc_start);
                 }
 
@@ -566,7 +570,12 @@ pub const SemaAnalyzer = struct {
                         }
                     },
                     .struct_instance => |struct_instance| {
-                        const field = struct_instance.fields.get(index_exp.index.data.identifier) orelse unreachable;
+                        const field = struct_instance.fields.get(index_exp.index.data.identifier) orelse return self.err_dispatcher.invalidStructField(
+                            struct_instance.identifier,
+                            index_exp.index.data.identifier,
+                            stmt.loc_start,
+                        );
+
                         if (!field.type.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
                                 try field.type.name(self.allocator),
@@ -576,7 +585,15 @@ pub const SemaAnalyzer = struct {
                         }
                     },
                     .struct_ => |struct_| {
-                        const field = struct_.static_fields.get(index_exp.index.data.identifier) orelse unreachable;
+                        const field = struct_.static_fields.get(index_exp.index.data.identifier) orelse return self.err_dispatcher.invalidStaticStructField(
+                            struct_.identifier,
+                            index_exp.index.data.identifier,
+                            stmt.loc_start,
+                        );
+                        if (!field.is_mut) {
+                            return self.err_dispatcher.notMutable(field.identifier, stmt.loc_start);
+                        }
+
                         if (!field.type.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
                                 try field.type.name(self.allocator),
@@ -855,6 +872,7 @@ pub const SemaAnalyzer = struct {
                         return_type = try Type.init(self.allocator, .{ .struct_instance = &symbol.type.struct_ });
                     },
                     .anonymous_struct => {
+                        std.log.debug("anom", .{});
                         params = symbol.type.anonymous_struct.fields_in_order;
                         return_type = try Type.init(self.allocator, .{ .struct_instance = &symbol.type.anonymous_struct });
                     },
@@ -933,7 +951,7 @@ pub const SemaAnalyzer = struct {
             .anonymous_struct_inicialization => {
                 const anom_struct_symbol = try self.createAnonymousStruct(exp, true);
                 params = anom_struct_symbol.type.anonymous_struct.fields_in_order;
-                return_type = anom_struct_symbol.type;
+                return_type = try Type.init(self.allocator, .{ .struct_instance = &anom_struct_symbol.type.anonymous_struct });
                 uid = anom_struct_symbol.uid;
                 fn_identifier = anom_struct_symbol.identifier;
             },
@@ -1055,7 +1073,7 @@ pub const SemaAnalyzer = struct {
                         const function_member = struct_metadata.functions.get(member_name);
 
                         if (field_member == null and function_member == null) {
-                            return self.err_dispatcher.invalidStructMember(struct_metadata.identifier, member_name, exp.loc_start);
+                            return self.err_dispatcher.invalidStructField(struct_metadata.identifier, member_name, exp.loc_start);
                         }
 
                         return ir.Value.init(self.allocator, .{
@@ -1077,7 +1095,7 @@ pub const SemaAnalyzer = struct {
                         const function_member = struct_metadata.functions.get(member_name);
 
                         if (field_member == null and function_member == null) {
-                            return self.err_dispatcher.invalidStaticStructMember(struct_metadata.identifier, member_name, exp.loc_start);
+                            return self.err_dispatcher.invalidStaticStructField(struct_metadata.identifier, member_name, exp.loc_start);
                         }
 
                         return ir.Value.init(self.allocator, .{
@@ -1248,7 +1266,7 @@ pub const SemaAnalyzer = struct {
             },
             .struct_ => |struct_name| {
                 const struct_symbol = try self.scope.symbol_table.getOrThrow(struct_name);
-                return struct_symbol.type;
+                return Type.init(self.allocator, .{ .struct_instance = &struct_symbol.type.struct_ });
             },
             .array => {
                 const inner_type = try self.resolveTypeAnnotation(type_annotation.array);
@@ -1526,7 +1544,6 @@ pub const Type = union(enum) {
 
             .struct_instance => |struct_instance| {
                 if (other.* != .struct_instance) {
-                    std.debug.print("HELLO0\n", .{});
                     return false;
                 }
 
@@ -1553,49 +1570,6 @@ pub const Type = union(enum) {
                 if (other.* == .struct_) {
                     return std.mem.eql(u8, other.struct_.identifier, struct_.identifier);
                 }
-
-                if (other.* == .struct_instance) {
-                    //note: currently is structural typing
-                    //should change to more stricter when meta structs be implemented
-                    const other_struct = other.struct_instance;
-                    for (struct_.fields_in_order) |field| {
-                        if (other_struct.fields.get(field.identifier) == null) {
-                            return false;
-                        }
-                    }
-
-                    //note: should verify all function signature
-                    var fn_its = struct_.functions.iterator();
-                    while (fn_its.next()) |func| {
-                        if (other_struct.functions.get(func.key_ptr.*) == null) {
-                            return false;
-                        }
-                    }
-
-                    return true;
-                }
-
-                if (other.* == .anonymous_struct) {
-                    //note: currently is structural typing
-                    //should change to more stricter when meta structs be implemented
-                    const other_struct = other.anonymous_struct;
-                    for (struct_.fields_in_order) |field| {
-                        if (other_struct.fields.get(field.identifier) == null) {
-                            return false;
-                        }
-                    }
-
-                    //note: should verify all function signature
-                    var fn_its = struct_.functions.iterator();
-                    while (fn_its.next()) |func| {
-                        if (other_struct.functions.get(func.key_ptr.*) == null) {
-                            return false;
-                        }
-                    }
-
-                    return true;
-                }
-
                 return false;
             },
             .function => return true,
@@ -1624,7 +1598,7 @@ pub const Type = union(enum) {
                 });
             },
             .struct_instance => |metadata| {
-                return std.fmt.allocPrint(allocator, "struct {s}", .{
+                return std.fmt.allocPrint(allocator, "instance of struct {s}", .{
                     metadata.identifier,
                 });
             },

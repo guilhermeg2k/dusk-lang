@@ -1,5 +1,11 @@
 # Changelogs
 
+## v0.6 - Takina
+
+- Support for multiline function definitions
+- Anonymous structs (`@(...)` syntax)
+- Static struct fields (using `let`) and static method calls
+
 ## v0.5 - Chisato
 
 - Structs (definition, initialization, methods)

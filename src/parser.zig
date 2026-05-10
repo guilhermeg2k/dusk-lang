@@ -216,15 +216,20 @@ pub const Parser = struct {
     }
 
     fn parseStructDef(self: *Self) ParserError!ast.StructDef {
-        var tk = try self.expect(.indent);
+        _ = try self.expect(.indent);
         var static_fields: std.ArrayList(ast.StructField) = .empty;
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
-        while (true) : (tk = self.peekCurrent()) {
-            const next = self.peekCurrent();
-            switch (next.tag) {
+        var section: enum { static, field, func } = .static;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
                 .let_kw => {
+                    if (section != .static) {
+                        return self.err_dispatcher.invalidSyntax("static fields to be at the beginning of the struct", tk);
+                    }
                     const let_stmt = try self.parseLetStmt();
                     try static_fields.append(self.allocator, .{
                         .identifier = let_stmt.identifier,
@@ -235,11 +240,12 @@ pub const Parser = struct {
                 },
                 .identifier => {
                     self.walk();
-                    const identifier = next;
+                    const identifier = tk;
                     const has_type_annotation = self.match(.colon);
                     const is_fn = self.match(.l_paren);
 
                     if (is_fn) {
+                        section = .func;
                         const fn_def = try self.parseFnDef();
                         try funcs.append(self.allocator, .{
                             .identifier = identifier.value(self.src),
@@ -250,26 +256,30 @@ pub const Parser = struct {
                                 },
                             }),
                         });
-                        continue;
-                    }
+                    } else {
+                        if (section == .func) {
+                            return self.err_dispatcher.invalidSyntax("instance fields to be before methods", tk);
+                        }
+                        section = .field;
 
-                    var type_annotation: ?*ast.TypeAnnotation = null;
-                    if (has_type_annotation) {
-                        type_annotation = try self.parseTypeAnnotation();
-                    }
+                        var type_annotation: ?*ast.TypeAnnotation = null;
+                        if (has_type_annotation) {
+                            type_annotation = try self.parseTypeAnnotation();
+                        }
 
-                    const has_initial_value = self.match(.eq);
-                    var value: ?*ast.ExpNode = null;
-                    if (has_initial_value) {
-                        value = try self.parseExp(0);
-                    }
+                        const has_initial_value = self.match(.eq);
+                        var value: ?*ast.ExpNode = null;
+                        if (has_initial_value) {
+                            value = try self.parseExp(0);
+                        }
 
-                    try fields.append(self.allocator, .{
-                        .identifier = identifier.value(self.src),
-                        .is_mut = true,
-                        .type = type_annotation,
-                        .default_value = value,
-                    });
+                        try fields.append(self.allocator, .{
+                            .identifier = identifier.value(self.src),
+                            .is_mut = true,
+                            .type = type_annotation,
+                            .default_value = value,
+                        });
+                    }
                 },
                 .new_line => {
                     self.walk();
@@ -279,7 +289,7 @@ pub const Parser = struct {
                     break;
                 },
                 else => {
-                    return self.err_dispatcher.invalidSyntax("let or an identifier", next);
+                    return self.err_dispatcher.invalidSyntax("let or an identifier", tk);
                 },
             }
         }

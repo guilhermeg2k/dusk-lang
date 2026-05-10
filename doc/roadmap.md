@@ -2,12 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version: 0.6 - Takina
-
-- [x] Support for multiline function definition
-- [x] Anonymous structs
-- Static struct methods & variables (consts)
-
 ## Version: 0.7 - Mizuhara
 
 - Optionals
