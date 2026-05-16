@@ -1,0 +1,25 @@
+let Node = struct
+    left: ?Node
+    right: ?Node
+    value: number
+
+    add(mut self: @, left: ?Node, right: ?Node) -> void
+        self.left = left
+        self.right = right
+
+let mut root = Node(value = 50, left = null, right = null)
+
+let left_node = @(value = 0, left = null, right = null)
+
+root.add(
+    left = @(value = 0, left = null, right = null),
+    right = @(value = 100, left = null, right = null)
+)
+
+let print_node = (node: Node) -> void
+    echo(stringify(node))
+
+print_node(root)
+print_node(left_node)
+print_node(@(value = 888, left = null, right = null))
+

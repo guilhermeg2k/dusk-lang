@@ -1618,13 +1618,13 @@ pub const Type = struct {
                     }
                 }
 
-                //note: should verify all function signature
-                var fn_its = struct_instance.functions.iterator();
-                while (fn_its.next()) |func| {
-                    if (other_struct.functions.get(func.key_ptr.*) == null) {
-                        return false;
-                    }
-                }
+                //note: i think we dont need to verify functions!
+                // var fn_its = struct_instance.functions.iterator();
+                // while (fn_its.next()) |func| {
+                //     if (other_struct.functions.get(func.key_ptr.*) == null) {
+                //         return false;
+                //     }
+                // }
 
                 return true;
             },
