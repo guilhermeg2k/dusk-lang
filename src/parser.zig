@@ -523,6 +523,9 @@ pub const Parser = struct {
             .false_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = false }, .loc_start = tk.loc.start });
             },
+            .null_literal => {
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .null_literal = {} }, .loc_start = tk.loc.start });
+            },
             .l_bracket => {
                 return ast.ExpNode.init(
                     self.allocator,
@@ -685,18 +688,29 @@ pub const Parser = struct {
     }
 
     fn parseTypeAnnotation(self: *Self) !*ast.TypeAnnotation {
+        const is_nullable = self.match(.question_mark);
         const tk = self.peekCurrent();
         self.walk();
 
         return switch (tk.tag) {
-            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{ .name = tk.value(self.src) }),
-            .identifier => ast.TypeAnnotation.init(self.allocator, .{ .struct_ = tk.value(self.src) }),
-            .at => ast.TypeAnnotation.init(self.allocator, .{ .struct_self = {} }),
+            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .primitive = tk.value(self.src) },
+                .nullable = is_nullable,
+            }),
+            .identifier => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .struct_ = tk.value(self.src) },
+                .nullable = is_nullable,
+            }),
+            .at => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .struct_self = {} },
+                .nullable = is_nullable,
+            }),
             .l_bracket => {
                 _ = try self.expect(.r_bracket);
                 const arr_type = try self.parseTypeAnnotation();
                 return ast.TypeAnnotation.init(self.allocator, .{
-                    .array = arr_type,
+                    .type = .{ .array = arr_type },
+                    .nullable = is_nullable,
                 });
             },
             else => {

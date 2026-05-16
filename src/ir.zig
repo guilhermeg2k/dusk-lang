@@ -89,6 +89,7 @@ pub const Value = union(enum) {
     i_bool: bool,
     i_string: []const u8,
     i_void: void,
+    i_null: void,
 
     i_array: Array,
 

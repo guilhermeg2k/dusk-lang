@@ -305,6 +305,7 @@ pub const Generator = struct {
             .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
             .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
+            .i_null => try buf.appendSlice(self.allocator, "null"),
             .indexed => {
                 const target = try self.genValue(value.indexed.target);
                 switch (value.indexed.index.*) {

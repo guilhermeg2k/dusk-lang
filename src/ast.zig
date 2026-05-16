@@ -44,13 +44,17 @@ pub const AssignStmt = struct {
     exp: *ExpNode,
 };
 
-pub const TypeAnnotation = union(enum) {
+pub const TypeAnnotation = struct {
     const Self = @This();
 
-    name: []const u8,
-    struct_: []const u8,
-    array: *TypeAnnotation,
-    struct_self: void,
+    type: union(enum) {
+        primitive: []const u8,
+        struct_: []const u8,
+        array: *TypeAnnotation,
+        struct_self: void,
+    },
+
+    nullable: bool,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -59,11 +63,11 @@ pub const TypeAnnotation = union(enum) {
     }
 
     pub fn value(self: *Self, alloc: std.mem.Allocator) ![]const u8 {
-        return switch (self.*) {
-            .name => self.name,
+        return switch (self.type) {
+            .primitive => |primitive_name| primitive_name,
             .struct_ => |struct_name| struct_name,
             .array => {
-                return std.fmt.allocPrint(alloc, "[]{s}", .{try self.array.value(alloc)});
+                return std.fmt.allocPrint(alloc, "[]{s}", .{try self.type.array.value(alloc)});
             },
             .struct_self => {
                 return "@";
@@ -93,6 +97,7 @@ pub const Exp = union(enum) {
     bool_literal: bool,
     identifier: []const u8,
     array_literal: ArrayLiteral,
+    null_literal: void,
 
     fn_call: FnCall,
     fn_def: FnDef,

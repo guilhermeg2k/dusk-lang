@@ -23,11 +23,12 @@ pub const BuiltIn = struct {
         });
 
         symbol.type = try Type.init(self.alloc, .{
-            .function = .{
+            .kind = .{ .function = .{
                 .symbol = symbol,
                 .params = echo_params,
                 .return_type = &void_type,
-            },
+            } },
+            .nullable = false,
         });
 
         const code = try std.fmt.allocPrint(
@@ -48,11 +49,14 @@ pub const BuiltIn = struct {
         });
 
         symbol.type = try Type.init(self.alloc, .{
-            .function = .{
-                .symbol = symbol,
-                .params = append_params,
-                .return_type = &void_type,
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = append_params,
+                    .return_type = &void_type,
+                },
             },
+            .nullable = false,
         });
 
         const code = try std.fmt.allocPrint(
@@ -73,11 +77,14 @@ pub const BuiltIn = struct {
         });
 
         symbol.type = try Type.init(self.alloc, .{
-            .function = .{
-                .symbol = symbol,
-                .params = len_params,
-                .return_type = &number_type,
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = len_params,
+                    .return_type = &number_type,
+                },
             },
+            .nullable = false,
         });
 
         const code = try std.fmt.allocPrint(
@@ -98,11 +105,14 @@ pub const BuiltIn = struct {
         });
 
         symbol.type = try Type.init(self.alloc, .{
-            .function = .{
-                .symbol = symbol,
-                .params = floor_params,
-                .return_type = &number_type,
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = floor_params,
+                    .return_type = &number_type,
+                },
             },
+            .nullable = false,
         });
 
         const code = try std.fmt.allocPrint(
@@ -123,11 +133,14 @@ pub const BuiltIn = struct {
         });
 
         symbol.type = try Type.init(self.alloc, .{
-            .function = .{
-                .symbol = symbol,
-                .params = concat_params,
-                .return_type = &string_type,
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = concat_params,
+                    .return_type = &string_type,
+                },
             },
+            .nullable = false,
         });
 
         const code = try std.fmt.allocPrint(
@@ -148,11 +161,14 @@ pub const BuiltIn = struct {
         });
 
         symbol.type = try Type.init(self.alloc, .{
-            .function = .{
-                .symbol = symbol,
-                .params = stringify_params,
-                .return_type = &string_type,
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = stringify_params,
+                    .return_type = &string_type,
+                },
             },
+            .nullable = false,
         });
 
         const code = try std.fmt.allocPrint(
@@ -230,12 +246,12 @@ pub const BuiltIn = struct {
         },
     };
 
-    var fn_type = Type{ .function_def = {} };
-    var void_type = Type{ .void = {} };
-    var number_type = Type{ .number = {} };
-    var string_type = Type{ .string = {} };
-    var dynamic = Type{ .dynamic = {} };
-    var dynamic_array_type = Type{ .array = &dynamic };
+    var fn_type = Type{ .kind = .{ .function_def = {} } };
+    var void_type = Type{ .kind = .{ .void = {} }, .nullable = false };
+    var number_type = Type{ .kind = .{ .number = {} }, .nullable = false };
+    var string_type = Type{ .kind = .{ .string = {} }, .nullable = false };
+    var dynamic = Type{ .kind = .{ .dynamic = {} }, .nullable = false };
+    var dynamic_array_type = Type{ .kind = .{ .array = &dynamic }, .nullable = false };
 };
 
 const BuiltInFn = struct {

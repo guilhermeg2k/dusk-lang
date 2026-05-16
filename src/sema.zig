@@ -13,13 +13,22 @@ pub const SemaAnalyzer = struct {
     type_number: *Type,
     type_str: *Type,
     type_bool: *Type,
+    type_null: *Type,
     type_func_def: *Type,
     type_struct_def: *Type,
     type_void: *Type,
     type_dynamic: *Type,
+    type_number_nullable: *Type,
+    type_str_nullable: *Type,
+    type_bool_nullable: *Type,
+    type_null_nullable: *Type,
+    type_func_def_nullable: *Type,
+    type_struct_def_nullable: *Type,
+    type_dynamic_nullable: *Type,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
-        const void_type = try Type.init(allocator, .void);
+        const void_type = try Type.init(allocator, .{ .kind = .void, .nullable = false });
+
         return Self{
             .allocator = allocator,
             .scope = try Scope.init(allocator, void_type),
@@ -28,13 +37,22 @@ pub const SemaAnalyzer = struct {
             .structs = .empty,
 
             //note: change this to static outside the struct
-            .type_number = try Type.init(allocator, .number),
-            .type_str = try Type.init(allocator, .string),
-            .type_bool = try Type.init(allocator, .boolean),
-            .type_func_def = try Type.init(allocator, .function_def),
-            .type_struct_def = try Type.init(allocator, .struct_def),
+            .type_number = try Type.init(allocator, .{ .kind = .number, .nullable = false }),
+            .type_str = try Type.init(allocator, .{ .kind = .string, .nullable = false }),
+            .type_bool = try Type.init(allocator, .{ .kind = .boolean, .nullable = false }),
+            .type_func_def = try Type.init(allocator, .{ .kind = .function_def, .nullable = false }),
+            .type_struct_def = try Type.init(allocator, .{ .kind = .struct_def, .nullable = false }),
             .type_void = void_type,
-            .type_dynamic = try Type.init(allocator, .dynamic),
+            .type_dynamic = try Type.init(allocator, .{ .kind = .dynamic, .nullable = false }),
+            .type_null = try Type.init(allocator, .{ .kind = .null, .nullable = false }),
+
+            .type_number_nullable = try Type.init(allocator, .{ .kind = .number, .nullable = true }),
+            .type_str_nullable = try Type.init(allocator, .{ .kind = .string, .nullable = true }),
+            .type_bool_nullable = try Type.init(allocator, .{ .kind = .boolean, .nullable = true }),
+            .type_func_def_nullable = try Type.init(allocator, .{ .kind = .function_def, .nullable = true }),
+            .type_struct_def_nullable = try Type.init(allocator, .{ .kind = .struct_def, .nullable = true }),
+            .type_dynamic_nullable = try Type.init(allocator, .{ .kind = .dynamic, .nullable = true }),
+            .type_null_nullable = try Type.init(allocator, .{ .kind = .null, .nullable = true }),
         };
     }
 
@@ -114,11 +132,14 @@ pub const SemaAnalyzer = struct {
         });
 
         symbol.type = try Type.init(self.allocator, .{
-            .function = .{
-                .symbol = symbol,
-                .params = &.{},
-                .return_type = undefined,
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = &.{},
+                    .return_type = undefined,
+                },
             },
+            .nullable = false,
         });
 
         return symbol;
@@ -129,7 +150,7 @@ pub const SemaAnalyzer = struct {
         try self.scope.symbol_table.put(symbol);
         var fields: std.ArrayList(ir.StructField) = .empty;
 
-        var fieldsIt = symbol.type.anonymous_struct.fields.iterator();
+        var fieldsIt = symbol.type.kind.anonymous_struct.fields.iterator();
         while (fieldsIt.next()) |field| {
             try fields.append(
                 self.allocator,
@@ -163,13 +184,16 @@ pub const SemaAnalyzer = struct {
                 .uid = uid,
                 //note: mut setting by hand to false
                 .is_mut = false,
-                .type = try Type.init(self.allocator, .{ .anonymous_struct = .{
-                    .identifier = identifier,
-                    .fields_in_order = &.{},
-                    .fields = .init(self.allocator),
-                    .static_fields = .init(self.allocator),
-                    .functions = .init(self.allocator),
-                } }),
+                .type = try Type.init(self.allocator, .{
+                    .kind = .{ .anonymous_struct = .{
+                        .identifier = identifier,
+                        .fields_in_order = &.{},
+                        .fields = .init(self.allocator),
+                        .static_fields = .init(self.allocator),
+                        .functions = .init(self.allocator),
+                    } },
+                    .nullable = false,
+                }),
             },
         );
         try self.fulfillAnonymousStructTypeFromFnCall(anom_struct_symbol, exp, is_mut);
@@ -205,13 +229,16 @@ pub const SemaAnalyzer = struct {
 
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
 
-        symbol.type = try Type.init(self.allocator, .{ .struct_ = .{
-            .identifier = identifier,
-            .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
-            .fields = .init(self.allocator),
-            .static_fields = .init(self.allocator),
-            .functions = .init(self.allocator),
-        } });
+        symbol.type = try Type.init(self.allocator, .{
+            .kind = .{ .struct_ = .{
+                .identifier = identifier,
+                .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+                .fields = .init(self.allocator),
+                .static_fields = .init(self.allocator),
+                .functions = .init(self.allocator),
+            } },
+            .nullable = false,
+        });
 
         return symbol;
     }
@@ -242,9 +269,9 @@ pub const SemaAnalyzer = struct {
             try fields.put(arg.identifier.?, field);
         }
 
-        struct_symbol.type.anonymous_struct.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
-        struct_symbol.type.anonymous_struct.fields = fields;
-        struct_symbol.type.anonymous_struct.functions = .init(self.allocator);
+        struct_symbol.type.kind.anonymous_struct.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
+        struct_symbol.type.kind.anonymous_struct.fields = fields;
+        struct_symbol.type.kind.anonymous_struct.functions = .init(self.allocator);
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
@@ -272,13 +299,13 @@ pub const SemaAnalyzer = struct {
             //note: maybe this is not optimal because we only need the fn metadata
             const fn_symbol = try self.createIncompleteFuncSymbol(func.identifier);
             try self.fulfillFuncType(fn_symbol, func.def, struct_symbol);
-            try funcs.put(func.identifier, fn_symbol.type.function);
+            try funcs.put(func.identifier, fn_symbol.type.kind.function);
         }
 
-        struct_symbol.type.struct_.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
-        struct_symbol.type.struct_.fields = fields;
-        struct_symbol.type.struct_.static_fields = static_fields;
-        struct_symbol.type.struct_.functions = funcs;
+        struct_symbol.type.kind.struct_.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
+        struct_symbol.type.kind.struct_.fields = fields;
+        struct_symbol.type.kind.struct_.static_fields = static_fields;
+        struct_symbol.type.kind.struct_.functions = funcs;
     }
 
     fn createStructField(self: *Self, exp: *const ast.ExpNode, field: ast.StructField) !TypedIdentifier {
@@ -296,7 +323,7 @@ pub const SemaAnalyzer = struct {
                 if (!value_type.eql(field_type)) {
                     return self.err_dispatcher.invalidType(
                         try _type.value(self.allocator),
-                        @tagName(value_type.*),
+                        @tagName(value_type.kind),
                         exp.loc_start,
                     );
                 }
@@ -329,16 +356,24 @@ pub const SemaAnalyzer = struct {
                 );
             };
 
-            if (arg_type.* == .struct_self and struct_symbol == null) {
+            if (arg_type.kind == .struct_self and struct_symbol == null) {
                 return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc_start);
             }
 
-            if (arg_type.* == .struct_self) {
-                arg_type = try Type.init(self.allocator, .{ .struct_instance = &struct_symbol.?.type.struct_ });
+            if (arg_type.kind == .struct_self) {
+                arg_type = try Type.init(self.allocator, .{
+                    .kind = .{
+                        .struct_instance = &struct_symbol.?.type.kind.struct_,
+                    },
+                    .nullable = arg.type_annotation.nullable,
+                });
             }
 
-            if (arg_type.* == .struct_) {
-                arg_type = try Type.init(self.allocator, .{ .struct_instance = &arg_type.struct_ });
+            if (arg_type.kind == .struct_) {
+                arg_type = try Type.init(self.allocator, .{
+                    .kind = .{ .struct_instance = &arg_type.kind.struct_ },
+                    .nullable = arg.type_annotation.nullable,
+                });
             }
 
             self.scope.symbol_table.put(
@@ -364,7 +399,7 @@ pub const SemaAnalyzer = struct {
         //note:  need to catch the else case ?
         if (fn_def.return_type) |r_type| {
             return_type = self.resolveTypeAnnotation(r_type) catch {
-                return self.err_dispatcher.typeNotDefined(r_type.name, exp.loc_start);
+                return self.err_dispatcher.typeNotDefined(r_type.type.primitive, exp.loc_start);
             };
         } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
             const return_value = try self.evalExp(return_exp);
@@ -374,8 +409,8 @@ pub const SemaAnalyzer = struct {
         //restore main scope
         self.scope.exit(self.type_void);
 
-        fn_symbol.type.function.return_type = return_type;
-        fn_symbol.type.function.params = try params_metadata.toOwnedSlice(self.allocator);
+        fn_symbol.type.kind.function.return_type = return_type;
+        fn_symbol.type.kind.function.params = try params_metadata.toOwnedSlice(self.allocator);
     }
 
     pub fn visitBlock(self: *Self, block: *const ast.Block) ![]const ir.Instruction {
@@ -425,7 +460,7 @@ pub const SemaAnalyzer = struct {
 
         if (is_anonymous_struct) {
             const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStruct(let_stmt.value, let_stmt.is_mut) else null;
-            const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.struct_;
+            const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.type.struct_;
             let_stmt.value.data.fn_call.target.data = .{ .identifier = struct_identifier };
         }
 
@@ -436,21 +471,21 @@ pub const SemaAnalyzer = struct {
             var_type = try self.resolveTypeAnnotation(type_annotation);
         } else {
             var_type = expression_type;
-            if (var_type.* == .array and var_type.array.* == .dynamic) {
+            if (var_type.kind == .array and var_type.kind.array.kind == .dynamic) {
                 return self.err_dispatcher.cantInferArrayLiteralType(let_stmt.value.loc_start);
             }
         }
 
-        if (var_type.* == .function_def) {
+        if (var_type.kind == .function_def) {
             const fn_symbol = self.scope.symbol_table.getOrThrow(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc_start);
             };
-            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, fn_symbol.type.function, null);
+            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, fn_symbol.type.kind.function, null);
             try self.functions.append(self.allocator, func);
             return null;
         }
 
-        if (var_type.* == .struct_def) {
+        if (var_type.kind == .struct_def) {
             const struct_def = try self.visitStructDef(let_stmt.value, let_stmt.identifier);
             try self.structs.append(self.allocator, struct_def);
             return null;
@@ -555,13 +590,13 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notDefined(target_root.data.identifier, stmt.loc_start);
                 };
 
-                if (!target_symbol.is_mut and target_type.* != .struct_) {
+                if (!target_symbol.is_mut and target_type.kind != .struct_) {
                     return self.err_dispatcher.notMutable(target_root.data.identifier, stmt.loc_start);
                 }
 
-                switch (target_type.*) {
+                switch (target_type.kind) {
                     .array => {
-                        if (!target_symbol.type.array.eql(assignment_value_type)) {
+                        if (!target_symbol.type.kind.array.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
                                 try target_symbol.type.name(self.allocator),
                                 try assignment_value_type.name(self.allocator),
@@ -684,7 +719,7 @@ pub const SemaAnalyzer = struct {
         }
 
         for (struct_def.funcs) |func| {
-            const fn_metadata = if (struct_symbol.type.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
+            const fn_metadata = if (struct_symbol.type.kind.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
             const fn_name = fn_metadata.symbol.identifier;
             const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
@@ -732,7 +767,7 @@ pub const SemaAnalyzer = struct {
 
             const arg_uid = self.scope.genUid();
 
-            if (param.is_mut and param.type.* != .array and param.type.* != .struct_instance) {
+            if (param.is_mut and param.type.kind != .array and param.type.kind != .struct_instance) {
                 return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc_start);
             }
 
@@ -809,6 +844,9 @@ pub const SemaAnalyzer = struct {
             .bool_literal => {
                 return ir.Value.init(self.allocator, .{ .i_bool = exp.data.bool_literal });
             },
+            .null_literal => {
+                return ir.Value.init(self.allocator, .{ .i_null = {} });
+            },
             .fn_def => {
                 return ir.Value.init(self.allocator, .{ .fn_def = {} });
             },
@@ -861,20 +899,25 @@ pub const SemaAnalyzer = struct {
                 fn_identifier = symbol.identifier;
                 uid = symbol.uid;
 
-                switch (symbol.type.*) {
-                    .function => {
-                        params = symbol.type.function.params;
-                        return_type = symbol.type.function.return_type;
+                switch (symbol.type.kind) {
+                    .function => |func| {
+                        params = func.params;
+                        return_type = func.return_type;
                     },
                     //when identifier is a struct we turn it into a struct inicialization
-                    .struct_ => {
-                        params = symbol.type.struct_.fields_in_order;
-                        return_type = try Type.init(self.allocator, .{ .struct_instance = &symbol.type.struct_ });
+                    .struct_ => |struct_| {
+                        params = struct_.fields_in_order;
+                        return_type = try Type.init(self.allocator, .{
+                            .kind = .{ .struct_instance = &symbol.type.kind.struct_ },
+                            .nullable = false,
+                        });
                     },
-                    .anonymous_struct => {
-                        std.log.debug("anom", .{});
-                        params = symbol.type.anonymous_struct.fields_in_order;
-                        return_type = try Type.init(self.allocator, .{ .struct_instance = &symbol.type.anonymous_struct });
+                    .anonymous_struct => |anonymous_struct| {
+                        params = anonymous_struct.fields_in_order;
+                        return_type = try Type.init(self.allocator, .{
+                            .kind = .{ .struct_instance = &symbol.type.kind.anonymous_struct },
+                            .nullable = false,
+                        });
                     },
                     else => {
                         return self.err_dispatcher.invalidType(
@@ -890,7 +933,7 @@ pub const SemaAnalyzer = struct {
                 const target = try self.evalExp(indexed.target);
                 const target_type = self.resolveValueType(target);
 
-                if (target_type.* != .struct_ and target_type.* != .struct_instance) {
+                if (target_type.kind != .struct_ and target_type.kind != .struct_instance) {
                     return self.err_dispatcher.invalidType(
                         "a struct",
                         try target_type.name(self.allocator),
@@ -902,7 +945,7 @@ pub const SemaAnalyzer = struct {
                 fn_call_target = target;
                 const fn_name = indexed.index.data.identifier;
 
-                const fn_metadata = switch (target_type.*) {
+                const fn_metadata = switch (target_type.kind) {
                     .struct_ => |_struct| _struct.functions.get(fn_name) orelse {
                         return self.err_dispatcher.invalidStructFunction(
                             _struct.identifier,
@@ -920,12 +963,12 @@ pub const SemaAnalyzer = struct {
                     else => unreachable,
                 };
 
-                const struct_symbol_identifier = if (target_type.* == .struct_instance) target_type.struct_instance.identifier else target_type.struct_.identifier;
+                const struct_symbol_identifier = if (target_type.kind == .struct_instance) target_type.kind.struct_instance.identifier else target_type.kind.struct_.identifier;
                 const target_type_symbol = try self.scope.symbol_table.getOrThrow(struct_symbol_identifier);
 
                 //auto append struct to fn call if first argument of function is itself
-                if (fn_metadata.params.len > 0 and target_type.* == .struct_instance) {
-                    const first_argument_uid = switch (fn_metadata.params[0].type.*) {
+                if (fn_metadata.params.len > 0 and target_type.kind == .struct_instance) {
+                    const first_argument_uid = switch (fn_metadata.params[0].type.kind) {
                         .struct_instance => |struct_instance| (try self.scope.symbol_table.getOrThrow(struct_instance.identifier)).uid,
                         else => 0,
                     };
@@ -950,8 +993,11 @@ pub const SemaAnalyzer = struct {
             },
             .anonymous_struct_inicialization => {
                 const anom_struct_symbol = try self.createAnonymousStruct(exp, true);
-                params = anom_struct_symbol.type.anonymous_struct.fields_in_order;
-                return_type = try Type.init(self.allocator, .{ .struct_instance = &anom_struct_symbol.type.anonymous_struct });
+                params = anom_struct_symbol.type.kind.anonymous_struct.fields_in_order;
+                return_type = try Type.init(self.allocator, .{
+                    .kind = .{ .struct_instance = &anom_struct_symbol.type.kind.anonymous_struct },
+                    .nullable = false,
+                });
                 uid = anom_struct_symbol.uid;
                 fn_identifier = anom_struct_symbol.identifier;
             },
@@ -998,14 +1044,14 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), exp.loc_start);
             }
 
-            if (param.type.* == .struct_ and param.is_mut) {
+            if (param.type.kind == .struct_ and param.is_mut) {
                 const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
                 if (!symbol.is_mut) {
                     return self.err_dispatcher.notMutable(symbol.identifier, arg_exp.loc_start);
                 }
             }
 
-            if (param.type.* == .array and param.is_mut and arg_exp.data != .array_literal) {
+            if (param.type.kind == .array and param.is_mut and arg_exp.data != .array_literal) {
                 const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
                 if (!symbol.is_mut) {
                     return self.err_dispatcher.notMutable(fn_call_arg_value.identifier.identifier, arg_exp.loc_start);
@@ -1048,7 +1094,7 @@ pub const SemaAnalyzer = struct {
         const target = try self.evalExp(index_exp.target);
         const target_type = self.resolveValueType(target);
 
-        switch (target_type.*) {
+        switch (target_type.kind) {
             .array => {
                 const index = try self.evalExp(index_exp.index);
                 const index_type = self.resolveValueType(index);
@@ -1065,7 +1111,7 @@ pub const SemaAnalyzer = struct {
                 });
             },
             .struct_instance => {
-                const struct_metadata = target_type.struct_instance;
+                const struct_metadata = target_type.kind.struct_instance;
 
                 return switch (index_exp.index.data) {
                     .identifier => |member_name| {
@@ -1087,7 +1133,7 @@ pub const SemaAnalyzer = struct {
                 };
             },
             .struct_ => {
-                const struct_metadata = target_type.struct_;
+                const struct_metadata = target_type.kind.struct_;
 
                 return switch (index_exp.index.data) {
                     .identifier => |member_name| {
@@ -1154,7 +1200,7 @@ pub const SemaAnalyzer = struct {
             self.allocator,
             .{
                 .i_array = .{
-                    .type = try Type.init(self.allocator, .{ .array = array_literal_type }),
+                    .type = try Type.init(self.allocator, .{ .kind = .{ .array = array_literal_type }, .nullable = false }),
                     .values = try values.toOwnedSlice(self.allocator),
                 },
             },
@@ -1251,31 +1297,36 @@ pub const SemaAnalyzer = struct {
         } });
     }
 
-    //note: not supporting structs
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation) !*Type {
-        switch (type_annotation.*) {
-            .name => {
-                if (std.mem.eql(u8, type_annotation.name, "number")) return self.type_number;
-                if (std.mem.eql(u8, type_annotation.name, "string")) return self.type_str;
-                if (std.mem.eql(u8, type_annotation.name, "bool")) return self.type_bool;
-                if (std.mem.eql(u8, type_annotation.name, "fn")) return self.type_func_def;
-                if (std.mem.eql(u8, type_annotation.name, "void")) return Type.init(self.allocator, .void);
-                if (std.mem.eql(u8, type_annotation.name, "dynamic")) return self.type_dynamic;
+        switch (type_annotation.type) {
+            .primitive => |primitive_name| {
+                if (std.mem.eql(u8, primitive_name, "number")) return if (type_annotation.nullable) self.type_number_nullable else self.type_number;
+                if (std.mem.eql(u8, primitive_name, "string")) return if (type_annotation.nullable) self.type_str_nullable else self.type_str;
+                if (std.mem.eql(u8, primitive_name, "bool")) return if (type_annotation.nullable) self.type_bool_nullable else self.type_bool;
+                if (std.mem.eql(u8, primitive_name, "fn")) return if (type_annotation.nullable) self.type_func_def_nullable else self.type_func_def;
+                if (std.mem.eql(u8, primitive_name, "void")) return self.type_void;
+                if (std.mem.eql(u8, primitive_name, "dynamic")) return if (type_annotation.nullable) self.type_dynamic_nullable else self.type_dynamic;
 
                 return Errors.SemaError;
             },
             .struct_ => |struct_name| {
                 const struct_symbol = try self.scope.symbol_table.getOrThrow(struct_name);
-                return Type.init(self.allocator, .{ .struct_instance = &struct_symbol.type.struct_ });
+                return Type.init(self.allocator, .{
+                    .kind = .{ .struct_instance = &struct_symbol.type.kind.struct_ },
+                    .nullable = type_annotation.nullable,
+                });
             },
             .array => {
-                const inner_type = try self.resolveTypeAnnotation(type_annotation.array);
+                const inner_type = try self.resolveTypeAnnotation(type_annotation.type.array);
                 return Type.init(self.allocator, .{
-                    .array = inner_type,
+                    .kind = .{
+                        .array = inner_type,
+                    },
+                    .nullable = type_annotation.nullable,
                 });
             },
             .struct_self => {
-                return Type.init(self.allocator, .struct_self);
+                return Type.init(self.allocator, .{ .kind = .struct_self, .nullable = type_annotation.nullable });
             },
         }
     }
@@ -1288,6 +1339,7 @@ pub const SemaAnalyzer = struct {
             .i_bool => self.type_bool,
             .i_string => self.type_str,
             .i_void => self.type_bool,
+            .i_null => self.type_null,
             .fn_def => self.type_func_def,
             .struct_def => self.type_struct_def,
             .identifier => value.identifier.type,
@@ -1296,7 +1348,7 @@ pub const SemaAnalyzer = struct {
             .indexed => |indexed| {
                 const target_type = self.resolveValueType(indexed.target);
 
-                return switch (target_type.*) {
+                return switch (target_type.kind) {
                     .array => |inner_type| {
                         return inner_type;
                     },
@@ -1498,29 +1550,34 @@ pub const TypedIdentifier = struct {
     }
 };
 
-pub const Type = union(enum) {
+pub const Type = struct {
     const Self = @This();
 
-    number,
-    string,
-    boolean,
-    void,
-    //note: currently only used for built-in functions
-    dynamic,
+    kind: union(enum) {
+        number,
+        string,
+        boolean,
+        void,
+        null,
+        //note: currently only used for built-in functions
+        dynamic,
 
-    //note: later both of this type should take the metadata
-    //i think this types are not needed specially the struct_def one not removing them now
-    function_def,
-    struct_def,
+        //note: later both of this type should take the metadata
+        //i think this types are not needed specially the struct_def one not removing them now
+        function_def,
+        struct_def,
 
-    struct_: StructMetadata,
-    function: FuncMetadata,
+        struct_: StructMetadata,
+        function: FuncMetadata,
 
-    anonymous_struct: StructMetadata,
-    struct_instance: *StructMetadata,
+        anonymous_struct: StructMetadata,
+        struct_instance: *StructMetadata,
 
-    struct_self,
-    array: *Type,
+        struct_self,
+        array: *Type,
+    },
+
+    nullable: bool,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -1529,27 +1586,32 @@ pub const Type = union(enum) {
     }
 
     pub fn eql(self: *Self, other: *Type) bool {
-        if (self.* == .dynamic or other.* == .dynamic) return true;
+        if (self.kind == .dynamic or other.kind == .dynamic) return true;
+        if (self.nullable == false and other.nullable == true) return false;
 
-        switch (self.*) {
-            .number => return other.* == .number,
-            .string => return other.* == .string,
-            .boolean => return other.* == .boolean,
-            .void => return other.* == .void,
+        switch (self.kind) {
+            .number => return other.kind == .number or (self.nullable and other.kind == .null),
+            .string => return other.kind == .string or (self.nullable and other.kind == .null),
+            .boolean => return other.kind == .boolean or (self.nullable and other.kind == .null),
+            .void => return other.kind == .void or (self.nullable and other.kind == .null),
             .dynamic => return true,
 
             //note: this is wrong
-            .function_def => return other.* == .function_def,
-            .struct_def => return other.* == .struct_def,
+            .function_def => return other.kind == .function_def or (self.nullable and other.kind == .null),
+            .struct_def => return other.kind == .struct_def or (self.nullable and other.kind == .null),
 
             .struct_instance => |struct_instance| {
-                if (other.* != .struct_instance) {
+                if (self.nullable == true and other.kind == .null) {
+                    return true;
+                }
+
+                if (other.kind != .struct_instance) {
                     return false;
                 }
 
                 //note: currently is structural typing
                 //should change to more stricter when meta structs be implemented
-                const other_struct = other.struct_instance;
+                const other_struct = other.kind.struct_instance;
                 for (struct_instance.fields_in_order) |field| {
                     if (other_struct.fields.get(field.identifier) == null) {
                         return false;
@@ -1567,28 +1629,31 @@ pub const Type = union(enum) {
                 return true;
             },
             .struct_ => |struct_| {
-                if (other.* == .struct_) {
-                    return std.mem.eql(u8, other.struct_.identifier, struct_.identifier);
+                if (other.kind == .struct_) {
+                    return std.mem.eql(u8, other.kind.struct_.identifier, struct_.identifier);
                 }
                 return false;
             },
+
             .function => return true,
 
             .struct_self => unreachable,
+
             .array => |inner| {
-                if (other.* != .array) return false;
-                return inner.eql(other.array);
+                if (other.kind != .array) return false;
+                return inner.eql(other.kind.array);
             },
             else => unreachable,
         }
     }
 
     pub fn name(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
-        return switch (self.*) {
+        return switch (self.kind) {
             .number => "number",
             .string => "string",
             .boolean => "boolean",
             .void => "void",
+            .null => "null",
             .dynamic => "dynamic",
             .struct_def => "struct def",
             .function_def => "function def",

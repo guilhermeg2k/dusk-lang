@@ -5,17 +5,23 @@ let Node = struct
 
 
 let node = Node(
-    left = @(value = 10),
+    left = null,
     right = null,
     value = 10
 )
 
-if node.left != null
-    echo(node.left.value)
+let node2 = Node(
+    left = node,
+    right = null,
+    value = 30
+)
+
+if node2.left != null
+    echo(node2.left.value)
 
 if node.right != null
     echo(node.right.value)
 
-echo(node.value)
+echo(node2.value)
 
 
