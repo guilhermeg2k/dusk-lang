@@ -1,0 +1,104 @@
+let Node = struct
+    value: number
+    next: ?Node
+
+let LinkedList = struct
+    root: ?Node
+    tail: ?Node
+    len: number = 0
+
+    add: (mut self: @, value: number) -> void
+        let new_node = @(value = value, next = null)
+
+        if self.tail == null
+            self.root = new_node
+            self.tail = new_node
+        else
+            self.tail.next = new_node
+            self.tail = new_node
+
+        self.len += 1
+
+    add_head: (mut self: @, value: number) -> void
+        let new_node = @(value = value, next = self.root)
+        self.root = new_node
+
+        if self.tail == null
+            self.tail = new_node
+
+        self.len += 1
+
+    pop_value: (mut self: @, value: number) -> bool
+        let mut cur_node = self.root
+        let mut previous_node: ?Node = null
+
+        for cur_node != null
+            if cur_node.value != value
+                previous_node = cur_node
+                cur_node = cur_node.next
+                continue
+
+            if previous_node == null
+                self.root = cur_node.next
+                if self.root == null
+                    self.tail = null
+            else
+                previous_node.next = cur_node.next
+                if cur_node.next == null
+                    self.tail = previous_node
+
+            self.len -= 1
+            return true
+
+        return false
+
+    pop: (mut self: @) -> void
+        if self.root == null
+            return
+
+        if self.root == self.tail
+            self.root = null
+            self.tail = null
+        else
+            let mut cur_node = self.root
+            for cur_node.next != self.tail
+                cur_node = cur_node.next
+            cur_node.next = null
+            self.tail = cur_node
+
+        self.len -= 1
+
+    contains: (self: @, value: number) -> bool
+        let mut cur_node = self.root
+        for cur_node != null
+            if cur_node.value == value
+                return true
+            cur_node = cur_node.next
+        return false
+
+    print: (self: @) -> string
+        let mut cur_node = self.root
+        for cur_node != null
+            echo(cur_node.value)
+            cur_node = cur_node.next
+
+let mut list = LinkedList(root = null, tail = null)
+
+list.add(10)
+list.add(20)
+list.add(30)
+list.add(40)
+list.add_head(50)
+list.add_head(60)
+list.print()
+echo(list.contains(10))
+echo(list.len)
+list.pop()
+list.pop()
+list.print()
+echo(list.len)
+list.pop_value(50)
+list.pop_value(60)
+echo(list.contains(60))
+list.print()
+echo(list.len)

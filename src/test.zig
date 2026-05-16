@@ -97,22 +97,57 @@ test "Test: Compile and Run" {
             .src_file = "test/multiline-fn.dsk",
             .expected_output = "1\n8\n25\n81\n",
         },
-        .{ .name = "anonymous structs", .src_file = "test/anom-struct.dsk", .expected_output = 
-        \\{"x":10,"y":10}
-        \\{"x":20,"y":20}
-        \\{"x":30,"y":30}
-        \\{"x":50,"y":50}
-        \\{"x":40,"y":40}
+        .{
+            .name = "anonymous structs",
+            .src_file = "test/anom-struct.dsk",
+            .expected_output =
+            \\{"x":10,"y":10}
+            \\{"x":20,"y":20}
+            \\{"x":30,"y":30}
+            \\{"x":50,"y":50}
+            \\{"x":40,"y":40}
+            ,
         },
-        .{ .name = "static fields structs", .src_file = "test/static-struct.dsk", .expected_output = 
-        \\127.0.0.1:9090/me
-        \\127.0.0.1:9090/me
-        \\:9090
+        .{
+            .name = "static fields structs",
+            .src_file = "test/static-struct.dsk",
+            .expected_output =
+            \\127.0.0.1:9090/me
+            \\127.0.0.1:9090/me
+            \\:9090
+            ,
         },
-        .{ .name = "simple tree", .src_file = "test/simple-tree.dsk", .expected_output = 
-        \\{"left":{"value":0,"right":null,"left":null},"right":{"value":100,"right":null,"left":null},"value":50}
-        \\{"value":0,"right":null,"left":null}
-        \\{"value":888,"right":null,"left":null}
+        .{
+            .name = "simple tree",
+            .src_file = "test/simple-tree.dsk",
+            .expected_output =
+            \\{"left":{"value":0,"right":null,"left":null},"right":{"value":100,"right":null,"left":null},"value":50}
+            \\{"value":0,"right":null,"left":null}
+            \\{"value":888,"right":null,"left":null}
+            ,
+        },
+        .{
+            .name = "linked list",
+            .src_file = "test/linked-list.dsk",
+            .expected_output =
+            \\60
+            \\50
+            \\10
+            \\20
+            \\30
+            \\40
+            \\true
+            \\6
+            \\60
+            \\50
+            \\10
+            \\20
+            \\4
+            \\false
+            \\10
+            \\20
+            \\2
+            ,
         },
     };
 

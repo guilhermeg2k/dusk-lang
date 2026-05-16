@@ -336,7 +336,7 @@ pub const SemaAnalyzer = struct {
             .identifier = field.identifier,
             .is_mut = field.is_mut,
             .type = field_type,
-            .has_default_value = false,
+            .has_default_value = field.default_value != null,
         };
     }
 
@@ -348,51 +348,51 @@ pub const SemaAnalyzer = struct {
         //create a temporary scope just for inline return type inference
         try self.scope.enter(self.type_void);
 
-        for (fn_def.params) |arg| {
-            var arg_type = self.resolveTypeAnnotation(arg.type_annotation) catch {
+        for (fn_def.params) |param| {
+            var param_type = self.resolveTypeAnnotation(param.type_annotation) catch {
                 return self.err_dispatcher.typeNotDefined(
-                    try arg.type_annotation.value(self.allocator),
+                    try param.type_annotation.value(self.allocator),
                     exp.loc_start,
                 );
             };
 
-            if (arg_type.kind == .struct_self and struct_symbol == null) {
+            if (param_type.kind == .struct_self and struct_symbol == null) {
                 return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc_start);
             }
 
-            if (arg_type.kind == .struct_self) {
-                arg_type = try Type.init(self.allocator, .{
+            if (param_type.kind == .struct_self) {
+                param_type = try Type.init(self.allocator, .{
                     .kind = .{
                         .struct_instance = &struct_symbol.?.type.kind.struct_,
                     },
-                    .nullable = arg.type_annotation.nullable,
+                    .nullable = param.type_annotation.nullable,
                 });
             }
 
-            if (arg_type.kind == .struct_) {
-                arg_type = try Type.init(self.allocator, .{
-                    .kind = .{ .struct_instance = &arg_type.kind.struct_ },
-                    .nullable = arg.type_annotation.nullable,
+            if (param_type.kind == .struct_) {
+                param_type = try Type.init(self.allocator, .{
+                    .kind = .{ .struct_instance = &param_type.kind.struct_ },
+                    .nullable = param.type_annotation.nullable,
                 });
             }
 
             self.scope.symbol_table.put(
                 try Symbol.init(self.allocator, .{
                     .uid = self.scope.genUid(),
-                    .identifier = arg.identifier,
-                    .is_mut = arg.is_mut,
-                    .type = arg_type,
+                    .identifier = param.identifier,
+                    .is_mut = param.is_mut,
+                    .type = param_type,
                 }),
             ) catch {
-                return self.err_dispatcher.alreadyDefined(arg.identifier, exp.loc_start);
+                return self.err_dispatcher.alreadyDefined(param.identifier, exp.loc_start);
             };
 
             try params_metadata.append(self.allocator, .{
-                .identifier = arg.identifier,
-                .type = arg_type,
-                .is_mut = arg.is_mut,
+                .identifier = param.identifier,
+                .type = param_type,
+                .is_mut = param.is_mut,
                 //note: false
-                .has_default_value = false,
+                .has_default_value = param.default_value != null,
             });
         }
 
@@ -1005,12 +1005,19 @@ pub const SemaAnalyzer = struct {
         }
 
         const call_args_len = fn_call.arguments.len;
-        const fn_params_len = params.len;
+
+        var required_params_len: usize = 0;
+        for (params) |param| {
+            if (!param.has_default_value) {
+                required_params_len += 1;
+            }
+        }
+
         //call args + auto binded struct
         const total_args_len = call_args_len + fn_call_arguments_values.items.len;
 
-        if (fn_params_len != total_args_len) {
-            return self.err_dispatcher.invalidNumberOfArgs(fn_params_len, total_args_len, exp.loc_start);
+        if (required_params_len > total_args_len) {
+            return self.err_dispatcher.invalidNumberOfArgs(required_params_len, total_args_len, exp.loc_start);
         }
 
         if (fn_call.are_arguments_named) {
@@ -1026,13 +1033,16 @@ pub const SemaAnalyzer = struct {
             if (i == 0 and has_first_argument_being_binded) continue;
 
             const index = if (has_first_argument_being_binded) i - 1 else i;
-            var arg_exp = fn_call.arguments[index].exp;
+            var arg_exp = fn_call.arguments[@min(index, fn_call.arguments.len - 1)].exp;
 
             if (fn_call.are_arguments_named) {
                 const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
                 if (named_arg_exp) |named_arg| {
                     arg_exp = named_arg;
                 } else {
+                    if (param.has_default_value) {
+                        continue;
+                    }
                     return self.err_dispatcher.missingArgument(param.identifier, exp.loc_start);
                 }
             }
