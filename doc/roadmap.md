@@ -59,6 +59,7 @@
 ## Version 0.17 - Enjin
 
 - Modules
+- Privates
 
 ## Version 0.18 - Yoruichi
 

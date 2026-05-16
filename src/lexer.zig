@@ -21,6 +21,7 @@ pub const Lexer = struct {
         .{ "false", Tag.false_literal },
         .{ "fn", Tag.fn_kw },
         .{ "return", Tag.return_kw },
+        .{ "null", Tag.null_literal },
     });
 
     allocator: std.mem.Allocator,
@@ -129,6 +130,9 @@ pub const Lexer = struct {
                 },
                 '@' => {
                     return Token.init(Tag.at, self.cur_index, self.cur_index);
+                },
+                '?' => {
+                    return Token.init(Tag.question_mark, self.cur_index, self.cur_index);
                 },
                 '.' => {
                     return Token.init(Tag.dot, self.cur_index, self.cur_index);
@@ -388,6 +392,7 @@ pub const Tag = enum {
     number_literal,
     true_literal,
     false_literal,
+    null_literal,
     eq,
     double_eq,
     plus_eq,
@@ -401,6 +406,7 @@ pub const Tag = enum {
     gt,
     ge,
     at,
+    question_mark,
     dot,
     l_bracket,
     r_bracket,

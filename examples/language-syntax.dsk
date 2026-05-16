@@ -105,6 +105,9 @@ for x > y
 for
     echo('I\'m infinity')
 
+for items: item, index
+    echo(item, index)
+
 ###
   Functions
 ###

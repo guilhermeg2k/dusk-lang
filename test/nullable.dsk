@@ -1,0 +1,21 @@
+let Node = struct
+    left: ?Node
+    right: ?Node
+    value: number
+
+
+let node = Node(
+    left = @(value = 10),
+    right = null,
+    value = 10
+)
+
+if node.left != null
+    echo(node.left.value)
+
+if node.right != null
+    echo(node.right.value)
+
+echo(node.value)
+
+
