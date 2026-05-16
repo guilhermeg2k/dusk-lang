@@ -1637,49 +1637,57 @@ pub const Type = struct {
 
             .function => return true,
 
-            .struct_self => unreachable,
-
             .array => |inner| {
                 if (other.kind != .array) return false;
                 return inner.eql(other.kind.array);
             },
-            else => unreachable,
+
+            .null => {
+                return other.nullable or other.kind == .null;
+            },
+
+            .struct_self, .anonymous_struct => unreachable,
         }
     }
 
     pub fn name(self: *Self, allocator: std.mem.Allocator) ![]const u8 {
+        const prefix = if (self.nullable) "nullable " else "";
+
         return switch (self.kind) {
-            .number => "number",
-            .string => "string",
-            .boolean => "boolean",
-            .void => "void",
-            .null => "null",
-            .dynamic => "dynamic",
-            .struct_def => "struct def",
-            .function_def => "function def",
+            .number => try std.mem.concat(allocator, u8, &.{ prefix, "number" }),
+            .string => try std.mem.concat(allocator, u8, &.{ prefix, "string" }),
+            .boolean => try std.mem.concat(allocator, u8, &.{ prefix, "boolean" }),
+            .void => try std.mem.concat(allocator, u8, &.{ prefix, "void" }),
+            .null => try std.mem.concat(allocator, u8, &.{ prefix, "null" }),
+            .dynamic => try std.mem.concat(allocator, u8, &.{ prefix, "dynamic" }),
+            .struct_def => try std.mem.concat(allocator, u8, &.{ prefix, "struct def" }),
+            .function_def => try std.mem.concat(allocator, u8, &.{ prefix, "function def" }),
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{
                     metadata.symbol.identifier,
                 });
             },
             .struct_instance => |metadata| {
-                return std.fmt.allocPrint(allocator, "instance of struct {s}", .{
+                return std.fmt.allocPrint(allocator, "{s}instance of struct {s}", .{
+                    prefix,
                     metadata.identifier,
                 });
             },
             .anonymous_struct => |metadata| {
-                return std.fmt.allocPrint(allocator, "anonymous struct {s}", .{
+                return std.fmt.allocPrint(allocator, "{s}anonymous struct {s}", .{
+                    prefix,
                     metadata.identifier,
                 });
             },
             .struct_ => |metadata| {
-                return std.fmt.allocPrint(allocator, "struct {s}", .{
+                return std.fmt.allocPrint(allocator, "{s}struct {s}", .{
+                    prefix,
                     metadata.identifier,
                 });
             },
             .struct_self => "@",
             .array => |inner_type| {
-                return std.fmt.allocPrint(allocator, "[]{s}", .{try inner_type.name(allocator)});
+                return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try inner_type.name(allocator) });
             },
         };
     }

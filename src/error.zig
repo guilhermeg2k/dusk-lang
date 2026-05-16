@@ -28,7 +28,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "Invalid type: expected {s} found {s}",
+                "Invalid type: expected '{s}' found '{s}'",
                 .{ expected, found },
             ),
             loc,
