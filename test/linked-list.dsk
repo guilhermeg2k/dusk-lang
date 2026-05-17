@@ -76,7 +76,7 @@ let LinkedList = struct
             cur_node = cur_node.next
         return false
 
-    print: (self: @) -> string
+    print: (self: @) -> void
         let mut cur_node = self.root
         for cur_node != null
             echo(cur_node.value)

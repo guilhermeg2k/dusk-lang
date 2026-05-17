@@ -36,6 +36,18 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Invalid function return type: expected '{s}' found '{s}'",
+                .{ expected, found },
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
     pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
         self.log(
             try allocPrint(

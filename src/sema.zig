@@ -63,7 +63,7 @@ pub const SemaAnalyzer = struct {
         try self.hoistFunctionsAndStructs(root);
 
         return .{
-            .instructions = try self.visitBlock(root),
+            .instructions = (try self.visitBlock(root)).instructions,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .structs = try self.structs.toOwnedSlice(self.allocator),
         };
@@ -413,10 +413,12 @@ pub const SemaAnalyzer = struct {
         fn_symbol.type.kind.function.params = try params_metadata.toOwnedSlice(self.allocator);
     }
 
-    pub fn visitBlock(self: *Self, block: *const ast.Block) ![]const ir.Instruction {
+    pub fn visitBlock(self: *Self, block: *const ast.Block) !ir.Block {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type);
         defer self.scope.exit(self.scope.return_type);
+
+        var return_type: *Type = self.type_void;
 
         for (block.statements.items) |stmt| {
             const instruction = switch (stmt.data) {
@@ -431,11 +433,17 @@ pub const SemaAnalyzer = struct {
             };
 
             if (instruction) |i| {
+                if (i == .return_stmt) {
+                    return_type = self.scope.return_type;
+                }
                 try instructions.append(self.allocator, i);
             }
         }
 
-        return instructions.toOwnedSlice(self.allocator);
+        return ir.Block{
+            .return_type = return_type,
+            .instructions = try instructions.toOwnedSlice(self.allocator),
+        };
     }
 
     fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
@@ -533,12 +541,13 @@ pub const SemaAnalyzer = struct {
 
         var else_block: std.ArrayList(ir.Instruction) = .empty;
         if (if_stmt.else_block) |else_blc| {
-            try else_block.appendSlice(self.allocator, try self.visitBlock(&else_blc));
+            const block = try self.visitBlock(&else_blc);
+            try else_block.appendSlice(self.allocator, block.instructions);
         }
 
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
-            .then_block = then_block,
+            .then_block = then_block.instructions,
             .else_block = try else_block.toOwnedSlice(self.allocator),
         } };
     }
@@ -675,7 +684,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Instruction{ .loop = .{
             .condition = condition_value,
-            .do_block = block,
+            .do_block = block.instructions,
         } };
     }
 
@@ -791,12 +800,20 @@ pub const SemaAnalyzer = struct {
 
         const body = try self.visitBlock(&fn_def.body_block);
 
+        if (!body.return_type.eql(self.scope.return_type)) {
+            return self.err_dispatcher.invalidFunctionReturnType(
+                try self.scope.return_type.name(self.allocator),
+                try body.return_type.name(self.allocator),
+                exp.loc_start,
+            );
+        }
+
         return ir.Func{
             .uid = uid,
             .identifier = if (override_name) |name| name else metadata.symbol.identifier,
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = metadata.return_type,
-            .body = body,
+            .body = body.instructions,
         };
     }
 
@@ -808,7 +825,7 @@ pub const SemaAnalyzer = struct {
             const exp_value_type = self.resolveValueType(exp_value);
 
             if (!exp_value_type.eql(self.scope.return_type)) {
-                return self.err_dispatcher.invalidType(
+                return self.err_dispatcher.invalidFunctionReturnType(
                     try self.scope.return_type.name(self.allocator),
                     try exp_value_type.name(self.allocator),
                     stmt.loc_start,
@@ -821,7 +838,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (!self.scope.return_type.eql(self.type_void)) {
-            return self.err_dispatcher.invalidType(
+            return self.err_dispatcher.invalidFunctionReturnType(
                 try self.scope.return_type.name(self.allocator),
                 "void",
                 stmt.loc_start,

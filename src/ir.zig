@@ -4,6 +4,11 @@ pub const Program = struct {
     structs: []const Struct,
 };
 
+pub const Block = struct {
+    return_type: *Type,
+    instructions: []const Instruction,
+};
+
 pub const Instruction = union(enum) {
     store_var: StoreVar,
     update_var: UpdateVar,
