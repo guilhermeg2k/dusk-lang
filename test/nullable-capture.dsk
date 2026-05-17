@@ -1,0 +1,11 @@
+let mut username: ?string = null
+
+if username: name
+    echo(name)
+
+username = "Geromel Dr."
+
+if username: name
+    echo(name)
+
+

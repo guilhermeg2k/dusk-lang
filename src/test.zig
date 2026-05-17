@@ -149,6 +149,11 @@ test "Test: Compile and Run" {
             \\2
             ,
         },
+        .{
+            .name = "capture nullable",
+            .src_file = "test/nullable-capture.dsk",
+            .expected_output = "Geromel Dr.",
+        },
     };
 
     for (cases) |case| {

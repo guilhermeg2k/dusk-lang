@@ -430,7 +430,14 @@ pub const SemaAnalyzer = struct {
                 .break_stmt => ir.Instruction{ .break_stmt = {} },
                 .continue_stmt => ir.Instruction{ .continue_stmt = {} },
                 .return_stmt => try self.visitReturnStmt(&stmt),
+                .if_capture_stmt => null,
             };
+
+            if (stmt.data == .if_capture_stmt) {
+                const if_capture_insts = try self.visitIfCaptureStmt(&stmt);
+                try instructions.appendSlice(self.allocator, if_capture_insts);
+                continue;
+            }
 
             if (instruction) |i| {
                 if (i == .return_stmt) {
@@ -550,6 +557,80 @@ pub const SemaAnalyzer = struct {
             .then_block = then_block.instructions,
             .else_block = try else_block.toOwnedSlice(self.allocator),
         } };
+    }
+
+    fn visitIfCaptureStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        const if_capture_stmt = stmt.data.if_capture_stmt;
+        const exp_value = try self.evalExp(if_capture_stmt.exp);
+        const exp_type = self.resolveValueType(exp_value);
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+
+        if (exp_type.nullable == false) {
+            return self.err_dispatcher.invalidType("nullable", try exp_type.name(self.allocator), stmt.loc_start);
+        }
+
+        const captured_type = try Type.init(self.allocator, .{
+            .nullable = false,
+            .kind = exp_type.kind,
+        });
+
+        const aux_var_id = self.scope.genUid();
+        const aux_var_name = try std.fmt.allocPrint(self.allocator, "$captured_${d}", .{aux_var_id});
+
+        const store_aux_var_inst = ir.Instruction{ .store_var = .{
+            .uid = aux_var_id,
+            .identifier = aux_var_name,
+            .type = captured_type,
+            .value = exp_value,
+        } };
+
+        const aux_var_value = try ir.Value.init(self.allocator, .{
+            .identifier = .{
+                .uid = aux_var_id,
+                .identifier = aux_var_name,
+                .type = captured_type,
+            },
+        });
+
+        const captured_symbol = try Symbol.init(self.allocator, .{
+            .uid = self.scope.genUid(),
+            .identifier = if_capture_stmt.identifier,
+            .type = captured_type,
+            .is_mut = false,
+        });
+
+        try self.scope.symbol_table.put(captured_symbol);
+        defer _ = self.scope.symbol_table.remove(captured_symbol);
+
+        const store_captured_var_inst = ir.Instruction{ .store_var = .{
+            .uid = captured_symbol.uid,
+            .identifier = captured_symbol.identifier,
+            .type = captured_type,
+            .value = aux_var_value,
+        } };
+
+        const check_null_condition = try ir.Value.init(
+            self.allocator,
+            .{
+                .binary_op = .{
+                    .kind = .cmp_neq,
+                    .type = self.type_bool,
+                    .left = aux_var_value,
+                    .right = try ir.Value.init(self.allocator, .{
+                        .i_null = {},
+                    }),
+                },
+            },
+        );
+
+        const check_null_if_inst = ir.Instruction{ .branch_if = .{
+            .condition = check_null_condition,
+            .then_block = (try self.visitBlock(&if_capture_stmt.body)).instructions,
+            .else_block = &.{},
+        } };
+
+        try instructions.appendSlice(self.allocator, &.{ store_aux_var_inst, store_captured_var_inst, check_null_if_inst });
+        return instructions.toOwnedSlice(self.allocator);
     }
 
     fn visitAssignStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
@@ -1510,12 +1591,8 @@ const SymbolTable = struct {
         try self.symbols.put(symbol.identifier, symbol);
     }
 
-    fn remove(self: *Self, symbol: *Symbol) !void {
-        if (self.symbols.get(symbol.identifier)) |_| {
-            return Errors.SemaError;
-        }
-
-        try self.symbols.remove(symbol.identifier);
+    fn remove(self: *Self, symbol: *Symbol) bool {
+        return self.symbols.remove(symbol.identifier);
     }
 
     fn get(self: *Self, identifier: []const u8) ?*Symbol {
@@ -1681,14 +1758,16 @@ pub const Type = struct {
         const prefix = if (self.nullable) "nullable " else "";
 
         return switch (self.kind) {
-            .number => try std.mem.concat(allocator, u8, &.{ prefix, "number" }),
-            .string => try std.mem.concat(allocator, u8, &.{ prefix, "string" }),
-            .boolean => try std.mem.concat(allocator, u8, &.{ prefix, "boolean" }),
-            .void => try std.mem.concat(allocator, u8, &.{ prefix, "void" }),
-            .null => try std.mem.concat(allocator, u8, &.{ prefix, "null" }),
-            .dynamic => try std.mem.concat(allocator, u8, &.{ prefix, "dynamic" }),
-            .struct_def => try std.mem.concat(allocator, u8, &.{ prefix, "struct def" }),
-            .function_def => try std.mem.concat(allocator, u8, &.{ prefix, "function def" }),
+            .number => if (self.nullable) "nullable number" else "number",
+            .string => if (self.nullable) "nullable string" else "string",
+            .boolean => if (self.nullable) "nullable boolean" else "boolean",
+            .void => if (self.nullable) "nullable void" else "void",
+            .null => if (self.nullable) "nullable null" else "null",
+            .dynamic => if (self.nullable) "nullable dynamic" else "dynamic",
+            .struct_def => if (self.nullable) "nullable struct def" else "struct def",
+            .function_def => if (self.nullable) "nullable function def" else "function def",
+            .struct_self => "@",
+            //perf: all above are wasting memory
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{
                     metadata.symbol.identifier,
@@ -1712,7 +1791,6 @@ pub const Type = struct {
                     metadata.identifier,
                 });
             },
-            .struct_self => "@",
             .array => |inner_type| {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try inner_type.name(allocator) });
             },

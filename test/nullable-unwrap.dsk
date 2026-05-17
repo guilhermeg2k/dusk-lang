@@ -1,4 +1,0 @@
-let username: string = null
-
-if username: name
-    echo(name)
