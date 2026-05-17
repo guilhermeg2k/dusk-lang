@@ -13,6 +13,7 @@ pub const StatementNode = struct {
 pub const Statement = union(enum) {
     let_stmt: LetStmt,
     if_stmt: IfStmt,
+    if_capture_stmt: IfCaptureStmt,
     for_stmt: ForStmt,
     assign_stmt: AssignStmt,
     return_stmt: ReturnStmt,
@@ -32,6 +33,12 @@ pub const IfStmt = struct {
     condition: *ExpNode,
     then_block: Block,
     else_block: ?Block,
+};
+
+pub const IfCaptureStmt = struct {
+    exp: *ExpNode,
+    identifier: []const u8,
+    body: Block,
 };
 
 pub const ForStmt = struct {

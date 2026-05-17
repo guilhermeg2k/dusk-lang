@@ -56,6 +56,9 @@ pub const Parser = struct {
                 return ast.StatementNode{ .data = .{ .let_stmt = try self.parseLetStmt() }, .loc_start = tk.loc.start };
             },
             .if_kw => {
+                if (self.isIfCapture()) {
+                    return ast.StatementNode{ .data = .{ .if_capture_stmt = try self.parseIfCapture() }, .loc_start = tk.loc.start };
+                }
                 return ast.StatementNode{ .data = .{ .if_stmt = try self.parseIfStmt() }, .loc_start = tk.loc.start };
             },
             .for_kw => {
@@ -175,6 +178,18 @@ pub const Parser = struct {
                 };
             },
         }
+    }
+
+    fn parseIfCapture(self: *Self) !ast.IfCaptureStmt {
+        self.walk();
+        const exp = try self.parseExp(0);
+        _ = try self.expect(.colon);
+        const identififer = try self.expect(.identifier);
+        _ = try self.expect(.indent);
+        const body = try self.parseBlock();
+        _ = try self.expect(.dedent);
+
+        return ast.IfCaptureStmt{ .exp = exp, .identifier = identififer.value(self.src), .body = body };
     }
 
     fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {
@@ -572,6 +587,27 @@ pub const Parser = struct {
                 return self.err_dispatcher.invalidSyntax("valid expression", tk);
             },
         };
+    }
+
+    fn isIfCapture(self: *Self) bool {
+        const start_id = self.cur_index;
+        const tokens_scan_limit = 500;
+        var tokens_scanned: usize = 0;
+        defer self.cur_index = start_id;
+
+        while (tokens_scanned < tokens_scan_limit) {
+            const tk = self.peekCurrent();
+            if (tk.tag == .colon) {
+                return true;
+            }
+            if (tk.tag == .new_line or tk.tag == .indent) {
+                return false;
+            }
+            self.walk();
+            tokens_scanned += 1;
+        }
+
+        return false;
     }
 
     fn isFuncDef(self: *Self) bool {
