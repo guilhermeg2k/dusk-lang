@@ -14,7 +14,6 @@ let UserInfo = struct
     phone: ?string
 
 let User = struct
-    confirmed: UserInfo
     info: ?UserInfo
 
 
@@ -31,20 +30,7 @@ let mut user = User(
         ),
         phone = null
     ),
-    confirmed = @(
-        address = @(
-            city = null,
-            state = "DF",
-            country = @(
-                id = 1,
-                name = "Brasil",
-                code = "BR"
-            )
-        ),
-        phone = null
-    ),
 )
-
 
 if user.info?.address: address
     if address.country?.name: name
@@ -54,13 +40,27 @@ if user.info?.address: address
     if address.city: name
         echo(concat("city name is ", name))
 
-if user.info?.phone: phone
-    echo(concat("phone is ", phone))
-
-if user.info: info
+# NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
+if user.info: mut info
     info.phone = "40028922"
 
 if user.info?.address?.country?.code: code
     echo(concat("country code is ", code))
 
+if user.info?.phone: phone
+    echo(concat("phone is ", phone))
+
+if user.info: mut info
+    info.phone = "40028922"
+
+if user.info?.phone: phone
+    echo(concat("phone is ", phone))
+
+# NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
+if user.info?.address?.state: mut name
+    name = "SP"
+
+
+# should still be DF
+echo(user.info?.address?.state)
 

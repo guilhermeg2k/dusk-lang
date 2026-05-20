@@ -8,6 +8,7 @@
   - Optional fn args
 - Function parameter default value
 - Inference for function arguments (When it has default value)
+- Nested Struct definition
 
 ## Version: 0.8 - Seras Victoria
 

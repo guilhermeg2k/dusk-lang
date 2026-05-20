@@ -569,6 +569,10 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidType("nullable", try exp_type.name(self.allocator), stmt.loc_start);
         }
 
+        if (if_capture_stmt.identifier.is_mut and !self.isExpressionMutable(if_capture_stmt.exp)) {
+            return self.err_dispatcher.unwrappedValueCantBeMutable(if_capture_stmt.identifier.name, stmt.loc_start);
+        }
+
         const captured_type = try Type.init(self.allocator, .{
             .nullable = false,
             .kind = exp_type.kind,
@@ -594,9 +598,9 @@ pub const SemaAnalyzer = struct {
 
         const captured_symbol = try Symbol.init(self.allocator, .{
             .uid = self.scope.genUid(),
-            .identifier = if_capture_stmt.identifier,
+            .identifier = if_capture_stmt.identifier.name,
             .type = captured_type,
-            .is_mut = false,
+            .is_mut = if_capture_stmt.identifier.is_mut,
         });
 
         try self.scope.symbol_table.put(captured_symbol);
@@ -1420,6 +1424,18 @@ pub const SemaAnalyzer = struct {
             .left = left_value,
             .right = right_value,
         } });
+    }
+
+    fn isExpressionMutable(self: *Self, exp: *ast.ExpNode) bool {
+        return switch (exp.data) {
+            .identifier => |name| {
+                const sym = self.scope.symbol_table.get(name) orelse return false;
+                return sym.is_mut;
+            },
+            .indexed => |indexed| self.isExpressionMutable(indexed.target),
+            .nullable_indexed => |indexed| self.isExpressionMutable(indexed.target),
+            else => false,
+        };
     }
 
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation) !*Type {

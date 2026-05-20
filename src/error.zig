@@ -131,6 +131,11 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: usize) Errors {
+        self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
+        return Errors.SemaError;
+    }
+
     pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: usize) Errors {
         self.log("@ cannot be used outside of a struct", loc);
         return Errors.SemaError;
@@ -164,7 +169,7 @@ pub const ErrorDispatcher = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "function '{s}' does not exists on struct '{s}'",
+                "Function '{s}' does not exists on struct '{s}'",
                 .{ function, struct_name },
             ),
             loc,

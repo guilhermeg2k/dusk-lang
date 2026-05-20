@@ -37,7 +37,7 @@ pub const IfStmt = struct {
 
 pub const IfCaptureStmt = struct {
     exp: *ExpNode,
-    identifier: []const u8,
+    identifier: struct { name: []const u8, is_mut: bool },
     body: Block,
 };
 

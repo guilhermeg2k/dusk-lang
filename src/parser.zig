@@ -187,12 +187,20 @@ pub const Parser = struct {
         self.walk();
         const exp = try self.parseExp(0);
         _ = try self.expect(.colon);
+        const is_mut = self.match(.mut_kw);
         const identififer = try self.expect(.identifier);
         _ = try self.expect(.indent);
         const body = try self.parseBlock();
         _ = try self.expect(.dedent);
 
-        return ast.IfCaptureStmt{ .exp = exp, .identifier = identififer.value(self.src), .body = body };
+        return ast.IfCaptureStmt{
+            .exp = exp,
+            .identifier = .{
+                .name = identififer.value(self.src),
+                .is_mut = is_mut,
+            },
+            .body = body,
+        };
     }
 
     fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {
