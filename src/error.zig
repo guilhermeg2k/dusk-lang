@@ -197,6 +197,30 @@ pub const ErrorDispatcher = struct {
         return Errors.SemaError;
     }
 
+    pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Unecessary optional chain for '{s}'",
+                .{member},
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
+    pub fn nullableMustBeUnwraped(self: *Self, member: []const u8, loc: usize) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "{s} must be unwrapped",
+                .{member},
+            ),
+            loc,
+        );
+        return Errors.SemaError;
+    }
+
     pub fn log(self: *Self, msg: []const u8, loc: usize) void {
         const exactLoc = self.findExactLoc(loc);
         const spaces = 6 + loc - exactLoc.line.start;

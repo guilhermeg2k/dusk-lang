@@ -101,6 +101,7 @@ pub const Value = union(enum) {
     identifier: struct { uid: usize, identifier: []const u8, type: *Type },
 
     indexed: IndexedValue,
+    nullable_indexed: IndexedValue,
 
     binary_op: BinaryOp,
 

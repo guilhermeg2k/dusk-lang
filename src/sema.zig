@@ -961,7 +961,10 @@ pub const SemaAnalyzer = struct {
                 return ir.Value.init(self.allocator, .{ .struct_def = {} });
             },
             .indexed => {
-                return self.evalIndexedExp(exp);
+                return self.evalIndexedExp(exp, false);
+            },
+            .nullable_indexed => {
+                return self.evalIndexedExp(exp, true);
             },
             .unary_exp => {
                 return self.evalUnaryExp(exp);
@@ -1196,32 +1199,48 @@ pub const SemaAnalyzer = struct {
         );
     }
 
-    fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
-        const index_exp = exp.data.indexed;
+    fn createIndexedIrValue(self: *Self, target: *ir.Value, index: *ir.Value, is_nullable: bool) !*ir.Value {
+        if (is_nullable) {
+            return ir.Value.init(self.allocator, .{
+                .nullable_indexed = .{ .target = target, .index = index },
+            });
+        } else {
+            return ir.Value.init(self.allocator, .{
+                .indexed = .{ .target = target, .index = index },
+            });
+        }
+    }
 
-        const target = try self.evalExp(index_exp.target);
+    fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode, is_nullable: bool) !*ir.Value {
+        const indexed_exp_index = if (is_nullable) exp.data.nullable_indexed.index else exp.data.indexed.index;
+        const index_exp_target = if (is_nullable) exp.data.nullable_indexed.target else exp.data.indexed.target;
+
+        const target = try self.evalExp(index_exp_target);
         const target_type = self.resolveValueType(target);
+
+        if (!is_nullable and target_type.nullable) {
+            return self.err_dispatcher.nullableMustBeUnwraped(try target_type.name(self.allocator), exp.loc_start);
+        }
+
+        if (is_nullable and !target_type.nullable) {
+            return self.err_dispatcher.unnecessaryOptionalChain(try target_type.name(self.allocator), exp.loc_start);
+        }
 
         switch (target_type.kind) {
             .array => {
-                const index = try self.evalExp(index_exp.index);
+                const index = try self.evalExp(indexed_exp_index);
                 const index_type = self.resolveValueType(index);
 
                 if (!index_type.eql(self.type_number)) {
                     return self.err_dispatcher.invalidIndexing("number", try index_type.name(self.allocator), exp.loc_start);
                 }
 
-                return ir.Value.init(self.allocator, .{
-                    .indexed = .{
-                        .target = target,
-                        .index = index,
-                    },
-                });
+                return self.createIndexedIrValue(target, index, is_nullable);
             },
             .struct_instance => {
                 const struct_metadata = target_type.kind.struct_instance;
 
-                return switch (index_exp.index.data) {
+                return switch (indexed_exp_index.data) {
                     .identifier => |member_name| {
                         const field_member = struct_metadata.fields.get(member_name);
                         const function_member = struct_metadata.functions.get(member_name);
@@ -1230,12 +1249,11 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.invalidStructField(struct_metadata.identifier, member_name, exp.loc_start);
                         }
 
-                        return ir.Value.init(self.allocator, .{
-                            .indexed = .{
-                                .target = target,
-                                .index = try ir.Value.init(self.allocator, .{ .i_string = member_name }),
-                            },
-                        });
+                        return self.createIndexedIrValue(
+                            target,
+                            try ir.Value.init(self.allocator, .{ .i_string = member_name }),
+                            is_nullable,
+                        );
                     },
                     else => unreachable,
                 };
@@ -1243,7 +1261,7 @@ pub const SemaAnalyzer = struct {
             .struct_ => {
                 const struct_metadata = target_type.kind.struct_;
 
-                return switch (index_exp.index.data) {
+                return switch (indexed_exp_index.data) {
                     .identifier => |member_name| {
                         const field_member = struct_metadata.static_fields.get(member_name);
                         const function_member = struct_metadata.functions.get(member_name);
@@ -1252,12 +1270,11 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.invalidStaticStructField(struct_metadata.identifier, member_name, exp.loc_start);
                         }
 
-                        return ir.Value.init(self.allocator, .{
-                            .indexed = .{
-                                .target = target,
-                                .index = try ir.Value.init(self.allocator, .{ .i_string = member_name }),
-                            },
-                        });
+                        return self.createIndexedIrValue(
+                            target,
+                            try ir.Value.init(self.allocator, .{ .i_string = member_name }),
+                            is_nullable,
+                        );
                     },
                     else => unreachable,
                 };
@@ -1439,9 +1456,47 @@ pub const SemaAnalyzer = struct {
         }
     }
 
+    fn getIndexedType(self: *Self, target: *ir.Value, index: *ir.Value) *Type {
+        const target_type = self.resolveValueType(target);
+
+        return switch (target_type.kind) {
+            .array => |inner_type| inner_type,
+            .struct_instance => |struct_metadata| {
+                const field_name = index.i_string;
+                if (struct_metadata.fields.get(field_name)) |field_type| {
+                    return field_type.type;
+                }
+                if (struct_metadata.functions.get(field_name)) |_| {
+                    return self.type_func_def;
+                }
+                unreachable;
+            },
+            .struct_ => |struct_metadata| {
+                const field_name = index.i_string;
+                if (struct_metadata.static_fields.get(field_name)) |field_type| {
+                    return field_type.type;
+                }
+                if (struct_metadata.functions.get(field_name)) |_| {
+                    return self.type_func_def;
+                }
+                unreachable;
+            },
+            else => unreachable,
+        };
+    }
+
+    fn makeNullable(self: *Self, base_type: *Type) !*Type {
+        if (base_type.nullable) return base_type;
+
+        const new_type = try self.allocator.create(Type);
+        new_type.* = base_type.*;
+        new_type.nullable = true;
+
+        return new_type;
+    }
+
     pub fn resolveValueType(self: *Self, value: *ir.Value) *Type {
         //note: func_def needs a better solving probably doing this when we have generics?
-        //also missing struct
         return switch (value.*) {
             .i_float => self.type_number,
             .i_bool => self.type_bool,
@@ -1454,42 +1509,12 @@ pub const SemaAnalyzer = struct {
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
             .indexed => |indexed| {
-                const target_type = self.resolveValueType(indexed.target);
-
-                return switch (target_type.kind) {
-                    .array => |inner_type| {
-                        return inner_type;
-                    },
-                    .struct_instance => |struct_metadata| {
-                        const field_name = indexed.index.i_string;
-
-                        if (struct_metadata.fields.get(field_name)) |field_type| {
-                            return field_type.type;
-                        }
-
-                        //note: wrong
-                        if (struct_metadata.functions.get(field_name)) |_| {
-                            return self.type_func_def;
-                        }
-
-                        unreachable;
-                    },
-                    .struct_ => |struct_metadata| {
-                        const field_name = indexed.index.i_string;
-
-                        if (struct_metadata.static_fields.get(field_name)) |field_type| {
-                            return field_type.type;
-                        }
-
-                        //note: wrong
-                        if (struct_metadata.functions.get(field_name)) |_| {
-                            return self.type_func_def;
-                        }
-
-                        unreachable;
-                    },
-                    else => unreachable,
-                };
+                return self.getIndexedType(indexed.target, indexed.index);
+            },
+            .nullable_indexed => |indexed| {
+                const raw_type = self.getIndexedType(indexed.target, indexed.index);
+                //note: this maybe dangerous but i'm not changing all the signatures of this function rn. Maybe not even be needed when we have a TypeTable
+                return self.makeNullable(raw_type) catch unreachable;
             },
             .i_array => value.i_array.type,
             .fn_call => value.fn_call.return_type,
@@ -1767,7 +1792,7 @@ pub const Type = struct {
             .struct_def => if (self.nullable) "nullable struct def" else "struct def",
             .function_def => if (self.nullable) "nullable function def" else "function def",
             .struct_self => "@",
-            //perf: all above are wasting memory
+            //perf: all bellow are wasting memory
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{
                     metadata.symbol.identifier,

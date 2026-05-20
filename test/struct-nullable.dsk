@@ -1,0 +1,66 @@
+let Country = struct
+    id: number
+    name: string
+    code: ?string
+
+let Address = struct
+    city: ?string
+    state: ?string
+    country: ?Country
+    street: ?string
+
+let UserInfo = struct
+    address: ?Address
+    phone: ?string
+
+let User = struct
+    confirmed: UserInfo
+    info: ?UserInfo
+
+
+let mut user = User(
+    info = @(
+        address = @(
+            city = null,
+            state = "DF",
+            country = @(
+                id = 1,
+                name = "Brasil",
+                code = "BR"
+            )
+        ),
+        phone = null
+    ),
+    confirmed = @(
+        address = @(
+            city = null,
+            state = "DF",
+            country = @(
+                id = 1,
+                name = "Brasil",
+                code = "BR"
+            )
+        ),
+        phone = null
+    ),
+)
+
+
+if user.info?.address: address
+    if address.country?.name: name
+        echo(concat("country name is ", name))
+    if address.state: name
+        echo(concat("state name is ", name))
+    if address.city: name
+        echo(concat("city name is ", name))
+
+if user.info?.phone: phone
+    echo(concat("phone is ", phone))
+
+if user.info: info
+    info.phone = "40028922"
+
+if user.info?.address?.country?.code: code
+    echo(concat("country code is ", code))
+
+

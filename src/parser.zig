@@ -57,7 +57,10 @@ pub const Parser = struct {
             },
             .if_kw => {
                 if (self.isIfCapture()) {
-                    return ast.StatementNode{ .data = .{ .if_capture_stmt = try self.parseIfCapture() }, .loc_start = tk.loc.start };
+                    return ast.StatementNode{
+                        .data = .{ .if_capture_stmt = try self.parseIfCapture() },
+                        .loc_start = tk.loc.start,
+                    };
                 }
                 return ast.StatementNode{ .data = .{ .if_stmt = try self.parseIfStmt() }, .loc_start = tk.loc.start };
             },
@@ -700,6 +703,30 @@ pub const Parser = struct {
                         .index = id_node,
                     },
                 }, .loc_start = node.loc_start });
+
+                node = index_node;
+                continue;
+            }
+
+            //nullable struct field member access
+            if (tk.tag == .question_mark_dot) {
+                self.walk();
+
+                const id_token = try self.expect(.identifier);
+                const id_node = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = id_token.value(self.src) },
+                    .loc_start = id_token.loc.start,
+                });
+
+                const index_node = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{
+                        .nullable_indexed = .{
+                            .target = node,
+                            .index = id_node,
+                        },
+                    },
+                    .loc_start = node.loc_start,
+                });
 
                 node = index_node;
                 continue;

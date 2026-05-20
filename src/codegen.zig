@@ -318,6 +318,18 @@ pub const Generator = struct {
                     },
                 }
             },
+            .nullable_indexed => {
+                const target = try self.genValue(value.nullable_indexed.target);
+                switch (value.nullable_indexed.index.*) {
+                    .i_string => |member_name| {
+                        try buf.print(self.allocator, "{s}?.[\"{s}\"]", .{ target, member_name });
+                    },
+                    else => {
+                        const index_js = try self.genValue(value.nullable_indexed.index);
+                        try buf.print(self.allocator, "{s}?.[{s}]", .{ target, index_js });
+                    },
+                }
+            },
             .i_array => {
                 const i_array = try self.genImmediateArray(value.i_array);
                 try buf.appendSlice(self.allocator, i_array);

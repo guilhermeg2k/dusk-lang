@@ -132,7 +132,7 @@ pub const Lexer = struct {
                     return Token.init(Tag.at, self.cur_index, self.cur_index);
                 },
                 '?' => {
-                    return Token.init(Tag.question_mark, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol('.', Tag.question_mark_dot, Tag.question_mark);
                 },
                 '.' => {
                     return Token.init(Tag.dot, self.cur_index, self.cur_index);
@@ -406,8 +406,9 @@ pub const Tag = enum {
     gt,
     ge,
     at,
-    question_mark,
     dot,
+    question_mark,
+    question_mark_dot,
     l_bracket,
     r_bracket,
     l_paren,

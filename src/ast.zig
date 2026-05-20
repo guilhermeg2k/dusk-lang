@@ -113,6 +113,7 @@ pub const Exp = union(enum) {
     anonymous_struct_inicialization: bool,
 
     indexed: IndexedExp,
+    nullable_indexed: NullableIndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
 };
@@ -166,6 +167,11 @@ pub const ReturnStmt = struct {
 };
 
 pub const IndexedExp = struct {
+    target: *ExpNode,
+    index: *ExpNode,
+};
+
+pub const NullableIndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
 };
