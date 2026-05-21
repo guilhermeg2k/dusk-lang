@@ -10,11 +10,11 @@ let LinkedList = struct
     add: (mut self: @, value: number) -> void
         let new_node = @(value = value, next = null)
 
-        if self.tail == null
-            self.root = new_node
+        if self.tail: mut tail
+            tail.next = new_node
             self.tail = new_node
         else
-            self.tail.next = new_node
+            self.root = new_node
             self.tail = new_node
 
         self.len += 1
@@ -33,22 +33,23 @@ let LinkedList = struct
         let mut previous_node: ?Node = null
 
         for cur_node != null
-            if cur_node.value != value
-                previous_node = cur_node
-                cur_node = cur_node.next
-                continue
+            if cur_node: mut c_node
+                if c_node.value != value
+                    previous_node = cur_node
+                    cur_node = c_node.next
+                    continue
 
-            if previous_node == null
-                self.root = cur_node.next
-                if self.root == null
-                    self.tail = null
-            else
-                previous_node.next = cur_node.next
-                if cur_node.next == null
-                    self.tail = previous_node
+                if previous_node: mut p_node
+                    p_node.next = c_node.next
+                    if c_node.next == null
+                        self.tail = previous_node
+                else
+                    self.root = c_node.next
+                    if self.root == null
+                        self.tail = null
 
-            self.len -= 1
-            return true
+                self.len -= 1
+                return true
 
         return false
 
@@ -61,26 +62,31 @@ let LinkedList = struct
             self.tail = null
         else
             let mut cur_node = self.root
-            for cur_node.next != self.tail
-                cur_node = cur_node.next
-            cur_node.next = null
-            self.tail = cur_node
+            for cur_node != null
+                if cur_node: mut c_node
+                    if c_node.next == self.tail
+                        c_node.next = null
+                        self.tail = cur_node
+                        break
+                    cur_node = c_node.next
 
         self.len -= 1
 
     contains: (self: @, value: number) -> bool
         let mut cur_node = self.root
         for cur_node != null
-            if cur_node.value == value
-                return true
-            cur_node = cur_node.next
+            if cur_node: c_node
+                if c_node.value == value
+                    return true
+                cur_node = c_node.next
         return false
 
     print: (self: @) -> void
         let mut cur_node = self.root
         for cur_node != null
-            echo(cur_node.value)
-            cur_node = cur_node.next
+            if cur_node: c_node
+                echo(c_node.value)
+                cur_node = c_node.next
 
 let mut list = LinkedList(root = null, tail = null)
 
