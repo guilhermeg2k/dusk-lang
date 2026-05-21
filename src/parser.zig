@@ -185,13 +185,30 @@ pub const Parser = struct {
 
     fn parseIfCapture(self: *Self) !ast.IfCaptureStmt {
         self.walk();
+
         const exp = try self.parseExp(0);
         _ = try self.expect(.colon);
+
         const is_mut = self.match(.mut_kw);
         const identififer = try self.expect(.identifier);
+
         _ = try self.expect(.indent);
         const body = try self.parseBlock();
         _ = try self.expect(.dedent);
+
+        const has_else = self.match(.else_kw);
+        var else_block: ?ast.Block = null;
+
+        if (has_else) {
+            const is_else_if = self.peekCurrent().tag == .if_kw;
+            if (is_else_if) {
+                else_block = try self.parseBlock();
+            } else {
+                _ = try self.expect(.indent);
+                else_block = try self.parseBlock();
+                _ = try self.expect(.dedent);
+            }
+        }
 
         return ast.IfCaptureStmt{
             .exp = exp,
@@ -200,6 +217,7 @@ pub const Parser = struct {
                 .is_mut = is_mut,
             },
             .body = body,
+            .else_block = else_block,
         };
     }
 

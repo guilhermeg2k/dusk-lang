@@ -538,24 +538,18 @@ pub const SemaAnalyzer = struct {
 
     fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const if_stmt = stmt.data.if_stmt;
+
         const condition_value = try self.evalExp(if_stmt.condition);
         const condition_value_type = self.resolveValueType(condition_value);
+
         if (!condition_value_type.eql(self.type_bool)) {
             return self.err_dispatcher.invalidType("boolean", try condition_value_type.name(self.allocator), stmt.loc_start);
         }
 
-        const then_block = try self.visitBlock(&if_stmt.then_block);
-
-        var else_block: std.ArrayList(ir.Instruction) = .empty;
-        if (if_stmt.else_block) |else_blc| {
-            const block = try self.visitBlock(&else_blc);
-            try else_block.appendSlice(self.allocator, block.instructions);
-        }
-
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
-            .then_block = then_block.instructions,
-            .else_block = try else_block.toOwnedSlice(self.allocator),
+            .then_block = (try self.visitBlock(&if_stmt.then_block)).instructions,
+            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{},
         } };
     }
 
@@ -627,10 +621,13 @@ pub const SemaAnalyzer = struct {
             },
         );
 
+        const then_block = (try self.visitBlock(&if_capture_stmt.body)).instructions;
+        const else_block = if (if_capture_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{};
+
         const check_null_if_inst = ir.Instruction{ .branch_if = .{
             .condition = check_null_condition,
-            .then_block = (try self.visitBlock(&if_capture_stmt.body)).instructions,
-            .else_block = &.{},
+            .then_block = then_block,
+            .else_block = else_block,
         } };
 
         try instructions.appendSlice(self.allocator, &.{ store_aux_var_inst, store_captured_var_inst, check_null_if_inst });
