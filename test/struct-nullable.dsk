@@ -40,7 +40,6 @@ if user.info?.address: address
     if address.city: name
         echo(concat("city name is ", name))
 
-# NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
 if user.info: mut info
     info.phone = "40028922"
 
@@ -57,9 +56,8 @@ if user.info?.phone: phone
     echo(concat("phone is ", phone))
 
 # NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
-if user.info?.address?.state: mut name
-    name = "SP"
-
+if user.info?.address?.state: mut state_name
+    state_name = "SP"
 
 # should still be DF
 echo(user.info?.address?.state)

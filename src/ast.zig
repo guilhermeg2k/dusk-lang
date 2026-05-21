@@ -39,6 +39,7 @@ pub const IfCaptureStmt = struct {
     exp: *ExpNode,
     identifier: struct { name: []const u8, is_mut: bool },
     body: Block,
+    else_block: ?Block,
 };
 
 pub const ForStmt = struct {

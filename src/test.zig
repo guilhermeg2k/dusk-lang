@@ -154,6 +154,18 @@ test "Test: Compile and Run" {
             .src_file = "test/nullable-capture.dsk",
             .expected_output = "Geromel Dr.",
         },
+        .{
+            .name = "struct nullable chaining",
+            .src_file = "test/struct-nullable.dsk",
+            .expected_output =
+            \\country name is Brasil
+            \\state name is DF
+            \\country code is BR
+            \\phone is 40028922
+            \\phone is 40028922
+            \\DF
+            ,
+        },
     };
 
     for (cases) |case| {
