@@ -1,0 +1,31 @@
+let add = (x: number, y = 2) -> return x + y
+
+echo(add(50))
+echo(add(x = 50))
+echo(add(50,50))
+echo(add(y = 50,x = 50))
+
+let add2 = (x: number = 2, y: number) -> return x + y
+
+echo(add2(10, 10))
+echo(add2(y = 10, x = 10))
+echo(add2(y = 45))
+
+let User = struct
+    username: string
+    auth_method = "DUSK"
+
+echo(stringify(User("Rogerinho")))
+
+echo(stringify(User("Rogerinho", "Y")))
+
+echo(stringify(User(
+    username="Rogerinho",
+)))
+
+echo(stringify(User(
+    username="Rogerinho",
+    auth_method="T"
+)))
+
+

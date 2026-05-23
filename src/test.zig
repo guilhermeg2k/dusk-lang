@@ -166,6 +166,23 @@ test "Test: Compile and Run" {
             \\DF
             ,
         },
+        .{
+            .name = "default_values",
+            .src_file = "test/default_values.dsk",
+            .expected_output =
+            \\52
+            \\52
+            \\100
+            \\100
+            \\20
+            \\20
+            \\47
+            \\{"username":"Rogerinho","auth_method":"DUSK"}
+            \\{"username":"Rogerinho","auth_method":"Y"}
+            \\{"username":"Rogerinho","auth_method":"DUSK"}
+            \\{"username":"Rogerinho","auth_method":"T"}
+            ,
+        },
     };
 
     for (cases) |case| {

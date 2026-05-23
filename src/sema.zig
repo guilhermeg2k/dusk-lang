@@ -84,11 +84,12 @@ pub const SemaAnalyzer = struct {
             switch (let_stmt.value.data) {
                 .fn_def => {
                     const symbol = try self.createIncompleteFuncSymbol(let_stmt.identifier);
-                    try self.scope.symbol_table.put(symbol);
+                    //note: wrong loc_start
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc_start);
                 },
                 .struct_def => {
                     const symbol = try self.createIncompleteStructSymbol(let_stmt.identifier);
-                    try self.scope.symbol_table.put(symbol);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc_start);
                 },
                 else => unreachable,
             }
@@ -259,8 +260,7 @@ pub const SemaAnalyzer = struct {
                 .identifier = arg.identifier.?,
                 .is_mut = is_mut,
                 .type = field_type,
-                //note: false
-                .has_default_value = false,
+                .default_value = exp_value,
             };
             try fields_in_order.append(
                 self.allocator,
@@ -310,6 +310,7 @@ pub const SemaAnalyzer = struct {
 
     fn createStructField(self: *Self, exp: *const ast.ExpNode, field: ast.StructField) !TypedIdentifier {
         var field_type: *Type = undefined;
+        var field_default_value: ?*ir.Value = null;
 
         if (field.type) |_type| {
             field_type = try self.resolveTypeAnnotation(_type);
@@ -318,6 +319,7 @@ pub const SemaAnalyzer = struct {
         if (field.default_value) |initial_value| {
             const value = try self.evalExp(initial_value);
             const value_type = self.resolveValueType(value);
+            field_default_value = value;
 
             if (field.type) |_type| {
                 if (!value_type.eql(field_type)) {
@@ -336,7 +338,7 @@ pub const SemaAnalyzer = struct {
             .identifier = field.identifier,
             .is_mut = field.is_mut,
             .type = field_type,
-            .has_default_value = field.default_value != null,
+            .default_value = field_default_value,
         };
     }
 
@@ -349,6 +351,7 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(self.type_void);
 
         for (fn_def.params) |param| {
+            var param_default_value: ?*ir.Value = null;
             var param_type: *Type = undefined;
 
             if (param.type_annotation) |annotation| {
@@ -361,6 +364,7 @@ pub const SemaAnalyzer = struct {
 
                 if (param.default_value) |default_value| {
                     const value = try self.evalExp(default_value);
+                    param_default_value = value;
                     const value_type = self.resolveValueType(value);
                     if (!value_type.eql(param_type)) {
                         return self.err_dispatcher.invalidType(
@@ -373,6 +377,7 @@ pub const SemaAnalyzer = struct {
             } else {
                 if (param.default_value) |default_value| {
                     const value = try self.evalExp(default_value);
+                    param_default_value = value;
                     param_type = self.resolveValueType(value);
                 } else {
                     return self.err_dispatcher.invalidParameterType(param.identifier, exp.loc_start);
@@ -414,8 +419,7 @@ pub const SemaAnalyzer = struct {
                 .identifier = param.identifier,
                 .type = param_type,
                 .is_mut = param.is_mut,
-                //note: false
-                .has_default_value = param.default_value != null,
+                .default_value = param_default_value,
             });
         }
 
@@ -863,22 +867,6 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(old_return_type);
 
         for (metadata.params) |param| {
-            const param_default_value: ?*ir.Value = null;
-
-            //note: not evaluating deafult values
-            // if (param.default_value) |default_value| {
-            //     param_default_value = try self.evalExp(default_value);
-            //     const default_value_type = self.resolveValueType(param_default_value.?);
-            //
-            //     if (!param.type.eql(default_value_type)) {
-            //         return self.err_dispatcher.invalidType(
-            //             try param.type.name(self.allocator),
-            //             try default_value_type.name(self.allocator),
-            //             default_value.loc_start,
-            //         );
-            //     }
-            // }
-
             const arg_uid = self.scope.genUid();
 
             if (param.is_mut and param.type.kind != .array and param.type.kind != .struct_instance) {
@@ -899,7 +887,7 @@ pub const SemaAnalyzer = struct {
                 .uid = arg_uid,
                 .identifier = param.identifier,
                 .type = param.type,
-                .default_value = param_default_value,
+                .default_value = param.default_value,
             });
         }
 
@@ -1000,7 +988,7 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    //note: needs refactor
+    //note: too big needs refactor
     fn evalFnCall(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const fn_call = exp.data.fn_call;
         var fn_identifier: []const u8 = undefined;
@@ -1133,7 +1121,7 @@ pub const SemaAnalyzer = struct {
 
         var required_params_len: usize = 0;
         for (params) |param| {
-            if (!param.has_default_value) {
+            if (param.default_value == null) {
                 required_params_len += 1;
             }
         }
@@ -1157,43 +1145,45 @@ pub const SemaAnalyzer = struct {
         for (params, 0..) |param, i| {
             if (i == 0 and has_first_argument_being_binded) continue;
 
-            const index = if (has_first_argument_being_binded) i - 1 else i;
-            var arg_exp = fn_call.arguments[@min(index, fn_call.arguments.len - 1)].exp;
+            var arg_exp: ?*ast.ExpNode = null;
 
             if (fn_call.are_arguments_named) {
                 const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
                 if (named_arg_exp) |named_arg| {
                     arg_exp = named_arg;
-                } else {
-                    if (param.has_default_value) {
-                        continue;
+                }
+            } else {
+                const index = if (has_first_argument_being_binded) i - 1 else i;
+                arg_exp = if (fn_call.arguments.len > index) fn_call.arguments[index].exp else null;
+            }
+
+            if (arg_exp) |_exp| {
+                const fn_call_arg_value = try self.evalExp(_exp);
+                const arg_type = self.resolveValueType(fn_call_arg_value);
+
+                if (!param.type.eql(arg_type)) {
+                    return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), _exp.loc_start);
+                }
+
+                if (param.type.kind == .struct_ and param.is_mut) {
+                    const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
+                    if (!symbol.is_mut) {
+                        return self.err_dispatcher.notMutable(symbol.identifier, _exp.loc_start);
                     }
-                    return self.err_dispatcher.missingArgument(param.identifier, exp.loc_start);
                 }
-            }
 
-            const fn_call_arg_value = try self.evalExp(arg_exp);
-            const arg_type = self.resolveValueType(fn_call_arg_value);
-
-            if (!param.type.eql(arg_type)) {
-                return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), exp.loc_start);
-            }
-
-            if (param.type.kind == .struct_ and param.is_mut) {
-                const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
-                if (!symbol.is_mut) {
-                    return self.err_dispatcher.notMutable(symbol.identifier, arg_exp.loc_start);
+                if (param.type.kind == .array and param.is_mut and _exp.data != .array_literal) {
+                    const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
+                    if (!symbol.is_mut) {
+                        return self.err_dispatcher.notMutable(fn_call_arg_value.identifier.identifier, _exp.loc_start);
+                    }
                 }
+                try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
+            } else if (param.default_value) |value| {
+                try fn_call_arguments_values.append(self.allocator, value);
+            } else {
+                return self.err_dispatcher.missingArgument(param.identifier, exp.loc_start);
             }
-
-            if (param.type.kind == .array and param.is_mut and arg_exp.data != .array_literal) {
-                const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
-                if (!symbol.is_mut) {
-                    return self.err_dispatcher.notMutable(fn_call_arg_value.identifier.identifier, arg_exp.loc_start);
-                }
-            }
-
-            try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
         }
 
         if (is_struct_fn_call) {
@@ -1700,13 +1690,14 @@ const FuncMetadata = struct {
     return_type: *Type,
 };
 
+//note: idk about this
 pub const TypedIdentifier = struct {
     const Self = @This();
 
     identifier: []const u8,
     type: *Type,
     is_mut: bool,
-    has_default_value: bool,
+    default_value: ?*ir.Value,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);

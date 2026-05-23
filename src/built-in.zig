@@ -185,7 +185,7 @@ pub const BuiltIn = struct {
             .identifier = "msgs",
             .type = &dynamic,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
     };
 
@@ -194,7 +194,7 @@ pub const BuiltIn = struct {
             .identifier = "array",
             .type = &dynamic_array_type,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
     };
 
@@ -203,13 +203,13 @@ pub const BuiltIn = struct {
             .identifier = "array",
             .type = &dynamic_array_type,
             .is_mut = true,
-            .has_default_value = false,
+            .default_value = null,
         },
         .{
             .identifier = "value",
             .type = &dynamic,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
     };
 
@@ -218,7 +218,7 @@ pub const BuiltIn = struct {
             .identifier = "n",
             .type = &number_type,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
     };
 
@@ -227,13 +227,13 @@ pub const BuiltIn = struct {
             .identifier = "str1",
             .type = &string_type,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
         .{
             .identifier = "str2",
             .type = &string_type,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
     };
 
@@ -242,7 +242,7 @@ pub const BuiltIn = struct {
             .identifier = "obj",
             .type = &dynamic,
             .is_mut = false,
-            .has_default_value = false,
+            .default_value = null,
         },
     };
 
