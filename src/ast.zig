@@ -142,7 +142,7 @@ pub const FnDef = struct {
 
 pub const FnParam = struct {
     identifier: []const u8,
-    type_annotation: *TypeAnnotation,
+    type_annotation: ?*TypeAnnotation,
     default_value: ?*ExpNode,
     is_mut: bool,
 };

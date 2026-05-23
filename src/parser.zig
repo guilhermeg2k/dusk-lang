@@ -399,13 +399,17 @@ pub const Parser = struct {
 
     fn parseFnArg(self: *Self) ParserError!ast.FnParam {
         var default_value: ?*ast.ExpNode = null;
+        var type_annotation: ?*ast.TypeAnnotation = null;
+
         const is_mut = self.match(.mut_kw);
 
         const id_tk = try self.expect(.identifier);
         const id = id_tk.value(self.src);
 
-        _ = try self.expect(.colon);
-        const type_annotation = try self.parseTypeAnnotation();
+        const has_type_annotation = self.match(.colon);
+        if (has_type_annotation) {
+            type_annotation = try self.parseTypeAnnotation();
+        }
 
         if (self.match(.eq)) {
             default_value = try self.parseExp(0);

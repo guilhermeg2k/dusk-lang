@@ -349,12 +349,35 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(self.type_void);
 
         for (fn_def.params) |param| {
-            var param_type = self.resolveTypeAnnotation(param.type_annotation) catch {
-                return self.err_dispatcher.typeNotDefined(
-                    try param.type_annotation.value(self.allocator),
-                    exp.loc_start,
-                );
-            };
+            var param_type: *Type = undefined;
+
+            if (param.type_annotation) |annotation| {
+                param_type = self.resolveTypeAnnotation(annotation) catch {
+                    return self.err_dispatcher.typeNotDefined(
+                        try param.type_annotation.?.value(self.allocator),
+                        exp.loc_start,
+                    );
+                };
+
+                if (param.default_value) |default_value| {
+                    const value = try self.evalExp(default_value);
+                    const value_type = self.resolveValueType(value);
+                    if (!value_type.eql(param_type)) {
+                        return self.err_dispatcher.invalidType(
+                            try param_type.name(self.allocator),
+                            try value_type.name(self.allocator),
+                            param.default_value.?.loc_start,
+                        );
+                    }
+                }
+            } else {
+                if (param.default_value) |default_value| {
+                    const value = try self.evalExp(default_value);
+                    param_type = self.resolveValueType(value);
+                } else {
+                    return self.err_dispatcher.invalidParameterType(param.identifier, exp.loc_start);
+                }
+            }
 
             if (param_type.kind == .struct_self and struct_symbol == null) {
                 return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc_start);
@@ -365,14 +388,14 @@ pub const SemaAnalyzer = struct {
                     .kind = .{
                         .struct_instance = &struct_symbol.?.type.kind.struct_,
                     },
-                    .nullable = param.type_annotation.nullable,
+                    .nullable = param.type_annotation.?.nullable,
                 });
             }
 
             if (param_type.kind == .struct_) {
                 param_type = try Type.init(self.allocator, .{
                     .kind = .{ .struct_instance = &param_type.kind.struct_ },
-                    .nullable = param.type_annotation.nullable,
+                    .nullable = param.type_annotation.?.nullable,
                 });
             }
 
