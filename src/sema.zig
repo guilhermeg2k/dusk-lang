@@ -282,12 +282,12 @@ pub const SemaAnalyzer = struct {
         var funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
         for (struct_def.static_fields) |field| {
-            const struct_field = try self.createStructField(exp, field);
+            const struct_field = try self.createStructField(field);
             try static_fields.put(field.identifier, struct_field);
         }
 
         for (struct_def.fields) |field| {
-            const struct_field = try self.createStructField(exp, field);
+            const struct_field = try self.createStructField(field);
             try fields_in_order.append(
                 self.allocator,
                 struct_field,
@@ -308,7 +308,7 @@ pub const SemaAnalyzer = struct {
         struct_symbol.type.kind.struct_.functions = funcs;
     }
 
-    fn createStructField(self: *Self, exp: *const ast.ExpNode, field: ast.StructField) !TypedIdentifier {
+    fn createStructField(self: *Self, field: ast.StructField) Errors!TypedIdentifier {
         var field_type: *Type = undefined;
         var field_default_value: ?*ir.Value = null;
 
@@ -326,7 +326,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         try _type.value(self.allocator),
                         @tagName(value_type.kind),
-                        exp.loc_start,
+                        field.default_value.?.loc_start,
                     );
                 }
             }
@@ -795,6 +795,25 @@ pub const SemaAnalyzer = struct {
             .condition = condition_value,
             .do_block = block.instructions,
         } };
+    }
+
+    fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.AnonymousStructDef) !AnonymousStruct {
+        var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
+        var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
+
+        for (struct_def.fields) |field| {
+            const struct_field = try self.createStructField(field);
+            try fields_in_order.append(
+                self.allocator,
+                struct_field,
+            );
+            try fields.put(field.identifier, struct_field);
+        }
+
+        return .{
+            .fields = fields,
+            .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+        };
     }
 
     fn visitStructDef(self: *Self, exp: *const ast.ExpNode, identifier: []const u8) Errors!ir.Struct {
@@ -1467,6 +1486,12 @@ pub const SemaAnalyzer = struct {
                     .nullable = type_annotation.nullable,
                 });
             },
+            .anonymous_struct => |struct_metadata| {
+                return Type.init(self.allocator, .{
+                    .kind = .{ .anonymous_struct_instance = try self.visitAnonymousStructDef(&struct_metadata) },
+                    .nullable = type_annotation.nullable,
+                });
+            },
             .array => {
                 const inner_type = try self.resolveTypeAnnotation(type_annotation.type.array);
                 return Type.init(self.allocator, .{
@@ -1676,6 +1701,11 @@ pub const Symbol = struct {
     }
 };
 
+const AnonymousStruct = struct {
+    fields: std.StringHashMap(TypedIdentifier),
+    fields_in_order: []const TypedIdentifier,
+};
+
 const StructMetadata = struct {
     identifier: []const u8,
     fields: std.StringHashMap(TypedIdentifier),
@@ -1727,6 +1757,9 @@ pub const Type = struct {
         function: FuncMetadata,
 
         anonymous_struct: StructMetadata,
+
+        anonymous_struct_instance: AnonymousStruct,
+
         struct_instance: *StructMetadata,
 
         struct_self,
@@ -1756,20 +1789,21 @@ pub const Type = struct {
             .function_def => return other.kind == .function_def or (self.nullable and other.kind == .null),
             .struct_def => return other.kind == .struct_def or (self.nullable and other.kind == .null),
 
+            //todo: same impl of below
             .struct_instance => |struct_instance| {
                 if (self.nullable == true and other.kind == .null) {
                     return true;
                 }
 
-                if (other.kind != .struct_instance) {
+                if (other.kind != .struct_instance and other.kind != .anonymous_struct_instance) {
                     return false;
                 }
 
                 //note: currently is structural typing
                 //should change to more stricter when meta structs be implemented
-                const other_struct = other.kind.struct_instance;
+                const fields = if (other.kind == .anonymous_struct_instance) other.kind.anonymous_struct_instance.fields else other.kind.struct_instance.fields;
                 for (struct_instance.fields_in_order) |field| {
-                    if (other_struct.fields.get(field.identifier) == null) {
+                    if (fields.get(field.identifier) == null) {
                         return false;
                     }
                 }
@@ -1784,6 +1818,27 @@ pub const Type = struct {
 
                 return true;
             },
+
+            .anonymous_struct_instance => |struct_instance| {
+                if (self.nullable == true and other.kind == .null) {
+                    return true;
+                }
+
+                if (other.kind != .struct_instance and other.kind != .anonymous_struct_instance) {
+                    return false;
+                }
+
+                const fields = if (other.kind == .anonymous_struct_instance) other.kind.anonymous_struct_instance.fields else other.kind.struct_instance.fields;
+
+                for (struct_instance.fields_in_order) |field| {
+                    if (fields.get(field.identifier) == null) {
+                        return false;
+                    }
+                }
+
+                return true;
+            },
+
             .struct_ => |struct_| {
                 if (other.kind == .struct_) {
                     return std.mem.eql(u8, other.kind.struct_.identifier, struct_.identifier);
@@ -1835,6 +1890,12 @@ pub const Type = struct {
                 return std.fmt.allocPrint(allocator, "{s}anonymous struct {s}", .{
                     prefix,
                     metadata.identifier,
+                });
+            },
+            //note: this gonna log ugly shit
+            .anonymous_struct_instance => |metadata| {
+                return std.fmt.allocPrint(allocator, "anonymous struct {any}", .{
+                    metadata.fields,
                 });
             },
             .struct_ => |metadata| {

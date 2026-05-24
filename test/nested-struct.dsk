@@ -1,0 +1,27 @@
+let User = struct
+    id: string
+    username: string
+    auth_provider: string
+
+    address: struct
+        country: string
+        state: string
+        city: string
+        street: string
+
+
+let user = User(
+    id="1",
+    username="Rogerinho",
+    auth_provider="G",
+    address=@(
+        country = "Brasil",
+        state = "SP",
+        city = "São Paulo",
+        street = "Av. Paulista"
+    )
+)
+
+echo(stringify(user))
+
+

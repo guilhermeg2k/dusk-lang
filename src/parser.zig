@@ -101,7 +101,7 @@ pub const Parser = struct {
 
         const has_type_annotation = self.match(.colon);
         if (has_type_annotation) {
-            type_annotation = try self.parseTypeAnnotation();
+            type_annotation = try self.parseTypeAnnotation(false);
         }
 
         _ = try self.expect(.eq);
@@ -259,6 +259,26 @@ pub const Parser = struct {
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
+    fn parseStructField(self: *Self, identifier: []const u8, has_type_annotation: bool) !ast.StructField {
+        var type_annotation: ?*ast.TypeAnnotation = null;
+        if (has_type_annotation) {
+            type_annotation = try self.parseTypeAnnotation(true);
+        }
+
+        const has_initial_value = self.match(.eq);
+        var value: ?*ast.ExpNode = null;
+        if (has_initial_value) {
+            value = try self.parseExp(0);
+        }
+
+        return .{
+            .identifier = identifier,
+            .is_mut = true,
+            .type = type_annotation,
+            .default_value = value,
+        };
+    }
+
     fn parseStructDef(self: *Self) ParserError!ast.StructDef {
         _ = try self.expect(.indent);
         var static_fields: std.ArrayList(ast.StructField) = .empty;
@@ -305,24 +325,8 @@ pub const Parser = struct {
                             return self.err_dispatcher.invalidSyntax("instance fields to be before methods", tk);
                         }
                         section = .field;
-
-                        var type_annotation: ?*ast.TypeAnnotation = null;
-                        if (has_type_annotation) {
-                            type_annotation = try self.parseTypeAnnotation();
-                        }
-
-                        const has_initial_value = self.match(.eq);
-                        var value: ?*ast.ExpNode = null;
-                        if (has_initial_value) {
-                            value = try self.parseExp(0);
-                        }
-
-                        try fields.append(self.allocator, .{
-                            .identifier = identifier.value(self.src),
-                            .is_mut = true,
-                            .type = type_annotation,
-                            .default_value = value,
-                        });
+                        const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
+                        try fields.append(self.allocator, strc_field);
                     }
                 },
                 .new_line => {
@@ -342,6 +346,39 @@ pub const Parser = struct {
             .funcs = try funcs.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseAnonymousStructDef(self: *Self) ParserError!ast.AnonymousStructDef {
+        _ = try self.expect(.indent);
+        var fields: std.ArrayList(ast.StructField) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    const identifier = tk;
+                    const has_type_annotation = self.match(.colon);
+
+                    const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
+                    try fields.append(self.allocator, strc_field);
+                },
+                .new_line => {
+                    self.walk();
+                },
+                .dedent, .eof => {
+                    self.walk();
+                    break;
+                },
+                else => {
+                    return self.err_dispatcher.invalidSyntax("identifier", tk);
+                },
+            }
+        }
+
+        return ast.AnonymousStructDef{
+            .fields = try fields.toOwnedSlice(self.allocator),
         };
     }
 
@@ -369,7 +406,7 @@ pub const Parser = struct {
             try statements.append(self.allocator, return_stmt);
             body_block = .{ .statements = statements };
         } else {
-            return_type = try self.parseTypeAnnotation();
+            return_type = try self.parseTypeAnnotation(false);
             _ = try self.expect(.indent);
             body_block = try self.parseBlock();
             _ = try self.expect(.dedent);
@@ -408,7 +445,7 @@ pub const Parser = struct {
 
         const has_type_annotation = self.match(.colon);
         if (has_type_annotation) {
-            type_annotation = try self.parseTypeAnnotation();
+            type_annotation = try self.parseTypeAnnotation(false);
         }
 
         if (self.match(.eq)) {
@@ -608,7 +645,7 @@ pub const Parser = struct {
             .at => {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
-                        .anonymous_struct_inicialization = true,
+                        .anonymous_struct_inicialization = {},
                     },
                     .loc_start = tk.loc.start,
                 });
@@ -780,10 +817,14 @@ pub const Parser = struct {
         };
     }
 
-    fn parseTypeAnnotation(self: *Self) !*ast.TypeAnnotation {
+    fn parseTypeAnnotation(self: *Self, allow_anonymous_struct: bool) !*ast.TypeAnnotation {
         const is_nullable = self.match(.question_mark);
         const tk = self.peekCurrent();
         self.walk();
+
+        if (!allow_anonymous_struct and tk.tag == .struct_kw) {
+            return self.err_dispatcher.invalidSyntax("type string, number, bool, void, ...", tk);
+        }
 
         return switch (tk.tag) {
             .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
@@ -794,20 +835,24 @@ pub const Parser = struct {
                 .type = .{ .struct_ = tk.value(self.src) },
                 .nullable = is_nullable,
             }),
+            .struct_kw => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .anonymous_struct = try self.parseAnonymousStructDef() },
+                .nullable = is_nullable,
+            }),
             .at => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .struct_self = {} },
                 .nullable = is_nullable,
             }),
             .l_bracket => {
                 _ = try self.expect(.r_bracket);
-                const arr_type = try self.parseTypeAnnotation();
+                const arr_type = try self.parseTypeAnnotation(false);
                 return ast.TypeAnnotation.init(self.allocator, .{
                     .type = .{ .array = arr_type },
                     .nullable = is_nullable,
                 });
             },
             else => {
-                return self.err_dispatcher.invalidSyntax("type string, number, bool, fn, void, ...", tk);
+                return self.err_dispatcher.invalidSyntax("type string, number, bool, void, ...", tk);
             },
         };
     }
