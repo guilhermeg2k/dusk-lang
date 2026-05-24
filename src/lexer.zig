@@ -158,6 +158,9 @@ pub const Lexer = struct {
                 '!' => {
                     return self.readComplexSymbol('=', Tag.not_eq, Tag.not);
                 },
+                '|' => {
+                    return self.readComplexSymbol('>', Tag.pipe, Tag.err);
+                },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
                 },
@@ -419,6 +422,7 @@ pub const Tag = enum {
     star,
     slash,
     percent,
+    pipe,
     indent,
     dedent,
     new_line,

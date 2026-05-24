@@ -48,18 +48,27 @@ pub const QjsRuntime = struct {
         var i: i32 = 0;
         while (i < argc) : (i += 1) {
             if (i > 0) {
-                QjsRuntime.stdout_writer.writeAll(" ") catch {};
+                QjsRuntime.stdout_writer.writeAll(" ") catch {
+                    std.log.err("Failed to write all [1]", .{});
+                };
             }
 
             const str_ptr = c.JS_ToCString(ctx, argv[@intCast(i)]);
             const str_len = std.mem.len(str_ptr);
-            QjsRuntime.stdout_writer.writeAll(str_ptr[0..str_len]) catch {};
+            QjsRuntime.stdout_writer.writeAll(str_ptr[0..str_len]) catch {
+                std.log.err("Failed to write all [2]", .{});
+            };
 
             c.JS_FreeCString(ctx, str_ptr);
         }
 
-        stdout_writer.writeAll("\n") catch {};
-        stdout_writer.flush() catch {};
+        stdout_writer.writeAll("\n") catch {
+            std.log.err("Failed to write all [3]", .{});
+        };
+
+        stdout_writer.flush() catch {
+            std.log.err("Failed to write flush", .{});
+        };
 
         return c.JSValue{
             .u = .{ .int32 = 0 },

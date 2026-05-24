@@ -565,6 +565,34 @@ pub const Parser = struct {
             const op_bp = self.getBindingPower(tk.tag);
             if (op_bp <= min_bp) break;
 
+            //desugaring pipe operator
+            if (tk.tag == .pipe) {
+                self.walk();
+
+                const right = try self.parseExp(self.getBindingPower(.l_paren));
+
+                if (right.data != .fn_call) {
+                    //note: is not actually a "type" error is it?
+                    return self.err_dispatcher.invalidType("function call", @tagName(right.data), right.loc_start);
+                }
+
+                const old_args = right.data.fn_call.arguments;
+                var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
+
+                new_args.appendAssumeCapacity(
+                    .{
+                        .identifier = null,
+                        .exp = exp,
+                    },
+                );
+
+                new_args.appendSliceAssumeCapacity(old_args);
+
+                right.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
+                exp = right;
+                continue;
+            }
+
             //if dont break it means it's a binary op
             const op_token = self.peekCurrent();
             const op = try ast.BinaryOp.fromTag(op_token.tag);
@@ -713,6 +741,7 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
 
+            //todo: should be a switch no?
             //fnCall
             if (tk.tag == .l_paren) {
                 self.walk();
@@ -809,6 +838,7 @@ pub const Parser = struct {
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {
         return switch (tag) {
+            .pipe => 5,
             .or_kw => 10,
             .and_kw => 20,
             .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,

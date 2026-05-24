@@ -1,0 +1,9 @@
+let add = (a: number, b: number) -> return a + b
+
+let is_even = (x: number) -> return (x % 2) == 0
+
+let res = (x: number) -> return x |> add(1) |> is_even
+
+echo(res(2))
+
+
