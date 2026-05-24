@@ -146,76 +146,6 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !*Symbol {
-        const symbol = try self.createAnonymousStructSymbol(exp, is_mut);
-        try self.scope.symbol_table.put(symbol);
-        var fields: std.ArrayList(ir.StructField) = .empty;
-
-        var fieldsIt = symbol.type.kind.anonymous_struct.fields.iterator();
-        while (fieldsIt.next()) |field| {
-            try fields.append(
-                self.allocator,
-                .{
-                    .identifier = field.key_ptr.*,
-                    .type = field.value_ptr.*.type,
-                    .default_value = null,
-                },
-            );
-        }
-
-        const struct_def = ir.Struct{
-            .uid = symbol.uid,
-            .identifier = symbol.identifier,
-            .fields = try fields.toOwnedSlice(self.allocator),
-            .static_fields = &.{},
-            .funcs = &.{},
-        };
-
-        try self.structs.append(self.allocator, struct_def);
-        return symbol;
-    }
-
-    fn createAnonymousStructSymbol(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !*Symbol {
-        const uid = self.scope.genUid();
-        const identifier = try allocPrint(self.allocator, "{s}_{d}", .{ "$ANONYMOUS_STRUCT", uid });
-        const anom_struct_symbol = try Symbol.init(
-            self.allocator,
-            .{
-                .identifier = identifier,
-                .uid = uid,
-                //note: mut setting by hand to false
-                .is_mut = false,
-                .type = try Type.init(self.allocator, .{
-                    .kind = .{ .anonymous_struct = .{
-                        .identifier = identifier,
-                        .fields_in_order = &.{},
-                        .fields = .init(self.allocator),
-                        .static_fields = .init(self.allocator),
-                        .functions = .init(self.allocator),
-                    } },
-                    .nullable = false,
-                }),
-            },
-        );
-        try self.fulfillAnonymousStructTypeFromFnCall(anom_struct_symbol, exp, is_mut);
-        return anom_struct_symbol;
-    }
-
-    fn createIncompleteAnonymousStructSymbol(self: *Self, identifier: []const u8) !*Symbol {
-        const symbol = try Symbol.init(
-            self.allocator,
-            .{
-                .identifier = identifier,
-                .uid = self.scope.genUid(),
-                //note: mut setting by hand to false
-                .is_mut = false,
-                .type = undefined,
-            },
-        );
-
-        return symbol;
-    }
-
     fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !*Symbol {
         const symbol = try Symbol.init(
             self.allocator,
@@ -244,7 +174,7 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn fulfillAnonymousStructTypeFromFnCall(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode, is_mut: bool) !void {
+    fn createAnonymousStructFromFnCall(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !AnonymousStruct {
         const fn_call = exp.data.fn_call;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
@@ -269,9 +199,7 @@ pub const SemaAnalyzer = struct {
             try fields.put(arg.identifier.?, field);
         }
 
-        struct_symbol.type.kind.anonymous_struct.fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
-        struct_symbol.type.kind.anonymous_struct.fields = fields;
-        struct_symbol.type.kind.anonymous_struct.functions = .init(self.allocator);
+        return AnonymousStruct{ .fields = fields, .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator) };
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
@@ -496,15 +424,15 @@ pub const SemaAnalyzer = struct {
         var var_type: *Type = undefined;
         const let_stmt = stmt.data.let_stmt;
 
-        const is_anonymous_struct =
-            let_stmt.value.data == .fn_call and
-            let_stmt.value.data.fn_call.target.data == .anonymous_struct_inicialization;
-
-        if (is_anonymous_struct) {
-            const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStruct(let_stmt.value, let_stmt.is_mut) else null;
-            const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.type.struct_;
-            let_stmt.value.data.fn_call.target.data = .{ .identifier = struct_identifier };
-        }
+        // const is_anonymous_struct =
+        //     let_stmt.value.data == .fn_call and
+        //     let_stmt.value.data.fn_call.target.data == .anonymous_struct_inicialization;
+        //
+        // if (is_anonymous_struct) {
+        //     const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStruct(let_stmt.value, let_stmt.is_mut) else null;
+        //     const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.type.struct_;
+        //     let_stmt.value.data.fn_call.target.data = .{ .identifier = struct_identifier };
+        // }
 
         const expression_value = try self.evalExp(let_stmt.value);
         const expression_type = self.resolveValueType(expression_value);
@@ -1044,13 +972,14 @@ pub const SemaAnalyzer = struct {
                             .nullable = false,
                         });
                     },
-                    .anonymous_struct => |anonymous_struct| {
-                        params = anonymous_struct.fields_in_order;
-                        return_type = try Type.init(self.allocator, .{
-                            .kind = .{ .struct_instance = &symbol.type.kind.anonymous_struct },
-                            .nullable = false,
-                        });
-                    },
+                    //todo: remove
+                    // .anonymous_struct => |anonymous_struct| {
+                    //     params = anonymous_struct.fields_in_order;
+                    //     return_type = try Type.init(self.allocator, .{
+                    //         .kind = .{ .anonymous_struct_instance = &symbol.type.kind.anonymous_struct },
+                    //         .nullable = false,
+                    //     });
+                    // },
                     else => {
                         return self.err_dispatcher.invalidType(
                             "function or struct",
@@ -1124,14 +1053,12 @@ pub const SemaAnalyzer = struct {
                 fn_identifier = fn_metadata.symbol.identifier;
             },
             .anonymous_struct_inicialization => {
-                const anom_struct_symbol = try self.createAnonymousStruct(exp, true);
-                params = anom_struct_symbol.type.kind.anonymous_struct.fields_in_order;
+                const anonymous_struct = try self.createAnonymousStructFromFnCall(exp, false);
+                params = anonymous_struct.fields_in_order;
                 return_type = try Type.init(self.allocator, .{
-                    .kind = .{ .struct_instance = &anom_struct_symbol.type.kind.anonymous_struct },
+                    .kind = .{ .anonymous_struct_instance = anonymous_struct },
                     .nullable = false,
                 });
-                uid = anom_struct_symbol.uid;
-                fn_identifier = anom_struct_symbol.identifier;
             },
             else => unreachable,
         }
@@ -1203,6 +1130,24 @@ pub const SemaAnalyzer = struct {
             } else {
                 return self.err_dispatcher.missingArgument(param.identifier, exp.loc_start);
             }
+        }
+
+        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct_inicialization;
+
+        if (is_anonymous_struct_inicialization) {
+            var keys: std.ArrayList([]const u8) = .empty;
+            for (params) |param| {
+                try keys.append(self.allocator, param.identifier);
+            }
+
+            return ir.Value.init(
+                self.allocator,
+                .{ .struct_init = .{
+                    .keys = try keys.toOwnedSlice(self.allocator),
+                    .values = try fn_call_arguments_values.toOwnedSlice(self.allocator),
+                    .type = return_type,
+                } },
+            );
         }
 
         if (is_struct_fn_call) {
@@ -1557,6 +1502,7 @@ pub const SemaAnalyzer = struct {
             .fn_def => self.type_func_def,
             .struct_def => self.type_struct_def,
             .identifier => value.identifier.type,
+            .struct_init => value.struct_init.type,
             .binary_op => value.binary_op.type,
             .unary_op => value.unary_op.type,
             .indexed => |indexed| {
@@ -1759,7 +1705,6 @@ pub const Type = struct {
         anonymous_struct: StructMetadata,
 
         anonymous_struct_instance: AnonymousStruct,
-
         struct_instance: *StructMetadata,
 
         struct_self,

@@ -42,6 +42,7 @@
 ## Version 0.13 - Simon
 
 - Upgrade to latest zig version
+- Review code notes
 - Code Formatter
 
 ## Version 0.14 - Frieren

@@ -573,11 +573,13 @@ pub const Parser = struct {
             const right = try self.parseExp(op_bp);
 
             exp = try ast.ExpNode.init(self.allocator, .{
-                .data = .{ .binary_exp = .{
-                    .left = exp,
-                    .op = op,
-                    .right = right,
-                } },
+                .data = .{
+                    .binary_exp = .{
+                        .left = exp,
+                        .op = op,
+                        .right = right,
+                    },
+                },
                 .loc_start = tk.loc.start,
             });
         }

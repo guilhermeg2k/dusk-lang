@@ -121,9 +121,9 @@ test "Test: Compile and Run" {
             .name = "simple tree",
             .src_file = "test/simple-tree.dsk",
             .expected_output =
-            \\{"left":{"value":0,"right":null,"left":null},"right":{"value":100,"right":null,"left":null},"value":50}
-            \\{"value":0,"right":null,"left":null}
-            \\{"value":888,"right":null,"left":null}
+            \\{"left":{"value":0,"left":null,"right":null},"right":{"value":100,"left":null,"right":null},"value":50}
+            \\{"value":0,"left":null,"right":null}
+            \\{"value":888,"left":null,"right":null}
             ,
         },
         .{

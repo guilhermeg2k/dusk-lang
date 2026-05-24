@@ -55,6 +55,13 @@ pub const UpdateIndexed = struct {
     value: *Value,
 };
 
+pub const StructInit = struct {
+    keys: [][]const u8,
+    values: []*Value,
+    //note: temp
+    type: *Type,
+};
+
 pub const StoreVar = struct {
     uid: usize,
     identifier: []const u8,
@@ -112,6 +119,8 @@ pub const Value = union(enum) {
     struct_def: void,
 
     fn_call: FnCall,
+
+    struct_init: StructInit,
 
     struct_fn_call: StructFnCall,
 
