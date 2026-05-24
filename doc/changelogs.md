@@ -1,5 +1,13 @@
 # Changelogs
 
+## v0.7 - Mizuhara
+
+- Nullable types (`?Type`) and optional chaining (`?.`)
+- Nullable capture (`if value: captured` and `if value: mut captured`)
+- Function parameter default values and inference
+- Struct field default values
+- Nested Struct definition (`field: struct ...`)
+
 ## v0.6 - Takina
 
 - Support for multiline function definitions

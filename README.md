@@ -4,7 +4,8 @@
 
 # Dusk Programming Language
 
-A small/lightweight statically typed scripting language inspired by Lua, Python, Zig & Rust
+A small/lightweight statically typed scripting language
+
 > 🚧 Very early work in progress 🚧
 
 [Language Reference](doc/language-ref.md)

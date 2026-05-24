@@ -2,14 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version: 0.7 - Mizuhara
-
-- Optionals
-  - Optional fn args
-- Function parameter default value
-- Inference for function arguments (When it has default value)
-- Nested Struct definition
-
 ## Version: 0.8 - Seras Victoria
 
 - Fancy for (fon in like)
@@ -19,7 +11,7 @@
 
 - Type Table
 - IR Value with type: \*Type at root
-- Static method dispatch.
+- Static method dispatch
 
 ## Version: 0.10 - Power
 
@@ -39,7 +31,7 @@
 - Review code notes
 - Code Formatter
 
-## Version 0.13 - Simon
+## Version 0.13 - Frieren
 
 - Target wasm & evaluate with wasmtime
 
@@ -49,7 +41,7 @@
 - Ternary operator
 - Nullish coalescing operator (??)
 
-## Version 0.15 - Frieren
+## Version 0.15 - Simon
 
 - Multiline Comments
 - Multiline strings

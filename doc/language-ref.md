@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.6::Takina** of Dusk programming language.
+This document provides a reference for **v0.7::Mizuhara** of Dusk programming language.
 
 ## 1. Comments
 
@@ -47,6 +47,7 @@ y = 20    # OK
 | `bool`   | Boolean value                                     | `true`, `false`     |
 | `void`   | Represents no value (mostly for return types)     | `void`              |
 
+
 ### Arrays
 
 Arrays are dynamic lists of elements of the same type.
@@ -65,12 +66,18 @@ Structs are custom data types that group related data and methods.
 
 #### Definition
 
-Structs are defined using the `struct` keyword.
+Structs are defined using the `struct` keyword. Structs can also contain nested struct definitions and default values for fields. Note that **nested structs can only contain fields**, they cannot contain methods or static fields.
 
 ```rust
 let User = struct
     id: string
     username: string
+    auth_method = "DUSK" # Field with default value
+
+    # Nested struct
+    address: struct
+        city: string
+        country: string
 
     # Method
     to_string: (self: @) -> string
@@ -162,6 +169,28 @@ print_point(Point2D(x = 50, y = 50))
 print_point(@(x=40,y=40))
 ```
 
+### Nullable Types
+
+Dusk supports nullable types by prefixing the type with `?`. This means the value can either be of the specified type or `null`.
+
+```rust
+let mut name: ?string = null
+name = "Dusk"
+```
+
+You can use optional chaining (`?.`) to safely access fields of nullable structs. If any part of the chain is `null`, the result is `null`.
+
+```rust
+let Country = struct
+    name: string
+
+let User = struct
+    country: ?Country
+
+let user = User(country=null)
+echo(user.country?.name) # null
+```
+
 ## 3. Operators
 
 ### Arithmetic
@@ -216,6 +245,23 @@ else if x > 0
 else
     echo("0 or less")
 ```
+
+### Nullable Capture
+
+You can safely unwrap nullable values using the `if value: captured` syntax. The captured value is only available within the `if` block. You can also capture it as a mutable value using `if value: mut captured`.
+
+```rust
+let mut username: ?string = null
+
+if username: name
+    echo(name)
+
+username = "Dusk"
+if username: mut name
+    name = "Dusk 2.0"
+```
+
+> **Note on Mutability:** Capturing a primitive value (like `number`, `string`, `bool`) as `mut` will only mutate the captured local variable, not the original value. Mutating the original value through a capture only works for reference types like structs and arrays.
 
 ### Loops
 
@@ -276,6 +322,18 @@ The compiler can infer function types in most cases.
 ```rust
 let add = (a: number, b: number) -> number
     return a + b
+```
+
+#### Default Values
+
+Function parameters can have default values. When a default value is provided, the type annotation becomes optional and is inferred from the default value.
+
+```rust
+let add = (x: number, y = 2) -> return x + y
+
+echo(add(10))        # 12
+echo(add(10, 5))     # 15
+echo(add(y=10, x=5)) # 15
 ```
 
 #### Multiline Definition
