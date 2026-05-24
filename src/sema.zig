@@ -972,14 +972,6 @@ pub const SemaAnalyzer = struct {
                             .nullable = false,
                         });
                     },
-                    //todo: remove
-                    // .anonymous_struct => |anonymous_struct| {
-                    //     params = anonymous_struct.fields_in_order;
-                    //     return_type = try Type.init(self.allocator, .{
-                    //         .kind = .{ .anonymous_struct_instance = &symbol.type.kind.anonymous_struct },
-                    //         .nullable = false,
-                    //     });
-                    // },
                     else => {
                         return self.err_dispatcher.invalidType(
                             "function or struct",
@@ -1697,12 +1689,12 @@ pub const Type = struct {
         //note: later both of this type should take the metadata
         //i think this types are not needed specially the struct_def one not removing them now
         function_def,
-        struct_def,
-
-        struct_: StructMetadata,
         function: FuncMetadata,
 
-        anonymous_struct: StructMetadata,
+        //struct_def = a struct gonna be defined
+        //struct_ = is the DEFINED  struct
+        struct_def,
+        struct_: StructMetadata,
 
         anonymous_struct_instance: AnonymousStruct,
         struct_instance: *StructMetadata,
@@ -1802,7 +1794,7 @@ pub const Type = struct {
                 return other.nullable or other.kind == .null;
             },
 
-            .struct_self, .anonymous_struct => unreachable,
+            .struct_self => unreachable,
         }
     }
 
@@ -1827,12 +1819,6 @@ pub const Type = struct {
             },
             .struct_instance => |metadata| {
                 return std.fmt.allocPrint(allocator, "{s}instance of struct {s}", .{
-                    prefix,
-                    metadata.identifier,
-                });
-            },
-            .anonymous_struct => |metadata| {
-                return std.fmt.allocPrint(allocator, "{s}anonymous struct {s}", .{
                     prefix,
                     metadata.identifier,
                 });
