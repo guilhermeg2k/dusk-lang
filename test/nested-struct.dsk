@@ -9,6 +9,13 @@ let User = struct
         city: string
         street: string
 
+    default_address = @(
+        country = "Brasil",
+        state = "SP",
+        city = "São Paulo",
+        street = "Av. Paulista"
+    )
+
 
 let user = User(
     id="1",
@@ -16,9 +23,9 @@ let user = User(
     auth_provider="G",
     address = @(
         country = "Brasil",
-        state = "SP",
-        city = "São Paulo",
-        street = "Av. Paulista"
+        state = "DF",
+        city = "Brasília",
+        street = "Eixão Sul"
     )
 )
 

@@ -18,7 +18,7 @@
 ## Version 0.9 - Shinobu
 
 - Type Table
-- IR Value with type: *Type at root
+- IR Value with type: \*Type at root
 - Static method dispatch.
 
 ## Version: 0.10 - Power
@@ -32,7 +32,6 @@
 
 - Error Handling
 - Defer
-
 
 ## Version 0.12 - Kanade
 
@@ -78,7 +77,6 @@
 ## Version 0.20 - Youku
 
 - Coroutines
-
 
 ## Backlog
 

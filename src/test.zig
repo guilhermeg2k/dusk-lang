@@ -168,7 +168,7 @@ test "Test: Compile and Run" {
         },
         .{
             .name = "default_values",
-            .src_file = "test/default_values.dsk",
+            .src_file = "test/default-values.dsk",
             .expected_output =
             \\52
             \\52
@@ -181,6 +181,13 @@ test "Test: Compile and Run" {
             \\{"username":"Rogerinho","auth_method":"Y"}
             \\{"username":"Rogerinho","auth_method":"DUSK"}
             \\{"username":"Rogerinho","auth_method":"T"}
+            ,
+        },
+        .{
+            .name = "nested structs",
+            .src_file = "test/nested-struct.dsk",
+            .expected_output =
+            \\{"id":"1","username":"Rogerinho","auth_provider":"G","address":{"country":"Brasil","state":"DF","city":"Brasília","street":"Eixão Sul"},"default_address":{"country":"Brasil","state":"SP","city":"São Paulo","street":"Av. Paulista"}}
             ,
         },
     };
