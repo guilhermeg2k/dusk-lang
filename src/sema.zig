@@ -1361,7 +1361,7 @@ pub const SemaAnalyzer = struct {
             },
 
             //note: this makes support string comparison by operators
-            .eq, .not_eq, .lt, .lt_or_eq, .gt, .gt_or_eq => {
+            .lt, .lt_or_eq, .gt, .gt_or_eq => {
                 if (left_type.eql(self.type_bool)) {
                     return self.err_dispatcher.invalidType(
                         "string, number",
@@ -1380,6 +1380,9 @@ pub const SemaAnalyzer = struct {
                         exp.loc_start,
                     );
                 }
+                op_type = self.type_bool;
+            },
+            .eq, .not_eq => {
                 op_type = self.type_bool;
             },
         }

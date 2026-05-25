@@ -190,6 +190,7 @@ test "Test: Compile and Run" {
             \\{"id":"1","username":"Rogerinho","auth_provider":"G","address":{"country":"Brasil","state":"DF","city":"Brasília","street":"Eixão Sul"},"default_address":{"country":"Brasil","state":"SP","city":"São Paulo","street":"Av. Paulista"}}
             ,
         },
+        .{ .name = "simple pipe", .src_file = "test/simple-pipe.dsk", .expected_output = "" },
     };
 
     for (cases) |case| {

@@ -3,7 +3,7 @@ pub const BuiltIn = struct {
 
     alloc: std.mem.Allocator,
 
-    pub fn generate(self: *const Self) ![6]BuiltInFn {
+    pub fn generate(self: *const Self) ![7]BuiltInFn {
         return [_]BuiltInFn{
             try self.echo(),
             try self.append(),
@@ -11,6 +11,7 @@ pub const BuiltIn = struct {
             try self.floor(),
             try self.concat(),
             try self.stringify(),
+            try self.assert(),
         };
     }
 
@@ -180,6 +181,34 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .code = code };
     }
 
+    fn assert(self: *const Self) !BuiltInFn {
+        const symbol = try Symbol.init(self.alloc, .{
+            .uid = 6,
+            .identifier = "assert",
+            .type = undefined,
+            .is_mut = false,
+        });
+
+        symbol.type = try Type.init(self.alloc, .{
+            .kind = .{
+                .function = .{
+                    .symbol = symbol,
+                    .params = assert_params,
+                    .return_type = &void_type,
+                },
+            },
+            .nullable = false,
+        });
+
+        const code = try std.fmt.allocPrint(
+            self.alloc,
+            "function {s}_{d}(cond) {{if(cond==false) throw 'ASSERTION_FAILED'}}\n",
+            .{ symbol.identifier, symbol.uid },
+        );
+
+        return BuiltInFn{ .symbol = symbol, .code = code };
+    }
+
     const echo_params: []const sema.TypedIdentifier = &.{
         .{
             .identifier = "msgs",
@@ -246,10 +275,20 @@ pub const BuiltIn = struct {
         },
     };
 
+    const assert_params: []const sema.TypedIdentifier = &.{
+        .{
+            .identifier = "cond",
+            .type = &boolean_type,
+            .is_mut = false,
+            .default_value = null,
+        },
+    };
+
     var fn_type = Type{ .kind = .{ .function_def = {} } };
     var void_type = Type{ .kind = .{ .void = {} }, .nullable = false };
     var number_type = Type{ .kind = .{ .number = {} }, .nullable = false };
     var string_type = Type{ .kind = .{ .string = {} }, .nullable = false };
+    var boolean_type = Type{ .kind = .{ .boolean = {} }, .nullable = false };
     var dynamic = Type{ .kind = .{ .dynamic = {} }, .nullable = false };
     var dynamic_array_type = Type{ .kind = .{ .array = &dynamic }, .nullable = false };
 };
