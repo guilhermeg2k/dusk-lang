@@ -556,41 +556,56 @@ pub const Parser = struct {
         return ast.ReturnStmt{ .exp = try self.parseExp(0) };
     }
 
+    fn parsePipeOperator(self: *Self, exp: *ast.ExpNode) !*ast.ExpNode {
+        self.walk();
+        const right = try self.parseExp(self.getBindingPower(.l_paren));
+
+        if (right.data != .fn_call) {
+            //note: is not actually a "type" error is it?
+            return self.err_dispatcher.invalidType("function call", @tagName(right.data), right.loc_start);
+        }
+
+        const old_args = right.data.fn_call.arguments;
+        var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
+
+        new_args.appendAssumeCapacity(
+            .{
+                .identifier = null,
+                .exp = exp,
+            },
+        );
+
+        new_args.appendSliceAssumeCapacity(old_args);
+
+        right.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
+        return right;
+    }
+
     fn parseExp(self: *Self, min_bp: u8) ParserError!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
 
         while (true) {
-            const tk = self.peekCurrent();
-            const op_bp = self.getBindingPower(tk.tag);
-            if (op_bp <= min_bp) break;
-
-            //desugaring pipe operator
-            if (tk.tag == .pipe) {
+            var tk = self.peekCurrent();
+            //to allow pipe throw multi-lines
+            if (tk.tag == .indent or tk.tag == .new_line) {
                 self.walk();
+            }
 
-                const right = try self.parseExp(self.getBindingPower(.l_paren));
-
-                if (right.data != .fn_call) {
-                    //note: is not actually a "type" error is it?
-                    return self.err_dispatcher.invalidType("function call", @tagName(right.data), right.loc_start);
-                }
-
-                const old_args = right.data.fn_call.arguments;
-                var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
-
-                new_args.appendAssumeCapacity(
-                    .{
-                        .identifier = null,
-                        .exp = exp,
-                    },
-                );
-
-                new_args.appendSliceAssumeCapacity(old_args);
-
-                right.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
-                exp = right;
+            tk = self.peekCurrent();
+            if (tk.tag == .pipe) {
+                exp = try self.parsePipeOperator(exp);
                 continue;
+            } else {
+                const previous_tk = self.peekBack();
+                if (previous_tk.tag == .indent or previous_tk.tag == .new_line) {
+                    self.walkBack();
+                }
+            }
+
+            const op_bp = self.getBindingPower(tk.tag);
+            if (op_bp <= min_bp) {
+                break;
             }
 
             //if dont break it means it's a binary op
@@ -935,6 +950,14 @@ pub const Parser = struct {
         }
 
         return self.tokens[self.cur_index + n];
+    }
+
+    fn peekBack(self: *Self) Token {
+        if (self.cur_index - 1 >= self.tokens.len or self.cur_index - 1 == 0) {
+            return Token.init(Tag.eof, 0, 0);
+        }
+
+        return self.tokens[self.cur_index - 1];
     }
 };
 

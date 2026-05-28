@@ -4,4 +4,11 @@ let is_even = (x: number) -> return (x % 2) == 0
 
 let res = 2 |> add(1) |> is_even()
 
+let sub = (a: number, b: number) -> return a - b
+
+let res2 = 2
+    |> add(2)
+    |> is_even()
+
 assert(res == false)
+assert(res2 == true)
