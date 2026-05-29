@@ -82,7 +82,7 @@ pub const BuiltIn = struct {
                 .function = .{
                     .symbol = symbol,
                     .params = len_params,
-                    .return_type = &float_type,
+                    .return_type = &int_type,
                 },
             },
             .nullable = false,

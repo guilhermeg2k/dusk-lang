@@ -1,6 +1,6 @@
 let Point2D = struct
-    x: number
-    y: number
+    x: int
+    y: int
 
 let print_point = (point: Point2D) -> void
     echo(stringify(point))

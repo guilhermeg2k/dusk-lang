@@ -1,4 +1,4 @@
-let add = (a: number, b: number) -> return a + b
+let add = (a: int, b: int) -> return a + b
 
 echo(add(10,10))
 
