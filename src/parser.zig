@@ -53,7 +53,13 @@ pub const Parser = struct {
 
         switch (tk.tag) {
             .let_kw => {
-                return ast.StatementNode{ .data = .{ .let_stmt = try self.parseLetStmt() }, .loc_start = tk.loc.start };
+                const letStmt = ast.StatementNode{
+                    .data = .{ .let_stmt = try self.parseLetStmt() },
+                    .loc_start = tk.loc.start,
+                };
+
+                if (self.peekCurrent().tag == .dedent) self.walk();
+                return letStmt;
             },
             .if_kw => {
                 if (self.isIfCapture()) {
@@ -587,34 +593,34 @@ pub const Parser = struct {
 
         while (true) {
             var tk = self.peekCurrent();
-            //to allow pipe throw multi-lines
             if (tk.tag == .indent or tk.tag == .new_line) {
                 self.walk();
+            }
+
+            tk = self.peekCurrent();
+            const op_bp = self.getBindingPower(tk.tag);
+            if (op_bp <= min_bp) {
+                const previous_tk = self.peekBack();
+                if (previous_tk.tag == .indent or previous_tk.tag == .new_line) {
+                    self.walkBack();
+                }
+                break;
             }
 
             tk = self.peekCurrent();
             if (tk.tag == .pipe) {
                 exp = try self.parsePipeOperator(exp);
                 continue;
-            } else {
-                const previous_tk = self.peekBack();
-                if (previous_tk.tag == .indent or previous_tk.tag == .new_line) {
-                    self.walkBack();
-                }
             }
 
-            const op_bp = self.getBindingPower(tk.tag);
-            if (op_bp <= min_bp) {
-                break;
-            }
-
-            //if dont break it means it's a binary op
+            //if dont break or continue it means it's a binary op
             const op_token = self.peekCurrent();
             const op = try ast.BinaryOp.fromTag(op_token.tag);
 
             self.walk();
             const right = try self.parseExp(op_bp);
 
+            tk = self.peekCurrent();
             exp = try ast.ExpNode.init(self.allocator, .{
                 .data = .{
                     .binary_exp = .{

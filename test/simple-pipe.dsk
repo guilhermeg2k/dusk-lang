@@ -10,5 +10,12 @@ let res2 = 2
     |> add(2)
     |> is_even()
 
+let res3 = 2
+    |> add(2)
+    + 3
+    |> sub(1)
+
 assert(res == false)
 assert(res2 == true)
+assert(res3 == 6)
+echo("dusk!")
