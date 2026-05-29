@@ -110,7 +110,7 @@ pub const BuiltIn = struct {
                 .function = .{
                     .symbol = symbol,
                     .params = floor_params,
-                    .return_type = &float_type,
+                    .return_type = &int_type,
                 },
             },
             .nullable = false,
@@ -245,7 +245,7 @@ pub const BuiltIn = struct {
     const floor_params: []const sema.TypedIdentifier = &.{
         .{
             .identifier = "n",
-            .type = &float_type,
+            .type = &int_type,
             .is_mut = false,
             .default_value = null,
         },

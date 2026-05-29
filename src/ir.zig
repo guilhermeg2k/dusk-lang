@@ -167,27 +167,45 @@ pub const StructFnCall = struct {
 };
 
 pub const UnaryOpKind = enum {
-    neg,
+    i_neg,
+    f_neg,
     not,
 };
 
 pub const BinaryOpKind = enum {
-    add,
-    sub,
-    mult,
-    div,
-    mod,
+    i_add,
+    i_sub,
+    i_mult,
+    i_div,
+    i_mod,
 
-    cmp_eq,
-    cmp_neq,
+    i_cmp_eq,
+    i_cmp_neq,
 
-    cmp_lt,
-    cmp_le,
-    cmp_ge,
-    cmp_gt,
+    i_cmp_lt,
+    i_cmp_le,
+    i_cmp_ge,
+    i_cmp_gt,
+
+    f_add,
+    f_sub,
+    f_mult,
+    f_div,
+    f_mod,
+
+    f_cmp_eq,
+    f_cmp_neq,
+
+    f_cmp_lt,
+    f_cmp_le,
+    f_cmp_ge,
+    f_cmp_gt,
 
     b_and,
     b_or,
+    //note: gota go soon
+    b_cmp_eq,
+    b_cmp_neq,
 };
 
 const std = @import("std");

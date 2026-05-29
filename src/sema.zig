@@ -49,7 +49,7 @@ pub const SemaAnalyzer = struct {
             .type_dynamic = try Type.init(allocator, .{ .kind = .dynamic, .nullable = false }),
             .type_null = try Type.init(allocator, .{ .kind = .null, .nullable = false }),
 
-            .type_int_nullable = try Type.init(allocator, .{ .kind = .float, .nullable = true }),
+            .type_int_nullable = try Type.init(allocator, .{ .kind = .int, .nullable = true }),
             .type_float_nullable = try Type.init(allocator, .{ .kind = .float, .nullable = true }),
             .type_str_nullable = try Type.init(allocator, .{ .kind = .string, .nullable = true }),
             .type_bool_nullable = try Type.init(allocator, .{ .kind = .boolean, .nullable = true }),
@@ -570,7 +570,7 @@ pub const SemaAnalyzer = struct {
             self.allocator,
             .{
                 .binary_op = .{
-                    .kind = .cmp_neq,
+                    .kind = .b_cmp_neq,
                     .type = self.type_bool,
                     .left = aux_var_value,
                     .right = try ir.Value.init(self.allocator, .{
@@ -1208,8 +1208,8 @@ pub const SemaAnalyzer = struct {
                 const index = try self.evalExp(indexed_exp_index);
                 const index_type = self.resolveValueType(index);
 
-                if (!index_type.eql(self.type_float)) {
-                    return self.err_dispatcher.invalidIndexing("number", try index_type.name(self.allocator), exp.loc_start);
+                if (!index_type.eql(self.type_int)) {
+                    return self.err_dispatcher.invalidIndexing("int", try index_type.name(self.allocator), exp.loc_start);
                 }
 
                 return self.createIndexedIrValue(target, index, is_nullable);
@@ -1316,9 +1316,9 @@ pub const SemaAnalyzer = struct {
 
         switch (unary_exp.op) {
             .neg => {
-                if (!exp_type.eql(self.type_float)) {
+                if (!exp_type.eql(self.type_float) and !exp_type.eql(self.type_int)) {
                     return self.err_dispatcher.invalidType(
-                        "number",
+                        "int or float",
                         try exp_type.name(self.allocator),
                         exp.loc_start,
                     );
@@ -1335,7 +1335,11 @@ pub const SemaAnalyzer = struct {
             },
         }
 
-        return ir.Value.init(self.allocator, .{ .unary_op = .{ .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op), .type = exp_type, .right = exp_value } });
+        return ir.Value.init(self.allocator, .{ .unary_op = .{
+            .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op, exp_type),
+            .type = exp_type,
+            .right = exp_value,
+        } });
     }
 
     fn evalBinaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -1357,14 +1361,14 @@ pub const SemaAnalyzer = struct {
 
         switch (bin_exp.op) {
             .add, .sub, .mult, .div, .mod => {
-                if (!left_type.eql(self.type_float)) {
+                if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
                     return self.err_dispatcher.invalidType(
-                        "number",
+                        "int or float",
                         try left_type.name(self.allocator),
                         exp.loc_start,
                     );
                 }
-                op_type = self.type_float;
+                op_type = left_type;
             },
 
             //note: this makes support string comparison by operators
@@ -1395,7 +1399,7 @@ pub const SemaAnalyzer = struct {
         }
 
         return ir.Value.init(self.allocator, .{ .binary_op = .{
-            .kind = self.astBinOpToIrBinOpKind(bin_exp.op),
+            .kind = self.astBinOpToIrBinOpKind(bin_exp.op, op_type),
             .type = op_type,
             .left = left_value,
             .right = right_value,
@@ -1523,27 +1527,27 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn astBinOpToIrBinOpKind(_: *Self, bin_op: ast.BinaryOp) ir.BinaryOpKind {
+    fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, op_type: *Type) ir.BinaryOpKind {
         return switch (bin_op) {
-            .add => .add,
-            .sub => .sub,
-            .mult => .mult,
-            .div => .div,
-            .mod => .mod,
-            .eq => .cmp_eq,
-            .not_eq => .cmp_neq,
-            .lt => .cmp_lt,
-            .lt_or_eq => .cmp_le,
-            .gt => .cmp_gt,
-            .gt_or_eq => .cmp_ge,
+            .add => if (op_type == self.type_float) .i_add else .f_add,
+            .sub => if (op_type == self.type_float) .i_sub else .f_sub,
+            .mult => if (op_type == self.type_float) .i_mult else .f_mult,
+            .div => if (op_type == self.type_float) .i_div else .f_div,
+            .mod => if (op_type == self.type_float) .i_mod else .f_mod,
+            .eq => if (op_type == self.type_float) .i_cmp_eq else .f_cmp_eq,
+            .not_eq => if (op_type == self.type_float) .i_cmp_neq else .f_cmp_neq,
+            .lt => if (op_type == self.type_float) .i_cmp_lt else .f_cmp_lt,
+            .lt_or_eq => if (op_type == self.type_float) .i_cmp_le else .f_cmp_le,
+            .gt => if (op_type == self.type_float) .i_cmp_gt else .f_cmp_gt,
+            .gt_or_eq => if (op_type == self.type_float) .i_cmp_ge else .f_cmp_ge,
             .bool_or => .b_or,
             .bool_and => .b_and,
         };
     }
 
-    fn astUnaryOpToIrUnaryOpKind(_: *Self, bin_op: ast.UnaryOp) ir.UnaryOpKind {
+    fn astUnaryOpToIrUnaryOpKind(self: *Self, bin_op: ast.UnaryOp, exp_type: *Type) ir.UnaryOpKind {
         return switch (bin_op) {
-            .neg => .neg,
+            .neg => if (exp_type.eql(self.type_float)) .f_neg else .i_neg,
             .not => .not,
         };
     }
