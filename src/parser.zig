@@ -653,13 +653,25 @@ pub const Parser = struct {
 
         return switch (tk.tag) {
             .identifier => {
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = tk.value(self.src) }, .loc_start = tk.loc.start });
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = tk.value(self.src) },
+                    .loc_start = tk.loc.start,
+                });
+            },
+            .int_literal => {
+                const value = std.fmt.parseInt(i64, tk.value(self.src), 10) catch {
+                    return self.err_dispatcher.invalidSyntax("int literal", tk);
+                };
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .int_literal = value },
+                    .loc_start = tk.loc.start,
+                });
             },
             .float_literal => {
                 const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
-                    return self.err_dispatcher.invalidSyntax("number literal", tk);
+                    return self.err_dispatcher.invalidSyntax("float literal", tk);
                 };
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .number_literal = value }, .loc_start = tk.loc.start });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .float_literal = value }, .loc_start = tk.loc.start });
             },
             .string_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = tk.value(self.src) }, .loc_start = tk.loc.start });

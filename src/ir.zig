@@ -98,6 +98,7 @@ pub const Value = union(enum) {
     const Self = @This();
 
     i_float: f64,
+    i_int: i64,
     i_bool: bool,
     i_string: []const u8,
     i_void: void,

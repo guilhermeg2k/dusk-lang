@@ -195,6 +195,11 @@ test "Test: Compile and Run" {
             .src_file = "test/simple-pipe.dsk",
             .expected_output = "dusk!",
         },
+        .{
+            .name = "float ints",
+            .src_file = "test/float-ints.dsk",
+            .expected_output = "dusk!",
+        },
     };
 
     for (cases) |case| {

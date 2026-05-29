@@ -1,1 +1,13 @@
-let n =  1.12.223.22.22
+let f =  1.12
+let i =  1
+
+let f1: float =  1.12
+let i2: int = 1
+
+assert(f == 1.12)
+assert(i == 1)
+
+assert(f == f1)
+assert(i == i2)
+
+echo("dusk!")

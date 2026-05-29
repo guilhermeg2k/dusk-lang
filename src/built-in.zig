@@ -82,7 +82,7 @@ pub const BuiltIn = struct {
                 .function = .{
                     .symbol = symbol,
                     .params = len_params,
-                    .return_type = &number_type,
+                    .return_type = &float_type,
                 },
             },
             .nullable = false,
@@ -110,7 +110,7 @@ pub const BuiltIn = struct {
                 .function = .{
                     .symbol = symbol,
                     .params = floor_params,
-                    .return_type = &number_type,
+                    .return_type = &float_type,
                 },
             },
             .nullable = false,
@@ -245,7 +245,7 @@ pub const BuiltIn = struct {
     const floor_params: []const sema.TypedIdentifier = &.{
         .{
             .identifier = "n",
-            .type = &number_type,
+            .type = &float_type,
             .is_mut = false,
             .default_value = null,
         },
@@ -286,7 +286,8 @@ pub const BuiltIn = struct {
 
     var fn_type = Type{ .kind = .{ .function_def = {} } };
     var void_type = Type{ .kind = .{ .void = {} }, .nullable = false };
-    var number_type = Type{ .kind = .{ .number = {} }, .nullable = false };
+    var float_type = Type{ .kind = .{ .float = {} }, .nullable = false };
+    var int_type = Type{ .kind = .{ .int = {} }, .nullable = false };
     var string_type = Type{ .kind = .{ .string = {} }, .nullable = false };
     var boolean_type = Type{ .kind = .{ .boolean = {} }, .nullable = false };
     var dynamic = Type{ .kind = .{ .dynamic = {} }, .nullable = false };

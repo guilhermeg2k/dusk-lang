@@ -105,7 +105,8 @@ pub const ExpNode = struct {
 pub const Exp = union(enum) {
     const Self = @This();
 
-    number_literal: f64,
+    float_literal: f64,
+    int_literal: i64,
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
