@@ -1,0 +1,9 @@
+let x = 2/1
+let y = 5/2
+let z = 5//2
+
+assert(x == 2.0)
+assert(y == 2.5)
+assert(z == 2)
+echo("dusk!")
+

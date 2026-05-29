@@ -887,7 +887,7 @@ pub const Parser = struct {
             .and_kw => 20,
             .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,
             .plus, .minus => 40,
-            .star, .slash, .percent => 50,
+            .star, .slash, .double_slash, .percent => 50,
             .l_paren => 60,
             else => 0,
         };

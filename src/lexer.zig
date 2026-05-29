@@ -142,7 +142,7 @@ pub const Lexer = struct {
                     return Token.init(Tag.star, self.cur_index, self.cur_index);
                 },
                 '/' => {
-                    return Token.init(Tag.slash, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol('/', Tag.double_slash, Tag.slash);
                 },
                 '%' => {
                     return Token.init(Tag.percent, self.cur_index, self.cur_index);
@@ -429,6 +429,7 @@ pub const Tag = enum {
     minus,
     star,
     slash,
+    double_slash,
     percent,
     pipe,
     indent,

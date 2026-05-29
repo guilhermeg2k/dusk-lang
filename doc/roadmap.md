@@ -6,7 +6,7 @@
 
 - Pipe operator
 - Int/Float type
-- Floor division
+- Trunc division
 
 ## Version 0.9 - Shinobu
 

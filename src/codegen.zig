@@ -378,6 +378,10 @@ pub const Generator = struct {
         const right = try self.genValue(binaryOp.right);
         const op = self.genBinaryOpSymbol(binaryOp.kind);
 
+        if (binaryOp.kind == .i_div) {
+            return std.fmt.allocPrint(self.allocator, "(Math.trunc({s} / {s}))", .{ left, right });
+        }
+
         return std.fmt.allocPrint(self.allocator, "({s} {s} {s})", .{ left, op, right });
     }
 

@@ -223,6 +223,7 @@ pub const BinaryOp = enum {
     sub,
     mult,
     div,
+    trunc_div,
     mod,
 
     eq,
@@ -241,6 +242,7 @@ pub const BinaryOp = enum {
             .minus => .sub,
             .star => .mult,
             .slash => .div,
+            .double_slash => .trunc_div,
             .percent => .mod,
             .double_eq => .eq,
             .not_eq => .not_eq,

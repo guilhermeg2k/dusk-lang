@@ -1360,7 +1360,7 @@ pub const SemaAnalyzer = struct {
         }
 
         switch (bin_exp.op) {
-            .add, .sub, .mult, .div, .mod => {
+            .add, .sub, .mult => {
                 if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
                     return self.err_dispatcher.invalidType(
                         "int or float",
@@ -1370,7 +1370,35 @@ pub const SemaAnalyzer = struct {
                 }
                 op_type = left_type;
             },
-
+            .mod => {
+                if (!left_type.eql(self.type_int)) {
+                    return self.err_dispatcher.invalidType(
+                        "int",
+                        try left_type.name(self.allocator),
+                        exp.loc_start,
+                    );
+                }
+            },
+            .div => {
+                if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
+                    return self.err_dispatcher.invalidType(
+                        "int or float",
+                        try left_type.name(self.allocator),
+                        exp.loc_start,
+                    );
+                }
+                op_type = self.type_float;
+            },
+            .trunc_div => {
+                if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
+                    return self.err_dispatcher.invalidType(
+                        "int or float",
+                        try left_type.name(self.allocator),
+                        exp.loc_start,
+                    );
+                }
+                op_type = self.type_int;
+            },
             //note: this makes support string comparison by operators
             .lt, .lt_or_eq, .gt, .gt_or_eq => {
                 if (left_type.eql(self.type_bool)) {
@@ -1532,7 +1560,8 @@ pub const SemaAnalyzer = struct {
             .add => if (op_type == self.type_float) .i_add else .f_add,
             .sub => if (op_type == self.type_float) .i_sub else .f_sub,
             .mult => if (op_type == self.type_float) .i_mult else .f_mult,
-            .div => if (op_type == self.type_float) .i_div else .f_div,
+            .div => .f_div,
+            .trunc_div => .i_div,
             .mod => if (op_type == self.type_float) .i_mod else .f_mod,
             .eq => if (op_type == self.type_float) .i_cmp_eq else .f_cmp_eq,
             .not_eq => if (op_type == self.type_float) .i_cmp_neq else .f_cmp_neq,
