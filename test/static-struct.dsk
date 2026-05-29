@@ -1,6 +1,6 @@
 let Api = struct
     #Static fields
-    let ip: string = "127.0.0.1"
+    let ip = "127.0.0.1"
     let mut port: string = "8080"
 
     #Fields

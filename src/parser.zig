@@ -296,6 +296,7 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
+                //note: this is allowing define fn with let and it should not
                 .let_kw => {
                     if (section != .static) {
                         return self.err_dispatcher.invalidSyntax("static fields to be at the beginning of the struct", tk);
@@ -313,8 +314,18 @@ pub const Parser = struct {
                     const identifier = tk;
                     const has_type_annotation = self.match(.colon);
                     const is_fn = self.match(.l_paren);
+                    const has_default_value = self.match(.eq);
+                    if (has_default_value) {
+                        if (self.match(.l_paren)) {
+                            return self.err_dispatcher.invalidSyntax("'colon'", self.peekBack());
+                        }
+                        self.walkBack();
+                    }
 
                     if (is_fn) {
+                        if (has_type_annotation == false) {
+                            return self.err_dispatcher.invalidSyntax("'colon'", self.peekBack());
+                        }
                         section = .func;
                         const fn_def = try self.parseFnDef();
                         try funcs.append(self.allocator, .{

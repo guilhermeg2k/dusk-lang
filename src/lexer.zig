@@ -6,6 +6,8 @@ pub const Lexer = struct {
         .{ "let", Tag.let_kw },
         .{ "mut", Tag.mut_kw },
         .{ "number", Tag.number_kw },
+        .{ "int", Tag.number_kw },
+        .{ "float", Tag.number_kw },
         .{ "string", Tag.string_kw },
         .{ "bool", Tag.bool_kw },
         .{ "void", Tag.void_kw },
