@@ -655,7 +655,7 @@ pub const Parser = struct {
             .identifier => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = tk.value(self.src) }, .loc_start = tk.loc.start });
             },
-            .number_literal => {
+            .float_literal => {
                 const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
                     return self.err_dispatcher.invalidSyntax("number literal", tk);
                 };
@@ -891,7 +891,7 @@ pub const Parser = struct {
         }
 
         return switch (tk.tag) {
-            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+            .string_kw, .int_kw, .float_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .nullable = is_nullable,
             }),
