@@ -1,15 +1,13 @@
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.arena.allocator();
 
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len < 2) {
+        std.log.err("Invalid number of arguments\n", .{});
+        return;
+    }
 
-    var args = std.process.args();
-    _ = args.next();
-    const file_name = args.next();
-
+    const file_name = args[1];
     var buffer: [65536]u8 = undefined;
     const stdout_writer: std.io.Writer = std.fs.File.stdout().writer(&buffer).interface;
 

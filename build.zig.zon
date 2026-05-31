@@ -2,7 +2,7 @@
     .name = .dusk,
     .version = "0.1.0",
     .fingerprint = 0x194887165dc2592d,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .quickjs = .{
             .url = "https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz",
