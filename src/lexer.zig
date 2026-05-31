@@ -439,7 +439,7 @@ pub const Tag = enum {
     err,
 };
 
-const Loc = struct {
+pub const Loc = struct {
     start: usize,
     end: usize,
 };

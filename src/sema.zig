@@ -89,11 +89,11 @@ pub const SemaAnalyzer = struct {
                 .fn_def => {
                     const symbol = try self.createIncompleteFuncSymbol(let_stmt.identifier);
                     //note: wrong loc_start
-                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc_start);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
                 },
                 .struct_def => {
                     const symbol = try self.createIncompleteStructSymbol(let_stmt.identifier);
-                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc_start);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
                 },
                 else => unreachable,
             }
@@ -184,7 +184,7 @@ pub const SemaAnalyzer = struct {
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
 
         if (fn_call.are_arguments_named == false) {
-            return self.err_dispatcher.cantInferAnonymousStruct(exp.loc_start);
+            return self.err_dispatcher.cantInferAnonymousStruct(exp.loc);
         }
 
         for (fn_call.arguments) |arg| {
@@ -258,7 +258,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         try _type.value(self.allocator),
                         @tagName(value_type.kind),
-                        field.default_value.?.loc_start,
+                        field.default_value.?.loc,
                     );
                 }
             }
@@ -290,7 +290,7 @@ pub const SemaAnalyzer = struct {
                 param_type = self.resolveTypeAnnotation(annotation) catch {
                     return self.err_dispatcher.typeNotDefined(
                         try param.type_annotation.?.value(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 };
 
@@ -302,7 +302,7 @@ pub const SemaAnalyzer = struct {
                         return self.err_dispatcher.invalidType(
                             try param_type.name(self.allocator),
                             try value_type.name(self.allocator),
-                            param.default_value.?.loc_start,
+                            param.default_value.?.loc,
                         );
                     }
                 }
@@ -312,12 +312,12 @@ pub const SemaAnalyzer = struct {
                     param_default_value = value;
                     param_type = self.resolveValueType(value);
                 } else {
-                    return self.err_dispatcher.invalidParameterType(param.identifier, exp.loc_start);
+                    return self.err_dispatcher.invalidParameterType(param.identifier, exp.loc);
                 }
             }
 
             if (param_type.kind == .struct_self and struct_symbol == null) {
-                return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc_start);
+                return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc);
             }
 
             if (param_type.kind == .struct_self) {
@@ -344,7 +344,7 @@ pub const SemaAnalyzer = struct {
                     .type = param_type,
                 }),
             ) catch {
-                return self.err_dispatcher.alreadyDefined(param.identifier, exp.loc_start);
+                return self.err_dispatcher.alreadyDefined(param.identifier, exp.loc);
             };
 
             try params_metadata.append(self.allocator, .{
@@ -358,7 +358,7 @@ pub const SemaAnalyzer = struct {
         //note:  need to catch the else case ?
         if (fn_def.return_type) |r_type| {
             return_type = self.resolveTypeAnnotation(r_type) catch {
-                return self.err_dispatcher.typeNotDefined(r_type.type.primitive, exp.loc_start);
+                return self.err_dispatcher.typeNotDefined(r_type.type.primitive, exp.loc);
             };
         } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
             const return_value = try self.evalExp(return_exp);
@@ -416,7 +416,7 @@ pub const SemaAnalyzer = struct {
         const expression_stmt = stmt.data.expression_stmt;
 
         if (expression_stmt.data != .fn_call) {
-            return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), stmt.loc_start);
+            return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc);
         }
 
         return ir.Instruction{
@@ -436,13 +436,13 @@ pub const SemaAnalyzer = struct {
         } else {
             var_type = expression_type;
             if (var_type.kind == .array and var_type.kind.array.kind == .dynamic) {
-                return self.err_dispatcher.cantInferArrayLiteralType(let_stmt.value.loc_start);
+                return self.err_dispatcher.cantInferArrayLiteralType(let_stmt.value.loc);
             }
         }
 
         if (var_type.kind == .function_def) {
             const fn_symbol = self.scope.symbol_table.getOrThrow(let_stmt.identifier) catch {
-                return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc_start);
+                return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc);
             };
             const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, fn_symbol.type.kind.function, null);
             try self.functions.append(self.allocator, func);
@@ -459,7 +459,7 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidType(
                 try var_type.name(self.allocator),
                 try expression_type.name(self.allocator),
-                stmt.data.let_stmt.value.loc_start,
+                stmt.data.let_stmt.value.loc,
             );
         }
 
@@ -474,7 +474,7 @@ pub const SemaAnalyzer = struct {
                 .type = var_type,
             },
         )) catch {
-            return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc_start);
+            return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
 
         return ir.Instruction{ .store_var = .{
@@ -492,7 +492,7 @@ pub const SemaAnalyzer = struct {
         const condition_value_type = self.resolveValueType(condition_value);
 
         if (!condition_value_type.eql(self.type_bool)) {
-            return self.err_dispatcher.invalidType("boolean", try condition_value_type.name(self.allocator), stmt.loc_start);
+            return self.err_dispatcher.invalidType("boolean", try condition_value_type.name(self.allocator), if_stmt.condition.loc);
         }
 
         return ir.Instruction{ .branch_if = .{
@@ -509,11 +509,11 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
 
         if (exp_type.nullable == false) {
-            return self.err_dispatcher.invalidType("nullable", try exp_type.name(self.allocator), stmt.loc_start);
+            return self.err_dispatcher.invalidType("nullable", try exp_type.name(self.allocator), if_capture_stmt.exp.loc);
         }
 
         if (if_capture_stmt.identifier.is_mut and !self.isExpressionMutable(if_capture_stmt.exp)) {
-            return self.err_dispatcher.unwrappedValueCantBeMutable(if_capture_stmt.identifier.name, stmt.loc_start);
+            return self.err_dispatcher.unwrappedValueCantBeMutable(if_capture_stmt.identifier.name, stmt.loc);
         }
 
         const captured_type = try Type.init(self.allocator, .{
@@ -590,21 +590,21 @@ pub const SemaAnalyzer = struct {
             .identifier => {
                 const id = assign_stmt.target.data.identifier;
                 const id_symbol = self.scope.symbol_table.getOrThrow(id) catch {
-                    return self.err_dispatcher.notDefined(id, stmt.loc_start);
+                    return self.err_dispatcher.notDefined(id, assign_stmt.target.loc);
                 };
 
                 const assignment_value = try self.evalExp(assign_stmt.exp);
                 const assignment_value_type = self.resolveValueType(assignment_value);
 
                 if (!id_symbol.is_mut) {
-                    return self.err_dispatcher.notMutable(id, stmt.loc_start);
+                    return self.err_dispatcher.notMutable(id, assign_stmt.target.loc);
                 }
 
                 if (!id_symbol.type.eql(assignment_value_type)) {
                     return self.err_dispatcher.invalidType(
                         try id_symbol.type.name(self.allocator),
                         try assignment_value_type.name(self.allocator),
-                        stmt.loc_start,
+                        assign_stmt.exp.loc,
                     );
                 }
 
@@ -627,11 +627,11 @@ pub const SemaAnalyzer = struct {
                 }
 
                 const target_symbol = self.scope.symbol_table.getOrThrow(target_root.data.identifier) catch {
-                    return self.err_dispatcher.notDefined(target_root.data.identifier, stmt.loc_start);
+                    return self.err_dispatcher.notDefined(target_root.data.identifier, target_root.loc);
                 };
 
                 if (!target_symbol.is_mut and target_type.kind != .struct_) {
-                    return self.err_dispatcher.notMutable(target_root.data.identifier, stmt.loc_start);
+                    return self.err_dispatcher.notMutable(target_root.data.identifier, target_root.loc);
                 }
 
                 switch (target_type.kind) {
@@ -640,7 +640,7 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.invalidType(
                                 try target_symbol.type.name(self.allocator),
                                 try assignment_value_type.name(self.allocator),
-                                stmt.loc_start,
+                                assign_stmt.exp.loc,
                             );
                         }
                     },
@@ -648,14 +648,14 @@ pub const SemaAnalyzer = struct {
                         const field = struct_instance.fields.get(index_exp.index.data.identifier) orelse return self.err_dispatcher.invalidStructField(
                             struct_instance.identifier,
                             index_exp.index.data.identifier,
-                            stmt.loc_start,
+                            index_exp.index.loc,
                         );
 
                         if (!field.type.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
                                 try field.type.name(self.allocator),
                                 try assignment_value_type.name(self.allocator),
-                                stmt.loc_start,
+                                assign_stmt.exp.loc,
                             );
                         }
                     },
@@ -663,17 +663,17 @@ pub const SemaAnalyzer = struct {
                         const field = struct_.static_fields.get(index_exp.index.data.identifier) orelse return self.err_dispatcher.invalidStaticStructField(
                             struct_.identifier,
                             index_exp.index.data.identifier,
-                            stmt.loc_start,
+                            index_exp.index.loc,
                         );
                         if (!field.is_mut) {
-                            return self.err_dispatcher.notMutable(field.identifier, stmt.loc_start);
+                            return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                         }
 
                         if (!field.type.eql(assignment_value_type)) {
                             return self.err_dispatcher.invalidType(
                                 try field.type.name(self.allocator),
                                 try assignment_value_type.name(self.allocator),
-                                stmt.loc_start,
+                                assign_stmt.exp.loc,
                             );
                         }
                     },
@@ -691,7 +691,7 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.invalidAssignment(
                     "identifier or identifier[n]",
                     @tagName(assign_stmt.target.data),
-                    stmt.loc_start,
+                    assign_stmt.target.loc,
                 );
             },
         }
@@ -707,7 +707,7 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidType(
                 "boolean",
                 try condition_value_type.name(self.allocator),
-                stmt.loc_start,
+                for_stmt.condition.loc,
             );
         }
 
@@ -811,7 +811,7 @@ pub const SemaAnalyzer = struct {
             const arg_uid = self.scope.genUid();
 
             if (param.is_mut and param.type.kind != .array and param.type.kind != .struct_instance) {
-                return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc_start);
+                return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc);
             }
 
             try self.scope.symbol_table.put(try Symbol.init(
@@ -838,7 +838,7 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.scope.return_type.name(self.allocator),
                 try body.return_type.name(self.allocator),
-                exp.loc_start,
+                exp.loc,
             );
         }
 
@@ -862,7 +862,7 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.invalidFunctionReturnType(
                     try self.scope.return_type.name(self.allocator),
                     try exp_value_type.name(self.allocator),
-                    stmt.loc_start,
+                    exp.loc,
                 );
             }
 
@@ -875,7 +875,7 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.scope.return_type.name(self.allocator),
                 "void",
-                stmt.loc_start,
+                stmt.loc,
             );
         }
 
@@ -950,7 +950,7 @@ pub const SemaAnalyzer = struct {
         switch (fn_call.target.data) {
             .identifier => |id| {
                 const symbol = self.scope.symbol_table.getOrThrow(id) catch {
-                    return self.err_dispatcher.notDefined(id, exp.loc_start);
+                    return self.err_dispatcher.notDefined(id, exp.loc);
                 };
 
                 fn_identifier = symbol.identifier;
@@ -973,7 +973,7 @@ pub const SemaAnalyzer = struct {
                         return self.err_dispatcher.invalidType(
                             "function or struct",
                             try symbol.type.name(self.allocator),
-                            exp.loc_start,
+                            exp.loc,
                         );
                     },
                 }
@@ -987,7 +987,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "a struct",
                         try target_type.name(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 }
 
@@ -1000,14 +1000,14 @@ pub const SemaAnalyzer = struct {
                         return self.err_dispatcher.invalidStructFunction(
                             _struct.identifier,
                             fn_name,
-                            exp.loc_start,
+                            exp.loc,
                         );
                     },
                     .struct_instance => |struct_instance| struct_instance.functions.get(fn_name) orelse {
                         return self.err_dispatcher.invalidStructFunction(
                             struct_instance.identifier,
                             fn_name,
-                            exp.loc_start,
+                            exp.loc,
                         );
                     },
                     else => unreachable,
@@ -1029,7 +1029,7 @@ pub const SemaAnalyzer = struct {
                         if (fn_metadata.params[0].is_mut) {
                             const symbol = try self.scope.symbol_table.getOrThrow(target.identifier.identifier);
                             if (!symbol.is_mut) {
-                                return self.err_dispatcher.notMutable(indexed.target.data.identifier, indexed.target.loc_start);
+                                return self.err_dispatcher.notMutable(indexed.target.data.identifier, indexed.target.loc);
                             }
                         }
                         try fn_call_arguments_values.append(self.allocator, target);
@@ -1065,7 +1065,7 @@ pub const SemaAnalyzer = struct {
         const total_args_len = call_args_len + fn_call_arguments_values.items.len;
 
         if (required_params_len > total_args_len) {
-            return self.err_dispatcher.invalidNumberOfArgs(required_params_len, total_args_len, exp.loc_start);
+            return self.err_dispatcher.invalidNumberOfArgs(required_params_len, total_args_len, exp.loc);
         }
 
         if (fn_call.are_arguments_named) {
@@ -1097,27 +1097,27 @@ pub const SemaAnalyzer = struct {
                 const arg_type = self.resolveValueType(fn_call_arg_value);
 
                 if (!param.type.eql(arg_type)) {
-                    return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), _exp.loc_start);
+                    return self.err_dispatcher.invalidType(try param.type.name(self.allocator), try arg_type.name(self.allocator), _exp.loc);
                 }
 
                 if (param.type.kind == .struct_ and param.is_mut) {
                     const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
                     if (!symbol.is_mut) {
-                        return self.err_dispatcher.notMutable(symbol.identifier, _exp.loc_start);
+                        return self.err_dispatcher.notMutable(symbol.identifier, _exp.loc);
                     }
                 }
 
                 if (param.type.kind == .array and param.is_mut and _exp.data != .array_literal) {
                     const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.identifier.identifier);
                     if (!symbol.is_mut) {
-                        return self.err_dispatcher.notMutable(fn_call_arg_value.identifier.identifier, _exp.loc_start);
+                        return self.err_dispatcher.notMutable(fn_call_arg_value.identifier.identifier, _exp.loc);
                     }
                 }
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
             } else if (param.default_value) |value| {
                 try fn_call_arguments_values.append(self.allocator, value);
             } else {
-                return self.err_dispatcher.missingArgument(param.identifier, exp.loc_start);
+                return self.err_dispatcher.missingArgument(param.identifier, exp.loc);
             }
         }
 
@@ -1186,11 +1186,11 @@ pub const SemaAnalyzer = struct {
         const target_type = self.resolveValueType(target);
 
         if (!is_nullable and target_type.nullable) {
-            return self.err_dispatcher.nullableMustBeUnwraped(try target_type.name(self.allocator), exp.loc_start);
+            return self.err_dispatcher.nullableMustBeUnwraped(try target_type.name(self.allocator), exp.loc);
         }
 
         if (is_nullable and !target_type.nullable) {
-            return self.err_dispatcher.unnecessaryOptionalChain(try target_type.name(self.allocator), exp.loc_start);
+            return self.err_dispatcher.unnecessaryOptionalChain(try target_type.name(self.allocator), exp.loc);
         }
 
         switch (target_type.kind) {
@@ -1199,7 +1199,7 @@ pub const SemaAnalyzer = struct {
                 const index_type = self.resolveValueType(index);
 
                 if (!index_type.eql(self.type_int)) {
-                    return self.err_dispatcher.invalidIndexing("int", try index_type.name(self.allocator), exp.loc_start);
+                    return self.err_dispatcher.invalidIndexing("int", try index_type.name(self.allocator), exp.loc);
                 }
 
                 return self.createIndexedIrValue(target, index, is_nullable);
@@ -1213,7 +1213,7 @@ pub const SemaAnalyzer = struct {
                         const function_member = struct_metadata.functions.get(member_name);
 
                         if (field_member == null and function_member == null) {
-                            return self.err_dispatcher.invalidStructField(struct_metadata.identifier, member_name, exp.loc_start);
+                            return self.err_dispatcher.invalidStructField(struct_metadata.identifier, member_name, exp.loc);
                         }
 
                         return self.createIndexedIrValue(
@@ -1234,7 +1234,7 @@ pub const SemaAnalyzer = struct {
                         const function_member = struct_metadata.functions.get(member_name);
 
                         if (field_member == null and function_member == null) {
-                            return self.err_dispatcher.invalidStaticStructField(struct_metadata.identifier, member_name, exp.loc_start);
+                            return self.err_dispatcher.invalidStaticStructField(struct_metadata.identifier, member_name, exp.loc);
                         }
 
                         return self.createIndexedIrValue(
@@ -1248,7 +1248,7 @@ pub const SemaAnalyzer = struct {
             },
 
             else => {
-                return self.err_dispatcher.invalidType("array or struct", try target_type.name(self.allocator), exp.loc_start);
+                return self.err_dispatcher.invalidType("array or struct", try target_type.name(self.allocator), exp.loc);
             },
         }
     }
@@ -1265,7 +1265,7 @@ pub const SemaAnalyzer = struct {
             } });
         }
 
-        return self.err_dispatcher.notDefined(id, exp.loc_start);
+        return self.err_dispatcher.notDefined(id, exp.loc);
     }
 
     fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -1282,7 +1282,7 @@ pub const SemaAnalyzer = struct {
             }
 
             if (!exp_value_type.eql(array_literal_type)) {
-                return self.err_dispatcher.invalidType(try array_literal_type.name(self.allocator), try exp_value_type.name(self.allocator), exp.loc_start);
+                return self.err_dispatcher.invalidType(try array_literal_type.name(self.allocator), try exp_value_type.name(self.allocator), exp.loc);
             }
 
             try values.append(self.allocator, exp_value);
@@ -1310,7 +1310,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "int or float",
                         try exp_type.name(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 }
             },
@@ -1319,7 +1319,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "boolean",
                         try exp_type.name(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 }
             },
@@ -1351,7 +1351,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "int or float",
                         try left_type.name(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 }
 
@@ -1366,7 +1366,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "int or float",
                         try left_type.name(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 }
                 op_type = self.type_bool;
@@ -1376,7 +1376,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(
                         "boolean",
                         try left_type.name(self.allocator),
-                        exp.loc_start,
+                        exp.loc,
                     );
                 }
                 op_type = self.type_bool;

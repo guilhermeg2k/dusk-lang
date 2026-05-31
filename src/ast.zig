@@ -7,7 +7,7 @@ pub const Block = struct {
 
 pub const StatementNode = struct {
     data: Statement,
-    loc_start: usize,
+    loc: err.Loc,
 };
 
 pub const Statement = union(enum) {
@@ -93,7 +93,7 @@ pub const ExpNode = struct {
     const Self = @This();
 
     data: Exp,
-    loc_start: usize,
+    loc: err.Loc,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
