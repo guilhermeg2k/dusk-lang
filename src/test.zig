@@ -200,6 +200,11 @@ test "Test: Compile and Run" {
             .src_file = "test/float-ints.dsk",
             .expected_output = "dusk!",
         },
+        .{
+            .name = "div",
+            .src_file = "test/div.dsk",
+            .expected_output = "dusk!",
+        },
     };
 
     for (cases) |case| {

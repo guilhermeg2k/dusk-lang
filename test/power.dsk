@@ -5,7 +5,7 @@ let power: fn = (base: int, exp: int) -> int
 
     let x: int = exp % 2
     if x == 0
-        let half: int = power(base, exp / 2)
+        let half: int = power(base, exp // 2)
         return half * half
 
     return base * power(base, exp - 1)

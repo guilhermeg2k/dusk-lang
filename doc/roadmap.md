@@ -11,6 +11,7 @@
 ## Version 0.9 - Shinobu
 
 - Upgrade to latest zig version
+- Improve errors message
 
 ## Version: 0.10 - Frieren
 
@@ -48,7 +49,7 @@
 ## Version 0.16 - Fujiwara
 
 - Modules
-- Privates
+- Privates~
 
 ## Version 0.17 - Yoruichi
 
@@ -73,4 +74,3 @@
 
 - Code Formatter
 - Fuzz testing
-- Improve errors message

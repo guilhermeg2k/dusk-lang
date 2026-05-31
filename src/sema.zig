@@ -428,16 +428,6 @@ pub const SemaAnalyzer = struct {
         var var_type: *Type = undefined;
         const let_stmt = stmt.data.let_stmt;
 
-        // const is_anonymous_struct =
-        //     let_stmt.value.data == .fn_call and
-        //     let_stmt.value.data.fn_call.target.data == .anonymous_struct_inicialization;
-        //
-        // if (is_anonymous_struct) {
-        //     const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStruct(let_stmt.value, let_stmt.is_mut) else null;
-        //     const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.type.struct_;
-        //     let_stmt.value.data.fn_call.target.data = .{ .identifier = struct_identifier };
-        // }
-
         const expression_value = try self.evalExp(let_stmt.value);
         const expression_type = self.resolveValueType(expression_value);
 
@@ -1342,6 +1332,20 @@ pub const SemaAnalyzer = struct {
         } });
     }
 
+    fn matchSameType(self: *Self, left: *Type, right: *Type, loc: usize) !void {
+        if (!left.eql(right)) {
+            return self.err_dispatcher.invalidType(
+                try left.name(self.allocator),
+                try right.name(self.allocator),
+                loc,
+            );
+        }
+    }
+
+    fn isTypeNumber(self: *Self, t: *Type) bool {
+        return t.eql(self.type_float) or t.eql(self.type_int);
+    }
+
     fn evalBinaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const bin_exp = exp.data.binary_exp;
         const left_value = try self.evalExp(bin_exp.left);
@@ -1351,68 +1355,34 @@ pub const SemaAnalyzer = struct {
 
         var op_type: *Type = self.type_void;
 
-        if (!left_type.eql(right_type)) {
-            return self.err_dispatcher.invalidType(
-                try left_type.name(self.allocator),
-                try right_type.name(self.allocator),
-                exp.loc_start,
-            );
-        }
-
         switch (bin_exp.op) {
-            .add, .sub, .mult => {
-                if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
+            .add, .sub, .mult, .mod, .div, .trunc_div => {
+                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) {
                     return self.err_dispatcher.invalidType(
                         "int or float",
                         try left_type.name(self.allocator),
                         exp.loc_start,
                     );
                 }
-                op_type = left_type;
+
+                op_type = switch (bin_exp.op) {
+                    .div => self.type_float,
+                    .trunc_div => self.type_int,
+                    else => if (left_type.eql(self.type_float) or right_type.eql(self.type_float)) self.type_float else self.type_int,
+                };
             },
-            .mod => {
-                if (!left_type.eql(self.type_int)) {
-                    return self.err_dispatcher.invalidType(
-                        "int",
-                        try left_type.name(self.allocator),
-                        exp.loc_start,
-                    );
-                }
-            },
-            .div => {
-                if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
-                    return self.err_dispatcher.invalidType(
-                        "int or float",
-                        try left_type.name(self.allocator),
-                        exp.loc_start,
-                    );
-                }
-                op_type = self.type_float;
-            },
-            .trunc_div => {
-                if (!left_type.eql(self.type_float) and !left_type.eql(self.type_int)) {
-                    return self.err_dispatcher.invalidType(
-                        "int or float",
-                        try left_type.name(self.allocator),
-                        exp.loc_start,
-                    );
-                }
-                op_type = self.type_int;
-            },
-            //note: this makes support string comparison by operators
             .lt, .lt_or_eq, .gt, .gt_or_eq => {
-                if (left_type.eql(self.type_bool)) {
+                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) {
                     return self.err_dispatcher.invalidType(
-                        "string, number",
+                        "int or float",
                         try left_type.name(self.allocator),
                         exp.loc_start,
                     );
                 }
                 op_type = self.type_bool;
             },
-
             .bool_or, .bool_and => {
-                if (!left_type.eql(self.type_bool)) {
+                if (!left_type.eql(self.type_bool) or !right_type.eql(self.type_bool)) {
                     return self.err_dispatcher.invalidType(
                         "boolean",
                         try left_type.name(self.allocator),
@@ -1421,6 +1391,7 @@ pub const SemaAnalyzer = struct {
                 }
                 op_type = self.type_bool;
             },
+            //note: allowing everything
             .eq, .not_eq => {
                 op_type = self.type_bool;
             },

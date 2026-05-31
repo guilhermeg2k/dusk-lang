@@ -3,7 +3,7 @@ let bin_search = (arr: []int, target: int) -> int
     let mut high = len(arr) - 1
 
     for low <= high
-        let mid = floor((low + high) / 2)
+        let mid = (low + high) // 2
         if arr[mid] == target
             return mid
         if arr[mid] < target
