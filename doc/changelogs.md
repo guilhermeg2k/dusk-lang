@@ -1,5 +1,12 @@
 # Changelogs
 
+## v0.8 - Seras Victoria
+
+- Separated `int` (64-bit signed integer) and `float` (64-bit floating point) primitive types, replacing the unified `number` type.
+- Enabled operations between `float` and `int` with implicit promotion of integers to floats.
+- Added support for the Pipe operator (`|>`) for left-to-right function call chaining.
+- Implemented Trunc division operator (`//`).
+
 ## v0.7 - Mizuhara
 
 - Nullable types (`?Type`) and optional chaining (`?.`)

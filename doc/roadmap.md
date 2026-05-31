@@ -2,12 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version: 0.8 - Seras Victoria
-
-- Pipe operator
-- Int/Float type
-- Trunc division
-
 ## Version 0.9 - Shinobu
 
 - Upgrade to latest zig version
