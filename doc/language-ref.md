@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.7::Mizuhara** of Dusk programming language.
+This document provides a reference for **v0.8::Seras Victoria** of Dusk programming language.
 
 ## 1. Comments
 
@@ -8,7 +8,7 @@ Dusk supports single-line comments starting with the `#` character.
 
 ```rust
 # This is a comment
-let x: number = 10 # Inline comment
+let x: int = 10 # Inline comment
 ```
 
 ## 2. Variables & Data Types
@@ -20,7 +20,7 @@ Variables are declared using the `let` keyword. Type annotations are **optional*
 ```rust
 # Type is inferred from the value
 let name = "Dusk" # string
-let count = 100   # number
+let count = 100   # int
 
 # Explicit type annotation still works
 let is_active: bool = true
@@ -31,32 +31,33 @@ let is_active: bool = true
 Variables are immutable by default. To make a variable mutable, use the `mut` keyword.
 
 ```rust
-let x: number = 10
+let x: int = 10
 # x = 20  <-- Error: Immutable variable
 
-let mut y: number = 10
+let mut y: int = 10
 y = 20    # OK
 ```
 
 ### Primitive Types
 
-| Type     | Description                                       | Example             |
-| :------- | :------------------------------------------------ | :------------------ |
-| `number` | 64-bit floating-point number (doubles as integer) | `42`, `3.14`, `-10` |
-| `string` | Sequence of characters (double quotes)            | `"Hello World"`     |
-| `bool`   | Boolean value                                     | `true`, `false`     |
-| `void`   | Represents no value (mostly for return types)     | `void`              |
+| Type     | Description                                   | Example             |
+| :------- | :-------------------------------------------- | :------------------ |
+| `int`    | 64-bit signed integer                         | `42`, `-10`         |
+| `float`  | 64-bit floating-point number                  | `3.14`, `-0.5`      |
+| `string` | Sequence of characters (double quotes)        | `"Hello World"`     |
+| `bool`   | Boolean value                                 | `true`, `false`     |
+| `void`   | Represents no value (mostly for return types) | `void`              |
 
 
 ### Arrays
 
 Arrays are dynamic lists of elements of the same type.
 
-- **Type Syntax**: `[]Type` (e.g., `[]number`, `[]string`)
+- **Type Syntax**: `[]Type` (e.g., `[]int`, `[]string`)
 - **Literal Syntax**: `[val1, val2, ...]`
 
 ```rust
-let numbers: []number = [1, 2, 3, 4]
+let numbers: []int = [1, 2, 3, 4]
 let names: []string = ["Alice", "Bob"]
 ```
 
@@ -152,8 +153,8 @@ Dusk supports anonymous struct initialization using the `@(...)` syntax.
 
 ```rust
 let Point2D = struct
-    x: number
-    y: number
+    x: int
+    y: int
 
 let print_point = (point: Point2D) -> void
     echo(stringify(point))
@@ -201,7 +202,17 @@ echo(user.country?.name) # null
 | `-`      | Subtraction    |
 | `*`      | Multiplication |
 | `/`      | Division       |
+| `//`     | Trunc division |
 | `%`      | Modulo         |
+
+#### Arithmetic Typing Rules
+
+Dusk supports implicit promotion of integers to floats when mixed in binary expressions. The resulting type of an arithmetic operation is defined as follows:
+
+- **Division (`/`)**: Always returns a `float`, even if both operands are `int`.
+- **Trunc Division (`//`)**: Always returns an `int`. It divides the left operand by the right, then truncates the result to an integer.
+- **Other Operators (`+`, `-`, `*`, `%`)**: Returns a `float` if at least one operand is a `float`. Otherwise (if both operands are `int`), returns an `int`.
+
 
 ### Comparison
 
@@ -261,7 +272,7 @@ if username: mut name
     name = "Dusk 2.0"
 ```
 
-> **Note on Mutability:** Capturing a primitive value (like `number`, `string`, `bool`) as `mut` will only mutate the captured local variable, not the original value. Mutating the original value through a capture only works for reference types like structs and arrays.
+> **Note on Mutability:** Capturing a primitive value (like `int`, `float`, `string`, `bool`) as `mut` will only mutate the captured local variable, not the original value. Mutating the original value through a capture only works for reference types like structs and arrays.
 
 ### Loops
 
@@ -270,7 +281,7 @@ Dusk supports `for` loops, which can be conditional (like a `while` loop) or inf
 **Conditional Loop:**
 
 ```rust
-let mut i: number = 0
+let mut i: int = 0
 for i < 5
     echo(i)
     i += 1
@@ -320,7 +331,7 @@ Functions are first-class citizens. Return types are only inferred for inline re
 The compiler can infer function types in most cases.
 
 ```rust
-let add = (a: number, b: number) -> number
+let add = (a: int, b: int) -> int
     return a + b
 ```
 
@@ -329,7 +340,7 @@ let add = (a: number, b: number) -> number
 Function parameters can have default values. When a default value is provided, the type annotation becomes optional and is inferred from the default value.
 
 ```rust
-let add = (x: number, y = 2) -> return x + y
+let add = (x: int, y = 2) -> return x + y
 
 echo(add(10))        # 12
 echo(add(10, 5))     # 15
@@ -342,9 +353,9 @@ Function parameters can be defined across multiple lines for better readability.
 
 ```rust
 let power = (
-    base: number,
-    exp: number
-) -> number
+    base: int,
+    exp: int
+) -> int
     # ...
 ```
 
@@ -353,7 +364,7 @@ let power = (
 For functions with a single return expression, you can use the inline `return`
 
 ```rust
-let add = (a: number, b: number) -> return a + b
+let add = (a: int, b: int) -> return a + b
 ```
 
 ### Void Functions
@@ -371,7 +382,7 @@ By default, function parameters are immutable. To allow a function to modify a p
 
 ```rust
 # The mut keyword allows this function to modify list
-let add_one = (mut list: []number) -> void
+let add_one = (mut list: []int) -> void
     append(list, 1)
 
 let mut my_list = [10, 20]
@@ -384,7 +395,7 @@ echo(my_list) # Prints [10, 20, 1]
 Functions can be called using positional arguments or named parameters.
 
 ```rust
-let sum: number = add(5, 3)
+let sum: int = add(5, 3)
 greet("Dusk")
 
 # Named parameters
@@ -400,6 +411,34 @@ let total = add(
 )
 ```
 
+#### Pipe Operator
+
+Dusk supports the pipe operator (`|>`), which allows passing the result of an expression as the first argument of a function call. This enables a clean, readable, left-to-right method-chaining-like syntax for nested function calls.
+
+The right-hand side of the pipe operator must be a function call. Parentheses are required even for functions with a single parameter.
+
+```rust
+let add = (a: int, b: int) -> int
+    return a + b
+
+let is_even = (x: int) -> bool
+    return (x % 2) == 0
+
+# The following calls are equivalent:
+# is_even(add(2, 1))
+let res = 2 |> add(1) |> is_even()
+
+assert(res == false)
+```
+
+The pipe operator can also be split across multiple lines:
+
+```rust
+let res2 = 2
+    |> add(2)
+    |> is_even()
+```
+
 ## 6. Built-in Functions
 
 Dusk provides a set of intrinsic functions.
@@ -407,9 +446,9 @@ Dusk provides a set of intrinsic functions.
 | Function    | Signature                                       | Description                                      |
 | :---------- | :---------------------------------------------- | :----------------------------------------------- |
 | `echo`      | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
-| `len`       | `len(arr: []dynamic) -> number`                 | Returns the length of an array.                  |
+| `len`       | `len(arr: []dynamic) -> int`                    | Returns the length of an array.                  |
 | `append`    | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
-| `floor`     | `floor(n: number) -> number`                    | Rounds a number down to the nearest integer      |
+| `floor`     | `floor(n: float) -> int`                        | Rounds a float down to the nearest integer       |
 | `concat`    | `concat(s1: string, s2: string) -> string`      | Concatenates two strings.                        |
 | `stringify` | `stringify(obj: dynamic) -> string`             | Returns a JSON string representation of a value. |
 

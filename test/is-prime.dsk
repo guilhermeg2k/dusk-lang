@@ -1,8 +1,8 @@
-let isPrime: fn = (n: number) -> bool
+let isPrime: fn = (n: int) -> bool
     if n < 2 
         return false
 
-    let mut i: number = 2
+    let mut i: int = 2
     for i * i <= n
         if n % i == 0
             return false

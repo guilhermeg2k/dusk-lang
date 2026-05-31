@@ -1,13 +1,13 @@
 let Node = struct
-    value: number
+    value: int
     next: ?Node
 
 let LinkedList = struct
     root: ?Node
     tail: ?Node
-    len: number = 0
+    len: int = 0
 
-    add: (mut self: @, value: number) -> void
+    add: (mut self: @, value: int) -> void
         let new_node = @(value = value, next = null)
 
         if self.tail: mut tail
@@ -19,7 +19,7 @@ let LinkedList = struct
 
         self.len += 1
 
-    add_head: (mut self: @, value: number) -> void
+    add_head: (mut self: @, value: int) -> void
         let new_node = @(value = value, next = self.root)
         self.root = new_node
 
@@ -28,7 +28,7 @@ let LinkedList = struct
 
         self.len += 1
 
-    pop_value: (mut self: @, value: number) -> bool
+    pop_value: (mut self: @, value: int) -> bool
         let mut cur_node = self.root
         let mut previous_node: ?Node = null
 
@@ -72,7 +72,7 @@ let LinkedList = struct
 
         self.len -= 1
 
-    contains: (self: @, value: number) -> bool
+    contains: (self: @, value: int) -> bool
         let mut cur_node = self.root
         for cur_node != null
             if cur_node: c_node

@@ -1,9 +1,9 @@
 let Node = struct
     left: ?Node
     right: ?Node
-    value: number
+    value: int
 
-    add(mut self: @, left: ?Node, right: ?Node) -> void
+    add: (mut self: @, left: ?Node, right: ?Node) -> void
         self.left = left
         self.right = right
 

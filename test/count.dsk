@@ -1,5 +1,5 @@
-let count: fn = (n: number = 15) -> void
-    let mut x: number = 0
+let count: fn = (n: int = 15) -> void
+    let mut x: int = 0
     for true
         echo(x)
         x = x + 1

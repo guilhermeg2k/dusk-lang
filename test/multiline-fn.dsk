@@ -1,13 +1,13 @@
 let power = (
-    base: number,
-    exp: number
-) -> number
+    base: int,
+    exp: int
+) -> int
     if exp == 0
         return 1
 
-    let x: number = exp % 2
+    let x: int = exp % 2
     if x == 0
-        let half: number = power(base, exp / 2)
+        let half: int = power(base, exp // 2)
         return half * half
 
     return base * power(base, exp - 1)

@@ -5,7 +5,8 @@ pub const Lexer = struct {
     const keywords = std.StaticStringMap(Tag).initComptime(.{
         .{ "let", Tag.let_kw },
         .{ "mut", Tag.mut_kw },
-        .{ "number", Tag.number_kw },
+        .{ "int", Tag.int_kw },
+        .{ "float", Tag.float_kw },
         .{ "string", Tag.string_kw },
         .{ "bool", Tag.bool_kw },
         .{ "void", Tag.void_kw },
@@ -141,7 +142,7 @@ pub const Lexer = struct {
                     return Token.init(Tag.star, self.cur_index, self.cur_index);
                 },
                 '/' => {
-                    return Token.init(Tag.slash, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol('/', Tag.double_slash, Tag.slash);
                 },
                 '%' => {
                     return Token.init(Tag.percent, self.cur_index, self.cur_index);
@@ -157,6 +158,9 @@ pub const Lexer = struct {
                 },
                 '!' => {
                     return self.readComplexSymbol('=', Tag.not_eq, Tag.not);
+                },
+                '|' => {
+                    return self.readComplexSymbol('>', Tag.pipe, Tag.err);
                 },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
@@ -261,13 +265,18 @@ pub const Lexer = struct {
     fn readNumberLiteral(self: *Self) Token {
         const start = self.cur_index;
         var next_char = self.peekNext();
+        var is_float = false;
 
         while (std.ascii.isDigit(next_char) or next_char == '.') {
+            if (next_char == '.') {
+                is_float = true;
+            }
             self.walk();
             next_char = self.peekNext();
         }
 
-        return Token.init(Tag.number_literal, start, self.cur_index);
+        const token_type = if (is_float) Tag.float_literal else Tag.int_literal;
+        return Token.init(token_type, start, self.cur_index);
     }
 
     fn readStringLiteral(self: *Self) Token {
@@ -375,7 +384,8 @@ pub const Tag = enum {
     let_kw,
     mut_kw,
     string_kw,
-    number_kw,
+    float_kw,
+    int_kw,
     void_kw,
     bool_kw,
     struct_kw,
@@ -389,7 +399,8 @@ pub const Tag = enum {
     fn_kw,
     return_kw,
     string_literal,
-    number_literal,
+    int_literal,
+    float_literal,
     true_literal,
     false_literal,
     null_literal,
@@ -418,7 +429,9 @@ pub const Tag = enum {
     minus,
     star,
     slash,
+    double_slash,
     percent,
+    pipe,
     indent,
     dedent,
     new_line,

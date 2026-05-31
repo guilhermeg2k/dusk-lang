@@ -1,5 +1,5 @@
 let Country = struct
-    id: number
+    id: int
     name: string
     code: ?string
 

@@ -303,6 +303,7 @@ pub const Generator = struct {
 
         switch (value.*) {
             .i_float => try buf.print(self.allocator, "{d}", .{value.i_float}),
+            .i_int => try buf.print(self.allocator, "{d}", .{value.i_int}),
             .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
             .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
             .i_void => {},
@@ -377,23 +378,27 @@ pub const Generator = struct {
         const right = try self.genValue(binaryOp.right);
         const op = self.genBinaryOpSymbol(binaryOp.kind);
 
+        if (binaryOp.kind == .i_div) {
+            return std.fmt.allocPrint(self.allocator, "(Math.trunc({s} / {s}))", .{ left, right });
+        }
+
         return std.fmt.allocPrint(self.allocator, "({s} {s} {s})", .{ left, op, right });
     }
 
     fn genBinaryOpSymbol(_: *Self, op: ir.BinaryOpKind) []const u8 {
         return switch (op) {
-            .add => "+",
-            .sub => "-",
-            .mult => "*",
-            .div => "/",
-            .mod => "%",
+            .i_add, .f_add => "+",
+            .i_sub, .f_sub => "-",
+            .i_mult, .f_mult => "*",
+            .i_div, .f_div => "/",
+            .i_mod, .f_mod => "%",
 
-            .cmp_eq => "===",
-            .cmp_neq => "!==",
-            .cmp_lt => "<",
-            .cmp_le => "<=",
-            .cmp_ge => ">=",
-            .cmp_gt => ">",
+            .i_cmp_eq, .f_cmp_eq, .b_cmp_eq => "===",
+            .i_cmp_neq, .f_cmp_neq, .b_cmp_neq => "!==",
+            .i_cmp_lt, .f_cmp_lt => "<",
+            .i_cmp_le, .f_cmp_le => "<=",
+            .i_cmp_ge, .f_cmp_ge => ">=",
+            .i_cmp_gt, .f_cmp_gt => ">",
 
             .b_and => "&&",
             .b_or => "||",
@@ -422,7 +427,7 @@ pub const Generator = struct {
 
     fn genUnaryOpSymbol(_: *Self, op: ir.UnaryOpKind) []const u8 {
         return switch (op) {
-            .neg => "-",
+            .f_neg, .i_neg => "-",
             .not => "!",
         };
     }

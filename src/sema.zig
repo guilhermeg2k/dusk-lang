@@ -10,7 +10,8 @@ pub const SemaAnalyzer = struct {
     scope: Scope,
     err_dispatcher: err.ErrorDispatcher,
 
-    type_number: *Type,
+    type_float: *Type,
+    type_int: *Type,
     type_str: *Type,
     type_bool: *Type,
     type_null: *Type,
@@ -18,7 +19,8 @@ pub const SemaAnalyzer = struct {
     type_struct_def: *Type,
     type_void: *Type,
     type_dynamic: *Type,
-    type_number_nullable: *Type,
+    type_float_nullable: *Type,
+    type_int_nullable: *Type,
     type_str_nullable: *Type,
     type_bool_nullable: *Type,
     type_null_nullable: *Type,
@@ -37,7 +39,8 @@ pub const SemaAnalyzer = struct {
             .structs = .empty,
 
             //note: change this to static outside the struct
-            .type_number = try Type.init(allocator, .{ .kind = .number, .nullable = false }),
+            .type_float = try Type.init(allocator, .{ .kind = .float, .nullable = false }),
+            .type_int = try Type.init(allocator, .{ .kind = .int, .nullable = false }),
             .type_str = try Type.init(allocator, .{ .kind = .string, .nullable = false }),
             .type_bool = try Type.init(allocator, .{ .kind = .boolean, .nullable = false }),
             .type_func_def = try Type.init(allocator, .{ .kind = .function_def, .nullable = false }),
@@ -46,7 +49,8 @@ pub const SemaAnalyzer = struct {
             .type_dynamic = try Type.init(allocator, .{ .kind = .dynamic, .nullable = false }),
             .type_null = try Type.init(allocator, .{ .kind = .null, .nullable = false }),
 
-            .type_number_nullable = try Type.init(allocator, .{ .kind = .number, .nullable = true }),
+            .type_int_nullable = try Type.init(allocator, .{ .kind = .int, .nullable = true }),
+            .type_float_nullable = try Type.init(allocator, .{ .kind = .float, .nullable = true }),
             .type_str_nullable = try Type.init(allocator, .{ .kind = .string, .nullable = true }),
             .type_bool_nullable = try Type.init(allocator, .{ .kind = .boolean, .nullable = true }),
             .type_func_def_nullable = try Type.init(allocator, .{ .kind = .function_def, .nullable = true }),
@@ -424,16 +428,6 @@ pub const SemaAnalyzer = struct {
         var var_type: *Type = undefined;
         const let_stmt = stmt.data.let_stmt;
 
-        // const is_anonymous_struct =
-        //     let_stmt.value.data == .fn_call and
-        //     let_stmt.value.data.fn_call.target.data == .anonymous_struct_inicialization;
-        //
-        // if (is_anonymous_struct) {
-        //     const anonymous_struct_symbol = if (let_stmt.type_annotation == null) try self.createAnonymousStruct(let_stmt.value, let_stmt.is_mut) else null;
-        //     const struct_identifier = if (anonymous_struct_symbol) |sym| sym.identifier else let_stmt.type_annotation.?.type.struct_;
-        //     let_stmt.value.data.fn_call.target.data = .{ .identifier = struct_identifier };
-        // }
-
         const expression_value = try self.evalExp(let_stmt.value);
         const expression_type = self.resolveValueType(expression_value);
 
@@ -566,7 +560,7 @@ pub const SemaAnalyzer = struct {
             self.allocator,
             .{
                 .binary_op = .{
-                    .kind = .cmp_neq,
+                    .kind = .b_cmp_neq,
                     .type = self.type_bool,
                     .left = aux_var_value,
                     .right = try ir.Value.init(self.allocator, .{
@@ -892,8 +886,11 @@ pub const SemaAnalyzer = struct {
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
-            .number_literal => {
-                return ir.Value.init(self.allocator, .{ .i_float = exp.data.number_literal });
+            .float_literal => {
+                return ir.Value.init(self.allocator, .{ .i_float = exp.data.float_literal });
+            },
+            .int_literal => {
+                return ir.Value.init(self.allocator, .{ .i_int = exp.data.int_literal });
             },
             .string_literal => {
                 return ir.Value.init(self.allocator, .{ .i_string = exp.data.string_literal });
@@ -1201,8 +1198,8 @@ pub const SemaAnalyzer = struct {
                 const index = try self.evalExp(indexed_exp_index);
                 const index_type = self.resolveValueType(index);
 
-                if (!index_type.eql(self.type_number)) {
-                    return self.err_dispatcher.invalidIndexing("number", try index_type.name(self.allocator), exp.loc_start);
+                if (!index_type.eql(self.type_int)) {
+                    return self.err_dispatcher.invalidIndexing("int", try index_type.name(self.allocator), exp.loc_start);
                 }
 
                 return self.createIndexedIrValue(target, index, is_nullable);
@@ -1309,9 +1306,9 @@ pub const SemaAnalyzer = struct {
 
         switch (unary_exp.op) {
             .neg => {
-                if (!exp_type.eql(self.type_number)) {
+                if (!exp_type.eql(self.type_float) and !exp_type.eql(self.type_int)) {
                     return self.err_dispatcher.invalidType(
-                        "number",
+                        "int or float",
                         try exp_type.name(self.allocator),
                         exp.loc_start,
                     );
@@ -1328,7 +1325,15 @@ pub const SemaAnalyzer = struct {
             },
         }
 
-        return ir.Value.init(self.allocator, .{ .unary_op = .{ .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op), .type = exp_type, .right = exp_value } });
+        return ir.Value.init(self.allocator, .{ .unary_op = .{
+            .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op, exp_type),
+            .type = exp_type,
+            .right = exp_value,
+        } });
+    }
+
+    fn isTypeNumber(self: *Self, t: *Type) bool {
+        return t.eql(self.type_float) or t.eql(self.type_int);
     }
 
     fn evalBinaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -1340,40 +1345,34 @@ pub const SemaAnalyzer = struct {
 
         var op_type: *Type = self.type_void;
 
-        if (!left_type.eql(right_type)) {
-            return self.err_dispatcher.invalidType(
-                try left_type.name(self.allocator),
-                try right_type.name(self.allocator),
-                exp.loc_start,
-            );
-        }
-
         switch (bin_exp.op) {
-            .add, .sub, .mult, .div, .mod => {
-                if (!left_type.eql(self.type_number)) {
+            .add, .sub, .mult, .mod, .div, .trunc_div => {
+                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) {
                     return self.err_dispatcher.invalidType(
-                        "number",
+                        "int or float",
                         try left_type.name(self.allocator),
                         exp.loc_start,
                     );
                 }
-                op_type = self.type_number;
-            },
 
-            //note: this makes support string comparison by operators
-            .eq, .not_eq, .lt, .lt_or_eq, .gt, .gt_or_eq => {
-                if (left_type.eql(self.type_bool)) {
+                op_type = switch (bin_exp.op) {
+                    .div => self.type_float,
+                    .trunc_div => self.type_int,
+                    else => if (left_type.eql(self.type_float) or right_type.eql(self.type_float)) self.type_float else self.type_int,
+                };
+            },
+            .lt, .lt_or_eq, .gt, .gt_or_eq => {
+                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) {
                     return self.err_dispatcher.invalidType(
-                        "string, number",
+                        "int or float",
                         try left_type.name(self.allocator),
                         exp.loc_start,
                     );
                 }
                 op_type = self.type_bool;
             },
-
             .bool_or, .bool_and => {
-                if (!left_type.eql(self.type_bool)) {
+                if (!left_type.eql(self.type_bool) or !right_type.eql(self.type_bool)) {
                     return self.err_dispatcher.invalidType(
                         "boolean",
                         try left_type.name(self.allocator),
@@ -1382,10 +1381,14 @@ pub const SemaAnalyzer = struct {
                 }
                 op_type = self.type_bool;
             },
+            //note: allowing everything
+            .eq, .not_eq => {
+                op_type = self.type_bool;
+            },
         }
 
         return ir.Value.init(self.allocator, .{ .binary_op = .{
-            .kind = self.astBinOpToIrBinOpKind(bin_exp.op),
+            .kind = self.astBinOpToIrBinOpKind(bin_exp.op, op_type),
             .type = op_type,
             .left = left_value,
             .right = right_value,
@@ -1407,7 +1410,8 @@ pub const SemaAnalyzer = struct {
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation) !*Type {
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
-                if (std.mem.eql(u8, primitive_name, "number")) return if (type_annotation.nullable) self.type_number_nullable else self.type_number;
+                if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.nullable) self.type_float_nullable else self.type_float;
+                if (std.mem.eql(u8, primitive_name, "int")) return if (type_annotation.nullable) self.type_int_nullable else self.type_int;
                 if (std.mem.eql(u8, primitive_name, "string")) return if (type_annotation.nullable) self.type_str_nullable else self.type_str;
                 if (std.mem.eql(u8, primitive_name, "bool")) return if (type_annotation.nullable) self.type_bool_nullable else self.type_bool;
                 if (std.mem.eql(u8, primitive_name, "fn")) return if (type_annotation.nullable) self.type_func_def_nullable else self.type_func_def;
@@ -1486,7 +1490,8 @@ pub const SemaAnalyzer = struct {
     pub fn resolveValueType(self: *Self, value: *ir.Value) *Type {
         //note: func_def needs a better solving probably doing this when we have generics?
         return switch (value.*) {
-            .i_float => self.type_number,
+            .i_float => self.type_float,
+            .i_int => self.type_int,
             .i_bool => self.type_bool,
             .i_string => self.type_str,
             .i_void => self.type_bool,
@@ -1511,27 +1516,28 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn astBinOpToIrBinOpKind(_: *Self, bin_op: ast.BinaryOp) ir.BinaryOpKind {
+    fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, op_type: *Type) ir.BinaryOpKind {
         return switch (bin_op) {
-            .add => .add,
-            .sub => .sub,
-            .mult => .mult,
-            .div => .div,
-            .mod => .mod,
-            .eq => .cmp_eq,
-            .not_eq => .cmp_neq,
-            .lt => .cmp_lt,
-            .lt_or_eq => .cmp_le,
-            .gt => .cmp_gt,
-            .gt_or_eq => .cmp_ge,
+            .add => if (op_type == self.type_float) .i_add else .f_add,
+            .sub => if (op_type == self.type_float) .i_sub else .f_sub,
+            .mult => if (op_type == self.type_float) .i_mult else .f_mult,
+            .div => .f_div,
+            .trunc_div => .i_div,
+            .mod => if (op_type == self.type_float) .i_mod else .f_mod,
+            .eq => if (op_type == self.type_float) .i_cmp_eq else .f_cmp_eq,
+            .not_eq => if (op_type == self.type_float) .i_cmp_neq else .f_cmp_neq,
+            .lt => if (op_type == self.type_float) .i_cmp_lt else .f_cmp_lt,
+            .lt_or_eq => if (op_type == self.type_float) .i_cmp_le else .f_cmp_le,
+            .gt => if (op_type == self.type_float) .i_cmp_gt else .f_cmp_gt,
+            .gt_or_eq => if (op_type == self.type_float) .i_cmp_ge else .f_cmp_ge,
             .bool_or => .b_or,
             .bool_and => .b_and,
         };
     }
 
-    fn astUnaryOpToIrUnaryOpKind(_: *Self, bin_op: ast.UnaryOp) ir.UnaryOpKind {
+    fn astUnaryOpToIrUnaryOpKind(self: *Self, bin_op: ast.UnaryOp, exp_type: *Type) ir.UnaryOpKind {
         return switch (bin_op) {
-            .neg => .neg,
+            .neg => if (exp_type.eql(self.type_float)) .f_neg else .i_neg,
             .not => .not,
         };
     }
@@ -1678,7 +1684,8 @@ pub const Type = struct {
     const Self = @This();
 
     kind: union(enum) {
-        number,
+        float,
+        int,
         string,
         boolean,
         void,
@@ -1716,7 +1723,8 @@ pub const Type = struct {
         if (self.nullable == false and other.nullable == true) return false;
 
         switch (self.kind) {
-            .number => return other.kind == .number or (self.nullable and other.kind == .null),
+            .float => return other.kind == .float or (self.nullable and other.kind == .null),
+            .int => return other.kind == .int or (self.nullable and other.kind == .null),
             .string => return other.kind == .string or (self.nullable and other.kind == .null),
             .boolean => return other.kind == .boolean or (self.nullable and other.kind == .null),
             .void => return other.kind == .void or (self.nullable and other.kind == .null),
@@ -1802,7 +1810,8 @@ pub const Type = struct {
         const prefix = if (self.nullable) "nullable " else "";
 
         return switch (self.kind) {
-            .number => if (self.nullable) "nullable number" else "number",
+            .float => if (self.nullable) "nullable float" else "float",
+            .int => if (self.nullable) "nullable int" else "int",
             .string => if (self.nullable) "nullable string" else "string",
             .boolean => if (self.nullable) "nullable boolean" else "boolean",
             .void => if (self.nullable) "nullable void" else "void",

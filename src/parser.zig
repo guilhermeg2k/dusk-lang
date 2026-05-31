@@ -53,7 +53,13 @@ pub const Parser = struct {
 
         switch (tk.tag) {
             .let_kw => {
-                return ast.StatementNode{ .data = .{ .let_stmt = try self.parseLetStmt() }, .loc_start = tk.loc.start };
+                const letStmt = ast.StatementNode{
+                    .data = .{ .let_stmt = try self.parseLetStmt() },
+                    .loc_start = tk.loc.start,
+                };
+
+                if (self.peekCurrent().tag == .dedent) self.walk();
+                return letStmt;
             },
             .if_kw => {
                 if (self.isIfCapture()) {
@@ -290,6 +296,7 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
+                //note: this is allowing define fn with let and it should not
                 .let_kw => {
                     if (section != .static) {
                         return self.err_dispatcher.invalidSyntax("static fields to be at the beginning of the struct", tk);
@@ -307,8 +314,18 @@ pub const Parser = struct {
                     const identifier = tk;
                     const has_type_annotation = self.match(.colon);
                     const is_fn = self.match(.l_paren);
+                    const has_default_value = self.match(.eq);
+                    if (has_default_value) {
+                        if (self.match(.l_paren)) {
+                            return self.err_dispatcher.invalidSyntax("'colon'", self.peekBack());
+                        }
+                        self.walkBack();
+                    }
 
                     if (is_fn) {
+                        if (has_type_annotation == false) {
+                            return self.err_dispatcher.invalidSyntax("'colon'", self.peekBack());
+                        }
                         section = .func;
                         const fn_def = try self.parseFnDef();
                         try funcs.append(self.allocator, .{
@@ -556,22 +573,65 @@ pub const Parser = struct {
         return ast.ReturnStmt{ .exp = try self.parseExp(0) };
     }
 
+    fn parsePipeOperator(self: *Self, exp: *ast.ExpNode) !*ast.ExpNode {
+        self.walk();
+        const right = try self.parseExp(self.getBindingPower(.l_paren));
+
+        if (right.data != .fn_call) {
+            //note: is not actually a "type" error is it?
+            return self.err_dispatcher.invalidType("function call", @tagName(right.data), right.loc_start);
+        }
+
+        const old_args = right.data.fn_call.arguments;
+        var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
+
+        new_args.appendAssumeCapacity(
+            .{
+                .identifier = null,
+                .exp = exp,
+            },
+        );
+
+        new_args.appendSliceAssumeCapacity(old_args);
+
+        right.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
+        return right;
+    }
+
     fn parseExp(self: *Self, min_bp: u8) ParserError!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
 
         while (true) {
-            const tk = self.peekCurrent();
-            const op_bp = self.getBindingPower(tk.tag);
-            if (op_bp <= min_bp) break;
+            var tk = self.peekCurrent();
+            if (tk.tag == .indent or tk.tag == .new_line) {
+                self.walk();
+            }
 
-            //if dont break it means it's a binary op
+            tk = self.peekCurrent();
+            const op_bp = self.getBindingPower(tk.tag);
+            if (op_bp <= min_bp) {
+                const previous_tk = self.peekBack();
+                if (previous_tk.tag == .indent or previous_tk.tag == .new_line) {
+                    self.walkBack();
+                }
+                break;
+            }
+
+            tk = self.peekCurrent();
+            if (tk.tag == .pipe) {
+                exp = try self.parsePipeOperator(exp);
+                continue;
+            }
+
+            //if dont break or continue it means it's a binary op
             const op_token = self.peekCurrent();
             const op = try ast.BinaryOp.fromTag(op_token.tag);
 
             self.walk();
             const right = try self.parseExp(op_bp);
 
+            tk = self.peekCurrent();
             exp = try ast.ExpNode.init(self.allocator, .{
                 .data = .{
                     .binary_exp = .{
@@ -593,13 +653,25 @@ pub const Parser = struct {
 
         return switch (tk.tag) {
             .identifier => {
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = tk.value(self.src) }, .loc_start = tk.loc.start });
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = tk.value(self.src) },
+                    .loc_start = tk.loc.start,
+                });
             },
-            .number_literal => {
-                const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
-                    return self.err_dispatcher.invalidSyntax("number literal", tk);
+            .int_literal => {
+                const value = std.fmt.parseInt(i64, tk.value(self.src), 10) catch {
+                    return self.err_dispatcher.invalidSyntax("int literal", tk);
                 };
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .number_literal = value }, .loc_start = tk.loc.start });
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .int_literal = value },
+                    .loc_start = tk.loc.start,
+                });
+            },
+            .float_literal => {
+                const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
+                    return self.err_dispatcher.invalidSyntax("float literal", tk);
+                };
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .float_literal = value }, .loc_start = tk.loc.start });
             },
             .string_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = tk.value(self.src) }, .loc_start = tk.loc.start });
@@ -713,6 +785,7 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
 
+            //todo: should be a switch no?
             //fnCall
             if (tk.tag == .l_paren) {
                 self.walk();
@@ -809,11 +882,12 @@ pub const Parser = struct {
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {
         return switch (tag) {
+            .pipe => 5,
             .or_kw => 10,
             .and_kw => 20,
             .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,
             .plus, .minus => 40,
-            .star, .slash, .percent => 50,
+            .star, .slash, .double_slash, .percent => 50,
             .l_paren => 60,
             else => 0,
         };
@@ -829,7 +903,7 @@ pub const Parser = struct {
         }
 
         return switch (tk.tag) {
-            .string_kw, .number_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+            .string_kw, .int_kw, .float_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .nullable = is_nullable,
             }),
@@ -905,6 +979,14 @@ pub const Parser = struct {
         }
 
         return self.tokens[self.cur_index + n];
+    }
+
+    fn peekBack(self: *Self) Token {
+        if (self.cur_index - 1 >= self.tokens.len or self.cur_index - 1 == 0) {
+            return Token.init(Tag.eof, 0, 0);
+        }
+
+        return self.tokens[self.cur_index - 1];
     }
 };
 

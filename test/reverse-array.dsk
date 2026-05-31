@@ -1,7 +1,7 @@
 let reverse_list: fn = (mut arr: []string) -> []string
-    let n: number = len(arr)
+    let n: int = len(arr)
     let mut result: []string = []
-    let mut i: number = n - 1
+    let mut i: int = n - 1
 
     for i > -1
         let val: string = arr[i]

@@ -190,6 +190,21 @@ test "Test: Compile and Run" {
             \\{"id":"1","username":"Rogerinho","auth_provider":"G","address":{"country":"Brasil","state":"DF","city":"Brasília","street":"Eixão Sul"},"default_address":{"country":"Brasil","state":"SP","city":"São Paulo","street":"Av. Paulista"}}
             ,
         },
+        .{
+            .name = "simple pipe",
+            .src_file = "test/simple-pipe.dsk",
+            .expected_output = "dusk!",
+        },
+        .{
+            .name = "float ints",
+            .src_file = "test/float-ints.dsk",
+            .expected_output = "dusk!",
+        },
+        .{
+            .name = "div",
+            .src_file = "test/div.dsk",
+            .expected_output = "dusk!",
+        },
     };
 
     for (cases) |case| {
