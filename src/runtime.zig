@@ -1,12 +1,12 @@
 pub const QjsRuntime = struct {
     const Self = @This();
 
-    pub var stdout_writer: std.io.Writer = undefined;
+    pub var stdout_writer: *std.Io.Writer = undefined;
 
     rt: *c.JSRuntime,
     ctx: *c.JSContext,
 
-    pub fn init(writer: std.io.Writer) !Self {
+    pub fn init(writer: *std.Io.Writer) !Self {
         stdout_writer = writer;
 
         const rt = c.JS_NewRuntime() orelse return error.RuntimeInitFailed;
