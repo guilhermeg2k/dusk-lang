@@ -1332,16 +1332,6 @@ pub const SemaAnalyzer = struct {
         } });
     }
 
-    fn matchSameType(self: *Self, left: *Type, right: *Type, loc: usize) !void {
-        if (!left.eql(right)) {
-            return self.err_dispatcher.invalidType(
-                try left.name(self.allocator),
-                try right.name(self.allocator),
-                loc,
-            );
-        }
-    }
-
     fn isTypeNumber(self: *Self, t: *Type) bool {
         return t.eql(self.type_float) or t.eql(self.type_int);
     }
