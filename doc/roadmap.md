@@ -6,13 +6,13 @@
 
 - Upgrade to latest zig version
 - Improve errors message
-
-## Version: 0.10 - Frieren
-
 - Type Table
 - IR Value with type: \*Type at root
 - Static method dispatch
 - Review code notes/todos
+
+## Version: 0.10 - Frieren
+
 - Target wasm & evaluate with wasmtime
 
 ## Version 0.11 - Power
