@@ -1658,6 +1658,11 @@ const StructMetadata = struct {
     functions: std.StringHashMap(FuncMetadata),
 };
 
+const Struct = struct {
+    field_names: [][]const u8,
+    field_types: []TypeId,
+};
+
 const FuncMetadata = struct {
     symbol: *Symbol,
     params: []const TypedIdentifier,
@@ -1702,7 +1707,10 @@ pub const Type = struct {
         //struct_ = is the DEFINED  struct
         struct_def,
         struct_: StructMetadata,
-
+        @"struct": struct {
+            field_names: [][]const u8,
+            field_types: []TypeId,
+        },
         anonymous_struct_instance: AnonymousStruct,
         struct_instance: *StructMetadata,
 
@@ -1851,8 +1859,126 @@ pub const Type = struct {
     }
 };
 
+const PrimitiveType = enum {
+    float,
+    int,
+    string,
+    boolean,
+    void,
+    null,
+    dynamic,
+    function_def,
+    struct_def,
+    struct_self,
+};
+
+const TypeId = usize;
+
+const TypeTable = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    types: std.ArrayList(Type),
+
+    primitives: std.AutoHashMap(PrimitiveType, TypeId),
+    arrays: std.AutoHashMap(TypeId, TypeId),
+    anom_structs: std.StringHashMap(TypeId),
+    nullables: std.AutoHashMap(TypeId, TypeId),
+
+    fn getById(self: *Self, id: TypeId) ?Type {
+        if (id >= self.types.items.len) {
+            return null;
+        }
+
+        return self.types.items[id];
+    }
+
+    fn getByIdOrThrow(self: *Self, id: TypeId) !Type {
+        if (id >= self.types.items.len) {
+            return Errors.SemaError;
+        }
+
+        return self.types.items[id];
+    }
+
+    fn addStruct(self: *Self, @"struct": Struct) !TypeId {
+        try self.types.append(self.allocator, .{
+            .kind = .{
+                .@"struct" = @"struct",
+            },
+            .nullable = false,
+        });
+
+        return self.types.items.len - 1;
+    }
+
+    fn getOrAddArray(self: *Self, inner: TypeId) !TypeId {
+        const cached_array = self.arrays.get(inner);
+        if (cached_array) {
+            return cached_array;
+        }
+
+        try self.types.append(self.allocator, .{
+            .kind = .{
+                .array = inner,
+            },
+            .nullable = false,
+        });
+
+        const new_type_id = self.types.items.len - 1;
+        self.arrays.put(inner, new_type_id);
+        return new_type_id;
+    }
+
+    fn getAnonymoustStructSignature(self: *Self, anom_struct: *const AnonymousStruct) ![]const u8 {
+        const fields = std.ArrayList([]const u8).init(self.allocator);
+        var buf: std.ArrayList(u8) = .empty;
+
+        var keys_it = anom_struct.fields.keyIterator();
+        while (keys_it.next()) |key_ptr| {
+            try fields.append(key_ptr.*);
+        }
+
+        std.mem.sort([]const u8, fields.items, {}, util.stringCompare);
+
+        for (fields.items) |field| {
+            const type_id = anom_struct.fields.get(field);
+            if (type_id) |t_id| {
+                try buf.print(self.allocator, "{s}:{d}/", .{
+                    field,
+                    t_id,
+                });
+            }
+        }
+
+        return buf.toOwnedSlice(self.allocator);
+    }
+
+    fn getOrAddAnonymousStruct(self: *Self, anom_struct: Struct) !TypeId {
+        const anom_struct_signature = try self.getAnonymoustStructSignature(&anom_struct);
+        const cached_anom_struct = self.anom_structs.get(anom_struct_signature);
+
+        if (cached_anom_struct) {
+            return cached_anom_struct;
+        }
+
+        try self.types.append(self.allocator, .{
+            .kind = .{
+                .@"struct" = anom_struct,
+            },
+            .nullable = false,
+        });
+
+        const new_id = self.types.items.len - 1;
+        try self.anom_structs.put(anom_struct_signature, new_id);
+
+        return new_id;
+    }
+};
+
 pub const Errors = err.Errors;
 
+const util = @import("util.zig");
 const buildin = @import("built-in.zig");
 const err = @import("error.zig");
 const ir = @import("ir.zig");
