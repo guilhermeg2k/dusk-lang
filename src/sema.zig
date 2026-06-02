@@ -1885,6 +1885,42 @@ const TypeTable = struct {
     anom_structs: std.StringHashMap(TypeId),
     nullables: std.AutoHashMap(TypeId, TypeId),
 
+    fn init(alloc: std.mem.Allocator) !Self {
+        var primitives = std.AutoHashMap(PrimitiveType, TypeId).init(alloc);
+        var types = std.ArrayList(Type);
+
+        for (std.enums.values(PrimitiveType), 0..) |primitive_type, i| {
+            const kind_union = switch (primitive_type) {
+                .float => .{ .float = {} },
+                .int => .{ .int = {} },
+                .string => .{ .string = {} },
+                .boolean => .{ .boolean = {} },
+                .void => .{ .void = {} },
+                .null => .{ .null = {} },
+                .dynamic => .{ .dynamic = {} },
+                .function_def => .{ .function_def = {} },
+                .struct_def => .{ .struct_def = {} },
+                .struct_self => .{ .struct_self = {} },
+            };
+
+            try types.append(alloc, .{
+                .kind = kind_union,
+                .nullable = false,
+            });
+
+            primitives.put(primitive_type, i);
+        }
+
+        return Self{
+            .allocator = alloc,
+            .types = types,
+            .primitives = primitives,
+            .arrays = std.AutoHashMap(TypeId, TypeId).init(alloc),
+            .anom_structs = std.StringHashMap(TypeId).init(alloc),
+            .nullables = std.AutoHashMap(TypeId, TypeId).init(alloc),
+        };
+    }
+
     fn getById(self: *Self, id: TypeId) ?Type {
         if (id >= self.types.items.len) {
             return null;
@@ -1912,10 +1948,31 @@ const TypeTable = struct {
         return self.types.items.len - 1;
     }
 
+    fn getOrAddNullable(self: *Self, typeId: TypeId) !TypeId {
+        const nullable_type = self.nullables.get(typeId);
+
+        if (nullable_type) |t| {
+            return t;
+        }
+
+        const @"type" = try self.getByIdOrThrow(typeId);
+
+        try self.types.append(self.allocator, .{
+            .name = @"type".name,
+            .kind = @"type".kind,
+            .nullable = true,
+        });
+
+        const id = self.types.items.len - 1;
+        try self.nullables.put(typeId, id);
+
+        return id;
+    }
+
     fn getOrAddArray(self: *Self, inner: TypeId) !TypeId {
         const cached_array = self.arrays.get(inner);
-        if (cached_array) {
-            return cached_array;
+        if (cached_array) |type_id| {
+            return type_id;
         }
 
         try self.types.append(self.allocator, .{
@@ -1926,12 +1983,12 @@ const TypeTable = struct {
         });
 
         const new_type_id = self.types.items.len - 1;
-        self.arrays.put(inner, new_type_id);
+        try self.arrays.put(inner, new_type_id);
         return new_type_id;
     }
 
     fn getAnonymoustStructSignature(self: *Self, anom_struct: *const AnonymousStruct) ![]const u8 {
-        const fields = std.ArrayList([]const u8).init(self.allocator);
+        var fields = std.ArrayList([]const u8).init(self.allocator);
         var buf: std.ArrayList(u8) = .empty;
 
         var keys_it = anom_struct.fields.keyIterator();

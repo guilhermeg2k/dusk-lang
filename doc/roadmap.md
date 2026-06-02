@@ -68,3 +68,4 @@
 
 - Code Formatter
 - Fuzz testing
+- Improve memory usage
