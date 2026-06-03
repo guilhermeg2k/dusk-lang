@@ -97,18 +97,18 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !*Symbol {
-        const symbol = try Symbol.init(self.allocator, .{
+    fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !Symbol {
+        var symbol = Symbol{
             .identifier = identifier,
             .uid = self.scope.genUid(),
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
         symbol.type_id = try self.type_table.addType(.{
             .kind = .{
                 .function = .{
-                    .symbol = symbol,
+                    .identifier = identifier,
                     .params = &.{},
                     .return_type_id = undefined,
                 },
@@ -119,16 +119,13 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !*Symbol {
-        const symbol = try Symbol.init(
-            self.allocator,
-            .{
-                .identifier = identifier,
-                .uid = self.scope.genUid(),
-                .is_mut = false,
-                .type_id = undefined,
-            },
-        );
+    fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !Symbol {
+        var symbol = Symbol{
+            .identifier = identifier,
+            .uid = self.scope.genUid(),
+            .is_mut = false,
+            .type_id = undefined,
+        };
 
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
 
@@ -174,7 +171,7 @@ pub const SemaAnalyzer = struct {
         return AnonymousStruct{ .fields = fields, .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator) };
     }
 
-    fn fulfillStructType(self: *Self, struct_symbol: *Symbol, exp: *const ast.ExpNode) !void {
+    fn fulfillStructType(self: *Self, struct_symbol: Symbol, exp: *const ast.ExpNode) !void {
         const struct_def = exp.data.struct_def;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
@@ -245,7 +242,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn fulfillFuncType(self: *Self, fn_symbol: *Symbol, exp: *ast.ExpNode, struct_symbol: ?*Symbol) !void {
+    fn fulfillFuncType(self: *Self, fn_symbol: Symbol, exp: *ast.ExpNode, struct_symbol: ?Symbol) !void {
         const fn_def = exp.data.fn_def;
         var return_type_id: TypeId = undefined;
         var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
@@ -309,12 +306,12 @@ pub const SemaAnalyzer = struct {
             }
 
             self.scope.symbol_table.put(
-                try Symbol.init(self.allocator, .{
+                .{
                     .uid = self.scope.genUid(),
                     .identifier = param.identifier,
                     .is_mut = param.is_mut,
                     .type_id = param_type_id,
-                }),
+                },
             ) catch {
                 return self.err_dispatcher.alreadyDefined(param.identifier, exp.loc);
             };
@@ -439,15 +436,12 @@ pub const SemaAnalyzer = struct {
 
         const uid = self.scope.genUid();
 
-        self.scope.symbol_table.put(try Symbol.init(
-            self.allocator,
-            .{
-                .identifier = let_stmt.identifier,
-                .uid = uid,
-                .is_mut = let_stmt.is_mut,
-                .type_id = var_type_id,
-            },
-        )) catch {
+        self.scope.symbol_table.put(.{
+            .identifier = let_stmt.identifier,
+            .uid = uid,
+            .is_mut = let_stmt.is_mut,
+            .type_id = var_type_id,
+        }) catch {
             return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
 
@@ -513,15 +507,15 @@ pub const SemaAnalyzer = struct {
             },
         });
 
-        const captured_symbol = try Symbol.init(self.allocator, .{
+        const captured_symbol = Symbol{
             .uid = self.scope.genUid(),
             .identifier = if_capture_stmt.identifier.name,
             .type_id = captured_type_id,
             .is_mut = if_capture_stmt.identifier.is_mut,
-        });
+        };
 
         try self.scope.symbol_table.put(captured_symbol);
-        defer _ = self.scope.symbol_table.remove(captured_symbol);
+        defer _ = self.scope.symbol_table.remove(captured_symbol.identifier);
 
         const store_captured_var_inst = ir.Instruction{ .store_var = .{
             .uid = captured_symbol.uid,
@@ -753,7 +747,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.funcs) |func| {
             const fn_metadata = if (self.type_table.getTypePtrById(struct_symbol.type_id).kind.struct_.functions.get(func.identifier)) |metadata| metadata else unreachable;
-            const fn_name = fn_metadata.symbol.identifier;
+            const fn_name = func.identifier;
             const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
         }
@@ -788,15 +782,12 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc);
             }
 
-            try self.scope.symbol_table.put(try Symbol.init(
-                self.allocator,
-                .{
-                    .uid = arg_uid,
-                    .identifier = param.identifier,
-                    .is_mut = param.is_mut,
-                    .type_id = param.type_id,
-                },
-            ));
+            try self.scope.symbol_table.put(.{
+                .uid = arg_uid,
+                .identifier = param.identifier,
+                .is_mut = param.is_mut,
+                .type_id = param.type_id,
+            });
 
             try params.append(self.allocator, .{
                 .uid = arg_uid,
@@ -818,7 +809,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Func{
             .uid = uid,
-            .identifier = if (override_name) |name| name else metadata.symbol.identifier,
+            .identifier = if (override_name) |name| name else metadata.identifier,
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = metadata.return_type_id,
             .body = body.instructions,
@@ -1018,7 +1009,7 @@ pub const SemaAnalyzer = struct {
                 params = fn_metadata.params;
                 return_type = fn_metadata.return_type_id;
                 uid = target_type_symbol.uid;
-                fn_identifier = fn_metadata.symbol.identifier;
+                fn_identifier = fn_name;
             },
             .anonymous_struct_inicialization => {
                 const anonymous_struct = try self.createAnonymousStructFromFnCall(exp, false);
@@ -1518,7 +1509,7 @@ const Scope = struct {
     pub fn init(alloc: std.mem.Allocator, return_type_id: TypeId, type_table: *TypeTable) !Self {
         const builtins = try buildin.BuiltIn.init(alloc, type_table);
 
-        var symbols = std.StringHashMap(*Symbol).init(alloc);
+        var symbols = std.StringHashMap(Symbol).init(alloc);
 
         for (try builtins.generate()) |func| {
             try symbols.put(func.symbol.identifier, func.symbol);
@@ -1533,8 +1524,9 @@ const Scope = struct {
     }
 
     pub fn genUid(self: *Self) usize {
-        defer self.next_uid += 1;
-        return self.next_uid;
+        const uid = self.next_uid;
+        self.next_uid += 1;
+        return uid;
     }
 
     pub fn enter(self: *Self, return_type_id: TypeId) !void {
@@ -1553,19 +1545,19 @@ const SymbolTable = struct {
 
     allocator: std.mem.Allocator,
     parent: ?*SymbolTable,
-    symbols: std.StringHashMap(*Symbol),
+    symbols: std.StringHashMap(Symbol),
 
-    pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable, symbols: ?std.StringHashMap(*Symbol)) !*Self {
+    pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable, symbols: ?std.StringHashMap(Symbol)) !*Self {
         const ptr = try allocator.create(Self);
         ptr.* = Self{
             .allocator = allocator,
             .parent = parent,
-            .symbols = if (symbols) |s| s else std.StringHashMap(*Symbol).init(allocator),
+            .symbols = if (symbols) |s| s else std.StringHashMap(Symbol).init(allocator),
         };
         return ptr;
     }
 
-    fn put(self: *Self, symbol: *Symbol) !void {
+    fn put(self: *Self, symbol: Symbol) !void {
         if (self.symbols.get(symbol.identifier)) |_| {
             return Errors.SemaError;
         }
@@ -1573,11 +1565,11 @@ const SymbolTable = struct {
         try self.symbols.put(symbol.identifier, symbol);
     }
 
-    fn remove(self: *Self, symbol: *Symbol) bool {
-        return self.symbols.remove(symbol.identifier);
+    fn remove(self: *Self, identifier: []const u8) bool {
+        return self.symbols.remove(identifier);
     }
 
-    fn get(self: *Self, identifier: []const u8) ?*Symbol {
+    fn get(self: *Self, identifier: []const u8) ?Symbol {
         if (self.symbols.get(identifier)) |s| return s;
         if (self.parent) |parent| {
             return parent.get(identifier);
@@ -1586,7 +1578,7 @@ const SymbolTable = struct {
     }
 
     //note: getOrError
-    fn getOrThrow(self: *Self, id: []const u8) !*Symbol {
+    fn getOrThrow(self: *Self, id: []const u8) !Symbol {
         if (self.get(id)) |s| return s;
         return Errors.SemaError;
     }
@@ -1599,12 +1591,6 @@ pub const Symbol = struct {
     identifier: []const u8,
     type_id: TypeId,
     is_mut: bool,
-
-    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
-        const ptr = try allocator.create(Self);
-        ptr.* = exp;
-        return ptr;
-    }
 };
 
 const AnonymousStruct = struct {
@@ -1626,7 +1612,7 @@ const Struct = struct {
 };
 
 const FuncMetadata = struct {
-    symbol: *Symbol,
+    identifier: []const u8,
     params: []const TypedIdentifier,
     return_type_id: TypeId,
 };
@@ -1830,7 +1816,7 @@ pub const TypeTable = struct {
             .function_def => if (t.nullable) "nullable function def" else "function def",
             .struct_self => "@",
             .function => |metadata| {
-                return std.fmt.allocPrint(allocator, "function {s}", .{metadata.symbol.identifier});
+                return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
             },
             .struct_instance => |struct_type_id| {
                 const struct_type = self.getTypePtrById(struct_type_id);

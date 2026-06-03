@@ -40,14 +40,14 @@ pub const BuiltIn = struct {
     }
 
     fn echo(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 0,
             .identifier = "echo",
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
@@ -61,14 +61,14 @@ pub const BuiltIn = struct {
     }
 
     fn append(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 1,
             .identifier = "append",
             .type_id = undefined,
             .is_mut = false,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = true, .default_value = null },
             .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
@@ -83,14 +83,14 @@ pub const BuiltIn = struct {
     }
 
     fn len(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 2,
             .identifier = "len",
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = false, .default_value = null },
         }, self.int_type_id);
 
@@ -104,14 +104,14 @@ pub const BuiltIn = struct {
     }
 
     fn floor(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 3,
             .identifier = "floor",
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "n", .type_id = self.int_type_id, .is_mut = false, .default_value = null },
         }, self.int_type_id);
 
@@ -125,14 +125,14 @@ pub const BuiltIn = struct {
     }
 
     fn concat(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 4,
             .identifier = "concat",
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "str1", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
             .{ .identifier = "str2", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
@@ -147,14 +147,14 @@ pub const BuiltIn = struct {
     }
 
     fn stringify(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 5,
             .identifier = "stringify",
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "obj", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
 
@@ -168,14 +168,14 @@ pub const BuiltIn = struct {
     }
 
     fn assert(self: *const Self) !BuiltInFn {
-        const symbol = try Symbol.init(self.alloc, .{
+        var symbol = Symbol{
             .uid = 6,
             .identifier = "assert",
             .is_mut = false,
             .type_id = undefined,
-        });
+        };
 
-        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
             .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
@@ -188,13 +188,13 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .code = code };
     }
 
-    fn createFuncTypeId(self: *const Self, symbol: *Symbol, params: []const TypedIdentifier, return_type_id: TypeId) !TypeId {
+    fn createFuncTypeId(self: *const Self, fn_identifier: []const u8, params: []const TypedIdentifier, return_type_id: TypeId) !TypeId {
         const params_copy = try self.alloc.alloc(TypedIdentifier, params.len);
         @memcpy(params_copy, params);
         const id = self.type_table.types.items.len;
         try self.type_table.types.append(self.alloc, .{
             .kind = .{ .function = .{
-                .symbol = symbol,
+                .identifier = fn_identifier,
                 .params = params_copy,
                 .return_type_id = return_type_id,
             } },
@@ -205,7 +205,7 @@ pub const BuiltIn = struct {
 };
 
 const BuiltInFn = struct {
-    symbol: *Symbol,
+    symbol: Symbol,
     code: []const u8,
 };
 
