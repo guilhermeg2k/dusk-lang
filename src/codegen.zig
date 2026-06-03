@@ -1,6 +1,7 @@
 pub const Generator = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
+    type_table: *TypeTable,
 
     pub fn generate(self: *Self, program: ir.Program) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
@@ -23,7 +24,7 @@ pub const Generator = struct {
 
     fn genBuiltInFunctions(self: *Self) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
-        const builtin = BuiltIn{ .alloc = self.allocator };
+        const builtin = try BuiltIn.init(self.allocator, self.type_table);
 
         for (try builtin.generate()) |func| {
             try buf.appendSlice(self.allocator, func.code);
@@ -487,4 +488,5 @@ const GeneratorError = error{OutOfMemory};
 
 const ir = @import("ir.zig");
 const BuiltIn = @import("built-in.zig").BuiltIn;
+const TypeTable = @import("sema.zig").TypeTable;
 const std = @import("std");

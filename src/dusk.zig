@@ -42,7 +42,7 @@ pub const Dusk = struct {
         //note: is not dupping prolly cause of a undefined
         // try self.dump(ir, "dump/ir.json");
 
-        var js_code_gen = Generator{ .allocator = self.allocator };
+        var js_code_gen = Generator{ .allocator = self.allocator, .type_table = &sema_analyzer.type_table };
         const compiled_code = try js_code_gen.generate(ir);
         return compiled_code;
     }

@@ -2,6 +2,30 @@ pub const BuiltIn = struct {
     const Self = @This();
 
     alloc: std.mem.Allocator,
+    type_table: *TypeTable,
+
+    void_type_id: TypeId,
+    float_type_id: TypeId,
+    int_type_id: TypeId,
+    string_type_id: TypeId,
+    boolean_type_id: TypeId,
+    dynamic_type_id: TypeId,
+    dynamic_array_type_id: TypeId,
+
+    pub fn init(alloc: std.mem.Allocator, type_table: *TypeTable) !Self {
+        const dynamic_type_id = type_table.primitives.get(.dynamic).?;
+        return Self{
+            .alloc = alloc,
+            .type_table = type_table,
+            .void_type_id = type_table.primitives.get(.void).?,
+            .float_type_id = type_table.primitives.get(.float).?,
+            .int_type_id = type_table.primitives.get(.int).?,
+            .string_type_id = type_table.primitives.get(.string).?,
+            .boolean_type_id = type_table.primitives.get(.boolean).?,
+            .dynamic_type_id = dynamic_type_id,
+            .dynamic_array_type_id = try type_table.getOrAddArray(dynamic_type_id),
+        };
+    }
 
     pub fn generate(self: *const Self) ![7]BuiltInFn {
         return [_]BuiltInFn{
@@ -20,17 +44,12 @@ pub const BuiltIn = struct {
             .uid = 0,
             .identifier = "echo",
             .is_mut = false,
-            .type = undefined,
+            .type_id = undefined,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{ .function = .{
-                .symbol = symbol,
-                .params = echo_params,
-                .return_type = &void_type,
-            } },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+        }, self.void_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -45,20 +64,14 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 1,
             .identifier = "append",
-            .type = undefined,
+            .type_id = undefined,
             .is_mut = false,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{
-                .function = .{
-                    .symbol = symbol,
-                    .params = append_params,
-                    .return_type = &void_type,
-                },
-            },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = true, .default_value = null },
+            .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+        }, self.void_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -74,19 +87,12 @@ pub const BuiltIn = struct {
             .uid = 2,
             .identifier = "len",
             .is_mut = false,
-            .type = undefined,
+            .type_id = undefined,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{
-                .function = .{
-                    .symbol = symbol,
-                    .params = len_params,
-                    .return_type = &int_type,
-                },
-            },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = false, .default_value = null },
+        }, self.int_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -102,19 +108,12 @@ pub const BuiltIn = struct {
             .uid = 3,
             .identifier = "floor",
             .is_mut = false,
-            .type = undefined,
+            .type_id = undefined,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{
-                .function = .{
-                    .symbol = symbol,
-                    .params = floor_params,
-                    .return_type = &int_type,
-                },
-            },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "n", .type_id = self.int_type_id, .is_mut = false, .default_value = null },
+        }, self.int_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -130,19 +129,13 @@ pub const BuiltIn = struct {
             .uid = 4,
             .identifier = "concat",
             .is_mut = false,
-            .type = undefined,
+            .type_id = undefined,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{
-                .function = .{
-                    .symbol = symbol,
-                    .params = concat_params,
-                    .return_type = &string_type,
-                },
-            },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "str1", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+            .{ .identifier = "str2", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, self.string_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -157,20 +150,13 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 5,
             .identifier = "stringify",
-            .type = undefined,
             .is_mut = false,
+            .type_id = undefined,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{
-                .function = .{
-                    .symbol = symbol,
-                    .params = stringify_params,
-                    .return_type = &string_type,
-                },
-            },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "obj", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+        }, self.string_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -185,20 +171,13 @@ pub const BuiltIn = struct {
         const symbol = try Symbol.init(self.alloc, .{
             .uid = 6,
             .identifier = "assert",
-            .type = undefined,
             .is_mut = false,
+            .type_id = undefined,
         });
 
-        symbol.type = try Type.init(self.alloc, .{
-            .kind = .{
-                .function = .{
-                    .symbol = symbol,
-                    .params = assert_params,
-                    .return_type = &void_type,
-                },
-            },
-            .nullable = false,
-        });
+        symbol.type_id = try self.createFuncTypeId(symbol, &.{
+            .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
+        }, self.void_type_id);
 
         const code = try std.fmt.allocPrint(
             self.alloc,
@@ -209,89 +188,20 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .code = code };
     }
 
-    const echo_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "msgs",
-            .type = &dynamic,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    const len_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "array",
-            .type = &dynamic_array_type,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    const append_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "array",
-            .type = &dynamic_array_type,
-            .is_mut = true,
-            .default_value = null,
-        },
-        .{
-            .identifier = "value",
-            .type = &dynamic,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    const floor_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "n",
-            .type = &int_type,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    const concat_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "str1",
-            .type = &string_type,
-            .is_mut = false,
-            .default_value = null,
-        },
-        .{
-            .identifier = "str2",
-            .type = &string_type,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    const stringify_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "obj",
-            .type = &dynamic,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    const assert_params: []const sema.TypedIdentifier = &.{
-        .{
-            .identifier = "cond",
-            .type = &boolean_type,
-            .is_mut = false,
-            .default_value = null,
-        },
-    };
-
-    var fn_type = Type{ .kind = .{ .function_def = {} } };
-    var void_type = Type{ .kind = .{ .void = {} }, .nullable = false };
-    var float_type = Type{ .kind = .{ .float = {} }, .nullable = false };
-    var int_type = Type{ .kind = .{ .int = {} }, .nullable = false };
-    var string_type = Type{ .kind = .{ .string = {} }, .nullable = false };
-    var boolean_type = Type{ .kind = .{ .boolean = {} }, .nullable = false };
-    var dynamic = Type{ .kind = .{ .dynamic = {} }, .nullable = false };
-    var dynamic_array_type = Type{ .kind = .{ .array = &dynamic }, .nullable = false };
+    fn createFuncTypeId(self: *const Self, symbol: *Symbol, params: []const TypedIdentifier, return_type_id: TypeId) !TypeId {
+        const params_copy = try self.alloc.alloc(TypedIdentifier, params.len);
+        @memcpy(params_copy, params);
+        const id = self.type_table.types.items.len;
+        try self.type_table.types.append(self.alloc, .{
+            .kind = .{ .function = .{
+                .symbol = symbol,
+                .params = params_copy,
+                .return_type_id = return_type_id,
+            } },
+            .nullable = false,
+        });
+        return id;
+    }
 };
 
 const BuiltInFn = struct {
@@ -301,5 +211,7 @@ const BuiltInFn = struct {
 
 const sema = @import("sema.zig");
 const Symbol = sema.Symbol;
-const Type = sema.Type;
+const TypeId = sema.TypeId;
+const TypedIdentifier = sema.TypedIdentifier;
+const TypeTable = sema.TypeTable;
 const std = @import("std");

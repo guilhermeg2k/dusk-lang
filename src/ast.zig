@@ -159,11 +159,6 @@ pub const FnCall = struct {
     arguments: []const FnCallArg,
 };
 
-pub const AnonymousStructInicialization = struct {
-    are_arguments_named: bool,
-    arguments: []const FnCallArg,
-};
-
 pub const FnCallArg = struct {
     identifier: ?[]const u8,
     exp: *ExpNode,

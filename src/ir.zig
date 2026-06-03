@@ -5,7 +5,7 @@ pub const Program = struct {
 };
 
 pub const Block = struct {
-    return_type: *Type,
+    return_type: TypeId,
     instructions: []const Instruction,
 };
 
@@ -31,7 +31,7 @@ pub const Struct = struct {
 
 pub const StructField = struct {
     identifier: []const u8,
-    type: *Type,
+    type_id: TypeId,
     default_value: ?*Value,
 };
 
@@ -40,14 +40,14 @@ pub const Func = struct {
     identifier: []const u8,
     params: []const FuncParam,
     body: []const Instruction,
-    return_type: *Type,
+    return_type: TypeId,
 };
 
 pub const FuncParam = struct {
     uid: usize,
     identifier: []const u8,
     default_value: ?*Value,
-    type: *Type,
+    type_id: TypeId,
 };
 
 pub const UpdateIndexed = struct {
@@ -58,14 +58,13 @@ pub const UpdateIndexed = struct {
 pub const StructInit = struct {
     keys: [][]const u8,
     values: []*Value,
-    //note: temp
-    type: *Type,
+    type_id: TypeId,
 };
 
 pub const StoreVar = struct {
     uid: usize,
     identifier: []const u8,
-    type: *Type,
+    type_id: TypeId,
     value: *Value,
 };
 
@@ -106,7 +105,7 @@ pub const Value = union(enum) {
 
     i_array: Array,
 
-    identifier: struct { uid: usize, identifier: []const u8, type: *Type },
+    identifier: struct { uid: usize, identifier: []const u8, type_id: TypeId },
 
     indexed: IndexedValue,
     nullable_indexed: IndexedValue,
@@ -132,11 +131,11 @@ pub const Value = union(enum) {
     }
 };
 
-pub const Array = struct { type: *Type, values: []const *Value };
+pub const Array = struct { type_id: TypeId, values: []const *Value };
 
 pub const BinaryOp = struct {
     kind: BinaryOpKind,
-    type: *Type,
+    type_id: TypeId,
     left: *Value,
     right: *Value,
 };
@@ -148,7 +147,7 @@ pub const IndexedValue = struct {
 
 pub const UnaryOp = struct {
     kind: UnaryOpKind,
-    type: *Type,
+    type_id: TypeId,
     right: *Value,
 };
 
@@ -156,14 +155,14 @@ pub const FnCall = struct {
     fn_uid: usize,
     identifier: []const u8,
     args: []const *Value,
-    return_type: *Type,
+    return_type: TypeId,
 };
 
 pub const StructFnCall = struct {
     target: *Value,
     identifier: []const u8,
     args: []const *Value,
-    return_type: *Type,
+    return_type: TypeId,
 };
 
 pub const UnaryOpKind = enum {
@@ -203,7 +202,6 @@ pub const BinaryOpKind = enum {
 
     b_and,
     b_or,
-    //note: gota go soon
     b_cmp_eq,
     b_cmp_neq,
 };
@@ -211,4 +209,4 @@ pub const BinaryOpKind = enum {
 const std = @import("std");
 const sema = @import("sema.zig");
 const SemaError = sema.Errors;
-const Type = sema.Type;
+const TypeId = sema.TypeId;
