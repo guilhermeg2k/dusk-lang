@@ -179,12 +179,12 @@ pub const SemaAnalyzer = struct {
         var funcs: std.StringHashMap(FuncMetadata) = .init(self.allocator);
 
         for (struct_def.static_fields) |field| {
-            const struct_field = try self.createStructField(field);
+            const struct_field = try self.createStructField(field, struct_symbol.type_id);
             try static_fields.put(field.identifier, struct_field);
         }
 
         for (struct_def.fields) |field| {
-            const struct_field = try self.createStructField(field);
+            const struct_field = try self.createStructField(field, struct_symbol.type_id);
             try fields_in_order.append(
                 self.allocator,
                 struct_field,
@@ -207,12 +207,12 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.struct_.functions = funcs;
     }
 
-    fn createStructField(self: *Self, field: ast.StructField) Errors!TypedIdentifier {
+    fn createStructField(self: *Self, field: ast.StructField, current_struct_type_id: ?TypeId) Errors!TypedIdentifier {
         var field_type_id: TypeId = undefined;
         var field_default_value: ?*ir.Value = null;
 
         if (field.type) |_type| {
-            field_type_id = try self.resolveTypeAnnotation(_type);
+            field_type_id = try self.resolveTypeAnnotation(_type, current_struct_type_id);
         }
 
         if (field.default_value) |initial_value| {
@@ -255,7 +255,7 @@ pub const SemaAnalyzer = struct {
             var param_type_id: TypeId = undefined;
 
             if (param.type_annotation) |annotation| {
-                param_type_id = self.resolveTypeAnnotation(annotation) catch {
+                param_type_id = self.resolveTypeAnnotation(annotation, if (struct_symbol) |symbol| symbol.type_id else null) catch {
                     return self.err_dispatcher.typeNotDefined(
                         try param.type_annotation.?.value(self.allocator),
                         exp.loc,
@@ -286,7 +286,7 @@ pub const SemaAnalyzer = struct {
 
             const param_type_ptr = self.type_table.getTypePtrById(param_type_id);
             if (param_type_ptr.kind == .struct_self and struct_symbol == null) {
-                return self.err_dispatcher.selfCantBeUsedOutsideOfAstruct(exp.loc);
+                return;
             }
 
             if (param_type_ptr.kind == .struct_self) {
@@ -326,7 +326,7 @@ pub const SemaAnalyzer = struct {
 
         //note:  need to catch the else case ?
         if (fn_def.return_type) |r_type| {
-            return_type_id = self.resolveTypeAnnotation(r_type) catch {
+            return_type_id = self.resolveTypeAnnotation(r_type, null) catch {
                 return self.err_dispatcher.typeNotDefined(r_type.type.primitive, exp.loc);
             };
         } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
@@ -401,7 +401,7 @@ pub const SemaAnalyzer = struct {
         const expression_type_id = self.resolveValueType(expression_value);
 
         if (let_stmt.type_annotation) |type_annotation| {
-            var_type_id = try self.resolveTypeAnnotation(type_annotation);
+            var_type_id = try self.resolveTypeAnnotation(type_annotation, null);
         } else {
             var_type_id = expression_type_id;
             const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
@@ -692,7 +692,7 @@ pub const SemaAnalyzer = struct {
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
 
         for (struct_def.fields) |field| {
-            const struct_field = try self.createStructField(field);
+            const struct_field = try self.createStructField(field, null);
             try fields_in_order.append(
                 self.allocator,
                 struct_field,
@@ -719,7 +719,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.fields) |field| {
             const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type) else self.resolveValueType(default_value.?);
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, struct_symbol.type_id) else self.resolveValueType(default_value.?);
 
             try fields.append(
                 self.allocator,
@@ -733,7 +733,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.static_fields) |field| {
             const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type) else self.resolveValueType(default_value.?);
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, struct_symbol.type_id) else self.resolveValueType(default_value.?);
 
             try static_fields.append(
                 self.allocator,
@@ -1011,7 +1011,7 @@ pub const SemaAnalyzer = struct {
                 uid = target_type_symbol.uid;
                 fn_identifier = fn_name;
             },
-            .anonymous_struct_inicialization => {
+            .anonymous_struct => {
                 const anonymous_struct = try self.createAnonymousStructFromFnCall(exp, false);
                 params = anonymous_struct.fields_in_order;
                 return_type = try self.type_table.addType(.{
@@ -1091,7 +1091,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct_inicialization;
+        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct;
 
         if (is_anonymous_struct_inicialization) {
             var keys: std.ArrayList([]const u8) = .empty;
@@ -1377,7 +1377,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation) !TypeId {
+    pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation, current_struct_type_id: ?TypeId) !TypeId {
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
                 if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
@@ -1404,12 +1404,14 @@ pub const SemaAnalyzer = struct {
                 });
             },
             .array => {
-                const inner_type_id = try self.resolveTypeAnnotation(type_annotation.type.array);
+                const inner_type_id = try self.resolveTypeAnnotation(type_annotation.type.array, current_struct_type_id);
                 return try self.type_table.getOrAddArray(inner_type_id);
             },
             .struct_self => {
-                const id = self.type_table.getPrimitive(.struct_self);
-                return if (type_annotation.nullable) try self.type_table.getOrAddNullable(id) else id;
+                if (current_struct_type_id) |struct_type_id| {
+                    return if (type_annotation.nullable) try self.type_table.getOrAddNullable(struct_type_id) else struct_type_id;
+                }
+                return Errors.SemaError;
             },
         }
     }

@@ -735,7 +735,7 @@ pub const Parser = struct {
             .at => {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
-                        .anonymous_struct_inicialization = {},
+                        .anonymous_struct = {},
                     },
                     .loc = tk.loc,
                 });

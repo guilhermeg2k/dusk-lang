@@ -117,7 +117,7 @@ pub const Exp = union(enum) {
     fn_def: FnDef,
 
     struct_def: StructDef,
-    anonymous_struct_inicialization: void,
+    anonymous_struct: void,
 
     indexed: IndexedExp,
     nullable_indexed: NullableIndexedExp,
