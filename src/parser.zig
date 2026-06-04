@@ -294,7 +294,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseStructDef(self: *Self) ParserError!ast.StructDef {
+    fn parseStructDef(self: *Self) ParserError!ast.Struct {
         _ = try self.expect(.indent);
         var static_fields: std.ArrayList(ast.StructField) = .empty;
         var fields: std.ArrayList(ast.StructField) = .empty;
@@ -369,14 +369,14 @@ pub const Parser = struct {
             }
         }
 
-        return ast.StructDef{
+        return ast.Struct{
             .funcs = try funcs.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),
         };
     }
 
-    fn parseAnonymousStructDef(self: *Self) ParserError!ast.AnonymousStructDef {
+    fn parseAnonymousStructDef(self: *Self) ParserError!ast.Struct {
         _ = try self.expect(.indent);
         var fields: std.ArrayList(ast.StructField) = .empty;
 
@@ -404,8 +404,10 @@ pub const Parser = struct {
             }
         }
 
-        return ast.AnonymousStructDef{
+        return ast.Struct{
             .fields = try fields.toOwnedSlice(self.allocator),
+            .static_fields = &.{},
+            .funcs = &.{},
         };
     }
 
@@ -735,7 +737,7 @@ pub const Parser = struct {
             .at => {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
-                        .anonymous_struct = {},
+                        .anonymous_struct_identifier = {},
                     },
                     .loc = tk.loc,
                 });

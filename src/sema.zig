@@ -141,7 +141,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createAnonymousStructFromFnCall(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !AnonymousStruct {
+    fn createAnonymousStructFromFnCall(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !Struct {
         const fn_call = exp.data.fn_call;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
@@ -166,7 +166,13 @@ pub const SemaAnalyzer = struct {
             try fields.put(arg.identifier.?, field);
         }
 
-        return AnonymousStruct{ .fields = fields, .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator) };
+        return Struct{
+            .identifier = "",
+            .fields = fields,
+            .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .static_fields = .init(self.allocator),
+            .methods = .init(self.allocator),
+        };
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, exp: *const ast.ExpNode) !void {
@@ -665,7 +671,7 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.AnonymousStructDef) !AnonymousStruct {
+    fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.Struct) !Struct {
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
 
@@ -679,8 +685,11 @@ pub const SemaAnalyzer = struct {
         }
 
         return .{
+            .identifier = "Anonymous Struct",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .static_fields = .init(self.allocator),
+            .methods = .init(self.allocator),
         };
     }
 
@@ -973,13 +982,10 @@ pub const SemaAnalyzer = struct {
                 uid = target_struct_meta_symbol.uid;
                 fn_identifier = fn_name;
             },
-            .anonymous_struct => {
+            .anonymous_struct_identifier => {
                 const anonymous_struct = try self.createAnonymousStructFromFnCall(exp, false);
                 params = anonymous_struct.fields_in_order;
-                return_type = try self.type_table.addType(.{
-                    .kind = .{ .anonymous_struct_instance = anonymous_struct },
-                    .nullable = false,
-                });
+                return_type = try self.type_table.getOrAddAnonymousStruct(anonymous_struct);
             },
             else => unreachable,
         }
@@ -1055,7 +1061,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct;
+        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct_identifier;
 
         if (is_anonymous_struct_inicialization) {
             var keys: std.ArrayList([]const u8) = .empty;
@@ -1341,10 +1347,9 @@ pub const SemaAnalyzer = struct {
                 return if (type_annotation.nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
             },
             .anonymous_struct => |struct_metadata| {
-                return try self.type_table.addType(.{
-                    .kind = .{ .anonymous_struct_instance = try self.visitAnonymousStructDef(&struct_metadata) },
-                    .nullable = type_annotation.nullable,
-                });
+                const anon_struct = try self.visitAnonymousStructDef(&struct_metadata);
+                const type_id = try self.type_table.getOrAddAnonymousStruct(anon_struct);
+                return if (type_annotation.nullable) try self.type_table.getOrAddNullable(type_id) else type_id;
             },
             .array => {
                 const inner_type_id = try self.resolveTypeAnnotation(type_annotation.type.array, current_struct_type_id);
@@ -1538,11 +1543,6 @@ pub const Symbol = struct {
     },
 };
 
-const AnonymousStruct = struct {
-    fields: std.StringHashMap(TypedIdentifier),
-    fields_in_order: []const TypedIdentifier,
-};
-
 const Struct = struct {
     identifier: []const u8,
     fields: std.StringHashMap(TypedIdentifier),
@@ -1589,8 +1589,6 @@ pub const Type = struct {
         function: FuncMetadata,
         @"struct": Struct,
 
-        anonymous_struct_instance: AnonymousStruct,
-
         array: TypeId,
     },
 
@@ -1626,6 +1624,7 @@ pub const TypeTable = struct {
     arrays: std.AutoHashMap(TypeId, TypeId),
     nullableTypeIdByTypeId: std.AutoHashMap(TypeId, TypeId),
     typeIdByNullableTypeId: std.AutoHashMap(TypeId, TypeId),
+    anom_structs: std.StringHashMap(TypeId),
 
     fn init(alloc: std.mem.Allocator) !Self {
         var primitives = std.AutoHashMap(PrimitiveType, TypeId).init(alloc);
@@ -1656,6 +1655,7 @@ pub const TypeTable = struct {
             .arrays = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .nullableTypeIdByTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .typeIdByNullableTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
+            .anom_structs = std.StringHashMap(TypeId).init(alloc),
         };
     }
 
@@ -1686,39 +1686,7 @@ pub const TypeTable = struct {
 
             .@"struct" => {
                 if (type_a.nullable == true and type_b.kind == .null) return true;
-
-                if (type_b.kind == .anonymous_struct_instance) {
-                    const struct_def_a = &type_a.kind.@"struct";
-                    const anon = type_b.kind.anonymous_struct_instance;
-                    for (struct_def_a.fields_in_order) |field| {
-                        if (anon.fields.get(field.identifier) == null) return false;
-                    }
-                    return true;
-                }
-
                 return type_a == type_b;
-            },
-
-            .anonymous_struct_instance => |anon_self| {
-                if (type_a.nullable == true and type_b.kind == .null) return true;
-
-                if (type_b.kind == .anonymous_struct_instance) {
-                    const anon = type_b.kind.anonymous_struct_instance;
-                    for (anon_self.fields_in_order) |field| {
-                        if (anon.fields.get(field.identifier) == null) return false;
-                    }
-                    return true;
-                }
-
-                if (type_b.kind == .@"struct") {
-                    const struct_def = type_b.kind.@"struct";
-                    for (anon_self.fields_in_order) |field| {
-                        if (struct_def.fields.get(field.identifier) == null) return false;
-                    }
-                    return true;
-                }
-
-                return false;
             },
 
             .dynamic => unreachable,
@@ -1743,9 +1711,6 @@ pub const TypeTable = struct {
             },
             .@"struct" => |s| {
                 return std.fmt.allocPrint(allocator, "{s}struct {s}", .{ prefix, s.identifier });
-            },
-            .anonymous_struct_instance => |metadata| {
-                return std.fmt.allocPrint(allocator, "anonymous struct {any}", .{metadata.fields});
             },
             .array => |inner_id| {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
@@ -1800,23 +1765,24 @@ pub const TypeTable = struct {
     }
 
     fn getAnonymoustStructSignature(self: *Self, anom_struct: *const Struct) ![]const u8 {
-        var fields_in_order = std.ArrayList([]const u8).init(self.allocator);
+        var fields_in_order: std.ArrayList([]const u8) = .empty;
 
         var keys_it = anom_struct.fields.keyIterator();
         while (keys_it.next()) |key_ptr| {
-            try fields_in_order.append(key_ptr.*);
+            try fields_in_order.append(self.allocator, key_ptr.*);
         }
 
         std.mem.sort([]const u8, fields_in_order.items, {}, util.stringCompare);
 
         var buf: std.ArrayList(u8) = .empty;
         for (fields_in_order.items) |field| {
-            const type_id = anom_struct.fields.get(field);
-            if (type_id) |t_id| {
-                try buf.print(self.allocator, "{s}:{d}/", .{
+            const typed_id = anom_struct.fields.get(field);
+            if (typed_id) |t_id| {
+                const formatted = try std.fmt.allocPrint(self.allocator, "{s}:{d}/", .{
                     field,
-                    t_id,
+                    t_id.type_id,
                 });
+                try buf.appendSlice(self.allocator, formatted);
             }
         }
 
@@ -1827,8 +1793,8 @@ pub const TypeTable = struct {
         const anom_struct_signature = try self.getAnonymoustStructSignature(&anom_struct);
         const cached_anom_struct = self.anom_structs.get(anom_struct_signature);
 
-        if (cached_anom_struct) {
-            return cached_anom_struct;
+        if (cached_anom_struct) |id| {
+            return id;
         }
 
         try self.types.append(self.allocator, .{
@@ -1838,7 +1804,7 @@ pub const TypeTable = struct {
             .nullable = false,
         });
 
-        const new_id = self.types.items.len - 1;
+        const new_id: TypeId = @intCast(self.types.items.len - 1);
         try self.anom_structs.put(anom_struct_signature, new_id);
 
         return new_id;

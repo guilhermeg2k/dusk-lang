@@ -58,7 +58,7 @@ pub const TypeAnnotation = struct {
     type: union(enum) {
         primitive: []const u8,
         @"struct": []const u8,
-        anonymous_struct: AnonymousStructDef,
+        anonymous_struct: Struct,
         array: *TypeAnnotation,
         struct_self: void,
     },
@@ -110,15 +110,12 @@ pub const Exp = union(enum) {
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
+    anonymous_struct_identifier: void,
     array_literal: ArrayLiteral,
     null_literal: void,
-
     fn_call: FnCall,
     fn_def: FnDef,
-
-    struct_def: StructDef,
-    anonymous_struct: void,
-
+    struct_def: Struct,
     indexed: IndexedExp,
     nullable_indexed: NullableIndexedExp,
     unary_exp: UnaryExp,
@@ -178,14 +175,10 @@ pub const NullableIndexedExp = struct {
     index: *ExpNode,
 };
 
-pub const StructDef = struct {
+pub const Struct = struct {
     fields: []const StructField,
     static_fields: []const StructField,
     funcs: []const StructFn,
-};
-
-pub const AnonymousStructDef = struct {
-    fields: []const StructField,
 };
 
 pub const StructFn = struct {
