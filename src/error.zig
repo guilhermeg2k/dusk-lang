@@ -35,7 +35,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidType;
     }
 
     pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
@@ -47,7 +47,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidReturnType;
     }
 
     pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
@@ -59,7 +59,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidExpression;
     }
 
     pub fn invalidIndexing(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
@@ -71,7 +71,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidIndexing;
     }
 
     pub fn invalidAssignment(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
@@ -83,7 +83,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidAssignment;
     }
 
     pub fn typeNotDefined(self: *Self, found: []const u8, loc: Loc) Errors {
@@ -91,7 +91,7 @@ pub const ErrorDispatcher = struct {
             try allocPrint(self.allocator, "Invalid type '{s}'", .{found}),
             loc,
         );
-        return Errors.SemaError;
+        return error.UnknownType;
     }
 
     pub fn invalidNumberOfArgs(self: *Self, expected: usize, found: usize, loc: Loc) Errors {
@@ -103,7 +103,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidNumberOfArgs;
     }
 
     pub fn missingArgument(self: *Self, expected: []const u8, loc: Loc) Errors {
@@ -115,32 +115,32 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.MissingArgument;
     }
 
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.AlreadyDefined;
     }
 
     pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.NotDefined;
     }
 
     pub fn notMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "'{s}' is not mutable", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.NotMutable;
     }
 
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.UnwrappedCantBeMutable;
     }
 
     pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: Loc) Errors {
         self.log("@ cannot be used outside of a struct", loc);
-        return Errors.SemaError;
+        return error.SelfOutsideStruct;
     }
 
     pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: Loc) Errors {
@@ -152,7 +152,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidStructField;
     }
 
     pub fn invalidStructField(self: *Self, struct_name: []const u8, member: []const u8, loc: Loc) Errors {
@@ -164,7 +164,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidStructField;
     }
 
     pub fn invalidStructFunction(self: *Self, struct_name: []const u8, function: []const u8, loc: Loc) Errors {
@@ -176,7 +176,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidStructField;
     }
 
     //note: maybe not used
@@ -185,7 +185,7 @@ pub const ErrorDispatcher = struct {
             "Can't infer anonymous struct type",
             loc,
         );
-        return Errors.SemaError;
+        return error.CantInferAnonymousStruct;
     }
 
     pub fn primitiveParamsCantBeMutable(self: *Self, loc: Loc) Errors {
@@ -193,7 +193,7 @@ pub const ErrorDispatcher = struct {
             "Primitive params can't be mutable",
             loc,
         );
-        return Errors.SemaError;
+        return error.PrimitiveParamsCantBeMutable;
     }
 
     pub fn cantInferArrayLiteralType(self: *Self, loc: Loc) Errors {
@@ -201,7 +201,7 @@ pub const ErrorDispatcher = struct {
             "Can't infer array literal type",
             loc,
         );
-        return Errors.SemaError;
+        return error.CantInferArrayLiteralType;
     }
 
     pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: Loc) Errors {
@@ -213,7 +213,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.UnecessaryOptionalChain;
     }
 
     pub fn nullableMustBeUnwraped(self: *Self, member: []const u8, loc: Loc) Errors {
@@ -225,7 +225,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.NullableMustBeUnwrapped;
     }
 
     pub fn invalidParameterType(self: *Self, parameter_name: []const u8, loc: Loc) Errors {
@@ -237,7 +237,7 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidParameterType;
     }
 
     pub fn log(self: *Self, msg: []const u8, loc: Loc) void {
@@ -279,11 +279,11 @@ pub const ErrorDispatcher = struct {
     fn findExactLoc(self: *Self, loc: usize) ExactLoc {
         var line_count: usize = 1;
         var line_start: usize = 0;
-        var line_end: usize = 0;
+        var line_end: usize = self.src.len -| 1;
 
         var i: usize = 0;
         var should_break_in_next_line = false;
-        while (true) {
+        while (i < self.src.len) {
             if (i == loc) should_break_in_next_line = true;
             if (self.src[i] == '\n') {
                 if (should_break_in_next_line) {
@@ -329,6 +329,27 @@ pub const Errors = error{
     LexerError,
     ParserError,
     SemaError,
+
+    InvalidType,
+    InvalidReturnType,
+    InvalidExpression,
+    InvalidIndexing,
+    InvalidAssignment,
+    UnknownType,
+    InvalidNumberOfArgs,
+    MissingArgument,
+    AlreadyDefined,
+    NotDefined,
+    NotMutable,
+    UnwrappedCantBeMutable,
+    SelfOutsideStruct,
+    InvalidStructField,
+    CantInferAnonymousStruct,
+    PrimitiveParamsCantBeMutable,
+    CantInferArrayLiteralType,
+    UnecessaryOptionalChain,
+    NullableMustBeUnwrapped,
+    InvalidParameterType,
 };
 
 const std = @import("std");

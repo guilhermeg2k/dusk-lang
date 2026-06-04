@@ -1,0 +1,3 @@
+let f = (a: int, b: int = 0) -> void
+    return
+f(b = 1)
