@@ -57,7 +57,7 @@ pub const TypeAnnotation = struct {
 
     type: union(enum) {
         primitive: []const u8,
-        struct_: []const u8,
+        @"struct": []const u8,
         anonymous_struct: AnonymousStructDef,
         array: *TypeAnnotation,
         struct_self: void,
@@ -74,7 +74,7 @@ pub const TypeAnnotation = struct {
     pub fn value(self: *Self, alloc: std.mem.Allocator) ![]const u8 {
         return switch (self.type) {
             .primitive => |primitive_name| primitive_name,
-            .struct_ => |struct_name| struct_name,
+            .@"struct" => |struct_name| struct_name,
             //note: improve this gonna log ugly stuff
             .anonymous_struct => |anom_struct| {
                 return std.fmt.allocPrint(alloc, "anonymous struct {any}", .{anom_struct.fields});

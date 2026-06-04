@@ -367,8 +367,6 @@ pub const Generator = struct {
                 try buf.appendSlice(self.allocator, op);
             },
 
-            .struct_def => {},
-            .fn_def => {},
         }
 
         return buf.toOwnedSlice(self.allocator);

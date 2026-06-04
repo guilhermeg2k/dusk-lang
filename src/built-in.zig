@@ -43,7 +43,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{
             .uid = 0,
             .identifier = "echo",
-            .is_mut = false,
+            .kind = .{ .function = {} },
             .type_id = undefined,
         };
 
@@ -65,7 +65,7 @@ pub const BuiltIn = struct {
             .uid = 1,
             .identifier = "append",
             .type_id = undefined,
-            .is_mut = false,
+            .kind = .{ .function = {} },
         };
 
         symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
@@ -86,7 +86,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{
             .uid = 2,
             .identifier = "len",
-            .is_mut = false,
+            .kind = .{ .function = {} },
             .type_id = undefined,
         };
 
@@ -107,7 +107,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{
             .uid = 3,
             .identifier = "floor",
-            .is_mut = false,
+            .kind = .{ .function = {} },
             .type_id = undefined,
         };
 
@@ -128,7 +128,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{
             .uid = 4,
             .identifier = "concat",
-            .is_mut = false,
+            .kind = .{ .function = {} },
             .type_id = undefined,
         };
 
@@ -150,7 +150,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{
             .uid = 5,
             .identifier = "stringify",
-            .is_mut = false,
+            .kind = .{ .function = {} },
             .type_id = undefined,
         };
 
@@ -171,7 +171,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{
             .uid = 6,
             .identifier = "assert",
-            .is_mut = false,
+            .kind = .{ .function = {} },
             .type_id = undefined,
         };
 

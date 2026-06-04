@@ -926,7 +926,7 @@ pub const Parser = struct {
                 .nullable = is_nullable,
             }),
             .identifier => ast.TypeAnnotation.init(self.allocator, .{
-                .type = .{ .struct_ = tk.value(self.src) },
+                .type = .{ .@"struct" = tk.value(self.src) },
                 .nullable = is_nullable,
             }),
             .struct_kw => ast.TypeAnnotation.init(self.allocator, .{
