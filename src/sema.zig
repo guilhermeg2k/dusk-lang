@@ -290,6 +290,7 @@ pub const SemaAnalyzer = struct {
             }
 
             if (param_type_ptr.kind == .struct_self) {
+                std.log.debug("COREANO", .{});
                 param_type_id = try self.type_table.addType(.{
                     .kind = .{
                         .struct_instance = struct_symbol.?.type_id,
@@ -1586,13 +1587,26 @@ const SymbolTable = struct {
     }
 };
 
+pub const StructScope = struct {
+    blueprint_type_id: TypeId,
+    methods: std.StringHashMap(TypeId),
+    static_fields: std.StringHashMap(TypeId),
+};
+
 pub const Symbol = struct {
     const Self = @This();
 
     uid: usize,
     identifier: []const u8,
     type_id: TypeId,
-    is_mut: bool,
+
+    kind: union(enum) {
+        variable: struct {
+            is_mut: bool,
+        },
+        function: void,
+        @"struct": StructScope,
+    },
 };
 
 const AnonymousStruct = struct {
@@ -1646,15 +1660,12 @@ pub const Type = struct {
         void,
         null,
         dynamic,
+        meta,
 
-        function_def,
         function: FuncMetadata,
-
-        struct_def,
-        struct_: StructMetadata,
         @"struct": Struct,
+
         anonymous_struct_instance: AnonymousStruct,
-        struct_instance: TypeId,
 
         struct_self,
         array: TypeId,
@@ -1677,8 +1688,7 @@ const PrimitiveType = enum {
     void,
     null,
     dynamic,
-    function_def,
-    struct_def,
+    meta,
     struct_self,
 };
 
@@ -1709,8 +1719,7 @@ pub const TypeTable = struct {
                     .void => .{ .void = {} },
                     .null => .{ .null = {} },
                     .dynamic => .{ .dynamic = {} },
-                    .function_def => .{ .function_def = {} },
-                    .struct_def => .{ .struct_def = {} },
+                    .meta => .{ .meta = {} },
                     .struct_self => .{ .struct_self = {} },
                 },
                 .nullable = false,
@@ -1814,8 +1823,6 @@ pub const TypeTable = struct {
             .void => if (t.nullable) "nullable void" else "void",
             .null => if (t.nullable) "nullable null" else "null",
             .dynamic => if (t.nullable) "nullable dynamic" else "dynamic",
-            .struct_def => if (t.nullable) "nullable struct def" else "struct def",
-            .function_def => if (t.nullable) "nullable function def" else "function def",
             .struct_self => "@",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
@@ -1841,17 +1848,6 @@ pub const TypeTable = struct {
 
     fn addType(self: *Self, typ: Type) !TypeId {
         try self.types.append(self.allocator, typ);
-        return @intCast(self.types.items.len - 1);
-    }
-
-    fn addStruct(self: *Self, @"struct": Struct) !TypeId {
-        try self.types.append(self.allocator, .{
-            .kind = .{
-                .@"struct" = @"struct",
-            },
-            .nullable = false,
-        });
-
         return @intCast(self.types.items.len - 1);
     }
 
