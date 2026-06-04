@@ -276,3 +276,103 @@ test "sema error: invalid indexing" {
 test "sema error: unknown type" {
     try runCaseError("unknown-type.dsk", error.UnknownType);
 }
+
+test "sema error: if condition not bool" {
+    try runCaseError("if-condition-not-bool.dsk", error.InvalidType);
+}
+
+test "sema error: for condition not bool" {
+    try runCaseError("for-condition-not-bool.dsk", error.InvalidType);
+}
+
+test "sema error: if capture on nonnullable" {
+    try runCaseError("if-capture-on-nonnullable.dsk", error.InvalidType);
+}
+
+test "sema error: assign type mismatch" {
+    try runCaseError("assign-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: array assign type mismatch" {
+    try runCaseError("array-assign-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: struct field assign type mismatch" {
+    try runCaseError("struct-field-assign-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: static field assign type mismatch" {
+    try runCaseError("static-field-assign-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: call non function" {
+    try runCaseError("call-non-function.dsk", error.InvalidType);
+}
+
+test "sema error: method call on nonstruct" {
+    try runCaseError("method-call-on-nonstruct.dsk", error.InvalidType);
+}
+
+test "sema error: fn arg type mismatch" {
+    try runCaseError("fn-arg-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: binary op type mismatch" {
+    try runCaseError("binary-op-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: binary bool type mismatch" {
+    try runCaseError("binary-bool-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: unary op type mismatch" {
+    try runCaseError("unary-op-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: index into non array" {
+    try runCaseError("index-into-non-array.dsk", error.InvalidType);
+}
+
+test "sema error: struct field default type mismatch" {
+    try runCaseError("struct-field-default-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: param default type mismatch" {
+    try runCaseError("param-default-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: indexed assign notmut root" {
+    try runCaseError("indexed-assign-notmut-root.dsk", error.NotMutable);
+}
+
+test "sema error: static field not mutable" {
+    try runCaseError("static-field-not-mutable.dsk", error.NotMutable);
+}
+
+test "sema error: self binding not mut" {
+    try runCaseError("self-binding-not-mut.dsk", error.NotMutable);
+}
+
+test "sema error: assign undefined" {
+    try runCaseError("assign-undefined.dsk", error.NotDefined);
+}
+
+test "sema error: indexed assign undefined" {
+    try runCaseError("indexed-assign-undefined.dsk", error.NotDefined);
+}
+
+test "sema error: call undefined" {
+    try runCaseError("call-undefined.dsk", error.NotDefined);
+}
+
+test "sema error: duplicate fn def" {
+    try runCaseError("duplicate-fn-def.dsk", error.AlreadyDefined);
+}
+
+test "sema error: duplicate param name" {
+    try runCaseError("duplicate-param-name.dsk", error.AlreadyDefined);
+}
+
+test "sema error: bare return in nonvoid fn" {
+    try runCaseError("bare-return-in-nonvoid-fn.dsk", error.InvalidReturnType);
+}

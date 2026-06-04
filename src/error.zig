@@ -241,6 +241,8 @@ pub const ErrorDispatcher = struct {
     }
 
     pub fn log(self: *Self, msg: []const u8, loc: Loc) void {
+        if (@import("builtin").is_test) return;
+
         const exactLoc = self.findExactLoc(loc.start);
         const start_col = 6 + loc.start - exactLoc.line.start;
         const range_len = if (loc.end > loc.start) (loc.end - loc.start) else 0;

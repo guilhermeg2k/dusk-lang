@@ -1,0 +1,3 @@
+let x = 1
+if x: y
+    echo(y)

@@ -1,0 +1,4 @@
+let S = struct
+    x: int
+let s = S(x = 1)
+s.x = "hello"
