@@ -1,5 +1,16 @@
 # Changelogs
 
+## v0.9 - Shinobu
+
+- Improved error messages with precise location highlighting (`^~~~` markers and line:col info)
+- Added `assert` built-in function for runtime assertions
+- Static method dispatch for struct methods
+- Upgraded to latest Zig version (0.16)
+- Internal: TypeTable as centralized type registry
+- Internal: IR Value refactored with `type_id` tracking
+- Internal: Symbol Table refactored with scoped parent-chain lookups
+- Expanded test suite with 43 negative test cases
+
 ## v0.8 - Seras Victoria
 
 - Separated `int` (64-bit signed integer) and `float` (64-bit floating point) primitive types, replacing the unified `number` type.
