@@ -1,3 +1,8 @@
+const std = @import("std");
+const err = @import("error.zig");
+
+const LexerError = err.Errors;
+
 pub const Lexer = struct {
     const Self = @This();
 
@@ -443,7 +448,3 @@ pub const Loc = struct {
     start: usize,
     end: usize,
 };
-
-const LexerError = err.Errors;
-const err = @import("error.zig");
-const std = @import("std");

@@ -1,4 +1,8 @@
-pub const Loc = @import("lexer.zig").Loc;
+const std = @import("std");
+const Token = @import("lexer.zig").Token;
+const Loc = @import("lexer.zig").Loc;
+
+const allocPrint = std.fmt.allocPrint;
 
 pub const ErrorDispatcher = struct {
     const Self = @This();
@@ -352,7 +356,3 @@ pub const Errors = error{
     NullableMustBeUnwrapped,
     InvalidParameterType,
 };
-
-const std = @import("std");
-const allocPrint = std.fmt.allocPrint;
-const Token = @import("lexer.zig").Token;

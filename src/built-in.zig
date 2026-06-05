@@ -1,3 +1,11 @@
+const std = @import("std");
+const sema = @import("sema.zig");
+
+const Symbol = sema.Symbol;
+const TypeId = sema.TypeId;
+const TypedIdentifier = sema.TypedIdentifier;
+const TypeTable = sema.TypeTable;
+
 pub const BuiltIn = struct {
     const Self = @This();
 
@@ -209,10 +217,3 @@ const BuiltInFn = struct {
     symbol: Symbol,
     code: []const u8,
 };
-
-const sema = @import("sema.zig");
-const Symbol = sema.Symbol;
-const TypeId = sema.TypeId;
-const TypedIdentifier = sema.TypedIdentifier;
-const TypeTable = sema.TypeTable;
-const std = @import("std");

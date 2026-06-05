@@ -1,5 +1,20 @@
 const std = @import("std");
 
+fn findLibStdCpp(b: *std.Build) []const u8 {
+    const paths = [_][]const u8{
+        "/lib64/libstdc++.so.6",
+        "/usr/lib64/libstdc++.so.6",
+        "/usr/lib/x86_64-linux-gnu/libstdc++.so.6",
+        "/usr/lib/aarch64-linux-gnu/libstdc++.so.6",
+        "/usr/lib/libstdc++.so.6",
+    };
+    for (paths) |p| {
+        std.Io.Dir.accessAbsolute(b.graph.io, p, .{}) catch continue;
+        return p;
+    }
+    @panic("libstdc++.so.6 not found at any known path. Install libstdc++ (e.g. 'dnf install libstdc++-devel' or 'apt install libstdc++-13-dev')");
+}
+
 pub fn build(b: *std.Build) void {
     // run
     const target = b.standardTargetOptions(.{});
@@ -66,4 +81,32 @@ pub fn build(b: *std.Build) void {
     });
     tests.root_module.link_libc = true;
     tests.root_module.addIncludePath(qjs_path);
+
+    // binaryen
+    const binaryen_dep = b.dependency("binaryen", .{});
+    const binaryen_include = binaryen_dep.path("include");
+    const binaryen_lib = binaryen_dep.path("lib");
+
+    inline for (&[_]*std.Build.Module{ exe.root_module, tests.root_module }) |mod| {
+        mod.addIncludePath(binaryen_include);
+        mod.addLibraryPath(binaryen_lib);
+        mod.linkSystemLibrary("binaryen", .{ .preferred_link_mode = .static });
+        mod.addObjectFile(.{ .cwd_relative = findLibStdCpp(b) });
+    }
+
+    // wasmtime
+    const wasmtime_dep = b.dependency("wasmtime_c_api", .{});
+    const wasmtime_include = wasmtime_dep.path("include");
+    const wasmtime_lib = wasmtime_dep.path("lib");
+
+    inline for (&[_]*std.Build.Module{ exe.root_module, tests.root_module }) |mod| {
+        mod.addIncludePath(wasmtime_include);
+        mod.addLibraryPath(wasmtime_lib);
+        mod.linkSystemLibrary("wasmtime", .{ .preferred_link_mode = .dynamic });
+        mod.linkSystemLibrary("pthread", .{});
+        mod.linkSystemLibrary("dl", .{});
+        mod.linkSystemLibrary("unwind", .{});
+        mod.addCMacro("WASMTIME_FEATURE_WASI", "");
+        mod.addCMacro("WASMTIME_FEATURE_COMPILER", "");
+    }
 }

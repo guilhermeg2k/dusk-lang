@@ -1,3 +1,9 @@
+pub const c = @cImport({
+    @cInclude("quickjs.h");
+});
+
+const std = @import("std");
+
 pub const QjsRuntime = struct {
     const Self = @This();
 
@@ -76,9 +82,3 @@ pub const QjsRuntime = struct {
         };
     }
 };
-
-pub const c = @cImport({
-    @cInclude("quickjs.h");
-});
-
-const std = @import("std");

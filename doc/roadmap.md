@@ -59,4 +59,5 @@
 
 - Code Formatter
 - Fuzz testing
-- Improve memory usage
+- Improve memory usage (Snatch allocator)
+- Cross-platform build

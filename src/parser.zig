@@ -1,3 +1,14 @@
+const std = @import("std");
+const lexer = @import("lexer.zig");
+const parser = @import("parser.zig");
+const ast = @import("ast.zig");
+const err = @import("error.zig");
+
+const Token = lexer.Token;
+const Tag = lexer.Tag;
+const Error = err.ErrorDispatcher;
+const ParserError = err.Errors;
+
 pub const Parser = struct {
     const Self = @This();
 
@@ -799,7 +810,7 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
 
-            //todo: should be a switch no?
+            //note: should be a switch no?
             //fnCall
             if (tk.tag == .l_paren) {
                 self.walk();
@@ -1006,14 +1017,3 @@ pub const Parser = struct {
         return self.tokens[self.cur_index - 1];
     }
 };
-
-const Token = lexer.Token;
-const Tag = lexer.Tag;
-const Error = err.ErrorDispatcher;
-const ParserError = err.Errors;
-
-const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
-const ast = @import("ast.zig");
-const err = @import("error.zig");
-const std = @import("std");

@@ -8,6 +8,14 @@
             .url = "https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz",
             .hash = "N-V-__8AACqwMQCi8sTo6aY0hGNBtx0A1peq9Vq56UpKfVdL",
         },
+        .binaryen = .{
+            .url = "https://github.com/WebAssembly/binaryen/releases/download/version_130/binaryen-version_130-x86_64-linux.tar.gz",
+            .hash = "N-V-__8AAIEYUxLycABS2SAAsp_UkCS7-GVHvrFmFpv2SHN8",
+        },
+        .wasmtime_c_api = .{
+            .url = "https://github.com/bytecodealliance/wasmtime/releases/download/v45.0.0/wasmtime-v45.0.0-x86_64-linux-c-api.tar.xz",
+            .hash = "N-V-__8AAFT_6gV82CrZiQO6PKr6zKASuLePLxWQkmB-9Dty",
+        },
     },
     .paths = .{
         "build.zig",

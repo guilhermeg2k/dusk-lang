@@ -1,3 +1,8 @@
+const std = @import("std");
+const ir = @import("ir.zig");
+const BuiltIn = @import("built-in.zig").BuiltIn;
+const TypeTable = @import("sema.zig").TypeTable;
+
 pub const Generator = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
@@ -446,8 +451,3 @@ pub const Generator = struct {
 };
 
 const GeneratorError = error{OutOfMemory};
-
-const ir = @import("ir.zig");
-const BuiltIn = @import("built-in.zig").BuiltIn;
-const TypeTable = @import("sema.zig").TypeTable;
-const std = @import("std");

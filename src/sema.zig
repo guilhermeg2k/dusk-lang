@@ -1,3 +1,12 @@
+const std = @import("std");
+const util = @import("util.zig");
+const buildin = @import("built-in.zig");
+const err = @import("error.zig");
+const ir = @import("ir.zig");
+const ast = @import("ast.zig");
+
+const allocPrint = std.fmt.allocPrint;
+
 pub const SemaAnalyzer = struct {
     const Self = @This();
 
@@ -1815,11 +1824,3 @@ pub const TypeTable = struct {
 };
 
 pub const Errors = err.Errors;
-
-const util = @import("util.zig");
-const buildin = @import("built-in.zig");
-const err = @import("error.zig");
-const ir = @import("ir.zig");
-const ast = @import("ast.zig");
-const allocPrint = std.fmt.allocPrint;
-const std = @import("std");

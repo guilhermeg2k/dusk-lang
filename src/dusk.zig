@@ -1,3 +1,19 @@
+const std = @import("std");
+const lexer = @import("lexer.zig");
+const parser = @import("parser.zig");
+const sema = @import("sema.zig");
+const codegen = @import("codegen.zig");
+const wasmgen = @import("wasmgen.zig");
+const wasm_runtime = @import("wasm_runtime.zig");
+const QjsRunTime = @import("runtime.zig").QjsRuntime;
+
+const Lexer = lexer.Lexer;
+const Parser = parser.Parser;
+const SemaAnalyzer = sema.SemaAnalyzer;
+const Generator = codegen.Generator;
+const WasmGenerator = wasmgen.WasmGenerator;
+const WasmRuntime = wasm_runtime.WasmRuntime;
+
 pub const Dusk = struct {
     const Self = @This();
 
@@ -47,6 +63,27 @@ pub const Dusk = struct {
         return compiled_code;
     }
 
+    pub fn compileToWasm(self: *Self, src: []const u8) !void {
+        var dusk_lexer = Lexer.init(self.allocator, src);
+        const tokens = try dusk_lexer.list();
+
+        var dusk_parser = Parser.init(self.allocator, src, tokens.items);
+        const ast = try dusk_parser.parse();
+
+        var sema_analyzer = try SemaAnalyzer.init(self.allocator);
+        const ir = try sema_analyzer.analyze(&ast, src);
+
+        const wasm_bytes = try WasmGenerator.generate(self.allocator, &sema_analyzer.type_table, ir);
+
+        const cwd = std.Io.Dir.cwd();
+        try cwd.createDirPath(self.io, "dump");
+        try cwd.writeFile(self.io, .{ .sub_path = "dump/output.wasm", .data = wasm_bytes });
+
+        var runtime = try WasmRuntime.init(self.stdout_writer, &sema_analyzer.type_table);
+        defer runtime.deinit();
+        try runtime.eval(wasm_bytes);
+    }
+
     fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
         const dir_path = std.fs.path.dirname(file_name) orelse ".";
         try std.Io.Dir.cwd().createDirPath(self.io, dir_path);
@@ -57,15 +94,3 @@ pub const Dusk = struct {
         try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = file_name, .data = json_str });
     }
 };
-
-const std = @import("std");
-const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
-const sema = @import("sema.zig");
-const codegen = @import("codegen.zig");
-const QjsRunTime = @import("runtime.zig").QjsRuntime;
-
-const Lexer = lexer.Lexer;
-const Parser = parser.Parser;
-const SemaAnalyzer = sema.SemaAnalyzer;
-const Generator = codegen.Generator;

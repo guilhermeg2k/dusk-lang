@@ -1,3 +1,8 @@
+const std = @import("std");
+const sema = @import("sema.zig");
+const SemaError = sema.Errors;
+const TypeId = sema.TypeId;
+
 pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
@@ -186,8 +191,3 @@ pub const BinaryOpKind = enum {
     b_cmp_eq,
     b_cmp_neq,
 };
-
-const std = @import("std");
-const sema = @import("sema.zig");
-const SemaError = sema.Errors;
-const TypeId = sema.TypeId;

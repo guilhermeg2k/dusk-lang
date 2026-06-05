@@ -1,3 +1,11 @@
+const std = @import("std");
+const lex = @import("lexer.zig");
+const parser = @import("parser.zig");
+const err = @import("error.zig");
+
+const Tag = lex.Tag;
+const Token = lex.Token;
+
 pub const Root = Block;
 
 //note: arraylist
@@ -7,7 +15,7 @@ pub const Block = struct {
 
 pub const StatementNode = struct {
     data: Statement,
-    loc: err.Loc,
+    loc: lex.Loc,
 };
 
 pub const Statement = union(enum) {
@@ -97,7 +105,7 @@ pub const ExpNode = struct {
     const Self = @This();
 
     data: Exp,
-    loc: err.Loc,
+    loc: lex.Loc,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -174,7 +182,6 @@ pub const IndexedExp = struct {
     nullable: bool,
 };
 
-
 pub const Struct = struct {
     fields: []const StructField,
     static_fields: []const StructField,
@@ -244,11 +251,3 @@ pub const BinaryOp = enum {
         };
     }
 };
-
-const Tag = lex.Tag;
-const Token = lex.Token;
-
-const lex = @import("lexer.zig");
-const parser = @import("parser.zig");
-const err = @import("error.zig");
-const std = @import("std");
