@@ -75,9 +75,13 @@ pub const TypeAnnotation = struct {
         return switch (self.type) {
             .primitive => |primitive_name| primitive_name,
             .@"struct" => |struct_name| struct_name,
-            //note: improve this gonna log ugly stuff
             .anonymous_struct => |anom_struct| {
-                return std.fmt.allocPrint(alloc, "anonymous struct {any}", .{anom_struct.fields});
+                var field_list: std.ArrayList(u8) = .empty;
+                for (anom_struct.fields, 0..) |field, i| {
+                    if (i > 0) try field_list.appendSlice(alloc, ", ");
+                    try field_list.appendSlice(alloc, field.identifier);
+                }
+                return std.fmt.allocPrint(alloc, "anonymous struct {{ {s} }}", .{field_list.items});
             },
             .array => {
                 return std.fmt.allocPrint(alloc, "[]{s}", .{try self.type.array.value(alloc)});
