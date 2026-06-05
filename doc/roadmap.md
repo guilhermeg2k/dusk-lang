@@ -4,8 +4,8 @@
 
 ## Version 0.9 - Shinobu
 
-- Upgrade to latest zig version
-- Improve errors message
+- [x] Upgrade to latest zig version
+- [x] Improve errors message
 - Type Table
 - IR Value with type: \*Type at root
 - Static method dispatch

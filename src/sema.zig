@@ -167,7 +167,7 @@ pub const SemaAnalyzer = struct {
         }
 
         return Struct{
-            .identifier = "",
+            .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
             .static_fields = .init(self.allocator),
@@ -225,7 +225,7 @@ pub const SemaAnalyzer = struct {
             field_default_value = value;
 
             if (field.type) |_type| {
-                if (!self.type_table.eql(value_type_id, field_type_id)) {
+                if (!self.type_table.coerce(value_type_id, field_type_id)) {
                     const field_type_ptr = self.type_table.getTypePtrById(field_type_id);
                     return self.err_dispatcher.invalidType(
                         try _type.value(self.allocator),
@@ -270,7 +270,7 @@ pub const SemaAnalyzer = struct {
                     const value = try self.evalExp(default_value);
                     param_default_value = value;
                     const value_type_id = self.resolveValueType(value);
-                    if (!self.type_table.eql(value_type_id, param_type_id)) {
+                    if (!self.type_table.coerce(value_type_id, param_type_id)) {
                         return self.err_dispatcher.invalidType(
                             try self.type_table.name(param_type_id, self.allocator),
                             try self.type_table.name(value_type_id, self.allocator),
@@ -408,7 +408,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        if (!self.type_table.eql(var_type_id, expression_type_id)) {
+        if (!self.type_table.coerce(expression_type_id, var_type_id)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(var_type_id, self.allocator),
                 try self.type_table.name(expression_type_id, self.allocator),
@@ -547,7 +547,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notMutable(id, assign_stmt.target.loc);
                 }
 
-                if (!self.type_table.eql(id_symbol.type_id, assignment_value_type)) {
+                if (!self.type_table.coerce(assignment_value_type, id_symbol.type_id)) {
                     return self.err_dispatcher.invalidType(
                         try self.type_table.name(id_symbol.type_id, self.allocator),
                         try self.type_table.name(assignment_value_type, self.allocator),
@@ -583,7 +583,7 @@ pub const SemaAnalyzer = struct {
 
                 switch (self.type_table.getTypePtrById(target_type).kind) {
                     .array => {
-                        if (!self.type_table.eql(self.type_table.getTypePtrById(target_symbol.type_id).kind.array, assignment_value_type)) {
+                        if (!self.type_table.coerce(assignment_value_type, self.type_table.getTypePtrById(target_symbol.type_id).kind.array)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(target_symbol.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -602,7 +602,7 @@ pub const SemaAnalyzer = struct {
                                 index_exp.index.loc,
                             );
 
-                            if (!self.type_table.eql(field.type_id, assignment_value_type)) {
+                            if (!self.type_table.coerce(assignment_value_type, field.type_id)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
                                     try self.type_table.name(assignment_value_type, self.allocator),
@@ -620,7 +620,7 @@ pub const SemaAnalyzer = struct {
                                 return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                             }
 
-                            if (!self.type_table.eql(field.type_id, assignment_value_type)) {
+                            if (!self.type_table.coerce(assignment_value_type, field.type_id)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
                                     try self.type_table.name(assignment_value_type, self.allocator),
@@ -685,7 +685,7 @@ pub const SemaAnalyzer = struct {
         }
 
         return .{
-            .identifier = "Anonymous Struct",
+            .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
             .static_fields = .init(self.allocator),
@@ -788,7 +788,7 @@ pub const SemaAnalyzer = struct {
 
         const body = try self.visitBlock(&fn_def.body_block);
 
-        if (!self.type_table.eql(body.return_type, self.scope.return_type_id)) {
+        if (!self.type_table.coerce(body.return_type, self.scope.return_type_id)) {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.type_table.name(self.scope.return_type_id, self.allocator),
                 try self.type_table.name(body.return_type, self.allocator),
@@ -812,7 +812,7 @@ pub const SemaAnalyzer = struct {
             const exp_value = try self.evalExp(exp);
             const exp_value_type = self.resolveValueType(exp_value);
 
-            if (!self.type_table.eql(exp_value_type, self.scope.return_type_id)) {
+            if (!self.type_table.coerce(exp_value_type, self.scope.return_type_id)) {
                 return self.err_dispatcher.invalidFunctionReturnType(
                     try self.type_table.name(self.scope.return_type_id, self.allocator),
                     try self.type_table.name(exp_value_type, self.allocator),
@@ -1034,7 +1034,7 @@ pub const SemaAnalyzer = struct {
                 const fn_call_arg_value = try self.evalExp(_exp);
                 const arg_type = self.resolveValueType(fn_call_arg_value);
 
-                if (!self.type_table.eql(param.type_id, arg_type)) {
+                if (!self.type_table.coerce(arg_type, param.type_id)) {
                     return self.err_dispatcher.invalidType(try self.type_table.name(param.type_id, self.allocator), try self.type_table.name(arg_type, self.allocator), _exp.loc);
                 }
 
@@ -1197,11 +1197,11 @@ pub const SemaAnalyzer = struct {
             const exp_value = try self.evalExp(e);
             const exp_value_type = self.resolveValueType(exp_value);
 
-            if (self.type_table.eql(array_literal_type, self.type_table.getPrimitive(.void))) {
+            if (array_literal_type == self.type_table.getPrimitive(.dynamic)) {
                 array_literal_type = exp_value_type;
             }
 
-            if (!self.type_table.eql(exp_value_type, array_literal_type)) {
+            if (!self.type_table.coerce(exp_value_type, array_literal_type)) {
                 return self.err_dispatcher.invalidType(try self.type_table.name(array_literal_type, self.allocator), try self.type_table.name(exp_value_type, self.allocator), exp.loc);
             }
 
@@ -1667,30 +1667,47 @@ pub const TypeTable = struct {
         return &self.types.items[@intCast(id)];
     }
 
-    fn eql(self: *Self, a: TypeId, b: TypeId) bool {
-        if (a == b) return true;
+    fn eql(_: *Self, a: TypeId, b: TypeId) bool {
+        return a == b;
+    }
 
-        const type_a = self.getTypePtrById(a);
-        const type_b = self.getTypePtrById(b);
+    fn coerce(self: *Self, from: TypeId, to: TypeId) bool {
+        if (from == to) return true;
 
-        if (type_a.kind == .dynamic or type_b.kind == .dynamic) return true;
-        if (type_a.nullable == false and type_b.nullable == true) return false;
+        const type_from = self.getTypePtrById(from);
+        const type_to = self.getTypePtrById(to);
 
-        switch (type_a.kind) {
-            .float, .int, .string, .boolean, .void, .meta, .array => return @intFromEnum(type_b.kind) == @intFromEnum(type_a.kind) or (type_a.nullable and type_b.kind == .null),
+        if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
 
-            .null => return type_b.nullable or type_b.kind == .null,
-
-            //note: this is wrong
-            .function => return true,
-
-            .@"struct" => {
-                if (type_a.nullable == true and type_b.kind == .null) return true;
-                return type_a == type_b;
-            },
-
-            .dynamic => unreachable,
+        if (!type_from.nullable and type_to.nullable) {
+            if (type_from.kind == .null) return true;
+            if (self.typeIdByNullableTypeId.get(to)) |unwrapped| {
+                return self.coerce(from, unwrapped);
+            }
         }
+
+        if (type_from.kind == .array and type_to.kind == .array) {
+            return self.coerce(type_from.kind.array, type_to.kind.array);
+        }
+
+        if (type_from.kind == .@"struct" and type_to.kind == .@"struct") {
+            const from_s = type_from.kind.@"struct";
+            const to_s = type_to.kind.@"struct";
+            const from_is_anon = std.mem.eql(u8, from_s.identifier, "@");
+            const to_is_anon = std.mem.eql(u8, to_s.identifier, "@");
+
+            if (from_is_anon and !to_is_anon) {
+                for (to_s.fields_in_order) |field| {
+                    if (from_s.fields.get(field.identifier) == null) return false;
+                }
+                return true;
+            }
+        }
+
+        //note: wrong?
+        if (type_from.kind == .function and type_to.kind == .function) return false;
+
+        return false;
     }
 
     fn name(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
@@ -1710,6 +1727,9 @@ pub const TypeTable = struct {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
             },
             .@"struct" => |s| {
+                if (std.mem.eql(u8, s.identifier, "@")) {
+                    return std.fmt.allocPrint(allocator, "{s}anonymous struct", .{prefix});
+                }
                 return std.fmt.allocPrint(allocator, "{s}struct {s}", .{ prefix, s.identifier });
             },
             .array => |inner_id| {
