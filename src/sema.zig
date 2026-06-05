@@ -58,7 +58,6 @@ pub const SemaAnalyzer = struct {
             switch (let_stmt.value.data) {
                 .fn_def => {
                     const symbol = try self.createIncompleteFuncSymbol(let_stmt.identifier);
-                    //note: wrong loc_start
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
                 },
                 .struct_def => {
@@ -100,7 +99,7 @@ pub const SemaAnalyzer = struct {
     fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !Symbol {
         var symbol = Symbol{
             .identifier = identifier,
-            .uid = self.scope.genFnUid(),
+            .uid = self.scope.genUid(),
             .kind = .{ .function = {} },
             .type_id = undefined,
         };
@@ -109,7 +108,7 @@ pub const SemaAnalyzer = struct {
             .kind = .{
                 .function = .{
                     .identifier = identifier,
-                    .uid = symbol.uid,
+                    .uid = self.scope.genFnUid(),
                     .params = &.{},
                     .return_type_id = undefined,
                 },
@@ -136,7 +135,7 @@ pub const SemaAnalyzer = struct {
 
         return Symbol{
             .identifier = identifier,
-            .uid = self.scope.genUid(),
+            .uid = self.scope.genFnUid(),
             .type_id = self.type_table.getPrimitive(.meta),
             .kind = .{ .@"struct" = .{ .blueprint_type_id = blueprint_type_id } },
         };
@@ -956,7 +955,8 @@ pub const SemaAnalyzer = struct {
 
                 const struct_def = target_type_ptr.kind.@"struct";
 
-                const fn_type_id = struct_def.methods.get(fn_name) orelse {                    return self.err_dispatcher.invalidStructFunction(
+                const fn_type_id = struct_def.methods.get(fn_name) orelse {
+                    return self.err_dispatcher.invalidStructFunction(
                         struct_def.identifier,
                         fn_name,
                         exp.loc,

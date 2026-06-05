@@ -1,6 +1,6 @@
 # Language Reference
 
-This document provides a reference for **v0.8::Seras Victoria** of Dusk programming language.
+This document provides a reference for **v0.9::Shinobu** of Dusk programming language.
 
 ## 1. Comments
 
@@ -445,6 +445,7 @@ Dusk provides a set of intrinsic functions.
 
 | Function    | Signature                                       | Description                                      |
 | :---------- | :---------------------------------------------- | :----------------------------------------------- |
+| `assert`    | `assert(cond: bool) -> void`                    | Raises a runtime error if the condition is false. |
 | `echo`      | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
 | `len`       | `len(arr: []dynamic) -> int`                    | Returns the length of an array.                  |
 | `append`    | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
