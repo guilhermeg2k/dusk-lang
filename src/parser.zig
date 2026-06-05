@@ -449,7 +449,6 @@ pub const Parser = struct {
         };
     }
 
-    //note: return std.ArrayList
     fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnParam) {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
@@ -521,12 +520,9 @@ pub const Parser = struct {
             return &.{};
         }
 
-        var are_arguments_named = false;
+        var are_arguments_named: ?bool = null;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
-        //note: this first_run seems to be dumb
-        //i think we can just take the tk as var out but i'm not changing this now
-        var first_run: bool = true;
         while (true) {
             _ = self.match(.new_line);
             const first_tk = self.peekCurrent();
@@ -537,12 +533,11 @@ pub const Parser = struct {
             const exp = try self.parseExp(0);
             const tk = self.peekCurrent();
 
-            if (first_run and tk.tag == .eq) {
-                are_arguments_named = true;
+            if (are_arguments_named == null) {
+                are_arguments_named = tk.tag == .eq;
             }
-            first_run = false;
 
-            if (are_arguments_named) {
+            if (are_arguments_named.?) {
                 if (tk.tag != .eq) {
                     return self.err_dispatcher.invalidSyntax("=", tk);
                 }
@@ -591,8 +586,7 @@ pub const Parser = struct {
         const right = try self.parseExp(self.getBindingPower(.l_paren));
 
         if (right.data != .fn_call) {
-            //note: is not actually a "type" error is it?
-            return self.err_dispatcher.invalidType("function call", @tagName(right.data), right.loc);
+            return self.err_dispatcher.invalidSyntax("function call after '->'", .{ .tag = .identifier, .loc = right.loc });
         }
 
         const old_args = right.data.fn_call.arguments;

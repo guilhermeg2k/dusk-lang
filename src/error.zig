@@ -179,7 +179,6 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
-    //note: maybe not used
     pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) Errors {
         self.log(
             "Can't infer anonymous struct type",

@@ -82,11 +82,11 @@ pub const SemaAnalyzer = struct {
 
             switch (let_stmt.value.data) {
                 .fn_def => {
-                    const symbol = try self.scope.symbol_table.getOrThrow(let_stmt.identifier);
+                    const symbol = try self.scope.symbol_table.getOrError(let_stmt.identifier);
                     try self.fulfillFuncType(symbol, let_stmt.value, null);
                 },
                 .struct_def => {
-                    const symbol = try self.scope.symbol_table.getOrThrow(let_stmt.identifier);
+                    const symbol = try self.scope.symbol_table.getOrError(let_stmt.identifier);
                     try self.fulfillStructType(
                         symbol,
                         let_stmt.value,
@@ -308,7 +308,6 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        //note:  need to catch the else case ?
         if (fn_def.return_type) |r_type| {
             return_type_id = self.resolveTypeAnnotation(r_type, null) catch {
                 return self.err_dispatcher.typeNotDefined(r_type.type.primitive, exp.loc);
@@ -316,6 +315,8 @@ pub const SemaAnalyzer = struct {
         } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
             const return_value = try self.evalExp(return_exp);
             return_type_id = return_value.type_id;
+        } else {
+            return_type_id = self.type_table.getPrimitive(.void);
         }
 
         //restore main scope
@@ -382,7 +383,7 @@ pub const SemaAnalyzer = struct {
         const let_stmt = stmt.data.let_stmt;
 
         if (let_stmt.value.data == .fn_def) {
-            const fn_symbol = self.scope.symbol_table.getOrThrow(let_stmt.identifier) catch {
+            const fn_symbol = self.scope.symbol_table.getOrError(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc);
             };
             const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, self.type_table.getTypePtrById(fn_symbol.type_id).kind.function, null);
@@ -542,7 +543,7 @@ pub const SemaAnalyzer = struct {
         switch (assign_stmt.target.data) {
             .identifier => {
                 const id = assign_stmt.target.data.identifier;
-                const id_symbol = self.scope.symbol_table.getOrThrow(id) catch {
+                const id_symbol = self.scope.symbol_table.getOrError(id) catch {
                     return self.err_dispatcher.notDefined(id, assign_stmt.target.loc);
                 };
 
@@ -579,7 +580,7 @@ pub const SemaAnalyzer = struct {
                     target_root = target_root.data.indexed.target;
                 }
 
-                const target_symbol = self.scope.symbol_table.getOrThrow(target_root.data.identifier) catch {
+                const target_symbol = self.scope.symbol_table.getOrError(target_root.data.identifier) catch {
                     return self.err_dispatcher.notDefined(target_root.data.identifier, target_root.loc);
                 };
 
@@ -700,7 +701,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitStructDef(self: *Self, exp: *const ast.ExpNode, identifier: []const u8) Errors!ir.Struct {
-        const struct_symbol = try self.scope.symbol_table.getOrThrow(identifier);
+        const struct_symbol = try self.scope.symbol_table.getOrError(identifier);
         const blueprint_type_id = struct_symbol.kind.@"struct".blueprint_type_id;
         const prev_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
@@ -898,7 +899,7 @@ pub const SemaAnalyzer = struct {
 
         switch (fn_call.target.data) {
             .identifier => |id| {
-                const symbol = self.scope.symbol_table.getOrThrow(id) catch {
+                const symbol = self.scope.symbol_table.getOrError(id) catch {
                     return self.err_dispatcher.notDefined(id, exp.loc);
                 };
 
@@ -964,7 +965,7 @@ pub const SemaAnalyzer = struct {
 
                 const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
 
-                const target_symbol = try self.scope.symbol_table.getOrThrow(target.data.identifier.identifier);
+                const target_symbol = try self.scope.symbol_table.getOrError(target.data.identifier.identifier);
 
                 //autobind self
                 if (fn_metadata.params.len > 0 and target_symbol.kind == .variable and target_type_id == fn_metadata.params[0].type_id) {
@@ -1036,7 +1037,7 @@ pub const SemaAnalyzer = struct {
                 }
 
                 if (self.type_table.getTypePtrById(param.type_id).kind == .@"struct" and param.is_mut and fn_call_arg_value.data == .identifier) {
-                    const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.data.identifier.identifier);
+                    const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.identifier);
                     if (!symbol.kind.variable.is_mut) {
                         return self.err_dispatcher.notMutable(symbol.identifier, _exp.loc);
                     }
@@ -1044,7 +1045,7 @@ pub const SemaAnalyzer = struct {
 
                 if (self.type_table.getTypePtrById(param.type_id).kind == .array and param.is_mut and _exp.data != .array_literal) {
                     if (fn_call_arg_value.data == .identifier) {
-                        const symbol = try self.scope.symbol_table.getOrThrow(fn_call_arg_value.data.identifier.identifier);
+                        const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.identifier);
                         if (!symbol.kind.variable.is_mut) {
                             return self.err_dispatcher.notMutable(fn_call_arg_value.data.identifier.identifier, _exp.loc);
                         }
@@ -1340,7 +1341,7 @@ pub const SemaAnalyzer = struct {
                 return Errors.SemaError;
             },
             .@"struct" => |struct_name| {
-                const struct_symbol = try self.scope.symbol_table.getOrThrow(struct_name);
+                const struct_symbol = try self.scope.symbol_table.getOrError(struct_name);
                 const blueprint_type_id = struct_symbol.kind.@"struct".blueprint_type_id;
                 return if (type_annotation.nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
             },
@@ -1500,8 +1501,7 @@ const SymbolTable = struct {
         return null;
     }
 
-    //note: getOrError
-    fn getOrThrow(self: *Self, id: []const u8) !Symbol {
+    fn getOrError(self: *Self, id: []const u8) !Symbol {
         if (self.get(id)) |s| return s;
         return Errors.SemaError;
     }
