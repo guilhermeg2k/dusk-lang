@@ -47,7 +47,7 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
@@ -68,7 +68,7 @@ pub const BuiltIn = struct {
             .kind = .{ .function = {} },
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = true, .default_value = null },
             .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
@@ -90,7 +90,7 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = false, .default_value = null },
         }, self.int_type_id);
 
@@ -111,7 +111,7 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "n", .type_id = self.int_type_id, .is_mut = false, .default_value = null },
         }, self.int_type_id);
 
@@ -132,7 +132,7 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "str1", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
             .{ .identifier = "str2", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
@@ -154,7 +154,7 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "obj", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
 
@@ -175,7 +175,7 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.identifier, &.{
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
@@ -188,13 +188,14 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .code = code };
     }
 
-    fn createFuncTypeId(self: *const Self, fn_identifier: []const u8, params: []const TypedIdentifier, return_type_id: TypeId) !TypeId {
+    fn createFuncTypeId(self: *const Self, uid: usize, fn_identifier: []const u8, params: []const TypedIdentifier, return_type_id: TypeId) !TypeId {
         const params_copy = try self.alloc.alloc(TypedIdentifier, params.len);
         @memcpy(params_copy, params);
         const id = self.type_table.types.items.len;
         try self.type_table.types.append(self.alloc, .{
             .kind = .{ .function = .{
                 .identifier = fn_identifier,
+                .uid = uid,
                 .params = params_copy,
                 .return_type_id = return_type_id,
             } },

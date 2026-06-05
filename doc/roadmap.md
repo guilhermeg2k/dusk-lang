@@ -6,9 +6,9 @@
 
 - [x] Upgrade to latest zig version
 - [x] Improve errors message
-- Type Table
-- IR Value with type: \*Type at root
-- Static method dispatch
+- [x] Type Table
+- [x] IR Value with type: \*Type at root
+- [x] Static method dispatch
 - Review code notes/todos
 
 ## Version: 0.10 - Frieren

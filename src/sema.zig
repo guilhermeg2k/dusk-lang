@@ -100,7 +100,7 @@ pub const SemaAnalyzer = struct {
     fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !Symbol {
         var symbol = Symbol{
             .identifier = identifier,
-            .uid = self.scope.genUid(),
+            .uid = self.scope.genFnUid(),
             .kind = .{ .function = {} },
             .type_id = undefined,
         };
@@ -109,6 +109,7 @@ pub const SemaAnalyzer = struct {
             .kind = .{
                 .function = .{
                     .identifier = identifier,
+                    .uid = symbol.uid,
                     .params = &.{},
                     .return_type_id = undefined,
                 },
@@ -742,7 +743,7 @@ pub const SemaAnalyzer = struct {
             const fn_type_id = if (self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods.get(func.identifier)) |type_id| type_id else unreachable;
             const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
             const fn_name = func.identifier;
-            const fn_def = try self.visitFnDef(func.def, struct_symbol.uid, fn_metadata, fn_name);
+            const fn_def = try self.visitFnDef(func.def, fn_metadata.uid, fn_metadata, fn_name);
             try funcs.append(self.allocator, fn_def);
         }
 
@@ -889,8 +890,6 @@ pub const SemaAnalyzer = struct {
         var uid: usize = undefined;
         var params: []const TypedIdentifier = undefined;
         var return_type: TypeId = undefined;
-        var is_struct_fn_call = false;
-        var fn_call_target: *ir.Value = undefined;
 
         var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
         defer arg_exp_by_param_name.deinit();
@@ -952,14 +951,11 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
-                is_struct_fn_call = true;
-                fn_call_target = target;
                 const fn_name = indexed.index.data.identifier;
 
                 const struct_def = target_type_ptr.kind.@"struct";
 
-                const fn_type_id = struct_def.methods.get(fn_name) orelse {
-                    return self.err_dispatcher.invalidStructFunction(
+                const fn_type_id = struct_def.methods.get(fn_name) orelse {                    return self.err_dispatcher.invalidStructFunction(
                         struct_def.identifier,
                         fn_name,
                         exp.loc,
@@ -969,7 +965,6 @@ pub const SemaAnalyzer = struct {
                 const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
 
                 const target_symbol = try self.scope.symbol_table.getOrThrow(target.data.identifier.identifier);
-                const target_struct_meta_symbol = try self.scope.symbol_table.getOrThrow(target_type_ptr.kind.@"struct".identifier);
 
                 //autobind self
                 if (fn_metadata.params.len > 0 and target_symbol.kind == .variable and target_type_id == fn_metadata.params[0].type_id) {
@@ -981,7 +976,7 @@ pub const SemaAnalyzer = struct {
 
                 params = fn_metadata.params;
                 return_type = fn_metadata.return_type_id;
-                uid = target_struct_meta_symbol.uid;
+                uid = fn_metadata.uid;
                 fn_identifier = fn_name;
             },
             .anonymous_struct_identifier => {
@@ -1078,22 +1073,6 @@ pub const SemaAnalyzer = struct {
                         .keys = try keys.toOwnedSlice(self.allocator),
                         .values = try fn_call_arguments_values.toOwnedSlice(self.allocator),
                     } },
-                    .type_id = return_type,
-                },
-            );
-        }
-
-        if (is_struct_fn_call) {
-            return ir.Value.init(
-                self.allocator,
-                .{
-                    .data = .{
-                        .struct_fn_call = .{
-                            .target = fn_call_target,
-                            .identifier = fn_identifier,
-                            .args = try fn_call_arguments_values.toOwnedSlice(self.allocator),
-                        },
-                    },
                     .type_id = return_type,
                 },
             );
@@ -1441,6 +1420,7 @@ const Scope = struct {
     symbol_table: *SymbolTable,
     return_type_id: TypeId,
     next_uid: usize,
+    next_fn_uid: usize,
 
     pub fn init(alloc: std.mem.Allocator, return_type_id: TypeId, type_table: *TypeTable) !Self {
         const builtins = try buildin.BuiltIn.init(alloc, type_table);
@@ -1456,12 +1436,19 @@ const Scope = struct {
             .symbol_table = try SymbolTable.init(alloc, null, symbols),
             .return_type_id = return_type_id,
             .next_uid = 10,
+            .next_fn_uid = 7,
         };
     }
 
     pub fn genUid(self: *Self) usize {
         const uid = self.next_uid;
         self.next_uid += 1;
+        return uid;
+    }
+
+    pub fn genFnUid(self: *Self) usize {
+        const uid = self.next_fn_uid;
+        self.next_fn_uid += 1;
         return uid;
     }
 
@@ -1548,6 +1535,7 @@ const Struct = struct {
 
 const FuncMetadata = struct {
     identifier: []const u8,
+    uid: usize,
     params: []const TypedIdentifier,
     return_type_id: TypeId,
 };

@@ -111,7 +111,6 @@ pub const Value = struct {
 
         fn_call: FnCall,
         struct_init: StructInit,
-        struct_fn_call: StructFnCall,
     },
 
     type_id: TypeId,
@@ -143,12 +142,6 @@ pub const UnaryOp = struct {
 
 pub const FnCall = struct {
     fn_uid: usize,
-    identifier: []const u8,
-    args: []const *Value,
-};
-
-pub const StructFnCall = struct {
-    target: *Value,
     identifier: []const u8,
     args: []const *Value,
 };

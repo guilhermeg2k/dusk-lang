@@ -339,10 +339,6 @@ pub const Generator = struct {
                 const struct_obj = try self.genStructInit(si);
                 try buf.appendSlice(self.allocator, struct_obj);
             },
-            .struct_fn_call => |sfc| {
-                const call = try self.genStructFnCall(sfc);
-                try buf.appendSlice(self.allocator, call);
-            },
             .binary_op => |bo| {
                 const op = try self.genBinaryOp(bo);
                 try buf.appendSlice(self.allocator, op);
@@ -441,23 +437,6 @@ pub const Generator = struct {
         }
 
         try buf.appendSlice(self.allocator, "}\n");
-        return buf.toOwnedSlice(self.allocator);
-    }
-
-    fn genStructFnCall(self: *Self, fnCall: ir.StructFnCall) ![]const u8 {
-        var buf: std.ArrayList(u8) = .empty;
-        const target = try self.genValue(fnCall.target);
-
-        try buf.print(self.allocator, "{s}.{s}(", .{ target, fnCall.identifier });
-
-        for (fnCall.args, 0..) |arg, i| {
-            if (i > 0) try buf.append(self.allocator, ',');
-            const arg_value = try self.genValue(arg);
-            try buf.appendSlice(self.allocator, arg_value);
-        }
-
-        try buf.appendSlice(self.allocator, ")");
-
         return buf.toOwnedSlice(self.allocator);
     }
 
