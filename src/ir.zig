@@ -58,7 +58,6 @@ pub const UpdateIndexed = struct {
 pub const StructInit = struct {
     keys: [][]const u8,
     values: []*Value,
-    type_id: TypeId,
 };
 
 pub const StoreVar = struct {
@@ -93,45 +92,41 @@ pub const ExpressionStmt = struct {
     value: *Value,
 };
 
-pub const Value = union(enum) {
+pub const Value = struct {
     const Self = @This();
+    data: union(enum) {
+        i_float: f64,
+        i_int: i64,
+        i_bool: bool,
+        i_string: []const u8,
+        i_void: void,
+        i_null: void,
+        i_array: Array,
 
-    i_float: f64,
-    i_int: i64,
-    i_bool: bool,
-    i_string: []const u8,
-    i_void: void,
-    i_null: void,
+        identifier: struct { uid: usize, identifier: []const u8 },
+        indexed: IndexedValue,
 
-    i_array: Array,
+        binary_op: BinaryOp,
+        unary_op: UnaryOp,
 
-    identifier: struct { uid: usize, identifier: []const u8, type_id: TypeId },
+        fn_call: FnCall,
+        struct_init: StructInit,
+        struct_fn_call: StructFnCall,
+    },
 
-    indexed: IndexedValue,
-    nullable_indexed: IndexedValue,
+    type_id: TypeId,
 
-    binary_op: BinaryOp,
-
-    unary_op: UnaryOp,
-
-    fn_call: FnCall,
-
-    struct_init: StructInit,
-
-    struct_fn_call: StructFnCall,
-
-    pub fn init(allocator: std.mem.Allocator, value: Self) !*Self {
-        const ptr = try allocator.create(Self);
+    pub fn init(allocator: std.mem.Allocator, value: Value) !*Value {
+        const ptr = try allocator.create(Value);
         ptr.* = value;
         return ptr;
     }
 };
 
-pub const Array = struct { type_id: TypeId, values: []const *Value };
+pub const Array = struct { values: []const *Value };
 
 pub const BinaryOp = struct {
     kind: BinaryOpKind,
-    type_id: TypeId,
     left: *Value,
     right: *Value,
 };
@@ -143,7 +138,6 @@ pub const IndexedValue = struct {
 
 pub const UnaryOp = struct {
     kind: UnaryOpKind,
-    type_id: TypeId,
     right: *Value,
 };
 
@@ -151,14 +145,12 @@ pub const FnCall = struct {
     fn_uid: usize,
     identifier: []const u8,
     args: []const *Value,
-    return_type: TypeId,
 };
 
 pub const StructFnCall = struct {
     target: *Value,
     identifier: []const u8,
     args: []const *Value,
-    return_type: TypeId,
 };
 
 pub const UnaryOpKind = enum {

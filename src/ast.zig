@@ -117,7 +117,6 @@ pub const Exp = union(enum) {
     fn_def: FnDef,
     struct_def: Struct,
     indexed: IndexedExp,
-    nullable_indexed: NullableIndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
 };
@@ -168,12 +167,9 @@ pub const ReturnStmt = struct {
 pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
+    nullable: bool,
 };
 
-pub const NullableIndexedExp = struct {
-    target: *ExpNode,
-    index: *ExpNode,
-};
 
 pub const Struct = struct {
     fields: []const StructField,

@@ -841,6 +841,7 @@ pub const Parser = struct {
                     .data = .{ .indexed = .{
                         .target = node,
                         .index = index,
+                        .nullable = false,
                     } },
                     .loc = .{ .start = node.loc.start, .end = r_bracket.loc.end },
                 });
@@ -863,6 +864,7 @@ pub const Parser = struct {
                     .indexed = .{
                         .target = node,
                         .index = id_node,
+                        .nullable = false,
                     },
                 }, .loc = .{ .start = node.loc.start, .end = id_token.loc.end } });
 
@@ -882,9 +884,10 @@ pub const Parser = struct {
 
                 const index_node = try ast.ExpNode.init(self.allocator, .{
                     .data = .{
-                        .nullable_indexed = .{
+                        .indexed = .{
                             .target = node,
                             .index = id_node,
+                            .nullable = true,
                         },
                     },
                     .loc = .{ .start = node.loc.start, .end = id_token.loc.end },
