@@ -8,7 +8,7 @@ let LinkedList = struct
     len: int = 0
 
     add: (mut self: @, value: int) -> void
-        let new_node = @(value = value, next = null)
+        let new_node: Node = @(value = value, next = null)
 
         if self.tail: mut tail
             tail.next = new_node

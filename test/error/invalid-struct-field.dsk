@@ -1,0 +1,4 @@
+let S = struct
+    a: int
+let s = S(a = 1)
+echo(s.b)

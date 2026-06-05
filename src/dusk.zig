@@ -2,7 +2,8 @@ pub const Dusk = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    stdout_writer: std.io.Writer,
+    stdout_writer: *std.Io.Writer,
+    io: std.Io,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
         const compiled_code = try self.compileFile(file_path, "dump/compiled.js");
@@ -11,26 +12,17 @@ pub const Dusk = struct {
     }
 
     pub fn compileFile(self: *Self, input_path: []const u8, output_path: ?[]const u8) ![]const u8 {
-        const abs_path = try std.fs.cwd().realpathAlloc(self.allocator, input_path);
-        defer self.allocator.free(abs_path);
-
-        const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
-        defer file.close();
-
-        const input_file_content = try file.readToEndAlloc(self.allocator, std.math.maxInt(usize));
+        const cwd = std.Io.Dir.cwd();
+        const input_file_content = try cwd.readFileAlloc(self.io, input_path, self.allocator, .unlimited);
+        defer self.allocator.free(input_file_content);
 
         const compiled_code = try self.compile(input_file_content);
 
         if (output_path) |out| {
             if (std.fs.path.dirname(out)) |dir| {
-                try std.fs.cwd().makePath(dir);
+                try cwd.createDirPath(self.io, dir);
             }
-
-            const output_file = try std.fs.cwd().createFile(out, .{});
-            defer output_file.close();
-            var output_writer = output_file.writer(&.{});
-            try output_writer.interface.writeAll(compiled_code);
-            try output_writer.interface.flush();
+            try cwd.writeFile(self.io, .{ .sub_path = out, .data = compiled_code });
         }
 
         return compiled_code;
@@ -50,22 +42,19 @@ pub const Dusk = struct {
         //note: is not dupping prolly cause of a undefined
         // try self.dump(ir, "dump/ir.json");
 
-        var js_code_gen = Generator{ .allocator = self.allocator };
+        var js_code_gen = Generator{ .allocator = self.allocator, .type_table = &sema_analyzer.type_table };
         const compiled_code = try js_code_gen.generate(ir);
         return compiled_code;
     }
 
     fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
         const dir_path = std.fs.path.dirname(file_name) orelse ".";
-        try std.fs.cwd().makePath(dir_path);
+        try std.Io.Dir.cwd().createDirPath(self.io, dir_path);
 
-        const file = try std.fs.cwd().createFile(file_name, .{});
-        defer file.close();
+        const json_str = try std.json.Stringify.valueAlloc(self.allocator, obj, .{ .whitespace = .indent_2 });
+        defer self.allocator.free(json_str);
 
-        var out: std.io.Writer.Allocating = .init(self.allocator);
-        try std.json.Stringify.value(obj, .{ .whitespace = .indent_2 }, &out.writer);
-
-        try file.writeAll(try out.toOwnedSlice());
+        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = file_name, .data = json_str });
     }
 };
 

@@ -5,7 +5,7 @@ pub const Program = struct {
 };
 
 pub const Block = struct {
-    return_type: *Type,
+    return_type: TypeId,
     instructions: []const Instruction,
 };
 
@@ -31,7 +31,7 @@ pub const Struct = struct {
 
 pub const StructField = struct {
     identifier: []const u8,
-    type: *Type,
+    type_id: TypeId,
     default_value: ?*Value,
 };
 
@@ -40,14 +40,14 @@ pub const Func = struct {
     identifier: []const u8,
     params: []const FuncParam,
     body: []const Instruction,
-    return_type: *Type,
+    return_type: TypeId,
 };
 
 pub const FuncParam = struct {
     uid: usize,
     identifier: []const u8,
     default_value: ?*Value,
-    type: *Type,
+    type_id: TypeId,
 };
 
 pub const UpdateIndexed = struct {
@@ -58,14 +58,12 @@ pub const UpdateIndexed = struct {
 pub const StructInit = struct {
     keys: [][]const u8,
     values: []*Value,
-    //note: temp
-    type: *Type,
 };
 
 pub const StoreVar = struct {
     uid: usize,
     identifier: []const u8,
-    type: *Type,
+    type_id: TypeId,
     value: *Value,
 };
 
@@ -94,49 +92,40 @@ pub const ExpressionStmt = struct {
     value: *Value,
 };
 
-pub const Value = union(enum) {
+pub const Value = struct {
     const Self = @This();
+    data: union(enum) {
+        i_float: f64,
+        i_int: i64,
+        i_bool: bool,
+        i_string: []const u8,
+        i_void: void,
+        i_null: void,
+        i_array: Array,
 
-    i_float: f64,
-    i_int: i64,
-    i_bool: bool,
-    i_string: []const u8,
-    i_void: void,
-    i_null: void,
+        identifier: struct { uid: usize, identifier: []const u8 },
+        indexed: IndexedValue,
 
-    i_array: Array,
+        binary_op: BinaryOp,
+        unary_op: UnaryOp,
 
-    identifier: struct { uid: usize, identifier: []const u8, type: *Type },
+        fn_call: FnCall,
+        struct_init: StructInit,
+    },
 
-    indexed: IndexedValue,
-    nullable_indexed: IndexedValue,
+    type_id: TypeId,
 
-    binary_op: BinaryOp,
-
-    unary_op: UnaryOp,
-
-    fn_def: void,
-
-    struct_def: void,
-
-    fn_call: FnCall,
-
-    struct_init: StructInit,
-
-    struct_fn_call: StructFnCall,
-
-    pub fn init(allocator: std.mem.Allocator, value: Self) !*Self {
-        const ptr = try allocator.create(Self);
+    pub fn init(allocator: std.mem.Allocator, value: Value) !*Value {
+        const ptr = try allocator.create(Value);
         ptr.* = value;
         return ptr;
     }
 };
 
-pub const Array = struct { type: *Type, values: []const *Value };
+pub const Array = struct { values: []const *Value };
 
 pub const BinaryOp = struct {
     kind: BinaryOpKind,
-    type: *Type,
     left: *Value,
     right: *Value,
 };
@@ -148,7 +137,6 @@ pub const IndexedValue = struct {
 
 pub const UnaryOp = struct {
     kind: UnaryOpKind,
-    type: *Type,
     right: *Value,
 };
 
@@ -156,14 +144,6 @@ pub const FnCall = struct {
     fn_uid: usize,
     identifier: []const u8,
     args: []const *Value,
-    return_type: *Type,
-};
-
-pub const StructFnCall = struct {
-    target: *Value,
-    identifier: []const u8,
-    args: []const *Value,
-    return_type: *Type,
 };
 
 pub const UnaryOpKind = enum {
@@ -203,7 +183,6 @@ pub const BinaryOpKind = enum {
 
     b_and,
     b_or,
-    //note: gota go soon
     b_cmp_eq,
     b_cmp_neq,
 };
@@ -211,4 +190,4 @@ pub const BinaryOpKind = enum {
 const std = @import("std");
 const sema = @import("sema.zig");
 const SemaError = sema.Errors;
-const Type = sema.Type;
+const TypeId = sema.TypeId;

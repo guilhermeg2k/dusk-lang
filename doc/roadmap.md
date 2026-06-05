@@ -4,15 +4,15 @@
 
 ## Version 0.9 - Shinobu
 
-- Upgrade to latest zig version
-- Improve errors message
+- [x] Upgrade to latest zig version
+- [x] Improve errors message
+- [x] Type Table
+- [x] IR Value with type: \*Type at root
+- [x] Static method dispatch
+- Review code notes/todos
 
 ## Version: 0.10 - Frieren
 
-- Type Table
-- IR Value with type: \*Type at root
-- Static method dispatch
-- Review code notes
 - Target wasm & evaluate with wasmtime
 
 ## Version 0.11 - Power
@@ -68,3 +68,4 @@
 
 - Code Formatter
 - Fuzz testing
+- Improve memory usage

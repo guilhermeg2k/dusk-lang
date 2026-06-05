@@ -1,6 +1,7 @@
 pub const Generator = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
+    type_table: *TypeTable,
 
     pub fn generate(self: *Self, program: ir.Program) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
@@ -23,7 +24,7 @@ pub const Generator = struct {
 
     fn genBuiltInFunctions(self: *Self) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
-        const builtin = BuiltIn{ .alloc = self.allocator };
+        const builtin = try BuiltIn.init(self.allocator, self.type_table);
 
         for (try builtin.generate()) |func| {
             try buf.appendSlice(self.allocator, func.code);
@@ -301,73 +302,51 @@ pub const Generator = struct {
     fn genValue(self: *Self, value: *ir.Value) GeneratorError![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
 
-        switch (value.*) {
-            .i_float => try buf.print(self.allocator, "{d}", .{value.i_float}),
-            .i_int => try buf.print(self.allocator, "{d}", .{value.i_int}),
-            .i_bool => try buf.print(self.allocator, "{s}", .{if (value.i_bool) "true" else "false"}),
-            .i_string => try buf.print(self.allocator, "{s}", .{value.i_string}),
+        switch (value.data) {
+            .i_float => |f| try buf.print(self.allocator, "{d}", .{f}),
+            .i_int => |i| try buf.print(self.allocator, "{d}", .{i}),
+            .i_bool => |b| try buf.print(self.allocator, "{s}", .{if (b) "true" else "false"}),
+            .i_string => |s| try buf.print(self.allocator, "{s}", .{s}),
             .i_void => {},
             .i_null => try buf.appendSlice(self.allocator, "null"),
-            .indexed => {
-                const target = try self.genValue(value.indexed.target);
-                switch (value.indexed.index.*) {
+            .indexed => |idx| {
+                const target = try self.genValue(idx.target);
+                const is_nullable = self.type_table.getTypePtrById(idx.target.type_id).nullable;
+                const optional_prefix = if (is_nullable) "?." else "";
+                switch (idx.index.data) {
                     .i_string => |member_name| {
-                        try buf.print(self.allocator, "{s}[\"{s}\"]", .{ target, member_name });
+                        try buf.print(self.allocator, "{s}{s}[\"{s}\"]", .{ target, optional_prefix, member_name });
                     },
                     else => {
-                        const index_js = try self.genValue(value.indexed.index);
-                        try buf.print(self.allocator, "{s}[{s}]", .{ target, index_js });
+                        const index_js = try self.genValue(idx.index);
+                        try buf.print(self.allocator, "{s}{s}[{s}]", .{ target, optional_prefix, index_js });
                     },
                 }
             },
-            .nullable_indexed => {
-                const target = try self.genValue(value.nullable_indexed.target);
-                switch (value.nullable_indexed.index.*) {
-                    .i_string => |member_name| {
-                        try buf.print(self.allocator, "{s}?.[\"{s}\"]", .{ target, member_name });
-                    },
-                    else => {
-                        const index_js = try self.genValue(value.nullable_indexed.index);
-                        try buf.print(self.allocator, "{s}?.[{s}]", .{ target, index_js });
-                    },
-                }
-            },
-            .i_array => {
-                const i_array = try self.genImmediateArray(value.i_array);
+            .i_array => |a| {
+                const i_array = try self.genImmediateArray(a);
                 try buf.appendSlice(self.allocator, i_array);
             },
-            .identifier => {
-                const name = try self.genName(value.identifier.uid, value.identifier.identifier);
+            .identifier => |id| {
+                const name = try self.genName(id.uid, id.identifier);
                 try buf.appendSlice(self.allocator, name);
             },
-
-            .fn_call => {
-                const call = try self.genFnCall(value.fn_call);
+            .fn_call => |fc| {
+                const call = try self.genFnCall(fc);
                 try buf.appendSlice(self.allocator, call);
             },
-
-            .struct_init => {
-                const struct_obj = try self.genStructInit(value.struct_init);
+            .struct_init => |si| {
+                const struct_obj = try self.genStructInit(si);
                 try buf.appendSlice(self.allocator, struct_obj);
             },
-
-            .struct_fn_call => {
-                const call = try self.genStructFnCall(value.struct_fn_call);
-                try buf.appendSlice(self.allocator, call);
-            },
-
-            .binary_op => {
-                const op = try self.genBinaryOp(value.binary_op);
+            .binary_op => |bo| {
+                const op = try self.genBinaryOp(bo);
                 try buf.appendSlice(self.allocator, op);
             },
-
-            .unary_op => {
-                const op = try self.genUnaryOp(value.unary_op);
+            .unary_op => |uo| {
+                const op = try self.genUnaryOp(uo);
                 try buf.appendSlice(self.allocator, op);
             },
-
-            .struct_def => {},
-            .fn_def => {},
         }
 
         return buf.toOwnedSlice(self.allocator);
@@ -461,23 +440,6 @@ pub const Generator = struct {
         return buf.toOwnedSlice(self.allocator);
     }
 
-    fn genStructFnCall(self: *Self, fnCall: ir.StructFnCall) ![]const u8 {
-        var buf: std.ArrayList(u8) = .empty;
-        const target = try self.genValue(fnCall.target);
-
-        try buf.print(self.allocator, "{s}.{s}(", .{ target, fnCall.identifier });
-
-        for (fnCall.args, 0..) |arg, i| {
-            if (i > 0) try buf.append(self.allocator, ',');
-            const arg_value = try self.genValue(arg);
-            try buf.appendSlice(self.allocator, arg_value);
-        }
-
-        try buf.appendSlice(self.allocator, ")");
-
-        return buf.toOwnedSlice(self.allocator);
-    }
-
     pub fn genName(self: *Self, uid: usize, identifier: []const u8) ![]const u8 {
         return std.fmt.allocPrint(self.allocator, "{s}_{d}", .{ identifier, uid });
     }
@@ -487,4 +449,5 @@ const GeneratorError = error{OutOfMemory};
 
 const ir = @import("ir.zig");
 const BuiltIn = @import("built-in.zig").BuiltIn;
+const TypeTable = @import("sema.zig").TypeTable;
 const std = @import("std");

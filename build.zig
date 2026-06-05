@@ -51,19 +51,19 @@ pub fn build(b: *std.Build) void {
         "dtoa.c",
     };
 
-    exe.addCSourceFiles(.{
+    exe.root_module.addCSourceFiles(.{
         .root = qjs_path,
         .files = qjs_files,
         .flags = qjs_flags,
     });
     exe.root_module.link_libc = true;
-    exe.addIncludePath(qjs_path);
+    exe.root_module.addIncludePath(qjs_path);
 
-    tests.addCSourceFiles(.{
+    tests.root_module.addCSourceFiles(.{
         .root = qjs_path,
         .files = qjs_files,
         .flags = qjs_flags,
     });
     tests.root_module.link_libc = true;
-    tests.addIncludePath(qjs_path);
+    tests.root_module.addIncludePath(qjs_path);
 }

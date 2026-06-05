@@ -1,0 +1,3 @@
+let S = struct
+    x: int = "hello"
+let s = S()

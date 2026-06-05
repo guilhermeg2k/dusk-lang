@@ -1,0 +1,5 @@
+let S = struct
+    x: int
+let f = (x: ?S) -> void
+    if x: mut y
+        echo(y.x)

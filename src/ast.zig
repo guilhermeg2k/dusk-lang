@@ -7,7 +7,7 @@ pub const Block = struct {
 
 pub const StatementNode = struct {
     data: Statement,
-    loc_start: usize,
+    loc: err.Loc,
 };
 
 pub const Statement = union(enum) {
@@ -57,8 +57,8 @@ pub const TypeAnnotation = struct {
 
     type: union(enum) {
         primitive: []const u8,
-        struct_: []const u8,
-        anonymous_struct: AnonymousStructDef,
+        @"struct": []const u8,
+        anonymous_struct: Struct,
         array: *TypeAnnotation,
         struct_self: void,
     },
@@ -74,10 +74,14 @@ pub const TypeAnnotation = struct {
     pub fn value(self: *Self, alloc: std.mem.Allocator) ![]const u8 {
         return switch (self.type) {
             .primitive => |primitive_name| primitive_name,
-            .struct_ => |struct_name| struct_name,
-            //note: improve this gonna log ugly stuff
+            .@"struct" => |struct_name| struct_name,
             .anonymous_struct => |anom_struct| {
-                return std.fmt.allocPrint(alloc, "anonymous struct {any}", .{anom_struct.fields});
+                var field_list: std.ArrayList(u8) = .empty;
+                for (anom_struct.fields, 0..) |field, i| {
+                    if (i > 0) try field_list.appendSlice(alloc, ", ");
+                    try field_list.appendSlice(alloc, field.identifier);
+                }
+                return std.fmt.allocPrint(alloc, "anonymous struct {{ {s} }}", .{field_list.items});
             },
             .array => {
                 return std.fmt.allocPrint(alloc, "[]{s}", .{try self.type.array.value(alloc)});
@@ -93,7 +97,7 @@ pub const ExpNode = struct {
     const Self = @This();
 
     data: Exp,
-    loc_start: usize,
+    loc: err.Loc,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -110,17 +114,13 @@ pub const Exp = union(enum) {
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
+    anonymous_struct_identifier: void,
     array_literal: ArrayLiteral,
     null_literal: void,
-
     fn_call: FnCall,
     fn_def: FnDef,
-
-    struct_def: StructDef,
-    anonymous_struct_inicialization: void,
-
+    struct_def: Struct,
     indexed: IndexedExp,
-    nullable_indexed: NullableIndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
 };
@@ -159,11 +159,6 @@ pub const FnCall = struct {
     arguments: []const FnCallArg,
 };
 
-pub const AnonymousStructInicialization = struct {
-    are_arguments_named: bool,
-    arguments: []const FnCallArg,
-};
-
 pub const FnCallArg = struct {
     identifier: ?[]const u8,
     exp: *ExpNode,
@@ -176,21 +171,14 @@ pub const ReturnStmt = struct {
 pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
+    nullable: bool,
 };
 
-pub const NullableIndexedExp = struct {
-    target: *ExpNode,
-    index: *ExpNode,
-};
 
-pub const StructDef = struct {
+pub const Struct = struct {
     fields: []const StructField,
     static_fields: []const StructField,
     funcs: []const StructFn,
-};
-
-pub const AnonymousStructDef = struct {
-    fields: []const StructField,
 };
 
 pub const StructFn = struct {

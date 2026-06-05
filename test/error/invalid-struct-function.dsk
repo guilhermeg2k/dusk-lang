@@ -1,0 +1,6 @@
+let S = struct
+    x: int
+    f: (self: @) -> void
+        return
+let s = S(x = 1)
+s.g()

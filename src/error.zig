@@ -1,14 +1,16 @@
+pub const Loc = @import("lexer.zig").Loc;
+
 pub const ErrorDispatcher = struct {
     const Self = @This();
 
     src: []const u8,
     allocator: std.mem.Allocator,
 
-    const MAX_PADDING = 256;
-    const padding = " " ** MAX_PADDING;
+    const LINE_MAX_CHAR_COUNT = 256;
+    const padding = " " ** LINE_MAX_CHAR_COUNT;
 
     pub fn unexpectedToken(self: *Self, token: Token) Errors {
-        self.log(try allocPrint(self.allocator, "Unexpected token '{s}'", .{token.value(self.src)}), token.loc.start);
+        self.log(try allocPrint(self.allocator, "Unexpected token '{s}'", .{token.value(self.src)}), token.loc);
         return Errors.LexerError;
     }
 
@@ -19,12 +21,12 @@ pub const ErrorDispatcher = struct {
                 "Invalid Syntax: expected {s} found '{s}'",
                 .{ expected, token.value(self.src) },
             ),
-            token.loc.start,
+            token.loc,
         );
         return Errors.ParserError;
     }
 
-    pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+    pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -33,10 +35,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidType;
     }
 
-    pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+    pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -45,10 +47,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidReturnType;
     }
 
-    pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+    pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -57,10 +59,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidExpression;
     }
 
-    pub fn invalidIndexing(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+    pub fn invalidIndexing(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -69,10 +71,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidIndexing;
     }
 
-    pub fn invalidAssignment(self: *Self, expected: []const u8, found: []const u8, loc: usize) Errors {
+    pub fn invalidAssignment(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -81,18 +83,18 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidAssignment;
     }
 
-    pub fn typeNotDefined(self: *Self, found: []const u8, loc: usize) Errors {
+    pub fn typeNotDefined(self: *Self, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(self.allocator, "Invalid type '{s}'", .{found}),
             loc,
         );
-        return Errors.SemaError;
+        return error.UnknownType;
     }
 
-    pub fn invalidNumberOfArgs(self: *Self, expected: usize, found: usize, loc: usize) Errors {
+    pub fn invalidNumberOfArgs(self: *Self, expected: usize, found: usize, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -101,10 +103,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidNumberOfArgs;
     }
 
-    pub fn missingArgument(self: *Self, expected: []const u8, loc: usize) Errors {
+    pub fn missingArgument(self: *Self, expected: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -113,35 +115,35 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.MissingArgument;
     }
 
-    pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: usize) Errors {
+    pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.AlreadyDefined;
     }
 
-    pub fn notDefined(self: *Self, identifier: []const u8, loc: usize) Errors {
+    pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.NotDefined;
     }
 
-    pub fn notMutable(self: *Self, identifier: []const u8, loc: usize) Errors {
+    pub fn notMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "'{s}' is not mutable", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.NotMutable;
     }
 
-    pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: usize) Errors {
+    pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
-        return Errors.SemaError;
+        return error.UnwrappedCantBeMutable;
     }
 
-    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: usize) Errors {
+    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: Loc) Errors {
         self.log("@ cannot be used outside of a struct", loc);
-        return Errors.SemaError;
+        return error.SelfOutsideStruct;
     }
 
-    pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: usize) Errors {
+    pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -150,10 +152,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidStructField;
     }
 
-    pub fn invalidStructField(self: *Self, struct_name: []const u8, member: []const u8, loc: usize) Errors {
+    pub fn invalidStructField(self: *Self, struct_name: []const u8, member: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -162,10 +164,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidStructField;
     }
 
-    pub fn invalidStructFunction(self: *Self, struct_name: []const u8, function: []const u8, loc: usize) Errors {
+    pub fn invalidStructFunction(self: *Self, struct_name: []const u8, function: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -174,35 +176,34 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidStructField;
     }
 
-    //note: maybe not used
-    pub fn cantInferAnonymousStruct(self: *Self, loc: usize) Errors {
+    pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) Errors {
         self.log(
             "Can't infer anonymous struct type",
             loc,
         );
-        return Errors.SemaError;
+        return error.CantInferAnonymousStruct;
     }
 
-    pub fn primitiveParamsCantBeMutable(self: *Self, loc: usize) Errors {
+    pub fn primitiveParamsCantBeMutable(self: *Self, loc: Loc) Errors {
         self.log(
             "Primitive params can't be mutable",
             loc,
         );
-        return Errors.SemaError;
+        return error.PrimitiveParamsCantBeMutable;
     }
 
-    pub fn cantInferArrayLiteralType(self: *Self, loc: usize) Errors {
+    pub fn cantInferArrayLiteralType(self: *Self, loc: Loc) Errors {
         self.log(
             "Can't infer array literal type",
             loc,
         );
-        return Errors.SemaError;
+        return error.CantInferArrayLiteralType;
     }
 
-    pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: usize) Errors {
+    pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -211,10 +212,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.UnecessaryOptionalChain;
     }
 
-    pub fn nullableMustBeUnwraped(self: *Self, member: []const u8, loc: usize) Errors {
+    pub fn nullableMustBeUnwraped(self: *Self, member: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -223,10 +224,10 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.NullableMustBeUnwrapped;
     }
 
-    pub fn invalidParameterType(self: *Self, parameter_name: []const u8, loc: usize) Errors {
+    pub fn invalidParameterType(self: *Self, parameter_name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -235,22 +236,43 @@ pub const ErrorDispatcher = struct {
             ),
             loc,
         );
-        return Errors.SemaError;
+        return error.InvalidParameterType;
     }
 
-    pub fn log(self: *Self, msg: []const u8, loc: usize) void {
-        const exactLoc = self.findExactLoc(loc);
-        const spaces = 6 + loc - exactLoc.line.start;
+    pub fn log(self: *Self, msg: []const u8, loc: Loc) void {
+        if (@import("builtin").is_test) return;
+
+        const exactLoc = self.findExactLoc(loc.start);
+        const start_col = 6 + loc.start - exactLoc.line.start;
+        const range_len = if (loc.end > loc.start) (loc.end - loc.start) else 0;
+
+        var error_loc_marker: [LINE_MAX_CHAR_COUNT]u8 = undefined;
+        var error_loc_marker_len: usize = 0;
+
+        const white_space_count = @min(start_col, LINE_MAX_CHAR_COUNT);
+        @memcpy(error_loc_marker[0..white_space_count], padding[0..white_space_count]);
+        error_loc_marker_len += white_space_count;
+
+        error_loc_marker[error_loc_marker_len] = '^';
+        error_loc_marker_len += 1;
+
+        if (range_len > 0) {
+            const tilde_count = @min(range_len, LINE_MAX_CHAR_COUNT - error_loc_marker_len - 1);
+            @memset(error_loc_marker[error_loc_marker_len .. error_loc_marker_len + tilde_count], '~');
+            error_loc_marker_len += tilde_count;
+            error_loc_marker[error_loc_marker_len] = '^';
+            error_loc_marker_len += 1;
+        }
 
         std.log.err(
-            "{s} at line {d} col {d}\n--> {d}: {s} {s}^",
+            "{s} at line {d} col {d}\n--> {d}: {s} {s}",
             .{
                 msg,
                 exactLoc.line.count,
                 exactLoc.col,
                 exactLoc.line.count,
                 self.src[exactLoc.line.start .. exactLoc.line.end + 1],
-                padding[0..@min(spaces, MAX_PADDING)],
+                error_loc_marker[0..error_loc_marker_len],
             },
         );
     }
@@ -258,11 +280,11 @@ pub const ErrorDispatcher = struct {
     fn findExactLoc(self: *Self, loc: usize) ExactLoc {
         var line_count: usize = 1;
         var line_start: usize = 0;
-        var line_end: usize = 0;
+        var line_end: usize = self.src.len -| 1;
 
         var i: usize = 0;
         var should_break_in_next_line = false;
-        while (true) {
+        while (i < self.src.len) {
             if (i == loc) should_break_in_next_line = true;
             if (self.src[i] == '\n') {
                 if (should_break_in_next_line) {
@@ -308,6 +330,27 @@ pub const Errors = error{
     LexerError,
     ParserError,
     SemaError,
+
+    InvalidType,
+    InvalidReturnType,
+    InvalidExpression,
+    InvalidIndexing,
+    InvalidAssignment,
+    UnknownType,
+    InvalidNumberOfArgs,
+    MissingArgument,
+    AlreadyDefined,
+    NotDefined,
+    NotMutable,
+    UnwrappedCantBeMutable,
+    SelfOutsideStruct,
+    InvalidStructField,
+    CantInferAnonymousStruct,
+    PrimitiveParamsCantBeMutable,
+    CantInferArrayLiteralType,
+    UnecessaryOptionalChain,
+    NullableMustBeUnwrapped,
+    InvalidParameterType,
 };
 
 const std = @import("std");
