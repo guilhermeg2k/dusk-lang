@@ -30,7 +30,7 @@ pub const WasmRuntime = struct {
 
         const context = wt.wasmtime_store_context(store);
 
-        const wasm_builtins_instance = try wasm_builtins.WasmBuiltins.init(std.heap.c_allocator, type_table);
+        const wasm_builtins_instance = try wasm_builtins.WasmBuiltins.init(std.heap.c_allocator, type_table, writer);
 
         var self = Self{
             .engine = engine,

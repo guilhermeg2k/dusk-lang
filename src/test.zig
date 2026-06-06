@@ -1,19 +1,24 @@
 const std = @import("std");
 const testing = std.testing;
 const runtime = @import("runtime.zig").QjsRuntime;
+const wasm_builtins = @import("wasm_builtins.zig");
 const Dusk = @import("dusk.zig").Dusk;
 
 fn runCase(src_file: []const u8, expected_output: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
+    const file_path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
+    const cwd = std.Io.Dir.cwd();
+    const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
+
     var buf: [65536]u8 = undefined;
     var stdout_writer_mock = std.Io.Writer.fixed(&buf);
 
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &stdout_writer_mock, .io = testing.io };
-    try dusk.runFile(try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file}));
+    try dusk.compileToWasm(src);
 
-    const output = buf[0..runtime.stdout_writer.end];
+    const output = buf[0..wasm_builtins.WasmBuiltins.stdout_writer.end];
     try testing.expectEqualStrings(std.mem.trim(u8, expected_output, "\n\r "), std.mem.trim(u8, output, "\n\r "));
 }
 

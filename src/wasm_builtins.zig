@@ -28,10 +28,13 @@ pub const BuiltIn = struct {
 pub const WasmBuiltins = struct {
     const Self = @This();
 
+    pub var stdout_writer: *std.Io.Writer = undefined;
+
     builtins: []const BuiltIn,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, type_table: *const TypeTable) !Self {
+    pub fn init(allocator: std.mem.Allocator, type_table: *const TypeTable, writer: ?*std.Io.Writer) !Self {
+        if (writer) |w| stdout_writer = w;
         const builtin_arr = try allocator.alloc(BuiltIn, 2);
         builtin_arr[0] = try echoBuiltIn(allocator, type_table);
         builtin_arr[1] = assertBuiltIn();
@@ -87,15 +90,14 @@ fn assertExpr(module: B.BinaryenModuleRef, arg: B.BinaryenExpressionRef) B.Binar
 }
 
 fn echoCallback(
-    env: ?*anyopaque,
+    _: ?*anyopaque,
     _: ?*wt.wasmtime_caller_t,
     args: [*c]const wt.wasmtime_val_t,
     _: usize,
     _: [*c]wt.wasmtime_val_t,
     _: usize,
 ) callconv(.c) ?*wt.wasm_trap_t {
-    const writer: *std.Io.Writer = @ptrCast(@alignCast(env.?));
-    writer.print("{d}\n", .{args[0].of.i64}) catch {};
-    writer.flush() catch {};
+    WasmBuiltins.stdout_writer.print("{d}\n", .{args[0].of.i64}) catch {};
+    WasmBuiltins.stdout_writer.flush() catch {};
     return null;
 }
