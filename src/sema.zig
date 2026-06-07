@@ -426,6 +426,8 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        expression_value.type_id = var_type_id;
+
         const uid = self.scope.genUid();
 
         self.scope.symbol_table.put(.{

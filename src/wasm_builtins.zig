@@ -52,12 +52,14 @@ pub const WasmBuiltins = struct {
 
     pub fn init(allocator: std.mem.Allocator, writer: ?*std.Io.Writer) !Self {
         if (writer) |w| stdout_writer = w;
-        const builtin_arr = try allocator.alloc(BuiltIn, 5);
+        const builtin_arr = try allocator.alloc(BuiltIn, 7);
         builtin_arr[0] = echoExprBuiltIn();
         builtin_arr[1] = assertBuiltIn();
         builtin_arr[2] = try printStrBuiltIn(allocator);
         builtin_arr[3] = concatBuiltIn();
         builtin_arr[4] = try echoIntBuiltIn(allocator);
+        builtin_arr[5] = appendBuiltIn();
+        builtin_arr[6] = lenBuiltIn();
         return Self{ .builtins = builtin_arr, .allocator = allocator };
     }
 
@@ -113,6 +115,10 @@ fn echoExpr(
 
     if (arg_type.kind == .boolean) {
         return echoBool(module, allocator, ctx, genValueFn, arg);
+    }
+
+    if (arg_type.kind == .array) {
+        return B.BinaryenNop(module);
     }
 
     const arg_val = try genValueFn(ctx, arg);
@@ -302,4 +308,106 @@ fn concatExpr(
     const left = try genValueFn(ctx, fc.args[0]);
     const right = try genValueFn(ctx, fc.args[1]);
     return B.BinaryenStringConcat(module, left, right);
+}
+
+fn appendBuiltIn() BuiltIn {
+    return BuiltIn{
+        .uid = 1,
+        .identifier = "append",
+        .kind = .{ .inline_expr = appendExpr },
+    };
+}
+
+fn appendExpr(
+    module: B.BinaryenModuleRef,
+    allocator: std.mem.Allocator,
+    type_table: *TypeTable,
+    fc: ir.FnCall,
+    ctx: *anyopaque,
+    genValueFn: *const fn (*anyopaque, *ir.Value) anyerror!B.BinaryenExpressionRef,
+) anyerror!B.BinaryenExpressionRef {
+    const old_arr = try genValueFn(ctx, fc.args[0]);
+    const new_val = try genValueFn(ctx, fc.args[1]);
+
+    const dusk_arr_type = type_table.getTypePtrById(fc.args[0].type_id);
+    const inner_type_id = dusk_arr_type.kind.array;
+    const arr_type = getArrayHeapType(type_table, inner_type_id);
+
+    const default_init = defaultInitExpr(module, type_table, inner_type_id);
+    const arr_ref_type = B.BinaryenTypeFromHeapType(arr_type, dusk_arr_type.nullable);
+
+    const len = B.BinaryenArrayLen(module, old_arr);
+    const new_size = B.BinaryenBinary(module, B.BinaryenAddInt32(), len, B.BinaryenConst(module, B.BinaryenLiteralInt32(1)));
+    const new_arr = B.BinaryenArrayNew(module, arr_type, new_size, default_init);
+    const zero = B.BinaryenConst(module, B.BinaryenLiteralInt32(0));
+
+    const children = try allocator.alloc(B.BinaryenExpressionRef, 3);
+    children[0] = B.BinaryenArrayCopy(module, new_arr, zero, old_arr, zero, len);
+    children[1] = B.BinaryenArraySet(module, new_arr, len, new_val);
+    children[2] = new_arr;
+    return B.BinaryenBlock(module, null, children.ptr, 3, arr_ref_type);
+}
+
+fn lenBuiltIn() BuiltIn {
+    return BuiltIn{
+        .uid = 2,
+        .identifier = "len",
+        .kind = .{ .inline_expr = lenExpr },
+    };
+}
+
+fn lenExpr(
+    module: B.BinaryenModuleRef,
+    _: std.mem.Allocator,
+    _: *TypeTable,
+    fc: ir.FnCall,
+    ctx: *anyopaque,
+    genValueFn: *const fn (*anyopaque, *ir.Value) anyerror!B.BinaryenExpressionRef,
+) anyerror!B.BinaryenExpressionRef {
+    const arr = try genValueFn(ctx, fc.args[0]);
+    const len_i32 = B.BinaryenArrayLen(module, arr);
+    return B.BinaryenUnary(module, B.BinaryenExtendUInt32(), len_i32);
+}
+
+fn getArrayHeapType(type_table: *TypeTable, inner_type_id: sema.TypeId) B.BinaryenHeapType {
+    const inner_type = type_table.getTypePtrById(inner_type_id);
+    const inner_wasm = switch (inner_type.kind) {
+        .int => B.BinaryenTypeInt64(),
+        .float => B.BinaryenTypeFloat64(),
+        .boolean => B.BinaryenTypeInt32(),
+        .string => B.BinaryenTypeStringref(),
+        .array => |inner| blk: {
+            const inner_heap = getArrayHeapType(type_table, inner);
+            break :blk B.BinaryenTypeFromHeapType(inner_heap, inner_type.nullable);
+        },
+        else => B.BinaryenTypeInt64(),
+    };
+
+    const builder = B.TypeBuilderCreate(1);
+    B.TypeBuilderSetArrayType(builder, 0, inner_wasm, B.BinaryenPackedTypeNotPacked(), 1);
+    _ = B.TypeBuilderGetTempHeapType(builder, 0);
+
+    var error_index: u32 = 0;
+    var error_reason: u32 = 0;
+    var built_types: B.BinaryenHeapType = undefined;
+    if (!B.TypeBuilderBuildAndDispose(builder, &built_types, &error_index, &error_reason)) {
+        @panic("TypeBuilderBuildAndDispose failed");
+    }
+    return built_types;
+}
+
+fn defaultInitExpr(module: B.BinaryenModuleRef, type_table: *TypeTable, inner_type_id: sema.TypeId) B.BinaryenExpressionRef {
+    const inner_type = type_table.getTypePtrById(inner_type_id);
+    return switch (inner_type.kind) {
+        .int => B.BinaryenConst(module, B.BinaryenLiteralInt64(0)),
+        .float => B.BinaryenConst(module, B.BinaryenLiteralFloat64(0.0)),
+        .boolean => B.BinaryenConst(module, B.BinaryenLiteralInt32(0)),
+        .string => B.BinaryenRefNull(module, B.BinaryenTypeStringref()),
+        .array => |inner| {
+            const heap_type = getArrayHeapType(type_table, inner);
+            const arr_type = B.BinaryenTypeFromHeapType(heap_type, inner_type.nullable);
+            return B.BinaryenRefNull(module, arr_type);
+        },
+        else => B.BinaryenNop(module),
+    };
 }

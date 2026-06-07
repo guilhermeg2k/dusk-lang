@@ -26,6 +26,8 @@ pub const WasmGenerator = struct {
     loop_labels: std.ArrayList(LoopLabels),
     next_label_id: u32,
 
+    array_types: std.AutoHashMap(TypeId, B.BinaryenHeapType),
+
     pub fn generate(allocator: std.mem.Allocator, type_table: *TypeTable, program: ir.Program) ![]const u8 {
         const module = B.BinaryenModuleCreate();
         errdefer B.BinaryenModuleDispose(module);
@@ -45,6 +47,7 @@ pub const WasmGenerator = struct {
             .next_local_index = 0,
             .loop_labels = .empty,
             .next_label_id = 0,
+            .array_types = std.AutoHashMap(TypeId, B.BinaryenHeapType).init(allocator),
         };
 
         try self.setupBuiltIns();
@@ -119,6 +122,7 @@ pub const WasmGenerator = struct {
         var var_types = try std.ArrayList(B.BinaryenType).initCapacity(self.allocator, num_vars);
         if (num_vars > 0) {
             try var_types.resize(self.allocator, num_vars);
+            for (var_types.items) |*t| t.* = B.BinaryenTypeNone();
             var iter = self.local_vars_by_symbol_uid.iterator();
             while (iter.next()) |entry| {
                 if (entry.value_ptr.index >= func.params.len) {
@@ -182,6 +186,12 @@ pub const WasmGenerator = struct {
         for (instructions, 0..) |inst, i| {
             children[i] = try self.genInstruction(inst);
         }
+        for (children[0 .. children.len - 1]) |*child| {
+            const child_type = B.BinaryenExpressionGetType(child.*);
+            if (child_type != B.BinaryenTypeNone() and child_type != B.BinaryenTypeUnreachable()) {
+                child.* = B.BinaryenDrop(self.module, child.*);
+            }
+        }
 
         return B.BinaryenBlock(self.module, null, children.ptr, @intCast(children.len), B.BinaryenTypeAuto());
     }
@@ -205,6 +215,12 @@ pub const WasmGenerator = struct {
                 const cond = try self.genValue(bi.condition);
                 const then_body = try self.genInstructions(bi.then_block);
                 const else_body = try self.genInstructions(bi.else_block);
+                if (bi.else_block.len == 0) {
+                    const then_type = B.BinaryenExpressionGetType(then_body);
+                    if (then_type != B.BinaryenTypeNone() and then_type != B.BinaryenTypeUnreachable()) {
+                        return B.BinaryenIf(self.module, cond, B.BinaryenDrop(self.module, then_body), else_body);
+                    }
+                }
                 return B.BinaryenIf(self.module, cond, then_body, else_body);
             },
             .loop => |lp| {
@@ -222,7 +238,9 @@ pub const WasmGenerator = struct {
                 const return_value = if (rs.value) |val| try self.genValue(val) else null;
                 return B.BinaryenReturn(self.module, return_value);
             },
-            else => unreachable,
+            .update_indexed => |ui| {
+                return self.genIndexedSet(ui);
+            },
         }
     }
 
@@ -288,11 +306,23 @@ pub const WasmGenerator = struct {
                 return self.genFnCall(fc, value.type_id);
             },
             .i_void => return B.BinaryenNop(self.module),
-            .i_null => return B.BinaryenNop(self.module),
+            .i_null => {
+                const type_ptr = self.type_table.getTypePtrById(value.type_id);
+                return switch (type_ptr.kind) {
+                    .string, .array => B.BinaryenRefNull(self.module, self.duskTypeToWasmType(value.type_id)),
+                    else => B.BinaryenNop(self.module),
+                };
+            },
             .i_string => |s| {
                 const null_terminated = try self.allocator.allocSentinel(u8, s.len, 0);
                 @memcpy(null_terminated[0..s.len], s);
                 return B.BinaryenStringConst(self.module, null_terminated.ptr);
+            },
+            .i_array => |a| {
+                return self.genArrayLiteral(value.type_id, a);
+            },
+            .indexed => |idx| {
+                return self.genIndexedGet(idx);
             },
             else => unreachable,
         }
@@ -430,8 +460,65 @@ pub const WasmGenerator = struct {
             .boolean => B.BinaryenTypeInt32(),
             .void => B.BinaryenTypeNone(),
             .string => B.BinaryenTypeStringref(),
+            .array => |inner_id| {
+                const heap_type = self.getOrPutArrayType(inner_id);
+                return B.BinaryenTypeFromHeapType(heap_type, type_ptr.nullable);
+            },
             else => B.BinaryenTypeInt64(),
         };
+    }
+
+    fn getOrPutArrayType(self: *Self, inner_type_id: TypeId) B.BinaryenHeapType {
+        const cached = self.array_types.get(inner_type_id);
+        if (cached) |h| return h;
+
+        const inner_wasm = self.duskTypeToWasmType(inner_type_id);
+        const builder = B.TypeBuilderCreate(1);
+        B.TypeBuilderSetArrayType(builder, 0, inner_wasm, B.BinaryenPackedTypeNotPacked(), 1);
+        _ = B.TypeBuilderGetTempHeapType(builder, 0);
+
+        var error_index: u32 = 0;
+        var error_reason: u32 = 0;
+        var built_type: B.BinaryenHeapType = undefined;
+        if (!B.TypeBuilderBuildAndDispose(builder, &built_type, &error_index, &error_reason)) {
+            @panic("TypeBuilderBuildAndDispose failed");
+        }
+
+        self.array_types.put(inner_type_id, built_type) catch unreachable;
+        return built_type;
+    }
+
+    fn genArrayLiteral(self: *Self, type_id: TypeId, a: ir.Array) WasmGenError!B.BinaryenExpressionRef {
+        const inner_type = self.type_table.getTypePtrById(type_id).kind.array;
+        const heap_type = self.getOrPutArrayType(inner_type);
+        const values = try self.allocator.alloc(B.BinaryenExpressionRef, a.values.len);
+        for (a.values, 0..) |v, i| {
+            values[i] = try self.genValue(v);
+        }
+        return B.BinaryenArrayNewFixed(self.module, heap_type, values.ptr, @intCast(values.len));
+    }
+
+    fn genIndexedGet(self: *Self, indexed: ir.IndexedValue) WasmGenError!B.BinaryenExpressionRef {
+        const target_type = self.type_table.getTypePtrById(indexed.target.type_id);
+        return switch (target_type.kind) {
+            .array => |inner_id| {
+                const target = try self.genValue(indexed.target);
+                const index_i64 = try self.genValue(indexed.index);
+                const index_i32 = B.BinaryenUnary(self.module, B.BinaryenWrapInt64(), index_i64);
+                const elem_wasm = self.duskTypeToWasmType(inner_id);
+                return B.BinaryenArrayGet(self.module, target, index_i32, elem_wasm, false);
+            },
+            else => unreachable,
+        };
+    }
+
+    fn genIndexedSet(self: *Self, updateIndexed: ir.UpdateIndexed) WasmGenError!B.BinaryenExpressionRef {
+        const inner_indexed = updateIndexed.target.data.indexed;
+        const array_ref = try self.genValue(inner_indexed.target);
+        const value = try self.genValue(updateIndexed.value);
+        const index_i64 = try self.genValue(inner_indexed.index);
+        const index_i32 = B.BinaryenUnary(self.module, B.BinaryenWrapInt64(), index_i64);
+        return B.BinaryenArraySet(self.module, array_ref, index_i32, value);
     }
 
     fn getCurrentLoopLabels(self: *Self) LoopLabels {

@@ -15,7 +15,10 @@ pub const WasmRuntime = struct {
     wasm_builtins_instance: wasm_builtins.WasmBuiltins,
 
     pub fn init(writer: *std.Io.Writer, type_table: *sema.TypeTable) !Self {
-        const engine = wt.wasm_engine_new() orelse return error.EngineInitFailed;
+        const config = wt.wasm_config_new() orelse return error.EngineInitFailed;
+
+        wt.wasmtime_config_wasm_gc_set(config, true);
+        const engine = wt.wasm_engine_new_with_config(config) orelse return error.EngineInitFailed;
 
         const store = wt.wasmtime_store_new(engine, null, null) orelse {
             wt.wasm_engine_delete(engine);
@@ -208,6 +211,7 @@ pub const WasmRuntime = struct {
             .float => wt.WASMTIME_F64,
             .boolean => wt.WASMTIME_I32,
             .string => wt.WASMTIME_ANYREF,
+            .array => wt.WASMTIME_ANYREF,
             else => unreachable,
         };
     }
