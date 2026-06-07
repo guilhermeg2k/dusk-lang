@@ -373,6 +373,10 @@ pub const Token = struct {
             return "INDENT";
         }
 
+        if (self.tag == Tag.string_literal) {
+            return src[self.loc.start + 1 .. self.loc.end];
+        }
+
         return src[self.loc.start .. self.loc.end + 1];
     }
 

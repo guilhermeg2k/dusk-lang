@@ -30,7 +30,10 @@ pub const WasmGenerator = struct {
         const module = B.BinaryenModuleCreate();
         errdefer B.BinaryenModuleDispose(module);
 
-        var wasm_builtins_instance = try wasm_builtins.WasmBuiltins.init(allocator, type_table, null);
+        B.BinaryenModuleSetFeatures(module, B.BinaryenFeatureReferenceTypes() | B.BinaryenFeatureGC() | B.BinaryenFeatureStrings());
+        B.BinaryenSetMemory(module, 1, 1, "memory", null, null, null, null, null, 0, false, false, "memory");
+
+        var wasm_builtins_instance = try wasm_builtins.WasmBuiltins.init(allocator, null);
         defer wasm_builtins_instance.deinit();
 
         var self = Self{
@@ -88,6 +91,9 @@ pub const WasmGenerator = struct {
                     const results_type = self.typeIdsToWasmType(host.results);
                     const name = try self.genName(def.uid, def.identifier);
                     _ = B.BinaryenAddFunctionImport(self.module, name.ptr, "env", name.ptr, params_type, results_type);
+                },
+                .host_import_raw => |raw| {
+                    _ = B.BinaryenAddFunctionImport(self.module, def.identifier.ptr, "env", def.identifier.ptr, raw.params, raw.results);
                 },
                 .inline_expr => {},
             }
@@ -283,6 +289,11 @@ pub const WasmGenerator = struct {
             },
             .i_void => return B.BinaryenNop(self.module),
             .i_null => return B.BinaryenNop(self.module),
+            .i_string => |s| {
+                const null_terminated = try self.allocator.allocSentinel(u8, s.len, 0);
+                @memcpy(null_terminated[0..s.len], s);
+                return B.BinaryenStringConst(self.module, null_terminated.ptr);
+            },
             else => unreachable,
         }
     }
@@ -385,11 +396,16 @@ pub const WasmGenerator = struct {
         return B.BinaryenCall(self.module, name.ptr, args.ptr, @intCast(args.len), return_type);
     }
 
-    fn genBuiltInExpr(self: *Self, fc: ir.FnCall) !B.BinaryenExpressionRef {
+    fn genBuiltInExpr(self: *Self, fc: ir.FnCall) WasmGenError!B.BinaryenExpressionRef {
         const def = self.wasm_builtins.getBuiltin(fc.fn_uid).?;
         const gen = def.kind.inline_expr;
-        const arg = try self.genValue(fc.args[0]);
-        return gen(self.module, arg);
+        const gen_value_fn = struct {
+            fn call(ctx: *anyopaque, value: *ir.Value) anyerror!B.BinaryenExpressionRef {
+                const s: *Self = @ptrCast(@alignCast(ctx));
+                return s.genValue(value);
+            }
+        }.call;
+        return gen(self.module, self.allocator, self.type_table, fc, self, gen_value_fn) catch return error.OutOfMemory;
     }
 
     fn funcParamsToWasmType(self: *Self, params: []const ir.FuncParam) !B.BinaryenType {
@@ -413,6 +429,7 @@ pub const WasmGenerator = struct {
             .float => B.BinaryenTypeFloat64(),
             .boolean => B.BinaryenTypeInt32(),
             .void => B.BinaryenTypeNone(),
+            .string => B.BinaryenTypeStringref(),
             else => B.BinaryenTypeInt64(),
         };
     }

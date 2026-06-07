@@ -1398,7 +1398,11 @@ pub const SemaAnalyzer = struct {
 
     fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, op_type: TypeId, left_type: TypeId, right_type: TypeId) ir.BinaryOpKind {
         const float_type = self.type_table.getPrimitive(.float);
+        const bool_type = self.type_table.getPrimitive(.boolean);
+
         const is_float_cmp = self.type_table.eql(left_type, float_type) or self.type_table.eql(right_type, float_type);
+        const is_bool_cmp = self.type_table.eql(left_type, bool_type) or self.type_table.eql(right_type, bool_type);
+
         return switch (bin_op) {
             .add => if (self.type_table.eql(op_type, float_type)) .f_add else .i_add,
             .sub => if (self.type_table.eql(op_type, float_type)) .f_sub else .i_sub,
@@ -1406,8 +1410,8 @@ pub const SemaAnalyzer = struct {
             .div => .f_div,
             .trunc_div => .i_div,
             .mod => if (self.type_table.eql(op_type, float_type)) .f_mod else .i_mod,
-            .eq => if (is_float_cmp) .f_cmp_eq else .i_cmp_eq,
-            .not_eq => if (is_float_cmp) .f_cmp_neq else .i_cmp_neq,
+            .eq => if (is_float_cmp) .f_cmp_eq else if (is_bool_cmp) .b_cmp_eq else .i_cmp_eq,
+            .not_eq => if (is_float_cmp) .f_cmp_neq else if (is_bool_cmp) .b_cmp_neq else .i_cmp_neq,
             .lt => if (is_float_cmp) .f_cmp_lt else .i_cmp_lt,
             .lt_or_eq => if (is_float_cmp) .f_cmp_le else .i_cmp_le,
             .gt => if (is_float_cmp) .f_cmp_gt else .i_cmp_gt,

@@ -108,5 +108,6 @@ pub fn build(b: *std.Build) void {
         mod.linkSystemLibrary("unwind", .{});
         mod.addCMacro("WASMTIME_FEATURE_WASI", "");
         mod.addCMacro("WASMTIME_FEATURE_COMPILER", "");
+        mod.addCMacro("WASMTIME_FEATURE_GC", "");
     }
 }
