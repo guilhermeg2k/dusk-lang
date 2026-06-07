@@ -112,10 +112,12 @@ pub const WasmGenerator = struct {
 
         var var_types = try std.ArrayList(B.BinaryenType).initCapacity(self.allocator, num_vars);
         if (num_vars > 0) {
+            try var_types.resize(self.allocator, num_vars);
             var iter = self.local_vars_by_symbol_uid.iterator();
             while (iter.next()) |entry| {
                 if (entry.value_ptr.index >= func.params.len) {
-                    try var_types.append(self.allocator, entry.value_ptr.wasm_type);
+                    const var_idx = entry.value_ptr.index - func.params.len;
+                    var_types.items[var_idx] = entry.value_ptr.wasm_type;
                 }
             }
         }
@@ -286,10 +288,43 @@ pub const WasmGenerator = struct {
     }
 
     fn genBinaryOp(self: *Self, bo: ir.BinaryOp) !B.BinaryenExpressionRef {
-        const left = try self.genValue(bo.left);
-        const right = try self.genValue(bo.right);
+        var left = try self.genValue(bo.left);
+        var right = try self.genValue(bo.right);
+
+        if (self.isFloatOpKind(bo.kind)) {
+            const int_type = self.type_table.getPrimitive(.int);
+            if (bo.left.type_id == int_type) {
+                left = B.BinaryenUnary(self.module, B.BinaryenConvertSInt64ToFloat64(), left);
+            }
+            if (bo.right.type_id == int_type) {
+                right = B.BinaryenUnary(self.module, B.BinaryenConvertSInt64ToFloat64(), right);
+            }
+        }
+
+        if (bo.kind == .f_mod) {
+            return self.genFloatMod(left, right);
+        }
+
         const op = self.genBinaryOpSymbol(bo.kind);
         return B.BinaryenBinary(self.module, op, left, right);
+    }
+
+    fn isFloatOpKind(_: *Self, op: ir.BinaryOpKind) bool {
+        return switch (op) {
+            .f_add, .f_sub, .f_mult, .f_div, .f_mod, .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => true,
+            else => false,
+        };
+    }
+
+    fn genFloatMod(self: *Self, left: B.BinaryenExpressionRef, right: B.BinaryenExpressionRef) !B.BinaryenExpressionRef {
+        const div = B.BinaryenBinary(self.module, B.BinaryenDivFloat64(), left, right);
+        const zero = B.BinaryenConst(self.module, B.BinaryenLiteralFloat64(0.0));
+        const non_negative = B.BinaryenBinary(self.module, B.BinaryenGtFloat64(), div, zero);
+        const floor_x = B.BinaryenUnary(self.module, B.BinaryenFloorFloat64(), div);
+        const ceil_x = B.BinaryenUnary(self.module, B.BinaryenCeilFloat64(), div);
+        const truncated = B.BinaryenSelect(self.module, non_negative, floor_x, ceil_x);
+        const mul = B.BinaryenBinary(self.module, B.BinaryenMulFloat64(), right, truncated);
+        return B.BinaryenBinary(self.module, B.BinaryenSubFloat64(), left, mul);
     }
 
     fn genBinaryOpSymbol(_: *Self, op: ir.BinaryOpKind) B.BinaryenOp {
@@ -309,7 +344,7 @@ pub const WasmGenerator = struct {
             .f_sub => B.BinaryenSubFloat64(),
             .f_mult => B.BinaryenMulFloat64(),
             .f_div => B.BinaryenDivFloat64(),
-            .f_mod => B.BinaryenRemSInt64(),
+            .f_mod => unreachable,
             .f_cmp_eq => B.BinaryenEqFloat64(),
             .f_cmp_neq => B.BinaryenNeFloat64(),
             .f_cmp_lt => B.BinaryenLtFloat64(),

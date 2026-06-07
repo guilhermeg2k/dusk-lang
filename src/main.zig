@@ -30,7 +30,6 @@ pub fn main(init: std.process.Init) !void {
         const cwd = std.Io.Dir.cwd();
         const src = try cwd.readFileAlloc(init.io, file_name, allocator, .unlimited);
         try dusk_c.compileToWasm(src);
-        std.log.info("WASM written to dump/output.wasm", .{});
     } else {
         try dusk_c.runFile(file_name);
     }

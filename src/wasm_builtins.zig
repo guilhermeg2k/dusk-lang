@@ -72,7 +72,7 @@ fn echoBuiltIn(allocator: std.mem.Allocator, type_table: *const TypeTable) !Buil
             .params = params,
             .results = &.{},
             .callback = echoCallback,
-        }},
+        } },
     };
 }
 

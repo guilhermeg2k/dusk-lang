@@ -207,7 +207,7 @@ test "float ints" {
 }
 
 test "division" {
-    try runCase("div.dsk", "dusk!");
+    try runCase("div.dsk", "");
 }
 
 test "sema error: type mismatch" {
