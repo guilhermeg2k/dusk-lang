@@ -15,6 +15,7 @@ let find_max: fn = (arr: []int) -> int
         i = i + 1
 
     return max_val
+
 echo(find_max([10, 50, 5, 213, 2131, 21312312321, 321321]))
 echo(find_max([]))
 echo(find_max([10000]))
