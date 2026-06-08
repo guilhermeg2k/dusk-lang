@@ -4,7 +4,8 @@
 
 ## Version: 0.10 - Frieren
 
-- Target wasm & evaluate with wasmtime
+- Bytecode generation
+- VM Bytecode interpreter
 
 ## Version 0.11 - Power
 
