@@ -147,6 +147,7 @@ pub const FnCall = struct {
 };
 
 pub const UnaryOpKind = enum {
+    //note: what is this i_neg, f_neg used for ? i don't remember
     i_neg,
     f_neg,
     not,
