@@ -4,12 +4,14 @@ const parser = @import("parser.zig");
 const sema = @import("sema.zig");
 const codegen = @import("codegen.zig");
 const bc = @import("bytecode.zig");
+const vm = @import("vm.zig");
 const QjsRunTime = @import("runtime.zig").QjsRuntime;
 
 const Lexer = lexer.Lexer;
 const Parser = parser.Parser;
 const SemaAnalyzer = sema.SemaAnalyzer;
 const Generator = codegen.Generator;
+const VM = vm.VM;
 
 pub const Dusk = struct {
     const Self = @This();
@@ -57,7 +59,10 @@ pub const Dusk = struct {
         const program = try Bytecodegen.generate(&ir);
         program.functions[0].chunk.disasamble();
 
+        var v = VM.init(self.allocator, &program);
+        v.run();
         return "";
+
         //note: is not dupping prolly cause of a undefined
         // try self.dump(ir, "dump/ir.json");
         //

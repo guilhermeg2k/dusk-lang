@@ -117,8 +117,8 @@ pub const BytecodeGen = struct {
 
         const load_const = Instruction{
             .op = .LOAD_CONST,
-            .a = @intCast(const_id),
-            .b = target_reg,
+            .a = target_reg,
+            .b = @intCast(const_id),
         };
 
         try self.chunk_instructions.append(self.allocator, load_const);
