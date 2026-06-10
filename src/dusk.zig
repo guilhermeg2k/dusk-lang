@@ -60,7 +60,7 @@ pub const Dusk = struct {
         program.functions[0].chunk.disasamble();
 
         var v = VM.init(self.allocator, &program);
-        v.run();
+        try v.run();
         return "";
 
         //note: is not dupping prolly cause of a undefined

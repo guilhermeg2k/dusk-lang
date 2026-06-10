@@ -13,3 +13,5 @@ let x12 = !true and true
 let x13 = 5 > 2 + 5
 let x14 = 2 * (3 + 4 * 5)
 let x15 = ((1 + 1) * (2 + 2))
+
+let y = "Hello"

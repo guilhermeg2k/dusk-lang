@@ -9,6 +9,7 @@ pub const VM = struct {
     frames: std.ArrayList(CallFrame),
     current_frame: *CallFrame,
     stack: [16383]bc.Value,
+    heap: std.ArrayList(bc.Value),
 
     pub fn init(allocator: std.mem.Allocator, program: *const bc.Program) VM {
         return .{
@@ -17,17 +18,19 @@ pub const VM = struct {
             .program = program,
             .current_frame = undefined,
             .stack = undefined,
+            .heap = .empty,
         };
     }
 
-    pub fn run(self: *Self) void {
+    pub fn run(self: *Self) !void {
         const main_fn = self.program.functions[self.program.main_func_index];
 
-        self.frames.append(self.allocator, CallFrame{
+        try self.frames.append(self.allocator, CallFrame{
             .function = &main_fn,
             .cur_inst = 0,
-            .stack_start_index = 0,
-        }) catch @panic("OOM");
+            .stack_offset = 0,
+        });
+
         self.current_frame = &self.frames.items[self.frames.items.len - 1];
 
         const instructions = self.current_frame.function.chunk.instructions;
@@ -171,7 +174,7 @@ pub const VM = struct {
                 else => {},
             }
         }
-        std.debug.print("Result in R: {any}\n", .{self.stack[self.current_frame.stack_start_index .. self.current_frame.stack_start_index + 14]});
+        std.debug.print("Result in R: {any}\n", .{self.stack[self.current_frame.stack_offset .. self.current_frame.stack_offset + 16]});
     }
 };
 
@@ -180,10 +183,10 @@ const CallFrame = struct {
 
     function: *const bc.Function,
     cur_inst: usize,
-    stack_start_index: usize,
+    stack_offset: usize,
 
     pub fn getStackIndex(self: *Self, index: u8) usize {
-        return self.stack_start_index + index;
+        return self.stack_offset + index;
     }
 
     pub fn getVar(self: *Self, stack: []bc.Value, index: u8) bc.Value {

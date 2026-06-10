@@ -77,7 +77,7 @@ pub const BytecodeGen = struct {
 
     fn genValue(self: *Self, value: *ir.Value, target_reg: u8) BytecodeError!u8 {
         switch (value.data) {
-            .i_int, .i_float, .i_bool => {
+            .i_int, .i_float, .i_bool, .i_string => {
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
             },
 
@@ -261,6 +261,7 @@ pub const Value = union(enum) {
     i_float: f64,
     i_bool: bool,
     i_null: void,
+    i_string: []const u8,
 
     pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (self) {
@@ -276,6 +277,7 @@ pub const Value = union(enum) {
             .i_int => |i| Self{ .i_int = i },
             .i_float => |f| Self{ .i_float = f },
             .i_bool => |b| Self{ .i_bool = b },
+            .i_string => |s| Self{ .i_string = s },
             .i_null => Self{ .i_null = {} },
             else => unreachable,
         };
