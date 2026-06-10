@@ -1,3 +1,16 @@
+const std = @import("std");
+const lexer = @import("lexer.zig");
+const parser = @import("parser.zig");
+const sema = @import("sema.zig");
+const codegen = @import("codegen.zig");
+const bc = @import("bytecode.zig");
+const QjsRunTime = @import("runtime.zig").QjsRuntime;
+
+const Lexer = lexer.Lexer;
+const Parser = parser.Parser;
+const SemaAnalyzer = sema.SemaAnalyzer;
+const Generator = codegen.Generator;
+
 pub const Dusk = struct {
     const Self = @This();
 
@@ -39,12 +52,19 @@ pub const Dusk = struct {
 
         var sema_analyzer = try SemaAnalyzer.init(self.allocator);
         const ir = try sema_analyzer.analyze(&ast, src);
+
+        var Bytecodegen = bc.BytecodeGen.init(self.allocator);
+        const program = try Bytecodegen.generate(&ir);
+        program.functions[0].chunk.disasamble();
+
+        return "";
         //note: is not dupping prolly cause of a undefined
         // try self.dump(ir, "dump/ir.json");
-
-        var js_code_gen = Generator{ .allocator = self.allocator, .type_table = &sema_analyzer.type_table };
-        const compiled_code = try js_code_gen.generate(ir);
-        return compiled_code;
+        //
+        //
+        // var js_code_gen = Generator{ .allocator = self.allocator, .type_table = &sema_analyzer.type_table };
+        // const compiled_code = try js_code_gen.generate(ir);
+        // return compiled_code;
     }
 
     fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
@@ -57,15 +77,3 @@ pub const Dusk = struct {
         try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = file_name, .data = json_str });
     }
 };
-
-const std = @import("std");
-const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
-const sema = @import("sema.zig");
-const codegen = @import("codegen.zig");
-const QjsRunTime = @import("runtime.zig").QjsRuntime;
-
-const Lexer = lexer.Lexer;
-const Parser = parser.Parser;
-const SemaAnalyzer = sema.SemaAnalyzer;
-const Generator = codegen.Generator;
