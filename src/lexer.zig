@@ -1,3 +1,8 @@
+const std = @import("std");
+const err = @import("error.zig");
+
+const LexerError = err.Errors;
+
 pub const Lexer = struct {
     const Self = @This();
 
@@ -368,6 +373,10 @@ pub const Token = struct {
             return "INDENT";
         }
 
+        if (self.tag == Tag.string_literal) {
+            return src[self.loc.start + 1 .. self.loc.end];
+        }
+
         return src[self.loc.start .. self.loc.end + 1];
     }
 
@@ -443,7 +452,3 @@ pub const Loc = struct {
     start: usize,
     end: usize,
 };
-
-const LexerError = err.Errors;
-const err = @import("error.zig");
-const std = @import("std");

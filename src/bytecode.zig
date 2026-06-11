@@ -35,7 +35,10 @@ pub const BytecodeGen = struct {
             },
         );
 
-        try funcs.append(self.allocator, main_fn);
+        for (0..10) |i| {
+            _ = i;
+            try funcs.append(self.allocator, main_fn);
+        }
 
         for (program.functions) |func| {
             try funcs.append(self.allocator, try self.genFunction(func));
@@ -54,7 +57,6 @@ pub const BytecodeGen = struct {
         return Function{
             .uid = func.uid,
             .name = func.identifier,
-            .number_of_params = @intCast(func.params.len),
             .chunk = try self.genFunctionChunk(func),
         };
     }
@@ -111,7 +113,19 @@ pub const BytecodeGen = struct {
             },
 
             .fn_call => |fc| {
-                _ = fc;
+                for (fc.args) |arg| {
+                    _ = try self.genValue(arg, self.consumeRegister());
+                }
+
+                const fn_call = Instruction{
+                    .op = .CALL,
+                    .a = target_reg,
+                    .b = @intCast(fc.fn_uid),
+                };
+
+                try self.chunk_instructions.append(self.allocator, fn_call);
+
+                self.freeRegisterN(fc.args.len);
             },
             else => {},
         }
@@ -188,7 +202,6 @@ pub const Program = struct {
 pub const Function = struct {
     uid: usize,
     name: []const u8,
-    number_of_params: u8,
     chunk: Chunk,
 };
 
@@ -247,7 +260,7 @@ const Chunk = struct {
             .B_NEQ,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .CALL => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.b }),
             .RETURN => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .JUMP => std.debug.print("{d}", .{inst.a}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] {d}", .{ inst.a, inst.b }),

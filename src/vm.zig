@@ -7,7 +7,6 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     program: *const bc.Program,
     frames: std.ArrayList(CallFrame),
-    current_frame: *CallFrame,
     stack: [16383]bc.Value,
     heap: std.ArrayList(bc.Value),
 
@@ -16,7 +15,6 @@ pub const VM = struct {
             .allocator = allocator,
             .frames = .empty,
             .program = program,
-            .current_frame = undefined,
             .stack = undefined,
             .heap = .empty,
         };
@@ -31,151 +29,166 @@ pub const VM = struct {
             .stack_offset = 0,
         });
 
-        self.current_frame = &self.frames.items[self.frames.items.len - 1];
+        var current_frame = &self.frames.items[self.frames.items.len - 1];
 
-        const instructions = self.current_frame.function.chunk.instructions;
-        const constants = self.current_frame.function.chunk.constants;
         const stack = self.stack[0..];
 
-        while (self.current_frame.cur_inst < instructions.len) : (self.current_frame.cur_inst += 1) {
-            const inst = instructions[self.current_frame.cur_inst];
+        while (current_frame.cur_inst < current_frame.function.chunk.instructions.len) : (current_frame.cur_inst += 1) {
+            current_frame = &self.frames.items[self.frames.items.len - 1];
+            const inst = current_frame.function.chunk.instructions[current_frame.cur_inst];
 
             switch (inst.op) {
                 .LOAD_CONST => {
-                    self.current_frame.setVar(stack, inst.a, constants[inst.b]);
+                    current_frame.setVar(stack, inst.a, current_frame.function.chunk.constants[inst.b]);
                 },
                 .LOAD => {
-                    self.current_frame.setVar(stack, inst.a, self.current_frame.getVar(stack, inst.b));
+                    current_frame.setVar(stack, inst.a, current_frame.getVar(stack, inst.b));
                 },
 
                 .I_ADD => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_int = self.current_frame.getVar(stack, inst.b).i_int + self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_int = current_frame.getVar(stack, inst.b).i_int + current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_SUB => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_int = self.current_frame.getVar(stack, inst.b).i_int - self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_int = current_frame.getVar(stack, inst.b).i_int - current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_MULT => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_int = self.current_frame.getVar(stack, inst.b).i_int * self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_int = current_frame.getVar(stack, inst.b).i_int * current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_DIV => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{ .i_int = @divTrunc(
-                        self.current_frame.getVar(stack, inst.b).i_int,
-                        self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{ .i_int = @divTrunc(
+                        current_frame.getVar(stack, inst.b).i_int,
+                        current_frame.getVar(stack, inst.c).i_int,
                     ) });
                 },
                 .I_MOD => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{ .i_int = @mod(
-                        self.current_frame.getVar(stack, inst.b).i_int,
-                        self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{ .i_int = @mod(
+                        current_frame.getVar(stack, inst.b).i_int,
+                        current_frame.getVar(stack, inst.c).i_int,
                     ) });
                 },
                 .I_EQ => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_int == self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_int == current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_NEQ => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_int != self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_int != current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_LT => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_int < self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_int < current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_LE => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_int <= self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_int <= current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_GT => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_int > self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_int > current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_GE => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_int >= self.current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_int >= current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
                 .I_NEG => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_int = -self.current_frame.getVar(stack, inst.b).i_int,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_int = -current_frame.getVar(stack, inst.b).i_int,
                     });
                 },
 
                 .F_ADD => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_float = self.current_frame.getVar(stack, inst.b).i_float + self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_float = current_frame.getVar(stack, inst.b).i_float + current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_SUB => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_float = self.current_frame.getVar(stack, inst.b).i_float - self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_float = current_frame.getVar(stack, inst.b).i_float - current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_MULT => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_float = self.current_frame.getVar(stack, inst.b).i_float * self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_float = current_frame.getVar(stack, inst.b).i_float * current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_DIV => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_float = self.current_frame.getVar(stack, inst.b).i_float / self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_float = current_frame.getVar(stack, inst.b).i_float / current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_MOD => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{ .i_float = @mod(
-                        self.current_frame.getVar(stack, inst.b).i_float,
-                        self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{ .i_float = @mod(
+                        current_frame.getVar(stack, inst.b).i_float,
+                        current_frame.getVar(stack, inst.c).i_float,
                     ) });
                 },
                 .F_EQ => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_float == self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_float == current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_NEQ => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_float != self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_float != current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_LT => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_float < self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_float < current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_LE => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_float <= self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_float <= current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_GT => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_float > self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_float > current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_GE => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_bool = self.current_frame.getVar(stack, inst.b).i_float >= self.current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_float >= current_frame.getVar(stack, inst.c).i_float,
                     });
                 },
                 .F_NEG => {
-                    self.current_frame.setVar(stack, inst.a, bc.Value{
-                        .i_float = -self.current_frame.getVar(stack, inst.b).i_float,
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_float = -current_frame.getVar(stack, inst.b).i_float,
                     });
+                },
+                .CALL => {
+                    const func = self.program.functions[inst.b];
+                    try self.callFunction(&func, current_frame.stack_offset, inst.a);
+                },
+                .RETURN => {
+                    _ = self.frames.pop();
+                    current_frame = &self.frames.items[self.frames.items.len - 1];
                 },
                 else => {},
             }
         }
-        std.debug.print("Result in R: {any}\n", .{self.stack[self.current_frame.stack_offset .. self.current_frame.stack_offset + 16]});
+        std.debug.print("Result in R: {any}\n", .{self.stack[current_frame.stack_offset .. current_frame.stack_offset + 17]});
+    }
+
+    fn callFunction(self: *Self, func: *const bc.Function, current_stack_offset: usize, target_reg: u8) !void {
+        try self.frames.append(self.allocator, CallFrame{
+            .function = func,
+            .cur_inst = 0,
+            .stack_offset = current_stack_offset + target_reg + 1,
+        });
     }
 };
 
