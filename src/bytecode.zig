@@ -23,6 +23,8 @@ pub const BytecodeGen = struct {
     }
 
     pub fn generate(self: *Self, program: *const ir.Program) !Program {
+        var funcs: std.ArrayList(Function) = .empty;
+
         const main_fn = try self.genFunction(
             ir.Func{
                 .uid = 0,
@@ -33,12 +35,15 @@ pub const BytecodeGen = struct {
             },
         );
 
-        const functions = try self.allocator.alloc(Function, 1);
-        functions[0] = main_fn;
+        try funcs.append(self.allocator, main_fn);
+
+        for (program.functions) |func| {
+            try funcs.append(self.allocator, try self.genFunction(func));
+        }
 
         return Program{
             .main_func_index = 0,
-            .functions = functions,
+            .functions = try funcs.toOwnedSlice(self.allocator),
         };
     }
 
@@ -103,6 +108,10 @@ pub const BytecodeGen = struct {
 
             .unary_op => |uo| {
                 try self.genUnaryOp(uo, target_reg);
+            },
+
+            .fn_call => |fc| {
+                _ = fc;
             },
             else => {},
         }

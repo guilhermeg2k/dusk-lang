@@ -35,10 +35,11 @@ pub const VM = struct {
 
         const instructions = self.current_frame.function.chunk.instructions;
         const constants = self.current_frame.function.chunk.constants;
+        const stack = self.stack[0..];
 
         while (self.current_frame.cur_inst < instructions.len) : (self.current_frame.cur_inst += 1) {
             const inst = instructions[self.current_frame.cur_inst];
-            const stack = self.stack[0..];
+
             switch (inst.op) {
                 .LOAD_CONST => {
                     self.current_frame.setVar(stack, inst.a, constants[inst.b]);
