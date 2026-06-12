@@ -57,7 +57,7 @@ pub const Dusk = struct {
 
         var Bytecodegen = bc.BytecodeGen.init(self.allocator);
         const program = try Bytecodegen.generate(&ir);
-        program.functions[0].chunk.disasamble();
+        program.functions[0].kind.native.disasamble();
 
         var v = VM.init(self.allocator, &program);
         try v.run();

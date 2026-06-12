@@ -33,13 +33,13 @@ pub const VM = struct {
 
         const stack = self.stack[0..];
 
-        while (current_frame.cur_inst < current_frame.function.chunk.instructions.len) : (current_frame.cur_inst += 1) {
+        while (current_frame.cur_inst < current_frame.function.kind.native.instructions.len) : (current_frame.cur_inst += 1) {
             current_frame = &self.frames.items[self.frames.items.len - 1];
-            const inst = current_frame.function.chunk.instructions[current_frame.cur_inst];
+            const inst = current_frame.function.kind.native.instructions[current_frame.cur_inst];
 
             switch (inst.op) {
                 .LOAD_CONST => {
-                    current_frame.setVar(stack, inst.a, current_frame.function.chunk.constants[inst.bEx()]);
+                    current_frame.setVar(stack, inst.a, current_frame.function.kind.native.constants[inst.bEx()]);
                 },
                 .LOAD => {
                     current_frame.setVar(stack, inst.a, current_frame.getVar(stack, inst.b));

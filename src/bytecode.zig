@@ -57,7 +57,7 @@ pub const BytecodeGen = struct {
         return Function{
             .uid = func.uid,
             .name = func.identifier,
-            .chunk = try self.genFunctionChunk(func),
+            .kind = .{ .native = try self.genFunctionChunk(func) },
         };
     }
 
@@ -201,10 +201,15 @@ pub const Program = struct {
     functions: []const Function,
 };
 
+pub const BultinFn = *const fn (args: []Value) Value;
+
 pub const Function = struct {
     uid: usize,
     name: []const u8,
-    chunk: Chunk,
+    kind: union(enum) {
+        native: Chunk,
+        bultin: BultinFn,
+    },
 };
 
 const Chunk = struct {
