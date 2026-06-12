@@ -39,7 +39,7 @@ pub const VM = struct {
 
             switch (inst.op) {
                 .LOAD_CONST => {
-                    current_frame.setVar(stack, inst.a, current_frame.function.chunk.constants[inst.b]);
+                    current_frame.setVar(stack, inst.a, current_frame.function.chunk.constants[inst.bEx()]);
                 },
                 .LOAD => {
                     current_frame.setVar(stack, inst.a, current_frame.getVar(stack, inst.b));
@@ -170,7 +170,7 @@ pub const VM = struct {
                     });
                 },
                 .CALL => {
-                    const func = self.program.functions[inst.b];
+                    const func = self.program.functions[inst.bEx()];
                     try self.callFunction(&func, current_frame.stack_offset, inst.a);
                 },
                 .RETURN => {

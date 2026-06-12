@@ -117,11 +117,12 @@ pub const BytecodeGen = struct {
                     _ = try self.genValue(arg, self.consumeRegister());
                 }
 
-                const fn_call = Instruction{
+                var fn_call = Instruction{
                     .op = .CALL,
                     .a = target_reg,
-                    .b = @intCast(fc.fn_uid),
                 };
+
+                fn_call.putBEx(@intCast(fc.fn_uid));
 
                 try self.chunk_instructions.append(self.allocator, fn_call);
 
@@ -138,11 +139,12 @@ pub const BytecodeGen = struct {
 
         try self.chunk_constants.append(self.allocator, Value.from_ir_value(value));
 
-        const load_const = Instruction{
+        var load_const = Instruction{
             .op = .LOAD_CONST,
             .a = target_reg,
-            .b = @intCast(const_id),
         };
+
+        load_const.putBEx(@intCast(const_id));
 
         try self.chunk_instructions.append(self.allocator, load_const);
     }
@@ -270,10 +272,21 @@ const Chunk = struct {
 };
 
 const Instruction = packed struct {
+    const Self = @This();
+
     op: OpCode,
     a: u8 = 0,
     b: u8 = 0,
     c: u8 = 0,
+
+    pub fn putBEx(self: *Self, value: u16) void {
+        self.b = @intCast(value >> 8);
+        self.c = @intCast(value & 0xFF);
+    }
+
+    pub fn bEx(self: Self) u16 {
+        return @intCast(self.b + self.c);
+    }
 };
 
 pub const Value = union(enum) {
