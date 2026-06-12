@@ -171,7 +171,13 @@ pub const VM = struct {
                 },
                 .CALL => {
                     const func = self.program.functions[inst.bEx()];
-                    try self.callFunction(&func, current_frame.stack_offset, inst.a);
+                    switch (func.kind) {
+                        .native => try self.callFunction(&func, current_frame.stack_offset, inst.a),
+                        .bultin => |b| {
+                            const args = stack[current_frame.stack_offset + inst.a + 1 ..][0..b.num_args];
+                            stack[current_frame.stack_offset + inst.a] = b.func(args);
+                        },
+                    }
                 },
                 .RETURN => {
                     _ = self.frames.pop();
@@ -180,7 +186,6 @@ pub const VM = struct {
                 else => {},
             }
         }
-        std.debug.print("Result in R: {any}\n", .{self.stack[current_frame.stack_offset .. current_frame.stack_offset + 17]});
     }
 
     fn callFunction(self: *Self, func: *const bc.Function, current_stack_offset: usize, target_reg: u8) !void {

@@ -385,7 +385,8 @@ pub const SemaAnalyzer = struct {
             const fn_symbol = self.scope.symbol_table.getOrError(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc);
             };
-            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, self.type_table.getTypePtrById(fn_symbol.type_id).kind.function, null);
+            const fn_metadata = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function;
+            const func = try self.visitFnDef(let_stmt.value, fn_metadata.uid, fn_metadata, null);
             try self.functions.append(self.allocator, func);
             return null;
         }
@@ -903,19 +904,19 @@ pub const SemaAnalyzer = struct {
                 };
 
                 fn_identifier = symbol.identifier;
-                uid = symbol.uid;
-
                 switch (symbol.kind) {
                     .function => {
                         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
                         params = func.params;
                         return_type = func.return_type_id;
+                        uid = func.uid;
                     },
                     //when identifier is a struct we turn it into a struct inicialization
                     .@"struct" => |scope| {
                         const struct_def = self.type_table.getTypePtrById(scope.blueprint_type_id).kind.@"struct";
                         params = struct_def.fields_in_order;
                         return_type = scope.blueprint_type_id;
+                        uid = symbol.uid;
                     },
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
@@ -923,10 +924,12 @@ pub const SemaAnalyzer = struct {
                             const func = type_ptr.kind.function;
                             params = func.params;
                             return_type = func.return_type_id;
+                            uid = func.uid;
                         } else if (type_ptr.kind == .@"struct") {
                             const struct_def = type_ptr.kind.@"struct";
                             params = struct_def.fields_in_order;
                             return_type = symbol.type_id;
+                            uid = symbol.uid;
                         } else {
                             return self.err_dispatcher.invalidType(
                                 "function or struct",

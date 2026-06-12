@@ -22,8 +22,16 @@ pub const BytecodeGen = struct {
         };
     }
 
-    pub fn generate(self: *Self, program: *const ir.Program) !Program {
+    pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
         var funcs: std.ArrayList(Function) = .empty;
+
+        for (builtins) |bf| {
+            try funcs.append(self.allocator, bf);
+        }
+
+        for (program.functions) |func| {
+            try funcs.append(self.allocator, try self.genFunction(func));
+        }
 
         const main_fn = try self.genFunction(
             ir.Func{
@@ -34,18 +42,10 @@ pub const BytecodeGen = struct {
                 .return_type = 0,
             },
         );
-
-        for (0..10) |i| {
-            _ = i;
-            try funcs.append(self.allocator, main_fn);
-        }
-
-        for (program.functions) |func| {
-            try funcs.append(self.allocator, try self.genFunction(func));
-        }
+        try funcs.append(self.allocator, main_fn);
 
         return Program{
-            .main_func_index = 0,
+            .main_func_index = funcs.items.len - 1,
             .functions = try funcs.toOwnedSlice(self.allocator),
         };
     }
@@ -113,6 +113,7 @@ pub const BytecodeGen = struct {
             },
 
             .fn_call => |fc| {
+                std.log.debug("fc {any}\n", .{fc});
                 for (fc.args) |arg| {
                     _ = try self.genValue(arg, self.consumeRegister());
                 }
@@ -201,7 +202,10 @@ pub const Program = struct {
     functions: []const Function,
 };
 
-pub const BultinFn = *const fn (args: []Value) Value;
+pub const BultinFn = struct {
+    func: *const fn (args: []Value) Value,
+    num_args: u8,
+};
 
 pub const Function = struct {
     uid: usize,
@@ -267,7 +271,7 @@ const Chunk = struct {
             .B_NEQ,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.b }),
+            .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
             .RETURN => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .JUMP => std.debug.print("{d}", .{inst.a}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] {d}", .{ inst.a, inst.b }),

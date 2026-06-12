@@ -5,6 +5,7 @@ const sema = @import("sema.zig");
 const codegen = @import("codegen.zig");
 const bc = @import("bytecode.zig");
 const vm = @import("vm.zig");
+const builtin = @import("built-in.zig");
 const QjsRunTime = @import("runtime.zig").QjsRuntime;
 
 const Lexer = lexer.Lexer;
@@ -56,8 +57,8 @@ pub const Dusk = struct {
         const ir = try sema_analyzer.analyze(&ast, src);
 
         var Bytecodegen = bc.BytecodeGen.init(self.allocator);
-        const program = try Bytecodegen.generate(&ir);
-        program.functions[0].kind.native.disasamble();
+        const program = try Bytecodegen.generate(&ir, &builtin.getBytecodeFunctions());
+        program.functions[program.main_func_index].kind.native.disasamble();
 
         var v = VM.init(self.allocator, &program);
         try v.run();

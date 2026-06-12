@@ -20,3 +20,5 @@ let add = (x: int, y: int) -> int
     return x + y
 
 let z = add(2,2)
+
+let ec = echo(z)

@@ -1,3 +1,6 @@
+const std = @import("std");
+const bc = @import("bytecode.zig");
+
 pub const BuiltIn = struct {
     const Self = @This();
 
@@ -51,13 +54,10 @@ pub const BuiltIn = struct {
             .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(...msg) {{echo(...msg);}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{ .func = &echoImpl, .num_args = 1 },
+        };
     }
 
     fn append(self: *const Self) !BuiltInFn {
@@ -73,13 +73,10 @@ pub const BuiltIn = struct {
             .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(arr, item) {{return arr.push(item);}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{ .func = &appendImpl, .num_args = 2 },
+        };
     }
 
     fn len(self: *const Self) !BuiltInFn {
@@ -91,16 +88,21 @@ pub const BuiltIn = struct {
         };
 
         symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
-            .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = false, .default_value = null },
+            .{
+                .identifier = "array",
+                .type_id = self.dynamic_array_type_id,
+                .is_mut = false,
+                .default_value = null,
+            },
         }, self.int_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(arr) {{return arr.length;}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{
+                .func = &lenImpl,
+                .num_args = 1,
+            },
+        };
     }
 
     fn floor(self: *const Self) !BuiltInFn {
@@ -115,13 +117,10 @@ pub const BuiltIn = struct {
             .{ .identifier = "n", .type_id = self.int_type_id, .is_mut = false, .default_value = null },
         }, self.int_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(n) {{return Math.floor(n)}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{ .func = &floorImpl, .num_args = 1 },
+        };
     }
 
     fn concat(self: *const Self) !BuiltInFn {
@@ -137,13 +136,10 @@ pub const BuiltIn = struct {
             .{ .identifier = "str2", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(s1, s2) {{return s1+s2;}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{ .func = &concatImpl, .num_args = 2 },
+        };
     }
 
     fn stringify(self: *const Self) !BuiltInFn {
@@ -158,13 +154,10 @@ pub const BuiltIn = struct {
             .{ .identifier = "obj", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(obj) {{try {{return JSON.stringify(obj);}} catch {{return \"INVALID JSON\";}};}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{ .func = &stringifyImpl, .num_args = 1 },
+        };
     }
 
     fn assert(self: *const Self) !BuiltInFn {
@@ -179,13 +172,10 @@ pub const BuiltIn = struct {
             .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
 
-        const code = try std.fmt.allocPrint(
-            self.alloc,
-            "function {s}_{d}(cond) {{if(cond==false) throw 'ASSERTION_FAILED'}}\n",
-            .{ symbol.identifier, symbol.uid },
-        );
-
-        return BuiltInFn{ .symbol = symbol, .code = code };
+        return BuiltInFn{
+            .symbol = symbol,
+            .bc_fn = .{ .func = &assertImpl, .num_args = 1 },
+        };
     }
 
     fn createFuncTypeId(self: *const Self, uid: usize, fn_identifier: []const u8, params: []const TypedIdentifier, return_type_id: TypeId) !TypeId {
@@ -205,9 +195,58 @@ pub const BuiltIn = struct {
     }
 };
 
+pub fn getBytecodeFunctions() [7]bc.Function {
+    return [_]bc.Function{
+        .{ .uid = 0, .name = "echo", .kind = .{ .bultin = .{ .func = &echoImpl, .num_args = 1 } } },
+        .{ .uid = 1, .name = "append", .kind = .{ .bultin = .{ .func = &appendImpl, .num_args = 2 } } },
+        .{ .uid = 2, .name = "len", .kind = .{ .bultin = .{ .func = &lenImpl, .num_args = 1 } } },
+        .{ .uid = 3, .name = "floor", .kind = .{ .bultin = .{ .func = &floorImpl, .num_args = 1 } } },
+        .{ .uid = 4, .name = "concat", .kind = .{ .bultin = .{ .func = &concatImpl, .num_args = 2 } } },
+        .{ .uid = 5, .name = "stringify", .kind = .{ .bultin = .{ .func = &stringifyImpl, .num_args = 1 } } },
+        .{ .uid = 6, .name = "assert", .kind = .{ .bultin = .{ .func = &assertImpl, .num_args = 1 } } },
+    };
+}
+
+fn echoImpl(args: []bc.Value) bc.Value {
+    std.debug.print("being called {any}\n", .{args[0]});
+    return .{ .i_null = {} };
+}
+
+fn appendImpl(args: []bc.Value) bc.Value {
+    _ = args;
+    @panic("not implemented: append");
+}
+
+fn lenImpl(args: []bc.Value) bc.Value {
+    _ = args;
+    @panic("not implemented: len");
+}
+
+fn floorImpl(args: []bc.Value) bc.Value {
+    return .{ .i_int = @intFromFloat(@floor(args[0].i_float)) };
+}
+
+fn concatImpl(args: []bc.Value) bc.Value {
+    _ = args;
+    @panic("not implemented: concat");
+}
+
+fn stringifyImpl(args: []bc.Value) bc.Value {
+    _ = args;
+    @panic("not implemented: stringify");
+}
+
+fn assertImpl(args: []bc.Value) bc.Value {
+    if (!args[0].i_bool) {
+        @panic("ASSERTION_FAILED");
+    }
+    return .{ .i_null = {} };
+}
+
 const BuiltInFn = struct {
     symbol: Symbol,
-    code: []const u8,
+    bc_fn: bc.BultinFn,
+    code: []const u8 = "",
 };
 
 const sema = @import("sema.zig");
@@ -215,4 +254,3 @@ const Symbol = sema.Symbol;
 const TypeId = sema.TypeId;
 const TypedIdentifier = sema.TypedIdentifier;
 const TypeTable = sema.TypeTable;
-const std = @import("std");
