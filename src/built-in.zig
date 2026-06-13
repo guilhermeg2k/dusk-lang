@@ -212,7 +212,10 @@ fn echoImpl(args: []bc.Value) bc.Value {
         .i_string => {
             std.debug.print("{s}\n", .{args[0].i_string});
         },
-        else => std.debug.print("{any}", .{args[0]}),
+        .i_int => std.debug.print("{d}\n", .{args[0].i_int}),
+        .i_float => std.debug.print("{d}\n", .{args[0].i_float}),
+        .i_bool => std.debug.print("{}\n", .{args[0].i_bool}),
+        else => std.debug.print("{any}\n", .{args[0]}),
     }
     return .{ .i_null = {} };
 }

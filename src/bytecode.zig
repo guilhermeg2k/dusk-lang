@@ -78,9 +78,13 @@ pub const BytecodeGen = struct {
                 .store_var => |store_var| {
                     _ = try self.genStoreVar(store_var);
                 },
-                .return_stmt => |r_stmt| {
-                    _ = try self.genReturn(r_stmt);
+                .expression_stmt => |stmt| {
+                    _ = try self.genValue(stmt.value, self.consumeRegister());
                 },
+                .return_stmt => |r_stmt| {
+                    try self.genReturn(r_stmt);
+                },
+
                 else => {},
             }
         }
@@ -96,6 +100,28 @@ pub const BytecodeGen = struct {
         return chunk;
     }
 
+    fn genFnCall(self: *Self, fc: ir.FnCall, target_reg: u8) !void {
+        for (fc.args) |arg| {
+            _ = try self.genValue(arg, self.consumeRegister());
+        }
+
+        var fn_call = Instruction{
+            .op = .CALL,
+            .a = target_reg,
+        };
+
+        fn_call.putBEx(@intCast(fc.fn_uid));
+
+        try self.chunk_instructions.append(self.allocator, fn_call);
+
+        self.freeRegisterN(fc.args.len);
+    }
+
+    fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
+        const var_register_id = try self.genValue(store_var.value, self.consumeRegister());
+        try self.var_register_id_by_uid.put(store_var.uid, var_register_id);
+    }
+
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
         const return_value_register = try self.genValue(return_stmt.value orelse &VOID_VALUE, self.consumeRegister());
 
@@ -105,11 +131,6 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, inst);
-    }
-
-    fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
-        const var_register_id = try self.genValue(store_var.value, self.consumeRegister());
-        try self.var_register_id_by_uid.put(store_var.uid, var_register_id);
     }
 
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) BytecodeError!u8 {
@@ -140,20 +161,7 @@ pub const BytecodeGen = struct {
             },
 
             .fn_call => |fc| {
-                for (fc.args) |arg| {
-                    _ = try self.genValue(arg, self.consumeRegister());
-                }
-
-                var fn_call = Instruction{
-                    .op = .CALL,
-                    .a = target_reg,
-                };
-
-                fn_call.putBEx(@intCast(fc.fn_uid));
-
-                try self.chunk_instructions.append(self.allocator, fn_call);
-
-                self.freeRegisterN(fc.args.len);
+                try self.genFnCall(fc, target_reg);
             },
             else => {},
         }
