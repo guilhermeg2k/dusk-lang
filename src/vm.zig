@@ -60,7 +60,7 @@ pub const VM = struct {
                         .i_int = current_frame.getVar(stack, inst.b).i_int * current_frame.getVar(stack, inst.c).i_int,
                     });
                 },
-                .I_DIV => {
+                .TRUNC_DIV => {
                     current_frame.setVar(stack, inst.a, bc.Value{ .i_int = @divTrunc(
                         current_frame.getVar(stack, inst.b).i_int,
                         current_frame.getVar(stack, inst.c).i_int,
@@ -167,6 +167,41 @@ pub const VM = struct {
                 .F_NEG => {
                     current_frame.setVar(stack, inst.a, bc.Value{
                         .i_float = -current_frame.getVar(stack, inst.b).i_float,
+                    });
+                },
+                .B_AND => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_bool and current_frame.getVar(stack, inst.c).i_bool,
+                    });
+                },
+                .B_OR => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_bool or current_frame.getVar(stack, inst.c).i_bool,
+                    });
+                },
+                .B_EQ => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_bool == current_frame.getVar(stack, inst.c).i_bool,
+                    });
+                },
+                .B_NEQ => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = current_frame.getVar(stack, inst.b).i_bool != current_frame.getVar(stack, inst.c).i_bool,
+                    });
+                },
+                .B_NOT => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_bool = !current_frame.getVar(stack, inst.b).i_bool,
+                    });
+                },
+                .I_TO_F => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_float = @floatFromInt(current_frame.getVar(stack, inst.a).i_int),
+                    });
+                },
+                .F_TO_I => {
+                    current_frame.setVar(stack, inst.a, bc.Value{
+                        .i_int = @trunc(current_frame.getVar(stack, inst.a).i_float),
                     });
                 },
                 .CALL => {

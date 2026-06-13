@@ -205,6 +205,10 @@ test "division" {
     try runCase("div.dsk", "dusk!");
 }
 
+test "auto promotion" {
+    try runCase("auto-promotion.dsk", "");
+}
+
 test "sema error: type mismatch" {
     try runCaseError("type-mismatch.dsk", error.InvalidType);
 }

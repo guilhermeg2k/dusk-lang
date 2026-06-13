@@ -1311,11 +1311,13 @@ pub const SemaAnalyzer = struct {
         }
 
         return ir.Value.init(self.allocator, .{
-            .data = .{ .binary_op = .{
-                .kind = self.astBinOpToIrBinOpKind(bin_exp.op, op_type),
-                .left = left_value,
-                .right = right_value,
-            } },
+            .data = .{
+                .binary_op = .{
+                    .kind = self.astBinOpToIrBinOpKind(bin_exp.op, left_type, right_type),
+                    .left = left_value,
+                    .right = right_value,
+                },
+            },
             .type_id = op_type,
         });
     }
@@ -1390,20 +1392,22 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, op_type: TypeId) ir.BinaryOpKind {
+    fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, left_type: TypeId, right_type: TypeId) ir.BinaryOpKind {
+        const is_float = self.type_table.eql(left_type, self.type_table.getPrimitive(.float)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.float));
+        const is_bool = self.type_table.eql(left_type, self.type_table.getPrimitive(.boolean)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.boolean));
         return switch (bin_op) {
-            .add => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_add else .i_add,
-            .sub => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_sub else .i_sub,
-            .mult => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_mult else .i_mult,
+            .add => if (is_float) .f_add else .i_add,
+            .sub => if (is_float) .f_sub else .i_sub,
+            .mult => if (is_float) .f_mult else .i_mult,
             .div => .f_div,
-            .trunc_div => .i_div,
-            .mod => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_mod else .i_mod,
-            .eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_eq else .i_cmp_eq,
-            .not_eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_neq else .i_cmp_neq,
-            .lt => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_lt else .i_cmp_lt,
-            .lt_or_eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_le else .i_cmp_le,
-            .gt => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_gt else .i_cmp_gt,
-            .gt_or_eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_ge else .i_cmp_ge,
+            .trunc_div => .trunc_div,
+            .mod => if (is_float) .f_mod else .i_mod,
+            .eq => if (is_float) .f_cmp_eq else if (is_bool) .b_cmp_eq else .i_cmp_eq,
+            .not_eq => if (is_float) .f_cmp_neq else if (is_bool) .b_cmp_neq else .i_cmp_neq,
+            .lt => if (is_float) .f_cmp_lt else .i_cmp_lt,
+            .lt_or_eq => if (is_float) .f_cmp_le else .i_cmp_le,
+            .gt => if (is_float) .f_cmp_gt else .i_cmp_gt,
+            .gt_or_eq => if (is_float) .f_cmp_ge else .i_cmp_ge,
             .bool_or => .b_or,
             .bool_and => .b_and,
         };

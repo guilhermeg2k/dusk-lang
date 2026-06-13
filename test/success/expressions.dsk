@@ -16,9 +16,6 @@ let x15 = ((1 + 1) * (2 + 2))
 
 let y = "Hello"
 
-let add = (x: int, y: int) -> int
-    return x + y
+let o = 3.5//2
 
-let z = add(2,2)
-
-echo(z)
+echo(o)

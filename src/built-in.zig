@@ -50,13 +50,21 @@ pub const BuiltIn = struct {
             .type_id = undefined,
         };
 
-        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
-            .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
-        }, self.void_type_id);
+        symbol.type_id = try self.createFuncTypeId(
+            symbol.uid,
+            symbol.identifier,
+            &.{
+                .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+            },
+            self.void_type_id,
+        );
 
         return BuiltInFn{
             .symbol = symbol,
-            .bc_fn = .{ .func = &echoImpl, .num_args = 1 },
+            .bc_fn = .{
+                .func = &echoImpl,
+                .num_args = 1,
+            },
         };
     }
 

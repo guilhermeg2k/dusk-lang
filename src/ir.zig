@@ -156,7 +156,7 @@ pub const BinaryOpKind = enum {
     i_add,
     i_sub,
     i_mult,
-    i_div,
+    trunc_div,
     i_mod,
 
     i_cmp_eq,

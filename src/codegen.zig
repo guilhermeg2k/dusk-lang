@@ -357,7 +357,7 @@ pub const Generator = struct {
         const right = try self.genValue(binaryOp.right);
         const op = self.genBinaryOpSymbol(binaryOp.kind);
 
-        if (binaryOp.kind == .i_div) {
+        if (binaryOp.kind == .trunc_div) {
             return std.fmt.allocPrint(self.allocator, "(Math.trunc({s} / {s}))", .{ left, right });
         }
 
@@ -369,7 +369,7 @@ pub const Generator = struct {
             .i_add, .f_add => "+",
             .i_sub, .f_sub => "-",
             .i_mult, .f_mult => "*",
-            .i_div, .f_div => "/",
+            .trunc_div, .f_div => "/",
             .i_mod, .f_mod => "%",
 
             .i_cmp_eq, .f_cmp_eq, .b_cmp_eq => "===",
@@ -381,6 +381,7 @@ pub const Generator = struct {
 
             .b_and => "&&",
             .b_or => "||",
+            else => unreachable,
         };
     }
 

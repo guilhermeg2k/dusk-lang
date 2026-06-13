@@ -190,6 +190,56 @@ pub const BytecodeGen = struct {
         defer self.freeRegisterN(2);
 
         const op = OpCode.fromIrBinaryOp(bo.kind);
+
+        switch (bo.kind) {
+            .f_add,
+            .f_sub,
+            .f_mult,
+            .f_div,
+            .f_mod,
+            .f_cmp_eq,
+            .f_cmp_neq,
+            .f_cmp_lt,
+            .f_cmp_le,
+            .f_cmp_gt,
+            .f_cmp_ge,
+            => {
+                if (bo.left.data == .i_int) {
+                    const left_to_float = Instruction{
+                        .op = .I_TO_F,
+                        .a = left_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, left_to_float);
+                }
+
+                if (bo.right.data == .i_int) {
+                    const right_to_float = Instruction{
+                        .op = .I_TO_F,
+                        .a = right_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, right_to_float);
+                }
+            },
+            .trunc_div => {
+                if (bo.left.data == .i_float) {
+                    const left_to_int = Instruction{
+                        .op = .F_TO_I,
+                        .a = left_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, left_to_int);
+                }
+
+                if (bo.right.data == .i_float) {
+                    const right_to_int = Instruction{
+                        .op = .F_TO_I,
+                        .a = right_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, right_to_int);
+                }
+            },
+            else => {},
+        }
+
         const bo_inst = Instruction{
             .op = op,
             .a = target_reg,
@@ -280,7 +330,7 @@ const Chunk = struct {
             .I_ADD,
             .I_SUB,
             .I_MULT,
-            .I_DIV,
+            .TRUNC_DIV,
             .I_MOD,
             .I_EQ,
             .I_NEQ,
@@ -303,6 +353,8 @@ const Chunk = struct {
             .B_AND,
             .B_EQ,
             .B_NEQ,
+            .I_TO_F,
+            .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
@@ -372,7 +424,6 @@ const OpCode = enum(u8) {
     I_ADD,
     I_SUB,
     I_MULT,
-    I_DIV,
     I_MOD,
     I_EQ,
     I_NEQ,
@@ -381,6 +432,10 @@ const OpCode = enum(u8) {
     I_GT,
     I_GE,
     I_NEG,
+
+    TRUNC_DIV,
+    I_TO_F,
+    F_TO_I,
 
     F_ADD,
     F_SUB,
@@ -420,8 +475,9 @@ const OpCode = enum(u8) {
             .i_add => Self.I_ADD,
             .i_sub => Self.I_SUB,
             .i_mult => Self.I_MULT,
-            .i_div => Self.I_DIV,
             .i_mod => Self.I_MOD,
+
+            .trunc_div => Self.TRUNC_DIV,
 
             .i_cmp_eq => Self.I_EQ,
             .i_cmp_neq => Self.I_NEQ,
