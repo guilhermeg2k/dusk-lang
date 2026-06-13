@@ -25,8 +25,10 @@ pub const Generator = struct {
     fn genBuiltInFunctions(self: *Self) ![]const u8 {
         var buf: std.ArrayList(u8) = .empty;
         const builtin = try BuiltIn.init(self.allocator, self.type_table);
+        const generated = try builtin.generate();
+        defer self.allocator.free(generated);
 
-        for (try builtin.generate()) |func| {
+        for (generated) |func| {
             try buf.appendSlice(self.allocator, func.code);
         }
 

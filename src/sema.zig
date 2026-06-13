@@ -1432,10 +1432,12 @@ const Scope = struct {
 
     pub fn init(alloc: std.mem.Allocator, return_type_id: TypeId, type_table: *TypeTable) !Self {
         const builtins = try buildin.BuiltIn.init(alloc, type_table);
+        const generated = try builtins.generate();
+        defer alloc.free(generated);
 
         var symbols = std.StringHashMap(Symbol).init(alloc);
 
-        for (try builtins.generate()) |func| {
+        for (generated) |func| {
             try symbols.put(func.symbol.identifier, func.symbol);
         }
 
@@ -1443,8 +1445,8 @@ const Scope = struct {
             .allocator = alloc,
             .symbol_table = try SymbolTable.init(alloc, null, symbols),
             .return_type_id = return_type_id,
-            .next_uid = 10,
-            .next_fn_uid = 7,
+            .next_uid = generated.len,
+            .next_fn_uid = generated.len,
         };
     }
 
