@@ -197,18 +197,23 @@ pub const BuiltIn = struct {
 
 pub fn getBytecodeFunctions() [7]bc.Function {
     return [_]bc.Function{
-        .{ .uid = 0, .name = "echo", .kind = .{ .bultin = .{ .func = &echoImpl, .num_args = 1 } } },
-        .{ .uid = 1, .name = "append", .kind = .{ .bultin = .{ .func = &appendImpl, .num_args = 2 } } },
-        .{ .uid = 2, .name = "len", .kind = .{ .bultin = .{ .func = &lenImpl, .num_args = 1 } } },
-        .{ .uid = 3, .name = "floor", .kind = .{ .bultin = .{ .func = &floorImpl, .num_args = 1 } } },
-        .{ .uid = 4, .name = "concat", .kind = .{ .bultin = .{ .func = &concatImpl, .num_args = 2 } } },
-        .{ .uid = 5, .name = "stringify", .kind = .{ .bultin = .{ .func = &stringifyImpl, .num_args = 1 } } },
-        .{ .uid = 6, .name = "assert", .kind = .{ .bultin = .{ .func = &assertImpl, .num_args = 1 } } },
+        .{ .uid = 0, .name = "echo", .kind = .{ .builtin = .{ .func = &echoImpl, .num_args = 1 } } },
+        .{ .uid = 1, .name = "append", .kind = .{ .builtin = .{ .func = &appendImpl, .num_args = 2 } } },
+        .{ .uid = 2, .name = "len", .kind = .{ .builtin = .{ .func = &lenImpl, .num_args = 1 } } },
+        .{ .uid = 3, .name = "floor", .kind = .{ .builtin = .{ .func = &floorImpl, .num_args = 1 } } },
+        .{ .uid = 4, .name = "concat", .kind = .{ .builtin = .{ .func = &concatImpl, .num_args = 2 } } },
+        .{ .uid = 5, .name = "stringify", .kind = .{ .builtin = .{ .func = &stringifyImpl, .num_args = 1 } } },
+        .{ .uid = 6, .name = "assert", .kind = .{ .builtin = .{ .func = &assertImpl, .num_args = 1 } } },
     };
 }
 
 fn echoImpl(args: []bc.Value) bc.Value {
-    std.debug.print("being called {any}\n", .{args[0]});
+    switch (args[0]) {
+        .i_string => {
+            std.debug.print("{s}\n", .{args[0].i_string});
+        },
+        else => std.debug.print("{any}", .{args[0]}),
+    }
     return .{ .i_null = {} };
 }
 
@@ -245,7 +250,7 @@ fn assertImpl(args: []bc.Value) bc.Value {
 
 const BuiltInFn = struct {
     symbol: Symbol,
-    bc_fn: bc.BultinFn,
+    bc_fn: bc.BuiltinFn,
     code: []const u8 = "",
 };
 

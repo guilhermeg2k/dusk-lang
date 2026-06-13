@@ -4,6 +4,13 @@ const ir = @import("ir.zig");
 pub const BytecodeGen = struct {
     const Self = @This();
 
+    const VOID_VALUE = ir.Value{
+        .type_id = 0, // in this ctx type does not matter
+        .data = .{
+            .i_void = {},
+        },
+    };
+
     allocator: std.mem.Allocator,
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
@@ -54,6 +61,10 @@ pub const BytecodeGen = struct {
         self.next_free_register = @intCast(func.params.len);
         self.var_register_id_by_uid.clearRetainingCapacity();
 
+        for (func.params, 0..) |param, i| {
+            try self.var_register_id_by_uid.put(param.uid, @intCast(i));
+        }
+
         return Function{
             .uid = func.uid,
             .name = func.identifier,
@@ -67,14 +78,33 @@ pub const BytecodeGen = struct {
                 .store_var => |store_var| {
                     _ = try self.genStoreVar(store_var);
                 },
+                .return_stmt => |r_stmt| {
+                    _ = try self.genReturn(r_stmt);
+                },
                 else => {},
             }
         }
 
-        return Chunk{
+        const chunk = Chunk{
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
         };
+
+        self.chunk_instructions = .empty;
+        self.chunk_constants = .empty;
+
+        return chunk;
+    }
+
+    fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
+        const return_value_register = try self.genValue(return_stmt.value orelse &VOID_VALUE, self.consumeRegister());
+
+        const inst = Instruction{
+            .op = .RETURN,
+            .a = return_value_register,
+        };
+
+        try self.chunk_instructions.append(self.allocator, inst);
     }
 
     fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
@@ -82,26 +112,23 @@ pub const BytecodeGen = struct {
         try self.var_register_id_by_uid.put(store_var.uid, var_register_id);
     }
 
-    fn genValue(self: *Self, value: *ir.Value, target_reg: u8) BytecodeError!u8 {
+    fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) BytecodeError!u8 {
         switch (value.data) {
-            .i_int, .i_float, .i_bool, .i_string => {
+            .i_int, .i_float, .i_bool, .i_string, .i_null, .i_void => {
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
             },
 
             .identifier => |id| {
-                const symbol_reg = self.var_register_id_by_uid.get(id.uid);
+                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse
+                    return BytecodeError.UndefinedVariable;
 
-                if (symbol_reg) |reg| {
-                    const inst = Instruction{
-                        .op = .LOAD,
-                        .a = target_reg,
-                        .b = reg,
-                    };
+                const inst = Instruction{
+                    .op = .LOAD,
+                    .a = target_reg,
+                    .b = symbol_reg,
+                };
 
-                    try self.chunk_instructions.append(self.allocator, inst);
-                }
-
-                unreachable;
+                try self.chunk_instructions.append(self.allocator, inst);
             },
 
             .binary_op => |bo| {
@@ -113,7 +140,6 @@ pub const BytecodeGen = struct {
             },
 
             .fn_call => |fc| {
-                std.log.debug("fc {any}\n", .{fc});
                 for (fc.args) |arg| {
                     _ = try self.genValue(arg, self.consumeRegister());
                 }
@@ -135,7 +161,7 @@ pub const BytecodeGen = struct {
         return target_reg;
     }
 
-    fn genLoadConstFromIntermediateValue(self: *Self, value: *ir.Value, target_reg: u8) !void {
+    fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
         const const_id = self.chunk_constants.items.len;
 
         try self.chunk_constants.append(self.allocator, Value.from_ir_value(value));
@@ -202,7 +228,7 @@ pub const Program = struct {
     functions: []const Function,
 };
 
-pub const BultinFn = struct {
+pub const BuiltinFn = struct {
     func: *const fn (args: []Value) Value,
     num_args: u8,
 };
@@ -212,7 +238,7 @@ pub const Function = struct {
     name: []const u8,
     kind: union(enum) {
         native: Chunk,
-        bultin: BultinFn,
+        builtin: BuiltinFn,
     },
 };
 
@@ -237,10 +263,10 @@ const Chunk = struct {
     fn disassembleInstruction(self: *const Self, offset: usize) void {
         const inst = self.instructions[offset];
         const op = @tagName(inst.op);
-        std.debug.print("{d:0>4} {s:<12} ", .{ offset, op });
+        std.debug.print("{d:0>4} {s:<12}", .{ offset, op });
 
         switch (inst.op) {
-            .LOAD_CONST => std.debug.print("R[{d}] CONST[{d}]", .{ inst.b, inst.a }),
+            .LOAD_CONST => std.debug.print("R[{d}] CONST[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STORE_VAR => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .I_ADD,
@@ -272,7 +298,7 @@ const Chunk = struct {
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
-            .RETURN => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .RETURN => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("{d}", .{inst.a}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] {d}", .{ inst.a, inst.b }),
         }
@@ -294,7 +320,7 @@ const Instruction = packed struct {
     }
 
     pub fn bEx(self: Self) u16 {
-        return @intCast(self.b + self.c);
+        return (@as(u16, self.b) << 8) | self.c;
     }
 };
 
@@ -316,13 +342,13 @@ pub const Value = union(enum) {
         }
     }
 
-    fn from_ir_value(value: *ir.Value) Self {
+    fn from_ir_value(value: *const ir.Value) Self {
         return switch (value.data) {
             .i_int => |i| Self{ .i_int = i },
             .i_float => |f| Self{ .i_float = f },
             .i_bool => |b| Self{ .i_bool = b },
             .i_string => |s| Self{ .i_string = s },
-            .i_null => Self{ .i_null = {} },
+            .i_null, .i_void => Self{ .i_null = {} },
             else => unreachable,
         };
     }
@@ -417,4 +443,4 @@ const OpCode = enum(u8) {
     }
 };
 
-const BytecodeError = error{OutOfMemory};
+const BytecodeError = error{ OutOfMemory, UndefinedVariable };

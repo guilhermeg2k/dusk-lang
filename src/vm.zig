@@ -173,15 +173,17 @@ pub const VM = struct {
                     const func = self.program.functions[inst.bEx()];
                     switch (func.kind) {
                         .native => try self.callFunction(&func, current_frame.stack_offset, inst.a),
-                        .bultin => |b| {
+                        .builtin => |b| {
                             const args = stack[current_frame.stack_offset + inst.a + 1 ..][0..b.num_args];
                             stack[current_frame.stack_offset + inst.a] = b.func(args);
                         },
                     }
                 },
                 .RETURN => {
+                    self.stack[current_frame.stack_offset - 1] = current_frame.getVar(stack, inst.a);
                     _ = self.frames.pop();
                     current_frame = &self.frames.items[self.frames.items.len - 1];
+                    current_frame.cur_inst -= 1;
                 },
                 else => {},
             }
