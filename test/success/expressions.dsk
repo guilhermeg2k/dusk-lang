@@ -14,8 +14,21 @@ let x13 = 5 > 2 + 5
 let x14 = 2 * (3 + 4 * 5)
 let x15 = ((1 + 1) * (2 + 2))
 
-let y = "Hello"
-
 let o = 3.5//2
 
-echo(o)
+assert(x1 == 7)
+assert(x2 == 9)
+assert(x3 == 11)
+assert(x4 == 1)
+assert(x5 == 5)
+assert(x6 == 11)
+assert(x7 == -2)
+assert(x8 == -8)
+assert(x9 == -5)
+assert(x10 == true)
+assert(x11 == true)
+assert(x12 == false)
+assert(x13 == false)
+assert(x14 == 46)
+assert(x15 == 8)
+assert(o == 1)

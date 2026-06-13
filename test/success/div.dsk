@@ -10,6 +10,3 @@ assert(y == 2.5)
 assert(z == 2)
 assert(w == 1)
 assert(a == 1.5)
-
-echo("dusk!")
-

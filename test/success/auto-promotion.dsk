@@ -43,5 +43,3 @@ assert(false != true)
 assert(true and true)
 assert(false or true)
 assert(!false)
-
-echo("dusk!")

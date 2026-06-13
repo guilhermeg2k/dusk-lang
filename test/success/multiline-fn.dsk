@@ -1,18 +1,6 @@
-let power = (
-    base: int,
-    exp: int
-) -> int
-    if exp == 0
-        return 1
+let add = (
+    a: int,
+    b: int
+) -> return a + b
 
-    let x: int = exp % 2
-    if x == 0
-        let half: int = power(base, exp // 2)
-        return half * half
-
-    return base * power(base, exp - 1)
-
-echo(power(base=2, exp=0))
-echo(power(2, 3))
-echo(power(5, 2))
-echo(power(3, 4))
+assert(add(2, 3) == 5)

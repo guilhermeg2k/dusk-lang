@@ -18,4 +18,3 @@ let res3 = 2
 assert(res == false)
 assert(res2 == true)
 assert(res3 == 6)
-echo("dusk!")

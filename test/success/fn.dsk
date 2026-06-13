@@ -1,4 +1,4 @@
-let main: fn = () -> void
-    echo("Hello World")
+let main: fn = () -> int
+    return 42
 
-main()
+assert(main() == 42)
