@@ -72,14 +72,17 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn genFunctionChunk(self: *Self, func: ir.Func) !Chunk {
-        for (func.body) |instruction| {
+    fn genInstructionBlock(self: *Self, block: []ir.Instruction) !void {
+        for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
                     _ = try self.genStoreVar(store_var);
                 },
                 .expression_stmt => |stmt| {
                     _ = try self.genValue(stmt.value, self.consumeRegister());
+                },
+                .branch_if => |stmt| {
+                    try self.genBranchIf(stmt);
                 },
                 .return_stmt => |r_stmt| {
                     try self.genReturn(r_stmt);
@@ -88,7 +91,10 @@ pub const BytecodeGen = struct {
                 else => {},
             }
         }
+    }
 
+    fn genFunctionChunk(self: *Self, func: ir.Func) !Chunk {
+        try self.genInstructionBlock(func.body);
         const chunk = Chunk{
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
@@ -98,6 +104,65 @@ pub const BytecodeGen = struct {
         self.chunk_constants = .empty;
 
         return chunk;
+    }
+
+    fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
+        const var_register_id = try self.genValue(store_var.value, self.consumeRegister());
+        try self.var_register_id_by_uid.put(store_var.uid, var_register_id);
+    }
+
+    fn genBranchIf(self: *Self, ifStmt: ir.BranchIf) !void {
+        const condition_reg = self.genValue(ifStmt.condition, self.consumeRegister());
+        defer self.freeRegister();
+
+        const jump_into_else = Instruction{
+            .op = .JUMP_IF_FALSE,
+            .a = condition_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, jump_into_else);
+        const jump_into_else_idx = self.chunk_instructions.items.len - 1;
+
+        try self.genInstructionBlock(ifStmt.then_block);
+
+        const jump_pass_else = Instruction{
+            .op = .JUMP,
+        };
+
+        try self.chunk_instructions.append(self.allocator, jump_pass_else);
+        const jump_pass_else_idx = self.chunk_instructions.items.len - 1;
+        const jump_into_else_position = self.chunk_instructions.items.len;
+
+        try self.genInstructionBlock(ifStmt.else_block);
+        const jump_pass_else_position = self.chunk_instructions.items.len;
+
+        self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
+        self.chunk_instructions.items[jump_pass_else_idx].putAex(@intCast(jump_pass_else_position));
+    }
+
+    fn genLoop(self: *Self, loopStmt: ir.Loop) !void {
+        const condition_reg = self.genValue(loopStmt.condition, self.consumeRegister());
+        defer self.freeRegister();
+
+        const jump_pass_loop = Instruction{
+            .op = .JUMP_IF_FALSE,
+            .a = condition_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, jump_pass_loop);
+        const loop_begin_idx = self.chunk_instructions.items.len - 1;
+
+        try self.genInstructionBlock(loopStmt.do_block);
+
+        const jump_to_begin = Instruction{
+            .op = .JUMP,
+        };
+
+        jump_to_begin.putAEx(@intCast(loop_begin_idx));
+        try self.chunk_instructions.append(self.allocator, jump_to_begin);
+        const jump_pass_loop_position = self.chunk_instructions.items.len;
+
+        self.chunk_instructions.items[loop_begin_idx].putBEx(@intCast(jump_pass_loop_position));
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, target_reg: u8) !void {
@@ -115,11 +180,6 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, fn_call);
 
         self.freeRegisterN(fc.args.len);
-    }
-
-    fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
-        const var_register_id = try self.genValue(store_var.value, self.consumeRegister());
-        try self.var_register_id_by_uid.put(store_var.uid, var_register_id);
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
@@ -373,6 +433,20 @@ const Instruction = packed struct {
     a: u8 = 0,
     b: u8 = 0,
     c: u8 = 0,
+
+    pub fn putAEx(self: *Self, value: u24) void {
+        self.a = @intCast(value >> 16);
+        self.b = @intCast((value >> 8) & 0xFF);
+        self.c = @intCast(value & 0xFF);
+    }
+
+    pub fn aEx(self: Self) u24 {
+        const a = @as(u24, self.a) << 16;
+        const b = @as(u24, self.b) << 8;
+        const c = @as(u24, self.c);
+
+        return a | b | c;
+    }
 
     pub fn putBEx(self: *Self, value: u16) void {
         self.b = @intCast(value >> 8);
