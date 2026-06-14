@@ -224,6 +224,9 @@ pub const VM = struct {
                         current_frame.cur_inst = inst.bEx() - 1;
                     }
                 },
+                .TYPE => {
+                    current_frame.setVar(stack, inst.a, bc.Value{ .i_int = inst.b });
+                },
                 .RETURN => {
                     self.stack[current_frame.stack_offset - 1] = current_frame.getVar(stack, inst.a);
                     _ = self.frames.pop();

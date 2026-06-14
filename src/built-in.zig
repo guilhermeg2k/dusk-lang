@@ -144,7 +144,7 @@ const builtin_bytecode_registry = [_]struct {
     impl: *const fn (args: []bc.Value) bc.Value,
     num_args: u8,
 }{
-    .{ .name = "echo", .impl = &echoImpl, .num_args = 1 },
+    .{ .name = "echo", .impl = &echoImpl, .num_args = 2 },
     .{ .name = "append", .impl = &appendImpl, .num_args = 2 },
     .{ .name = "len", .impl = &lenImpl, .num_args = 1 },
     .{ .name = "assert", .impl = &assertImpl, .num_args = 1 },
@@ -169,14 +169,14 @@ pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
 }
 
 fn echoImpl(args: []bc.Value) bc.Value {
-    switch (args[0]) {
-        .i_string => {
-            std.debug.print("{s}\n", .{args[0].i_string});
-        },
+    const ty: bc.ValueType = @enumFromInt(@as(u8, @intCast(args[1].i_int)));
+    switch (ty) {
         .i_int => std.debug.print("{d}\n", .{args[0].i_int}),
         .i_float => std.debug.print("{d}\n", .{args[0].i_float}),
         .i_bool => std.debug.print("{}\n", .{args[0].i_bool}),
-        else => std.debug.print("{any}\n", .{args[0]}),
+        .i_string => std.debug.print("{s}\n", .{args[0].i_string.slice()}),
+        .i_null => std.debug.print("null\n", .{}),
+        .i_heap_object => std.debug.print("<heap object>\n", .{}),
     }
     return .{ .i_null = {} };
 }

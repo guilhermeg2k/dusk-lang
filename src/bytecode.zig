@@ -23,8 +23,10 @@ pub const BytecodeGen = struct {
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
     next_free_register: u8 = 0,
     chunk_constants: std.ArrayList(Value),
-    const_id_by_value: std.HashMap(Value, u32, ValueHashContext, 80),
+    shadow_types: std.ArrayList(ValueType),
+    const_id_by_value: std.HashMap(TypedValue, u32, TypedValueHashContext, 80),
     chunk_instructions: std.ArrayList(Instruction),
+    register_types: [256]ValueType = [_]ValueType{ValueType.i_null} ** 256,
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
 
@@ -34,7 +36,8 @@ pub const BytecodeGen = struct {
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
             .chunk_constants = .empty,
-            .const_id_by_value = std.HashMap(Value, u32, ValueHashContext, 80).init(alloc),
+            .shadow_types = .empty,
+            .const_id_by_value = std.HashMap(TypedValue, u32, TypedValueHashContext, 80).init(alloc),
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
@@ -75,6 +78,7 @@ pub const BytecodeGen = struct {
 
         for (func.params, 0..) |param, i| {
             try self.var_register_id_by_uid.put(param.uid, @intCast(i));
+            self.register_types[i] = .i_null;
         }
 
         return Function{
@@ -114,10 +118,12 @@ pub const BytecodeGen = struct {
         const chunk = Chunk{
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
+            .shadow_types = try self.shadow_types.toOwnedSlice(self.allocator),
         };
 
         self.chunk_instructions = .empty;
         self.chunk_constants = .empty;
+        self.shadow_types = .empty;
         self.const_id_by_value.clearRetainingCapacity();
 
         return chunk;
@@ -233,6 +239,17 @@ pub const BytecodeGen = struct {
             _ = try self.genValue(arg, self.consumeRegister());
         }
 
+        //note: temp hack for echo
+        if (fc.fn_uid == 0) {
+            var ty = ValueType.from_ir_value(fc.args[0]);
+            if (fc.args[0].data == .identifier) {
+                ty = self.resolveIdentifierType(fc.args[0].data.identifier.uid);
+            }
+            const type_reg = self.consumeRegister();
+            try self.chunk_instructions.append(self.allocator, Instruction{ .op = .TYPE, .a = type_reg, .b = @intFromEnum(ty) });
+            self.register_types[type_reg] = .i_int;
+        }
+
         var fn_call = Instruction{
             .op = .CALL,
             .a = target_reg,
@@ -242,7 +259,14 @@ pub const BytecodeGen = struct {
 
         try self.chunk_instructions.append(self.allocator, fn_call);
 
-        self.freeRegisterN(fc.args.len);
+        const num_args = fc.args.len + if (fc.fn_uid == 0) @as(usize, 1) else @as(usize, 0);
+        self.freeRegisterN(num_args);
+        self.register_types[target_reg] = .i_null;
+    }
+
+    fn resolveIdentifierType(self: *Self, uid: usize) ValueType {
+        const reg = self.var_register_id_by_uid.get(uid) orelse return .i_null;
+        return self.register_types[reg];
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
@@ -259,7 +283,9 @@ pub const BytecodeGen = struct {
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) BytecodeError!u8 {
         switch (value.data) {
             .i_int, .i_float, .i_bool, .i_string, .i_null, .i_void => {
+                const tv = TypedValue.from_ir_value(value);
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
+                self.register_types[target_reg] = tv.type;
             },
 
             .identifier => |id| {
@@ -273,6 +299,7 @@ pub const BytecodeGen = struct {
                 };
 
                 try self.chunk_instructions.append(self.allocator, inst);
+                self.register_types[target_reg] = self.register_types[symbol_reg];
             },
 
             .binary_op => |bo| {
@@ -293,11 +320,12 @@ pub const BytecodeGen = struct {
     }
 
     fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const const_val = Value.from_ir_value(value);
+        const const_val = TypedValue.from_ir_value(value);
         const result = try self.const_id_by_value.getOrPut(const_val);
         if (!result.found_existing) {
             result.value_ptr.* = @intCast(self.chunk_constants.items.len);
-            try self.chunk_constants.append(self.allocator, const_val);
+            try self.chunk_constants.append(self.allocator, const_val.value);
+            try self.shadow_types.append(self.allocator, const_val.type);
         }
         const const_id = result.value_ptr.*;
 
@@ -375,6 +403,13 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, bo_inst);
+        self.register_types[target_reg] = switch (bo.kind) {
+            .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .i_int,
+            .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .i_bool,
+            .f_add, .f_sub, .f_mult, .f_div, .f_mod => .i_float,
+            .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .i_bool,
+            .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .i_bool,
+        };
     }
 
     fn genUnaryOp(self: *Self, bo: ir.UnaryOp, target_reg: u8) !void {
@@ -389,6 +424,11 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, op_inst);
+        self.register_types[target_reg] = switch (bo.kind) {
+            .not => .i_bool,
+            .i_neg => .i_int,
+            .f_neg => .i_float,
+        };
     }
 
     fn freeRegister(self: *Self) void {
@@ -432,11 +472,21 @@ const Chunk = struct {
 
     instructions: []Instruction,
     constants: []Value,
+    shadow_types: []ValueType,
 
     pub fn disasamble(self: *const Self) void {
-        std.debug.print("== constants ({d}) ==\n", .{self.constants.len});
         for (self.constants, 0..) |constant, i| {
-            std.debug.print("{d:0>4}   {any}\n", .{ i, constant });
+            const ty = self.shadow_types[i];
+            std.debug.print("{d:0>4}  {s: <10} ", .{ i, @tagName(ty) });
+            switch (ty) {
+                .i_int => std.debug.print("{d}", .{constant.i_int}),
+                .i_float => std.debug.print("{d}", .{constant.i_float}),
+                .i_bool => std.debug.print("{}", .{constant.i_bool}),
+                .i_null => std.debug.print("null", .{}),
+                .i_string => std.debug.print("\"{s}\"", .{constant.i_string.slice()}),
+                .i_heap_object => std.debug.print("<heap>", .{}),
+            }
+            std.debug.print("\n", .{});
         }
 
         std.debug.print("\n== code ({d}) ==\n", .{self.instructions.len});
@@ -488,6 +538,7 @@ const Chunk = struct {
             .RETURN => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
+            .TYPE => std.debug.print("R[{d}] {s}", .{ inst.a, @tagName(@as(ValueType, @enumFromInt(inst.b))) }),
         }
         std.debug.print("\n", .{});
     }
@@ -520,59 +571,26 @@ const Instruction = packed struct {
     }
 };
 
-pub const Value = union(enum) {
-    const Self = @This();
+pub const StringValue = struct {
+    ptr: [*]const u8,
+    len: usize,
 
+    pub fn slice(self: StringValue) []const u8 {
+        return self.ptr[0..self.len];
+    }
+
+    pub fn fromSlice(s: []const u8) StringValue {
+        return .{ .ptr = s.ptr, .len = s.len };
+    }
+};
+
+pub const Value = union {
     i_int: i64,
     i_float: f64,
     i_bool: bool,
     i_null: void,
-    //note: should be moved to i_heap_object on the future
-    i_string: []const u8,
+    i_string: StringValue,
     i_heap_object: *HeapObject,
-
-    fn from_ir_value(value: *const ir.Value) Self {
-        return switch (value.data) {
-            .i_int => |i| Self{ .i_int = i },
-            .i_float => |f| Self{ .i_float = f },
-            .i_bool => |b| Self{ .i_bool = b },
-            .i_string => |s| Self{ .i_string = s },
-            .i_null, .i_void => Self{ .i_null = {} },
-            .i_array => {
-                return Self{
-                    .i_heap_object = HeapObject{},
-                };
-            },
-            else => unreachable,
-        };
-    }
-};
-
-const ValueHashContext = struct {
-    pub fn hash(_: @This(), value: Value) u64 {
-        var hasher = std.hash.Wyhash.init(0);
-        const tag: u64 = @intFromEnum(value);
-        hasher.update(std.mem.asBytes(&tag));
-        switch (value) {
-            .i_int => |v| hasher.update(std.mem.asBytes(&v)),
-            .i_float => |v| hasher.update(std.mem.asBytes(&@as(u64, @bitCast(v)))),
-            .i_bool => |v| hasher.update(std.mem.asBytes(&v)),
-            .i_null => {},
-            .i_string => |v| hasher.update(v),
-        }
-        return hasher.final();
-    }
-
-    pub fn eql(_: @This(), a: Value, b: Value) bool {
-        if (@intFromEnum(a) != @intFromEnum(b)) return false;
-        return switch (a) {
-            .i_int => a.i_int == b.i_int,
-            .i_float => @as(u64, @bitCast(a.i_float)) == @as(u64, @bitCast(b.i_float)),
-            .i_bool => a.i_bool == b.i_bool,
-            .i_null => true,
-            .i_string => std.mem.eql(u8, a.i_string, b.i_string),
-        };
-    }
 };
 
 const HeapObject = union(enum) {
@@ -584,6 +602,84 @@ const HeapObject = union(enum) {
         const ptr = try allocator.create(Value);
         ptr.* = value;
         return ptr;
+    }
+};
+
+const TypedValue = struct {
+    value: Value,
+    type: ValueType,
+
+    fn from_ir_value(ir_value: *const ir.Value) TypedValue {
+        return switch (ir_value.data) {
+            .i_int => |i| TypedValue{ .value = .{ .i_int = i }, .type = .i_int },
+            .i_float => |f| TypedValue{ .value = .{ .i_float = f }, .type = .i_float },
+            .i_bool => |b| TypedValue{ .value = .{ .i_bool = b }, .type = .i_bool },
+            .i_string => |s| TypedValue{ .value = .{ .i_string = StringValue.fromSlice(s) }, .type = .i_string },
+            .i_null, .i_void => TypedValue{ .value = .{ .i_null = {} }, .type = .i_null },
+            .i_array => TypedValue{ .value = undefined, .type = .i_heap_object },
+            else => unreachable,
+        };
+    }
+};
+
+pub const ValueType = enum(u8) {
+    i_int,
+    i_float,
+    i_bool,
+    i_null,
+    i_string,
+    i_heap_object,
+
+    fn from_ir_value(value: *const ir.Value) ValueType {
+        return switch (value.data) {
+            .i_int => .i_int,
+            .i_float => .i_float,
+            .i_bool => .i_bool,
+            .i_string => .i_string,
+            .i_null, .i_void => .i_null,
+            .binary_op => |bo| switch (bo.kind) {
+                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .i_int,
+                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .i_bool,
+                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .i_float,
+                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .i_bool,
+                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .i_bool,
+            },
+            .unary_op => |uo| switch (uo.kind) {
+                .not => .i_bool,
+                .i_neg => .i_int,
+                .f_neg => .i_float,
+            },
+            else => .i_null,
+        };
+    }
+};
+
+const TypedValueHashContext = struct {
+    pub fn hash(_: @This(), tv: TypedValue) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const tag: u8 = @intFromEnum(tv.type);
+        hasher.update(std.mem.asBytes(&tag));
+        switch (tv.type) {
+            .i_int => hasher.update(std.mem.asBytes(&tv.value.i_int)),
+            .i_float => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.i_float)))),
+            .i_bool => hasher.update(std.mem.asBytes(&tv.value.i_bool)),
+            .i_null => {},
+            .i_string => hasher.update(tv.value.i_string.slice()),
+            .i_heap_object => {},
+        }
+        return hasher.final();
+    }
+
+    pub fn eql(_: @This(), a: TypedValue, b: TypedValue) bool {
+        if (a.type != b.type) return false;
+        return switch (a.type) {
+            .i_int => a.value.i_int == b.value.i_int,
+            .i_float => @as(u64, @bitCast(a.value.i_float)) == @as(u64, @bitCast(b.value.i_float)),
+            .i_bool => a.value.i_bool == b.value.i_bool,
+            .i_null => true,
+            .i_string => std.mem.eql(u8, a.value.i_string.slice(), b.value.i_string.slice()),
+            .i_heap_object => false,
+        };
     }
 };
 
@@ -634,6 +730,7 @@ const OpCode = enum(u8) {
 
     JUMP,
     JUMP_IF_FALSE,
+    TYPE,
 
     pub fn fromUnaryOp(op: ir.UnaryOpKind) Self {
         return switch (op) {
