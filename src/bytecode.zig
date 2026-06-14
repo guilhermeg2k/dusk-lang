@@ -1,5 +1,6 @@
 const std = @import("std");
 const ir = @import("ir.zig");
+const v = @import("value.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -21,12 +22,15 @@ pub const BytecodeGen = struct {
     allocator: std.mem.Allocator,
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
+
+    register_types: [256]v.ValueType = [_]v.ValueType{v.ValueType.i_null} ** 256,
     next_free_register: u8 = 0,
-    chunk_constants: std.ArrayList(Value),
-    shadow_types: std.ArrayList(ValueType),
-    const_id_by_value: std.HashMap(TypedValue, u32, TypedValueHashContext, 80),
+
+    chunk_constants: std.ArrayList(v.Value),
+    chunk_constants_types: std.ArrayList(v.ValueType),
+    const_id_by_value: std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80),
+
     chunk_instructions: std.ArrayList(Instruction),
-    register_types: [256]ValueType = [_]ValueType{ValueType.i_null} ** 256,
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
 
@@ -36,8 +40,8 @@ pub const BytecodeGen = struct {
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
             .chunk_constants = .empty,
-            .shadow_types = .empty,
-            .const_id_by_value = std.HashMap(TypedValue, u32, TypedValueHashContext, 80).init(alloc),
+            .chunk_constants_types = .empty,
+            .const_id_by_value = std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80).init(alloc),
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
@@ -118,12 +122,12 @@ pub const BytecodeGen = struct {
         const chunk = Chunk{
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
-            .shadow_types = try self.shadow_types.toOwnedSlice(self.allocator),
+            .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
         };
 
         self.chunk_instructions = .empty;
         self.chunk_constants = .empty;
-        self.shadow_types = .empty;
+        self.chunk_constants_types = .empty;
         self.const_id_by_value.clearRetainingCapacity();
 
         return chunk;
@@ -241,7 +245,7 @@ pub const BytecodeGen = struct {
 
         //note: temp hack for echo
         if (fc.fn_uid == 0) {
-            var ty = ValueType.from_ir_value(fc.args[0]);
+            var ty = v.ValueType.from_ir_value(fc.args[0]);
             if (fc.args[0].data == .identifier) {
                 ty = self.resolveIdentifierType(fc.args[0].data.identifier.uid);
             }
@@ -264,7 +268,7 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = .i_null;
     }
 
-    fn resolveIdentifierType(self: *Self, uid: usize) ValueType {
+    fn resolveIdentifierType(self: *Self, uid: usize) v.ValueType {
         const reg = self.var_register_id_by_uid.get(uid) orelse return .i_null;
         return self.register_types[reg];
     }
@@ -283,7 +287,7 @@ pub const BytecodeGen = struct {
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) BytecodeError!u8 {
         switch (value.data) {
             .i_int, .i_float, .i_bool, .i_string, .i_null, .i_void => {
-                const tv = TypedValue.from_ir_value(value);
+                const tv = v.TypedValue.from_ir_value(value);
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
                 self.register_types[target_reg] = tv.type;
             },
@@ -320,12 +324,12 @@ pub const BytecodeGen = struct {
     }
 
     fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const const_val = TypedValue.from_ir_value(value);
+        const const_val = v.TypedValue.from_ir_value(value);
         const result = try self.const_id_by_value.getOrPut(const_val);
         if (!result.found_existing) {
             result.value_ptr.* = @intCast(self.chunk_constants.items.len);
             try self.chunk_constants.append(self.allocator, const_val.value);
-            try self.shadow_types.append(self.allocator, const_val.type);
+            try self.chunk_constants_types.append(self.allocator, const_val.type);
         }
         const const_id = result.value_ptr.*;
 
@@ -436,8 +440,8 @@ pub const BytecodeGen = struct {
     }
 
     fn freeRegisterN(self: *Self, n: usize) void {
-        const v = @max(0, self.next_free_register - n);
-        self.next_free_register = @intCast(v);
+        const new_free = @max(0, self.next_free_register - n);
+        self.next_free_register = @intCast(new_free);
     }
 
     fn consumeRegister(self: *Self) u8 {
@@ -454,7 +458,7 @@ pub const Program = struct {
 };
 
 pub const BuiltinFn = struct {
-    func: *const fn (args: []Value) Value,
+    func: *const fn (args: []v.Value) v.Value,
     num_args: u8,
 };
 
@@ -471,8 +475,8 @@ const Chunk = struct {
     const Self = @This();
 
     instructions: []Instruction,
-    constants: []Value,
-    shadow_types: []ValueType,
+    constants: []v.Value,
+    shadow_types: []v.ValueType,
 
     pub fn disasamble(self: *const Self) void {
         for (self.constants, 0..) |constant, i| {
@@ -538,7 +542,7 @@ const Chunk = struct {
             .RETURN => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
-            .TYPE => std.debug.print("R[{d}] {s}", .{ inst.a, @tagName(@as(ValueType, @enumFromInt(inst.b))) }),
+            .TYPE => std.debug.print("R[{d}] {s}", .{ inst.a, @tagName(@as(v.ValueType, @enumFromInt(inst.b))) }),
         }
         std.debug.print("\n", .{});
     }
@@ -568,118 +572,6 @@ const Instruction = packed struct {
 
     pub fn bEx(self: Self) u16 {
         return (@as(u16, self.b) << 8) | self.c;
-    }
-};
-
-pub const StringValue = struct {
-    ptr: [*]const u8,
-    len: usize,
-
-    pub fn slice(self: StringValue) []const u8 {
-        return self.ptr[0..self.len];
-    }
-
-    pub fn fromSlice(s: []const u8) StringValue {
-        return .{ .ptr = s.ptr, .len = s.len };
-    }
-};
-
-pub const Value = union {
-    i_int: i64,
-    i_float: f64,
-    i_bool: bool,
-    i_null: void,
-    i_string: StringValue,
-    i_heap_object: *HeapObject,
-};
-
-const HeapObject = union(enum) {
-    const Self = @This();
-
-    array: std.ArrayList(Value),
-
-    pub fn init(allocator: std.mem.Allocator, value: Self) *Self {
-        const ptr = try allocator.create(Value);
-        ptr.* = value;
-        return ptr;
-    }
-};
-
-const TypedValue = struct {
-    value: Value,
-    type: ValueType,
-
-    fn from_ir_value(ir_value: *const ir.Value) TypedValue {
-        return switch (ir_value.data) {
-            .i_int => |i| TypedValue{ .value = .{ .i_int = i }, .type = .i_int },
-            .i_float => |f| TypedValue{ .value = .{ .i_float = f }, .type = .i_float },
-            .i_bool => |b| TypedValue{ .value = .{ .i_bool = b }, .type = .i_bool },
-            .i_string => |s| TypedValue{ .value = .{ .i_string = StringValue.fromSlice(s) }, .type = .i_string },
-            .i_null, .i_void => TypedValue{ .value = .{ .i_null = {} }, .type = .i_null },
-            .i_array => TypedValue{ .value = undefined, .type = .i_heap_object },
-            else => unreachable,
-        };
-    }
-};
-
-pub const ValueType = enum(u8) {
-    i_int,
-    i_float,
-    i_bool,
-    i_null,
-    i_string,
-    i_heap_object,
-
-    fn from_ir_value(value: *const ir.Value) ValueType {
-        return switch (value.data) {
-            .i_int => .i_int,
-            .i_float => .i_float,
-            .i_bool => .i_bool,
-            .i_string => .i_string,
-            .i_null, .i_void => .i_null,
-            .binary_op => |bo| switch (bo.kind) {
-                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .i_int,
-                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .i_bool,
-                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .i_float,
-                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .i_bool,
-                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .i_bool,
-            },
-            .unary_op => |uo| switch (uo.kind) {
-                .not => .i_bool,
-                .i_neg => .i_int,
-                .f_neg => .i_float,
-            },
-            else => .i_null,
-        };
-    }
-};
-
-const TypedValueHashContext = struct {
-    pub fn hash(_: @This(), tv: TypedValue) u64 {
-        var hasher = std.hash.Wyhash.init(0);
-        const tag: u8 = @intFromEnum(tv.type);
-        hasher.update(std.mem.asBytes(&tag));
-        switch (tv.type) {
-            .i_int => hasher.update(std.mem.asBytes(&tv.value.i_int)),
-            .i_float => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.i_float)))),
-            .i_bool => hasher.update(std.mem.asBytes(&tv.value.i_bool)),
-            .i_null => {},
-            .i_string => hasher.update(tv.value.i_string.slice()),
-            .i_heap_object => {},
-        }
-        return hasher.final();
-    }
-
-    pub fn eql(_: @This(), a: TypedValue, b: TypedValue) bool {
-        if (a.type != b.type) return false;
-        return switch (a.type) {
-            .i_int => a.value.i_int == b.value.i_int,
-            .i_float => @as(u64, @bitCast(a.value.i_float)) == @as(u64, @bitCast(b.value.i_float)),
-            .i_bool => a.value.i_bool == b.value.i_bool,
-            .i_null => true,
-            .i_string => std.mem.eql(u8, a.value.i_string.slice(), b.value.i_string.slice()),
-            .i_heap_object => false,
-        };
     }
 };
 

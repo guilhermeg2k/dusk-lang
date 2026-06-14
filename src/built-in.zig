@@ -1,5 +1,6 @@
 const std = @import("std");
 const bc = @import("bytecode.zig");
+const v = @import("value.zig");
 
 pub const BuiltIn = struct {
     const Self = @This();
@@ -141,7 +142,7 @@ const builtin_factories = [_]BuiltInFactory{
 
 const builtin_bytecode_registry = [_]struct {
     name: []const u8,
-    impl: *const fn (args: []bc.Value) bc.Value,
+    impl: *const fn (args: []v.Value) v.Value,
     num_args: u8,
 }{
     .{ .name = "echo", .impl = &echoImpl, .num_args = 2 },
@@ -168,8 +169,8 @@ pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
     return funcs;
 }
 
-fn echoImpl(args: []bc.Value) bc.Value {
-    const ty: bc.ValueType = @enumFromInt(@as(u8, @intCast(args[1].i_int)));
+fn echoImpl(args: []v.Value) v.Value {
+    const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].i_int)));
     switch (ty) {
         .i_int => std.debug.print("{d}\n", .{args[0].i_int}),
         .i_float => std.debug.print("{d}\n", .{args[0].i_float}),
@@ -181,17 +182,17 @@ fn echoImpl(args: []bc.Value) bc.Value {
     return .{ .i_null = {} };
 }
 
-fn appendImpl(args: []bc.Value) bc.Value {
+fn appendImpl(args: []v.Value) v.Value {
     _ = args;
     @panic("not implemented: append");
 }
 
-fn lenImpl(args: []bc.Value) bc.Value {
+fn lenImpl(args: []v.Value) v.Value {
     _ = args;
     @panic("not implemented: len");
 }
 
-fn assertImpl(args: []bc.Value) bc.Value {
+fn assertImpl(args: []v.Value) v.Value {
     if (!args[0].i_bool) {
         @panic("ASSERTION_FAILED");
     }

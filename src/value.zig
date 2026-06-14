@@ -1,0 +1,188 @@
+const std = @import("std");
+const ir = @import("ir.zig");
+const RunTimeError = @import("error.zig").RunTimeError;
+
+pub const Value = extern union {
+    i_int: i64,
+    i_float: f64,
+    i_bool: bool,
+    i_null: void,
+    i_string: StringValue,
+    i_heap_object: *HeapObject,
+};
+
+pub const Array = extern struct {
+    const Self = @This();
+
+    kind: ValueType,
+    len: usize,
+    capacity: usize,
+
+    pub fn init(allocator: std.mem.Allocator, kind: ValueType, capacity: usize) !*Self {
+        const total_bytes = Self.calc_size(capacity);
+        const raw_memory = try allocator.alignedAlloc(u8, @alignOf(Array), total_bytes);
+
+        const array = @as(*Self, @ptrCast(raw_memory.ptr));
+
+        array.len = 0;
+        array.kind = kind;
+        array.capacity = if (capacity != 0) capacity else 8;
+
+        return array;
+    }
+
+    pub fn get(self: *Self, i: usize) !Value {
+        if (i >= self.len) {
+            return RunTimeError.ArrayOutOfBounds;
+        }
+
+        const items = self.getDataPtr();
+        return items[i];
+    }
+
+    pub fn set(self: *Self, i: usize, value: Value) !void {
+        if (i >= self.len) {
+            return RunTimeError.ArrayOutOfBounds;
+        }
+
+        const items = self.getDataPtr();
+        items[i] = value;
+    }
+
+    pub fn append(self: *Self, allocator: std.mem.Allocator, value: Value) !*Self {
+        var cur_ptr = self;
+
+        const needs_resize = self.len + 1 > self.capacity;
+        if (needs_resize) {
+            const new_capacity = self.capacity + self.capacity / 2;
+            const new_size = Self.calc_size(new_capacity);
+            const old_size = Self.calc_size(self.capacity);
+
+            const old_raw_slice = @as([*]align(@alignOf(Array)) u8, @ptrCast(cur_ptr))[0..old_size];
+            const new_raw_slice = try allocator.realloc(old_raw_slice, new_size);
+
+            cur_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
+            cur_ptr.capacity = new_capacity;
+        }
+
+        const data_ptr = cur_ptr.getDataPtr();
+        data_ptr[cur_ptr.len] = value;
+        cur_ptr.len += 1;
+
+        return cur_ptr;
+    }
+
+    pub fn getDataPtr(self: *Self) [*]Value {
+        const data_pointer = @as([*]Self, @ptrCast(self)) + 1;
+        return @ptrCast(data_pointer);
+    }
+
+    fn calc_size(capacity: usize) usize {
+        const self_size = @sizeOf(Array);
+        const data_size = @sizeOf(Value) * capacity;
+        return self_size + data_size;
+    }
+};
+
+pub const HeapObject = union(enum) {
+    const Self = @This();
+
+    array: *Array,
+
+    pub fn init(allocator: std.mem.Allocator, value: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = value;
+        return ptr;
+    }
+};
+
+pub const StringValue = extern struct {
+    ptr: [*]const u8,
+    len: usize,
+
+    pub fn slice(self: StringValue) []const u8 {
+        return self.ptr[0..self.len];
+    }
+
+    pub fn fromSlice(s: []const u8) StringValue {
+        return .{ .ptr = s.ptr, .len = s.len };
+    }
+};
+
+pub const TypedValue = struct {
+    value: Value,
+    type: ValueType,
+
+    pub fn from_ir_value(ir_value: *const ir.Value) TypedValue {
+        return switch (ir_value.data) {
+            .i_int => |i| TypedValue{ .value = .{ .i_int = i }, .type = .i_int },
+            .i_float => |f| TypedValue{ .value = .{ .i_float = f }, .type = .i_float },
+            .i_bool => |b| TypedValue{ .value = .{ .i_bool = b }, .type = .i_bool },
+            .i_string => |s| TypedValue{ .value = .{ .i_string = StringValue.fromSlice(s) }, .type = .i_string },
+            .i_null, .i_void => TypedValue{ .value = .{ .i_null = {} }, .type = .i_null },
+            .i_array => TypedValue{ .value = undefined, .type = .i_heap_object },
+            else => unreachable,
+        };
+    }
+};
+
+pub const ValueType = enum(u8) {
+    i_int,
+    i_float,
+    i_bool,
+    i_null,
+    i_string,
+    i_heap_object,
+
+    pub fn from_ir_value(value: *const ir.Value) ValueType {
+        return switch (value.data) {
+            .i_int => .i_int,
+            .i_float => .i_float,
+            .i_bool => .i_bool,
+            .i_string => .i_string,
+            .i_null, .i_void => .i_null,
+            .binary_op => |bo| switch (bo.kind) {
+                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .i_int,
+                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .i_bool,
+                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .i_float,
+                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .i_bool,
+                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .i_bool,
+            },
+            .unary_op => |uo| switch (uo.kind) {
+                .not => .i_bool,
+                .i_neg => .i_int,
+                .f_neg => .i_float,
+            },
+            else => .i_null,
+        };
+    }
+};
+
+pub const TypedValueHashContext = struct {
+    pub fn hash(_: @This(), tv: TypedValue) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const tag: u8 = @intFromEnum(tv.type);
+        hasher.update(std.mem.asBytes(&tag));
+        switch (tv.type) {
+            .i_int => hasher.update(std.mem.asBytes(&tv.value.i_int)),
+            .i_float => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.i_float)))),
+            .i_bool => hasher.update(std.mem.asBytes(&tv.value.i_bool)),
+            .i_null => {},
+            .i_string => hasher.update(tv.value.i_string.slice()),
+            .i_heap_object => {},
+        }
+        return hasher.final();
+    }
+
+    pub fn eql(_: @This(), a: TypedValue, b: TypedValue) bool {
+        if (a.type != b.type) return false;
+        return switch (a.type) {
+            .i_int => a.value.i_int == b.value.i_int,
+            .i_float => @as(u64, @bitCast(a.value.i_float)) == @as(u64, @bitCast(b.value.i_float)),
+            .i_bool => a.value.i_bool == b.value.i_bool,
+            .i_null => true,
+            .i_string => std.mem.eql(u8, a.value.i_string.slice(), b.value.i_string.slice()),
+            .i_heap_object => false,
+        };
+    }
+};

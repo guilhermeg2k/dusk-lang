@@ -364,6 +364,11 @@ pub const Errors = error{
     InvalidParameterType,
 };
 
+pub const RunTimeError = error{
+    OutOfMemory,
+    ArrayOutOfBounds,
+};
+
 const std = @import("std");
 const allocPrint = std.fmt.allocPrint;
 const Token = @import("lexer.zig").Token;
