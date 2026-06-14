@@ -249,7 +249,15 @@ pub const Parser = struct {
         if (has_else) {
             const is_else_if = self.peekCurrent().tag == .if_kw;
             if (is_else_if) {
-                else_block = try self.parseBlock();
+                const if_tk = self.peekCurrent();
+                const else_if_stmt = try self.parseIfStmt();
+                const end_pos = self.tokens[self.cur_index - 1].loc.end;
+                var stmts: std.ArrayList(ast.StatementNode) = .empty;
+                try stmts.append(self.allocator, ast.StatementNode{
+                    .data = .{ .if_stmt = else_if_stmt },
+                    .loc = .{ .start = if_tk.loc.start, .end = end_pos },
+                });
+                else_block = ast.Block{ .statements = stmts };
             } else {
                 _ = try self.expect(.indent);
                 else_block = try self.parseBlock();
