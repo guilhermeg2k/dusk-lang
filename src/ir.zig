@@ -11,7 +11,6 @@ pub const Block = struct {
 
 pub const Instruction = union(enum) {
     store_var: StoreVar,
-    update_var: UpdateVar,
     branch_if: BranchIf,
     loop: Loop,
     return_stmt: ReturnStmt,

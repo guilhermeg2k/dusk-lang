@@ -35,6 +35,7 @@ pub const VM = struct {
 
         while (current_frame.cur_inst < current_frame.function.kind.native.instructions.len) : (current_frame.cur_inst += 1) {
             current_frame = &self.frames.items[self.frames.items.len - 1];
+
             const inst = current_frame.function.kind.native.instructions[current_frame.cur_inst];
 
             switch (inst.op) {
@@ -212,6 +213,15 @@ pub const VM = struct {
                             const args = stack[current_frame.stack_offset + inst.a + 1 ..][0..b.num_args];
                             stack[current_frame.stack_offset + inst.a] = b.func(args);
                         },
+                    }
+                },
+                .JUMP => {
+                    current_frame.cur_inst = inst.aEx() - 1;
+                },
+                .JUMP_IF_FALSE => {
+                    const condition = current_frame.getVar(stack, inst.a);
+                    if (!condition.i_bool) {
+                        current_frame.cur_inst = inst.bEx() - 1;
                     }
                 },
                 .RETURN => {

@@ -562,10 +562,11 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
-                return ir.Instruction{ .update_var = .{
+                return ir.Instruction{ .store_var = .{
                     .identifier = id_symbol.identifier,
-                    .var_uid = id_symbol.uid,
+                    .uid = id_symbol.uid,
                     .value = assignment_value,
+                    .type_id = id_symbol.type_id,
                 } };
             },
             .indexed => {

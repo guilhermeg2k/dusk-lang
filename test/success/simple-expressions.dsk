@@ -1,3 +1,14 @@
 let x1 = 1 + 2 * 3
 
 assert(x1 == 7)
+
+let x = 2
+
+if x == 2
+    echo("it is 2")
+
+let mut z = 10
+
+for z < 20
+    echo(z)
+    z += 1

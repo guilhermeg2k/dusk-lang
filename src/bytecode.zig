@@ -11,6 +11,13 @@ pub const BytecodeGen = struct {
         },
     };
 
+    const TRUE_VALUE = ir.Value{
+        .type_id = 0, // in this ctx type does not matter
+        .data = .{
+            .i_bool = true,
+        },
+    };
+
     allocator: std.mem.Allocator,
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
@@ -72,7 +79,7 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn genInstructionBlock(self: *Self, block: []ir.Instruction) !void {
+    fn genInstructionBlock(self: *Self, block: []const ir.Instruction) BytecodeError!void {
         for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
@@ -83,6 +90,9 @@ pub const BytecodeGen = struct {
                 },
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
+                },
+                .loop => |stmt| {
+                    try self.genLoop(stmt);
                 },
                 .return_stmt => |r_stmt| {
                     try self.genReturn(r_stmt);
@@ -107,12 +117,17 @@ pub const BytecodeGen = struct {
     }
 
     fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
-        const var_register_id = try self.genValue(store_var.value, self.consumeRegister());
-        try self.var_register_id_by_uid.put(store_var.uid, var_register_id);
+        const register_idx = self.var_register_id_by_uid.get(store_var.uid);
+        if (register_idx) |idx| {
+            _ = try self.genValue(store_var.value, idx);
+        } else {
+            const reg_idx = try self.genValue(store_var.value, self.consumeRegister());
+            try self.var_register_id_by_uid.put(store_var.uid, reg_idx);
+        }
     }
 
     fn genBranchIf(self: *Self, ifStmt: ir.BranchIf) !void {
-        const condition_reg = self.genValue(ifStmt.condition, self.consumeRegister());
+        const condition_reg = try self.genValue(ifStmt.condition, self.consumeRegister());
         defer self.freeRegister();
 
         const jump_into_else = Instruction{
@@ -125,23 +140,31 @@ pub const BytecodeGen = struct {
 
         try self.genInstructionBlock(ifStmt.then_block);
 
-        const jump_pass_else = Instruction{
-            .op = .JUMP,
-        };
+        if (ifStmt.else_block.len > 0) {
+            const jump_pass_else = Instruction{
+                .op = .JUMP,
+            };
 
-        try self.chunk_instructions.append(self.allocator, jump_pass_else);
-        const jump_pass_else_idx = self.chunk_instructions.items.len - 1;
-        const jump_into_else_position = self.chunk_instructions.items.len;
+            try self.chunk_instructions.append(self.allocator, jump_pass_else);
+            const jump_pass_else_idx = self.chunk_instructions.items.len - 1;
+            const jump_into_else_position = self.chunk_instructions.items.len;
 
-        try self.genInstructionBlock(ifStmt.else_block);
-        const jump_pass_else_position = self.chunk_instructions.items.len;
+            try self.genInstructionBlock(ifStmt.else_block);
+            const jump_pass_else_position = self.chunk_instructions.items.len;
 
-        self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
-        self.chunk_instructions.items[jump_pass_else_idx].putAex(@intCast(jump_pass_else_position));
+            self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
+            self.chunk_instructions.items[jump_pass_else_idx].putAEx(@intCast(jump_pass_else_position));
+        } else {
+            const jump_into_else_position = self.chunk_instructions.items.len;
+            self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
+        }
     }
 
     fn genLoop(self: *Self, loopStmt: ir.Loop) !void {
-        const condition_reg = self.genValue(loopStmt.condition, self.consumeRegister());
+        const loop_begin_idx = self.chunk_instructions.items.len;
+
+        //perf: this orelse
+        const condition_reg = try self.genValue(loopStmt.condition orelse &TRUE_VALUE, self.consumeRegister());
         defer self.freeRegister();
 
         const jump_pass_loop = Instruction{
@@ -150,19 +173,20 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, jump_pass_loop);
-        const loop_begin_idx = self.chunk_instructions.items.len - 1;
+        const jump_if_false_idx = self.chunk_instructions.items.len - 1;
 
         try self.genInstructionBlock(loopStmt.do_block);
 
-        const jump_to_begin = Instruction{
+        var jump_to_begin = Instruction{
             .op = .JUMP,
         };
 
         jump_to_begin.putAEx(@intCast(loop_begin_idx));
+
         try self.chunk_instructions.append(self.allocator, jump_to_begin);
         const jump_pass_loop_position = self.chunk_instructions.items.len;
 
-        self.chunk_instructions.items[loop_begin_idx].putBEx(@intCast(jump_pass_loop_position));
+        self.chunk_instructions.items[jump_if_false_idx].putBEx(@intCast(jump_pass_loop_position));
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, target_reg: u8) !void {
@@ -381,10 +405,10 @@ const Chunk = struct {
     fn disassembleInstruction(self: *const Self, offset: usize) void {
         const inst = self.instructions[offset];
         const op = @tagName(inst.op);
-        std.debug.print("{d:0>4} {s:<12}", .{ offset, op });
+        std.debug.print("{d:0>4} {s:<16}", .{ offset, op });
 
         switch (inst.op) {
-            .LOAD_CONST => std.debug.print("R[{d}] CONST[{d}]", .{ inst.a, inst.bEx() }),
+            .LOAD_CONST => std.debug.print("R[{d}] C[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STORE_VAR => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .I_ADD,
@@ -419,8 +443,8 @@ const Chunk = struct {
             .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
             .RETURN => std.debug.print("R[{d}]", .{inst.a}),
-            .JUMP => std.debug.print("{d}", .{inst.a}),
-            .JUMP_IF_FALSE => std.debug.print("R[{d}] {d}", .{ inst.a, inst.b }),
+            .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
+            .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
         }
         std.debug.print("\n", .{});
     }
@@ -435,17 +459,12 @@ const Instruction = packed struct {
     c: u8 = 0,
 
     pub fn putAEx(self: *Self, value: u24) void {
-        self.a = @intCast(value >> 16);
-        self.b = @intCast((value >> 8) & 0xFF);
-        self.c = @intCast(value & 0xFF);
+        self.a = @intCast(value >> 8);
+        self.b = @intCast(value & 0xFF);
     }
 
     pub fn aEx(self: Self) u24 {
-        const a = @as(u24, self.a) << 16;
-        const b = @as(u24, self.b) << 8;
-        const c = @as(u24, self.c);
-
-        return a | b | c;
+        return (@as(u16, self.a) << 8) | self.b;
     }
 
     pub fn putBEx(self: *Self, value: u16) void {

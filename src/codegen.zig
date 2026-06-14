@@ -170,10 +170,6 @@ pub const Generator = struct {
                     const str = try self.genStoreVar(instruction.store_var);
                     try buf.appendSlice(self.allocator, str);
                 },
-                .update_var => {
-                    const str = try self.genUpdateVar(instruction.update_var);
-                    try buf.appendSlice(self.allocator, str);
-                },
                 .update_indexed => {
                     const str = try self.genUpdateIndexed(instruction.update_indexed);
                     try buf.appendSlice(self.allocator, str);
@@ -213,16 +209,6 @@ pub const Generator = struct {
         const value = try self.genValue(store_var.value);
 
         try buf.print(self.allocator, "let {s} = {s};\n", .{ var_name, value });
-        return buf.toOwnedSlice(self.allocator);
-    }
-
-    fn genUpdateVar(self: *Self, update_var: ir.UpdateVar) ![]const u8 {
-        var buf: std.ArrayList(u8) = .empty;
-
-        const var_name = try self.genName(update_var.var_uid, update_var.identifier);
-        const value = try self.genValue(update_var.value);
-
-        try buf.print(self.allocator, "{s} = {s};\n", .{ var_name, value });
         return buf.toOwnedSlice(self.allocator);
     }
 
