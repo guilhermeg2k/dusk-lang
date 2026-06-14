@@ -130,6 +130,10 @@ test "auto promotion" {
     try runCase("auto-promotion.dsk");
 }
 
+test "break continue" {
+    try runCase("break-continue.dsk");
+}
+
 test "sema error: type mismatch" {
     try runCaseError("type-mismatch.dsk", error.InvalidType);
 }

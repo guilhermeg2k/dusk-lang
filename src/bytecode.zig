@@ -25,6 +25,8 @@ pub const BytecodeGen = struct {
     //perf: this should be a "cached" array map i think
     chunk_constants: std.ArrayList(Value),
     chunk_instructions: std.ArrayList(Instruction),
+    loop_stack: std.ArrayList(LoopContext),
+    break_patches: std.ArrayList(usize),
 
     pub fn init(alloc: std.mem.Allocator) Self {
         return Self{
@@ -33,6 +35,8 @@ pub const BytecodeGen = struct {
             .next_free_register = 0,
             .chunk_constants = .empty,
             .chunk_instructions = .empty,
+            .loop_stack = .empty,
+            .break_patches = .empty,
         };
     }
 
@@ -97,7 +101,8 @@ pub const BytecodeGen = struct {
                 .return_stmt => |r_stmt| {
                     try self.genReturn(r_stmt);
                 },
-
+                .break_stmt => try self.genBreak(),
+                .continue_stmt => try self.genContinue(),
                 else => {},
             }
         }
@@ -163,6 +168,8 @@ pub const BytecodeGen = struct {
     fn genLoop(self: *Self, loopStmt: ir.Loop) !void {
         const loop_begin_idx = self.chunk_instructions.items.len;
 
+        try self.pushLoopCtx(loop_begin_idx);
+
         //perf: this orelse
         const condition_reg = try self.genValue(loopStmt.condition orelse &TRUE_VALUE, self.consumeRegister());
         defer self.freeRegister();
@@ -187,6 +194,36 @@ pub const BytecodeGen = struct {
         const jump_pass_loop_position = self.chunk_instructions.items.len;
 
         self.chunk_instructions.items[jump_if_false_idx].putBEx(@intCast(jump_pass_loop_position));
+
+        try self.popLoopCtx();
+    }
+
+    fn genBreak(self: *Self) !void {
+        try self.break_patches.append(self.allocator, self.chunk_instructions.items.len);
+        try self.chunk_instructions.append(self.allocator, Instruction{ .op = .JUMP });
+    }
+
+    fn genContinue(self: *Self) !void {
+        const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+        var jump = Instruction{ .op = .JUMP };
+        jump.putAEx(@intCast(loop_ctx.loop_begin));
+        try self.chunk_instructions.append(self.allocator, jump);
+    }
+
+    fn pushLoopCtx(self: *Self, loop_begin: usize) !void {
+        try self.loop_stack.append(self.allocator, LoopContext{
+            .loop_begin = loop_begin,
+            .first_break_patch_idx = self.break_patches.items.len,
+        });
+    }
+
+    fn popLoopCtx(self: *Self) !void {
+        const ctx = self.loop_stack.pop() orelse unreachable;
+        const loop_end = self.chunk_instructions.items.len;
+        for (self.break_patches.items[ctx.first_break_patch_idx..]) |patch_idx| {
+            self.chunk_instructions.items[patch_idx].putAEx(@intCast(loop_end));
+        }
+        self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_idx);
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, target_reg: u8) !void {
@@ -601,3 +638,8 @@ const OpCode = enum(u8) {
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable };
+
+const LoopContext = struct {
+    loop_begin: usize,
+    first_break_patch_idx: usize,
+};
