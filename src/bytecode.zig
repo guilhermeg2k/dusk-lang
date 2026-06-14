@@ -22,8 +22,8 @@ pub const BytecodeGen = struct {
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
     next_free_register: u8 = 0,
-    //perf: this should be a "cached" array map i think
     chunk_constants: std.ArrayList(Value),
+    const_id_by_value: std.HashMap(Value, u32, ValueHashContext, 80),
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
@@ -34,6 +34,7 @@ pub const BytecodeGen = struct {
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
             .chunk_constants = .empty,
+            .const_id_by_value = std.HashMap(Value, u32, ValueHashContext, 80).init(alloc),
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
@@ -117,6 +118,7 @@ pub const BytecodeGen = struct {
 
         self.chunk_instructions = .empty;
         self.chunk_constants = .empty;
+        self.const_id_by_value.clearRetainingCapacity();
 
         return chunk;
     }
@@ -291,9 +293,13 @@ pub const BytecodeGen = struct {
     }
 
     fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const const_id = self.chunk_constants.items.len;
-
-        try self.chunk_constants.append(self.allocator, Value.from_ir_value(value));
+        const const_val = Value.from_ir_value(value);
+        const result = try self.const_id_by_value.getOrPut(const_val);
+        if (!result.found_existing) {
+            result.value_ptr.* = @intCast(self.chunk_constants.items.len);
+            try self.chunk_constants.append(self.allocator, const_val);
+        }
+        const const_id = result.value_ptr.*;
 
         var load_const = Instruction{
             .op = .LOAD_CONST,
@@ -540,6 +546,33 @@ pub const Value = union(enum) {
             .i_string => |s| Self{ .i_string = s },
             .i_null, .i_void => Self{ .i_null = {} },
             else => unreachable,
+        };
+    }
+};
+
+const ValueHashContext = struct {
+    pub fn hash(_: @This(), value: Value) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const tag: u64 = @intFromEnum(value);
+        hasher.update(std.mem.asBytes(&tag));
+        switch (value) {
+            .i_int => |v| hasher.update(std.mem.asBytes(&v)),
+            .i_float => |v| hasher.update(std.mem.asBytes(&@as(u64, @bitCast(v)))),
+            .i_bool => |v| hasher.update(std.mem.asBytes(&v)),
+            .i_null => {},
+            .i_string => |v| hasher.update(v),
+        }
+        return hasher.final();
+    }
+
+    pub fn eql(_: @This(), a: Value, b: Value) bool {
+        if (@intFromEnum(a) != @intFromEnum(b)) return false;
+        return switch (a) {
+            .i_int => a.i_int == b.i_int,
+            .i_float => @as(u64, @bitCast(a.i_float)) == @as(u64, @bitCast(b.i_float)),
+            .i_bool => a.i_bool == b.i_bool,
+            .i_null => true,
+            .i_string => std.mem.eql(u8, a.i_string, b.i_string),
         };
     }
 };
