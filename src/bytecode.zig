@@ -527,16 +527,9 @@ pub const Value = union(enum) {
     i_float: f64,
     i_bool: bool,
     i_null: void,
+    //note: should be moved to i_heap_object on the future
     i_string: []const u8,
-
-    pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (self) {
-            .i_int => |v| try writer.print("int {d}", .{v}),
-            .i_float => |v| try writer.print("float {d}", .{v}),
-            .i_bool => |v| try writer.print("bool {}", .{v}),
-            .i_null => try writer.print("null", .{}),
-        }
-    }
+    i_heap_object: *HeapObject,
 
     fn from_ir_value(value: *const ir.Value) Self {
         return switch (value.data) {
@@ -545,6 +538,11 @@ pub const Value = union(enum) {
             .i_bool => |b| Self{ .i_bool = b },
             .i_string => |s| Self{ .i_string = s },
             .i_null, .i_void => Self{ .i_null = {} },
+            .i_array => {
+                return Self{
+                    .i_heap_object = HeapObject{},
+                };
+            },
             else => unreachable,
         };
     }
@@ -574,6 +572,18 @@ const ValueHashContext = struct {
             .i_null => true,
             .i_string => std.mem.eql(u8, a.i_string, b.i_string),
         };
+    }
+};
+
+const HeapObject = union(enum) {
+    const Self = @This();
+
+    array: std.ArrayList(Value),
+
+    pub fn init(allocator: std.mem.Allocator, value: Self) *Self {
+        const ptr = try allocator.create(Value);
+        ptr.* = value;
+        return ptr;
     }
 };
 
