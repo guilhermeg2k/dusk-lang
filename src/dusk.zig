@@ -56,7 +56,7 @@ pub const Dusk = struct {
         var sema_analyzer = try SemaAnalyzer.init(self.allocator);
         const ir = try sema_analyzer.analyze(&ast, src);
 
-        var Bytecodegen = bc.BytecodeGen.init(self.allocator);
+        var Bytecodegen = bc.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
         const program = try Bytecodegen.generate(&ir, &builtin.getBytecodeFunctions());
         program.functions[program.main_func_index].kind.native.disasamble();
 

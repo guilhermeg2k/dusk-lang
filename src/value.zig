@@ -1,14 +1,17 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
+const sema = @import("sema.zig");
 
 pub const Value = extern union {
-    i_int: i64,
-    i_float: f64,
-    i_bool: bool,
-    i_null: void,
-    i_string: StringValue,
-    i_heap_object: *HeapObject,
+    int64: i64,
+    float64: f64,
+    bool: bool,
+    null: void,
+
+    //todo:  string should be pointers and heap allocated
+    string: StringValue,
+    array: *Array,
 };
 
 pub const Array = extern struct {
@@ -115,45 +118,60 @@ pub const TypedValue = struct {
 
     pub fn from_ir_value(ir_value: *const ir.Value) TypedValue {
         return switch (ir_value.data) {
-            .i_int => |i| TypedValue{ .value = .{ .i_int = i }, .type = .i_int },
-            .i_float => |f| TypedValue{ .value = .{ .i_float = f }, .type = .i_float },
-            .i_bool => |b| TypedValue{ .value = .{ .i_bool = b }, .type = .i_bool },
-            .i_string => |s| TypedValue{ .value = .{ .i_string = StringValue.fromSlice(s) }, .type = .i_string },
-            .i_null, .i_void => TypedValue{ .value = .{ .i_null = {} }, .type = .i_null },
-            .i_array => TypedValue{ .value = undefined, .type = .i_heap_object },
+            .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
+            .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
+            .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
+            .i_string => |s| TypedValue{ .value = .{ .string = StringValue.fromSlice(s) }, .type = .string },
+            .i_null, .i_void => TypedValue{ .value = .{ .null = {} }, .type = .null },
+            .i_array => TypedValue{ .value = undefined, .type = .array },
             else => unreachable,
         };
     }
 };
 
 pub const ValueType = enum(u8) {
-    i_int,
-    i_float,
-    i_bool,
-    i_null,
-    i_string,
-    i_heap_object,
+    int64,
+    float64,
+    bool,
+    null,
+    string,
+    array,
 
     pub fn from_ir_value(value: *const ir.Value) ValueType {
         return switch (value.data) {
-            .i_int => .i_int,
-            .i_float => .i_float,
-            .i_bool => .i_bool,
-            .i_string => .i_string,
-            .i_null, .i_void => .i_null,
+            .i_int => .int64,
+            .i_float => .float64,
+            .i_bool => .bool,
+            .i_string => .string,
+            .i_null, .i_void => .null,
+            .i_array => .array,
             .binary_op => |bo| switch (bo.kind) {
-                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .i_int,
-                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .i_bool,
-                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .i_float,
-                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .i_bool,
-                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .i_bool,
+                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .int64,
+                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .bool,
+                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .float64,
+                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .bool,
+                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .bool,
             },
             .unary_op => |uo| switch (uo.kind) {
-                .not => .i_bool,
-                .i_neg => .i_int,
-                .f_neg => .i_float,
+                .not => .bool,
+                .i_neg => .int64,
+                .f_neg => .float64,
             },
-            else => .i_null,
+            else => .null,
+        };
+    }
+
+    pub fn fromTypeId(type_table: *sema.TypeTable, type_id: sema.TypeId) ValueType {
+        const ty = type_table.getTypePtrById(type_id);
+        return switch (ty.kind) {
+            .int => .int64,
+            .float => .float64,
+            .boolean => .bool,
+            .string => .string,
+            .void, .null, .dynamic, .meta => .null,
+            .array => .array,
+            .@"struct" => .null,
+            .function => .null,
         };
     }
 };
@@ -164,12 +182,12 @@ pub const TypedValueHashContext = struct {
         const tag: u8 = @intFromEnum(tv.type);
         hasher.update(std.mem.asBytes(&tag));
         switch (tv.type) {
-            .i_int => hasher.update(std.mem.asBytes(&tv.value.i_int)),
-            .i_float => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.i_float)))),
-            .i_bool => hasher.update(std.mem.asBytes(&tv.value.i_bool)),
-            .i_null => {},
-            .i_string => hasher.update(tv.value.i_string.slice()),
-            .i_heap_object => {},
+            .int64 => hasher.update(std.mem.asBytes(&tv.value.int64)),
+            .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
+            .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
+            .null => {},
+            .string => hasher.update(tv.value.string.slice()),
+            .array => {},
         }
         return hasher.final();
     }
@@ -177,12 +195,12 @@ pub const TypedValueHashContext = struct {
     pub fn eql(_: @This(), a: TypedValue, b: TypedValue) bool {
         if (a.type != b.type) return false;
         return switch (a.type) {
-            .i_int => a.value.i_int == b.value.i_int,
-            .i_float => @as(u64, @bitCast(a.value.i_float)) == @as(u64, @bitCast(b.value.i_float)),
-            .i_bool => a.value.i_bool == b.value.i_bool,
-            .i_null => true,
-            .i_string => std.mem.eql(u8, a.value.i_string.slice(), b.value.i_string.slice()),
-            .i_heap_object => false,
+            .int64 => a.value.int64 == b.value.int64,
+            .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
+            .bool => a.value.bool == b.value.bool,
+            .null => true,
+            .string => std.mem.eql(u8, a.value.string.slice(), b.value.string.slice()),
+            .array => false,
         };
     }
 };

@@ -170,16 +170,16 @@ pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
 }
 
 fn echoImpl(args: []v.Value) v.Value {
-    const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].i_int)));
+    const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
     switch (ty) {
-        .i_int => std.debug.print("{d}\n", .{args[0].i_int}),
-        .i_float => std.debug.print("{d}\n", .{args[0].i_float}),
-        .i_bool => std.debug.print("{}\n", .{args[0].i_bool}),
-        .i_string => std.debug.print("{s}\n", .{args[0].i_string.slice()}),
-        .i_null => std.debug.print("null\n", .{}),
-        .i_heap_object => std.debug.print("<heap object>\n", .{}),
+        .int64 => std.debug.print("{d}\n", .{args[0].int64}),
+        .float64 => std.debug.print("{d}\n", .{args[0].float64}),
+        .bool => std.debug.print("{}\n", .{args[0].bool}),
+        .string => std.debug.print("{s}\n", .{args[0].string.slice()}),
+        .null => std.debug.print("null\n", .{}),
+        .array => std.debug.print("<heap object>\n", .{}),
     }
-    return .{ .i_null = {} };
+    return .{ .null = {} };
 }
 
 fn appendImpl(args: []v.Value) v.Value {
@@ -193,10 +193,10 @@ fn lenImpl(args: []v.Value) v.Value {
 }
 
 fn assertImpl(args: []v.Value) v.Value {
-    if (!args[0].i_bool) {
+    if (!args[0].bool) {
         @panic("ASSERTION_FAILED");
     }
-    return .{ .i_null = {} };
+    return .{ .null = {} };
 }
 
 const BuiltInFn = struct {

@@ -9,7 +9,7 @@ pub const VM = struct {
     program: *const bc.Program,
     frames: std.ArrayList(CallFrame),
     stack: [16383]v.Value,
-    heap: std.ArrayList(*v.HeapObject),
+    heap: std.ArrayList(*v.Value),
 
     pub fn init(allocator: std.mem.Allocator, program: *const bc.Program) VM {
         return .{
@@ -49,161 +49,161 @@ pub const VM = struct {
 
                 .I_ADD => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_int = current_frame.getVar(stack, inst.b).i_int + current_frame.getVar(stack, inst.c).i_int,
+                        .int64 = current_frame.getVar(stack, inst.b).int64 + current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_SUB => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_int = current_frame.getVar(stack, inst.b).i_int - current_frame.getVar(stack, inst.c).i_int,
+                        .int64 = current_frame.getVar(stack, inst.b).int64 - current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_MULT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_int = current_frame.getVar(stack, inst.b).i_int * current_frame.getVar(stack, inst.c).i_int,
+                        .int64 = current_frame.getVar(stack, inst.b).int64 * current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .TRUNC_DIV => {
-                    current_frame.setVar(stack, inst.a, v.Value{ .i_int = @divTrunc(
-                        current_frame.getVar(stack, inst.b).i_int,
-                        current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, v.Value{ .int64 = @divTrunc(
+                        current_frame.getVar(stack, inst.b).int64,
+                        current_frame.getVar(stack, inst.c).int64,
                     ) });
                 },
                 .I_MOD => {
-                    current_frame.setVar(stack, inst.a, v.Value{ .i_int = @mod(
-                        current_frame.getVar(stack, inst.b).i_int,
-                        current_frame.getVar(stack, inst.c).i_int,
+                    current_frame.setVar(stack, inst.a, v.Value{ .int64 = @mod(
+                        current_frame.getVar(stack, inst.b).int64,
+                        current_frame.getVar(stack, inst.c).int64,
                     ) });
                 },
                 .I_EQ => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_int == current_frame.getVar(stack, inst.c).i_int,
+                        .bool = current_frame.getVar(stack, inst.b).int64 == current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_NEQ => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_int != current_frame.getVar(stack, inst.c).i_int,
+                        .bool = current_frame.getVar(stack, inst.b).int64 != current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_LT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_int < current_frame.getVar(stack, inst.c).i_int,
+                        .bool = current_frame.getVar(stack, inst.b).int64 < current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_LE => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_int <= current_frame.getVar(stack, inst.c).i_int,
+                        .bool = current_frame.getVar(stack, inst.b).int64 <= current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_GT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_int > current_frame.getVar(stack, inst.c).i_int,
+                        .bool = current_frame.getVar(stack, inst.b).int64 > current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_GE => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_int >= current_frame.getVar(stack, inst.c).i_int,
+                        .bool = current_frame.getVar(stack, inst.b).int64 >= current_frame.getVar(stack, inst.c).int64,
                     });
                 },
                 .I_NEG => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_int = -current_frame.getVar(stack, inst.b).i_int,
+                        .int64 = -current_frame.getVar(stack, inst.b).int64,
                     });
                 },
 
                 .F_ADD => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_float = current_frame.getVar(stack, inst.b).i_float + current_frame.getVar(stack, inst.c).i_float,
+                        .float64 = current_frame.getVar(stack, inst.b).float64 + current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_SUB => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_float = current_frame.getVar(stack, inst.b).i_float - current_frame.getVar(stack, inst.c).i_float,
+                        .float64 = current_frame.getVar(stack, inst.b).float64 - current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_MULT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_float = current_frame.getVar(stack, inst.b).i_float * current_frame.getVar(stack, inst.c).i_float,
+                        .float64 = current_frame.getVar(stack, inst.b).float64 * current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_DIV => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_float = current_frame.getVar(stack, inst.b).i_float / current_frame.getVar(stack, inst.c).i_float,
+                        .float64 = current_frame.getVar(stack, inst.b).float64 / current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_MOD => {
-                    current_frame.setVar(stack, inst.a, v.Value{ .i_float = @mod(
-                        current_frame.getVar(stack, inst.b).i_float,
-                        current_frame.getVar(stack, inst.c).i_float,
+                    current_frame.setVar(stack, inst.a, v.Value{ .float64 = @mod(
+                        current_frame.getVar(stack, inst.b).float64,
+                        current_frame.getVar(stack, inst.c).float64,
                     ) });
                 },
                 .F_EQ => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_float == current_frame.getVar(stack, inst.c).i_float,
+                        .bool = current_frame.getVar(stack, inst.b).float64 == current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_NEQ => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_float != current_frame.getVar(stack, inst.c).i_float,
+                        .bool = current_frame.getVar(stack, inst.b).float64 != current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_LT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_float < current_frame.getVar(stack, inst.c).i_float,
+                        .bool = current_frame.getVar(stack, inst.b).float64 < current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_LE => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_float <= current_frame.getVar(stack, inst.c).i_float,
+                        .bool = current_frame.getVar(stack, inst.b).float64 <= current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_GT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_float > current_frame.getVar(stack, inst.c).i_float,
+                        .bool = current_frame.getVar(stack, inst.b).float64 > current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_GE => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_float >= current_frame.getVar(stack, inst.c).i_float,
+                        .bool = current_frame.getVar(stack, inst.b).float64 >= current_frame.getVar(stack, inst.c).float64,
                     });
                 },
                 .F_NEG => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_float = -current_frame.getVar(stack, inst.b).i_float,
+                        .float64 = -current_frame.getVar(stack, inst.b).float64,
                     });
                 },
                 .B_AND => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_bool and current_frame.getVar(stack, inst.c).i_bool,
+                        .bool = current_frame.getVar(stack, inst.b).bool and current_frame.getVar(stack, inst.c).bool,
                     });
                 },
                 .B_OR => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_bool or current_frame.getVar(stack, inst.c).i_bool,
+                        .bool = current_frame.getVar(stack, inst.b).bool or current_frame.getVar(stack, inst.c).bool,
                     });
                 },
                 .B_EQ => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_bool == current_frame.getVar(stack, inst.c).i_bool,
+                        .bool = current_frame.getVar(stack, inst.b).bool == current_frame.getVar(stack, inst.c).bool,
                     });
                 },
                 .B_NEQ => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = current_frame.getVar(stack, inst.b).i_bool != current_frame.getVar(stack, inst.c).i_bool,
+                        .bool = current_frame.getVar(stack, inst.b).bool != current_frame.getVar(stack, inst.c).bool,
                     });
                 },
                 .B_NOT => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_bool = !current_frame.getVar(stack, inst.b).i_bool,
+                        .bool = !current_frame.getVar(stack, inst.b).bool,
                     });
                 },
                 .I_TO_F => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_float = @floatFromInt(current_frame.getVar(stack, inst.a).i_int),
+                        .float64 = @floatFromInt(current_frame.getVar(stack, inst.a).int64),
                     });
                 },
                 .F_TO_I => {
                     current_frame.setVar(stack, inst.a, v.Value{
-                        .i_int = @trunc(current_frame.getVar(stack, inst.a).i_float),
+                        .int64 = @trunc(current_frame.getVar(stack, inst.a).float64),
                     });
                 },
                 .CALL => {
@@ -221,12 +221,12 @@ pub const VM = struct {
                 },
                 .JUMP_IF_FALSE => {
                     const condition = current_frame.getVar(stack, inst.a);
-                    if (!condition.i_bool) {
+                    if (!condition.bool) {
                         current_frame.cur_inst = inst.bEx() - 1;
                     }
                 },
                 .TYPE => {
-                    current_frame.setVar(stack, inst.a, v.Value{ .i_int = inst.b });
+                    current_frame.setVar(stack, inst.a, v.Value{ .int64 = inst.b });
                 },
                 .RETURN => {
                     self.stack[current_frame.stack_offset - 1] = current_frame.getVar(stack, inst.a);

@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const v = @import("value.zig");
+const sema = @import("sema.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -20,10 +21,11 @@ pub const BytecodeGen = struct {
     };
 
     allocator: std.mem.Allocator,
+    type_table: *sema.TypeTable,
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
 
-    register_types: [256]v.ValueType = [_]v.ValueType{v.ValueType.i_null} ** 256,
+    register_types: [256]sema.TypeId = [_]sema.TypeId{0} ** 256,
     next_free_register: u8 = 0,
 
     chunk_constants: std.ArrayList(v.Value),
@@ -34,9 +36,11 @@ pub const BytecodeGen = struct {
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
 
-    pub fn init(alloc: std.mem.Allocator) Self {
+    pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
         return Self{
             .allocator = alloc,
+            .type_table = type_table,
+            .register_types = [_]sema.TypeId{type_table.getPrimitive(.void)} ** 256,
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
             .chunk_constants = .empty,
@@ -82,7 +86,7 @@ pub const BytecodeGen = struct {
 
         for (func.params, 0..) |param, i| {
             try self.var_register_id_by_uid.put(param.uid, @intCast(i));
-            self.register_types[i] = .i_null;
+            self.register_types[i] = param.type_id;
         }
 
         return Function{
@@ -238,20 +242,17 @@ pub const BytecodeGen = struct {
         self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_idx);
     }
 
-    fn genFnCall(self: *Self, fc: ir.FnCall, target_reg: u8) !void {
+    fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
         for (fc.args) |arg| {
             _ = try self.genValue(arg, self.consumeRegister());
         }
 
-        //note: temp hack for echo
         if (fc.fn_uid == 0) {
-            var ty = v.ValueType.from_ir_value(fc.args[0]);
-            if (fc.args[0].data == .identifier) {
-                ty = self.resolveIdentifierType(fc.args[0].data.identifier.uid);
-            }
+            const arg_type_id = fc.args[0].type_id;
+            const arg_value_type = v.ValueType.fromTypeId(self.type_table, arg_type_id);
             const type_reg = self.consumeRegister();
-            try self.chunk_instructions.append(self.allocator, Instruction{ .op = .TYPE, .a = type_reg, .b = @intFromEnum(ty) });
-            self.register_types[type_reg] = .i_int;
+            try self.chunk_instructions.append(self.allocator, Instruction{ .op = .TYPE, .a = type_reg, .b = @intFromEnum(arg_value_type) });
+            self.register_types[type_reg] = self.type_table.getPrimitive(.int);
         }
 
         var fn_call = Instruction{
@@ -265,12 +266,7 @@ pub const BytecodeGen = struct {
 
         const num_args = fc.args.len + if (fc.fn_uid == 0) @as(usize, 1) else @as(usize, 0);
         self.freeRegisterN(num_args);
-        self.register_types[target_reg] = .i_null;
-    }
-
-    fn resolveIdentifierType(self: *Self, uid: usize) v.ValueType {
-        const reg = self.var_register_id_by_uid.get(uid) orelse return .i_null;
-        return self.register_types[reg];
+        self.register_types[target_reg] = value.type_id;
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
@@ -287,10 +283,11 @@ pub const BytecodeGen = struct {
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) BytecodeError!u8 {
         switch (value.data) {
             .i_int, .i_float, .i_bool, .i_string, .i_null, .i_void => {
-                const tv = v.TypedValue.from_ir_value(value);
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
-                self.register_types[target_reg] = tv.type;
+                self.register_types[target_reg] = value.type_id;
             },
+
+            .i_array => {},
 
             .identifier => |id| {
                 const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse
@@ -315,12 +312,93 @@ pub const BytecodeGen = struct {
             },
 
             .fn_call => |fc| {
-                try self.genFnCall(fc, target_reg);
+                try self.genFnCall(fc, value, target_reg);
             },
             else => {},
         }
 
         return target_reg;
+    }
+
+    fn genArrayInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const array_type = self.type_table.getTypePtrById(value.type_id);
+        const array_inner_type_id = array_type.kind.array;
+
+        const init_inst = Instruction{
+            .op = .ARRAY_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, array_inner_type_id)),
+            .c = @intCast(@min(value.data.i_array.values.len, 255)),
+        };
+
+        try self.chunk_instructions.append(self.allocator, init_inst);
+
+        for (value.data.i_array.values) |vl| {
+            try self.genArrayAppend(vl, target_reg);
+        }
+    }
+
+    fn genArrayLoad(self: *Self, target_reg: u8, array_reg: u8, index_value: *ir.Value) !void {
+        const index_reg = try self.genValue(index_value, self.consumeRegister());
+        defer self.freeRegister();
+
+        const load_inst = Instruction{
+            .op = .ARRAY_LOAD,
+            .a = target_reg,
+            .b = array_reg,
+            .c = index_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, load_inst);
+    }
+
+    fn genArrayStore(self: *Self, array_reg: u8, index_value: *ir.Value, value: *ir.Value) !void {
+        const index_reg = try self.genValue(index_value, self.consumeRegister());
+        defer self.freeRegister();
+
+        const value_reg = try self.genValue(value, self.consumeRegister());
+        defer self.freeRegister();
+
+        const store_inst = Instruction{
+            .op = .ARRAY_STORE,
+            .a = array_reg,
+            .b = index_reg,
+            .c = value_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, store_inst);
+    }
+
+    fn genArrayAppend(self: *Self, value: *const ir.Value, array_reg: u8) !void {
+        const v_reg = self.consumeRegister();
+        defer self.freeRegister();
+
+        const append_inst = Instruction{
+            .op = .ARRAY_APPEND,
+            .a = array_reg,
+            .b = try self.genValue(value, v_reg),
+        };
+        try self.chunk_instructions.append(self.allocator, append_inst);
+    }
+
+    fn genArrayPop(self: *Self, array_reg: u8, target_reg: u8) !void {
+        const pop_inst = Instruction{
+            .op = .ARRAY_POP,
+            .a = target_reg,
+            .b = array_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, pop_inst);
+    }
+
+    fn genArrayLen(self: *Self, array_reg: u8, target_reg: u8) !void {
+        const len_inst = Instruction{
+            .op = .ARRAY_LEN,
+            .a = target_reg,
+            .b = array_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, len_inst);
     }
 
     fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
@@ -350,6 +428,9 @@ pub const BytecodeGen = struct {
 
         const op = OpCode.fromIrBinaryOp(bo.kind);
 
+        const left_is_int = self.type_table.getTypePtrById(bo.left.type_id).kind == .int;
+        const right_is_int = self.type_table.getTypePtrById(bo.right.type_id).kind == .int;
+
         switch (bo.kind) {
             .f_add,
             .f_sub,
@@ -363,7 +444,7 @@ pub const BytecodeGen = struct {
             .f_cmp_gt,
             .f_cmp_ge,
             => {
-                if (bo.left.data == .i_int) {
+                if (left_is_int) {
                     const left_to_float = Instruction{
                         .op = .I_TO_F,
                         .a = left_reg,
@@ -371,7 +452,7 @@ pub const BytecodeGen = struct {
                     try self.chunk_instructions.append(self.allocator, left_to_float);
                 }
 
-                if (bo.right.data == .i_int) {
+                if (right_is_int) {
                     const right_to_float = Instruction{
                         .op = .I_TO_F,
                         .a = right_reg,
@@ -380,7 +461,7 @@ pub const BytecodeGen = struct {
                 }
             },
             .trunc_div => {
-                if (bo.left.data == .i_float) {
+                if (!left_is_int) {
                     const left_to_int = Instruction{
                         .op = .F_TO_I,
                         .a = left_reg,
@@ -388,7 +469,7 @@ pub const BytecodeGen = struct {
                     try self.chunk_instructions.append(self.allocator, left_to_int);
                 }
 
-                if (bo.right.data == .i_float) {
+                if (!right_is_int) {
                     const right_to_int = Instruction{
                         .op = .F_TO_I,
                         .a = right_reg,
@@ -408,11 +489,11 @@ pub const BytecodeGen = struct {
 
         try self.chunk_instructions.append(self.allocator, bo_inst);
         self.register_types[target_reg] = switch (bo.kind) {
-            .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .i_int,
-            .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .i_bool,
-            .f_add, .f_sub, .f_mult, .f_div, .f_mod => .i_float,
-            .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .i_bool,
-            .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .i_bool,
+            .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => self.type_table.getPrimitive(.int),
+            .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => self.type_table.getPrimitive(.boolean),
+            .f_add, .f_sub, .f_mult, .f_div, .f_mod => self.type_table.getPrimitive(.float),
+            .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => self.type_table.getPrimitive(.boolean),
+            .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => self.type_table.getPrimitive(.boolean),
         };
     }
 
@@ -429,9 +510,9 @@ pub const BytecodeGen = struct {
 
         try self.chunk_instructions.append(self.allocator, op_inst);
         self.register_types[target_reg] = switch (bo.kind) {
-            .not => .i_bool,
-            .i_neg => .i_int,
-            .f_neg => .i_float,
+            .not => self.type_table.getPrimitive(.boolean),
+            .i_neg => self.type_table.getPrimitive(.int),
+            .f_neg => self.type_table.getPrimitive(.float),
         };
     }
 
@@ -483,12 +564,12 @@ const Chunk = struct {
             const ty = self.shadow_types[i];
             std.debug.print("{d:0>4}  {s: <10} ", .{ i, @tagName(ty) });
             switch (ty) {
-                .i_int => std.debug.print("{d}", .{constant.i_int}),
-                .i_float => std.debug.print("{d}", .{constant.i_float}),
-                .i_bool => std.debug.print("{}", .{constant.i_bool}),
-                .i_null => std.debug.print("null", .{}),
-                .i_string => std.debug.print("\"{s}\"", .{constant.i_string.slice()}),
-                .i_heap_object => std.debug.print("<heap>", .{}),
+                .int64 => std.debug.print("{d}", .{constant.int64}),
+                .float64 => std.debug.print("{d}", .{constant.float64}),
+                .bool => std.debug.print("{}", .{constant.bool}),
+                .null => std.debug.print("null", .{}),
+                .string => std.debug.print("\"{s}\"", .{constant.string.slice()}),
+                .array => std.debug.print("<array>", .{}),
             }
             std.debug.print("\n", .{});
         }
@@ -543,6 +624,13 @@ const Chunk = struct {
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
             .TYPE => std.debug.print("R[{d}] {s}", .{ inst.a, @tagName(@as(v.ValueType, @enumFromInt(inst.b))) }),
+            .ARRAY_INIT,
+            .ARRAY_LOAD,
+            .ARRAY_STORE,
+            .ARRAY_LEN,
+            .ARRAY_APPEND,
+            .ARRAY_POP,
+            => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
         }
         std.debug.print("\n", .{});
     }
@@ -581,6 +669,13 @@ const OpCode = enum(u8) {
     LOAD_CONST,
     LOAD,
     STORE_VAR,
+
+    ARRAY_INIT,
+    ARRAY_LOAD,
+    ARRAY_STORE,
+    ARRAY_LEN,
+    ARRAY_APPEND,
+    ARRAY_POP,
 
     I_ADD,
     I_SUB,
