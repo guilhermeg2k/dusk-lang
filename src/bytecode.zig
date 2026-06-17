@@ -35,6 +35,7 @@ pub const BytecodeGen = struct {
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
+    inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
 
     pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
         return Self{
@@ -49,10 +50,18 @@ pub const BytecodeGen = struct {
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
+            .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
         };
     }
 
     pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
+        for (builtins) |bf| {
+            switch (bf.kind) {
+                .@"inline" => |inl| try self.inline_functions_by_uid.put(bf.uid, inl),
+                else => {},
+            }
+        }
+
         var funcs: std.ArrayList(Function) = .empty;
 
         for (builtins) |bf| {
@@ -92,11 +101,11 @@ pub const BytecodeGen = struct {
         return Function{
             .uid = func.uid,
             .name = func.identifier,
-            .kind = .{ .native = try self.genFunctionChunk(func) },
+            .kind = .{ .dusk = try self.genFunctionChunk(func) },
         };
     }
 
-    fn genInstructionBlock(self: *Self, block: []const ir.Instruction) BytecodeError!void {
+    fn genInstructionBlock(self: *Self, block: []const ir.Instruction) anyerror!void {
         for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
@@ -249,6 +258,16 @@ pub const BytecodeGen = struct {
             _ = try self.genValue(arg, self.consumeRegister());
         }
 
+        if (self.inline_functions_by_uid.get(fc.fn_uid)) |inl| {
+            const instructions = try inl.gen(target_reg, target_reg + 1, self.allocator);
+            defer self.allocator.free(instructions);
+            try self.chunk_instructions.appendSlice(self.allocator, instructions);
+            self.freeRegisterN(fc.args.len);
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
+        //note: temp hacky for echo
         if (fc.fn_uid == 0) {
             const arg_type_id = fc.args[0].type_id;
             const arg_value_type = v.ValueType.fromTypeId(self.type_table, arg_type_id);
@@ -282,7 +301,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, inst);
     }
 
-    fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) BytecodeError!u8 {
+    fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) anyerror!u8 {
         switch (value.data) {
             .i_int, .i_float, .i_bool, .i_string, .i_null, .i_void => {
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
@@ -567,21 +586,29 @@ pub const Program = struct {
     functions: []const Function,
 };
 
-pub const BuiltinFn = struct {
+pub const HostFn = struct {
     func: *const fn (args: []v.Value) v.Value,
     num_args: u8,
+};
+
+pub const InlineFn = struct {
+    gen: *const fn (target_reg: u8, arg_start_reg: u8, std.mem.Allocator) anyerror![]const Instruction,
+    num_args: u8,
+};
+
+pub const FunctionKind = union(enum) {
+    dusk: Chunk,
+    host: HostFn,
+    @"inline": InlineFn,
 };
 
 pub const Function = struct {
     uid: usize,
     name: []const u8,
-    kind: union(enum) {
-        native: Chunk,
-        builtin: BuiltinFn,
-    },
+    kind: FunctionKind,
 };
 
-const Chunk = struct {
+pub const Chunk = struct {
     const Self = @This();
 
     instructions: []Instruction,
@@ -666,7 +693,7 @@ const Chunk = struct {
     }
 };
 
-const Instruction = packed struct {
+pub const Instruction = packed struct {
     const Self = @This();
 
     op: OpCode,
@@ -693,7 +720,7 @@ const Instruction = packed struct {
     }
 };
 
-const OpCode = enum(u8) {
+pub const OpCode = enum(u8) {
     const Self = @This();
 
     LOAD_CONST,

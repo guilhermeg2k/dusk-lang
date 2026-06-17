@@ -96,7 +96,7 @@ fn appendFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
         },
         self.void_type_id,
     );
-    return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &appendImpl, .num_args = 2 } };
+    return BuiltInFn{ .symbol = symbol };
 }
 
 fn lenFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
@@ -115,7 +115,7 @@ fn lenFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
         },
         self.int_type_id,
     );
-    return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &lenImpl, .num_args = 1 } };
+    return BuiltInFn{ .symbol = symbol };
 }
 
 fn assertFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
@@ -142,13 +142,12 @@ const builtin_factories = [_]BuiltInFactory{
 
 const builtin_bytecode_registry = [_]struct {
     name: []const u8,
-    impl: *const fn (args: []v.Value) v.Value,
-    num_args: u8,
+    kind: bc.FunctionKind,
 }{
-    .{ .name = "echo", .impl = &echoImpl, .num_args = 2 },
-    .{ .name = "append", .impl = &appendImpl, .num_args = 2 },
-    .{ .name = "len", .impl = &lenImpl, .num_args = 1 },
-    .{ .name = "assert", .impl = &assertImpl, .num_args = 1 },
+    .{ .name = "echo", .kind = .{ .host = .{ .func = &echoImpl, .num_args = 2 } } },
+    .{ .name = "append", .kind = .{ .@"inline" = .{ .gen = &appendCodeGen, .num_args = 2 } } },
+    .{ .name = "len", .kind = .{ .@"inline" = .{ .gen = &lenCodeGen, .num_args = 1 } } },
+    .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
 };
 
 comptime {
@@ -163,7 +162,7 @@ pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
         f.* = .{
             .uid = i,
             .name = entry.name,
-            .kind = .{ .builtin = .{ .func = entry.impl, .num_args = entry.num_args } },
+            .kind = entry.kind,
         };
     }
     return funcs;
@@ -182,14 +181,16 @@ fn echoImpl(args: []v.Value) v.Value {
     return .{ .null = {} };
 }
 
-fn appendImpl(args: []v.Value) v.Value {
-    _ = args;
-    @panic("not implemented: append");
+fn appendCodeGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
+    return try list.toOwnedSlice(alloc);
 }
 
-fn lenImpl(args: []v.Value) v.Value {
-    _ = args;
-    @panic("not implemented: len");
+fn lenCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
 }
 
 fn assertImpl(args: []v.Value) v.Value {
@@ -201,7 +202,7 @@ fn assertImpl(args: []v.Value) v.Value {
 
 const BuiltInFn = struct {
     symbol: Symbol,
-    bc_fn: bc.BuiltinFn,
+    bc_fn: ?bc.HostFn = null,
     code: []const u8 = "",
 };
 

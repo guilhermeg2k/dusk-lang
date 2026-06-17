@@ -37,14 +37,14 @@ pub const VM = struct {
 
         const stack = self.stack[0..];
 
-        while (current_frame.cur_inst < current_frame.function.kind.native.instructions.len) : (current_frame.cur_inst += 1) {
+        while (current_frame.cur_inst < current_frame.function.kind.dusk.instructions.len) : (current_frame.cur_inst += 1) {
             current_frame = &self.frames.items[self.frames.items.len - 1];
 
-            const inst = current_frame.function.kind.native.instructions[current_frame.cur_inst];
+            const inst = current_frame.function.kind.dusk.instructions[current_frame.cur_inst];
 
             switch (inst.op) {
                 .LOAD_CONST => {
-                    current_frame.setVar(stack, inst.a, current_frame.function.kind.native.constants[inst.bEx()]);
+                    current_frame.setVar(stack, inst.a, current_frame.function.kind.dusk.constants[inst.bEx()]);
                 },
 
                 .LOAD => {
@@ -300,11 +300,12 @@ pub const VM = struct {
                 .CALL => {
                     const func = self.program.functions[inst.bEx()];
                     switch (func.kind) {
-                        .native => try self.callFunction(&func, current_frame.stack_offset, inst.a),
-                        .builtin => |b| {
+                        .dusk => try self.callFunction(&func, current_frame.stack_offset, inst.a),
+                        .host => |b| {
                             const args = stack[current_frame.stack_offset + inst.a + 1 ..][0..b.num_args];
                             stack[current_frame.stack_offset + inst.a] = b.func(args);
                         },
+                        .@"inline" => unreachable,
                     }
                 },
 
