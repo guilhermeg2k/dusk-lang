@@ -174,7 +174,6 @@ pub const IndexedExp = struct {
     nullable: bool,
 };
 
-
 pub const Struct = struct {
     fields: []const StructField,
     static_fields: []const StructField,

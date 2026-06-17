@@ -1,3 +1,12 @@
+const lexer = @import("lexer.zig");
+const parser = @import("parser.zig");
+const ast = @import("ast.zig");
+const err = @import("error.zig");
+const std = @import("std");
+const Token = lexer.Token;
+const Tag = lexer.Tag;
+const Errors = err.Errors;
+
 pub const Parser = struct {
     const Self = @This();
 
@@ -28,7 +37,7 @@ pub const Parser = struct {
         return self.parseBlock();
     }
 
-    pub fn parseBlock(self: *Self) ParserError!ast.Block {
+    pub fn parseBlock(self: *Self) Errors!ast.Block {
         var statements: std.ArrayList(ast.StatementNode) = .empty;
 
         var current_tk = self.peekCurrent();
@@ -236,7 +245,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseIfStmt(self: *Self) ParserError!ast.IfStmt {
+    fn parseIfStmt(self: *Self) Errors!ast.IfStmt {
         self.walk();
         const exp = try self.parseExp(0);
         var else_block: ?ast.Block = null;
@@ -268,7 +277,7 @@ pub const Parser = struct {
         return ast.IfStmt{ .condition = exp, .then_block = then_block, .else_block = else_block };
     }
 
-    fn parseForStmt(self: *Self) ParserError!ast.ForStmt {
+    fn parseForStmt(self: *Self) Errors!ast.ForStmt {
         self.walk();
 
         self.loop_depth += 1;
@@ -302,7 +311,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseStructDef(self: *Self) ParserError!ast.Struct {
+    fn parseStructDef(self: *Self) Errors!ast.Struct {
         _ = try self.expect(.indent);
         var static_fields: std.ArrayList(ast.StructField) = .empty;
         var fields: std.ArrayList(ast.StructField) = .empty;
@@ -384,7 +393,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseAnonymousStructDef(self: *Self) ParserError!ast.Struct {
+    fn parseAnonymousStructDef(self: *Self) Errors!ast.Struct {
         _ = try self.expect(.indent);
         var fields: std.ArrayList(ast.StructField) = .empty;
 
@@ -419,7 +428,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseFnDef(self: *Self) ParserError!ast.FnDef {
+    fn parseFnDef(self: *Self) Errors!ast.FnDef {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
@@ -457,7 +466,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseFnArgs(self: *Self) ParserError!std.ArrayList(ast.FnParam) {
+    fn parseFnArgs(self: *Self) Errors!std.ArrayList(ast.FnParam) {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
             _ = self.match(.new_line);
@@ -471,7 +480,7 @@ pub const Parser = struct {
         return arguments;
     }
 
-    fn parseFnArg(self: *Self) ParserError!ast.FnParam {
+    fn parseFnArg(self: *Self) Errors!ast.FnParam {
         var default_value: ?*ast.ExpNode = null;
         var type_annotation: ?*ast.TypeAnnotation = null;
 
@@ -497,7 +506,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseArrayLiteral(self: *Self) ParserError!ast.ArrayLiteral {
+    fn parseArrayLiteral(self: *Self) Errors!ast.ArrayLiteral {
         var exps: []const *ast.ExpNode = &.{};
         if (self.peekCurrent().tag != .r_bracket) {
             exps = try self.parseExpList();
@@ -508,7 +517,7 @@ pub const Parser = struct {
         return ast.ArrayLiteral{ .exps = exps };
     }
 
-    fn parseExpList(self: *Self) ParserError![]const *ast.ExpNode {
+    fn parseExpList(self: *Self) Errors![]const *ast.ExpNode {
         var exps: std.ArrayList(*ast.ExpNode) = .empty;
 
         while (true) {
@@ -523,7 +532,7 @@ pub const Parser = struct {
         return exps.toOwnedSlice(self.allocator);
     }
 
-    fn parseFnCallArgs(self: *Self) ParserError![]const ast.FnCallArg {
+    fn parseFnCallArgs(self: *Self) Errors![]const ast.FnCallArg {
         if (self.peekCurrent().tag == .r_paren) {
             return &.{};
         }
@@ -578,7 +587,7 @@ pub const Parser = struct {
         return args.toOwnedSlice(self.allocator);
     }
 
-    fn parseReturnStmt(self: *Self) ParserError!ast.ReturnStmt {
+    fn parseReturnStmt(self: *Self) Errors!ast.ReturnStmt {
         self.walk();
         const cur_tk = self.peekCurrent();
 
@@ -613,7 +622,7 @@ pub const Parser = struct {
         return right;
     }
 
-    fn parseExp(self: *Self, min_bp: u8) ParserError!*ast.ExpNode {
+    fn parseExp(self: *Self, min_bp: u8) Errors!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
 
@@ -661,7 +670,7 @@ pub const Parser = struct {
         return exp;
     }
 
-    fn parsePrefix(self: *Self) ParserError!*ast.ExpNode {
+    fn parsePrefix(self: *Self) Errors!*ast.ExpNode {
         const tk = self.peekCurrent();
         self.walk();
 
@@ -801,7 +810,7 @@ pub const Parser = struct {
         return tk.tag == .arrow or tk.tag == .return_kw;
     }
 
-    fn parsePostfix(self: *Self, left: *ast.ExpNode) ParserError!*ast.ExpNode {
+    fn parsePostfix(self: *Self, left: *ast.ExpNode) Errors!*ast.ExpNode {
         var node = left;
 
         while (true) {
@@ -1014,14 +1023,3 @@ pub const Parser = struct {
         return self.tokens[self.cur_index - 1];
     }
 };
-
-const Token = lexer.Token;
-const Tag = lexer.Tag;
-const Error = err.ErrorDispatcher;
-const ParserError = err.Errors;
-
-const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
-const ast = @import("ast.zig");
-const err = @import("error.zig");
-const std = @import("std");

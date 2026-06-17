@@ -287,7 +287,10 @@ pub const BytecodeGen = struct {
                 self.register_types[target_reg] = value.type_id;
             },
 
-            .i_array => {},
+            .i_array => {
+                try self.genArrayInit(value, target_reg);
+                self.register_types[target_reg] = value.type_id;
+            },
 
             .identifier => |id| {
                 const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse

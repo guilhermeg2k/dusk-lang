@@ -4,6 +4,8 @@ const RunTimeError = @import("error.zig").RunTimeError;
 const sema = @import("sema.zig");
 
 pub const Value = extern union {
+    const Self = @This();
+
     int64: i64,
     float64: f64,
     bool: bool,
@@ -11,21 +13,36 @@ pub const Value = extern union {
 
     //todo:  string should be pointers and heap allocated
     string: StringValue,
-    array: *Array,
+    heap_value: *HeapValue,
+};
+
+const HeapValueType = enum(u8) {
+    array,
+};
+
+pub const HeapValue = extern struct {
+    kind: HeapValueType,
+    next: ?*const HeapValue,
 };
 
 pub const Array = extern struct {
     const Self = @This();
 
+    obj: HeapValue,
     kind: ValueType,
     len: usize,
     capacity: usize,
 
     pub fn init(allocator: std.mem.Allocator, kind: ValueType, capacity: usize) !*Self {
         const total_bytes = Self.calc_size(capacity);
-        const raw_memory = try allocator.alignedAlloc(u8, @alignOf(Array), total_bytes);
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
 
         const array = @as(*Self, @ptrCast(raw_memory.ptr));
+
+        array.obj = .{
+            .next = null,
+            .kind = .array,
+        };
 
         array.len = 0;
         array.kind = kind;
@@ -87,18 +104,6 @@ pub const Array = extern struct {
     }
 };
 
-pub const HeapObject = union(enum) {
-    const Self = @This();
-
-    array: *Array,
-
-    pub fn init(allocator: std.mem.Allocator, value: Self) !*Self {
-        const ptr = try allocator.create(Self);
-        ptr.* = value;
-        return ptr;
-    }
-};
-
 pub const StringValue = extern struct {
     ptr: [*]const u8,
     len: usize,
@@ -135,6 +140,8 @@ pub const ValueType = enum(u8) {
     bool,
     null,
     string,
+
+    //note: maybe this needs to get the inner type?
     array,
 
     pub fn from_ir_value(value: *const ir.Value) ValueType {
