@@ -3,6 +3,10 @@ const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
 const sema = @import("sema.zig");
 
+const NULL_VALUE = Value{
+    .null = {},
+};
+
 pub const Value = extern union {
     const Self = @This();
 
@@ -21,8 +25,25 @@ const HeapValueType = enum(u8) {
 };
 
 pub const HeapValue = extern struct {
+    const Self = @This();
+
     kind: HeapValueType,
-    next: ?*const HeapValue,
+    next: ?*HeapValue = null,
+    forward: ?*HeapValue = null,
+
+    pub fn getParentPtr(comptime T: type, ptr: *Self) *T {
+        return @as(*T, @fieldParentPtr("obj", ptr));
+    }
+
+    pub fn followForward(ptr: *Self) ?*Self {
+        var cur = ptr.forward;
+
+        while (cur) |forward| {
+            cur = forward.forward;
+        }
+
+        return cur;
+    }
 };
 
 pub const Array = extern struct {
@@ -40,8 +61,9 @@ pub const Array = extern struct {
         const array = @as(*Self, @ptrCast(raw_memory.ptr));
 
         array.obj = .{
-            .next = null,
             .kind = .array,
+            .next = null,
+            .forward = null,
         };
 
         array.len = 0;
@@ -51,7 +73,7 @@ pub const Array = extern struct {
         return array;
     }
 
-    pub fn get(self: *Self, i: usize) !Value {
+    pub fn get(self: *const Self, i: usize) !Value {
         if (i >= self.len) {
             return RunTimeError.ArrayOutOfBounds;
         }
@@ -69,31 +91,50 @@ pub const Array = extern struct {
         items[i] = value;
     }
 
-    pub fn append(self: *Self, allocator: std.mem.Allocator, value: Value) !*Self {
-        var cur_ptr = self;
+    pub fn pop(self: *Self) !Value {
+        if (self.len == 0) {
+            return NULL_VALUE;
+        }
 
+        self.len -= 1;
+
+        return try self.get(self.len);
+    }
+
+    pub fn needsResize(self: *Self) bool {
+        return self.len + 1 > self.capacity;
+    }
+
+    pub fn resize(self: *Self, allocator: std.mem.Allocator) !*Self {
+        var cur_ptr = self;
         const needs_resize = self.len + 1 > self.capacity;
         if (needs_resize) {
             const new_capacity = self.capacity + self.capacity / 2;
             const new_size = Self.calc_size(new_capacity);
             const old_size = Self.calc_size(self.capacity);
 
-            const old_raw_slice = @as([*]align(@alignOf(Array)) u8, @ptrCast(cur_ptr))[0..old_size];
-            const new_raw_slice = try allocator.realloc(old_raw_slice, new_size);
+            const old_raw_slice = @as([*]align(@alignOf(Self)) u8, @ptrCast(cur_ptr))[0..old_size];
+            const new_raw_slice = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), new_size);
 
-            cur_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
+            @memcpy(new_raw_slice, old_raw_slice);
+
+            const new_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
+
+            cur_ptr.obj.forward = &new_ptr.obj;
+            cur_ptr = new_ptr;
             cur_ptr.capacity = new_capacity;
         }
-
-        const data_ptr = cur_ptr.getDataPtr();
-        data_ptr[cur_ptr.len] = value;
-        cur_ptr.len += 1;
-
         return cur_ptr;
     }
 
-    pub fn getDataPtr(self: *Self) [*]Value {
-        const data_pointer = @as([*]Self, @ptrCast(self)) + 1;
+    pub fn append(self: *Self, value: Value) !void {
+        const items = self.getDataPtr();
+        items[self.len] = value;
+        self.len += 1;
+    }
+
+    pub fn getDataPtr(self: *const Self) [*]Value {
+        const data_pointer = @as([*]Self, @ptrCast(@constCast(self))) + 1;
         return @ptrCast(data_pointer);
     }
 

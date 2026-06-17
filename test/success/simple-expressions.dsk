@@ -1,14 +1,6 @@
-let x1 = 1 + 2 * 3
+let mut a: []float = [1.0]
 
-assert(x1 == 7)
+a[0] = 2.0
 
-let x = 2
+echo(a[0])
 
-if x == 2
-    echo("it is 2")
-
-let mut z = 10
-
-for z < 20
-    echo(z)
-    z += 1

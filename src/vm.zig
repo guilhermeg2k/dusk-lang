@@ -64,6 +64,50 @@ pub const VM = struct {
                     );
                 },
 
+                .ARRAY_LOAD => {
+                    const arr_ptr = current_frame.getVar(stack, inst.b).heap_value;
+                    const array = self.getArrayFromHeapValuePtr(current_frame, stack, inst.b, arr_ptr);
+
+                    const idx = current_frame.getVar(stack, inst.c);
+                    const value = try array.get(@intCast(idx.int64));
+                    current_frame.setVar(stack, inst.a, value);
+                },
+
+                .ARRAY_APPEND => {
+                    const value = current_frame.getVar(stack, inst.b);
+                    const arr_ptr = current_frame.getVar(stack, inst.a).heap_value;
+                    var array = self.getArrayFromHeapValuePtr(current_frame, stack, inst.b, arr_ptr);
+
+                    if (array.needsResize()) {
+                        const new_array_ptr = try array.resize(self.allocator);
+                        current_frame.setVar(stack, inst.a, .{ .heap_value = &new_array_ptr.obj });
+                    }
+
+                    try array.append(value);
+                },
+
+                .ARRAY_STORE => {
+                    const arr_ptr = current_frame.getVar(stack, inst.a).heap_value;
+                    var array = self.getArrayFromHeapValuePtr(current_frame, stack, inst.a, arr_ptr);
+                    const idx = current_frame.getVar(stack, inst.b);
+                    const value = current_frame.getVar(stack, inst.c);
+
+                    try array.set(@intCast(idx.int64), value);
+                },
+
+                .ARRAY_LEN => {
+                    const arr_ptr = current_frame.getVar(stack, inst.b).heap_value;
+                    const array = self.getArrayFromHeapValuePtr(current_frame, stack, inst.b, arr_ptr);
+                    current_frame.setVar(stack, inst.a, .{ .int64 = @intCast(array.len) });
+                },
+
+                .ARRAY_POP => {
+                    const arr_ptr = current_frame.getVar(stack, inst.b).heap_value;
+                    var array = self.getArrayFromHeapValuePtr(current_frame, stack, inst.b, arr_ptr);
+                    const value = try array.pop();
+                    current_frame.setVar(stack, inst.a, value);
+                },
+
                 .I_ADD => {
                     current_frame.setVar(stack, inst.a, v.Value{
                         .int64 = current_frame.getVar(stack, inst.b).int64 + current_frame.getVar(stack, inst.c).int64,
@@ -288,6 +332,22 @@ pub const VM = struct {
                 else => {},
             }
         }
+    }
+
+    fn getArrayFromHeapValuePtr(self: *Self, frame: *CallFrame, stack: []v.Value, reg_idx: u8, ptr: *v.HeapValue) *v.Array {
+        const refreshed_pointer = self.refreshStackHeapPtr(frame, stack, reg_idx, ptr);
+        const array = v.HeapValue.getParentPtr(v.Array, refreshed_pointer);
+        return array;
+    }
+
+    fn refreshStackHeapPtr(_: *Self, frame: *CallFrame, stack: []v.Value, reg_idx: u8, ptr: *v.HeapValue) *v.HeapValue {
+        const follow_forward = v.HeapValue.followForward(ptr);
+
+        if (follow_forward) |forward| {
+            frame.setVar(stack, reg_idx, .{ .heap_value = forward });
+        }
+
+        return follow_forward orelse ptr;
     }
 
     fn callFunction(self: *Self, func: *const bc.Function, current_stack_offset: usize, target_reg: u8) !void {

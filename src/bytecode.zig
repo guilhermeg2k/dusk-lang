@@ -114,9 +114,11 @@ pub const BytecodeGen = struct {
                 .return_stmt => |r_stmt| {
                     try self.genReturn(r_stmt);
                 },
+                .update_indexed => |stmt| {
+                    _ = try self.genUpdateArrayValue(stmt);
+                },
                 .break_stmt => try self.genBreak(),
                 .continue_stmt => try self.genContinue(),
-                else => {},
             }
         }
     }
@@ -287,6 +289,13 @@ pub const BytecodeGen = struct {
                 self.register_types[target_reg] = value.type_id;
             },
 
+            .indexed => |idx| {
+                const array_reg = try self.genValue(idx.target, self.consumeRegister());
+                defer self.freeRegister();
+                try self.genArrayLoad(target_reg, array_reg, idx.index);
+                self.register_types[target_reg] = value.type_id;
+            },
+
             .i_array => {
                 try self.genArrayInit(value, target_reg);
                 self.register_types[target_reg] = value.type_id;
@@ -331,7 +340,7 @@ pub const BytecodeGen = struct {
             .op = .ARRAY_INIT,
             .a = target_reg,
             .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, array_inner_type_id)),
-            .c = @intCast(@min(value.data.i_array.values.len, 255)),
+            .c = @intCast(@min(@max(value.data.i_array.values.len, 8), 255)),
         };
 
         try self.chunk_instructions.append(self.allocator, init_inst);
@@ -372,14 +381,31 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, store_inst);
     }
 
+    fn genUpdateArrayValue(self: *Self, stmt: ir.UpdateIndexed) !void {
+        const indexed = stmt.target.data.indexed;
+        const array_reg = try self.genValue(indexed.target, self.consumeRegister());
+        const index_reg = try self.genValue(indexed.index, self.consumeRegister());
+        const value_reg = try self.genValue(stmt.value, self.consumeRegister());
+        defer self.freeRegisterN(3);
+
+        const store_inst = Instruction{
+            .op = .ARRAY_STORE,
+            .a = array_reg,
+            .b = index_reg,
+            .c = value_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, store_inst);
+    }
+
     fn genArrayAppend(self: *Self, value: *const ir.Value, array_reg: u8) !void {
-        const v_reg = self.consumeRegister();
+        const v_reg = try self.genValue(value, self.consumeRegister());
         defer self.freeRegister();
 
         const append_inst = Instruction{
             .op = .ARRAY_APPEND,
             .a = array_reg,
-            .b = try self.genValue(value, v_reg),
+            .b = v_reg,
         };
         try self.chunk_instructions.append(self.allocator, append_inst);
     }
@@ -627,13 +653,14 @@ const Chunk = struct {
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
             .TYPE => std.debug.print("R[{d}] {s}", .{ inst.a, @tagName(@as(v.ValueType, @enumFromInt(inst.b))) }),
-            .ARRAY_INIT,
             .ARRAY_LOAD,
             .ARRAY_STORE,
-            .ARRAY_LEN,
-            .ARRAY_APPEND,
-            .ARRAY_POP,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .ARRAY_APPEND,
+            .ARRAY_LEN,
+            .ARRAY_POP,
+            => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
+            .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
         }
         std.debug.print("\n", .{});
     }
