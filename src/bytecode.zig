@@ -81,7 +81,17 @@ pub const BytecodeGen = struct {
                 .return_type = 0,
             },
         );
+
         try funcs.append(self.allocator, main_fn);
+
+        for (funcs.items) |func| {
+            switch (func.kind) {
+                .dusk => {
+                    func.kind.dusk.disasamble();
+                },
+                else => {},
+            }
+        }
 
         return Program{
             .main_func_index = funcs.items.len - 1,
@@ -616,6 +626,7 @@ pub const Chunk = struct {
     shadow_types: []v.ValueType,
 
     pub fn disasamble(self: *const Self) void {
+        std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
         for (self.constants, 0..) |constant, i| {
             const ty = self.shadow_types[i];
             std.debug.print("{d:0>4}  {s: <10} ", .{ i, @tagName(ty) });

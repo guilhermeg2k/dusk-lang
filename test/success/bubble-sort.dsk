@@ -15,5 +15,7 @@ let bubble_sort: fn = (mut arr: []int) -> void
         i = i + 1
 
 let mut v: []int = [1,2,51,22, 100, 500, 321, 21312, 21312]
+
 bubble_sort(v)
+
 echo(v)

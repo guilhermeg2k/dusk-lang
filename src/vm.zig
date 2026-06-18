@@ -37,10 +37,16 @@ pub const VM = struct {
 
         const stack = self.stack[0..];
 
-        while (current_frame.cur_inst < current_frame.function.kind.dusk.instructions.len) : (current_frame.cur_inst += 1) {
+        while (self.frames.items.len > 0) {
             current_frame = &self.frames.items[self.frames.items.len - 1];
 
+            if (current_frame.cur_inst >= current_frame.function.kind.dusk.instructions.len) {
+                _ = self.frames.pop();
+                continue;
+            }
+
             const inst = current_frame.function.kind.dusk.instructions[current_frame.cur_inst];
+            current_frame.cur_inst += 1;
 
             switch (inst.op) {
                 .LOAD_CONST => {
@@ -310,13 +316,13 @@ pub const VM = struct {
                 },
 
                 .JUMP => {
-                    current_frame.cur_inst = inst.aEx() - 1;
+                    current_frame.cur_inst = inst.aEx();
                 },
 
                 .JUMP_IF_FALSE => {
                     const condition = current_frame.getVar(stack, inst.a);
                     if (!condition.bool) {
-                        current_frame.cur_inst = inst.bEx() - 1;
+                        current_frame.cur_inst = inst.bEx();
                     }
                 },
 
@@ -327,8 +333,6 @@ pub const VM = struct {
                 .RETURN => {
                     self.stack[current_frame.stack_offset - 1] = current_frame.getVar(stack, inst.a);
                     _ = self.frames.pop();
-                    current_frame = &self.frames.items[self.frames.items.len - 1];
-                    current_frame.cur_inst -= 1;
                 },
                 else => {},
             }

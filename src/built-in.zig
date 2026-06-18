@@ -168,16 +168,30 @@ pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
     return funcs;
 }
 
+fn printValue(value: v.Value, ty: v.ValueType) void {
+    switch (ty) {
+        .int64 => std.debug.print("{d}", .{value.int64}),
+        .float64 => std.debug.print("{d}", .{value.float64}),
+        .bool => std.debug.print("{}", .{value.bool}),
+        .string => std.debug.print("{s}", .{value.string.slice()}),
+        .null => std.debug.print("null", .{}),
+        .array => {
+            const array = v.HeapValue.getParentPtr(v.Array, value.heap_value);
+            const data = array.getDataPtr();
+            std.debug.print("[", .{});
+            for (0..array.len) |i| {
+                if (i > 0) std.debug.print(", ", .{});
+                printValue(data[i], array.kind);
+            }
+            std.debug.print("]", .{});
+        },
+    }
+}
+
 fn echoImpl(args: []v.Value) v.Value {
     const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
-    switch (ty) {
-        .int64 => std.debug.print("{d}\n", .{args[0].int64}),
-        .float64 => std.debug.print("{d}\n", .{args[0].float64}),
-        .bool => std.debug.print("{}\n", .{args[0].bool}),
-        .string => std.debug.print("{s}\n", .{args[0].string.slice()}),
-        .null => std.debug.print("null\n", .{}),
-        .array => std.debug.print("<heap object>\n", .{}),
-    }
+    printValue(args[0], ty);
+    std.debug.print("\n", .{});
     return .{ .null = {} };
 }
 

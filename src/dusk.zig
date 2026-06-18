@@ -58,7 +58,6 @@ pub const Dusk = struct {
 
         var Bytecodegen = bc.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
         const program = try Bytecodegen.generate(&ir, &builtin.getBytecodeFunctions());
-        program.functions[program.main_func_index].kind.dusk.disasamble();
 
         var v = VM.init(self.allocator, &program);
         try v.run();
