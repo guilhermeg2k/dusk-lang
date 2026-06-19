@@ -922,6 +922,8 @@ pub const SemaAnalyzer = struct {
         var params: []const TypedIdentifier = undefined;
         var return_type: TypeId = undefined;
 
+        var is_struct_init = false;
+
         var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
         defer arg_exp_by_param_name.deinit();
 
@@ -947,6 +949,7 @@ pub const SemaAnalyzer = struct {
                         params = struct_def.fields_in_order;
                         return_type = scope.blueprint_type_id;
                         uid = symbol.uid;
+                        is_struct_init = true;
                     },
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
@@ -960,6 +963,7 @@ pub const SemaAnalyzer = struct {
                             params = struct_def.fields_in_order;
                             return_type = symbol.type_id;
                             uid = symbol.uid;
+                            is_struct_init = true;
                         } else {
                             return self.err_dispatcher.invalidType(
                                 "function or struct",
@@ -1092,9 +1096,9 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct_identifier;
+        const is_struct_inicialization = is_struct_init or fn_call.target.data == .anonymous_struct_identifier;
 
-        if (is_anonymous_struct_inicialization) {
+        if (is_struct_inicialization) {
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
                 try keys.append(self.allocator, param.identifier);

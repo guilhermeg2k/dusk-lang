@@ -1,4 +1,12 @@
-let mut a = @(x = 1, y = 2)
-echo(a)
+let Point = struct
+    x: int
+    y: int
+
+    print: (self: @) -> void
+        echo(self)
+
+let mut a = Point(x = 1, y = 2)
+
+a.print()
 
 
