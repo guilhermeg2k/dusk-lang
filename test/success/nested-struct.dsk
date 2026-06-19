@@ -29,6 +29,6 @@ let user = User(
     )
 )
 
-echo(stringify(user))
+echo(user)
 
 

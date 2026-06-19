@@ -1,10 +1,10 @@
 let Point = struct
-    x: int
-    y: int
+    x: int = 2
+    y: int = 3
 
     print: (self: @) -> void
         echo(self)
 
-let mut a = Point(x = 1, y = 2)
+let mut a = Point()
 
-a.print()
+Point.print(a)
