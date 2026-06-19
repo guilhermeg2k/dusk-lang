@@ -114,6 +114,37 @@ pub const VM = struct {
                     current_frame.setVar(stack, inst.a, value);
                 },
 
+                .STRUCT_INIT => {
+                    var new_struct = try v.Struct.init(self.allocator, inst.b);
+                    try self.heap.allocate(&new_struct.obj);
+
+                    current_frame.setVar(
+                        stack,
+                        inst.a,
+                        .{
+                            .heap_value = &new_struct.obj,
+                        },
+                    );
+                },
+
+                .STRUCT_LOAD => {
+                    const struct_ptr = current_frame.getVar(stack, inst.b).heap_value;
+                    const struct_vl = v.HeapValue.getParentPtr(v.Struct, struct_ptr);
+
+                    current_frame.setVar(
+                        stack,
+                        inst.a,
+                        struct_vl.get(inst.c),
+                    );
+                },
+
+                .STRUCT_STORE => {
+                    const struct_ptr = current_frame.getVar(stack, inst.b).heap_value;
+                    const struct_vl = v.HeapValue.getParentPtr(v.Struct, struct_ptr);
+                    const vl = current_frame.getVar(stack, inst.c);
+                    struct_vl.set(inst.b, vl);
+                },
+
                 .I_ADD => {
                     current_frame.setVar(stack, inst.a, v.Value{
                         .int64 = current_frame.getVar(stack, inst.b).int64 + current_frame.getVar(stack, inst.c).int64,

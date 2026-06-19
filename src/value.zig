@@ -22,6 +22,7 @@ pub const Value = extern union {
 
 const HeapValueType = enum(u8) {
     array,
+    @"struct",
 };
 
 pub const HeapValue = extern struct {
@@ -43,6 +44,53 @@ pub const HeapValue = extern struct {
         }
 
         return cur;
+    }
+};
+
+pub const Struct = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    field_count: u8,
+
+    pub fn init(allocator: std.mem.Allocator, field_size: u8) !*Self {
+        const total_bytes = Self.calc_size(field_size);
+
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
+        const struct_ptr = @as(*Self, @ptrCast(raw_memory.ptr));
+
+        struct_ptr.obj = .{
+            .kind = .@"struct",
+            .next = null,
+            .forward = null,
+        };
+
+        struct_ptr.field_count = field_size;
+
+        return struct_ptr;
+    }
+
+    pub fn get(self: *const Self, i: usize) Value {
+        std.debug.assert(i < self.field_count);
+
+        const items = self.getDataPtr();
+        return items[i];
+    }
+
+    pub fn set(self: *Self, i: usize, value: Value) void {
+        std.debug.assert(i < self.field_count);
+
+        const items = self.getDataPtr();
+        items[i] = value;
+    }
+
+    pub fn getDataPtr(self: *const Self) [*]Value {
+        const data_pointer = @as([*]Self, @ptrCast(@constCast(self))) + 1;
+        return @ptrCast(data_pointer);
+    }
+
+    fn calc_size(capacity: usize) usize {
+        return @sizeOf(Self) + (@sizeOf(Value) * capacity);
     }
 };
 
