@@ -135,6 +135,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" = .{
                     .identifier = identifier,
                     .fields_in_order = &.{},
+                    .field_index_by_name = .init(self.allocator),
                     .fields = .init(self.allocator),
                     .static_fields = .init(self.allocator),
                     .methods = .init(self.allocator),
@@ -176,10 +177,16 @@ pub const SemaAnalyzer = struct {
             try fields.put(arg.identifier.?, field);
         }
 
+        var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
+        for (fields_in_order.items, 0..) |field, i| {
+            try field_index_by_name.put(field.identifier, @intCast(i));
+        }
+
         return Struct{
             .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .field_index_by_name = field_index_by_name,
             .static_fields = .init(self.allocator),
             .methods = .init(self.allocator),
         };
@@ -214,8 +221,14 @@ pub const SemaAnalyzer = struct {
             try methods.put(func.identifier, fn_symbol.type_id);
         }
 
+        var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
+        for (fields_in_order.items, 0..) |field, i| {
+            try field_index_by_name.put(field.identifier, @intCast(i));
+        }
+
         const struct_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
         struct_type_ptr.kind.@"struct".fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
+        struct_type_ptr.kind.@"struct".field_index_by_name = field_index_by_name;
         struct_type_ptr.kind.@"struct".fields = fields;
         struct_type_ptr.kind.@"struct".static_fields = static_fields;
         struct_type_ptr.kind.@"struct".methods = methods;
@@ -702,10 +715,16 @@ pub const SemaAnalyzer = struct {
             try fields.put(field.identifier, struct_field);
         }
 
+        var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
+        for (fields_in_order.items, 0..) |field, i| {
+            try field_index_by_name.put(field.identifier, @intCast(i));
+        }
+
         return .{
             .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .field_index_by_name = field_index_by_name,
             .static_fields = .init(self.allocator),
             .methods = .init(self.allocator),
         };
@@ -1084,10 +1103,12 @@ pub const SemaAnalyzer = struct {
             return ir.Value.init(
                 self.allocator,
                 .{
-                    .data = .{ .struct_init = .{
-                        .keys = try keys.toOwnedSlice(self.allocator),
-                        .values = try fn_call_arguments_values.toOwnedSlice(self.allocator),
-                    } },
+                    .data = .{
+                        .struct_init = .{
+                            .keys = try keys.toOwnedSlice(self.allocator),
+                            .values = try fn_call_arguments_values.toOwnedSlice(self.allocator),
+                        },
+                    },
                     .type_id = return_type,
                 },
             );
@@ -1550,6 +1571,7 @@ const Struct = struct {
     fields: std.StringHashMap(TypedIdentifier),
     static_fields: std.StringHashMap(TypedIdentifier),
     fields_in_order: []const TypedIdentifier,
+    field_index_by_name: std.StringHashMap(u8),
     methods: std.StringHashMap(TypeId),
 };
 
@@ -1591,7 +1613,6 @@ pub const Type = struct {
 
         function: FuncMetadata,
         @"struct": Struct,
-
         array: TypeId,
     },
 

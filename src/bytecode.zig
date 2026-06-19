@@ -319,15 +319,24 @@ pub const BytecodeGen = struct {
             },
 
             .indexed => |idx| {
-                const array_reg = try self.genValue(idx.target, self.consumeRegister());
-                defer self.freeRegister();
-                try self.genArrayLoad(target_reg, array_reg, idx.index);
-                self.register_types[target_reg] = value.type_id;
-            },
+                const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
-            .i_array => {
-                try self.genArrayInit(value, target_reg);
-                self.register_types[target_reg] = value.type_id;
+                switch (target_type.kind) {
+                    .@"struct" => |s| {
+                        const struct_reg = try self.genValue(idx.target, self.consumeRegister());
+                        defer self.freeRegister();
+
+                        const field_index = s.field_index_by_name.get(idx.index.data.i_string) orelse unreachable;
+                        try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
+                    },
+                    .array => {
+                        const array_reg = try self.genValue(idx.target, self.consumeRegister());
+                        defer self.freeRegister();
+                        try self.genArrayLoad(target_reg, array_reg, idx.index);
+                        self.register_types[target_reg] = value.type_id;
+                    },
+                    else => unreachable,
+                }
             },
 
             .identifier => |id| {
@@ -344,6 +353,16 @@ pub const BytecodeGen = struct {
                 self.register_types[target_reg] = self.register_types[symbol_reg];
             },
 
+            .i_array => {
+                try self.genArrayInit(value, target_reg);
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .struct_init => {
+                try self.genStructInit(value, target_reg);
+                self.register_types[target_reg] = value.type_id;
+            },
+
             .binary_op => |bo| {
                 try self.genBinOp(bo, target_reg);
             },
@@ -355,7 +374,6 @@ pub const BytecodeGen = struct {
             .fn_call => |fc| {
                 try self.genFnCall(fc, value, target_reg);
             },
-            else => {},
         }
 
         return target_reg;
@@ -457,6 +475,42 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, len_inst);
+    }
+
+    fn genStructInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const @"struct" = value.data.struct_init;
+        const struct_init = Instruction{
+            .op = .STRUCT_INIT,
+            .a = target_reg,
+            .b = @intCast(@"struct".keys.len),
+        };
+
+        try self.chunk_instructions.append(self.allocator, struct_init);
+
+        for (@"struct".values, 0..) |field_v, i| {
+            try self.genStructStore(target_reg, @intCast(i), field_v);
+        }
+    }
+
+    fn genStructStore(self: *Self, struct_reg: u8, field_index: u8, value: *const ir.Value) !void {
+        const struct_store = Instruction{
+            .op = .STRUCT_STORE,
+            .a = struct_reg,
+            .b = field_index,
+            .c = try self.genValue(value, self.consumeRegister()),
+        };
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, struct_store);
+    }
+
+    fn genStructLoad(self: *Self, target_reg: u8, struct_reg: u8, field_index: u8) !void {
+        const struct_load = Instruction{
+            .op = .STRUCT_LOAD,
+            .a = target_reg,
+            .b = struct_reg,
+            .c = field_index,
+        };
+        try self.chunk_instructions.append(self.allocator, struct_load);
     }
 
     fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
@@ -699,6 +753,9 @@ pub const Chunk = struct {
             .ARRAY_POP,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
+            .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
         }
         std.debug.print("\n", .{});
     }
@@ -744,6 +801,10 @@ pub const OpCode = enum(u8) {
     ARRAY_LEN,
     ARRAY_APPEND,
     ARRAY_POP,
+
+    STRUCT_INIT,
+    STRUCT_LOAD,
+    STRUCT_STORE,
 
     I_ADD,
     I_SUB,
