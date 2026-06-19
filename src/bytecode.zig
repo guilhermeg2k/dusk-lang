@@ -68,6 +68,12 @@ pub const BytecodeGen = struct {
             try funcs.append(self.allocator, bf);
         }
 
+        for (program.structs) |@"struct"| {
+            for (@"struct".funcs) |func| {
+                try funcs.append(self.allocator, try self.genFunction(func));
+            }
+        }
+
         for (program.functions) |func| {
             try funcs.append(self.allocator, try self.genFunction(func));
         }

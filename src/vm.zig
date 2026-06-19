@@ -335,9 +335,9 @@ pub const VM = struct {
                 },
 
                 .CALL => {
-                    const func = self.program.functions[inst.bEx()];
+                    const func = &self.program.functions[inst.bEx()];
                     switch (func.kind) {
-                        .dusk => try self.callFunction(&func, current_frame.stack_offset, inst.a),
+                        .dusk => try self.callFunction(func, current_frame.stack_offset, inst.a),
                         .host => |b| {
                             const args = stack[current_frame.stack_offset + inst.a + 1 ..][0..b.num_args];
                             stack[current_frame.stack_offset + inst.a] = b.func(args);

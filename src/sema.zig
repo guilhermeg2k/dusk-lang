@@ -146,7 +146,7 @@ pub const SemaAnalyzer = struct {
 
         return Symbol{
             .identifier = identifier,
-            .uid = self.scope.genFnUid(),
+            .uid = self.scope.genUid(),
             .type_id = self.type_table.getPrimitive(.meta),
             .kind = .{ .@"struct" = .{ .blueprint_type_id = blueprint_type_id } },
         };
