@@ -185,6 +185,15 @@ fn printValue(value: v.Value, ty: v.ValueType) void {
             }
             std.debug.print("]", .{});
         },
+        .@"struct" => {
+            const s = v.HeapValue.getParentPtr(v.Struct, value.heap_value);
+            std.debug.print("{{ ", .{});
+            for (0..s.field_count) |i| {
+                if (i > 0) std.debug.print(", ", .{});
+                std.debug.print("{d}", .{s.get(i).int64});
+            }
+            std.debug.print(" }}", .{});
+        },
     }
 }
 

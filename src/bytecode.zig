@@ -282,7 +282,11 @@ pub const BytecodeGen = struct {
             const arg_type_id = fc.args[0].type_id;
             const arg_value_type = v.ValueType.fromTypeId(self.type_table, arg_type_id);
             const type_reg = self.consumeRegister();
-            try self.chunk_instructions.append(self.allocator, Instruction{ .op = .TYPE, .a = type_reg, .b = @intFromEnum(arg_value_type) });
+            const type_value = ir.Value{
+                .type_id = self.type_table.getPrimitive(.int),
+                .data = .{ .i_int = @intFromEnum(arg_value_type) },
+            };
+            try self.genLoadConstFromIntermediateValue(&type_value, type_reg);
             self.register_types[type_reg] = self.type_table.getPrimitive(.int);
         }
 
@@ -691,6 +695,7 @@ pub const Chunk = struct {
                 .null => std.debug.print("null", .{}),
                 .string => std.debug.print("\"{s}\"", .{constant.string.slice()}),
                 .array => std.debug.print("<array>", .{}),
+                .@"struct" => std.debug.print("<struct>", .{}),
             }
             std.debug.print("\n", .{});
         }
@@ -744,7 +749,6 @@ pub const Chunk = struct {
             .RETURN => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
-            .TYPE => std.debug.print("R[{d}] {s}", .{ inst.a, @tagName(@as(v.ValueType, @enumFromInt(inst.b))) }),
             .ARRAY_LOAD,
             .ARRAY_STORE,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -846,7 +850,6 @@ pub const OpCode = enum(u8) {
 
     JUMP,
     JUMP_IF_FALSE,
-    TYPE,
 
     pub fn fromUnaryOp(op: ir.UnaryOpKind) Self {
         return switch (op) {

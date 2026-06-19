@@ -232,6 +232,7 @@ pub const ValueType = enum(u8) {
 
     //note: maybe this needs to get the inner type?
     array,
+    @"struct",
 
     pub fn from_ir_value(value: *const ir.Value) ValueType {
         return switch (value.data) {
@@ -266,7 +267,7 @@ pub const ValueType = enum(u8) {
             .string => .string,
             .void, .null, .dynamic, .meta => .null,
             .array => .array,
-            .@"struct" => .null,
+            .@"struct" => .@"struct",
             .function => .null,
         };
     }
@@ -284,6 +285,7 @@ pub const TypedValueHashContext = struct {
             .null => {},
             .string => hasher.update(tv.value.string.slice()),
             .array => {},
+            .@"struct" => {},
         }
         return hasher.final();
     }
@@ -297,6 +299,7 @@ pub const TypedValueHashContext = struct {
             .null => true,
             .string => std.mem.eql(u8, a.value.string.slice(), b.value.string.slice()),
             .array => false,
+            .@"struct" => false,
         };
     }
 };

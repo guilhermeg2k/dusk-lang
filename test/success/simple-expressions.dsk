@@ -1,6 +1,4 @@
-let mut a: []float = [1.0]
+let mut a = @(x = 1, y = 2)
+echo(a)
 
-a[0] = 2.0
-
-echo(a[0])
 
