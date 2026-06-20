@@ -7,7 +7,8 @@ pub const VM = struct {
 
     allocator: std.mem.Allocator,
     program: *const bc.Program,
-    frames: std.ArrayList(CallFrame),
+    frames: [256]CallFrame,
+    frame_count: usize,
     stack: [16383]v.Value,
     heap: Heap,
     static_store: []v.Value,
@@ -15,7 +16,8 @@ pub const VM = struct {
     pub fn init(allocator: std.mem.Allocator, program: *const bc.Program) VM {
         return .{
             .allocator = allocator,
-            .frames = .empty,
+            .frames = undefined,
+            .frame_count = 0,
             .program = program,
             .stack = undefined,
             .heap = .{
@@ -34,21 +36,22 @@ pub const VM = struct {
 
         const main_fn = self.program.functions[self.program.main_func_index];
 
-        try self.frames.append(self.allocator, CallFrame{
+        self.frames[0] = CallFrame{
             .function = &main_fn,
             .cur_inst = 0,
             .stack_offset = 0,
-        });
+        };
+        self.frame_count = 1;
 
-        var current_frame = &self.frames.items[self.frames.items.len - 1];
+        var current_frame = &self.frames[self.frame_count - 1];
 
         const stack = self.stack[0..];
 
-        while (self.frames.items.len > 0) {
-            current_frame = &self.frames.items[self.frames.items.len - 1];
+        while (self.frame_count > 0) {
+            current_frame = &self.frames[self.frame_count - 1];
 
             if (current_frame.cur_inst >= current_frame.function.kind.dusk.instructions.len) {
-                _ = self.frames.pop();
+                self.frame_count -= 1;
                 continue;
             }
 
@@ -359,7 +362,7 @@ pub const VM = struct {
                 .CALL => {
                     const func = &self.program.functions[inst.bEx()];
                     switch (func.kind) {
-                        .dusk => try self.callFunction(func, current_frame.stack_offset, inst.a),
+                        .dusk => self.callFunction(func, current_frame.stack_offset, inst.a),
                         .host => |b| {
                             const args = stack[current_frame.stack_offset + inst.a + 1 ..][0..b.num_args];
                             stack[current_frame.stack_offset + inst.a] = b.func(args);
@@ -381,7 +384,7 @@ pub const VM = struct {
 
                 .RETURN => {
                     self.stack[current_frame.stack_offset - 1] = current_frame.getVar(stack, inst.a);
-                    _ = self.frames.pop();
+                    self.frame_count -= 1;
                 },
                 else => {},
             }
@@ -404,12 +407,13 @@ pub const VM = struct {
         return follow_forward orelse ptr;
     }
 
-    fn callFunction(self: *Self, func: *const bc.Function, current_stack_offset: usize, target_reg: u8) !void {
-        try self.frames.append(self.allocator, CallFrame{
+    fn callFunction(self: *Self, func: *const bc.Function, current_stack_offset: usize, target_reg: u8) void {
+        self.frames[self.frame_count] = CallFrame{
             .function = func,
             .cur_inst = 0,
             .stack_offset = current_stack_offset + target_reg + 1,
-        });
+        };
+        self.frame_count += 1;
     }
 };
 

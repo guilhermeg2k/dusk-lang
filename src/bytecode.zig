@@ -107,14 +107,14 @@ pub const BytecodeGen = struct {
 
         try funcs.append(self.allocator, main_fn);
 
-        for (funcs.items) |func| {
-            switch (func.kind) {
-                .dusk => {
-                    func.kind.dusk.disasamble();
-                },
-                else => {},
-            }
-        }
+        // for (funcs.items) |func| {
+        //     switch (func.kind) {
+        //         .dusk => {
+        //             func.kind.dusk.disasamble();
+        //         },
+        //         else => {},
+        //     }
+        // }
 
         return Program{
             .main_func_index = funcs.items.len - 1,

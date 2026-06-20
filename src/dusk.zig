@@ -6,7 +6,6 @@ const codegen = @import("codegen.zig");
 const bc = @import("bytecode.zig");
 const vm = @import("vm.zig");
 const builtin = @import("built-in.zig");
-const QjsRunTime = @import("runtime.zig").QjsRuntime;
 
 const Lexer = lexer.Lexer;
 const Parser = parser.Parser;
@@ -22,36 +21,24 @@ pub const Dusk = struct {
     io: std.Io,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
-        const compiled_code = try self.compileFile(file_path, "dump/compiled.js");
-        var runtime = try QjsRunTime.init(self.stdout_writer);
-        try runtime.eval(compiled_code);
+        _ = try self.compileFile(file_path);
     }
 
-    pub fn compileFile(self: *Self, input_path: []const u8, output_path: ?[]const u8) ![]const u8 {
+    pub fn compileFile(self: *Self, input_path: []const u8) !void {
         const cwd = std.Io.Dir.cwd();
         const input_file_content = try cwd.readFileAlloc(self.io, input_path, self.allocator, .unlimited);
         defer self.allocator.free(input_file_content);
-
-        const compiled_code = try self.compile(input_file_content);
-
-        if (output_path) |out| {
-            if (std.fs.path.dirname(out)) |dir| {
-                try cwd.createDirPath(self.io, dir);
-            }
-            try cwd.writeFile(self.io, .{ .sub_path = out, .data = compiled_code });
-        }
-
-        return compiled_code;
+        _ = try self.compile(input_file_content);
     }
 
     pub fn compile(self: *Self, src: []const u8) ![]const u8 {
         var dusk_lexer = Lexer.init(self.allocator, src);
         const tokens = try dusk_lexer.list();
-        try self.dump(tokens, "dump/tokens.json");
+        // try self.dump(tokens, "dump/tokens.json");
 
         var dusk_parser = Parser.init(self.allocator, src, tokens.items);
         const ast = try dusk_parser.parse();
-        try self.dump(ast, "dump/ast.json");
+        // try self.dump(ast, "dump/ast.json");
 
         var sema_analyzer = try SemaAnalyzer.init(self.allocator);
         const ir = try sema_analyzer.analyze(&ast, src);
