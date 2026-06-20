@@ -173,7 +173,10 @@ fn printValue(value: v.Value, ty: v.ValueType) void {
         .int64 => std.debug.print("{d}", .{value.int64}),
         .float64 => std.debug.print("{d}", .{value.float64}),
         .bool => std.debug.print("{}", .{value.bool}),
-        .string => std.debug.print("{s}", .{value.string.slice()}),
+        .string => {
+            const str = v.HeapValue.getParentPtr(v.String, value.heap_value);
+            std.debug.print("{s}", .{str.slice()});
+        },
         .null => std.debug.print("null", .{}),
         .array => {
             const array = v.HeapValue.getParentPtr(v.Array, value.heap_value);

@@ -32,6 +32,9 @@ pub const BytecodeGen = struct {
     chunk_constants_types: std.ArrayList(v.ValueType),
     const_id_by_value: std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80),
 
+    chunk_string_constants: std.ArrayList([]const u8),
+    string_const_id_by_value: std.StringHashMap(u16),
+
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
@@ -49,6 +52,8 @@ pub const BytecodeGen = struct {
             .chunk_constants = .empty,
             .chunk_constants_types = .empty,
             .const_id_by_value = std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80).init(alloc),
+            .chunk_string_constants = .empty,
+            .string_const_id_by_value = std.StringHashMap(u16).init(alloc),
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
@@ -91,6 +96,7 @@ pub const BytecodeGen = struct {
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
+            .string_constants = try self.chunk_string_constants.toOwnedSlice(self.allocator),
         };
 
         const main_fn = Function{
@@ -187,12 +193,15 @@ pub const BytecodeGen = struct {
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
+            .string_constants = try self.chunk_string_constants.toOwnedSlice(self.allocator),
         };
 
         self.chunk_instructions = .empty;
         self.chunk_constants = .empty;
         self.chunk_constants_types = .empty;
+        self.chunk_string_constants = .empty;
         self.const_id_by_value.clearRetainingCapacity();
+        self.string_const_id_by_value.clearRetainingCapacity();
 
         return chunk;
     }
@@ -356,8 +365,13 @@ pub const BytecodeGen = struct {
 
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) anyerror!u8 {
         switch (value.data) {
-            .i_int, .i_float, .i_bool, .i_string, .i_null, .i_void => {
+            .i_int, .i_float, .i_bool, .i_null, .i_void => {
                 try self.genLoadConstFromIntermediateValue(value, target_reg);
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .i_string => |s| {
+                try self.genLoadString(s, target_reg);
                 self.register_types[target_reg] = value.type_id;
             },
 
@@ -619,6 +633,24 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, load_const);
     }
 
+    fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
+        const result = try self.string_const_id_by_value.getOrPut(s);
+        if (!result.found_existing) {
+            result.value_ptr.* = @intCast(self.chunk_string_constants.items.len);
+            try self.chunk_string_constants.append(self.allocator, s);
+        }
+
+        const string_id = result.value_ptr.*;
+
+        var load_string = Instruction{
+            .op = .LOAD_STRING,
+            .a = target_reg,
+        };
+
+        load_string.putBEx(string_id);
+        try self.chunk_instructions.append(self.allocator, load_string);
+    }
+
     fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
         const left_reg = try self.genValue(bo.left, self.consumeRegister());
         const right_reg = try self.genValue(bo.right, self.consumeRegister());
@@ -765,6 +797,7 @@ pub const Chunk = struct {
     instructions: []Instruction,
     constants: []v.Value,
     shadow_types: []v.ValueType,
+    string_constants: []const []const u8,
 
     pub fn disasamble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
@@ -776,11 +809,18 @@ pub const Chunk = struct {
                 .float64 => std.debug.print("{d}", .{constant.float64}),
                 .bool => std.debug.print("{}", .{constant.bool}),
                 .null => std.debug.print("null", .{}),
-                .string => std.debug.print("\"{s}\"", .{constant.string.slice()}),
+                .string => unreachable,
                 .array => std.debug.print("<array>", .{}),
                 .@"struct" => std.debug.print("<struct>", .{}),
             }
             std.debug.print("\n", .{});
+        }
+
+        if (self.string_constants.len > 0) {
+            std.debug.print("\n== string constants ({d}) ==\n", .{self.string_constants.len});
+            for (self.string_constants, 0..) |s, i| {
+                std.debug.print("{d:0>4}  \"{s}\"\n", .{ i, s });
+            }
         }
 
         std.debug.print("\n== code ({d}) ==\n", .{self.instructions.len});
@@ -796,6 +836,7 @@ pub const Chunk = struct {
 
         switch (inst.op) {
             .LOAD_CONST => std.debug.print("R[{d}] C[{d}]", .{ inst.a, inst.bEx() }),
+            .LOAD_STRING => std.debug.print("R[{d}] STR[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STORE_VAR => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .I_ADD,
@@ -883,6 +924,8 @@ pub const OpCode = enum(u8) {
     LOAD_CONST,
     LOAD,
     STORE_VAR,
+
+    LOAD_STRING,
 
     ARRAY_INIT,
     ARRAY_LOAD,

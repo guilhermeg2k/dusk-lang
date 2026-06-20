@@ -60,6 +60,13 @@ pub const VM = struct {
                     current_frame.setVar(stack, inst.a, current_frame.function.kind.dusk.constants[inst.bEx()]);
                 },
 
+                .LOAD_STRING => {
+                    const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
+                    var string_obj = try v.String.init(self.allocator, str_data);
+                    try self.heap.allocate(&string_obj.obj);
+                    current_frame.setVar(stack, inst.a, .{ .heap_value = &string_obj.obj });
+                },
+
                 .LOAD => {
                     current_frame.setVar(stack, inst.a, current_frame.getVar(stack, inst.b));
                 },

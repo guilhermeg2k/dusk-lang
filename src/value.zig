@@ -14,15 +14,13 @@ pub const Value = extern union {
     float64: f64,
     bool: bool,
     null: void,
-
-    //todo:  string should be pointers and heap allocated
-    string: StringValue,
     heap_value: *HeapValue,
 };
 
 const HeapValueType = enum(u8) {
     array,
     @"struct",
+    string,
 };
 
 pub const HeapValue = extern struct {
@@ -193,16 +191,42 @@ pub const Array = extern struct {
     }
 };
 
-pub const StringValue = extern struct {
-    ptr: [*]const u8,
+pub const String = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
     len: usize,
 
-    pub fn slice(self: StringValue) []const u8 {
-        return self.ptr[0..self.len];
+    pub fn init(allocator: std.mem.Allocator, source: []const u8) !*Self {
+        const total_bytes = Self.calc_size(source.len);
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
+        const string_ptr = @as(*Self, @ptrCast(raw_memory.ptr));
+
+        string_ptr.obj = .{
+            .kind = .string,
+            .next = null,
+            .forward = null,
+        };
+
+        string_ptr.len = source.len;
+
+        const data = string_ptr.getDataPtr();
+        @memcpy(data[0..source.len], source);
+
+        return string_ptr;
     }
 
-    pub fn fromSlice(s: []const u8) StringValue {
-        return .{ .ptr = s.ptr, .len = s.len };
+    pub fn slice(self: *const Self) []const u8 {
+        return self.getDataPtr()[0..self.len];
+    }
+
+    pub fn getDataPtr(self: *const Self) [*]u8 {
+        const data_pointer = @as([*]Self, @ptrCast(@constCast(self))) + 1;
+        return @ptrCast(data_pointer);
+    }
+
+    fn calc_size(len: usize) usize {
+        return @sizeOf(Self) + len;
     }
 };
 
@@ -215,7 +239,7 @@ pub const TypedValue = struct {
             .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
             .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
             .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
-            .i_string => |s| TypedValue{ .value = .{ .string = StringValue.fromSlice(s) }, .type = .string },
+            .i_string => unreachable,
             .i_null, .i_void => TypedValue{ .value = .{ .null = {} }, .type = .null },
             .i_array => TypedValue{ .value = undefined, .type = .array },
             else => unreachable,
@@ -228,8 +252,8 @@ pub const ValueType = enum(u8) {
     float64,
     bool,
     null,
-    string,
 
+    string,
     //note: maybe this needs to get the inner type?
     array,
     @"struct",
@@ -283,9 +307,9 @@ pub const TypedValueHashContext = struct {
             .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
             .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
             .null => {},
-            .string => hasher.update(tv.value.string.slice()),
-            .array => {},
-            .@"struct" => {},
+            .string => unreachable,
+            .array => unreachable,
+            .@"struct" => unreachable,
         }
         return hasher.final();
     }
@@ -297,9 +321,9 @@ pub const TypedValueHashContext = struct {
             .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
             .bool => a.value.bool == b.value.bool,
             .null => true,
-            .string => std.mem.eql(u8, a.value.string.slice(), b.value.string.slice()),
-            .array => false,
-            .@"struct" => false,
+            .string => unreachable,
+            .array => unreachable,
+            .@"struct" => unreachable,
         };
     }
 };
