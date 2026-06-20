@@ -10,6 +10,7 @@ pub const VM = struct {
     frames: std.ArrayList(CallFrame),
     stack: [16383]v.Value,
     heap: Heap,
+    static_store: []v.Value,
 
     pub fn init(allocator: std.mem.Allocator, program: *const bc.Program) VM {
         return .{
@@ -21,10 +22,16 @@ pub const VM = struct {
                 .allocator = allocator,
                 .head = null,
             },
+            .static_store = &.{},
         };
     }
 
     pub fn run(self: *Self) !void {
+        if (self.program.static_count > 0) {
+            self.static_store = try self.allocator.alloc(v.Value, self.program.static_count);
+            @memset(self.static_store, v.Value{ .null = {} });
+        }
+
         const main_fn = self.program.functions[self.program.main_func_index];
 
         try self.frames.append(self.allocator, CallFrame{
@@ -143,6 +150,14 @@ pub const VM = struct {
                     const struct_vl = v.HeapValue.getParentPtr(v.Struct, struct_ptr);
                     const vl = current_frame.getVar(stack, inst.c);
                     struct_vl.set(inst.b, vl);
+                },
+
+                .STATIC_LOAD => {
+                    current_frame.setVar(stack, inst.a, self.static_store[inst.bEx()]);
+                },
+
+                .STATIC_STORE => {
+                    self.static_store[inst.bEx()] = current_frame.getVar(stack, inst.a);
                 },
 
                 .I_ADD => {

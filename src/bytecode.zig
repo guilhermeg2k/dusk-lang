@@ -37,6 +37,8 @@ pub const BytecodeGen = struct {
     break_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
 
+    static_store: StaticStoreTable,
+
     pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
         return Self{
             .allocator = alloc,
@@ -51,6 +53,7 @@ pub const BytecodeGen = struct {
             .loop_stack = .empty,
             .break_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .static_store = StaticStoreTable.init(alloc),
         };
     }
 
@@ -69,6 +72,7 @@ pub const BytecodeGen = struct {
         }
 
         for (program.structs) |@"struct"| {
+            try self.genStructStaticFields(@"struct");
             for (@"struct".funcs) |func| {
                 try funcs.append(self.allocator, try self.genFunction(func));
             }
@@ -78,15 +82,22 @@ pub const BytecodeGen = struct {
             try funcs.append(self.allocator, try self.genFunction(func));
         }
 
-        const main_fn = try self.genFunction(
-            ir.Func{
-                .uid = 0,
-                .identifier = "$main",
-                .params = &.{},
-                .body = program.instructions,
-                .return_type = 0,
-            },
-        );
+        self.next_free_register = 0;
+        self.var_register_id_by_uid.clearRetainingCapacity();
+
+        try self.genInstructionBlock(program.instructions);
+
+        const main_chunk = Chunk{
+            .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
+            .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
+            .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
+        };
+
+        const main_fn = Function{
+            .uid = 0,
+            .name = "$main",
+            .kind = .{ .dusk = main_chunk },
+        };
 
         try funcs.append(self.allocator, main_fn);
 
@@ -102,7 +113,29 @@ pub const BytecodeGen = struct {
         return Program{
             .main_func_index = funcs.items.len - 1,
             .functions = try funcs.toOwnedSlice(self.allocator),
+            .static_count = self.static_store.count(),
         };
+    }
+
+    fn genStructStaticFields(self: *Self, @"struct": ir.Struct) !void {
+        try self.static_store.registerStructFields(@"struct");
+
+        for (@"struct".static_fields) |field| {
+            if (field.default_value) |default| {
+                const reg = try self.genValue(default, self.consumeRegister());
+                defer self.freeRegister();
+
+                const slot_id = try self.static_store.getSlot(
+                    @"struct".type_id,
+                    field.identifier,
+                );
+
+                var store = Instruction{ .op = .STATIC_STORE, .a = reg };
+                store.putBEx(slot_id);
+
+                try self.chunk_instructions.append(self.allocator, store);
+            }
+        }
     }
 
     fn genFunction(self: *Self, func: ir.Func) !Function {
@@ -332,12 +365,25 @@ pub const BytecodeGen = struct {
                 const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
                 switch (target_type.kind) {
-                    .@"struct" => |s| {
-                        const struct_reg = try self.genValue(idx.target, self.consumeRegister());
-                        defer self.freeRegister();
+                    .@"struct" => |@"struct"| {
+                        const field_name = idx.index.data.i_string;
+                        if (@"struct".field_index_by_name.get(field_name)) |field_index| {
+                            const struct_reg = try self.genValue(idx.target, self.consumeRegister());
+                            defer self.freeRegister();
+                            try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
+                            return target_reg;
+                        }
 
-                        const field_index = s.field_index_by_name.get(idx.index.data.i_string) orelse unreachable;
-                        try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
+                        var load_static = Instruction{
+                            .op = .STATIC_LOAD,
+                            .a = target_reg,
+                        };
+
+                        const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
+                        load_static.putBEx(slot_id);
+
+                        try self.chunk_instructions.append(self.allocator, load_static);
+                        self.register_types[target_reg] = value.type_id;
                     },
                     .array => {
                         const array_reg = try self.genValue(idx.target, self.consumeRegister());
@@ -440,19 +486,49 @@ pub const BytecodeGen = struct {
 
     fn genUpdateArrayValue(self: *Self, stmt: ir.UpdateIndexed) !void {
         const indexed = stmt.target.data.indexed;
-        const array_reg = try self.genValue(indexed.target, self.consumeRegister());
-        const index_reg = try self.genValue(indexed.index, self.consumeRegister());
-        const value_reg = try self.genValue(stmt.value, self.consumeRegister());
-        defer self.freeRegisterN(3);
+        const target_type = self.type_table.getTypePtrById(indexed.target.type_id);
 
-        const store_inst = Instruction{
-            .op = .ARRAY_STORE,
-            .a = array_reg,
-            .b = index_reg,
-            .c = value_reg,
-        };
+        switch (target_type.kind) {
+            .@"struct" => |@"struct"| {
+                const field_name = indexed.index.data.i_string;
+                if (@"struct".field_index_by_name.get(field_name)) |field_index| {
+                    const struct_reg = try self.genValue(indexed.target, self.consumeRegister());
+                    const value_reg = try self.genValue(stmt.value, self.consumeRegister());
+                    defer self.freeRegisterN(2);
 
-        try self.chunk_instructions.append(self.allocator, store_inst);
+                    const store_inst = Instruction{
+                        .op = .STRUCT_STORE,
+                        .a = struct_reg,
+                        .b = @intCast(field_index),
+                        .c = value_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, store_inst);
+                    return;
+                }
+
+                const value_reg = try self.genValue(stmt.value, self.consumeRegister());
+                defer self.freeRegister();
+                var store = Instruction{ .op = .STATIC_STORE, .a = value_reg };
+                const slot_id = try self.static_store.getSlot(indexed.target.type_id, field_name);
+                store.putBEx(slot_id);
+                try self.chunk_instructions.append(self.allocator, store);
+            },
+            .array => {
+                const array_reg = try self.genValue(indexed.target, self.consumeRegister());
+                const index_reg = try self.genValue(indexed.index, self.consumeRegister());
+                const value_reg = try self.genValue(stmt.value, self.consumeRegister());
+                defer self.freeRegisterN(3);
+
+                const store_inst = Instruction{
+                    .op = .ARRAY_STORE,
+                    .a = array_reg,
+                    .b = index_reg,
+                    .c = value_reg,
+                };
+                try self.chunk_instructions.append(self.allocator, store_inst);
+            },
+            else => unreachable,
+        }
     }
 
     fn genArrayAppend(self: *Self, value: *const ir.Value, array_reg: u8) !void {
@@ -658,6 +734,7 @@ pub const BytecodeGen = struct {
 pub const Program = struct {
     main_func_index: usize,
     functions: []const Function,
+    static_count: u16,
 };
 
 pub const HostFn = struct {
@@ -766,6 +843,8 @@ pub const Chunk = struct {
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
+            .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
         }
         std.debug.print("\n", .{});
     }
@@ -815,6 +894,9 @@ pub const OpCode = enum(u8) {
     STRUCT_INIT,
     STRUCT_LOAD,
     STRUCT_STORE,
+
+    STATIC_LOAD,
+    STATIC_STORE,
 
     I_ADD,
     I_SUB,
@@ -907,4 +989,42 @@ const BytecodeError = error{ OutOfMemory, UndefinedVariable };
 const LoopContext = struct {
     loop_begin: usize,
     first_break_patch_idx: usize,
+};
+
+pub const StaticStoreTable = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    next_slot: u16 = 0,
+    slots_by_type_id: std.AutoHashMap(sema.TypeId, std.StringHashMap(u16)),
+
+    pub fn init(alloc: std.mem.Allocator) Self {
+        return Self{
+            .allocator = alloc,
+            .slots_by_type_id = std.AutoHashMap(sema.TypeId, std.StringHashMap(u16)).init(alloc),
+        };
+    }
+
+    pub fn registerStructFields(self: *Self, @"struct": ir.Struct) !void {
+        if (@"struct".static_fields.len == 0) return;
+
+        const slot = try self.slots_by_type_id.getOrPut(@"struct".type_id);
+        if (!slot.found_existing) {
+            slot.value_ptr.* = std.StringHashMap(u16).init(self.allocator);
+        }
+
+        for (@"struct".static_fields) |field| {
+            try slot.value_ptr.put(field.identifier, self.next_slot);
+            self.next_slot += 1;
+        }
+    }
+
+    pub fn getSlot(self: *const Self, type_id: sema.TypeId, field_name: []const u8) !u16 {
+        const type_slots = self.slots_by_type_id.get(type_id) orelse return error.UnableToFindSlot;
+        return type_slots.get(field_name) orelse return error.UnableToFindSlot;
+    }
+
+    pub fn count(self: *const Self) u16 {
+        return self.next_slot;
+    }
 };

@@ -780,6 +780,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Struct{
             .uid = struct_symbol.uid,
+            .type_id = blueprint_type_id,
             .identifier = identifier,
             .fields = try fields.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),

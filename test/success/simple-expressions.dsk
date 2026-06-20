@@ -7,4 +7,4 @@ let Point = struct
 
 let mut a = Point()
 
-Point.print(a)
+a.print()
