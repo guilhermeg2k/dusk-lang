@@ -34,26 +34,26 @@ let mut user = User(
 
 if user.info?.address: address
     if address.country?.name: name
-        echo(concat("country name is ", name))
+        echo(name)
     if address.state: name
-        echo(concat("state name is ", name))
+        echo(name)
     if address.city: name
-        echo(concat("city name is ", name))
+        echo(name)
 
 if user.info: mut info
     info.phone = "40028922"
 
 if user.info?.address?.country?.code: code
-    echo(concat("country code is ", code))
+    echo(code)
 
 if user.info?.phone: phone
-    echo(concat("phone is ", phone))
+    echo(phone)
 
 if user.info: mut info
     info.phone = "40028922"
 
 if user.info?.phone: phone
-    echo(concat("phone is ", phone))
+    echo(phone)
 
 # NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
 if user.info?.address?.state: mut state_name

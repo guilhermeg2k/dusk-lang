@@ -17,7 +17,7 @@ root.add(
 )
 
 let print_node = (node: Node) -> void
-    echo(stringify(node))
+    echo(node.value)
 
 print_node(root)
 print_node(left_node)

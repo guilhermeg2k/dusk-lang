@@ -5,7 +5,7 @@ let User = struct
     auth_provider: string
 
     to_string: (self: @) -> string
-        return concat(self.id, self.username)
+        return self.username
 
     change_id: (mut self: @, id: string) -> void
         self.id = id
