@@ -1,6 +1,12 @@
 const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
+const sema = @import("sema.zig");
+
+const Symbol = sema.Symbol;
+const TypeId = sema.TypeId;
+const TypedIdentifier = sema.TypedIdentifier;
+const TypeTable = sema.TypeTable;
 
 pub const BuiltIn = struct {
     const Self = @This();
@@ -8,7 +14,6 @@ pub const BuiltIn = struct {
     const BuiltInFn = struct {
         symbol: Symbol,
         bc_fn: ?bc.HostFn = null,
-        code: []const u8 = "",
     };
 
     const BuiltInFactory = *const fn (*const Self, usize) anyerror!BuiltInFn;
@@ -239,9 +244,3 @@ pub const BuiltIn = struct {
         return .{ .null = {} };
     }
 };
-
-const sema = @import("sema.zig");
-const Symbol = sema.Symbol;
-const TypeId = sema.TypeId;
-const TypedIdentifier = sema.TypedIdentifier;
-const TypeTable = sema.TypeTable;

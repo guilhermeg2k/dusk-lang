@@ -34,36 +34,4 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);
-
-    // quickjs
-    const qjs_dep = b.dependency("quickjs", .{});
-    const qjs_path = qjs_dep.path(".");
-    const qjs_flags = &[_][]const u8{
-        "-D_GNU_SOURCE",
-        "-DCONFIG_VERSION=\"2025-09-13\"",
-        "-fno-sanitize=undefined",
-    };
-    const qjs_files = &[_][]const u8{
-        "quickjs.c",
-        "libregexp.c",
-        "libunicode.c",
-        "cutils.c",
-        "dtoa.c",
-    };
-
-    exe.root_module.addCSourceFiles(.{
-        .root = qjs_path,
-        .files = qjs_files,
-        .flags = qjs_flags,
-    });
-    exe.root_module.link_libc = true;
-    exe.root_module.addIncludePath(qjs_path);
-
-    tests.root_module.addCSourceFiles(.{
-        .root = qjs_path,
-        .files = qjs_files,
-        .flags = qjs_flags,
-    });
-    tests.root_module.link_libc = true;
-    tests.root_module.addIncludePath(qjs_path);
 }

@@ -1,3 +1,7 @@
+const std = @import("std");
+const dusk = @import("dusk.zig");
+const Dusk = dusk.Dusk;
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
 
@@ -15,7 +19,3 @@ pub fn main(init: std.process.Init) !void {
     var dusk_c = Dusk{ .allocator = allocator, .stdout_writer = stdout_writer, .io = init.io };
     try dusk_c.runFile(file_name);
 }
-
-const std = @import("std");
-const dusk = @import("dusk.zig");
-const Dusk = dusk.Dusk;

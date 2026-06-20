@@ -38,7 +38,7 @@ pub const VM = struct {
         var instructions = current_frame.function.kind.dusk.instructions;
         var stack_base: usize = 0;
 
-        while (self.frame_count > 0) {
+        while (true) {
             const inst = instructions[ip];
             ip += 1;
 
