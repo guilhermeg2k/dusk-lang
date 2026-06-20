@@ -35,10 +35,13 @@ pub const HeapValue = extern struct {
     }
 
     pub fn followForward(ptr: *Self) ?*Self {
-        var cur = ptr.forward;
+        if (ptr.forward == null) {
+            return null;
+        }
 
-        while (cur) |forward| {
-            cur = forward.forward;
+        var cur = ptr;
+        while (cur.forward) |forward| {
+            cur = forward;
         }
 
         return cur;
@@ -162,7 +165,7 @@ pub const Array = extern struct {
             const old_raw_slice = @as([*]align(@alignOf(Self)) u8, @ptrCast(cur_ptr))[0..old_size];
             const new_raw_slice = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), new_size);
 
-            @memcpy(new_raw_slice, old_raw_slice);
+            @memcpy(new_raw_slice[0..old_size], old_raw_slice);
 
             const new_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
 

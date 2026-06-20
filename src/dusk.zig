@@ -17,7 +17,7 @@ pub const Dusk = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    stdout_writer: *std.Io.Writer,
+    stdout_writer: ?*std.Io.Writer,
     io: std.Io,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
@@ -44,9 +44,12 @@ pub const Dusk = struct {
         const ir = try sema_analyzer.analyze(&ast, src);
 
         var Bytecodegen = bc.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
-        const program = try Bytecodegen.generate(&ir, &builtin.getBytecodeFunctions());
+        const program = try Bytecodegen.generate(&ir, &builtin.BuiltIn.getBytecodeFunctions());
 
         var v = VM.init(self.allocator, &program);
+        if (self.stdout_writer) |writer| {
+            builtin.BuiltIn.setEchoWriter(writer);
+        }
         try v.run();
         return "";
 

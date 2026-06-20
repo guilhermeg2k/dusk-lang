@@ -10,7 +10,7 @@ fn runCase(src_file: []const u8) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = undefined, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     _ = try dusk.compile(src);
 }
 
@@ -22,7 +22,7 @@ fn runCaseError(src_file: []const u8, expected: anytype) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/error/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = undefined, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     try testing.expectError(expected, dusk.compile(src));
 }
 

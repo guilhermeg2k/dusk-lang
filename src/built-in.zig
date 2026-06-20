@@ -5,6 +5,39 @@ const v = @import("value.zig");
 pub const BuiltIn = struct {
     const Self = @This();
 
+    const BuiltInFn = struct {
+        symbol: Symbol,
+        bc_fn: ?bc.HostFn = null,
+        code: []const u8 = "",
+    };
+
+    const BuiltInFactory = *const fn (*const Self, usize) anyerror!BuiltInFn;
+
+    const builtin_factories = [_]BuiltInFactory{
+        echoFactory,
+        appendFactory,
+        lenFactory,
+        assertFactory,
+    };
+
+    const builtin_bytecode_registry = [_]struct {
+        name: []const u8,
+        kind: bc.FunctionKind,
+    }{
+        .{ .name = "echo", .kind = .{ .host = .{ .func = &echoImpl, .num_args = 2 } } },
+        .{ .name = "append", .kind = .{ .@"inline" = .{ .gen = &appendCodeGen, .num_args = 2 } } },
+        .{ .name = "len", .kind = .{ .@"inline" = .{ .gen = &lenCodeGen, .num_args = 1 } } },
+        .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
+    };
+
+    comptime {
+        if (builtin_factories.len != builtin_bytecode_registry.len) {
+            @compileError("builtin_factories and builtin_bytecode_registry must have same length");
+        }
+    }
+
+    var echo_writer: ?*std.Io.Writer = null;
+
     alloc: std.mem.Allocator,
     type_table: *TypeTable,
 
@@ -57,179 +90,154 @@ pub const BuiltIn = struct {
         });
         return id;
     }
-};
 
-fn echoFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
-    var symbol = Symbol{
-        .uid = uid,
-        .identifier = "echo",
-        .kind = .{ .function = {} },
-        .type_id = undefined,
-    };
-
-    symbol.type_id = try self.createFuncTypeId(
-        symbol.uid,
-        symbol.identifier,
-        &.{
-            .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
-        },
-        self.void_type_id,
-    );
-
-    return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &echoImpl, .num_args = 1 } };
-}
-
-fn appendFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
-    var symbol = Symbol{
-        .uid = uid,
-        .identifier = "append",
-        .type_id = undefined,
-        .kind = .{ .function = {} },
-    };
-
-    symbol.type_id = try self.createFuncTypeId(
-        symbol.uid,
-        symbol.identifier,
-        &.{
-            .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = true, .default_value = null },
-            .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
-        },
-        self.void_type_id,
-    );
-    return BuiltInFn{ .symbol = symbol };
-}
-
-fn lenFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
-    var symbol = Symbol{
-        .uid = uid,
-        .identifier = "len",
-        .kind = .{ .function = {} },
-        .type_id = undefined,
-    };
-
-    symbol.type_id = try self.createFuncTypeId(
-        symbol.uid,
-        symbol.identifier,
-        &.{
-            .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = false, .default_value = null },
-        },
-        self.int_type_id,
-    );
-    return BuiltInFn{ .symbol = symbol };
-}
-
-fn assertFactory(self: *const BuiltIn, uid: usize) !BuiltInFn {
-    var symbol = Symbol{
-        .uid = uid,
-        .identifier = "assert",
-        .kind = .{ .function = {} },
-        .type_id = undefined,
-    };
-    symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
-        .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
-    }, self.void_type_id);
-    return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &assertImpl, .num_args = 1 } };
-}
-
-const BuiltInFactory = *const fn (*const BuiltIn, usize) anyerror!BuiltInFn;
-
-const builtin_factories = [_]BuiltInFactory{
-    echoFactory,
-    appendFactory,
-    lenFactory,
-    assertFactory,
-};
-
-const builtin_bytecode_registry = [_]struct {
-    name: []const u8,
-    kind: bc.FunctionKind,
-}{
-    .{ .name = "echo", .kind = .{ .host = .{ .func = &echoImpl, .num_args = 2 } } },
-    .{ .name = "append", .kind = .{ .@"inline" = .{ .gen = &appendCodeGen, .num_args = 2 } } },
-    .{ .name = "len", .kind = .{ .@"inline" = .{ .gen = &lenCodeGen, .num_args = 1 } } },
-    .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
-};
-
-comptime {
-    if (builtin_factories.len != builtin_bytecode_registry.len) {
-        @compileError("builtin_factories and builtin_bytecode_registry must have same length");
-    }
-}
-
-pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
-    var funcs: [builtin_bytecode_registry.len]bc.Function = undefined;
-    for (&funcs, builtin_bytecode_registry, 0..) |*f, entry, i| {
-        f.* = .{
-            .uid = i,
-            .name = entry.name,
-            .kind = entry.kind,
+    fn echoFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{
+            .uid = uid,
+            .identifier = "echo",
+            .kind = .{ .function = {} },
+            .type_id = undefined,
         };
+
+        symbol.type_id = try self.createFuncTypeId(
+            symbol.uid,
+            symbol.identifier,
+            &.{
+                .{ .identifier = "msgs", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+            },
+            self.void_type_id,
+        );
+
+        return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &echoImpl, .num_args = 1 } };
     }
-    return funcs;
-}
 
-fn printValue(value: v.Value, ty: v.ValueType) void {
-    switch (ty) {
-        .int64 => std.debug.print("{d}", .{value.int64}),
-        .float64 => std.debug.print("{d}", .{value.float64}),
-        .bool => std.debug.print("{}", .{value.bool}),
-        .string => {
-            const str = v.HeapValue.getParentPtr(v.String, value.heap_value);
-            std.debug.print("{s}", .{str.slice()});
-        },
-        .null => std.debug.print("null", .{}),
-        .array => {
-            const array = v.HeapValue.getParentPtr(v.Array, value.heap_value);
-            const data = array.getDataPtr();
-            std.debug.print("[", .{});
-            for (0..array.len) |i| {
-                if (i > 0) std.debug.print(", ", .{});
-                printValue(data[i], array.kind);
-            }
-            std.debug.print("]", .{});
-        },
-        .@"struct" => {
-            const s = v.HeapValue.getParentPtr(v.Struct, value.heap_value);
-            std.debug.print("{{ ", .{});
-            for (0..s.field_count) |i| {
-                if (i > 0) std.debug.print(", ", .{});
-                std.debug.print("{d}", .{s.get(i).int64});
-            }
-            std.debug.print(" }}", .{});
-        },
+    fn appendFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{
+            .uid = uid,
+            .identifier = "append",
+            .type_id = undefined,
+            .kind = .{ .function = {} },
+        };
+
+        symbol.type_id = try self.createFuncTypeId(
+            symbol.uid,
+            symbol.identifier,
+            &.{
+                .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = true, .default_value = null },
+                .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+            },
+            self.void_type_id,
+        );
+        return BuiltInFn{ .symbol = symbol };
     }
-}
 
-fn echoImpl(args: []v.Value) v.Value {
-    const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
-    printValue(args[0], ty);
-    std.debug.print("\n", .{});
-    return .{ .null = {} };
-}
+    fn lenFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{
+            .uid = uid,
+            .identifier = "len",
+            .kind = .{ .function = {} },
+            .type_id = undefined,
+        };
 
-fn appendCodeGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn lenCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn assertImpl(args: []v.Value) v.Value {
-    if (!args[0].bool) {
-        @panic("ASSERTION_FAILED");
+        symbol.type_id = try self.createFuncTypeId(
+            symbol.uid,
+            symbol.identifier,
+            &.{
+                .{ .identifier = "array", .type_id = self.dynamic_array_type_id, .is_mut = false, .default_value = null },
+            },
+            self.int_type_id,
+        );
+        return BuiltInFn{ .symbol = symbol };
     }
-    return .{ .null = {} };
-}
 
-const BuiltInFn = struct {
-    symbol: Symbol,
-    bc_fn: ?bc.HostFn = null,
-    code: []const u8 = "",
+    fn assertFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{
+            .uid = uid,
+            .identifier = "assert",
+            .kind = .{ .function = {} },
+            .type_id = undefined,
+        };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
+        }, self.void_type_id);
+        return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &assertImpl, .num_args = 1 } };
+    }
+
+    pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
+        var funcs: [builtin_bytecode_registry.len]bc.Function = undefined;
+        for (&funcs, builtin_bytecode_registry, 0..) |*f, entry, i| {
+            f.* = .{
+                .uid = i,
+                .name = entry.name,
+                .kind = entry.kind,
+            };
+        }
+        return funcs;
+    }
+
+    pub fn setEchoWriter(writer: *std.Io.Writer) void {
+        echo_writer = writer;
+    }
+
+    fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void {
+        switch (ty) {
+            .int64 => writer.print("{d}", .{value.int64}) catch {},
+            .float64 => writer.print("{d}", .{value.float64}) catch {},
+            .bool => writer.print("{}", .{value.bool}) catch {},
+            .string => {
+                const str = v.HeapValue.getParentPtr(v.String, value.heap_value);
+                writer.print("{s}", .{str.slice()}) catch {};
+            },
+            .null => writer.print("null", .{}) catch {},
+            .array => {
+                const array = v.HeapValue.getParentPtr(v.Array, value.heap_value);
+                const data = array.getDataPtr();
+                writer.print("[", .{}) catch {};
+                for (0..array.len) |i| {
+                    if (i > 0) writer.print(", ", .{}) catch {};
+                    printValue(writer, data[i], array.kind);
+                }
+                writer.print("]", .{}) catch {};
+            },
+            .@"struct" => {
+                const s = v.HeapValue.getParentPtr(v.Struct, value.heap_value);
+                writer.print("{{ ", .{}) catch {};
+                for (0..s.field_count) |i| {
+                    if (i > 0) writer.print(", ", .{}) catch {};
+                    writer.print("{d}", .{s.get(i).int64}) catch {};
+                }
+                writer.print(" }}", .{}) catch {};
+            },
+        }
+    }
+
+    fn echoImpl(args: []v.Value) v.Value {
+        if (echo_writer) |writer| {
+            const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
+            printValue(writer, args[0], ty);
+            writer.print("\n", .{}) catch {};
+        }
+        return .{ .null = {} };
+    }
+
+    fn appendCodeGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn lenCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn assertImpl(args: []v.Value) v.Value {
+        if (!args[0].bool) {
+            @panic("ASSERTION_FAILED");
+        }
+        return .{ .null = {} };
+    }
 };
 
 const sema = @import("sema.zig");

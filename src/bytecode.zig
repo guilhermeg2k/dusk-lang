@@ -63,16 +63,15 @@ pub const BytecodeGen = struct {
     }
 
     pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
+        var funcs: std.ArrayList(Function) = .empty;
+        self.next_free_register = 0;
+        self.var_register_id_by_uid.clearRetainingCapacity();
+
         for (builtins) |bf| {
             switch (bf.kind) {
                 .@"inline" => |inl| try self.inline_functions_by_uid.put(bf.uid, inl),
                 else => {},
             }
-        }
-
-        var funcs: std.ArrayList(Function) = .empty;
-
-        for (builtins) |bf| {
             try funcs.append(self.allocator, bf);
         }
 
@@ -87,25 +86,13 @@ pub const BytecodeGen = struct {
             try funcs.append(self.allocator, try self.genFunction(func));
         }
 
-        self.next_free_register = 0;
-        self.var_register_id_by_uid.clearRetainingCapacity();
-
-        try self.genInstructionBlock(program.instructions);
-
-        const main_chunk = Chunk{
-            .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
-            .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
-            .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
-            .string_constants = try self.chunk_string_constants.toOwnedSlice(self.allocator),
-        };
-
-        const main_fn = Function{
+        try funcs.append(self.allocator, try self.genFunction(.{
             .uid = 0,
-            .name = "$main",
-            .kind = .{ .dusk = main_chunk },
-        };
-
-        try funcs.append(self.allocator, main_fn);
+            .identifier = "$main",
+            .params = &.{},
+            .body = program.instructions,
+            .return_type = self.type_table.getPrimitive(.void),
+        }));
 
         // for (funcs.items) |func| {
         //     switch (func.kind) {
@@ -188,20 +175,29 @@ pub const BytecodeGen = struct {
     }
 
     fn genFunctionChunk(self: *Self, func: ir.Func) !Chunk {
+        defer {
+            self.chunk_instructions = .empty;
+            self.chunk_constants = .empty;
+            self.chunk_constants_types = .empty;
+            self.chunk_string_constants = .empty;
+            self.const_id_by_value.clearRetainingCapacity();
+            self.string_const_id_by_value.clearRetainingCapacity();
+        }
+
         try self.genInstructionBlock(func.body);
+
+        if (self.chunk_instructions.getLastOrNull()) |last| {
+            if (last.op != .RETURN) {
+                try self.chunk_instructions.append(self.allocator, Instruction{ .op = .RETURN });
+            }
+        }
+
         const chunk = Chunk{
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
             .string_constants = try self.chunk_string_constants.toOwnedSlice(self.allocator),
         };
-
-        self.chunk_instructions = .empty;
-        self.chunk_constants = .empty;
-        self.chunk_constants_types = .empty;
-        self.chunk_string_constants = .empty;
-        self.const_id_by_value.clearRetainingCapacity();
-        self.string_const_id_by_value.clearRetainingCapacity();
 
         return chunk;
     }
