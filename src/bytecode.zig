@@ -106,14 +106,14 @@ pub const BytecodeGen = struct {
             .return_type = self.type_table.getPrimitive(.void),
         }));
 
-        for (funcs.items) |func| {
-            switch (func.kind) {
-                .dusk => {
-                    func.kind.dusk.disasamble();
-                },
-                else => {},
-            }
-        }
+        // for (funcs.items) |func| {
+        //     switch (func.kind) {
+        //         .dusk => {
+        //             func.kind.dusk.disasamble();
+        //         },
+        //         else => {},
+        //     }
+        // }
 
         return Program{
             .main_func_index = funcs.items.len - 1,

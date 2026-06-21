@@ -94,6 +94,7 @@ pub const VM = struct {
 
                         const new_size = v.Array.calc_size(array.capacity);
                         self.heap.allocated += new_size;
+                        self.heap.peak_allocated = @max(self.heap.peak_allocated, self.heap.allocated);
                     }
 
                     const value = stack[stack_base + inst.b];
@@ -424,6 +425,7 @@ pub const VM = struct {
 
     fn allocate(self: *Self, bytes: usize) void {
         self.heap.allocated += bytes;
+        self.heap.peak_allocated = @max(self.heap.peak_allocated, self.heap.allocated);
         self.heap.object_count += 1;
     }
 
@@ -434,18 +436,13 @@ pub const VM = struct {
     }
 
     fn collectGarbage(self: *Self) !void {
-        const old_allocated = self.heap.allocated;
-        const old_object_count = self.heap.object_count;
-
-        const inactive: u1 = 1 - self.heap.active;
+        const inactive: u1 = self.heap.active ^ 1;
         _ = self.heap.arenas[inactive].reset(.retain_capacity);
         const new_alloc = self.heap.arenas[inactive].allocator();
 
         self.heap.allocated = 0;
         self.heap.object_count = 0;
-
-        var queue = try std.ArrayList(*v.HeapValue).initCapacity(self.allocator, old_object_count);
-        defer queue.deinit(self.allocator);
+        self.heap.gc_queue.clearRetainingCapacity();
 
         const active_frames = self.frames[0..self.frame_count];
         for (active_frames) |frame| {
@@ -456,19 +453,19 @@ pub const VM = struct {
             const base = frame.stack_offset;
             for (0..chunk.num_registers) |i| {
                 if (bitmap & (@as(u32, 1) << @intCast(i)) != 0) {
-                    try self.copyHeapValue(new_alloc, &self.stack[base + i], &queue, &self.heap);
+                    try self.copyHeapValue(new_alloc, &self.stack[base + i]);
                 }
             }
         }
 
         for (0..self.program.static_count) |i| {
             if (self.program.static_heap_bitmap & (@as(u64, 1) << @intCast(i)) != 0) {
-                try self.copyHeapValue(new_alloc, &self.static_store[i], &queue, &self.heap);
+                try self.copyHeapValue(new_alloc, &self.static_store[i]);
             }
         }
 
-        while (queue.items.len > 0) {
-            const obj = queue.pop().?;
+        while (self.heap.gc_queue.items.len > 0) {
+            const obj = self.heap.gc_queue.pop().?;
             switch (obj.kind) {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
@@ -476,7 +473,7 @@ pub const VM = struct {
                         .string, .@"struct", .array => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
-                                try self.copyHeapValue(new_alloc, item, &queue, &self.heap);
+                                try self.copyHeapValue(new_alloc, item);
                             }
                         },
                         else => {},
@@ -488,7 +485,7 @@ pub const VM = struct {
                     const fields = s.getDataPtr()[0..s.field_count];
                     for (0..s.field_count) |i| {
                         if (desc.heap_bitmap & (@as(u32, 1) << @intCast(i)) != 0) {
-                            try self.copyHeapValue(new_alloc, &fields[i], &queue, &self.heap);
+                            try self.copyHeapValue(new_alloc, &fields[i]);
                         }
                     }
                 },
@@ -499,13 +496,16 @@ pub const VM = struct {
         self.heap.active = inactive;
         self.heap.threshold = @max(self.heap.allocated * 2, MIN_GC_THRESHOLD);
 
-        const old_idx: u1 = 1 - self.heap.active;
-        if (self.heap.allocated < old_allocated / 4) {
+        const old_idx: u1 = self.heap.active ^ 1;
+        if (self.heap.allocated < self.heap.peak_allocated / 4) {
             _ = self.heap.arenas[old_idx].reset(.free_all);
+            self.heap.peak_allocated = self.heap.allocated;
+            self.heap.gc_queue.clearAndFree(self.allocator);
+            self.heap.gc_queue.ensureTotalCapacity(self.allocator, self.heap.object_count);
         }
     }
 
-    fn copyHeapValue(_: *Self, new_alloc: std.mem.Allocator, value: *v.Value, queue: *std.ArrayList(*v.HeapValue), heap: *Heap) !void {
+    fn copyHeapValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value) !void {
         var current = value.heap_obj;
         while (current.relocated) |rel| {
             current = rel;
@@ -518,10 +518,10 @@ pub const VM = struct {
             current.gc_forward = new_ptr;
             value.heap_obj = new_ptr;
             if (new_ptr.kind != .string) {
-                try queue.append(std.heap.page_allocator, new_ptr);
+                try self.heap.gc_queue.append(self.allocator, new_ptr);
             }
-            heap.object_count += 1;
-            heap.allocated += heapObjectSize(new_ptr);
+            self.heap.object_count += 1;
+            self.heap.allocated += heapObjectSize(new_ptr);
         }
     }
 
@@ -545,8 +545,10 @@ pub const VM = struct {
 const Heap = struct {
     arenas: [2]std.heap.ArenaAllocator,
     active: u1 = 0,
+    gc_queue: std.ArrayList(*v.HeapValue) = .empty,
     object_count: usize = 0,
     allocated: usize = 0,
+    peak_allocated: usize = 0,
     threshold: usize,
 };
 
