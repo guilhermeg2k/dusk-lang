@@ -1,0 +1,5 @@
+let mut i = 0
+for i < 3
+    let trash = [1, 2, i]
+    i += 1
+echo("done")

@@ -52,9 +52,10 @@ pub const Struct = extern struct {
     const Self = @This();
 
     obj: HeapValue,
+    descriptor_id: u16,
     field_count: u8,
 
-    pub fn init(allocator: std.mem.Allocator, field_size: u8) !*Self {
+    pub fn init(allocator: std.mem.Allocator, field_size: u8, desc_id: u16) !*Self {
         const total_bytes = Self.calc_size(field_size);
 
         const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
@@ -64,6 +65,7 @@ pub const Struct = extern struct {
             .kind = .@"struct",
         };
 
+        struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
 
         return struct_ptr;
@@ -294,6 +296,13 @@ pub const ValueType = enum(u8) {
     //note: maybe this needs to get the inner type?
     array,
     @"struct",
+
+    pub fn isHeapType(self: ValueType) bool {
+        return switch (self) {
+            .string, .array, .@"struct" => true,
+            else => false,
+        };
+    }
 
     pub fn from_ir_value(value: *const ir.Value) ValueType {
         return switch (value.data) {

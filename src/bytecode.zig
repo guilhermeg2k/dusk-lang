@@ -43,6 +43,11 @@ pub const BytecodeGen = struct {
 
     static_store: StaticStoreTable,
 
+    chunk_heap_maps: std.ArrayList(HeapMap),
+    struct_descriptors: std.ArrayList(StructDescriptor),
+    type_to_descriptor: std.AutoHashMap(sema.TypeId, u16),
+    static_heap_bitmap: u64 = 0,
+
     pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
         return Self{
             .allocator = alloc,
@@ -61,6 +66,9 @@ pub const BytecodeGen = struct {
             .break_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
             .static_store = StaticStoreTable.init(alloc),
+            .chunk_heap_maps = .empty,
+            .struct_descriptors = .empty,
+            .type_to_descriptor = std.AutoHashMap(sema.TypeId, u16).init(alloc),
         };
     }
 
@@ -68,6 +76,7 @@ pub const BytecodeGen = struct {
         var funcs: std.ArrayList(Function) = .empty;
         self.next_free_register = 0;
         self.peak_register = 0;
+        self.type_to_descriptor.clearRetainingCapacity();
         self.var_register_id_by_uid.clearRetainingCapacity();
 
         for (builtins) |bf| {
@@ -97,19 +106,21 @@ pub const BytecodeGen = struct {
             .return_type = self.type_table.getPrimitive(.void),
         }));
 
-        // for (funcs.items) |func| {
-        //     switch (func.kind) {
-        //         .dusk => {
-        //             func.kind.dusk.disasamble();
-        //         },
-        //         else => {},
-        //     }
-        // }
+        for (funcs.items) |func| {
+            switch (func.kind) {
+                .dusk => {
+                    func.kind.dusk.disasamble();
+                },
+                else => {},
+            }
+        }
 
         return Program{
             .main_func_index = funcs.items.len - 1,
             .functions = try funcs.toOwnedSlice(self.allocator),
             .static_count = self.static_store.count(),
+            .static_heap_bitmap = self.static_heap_bitmap,
+            .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
         };
     }
 
@@ -117,14 +128,15 @@ pub const BytecodeGen = struct {
         try self.static_store.registerStructFields(@"struct");
 
         for (@"struct".static_fields) |field| {
+            const slot_id = try self.static_store.getSlot(@"struct".type_id, field.identifier);
+            const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
+            if (vt.isHeapType()) {
+                self.static_heap_bitmap |= @as(u64, 1) << @intCast(slot_id);
+            }
+
             if (field.default_value) |default| {
                 const reg = try self.genValue(default, self.consumeRegister());
                 defer self.freeRegister();
-
-                const slot_id = try self.static_store.getSlot(
-                    @"struct".type_id,
-                    field.identifier,
-                );
 
                 var store = Instruction{ .op = .STATIC_STORE, .a = reg };
                 store.putBEx(slot_id);
@@ -184,6 +196,7 @@ pub const BytecodeGen = struct {
             self.chunk_constants = .empty;
             self.chunk_constants_types = .empty;
             self.chunk_string_constants = .empty;
+            self.chunk_heap_maps = .empty;
             self.const_id_by_value.clearRetainingCapacity();
             self.string_const_id_by_value.clearRetainingCapacity();
         }
@@ -202,6 +215,7 @@ pub const BytecodeGen = struct {
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
             .string_constants = try self.chunk_string_constants.toOwnedSlice(self.allocator),
+            .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
         };
 
         return chunk;
@@ -218,8 +232,9 @@ pub const BytecodeGen = struct {
     }
 
     fn genBranchIf(self: *Self, ifStmt: ir.BranchIf) !void {
+        const saved_next_free = self.next_free_register;
+
         const condition_reg = try self.genValue(ifStmt.condition, self.consumeRegister());
-        defer self.freeRegister();
 
         const jump_into_else = Instruction{
             .op = .JUMP_IF_FALSE,
@@ -249,16 +264,17 @@ pub const BytecodeGen = struct {
             const jump_into_else_position = self.chunk_instructions.items.len;
             self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
         }
+
+        self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn genLoop(self: *Self, loopStmt: ir.Loop) !void {
+        const saved_next_free = self.next_free_register;
         const loop_begin_idx = self.chunk_instructions.items.len;
 
         try self.pushLoopCtx(loop_begin_idx);
 
-        //perf: this orelse
         const condition_reg = try self.genValue(loopStmt.condition orelse &TRUE_VALUE, self.consumeRegister());
-        defer self.freeRegister();
 
         const jump_pass_loop = Instruction{
             .op = .JUMP_IF_FALSE,
@@ -282,6 +298,8 @@ pub const BytecodeGen = struct {
         self.chunk_instructions.items[jump_if_false_idx].putBEx(@intCast(jump_pass_loop_position));
 
         try self.popLoopCtx();
+
+        self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn genBreak(self: *Self) !void {
@@ -321,6 +339,15 @@ pub const BytecodeGen = struct {
             const instructions = try inl.gen(target_reg, target_reg + 1, self.allocator);
             defer self.allocator.free(instructions);
             try self.chunk_instructions.appendSlice(self.allocator, instructions);
+            for (instructions, 0..) |inl_inst, j| {
+                if (inl_inst.op.canTriggerGc()) {
+                    const pc: u16 = @intCast(self.chunk_instructions.items.len - instructions.len + j);
+                    try self.chunk_heap_maps.append(self.allocator, .{
+                        .pc = pc,
+                        .bitmap = self.computeHeapBitmap(),
+                    });
+                }
+            }
             self.freeRegisterN(fc.args.len);
             self.register_types[target_reg] = value.type_id;
             return;
@@ -347,6 +374,7 @@ pub const BytecodeGen = struct {
         fn_call.putBEx(@intCast(fc.fn_uid));
 
         try self.chunk_instructions.append(self.allocator, fn_call);
+        try self.recordHeapMap();
 
         const num_args = fc.args.len + if (fc.fn_uid == 0) @as(usize, 1) else @as(usize, 0);
         self.freeRegisterN(num_args);
@@ -462,6 +490,7 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, init_inst);
+        try self.recordHeapMap();
 
         for (value.data.i_array.values) |vl| {
             try self.genArrayAppend(vl, target_reg);
@@ -556,6 +585,7 @@ pub const BytecodeGen = struct {
             .b = v_reg,
         };
         try self.chunk_instructions.append(self.allocator, append_inst);
+        try self.recordHeapMap();
     }
 
     fn genArrayPop(self: *Self, array_reg: u8, target_reg: u8) !void {
@@ -580,13 +610,16 @@ pub const BytecodeGen = struct {
 
     fn genStructInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
         const @"struct" = value.data.struct_init;
-        const struct_init = Instruction{
+        const desc_id = try self.getOrCreateStructDescriptor(value);
+
+        var struct_init = Instruction{
             .op = .STRUCT_INIT,
             .a = target_reg,
-            .b = @intCast(@"struct".keys.len),
         };
+        struct_init.putBEx(desc_id);
 
         try self.chunk_instructions.append(self.allocator, struct_init);
+        try self.recordHeapMap();
 
         for (@"struct".values, 0..) |field_v, i| {
             try self.genStructStore(target_reg, @intCast(i), field_v);
@@ -650,6 +683,7 @@ pub const BytecodeGen = struct {
 
         load_string.putBEx(string_id);
         try self.chunk_instructions.append(self.allocator, load_string);
+        try self.recordHeapMap();
     }
 
     fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
@@ -752,7 +786,10 @@ pub const BytecodeGen = struct {
     }
 
     fn freeRegisterN(self: *Self, n: usize) void {
-        const new_free = @max(0, self.next_free_register - n);
+        const new_free: usize = @max(0, self.next_free_register - n);
+        for (new_free..self.next_free_register) |i| {
+            self.register_types[i] = self.type_table.getPrimitive(.void);
+        }
         self.next_free_register = @intCast(new_free);
     }
 
@@ -763,12 +800,64 @@ pub const BytecodeGen = struct {
         self.peak_register = @max(self.peak_register, self.next_free_register);
         return id;
     }
+
+    fn computeHeapBitmap(self: *Self) u32 {
+        var bitmap: u32 = 0;
+        for (0..self.peak_register) |i| {
+            const vt = v.ValueType.fromTypeId(self.type_table, self.register_types[i]);
+            if (vt.isHeapType()) {
+                bitmap |= @as(u32, 1) << @intCast(i);
+            }
+        }
+        return bitmap;
+    }
+
+    fn recordHeapMap(self: *Self) !void {
+        const pc: u16 = @intCast(self.chunk_instructions.items.len - 1);
+        try self.chunk_heap_maps.append(self.allocator, .{
+            .pc = pc,
+            .bitmap = self.computeHeapBitmap(),
+        });
+    }
+
+    fn getOrCreateStructDescriptor(self: *Self, value: *const ir.Value) !u16 {
+        if (self.type_to_descriptor.get(value.type_id)) |id| return id;
+
+        const struct_data = value.data.struct_init;
+        var bitmap: u32 = 0;
+        for (struct_data.values, 0..) |field_v, i| {
+            const vt = v.ValueType.fromTypeId(self.type_table, field_v.type_id);
+            if (vt.isHeapType()) {
+                bitmap |= @as(u32, 1) << @intCast(i);
+            }
+        }
+
+        const id: u16 = @intCast(self.struct_descriptors.items.len);
+        try self.struct_descriptors.append(self.allocator, .{
+            .field_count = @intCast(struct_data.keys.len),
+            .heap_bitmap = bitmap,
+        });
+        try self.type_to_descriptor.put(value.type_id, id);
+        return id;
+    }
+};
+
+pub const StructDescriptor = struct {
+    field_count: u8,
+    heap_bitmap: u32,
+};
+
+pub const HeapMap = struct {
+    pc: u16,
+    bitmap: u32,
 };
 
 pub const Program = struct {
     main_func_index: usize,
     functions: []const Function,
     static_count: u16,
+    static_heap_bitmap: u64,
+    struct_descriptors: []const StructDescriptor,
 };
 
 pub const HostFn = struct {
@@ -801,6 +890,7 @@ pub const Chunk = struct {
     constants: []v.Value,
     shadow_types: []v.ValueType,
     string_constants: []const []const u8,
+    heap_maps: []const HeapMap,
 
     pub fn disasamble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
@@ -984,6 +1074,13 @@ pub const OpCode = enum(u8) {
 
     JUMP,
     JUMP_IF_FALSE,
+
+    pub fn canTriggerGc(self: Self) bool {
+        return switch (self) {
+            .ARRAY_INIT, .ARRAY_APPEND, .STRUCT_INIT, .LOAD_STRING, .CALL => true,
+            else => false,
+        };
+    }
 
     pub fn fromUnaryOp(op: ir.UnaryOpKind) Self {
         return switch (op) {

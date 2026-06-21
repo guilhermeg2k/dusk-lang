@@ -1,6 +1,7 @@
 const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
+const util = @import("util.zig");
 
 pub const VM = struct {
     const Self = @This();
@@ -23,7 +24,6 @@ pub const VM = struct {
             .stack = undefined,
             .heap = .{
                 .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
-                .ptr_store = std.AutoHashMap(*v.HeapValue, void).init(std.heap.page_allocator),
                 .threshold = MIN_GC_THRESHOLD,
             },
             .static_store = &.{},
@@ -51,9 +51,10 @@ pub const VM = struct {
 
                 .LOAD_STRING => {
                     const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
+                    current_frame.cur_inst = ip;
                     try self.maybeCollectGarbage(v.String.calc_size(str_data.len));
                     var string_obj = try v.String.init(self.heap.arena.allocator(), str_data);
-                    try self.allocate(&string_obj.obj, v.String.calc_size(str_data.len));
+                    self.allocate(v.String.calc_size(str_data.len));
                     stack[stack_base + inst.a] = .{ .heap_obj = &string_obj.obj };
                 },
 
@@ -62,9 +63,10 @@ pub const VM = struct {
                 },
 
                 .ARRAY_INIT => {
+                    current_frame.cur_inst = ip;
                     try self.maybeCollectGarbage(v.Array.calc_size(inst.c));
                     var new_array = try v.Array.init(self.heap.arena.allocator(), @enumFromInt(inst.b), inst.c);
-                    try self.allocate(&new_array.obj, v.Array.calc_size(new_array.capacity));
+                    self.allocate(v.Array.calc_size(new_array.capacity));
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_array.obj };
                 },
 
@@ -81,14 +83,13 @@ pub const VM = struct {
                     var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
 
                     if (array.needsResize()) {
+                        current_frame.cur_inst = ip;
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
                         array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
                         array = try array.resize(self.heap.arena.allocator());
                         stack[stack_base + inst.a].heap_obj = &array.obj;
-                        try self.heap.ptr_store.put(&array.obj, {});
 
                         const new_size = v.Array.calc_size(array.capacity);
-
                         self.heap.allocated += new_size;
                     }
 
@@ -118,9 +119,12 @@ pub const VM = struct {
                 },
 
                 .STRUCT_INIT => {
-                    try self.maybeCollectGarbage(v.Struct.calc_size(inst.b));
-                    var new_struct = try v.Struct.init(self.heap.arena.allocator(), inst.b);
-                    try self.allocate(&new_struct.obj, v.Struct.calc_size(new_struct.field_count));
+                    const desc_id = inst.bEx();
+                    const desc = self.program.struct_descriptors[desc_id];
+                    current_frame.cur_inst = ip;
+                    try self.maybeCollectGarbage(v.Struct.calc_size(desc.field_count));
+                    var new_struct = try v.Struct.init(self.heap.arena.allocator(), desc.field_count, desc_id);
+                    self.allocate(v.Struct.calc_size(new_struct.field_count));
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_struct.obj };
                 },
 
@@ -415,8 +419,7 @@ pub const VM = struct {
         return follow orelse ptr;
     }
 
-    fn allocate(self: *Self, heap_obj: *v.HeapValue, bytes: usize) !void {
-        try self.heap.ptr_store.put(heap_obj, {});
+    fn allocate(self: *Self, bytes: usize) void {
         self.heap.allocated += bytes;
         self.heap.object_count += 1;
     }
@@ -428,33 +431,38 @@ pub const VM = struct {
     }
 
     fn collectGarbage(self: *Self) !void {
-        const active_frames = self.frames[0..self.frame_count];
-        var stack_top: usize = 0;
-        for (active_frames) |frame| {
-            stack_top = @max(stack_top, frame.stack_offset + frame.function.kind.dusk.num_registers);
-        }
-
         var new_heap = Heap{
             .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
-            .ptr_store = std.AutoHashMap(*v.HeapValue, void).init(self.allocator),
             .threshold = MIN_GC_THRESHOLD,
         };
 
         const new_alloc = new_heap.arena.allocator();
 
-        var copied_objects_queue = try std.ArrayList(*v.HeapValue).initCapacity(self.allocator, self.heap.object_count);
-        defer copied_objects_queue.deinit(self.allocator);
+        var queue = try std.ArrayList(*v.HeapValue).initCapacity(self.allocator, self.heap.object_count);
+        defer queue.deinit(self.allocator);
 
-        const active_stack = self.stack[0..stack_top];
-        for (active_stack) |*value| {
-            try self.copyValue(new_alloc, value, &copied_objects_queue, &new_heap);
+        const active_frames = self.frames[0..self.frame_count];
+        for (active_frames) |frame| {
+            const chunk = frame.function.kind.dusk;
+            const cur_pc: u16 = @intCast(frame.cur_inst -| 1);
+            const heap_map = util.binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
+            const bitmap: u32 = if (heap_map) |hm| hm.bitmap else 0;
+            const base = frame.stack_offset;
+            for (0..chunk.num_registers) |i| {
+                if (bitmap & (@as(u32, 1) << @intCast(i)) != 0) {
+                    try self.copyHeapValue(new_alloc, &self.stack[base + i], &queue, &new_heap);
+                }
+            }
         }
 
-        for (self.static_store) |*value| {
-            try self.copyValue(new_alloc, value, &copied_objects_queue, &new_heap);
+        for (0..self.program.static_count) |i| {
+            if (self.program.static_heap_bitmap & (@as(u64, 1) << @intCast(i)) != 0) {
+                try self.copyHeapValue(new_alloc, &self.static_store[i], &queue, &new_heap);
+            }
         }
 
-        while (copied_objects_queue.pop()) |obj| {
+        while (queue.items.len > 0) {
+            const obj = queue.pop().?;
             switch (obj.kind) {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
@@ -462,7 +470,7 @@ pub const VM = struct {
                         .string, .@"struct", .array => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
-                                try self.copyValue(new_alloc, item, &copied_objects_queue, &new_heap);
+                                try self.copyHeapValue(new_alloc, item, &queue, &new_heap);
                             }
                         },
                         else => {},
@@ -470,9 +478,12 @@ pub const VM = struct {
                 },
                 .@"struct" => {
                     const s = v.HeapValue.getParentPtr(v.Struct, obj);
+                    const desc = self.program.struct_descriptors[s.descriptor_id];
                     const fields = s.getDataPtr()[0..s.field_count];
-                    for (fields) |*field| {
-                        try self.copyValue(new_alloc, field, &copied_objects_queue, &new_heap);
+                    for (0..s.field_count) |i| {
+                        if (desc.heap_bitmap & (@as(u32, 1) << @intCast(i)) != 0) {
+                            try self.copyHeapValue(new_alloc, &fields[i], &queue, &new_heap);
+                        }
                     }
                 },
                 else => {},
@@ -481,30 +492,26 @@ pub const VM = struct {
 
         new_heap.threshold = @max(new_heap.allocated * 2, MIN_GC_THRESHOLD);
         self.heap.arena.deinit();
-        self.heap.ptr_store.deinit();
         self.heap = new_heap;
     }
 
-    fn copyValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value, alive_queue: *std.ArrayList(*v.HeapValue), heap: *Heap) !void {
-        if (self.heap.ptr_store.contains(value.heap_obj)) {
-            var current = value.heap_obj;
-            while (current.relocated) |rel| {
-                current = rel;
-            }
+    fn copyHeapValue(_: *Self, new_alloc: std.mem.Allocator, value: *v.Value, queue: *std.ArrayList(*v.HeapValue), heap: *Heap) !void {
+        var current = value.heap_obj;
+        while (current.relocated) |rel| {
+            current = rel;
+        }
 
-            if (current.gc_forward) |fwd| {
-                value.heap_obj = fwd;
-            } else {
-                const new_ptr = try cloneHeapObj(new_alloc, current);
-                current.gc_forward = new_ptr;
-                value.heap_obj = new_ptr;
-                if (new_ptr.kind != .string) {
-                    try alive_queue.append(self.allocator, new_ptr);
-                }
-                try heap.ptr_store.put(new_ptr, {});
-                heap.object_count += 1;
-                heap.allocated += heapObjectSize(new_ptr);
+        if (current.gc_forward) |fwd| {
+            value.heap_obj = fwd;
+        } else {
+            const new_ptr = try cloneHeapObj(new_alloc, current);
+            current.gc_forward = new_ptr;
+            value.heap_obj = new_ptr;
+            if (new_ptr.kind != .string) {
+                try queue.append(std.heap.page_allocator, new_ptr);
             }
+            heap.object_count += 1;
+            heap.allocated += heapObjectSize(new_ptr);
         }
     }
 
@@ -527,7 +534,6 @@ pub const VM = struct {
 
 const Heap = struct {
     arena: std.heap.ArenaAllocator,
-    ptr_store: std.AutoHashMap(*v.HeapValue, void),
     object_count: usize = 0,
     allocated: usize = 0,
     threshold: usize,
