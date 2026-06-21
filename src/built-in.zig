@@ -190,12 +190,12 @@ pub const BuiltIn = struct {
             .float64 => writer.print("{d}", .{value.float64}) catch {},
             .bool => writer.print("{}", .{value.bool}) catch {},
             .string => {
-                const str = v.HeapValue.getParentPtr(v.String, value.heap_value);
+                const str = v.HeapValue.getParentPtr(v.String, value.heap_obj);
                 writer.print("{s}", .{str.slice()}) catch {};
             },
             .null => writer.print("null", .{}) catch {},
             .array => {
-                const array = v.HeapValue.getParentPtr(v.Array, value.heap_value);
+                const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj);
                 const data = array.getDataPtr();
                 writer.print("[", .{}) catch {};
                 for (0..array.len) |i| {
@@ -205,7 +205,7 @@ pub const BuiltIn = struct {
                 writer.print("]", .{}) catch {};
             },
             .@"struct" => {
-                const s = v.HeapValue.getParentPtr(v.Struct, value.heap_value);
+                const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
                 writer.print("{{ ", .{}) catch {};
                 for (0..s.field_count) |i| {
                     if (i > 0) writer.print(", ", .{}) catch {};
@@ -221,6 +221,8 @@ pub const BuiltIn = struct {
             const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
             printValue(writer, args[0], ty);
             writer.print("\n", .{}) catch {};
+            //todo: not treating error
+            writer.flush() catch {};
         }
         return .{ .null = {} };
     }

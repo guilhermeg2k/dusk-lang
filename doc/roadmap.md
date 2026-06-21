@@ -20,6 +20,7 @@
 ## Version 0.13 - Hiei
 
 - Fancy for (fon in like)
+- Capture for
 - Ternary operator
 - Nullish coalescing operator (??)
 
@@ -61,3 +62,4 @@
 - Code Formatter
 - Fuzz testing
 - Improve memory usage
+- Improve VM Performance

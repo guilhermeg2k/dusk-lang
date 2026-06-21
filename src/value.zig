@@ -14,7 +14,7 @@ pub const Value = extern union {
     float64: f64,
     bool: bool,
     null: void,
-    heap_value: *HeapValue,
+    heap_obj: *HeapValue,
 };
 
 const HeapValueType = enum(u8) {
@@ -27,7 +27,6 @@ pub const HeapValue = extern struct {
     const Self = @This();
 
     kind: HeapValueType,
-    next: ?*HeapValue = null,
     forward: ?*HeapValue = null,
 
     pub fn getParentPtr(comptime T: type, ptr: *Self) *T {
@@ -62,7 +61,6 @@ pub const Struct = extern struct {
 
         struct_ptr.obj = .{
             .kind = .@"struct",
-            .next = null,
             .forward = null,
         };
 
@@ -90,8 +88,18 @@ pub const Struct = extern struct {
         return @ptrCast(data_pointer);
     }
 
-    fn calc_size(capacity: usize) usize {
-        return @sizeOf(Self) + (@sizeOf(Value) * capacity);
+    pub fn calc_size(field_count: usize) usize {
+        return @sizeOf(Self) + (@sizeOf(Value) * field_count);
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const size = Self.calc_size(self.field_count);
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.forward = null;
+        return new_obj;
     }
 };
 
@@ -111,7 +119,6 @@ pub const Array = extern struct {
 
         array.obj = .{
             .kind = .array,
-            .next = null,
             .forward = null,
         };
 
@@ -154,25 +161,26 @@ pub const Array = extern struct {
         return self.len + 1 > self.capacity;
     }
 
+    pub fn calcNewCapacity(self: *Self) usize {
+        return self.capacity + self.capacity / 2;
+    }
+
     pub fn resize(self: *Self, allocator: std.mem.Allocator) !*Self {
         var cur_ptr = self;
-        const needs_resize = self.len + 1 > self.capacity;
-        if (needs_resize) {
-            const new_capacity = self.capacity + self.capacity / 2;
-            const new_size = Self.calc_size(new_capacity);
-            const old_size = Self.calc_size(self.capacity);
+        const new_capacity = self.calcNewCapacity();
+        const new_size = Self.calc_size(new_capacity);
+        const old_size = Self.calc_size(self.capacity);
 
-            const old_raw_slice = @as([*]align(@alignOf(Self)) u8, @ptrCast(cur_ptr))[0..old_size];
-            const new_raw_slice = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), new_size);
+        const old_raw_slice = @as([*]align(@alignOf(Self)) u8, @ptrCast(cur_ptr))[0..old_size];
+        const new_raw_slice = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), new_size);
 
-            @memcpy(new_raw_slice[0..old_size], old_raw_slice);
+        @memcpy(new_raw_slice[0..old_size], old_raw_slice);
 
-            const new_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
+        const new_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
 
-            cur_ptr.obj.forward = &new_ptr.obj;
-            cur_ptr = new_ptr;
-            cur_ptr.capacity = new_capacity;
-        }
+        cur_ptr.obj.forward = &new_ptr.obj;
+        cur_ptr = new_ptr;
+        cur_ptr.capacity = new_capacity;
         return cur_ptr;
     }
 
@@ -187,10 +195,20 @@ pub const Array = extern struct {
         return @ptrCast(data_pointer);
     }
 
-    fn calc_size(capacity: usize) usize {
+    pub fn calc_size(capacity: usize) usize {
         const self_size = @sizeOf(Array);
         const data_size = @sizeOf(Value) * capacity;
         return self_size + data_size;
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const size = Self.calc_size(self.capacity);
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.forward = null;
+        return new_obj;
     }
 };
 
@@ -207,7 +225,6 @@ pub const String = extern struct {
 
         string_ptr.obj = .{
             .kind = .string,
-            .next = null,
             .forward = null,
         };
 
@@ -228,8 +245,18 @@ pub const String = extern struct {
         return @ptrCast(data_pointer);
     }
 
-    fn calc_size(len: usize) usize {
+    pub fn calc_size(len: usize) usize {
         return @sizeOf(Self) + len;
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const size = Self.calc_size(self.len);
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.forward = null;
+        return new_obj;
     }
 };
 

@@ -41,11 +41,10 @@ pub const Dusk = struct {
 
     pub fn compileAndRun(self: *Self, src: []const u8) !void {
         const program = try self.compile(src);
-
-        var v = VM.init(self.allocator, &program);
         if (self.stdout_writer) |writer| {
             builtin.BuiltIn.setEchoWriter(writer);
         }
+        var v = VM.init(&program);
         try v.run();
     }
 

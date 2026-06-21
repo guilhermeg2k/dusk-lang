@@ -27,6 +27,7 @@ pub const BytecodeGen = struct {
 
     register_types: [256]sema.TypeId = [_]sema.TypeId{0} ** 256,
     next_free_register: u8 = 0,
+    peak_register: u8 = 0,
 
     chunk_constants: std.ArrayList(v.Value),
     chunk_constants_types: std.ArrayList(v.ValueType),
@@ -49,6 +50,7 @@ pub const BytecodeGen = struct {
             .register_types = [_]sema.TypeId{type_table.getPrimitive(.void)} ** 256,
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
+            .peak_register = 0,
             .chunk_constants = .empty,
             .chunk_constants_types = .empty,
             .const_id_by_value = std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80).init(alloc),
@@ -65,6 +67,7 @@ pub const BytecodeGen = struct {
     pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
         var funcs: std.ArrayList(Function) = .empty;
         self.next_free_register = 0;
+        self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
 
         for (builtins) |bf| {
@@ -133,6 +136,7 @@ pub const BytecodeGen = struct {
 
     fn genFunction(self: *Self, func: ir.Func) !Function {
         self.next_free_register = @intCast(func.params.len);
+        self.peak_register = @intCast(func.params.len);
         self.var_register_id_by_uid.clearRetainingCapacity();
 
         for (func.params, 0..) |param, i| {
@@ -193,6 +197,7 @@ pub const BytecodeGen = struct {
         }
 
         const chunk = Chunk{
+            .num_registers = self.peak_register,
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
@@ -755,6 +760,7 @@ pub const BytecodeGen = struct {
         //note: check u8 limit and panic
         const id = self.next_free_register;
         self.next_free_register += 1;
+        self.peak_register = @max(self.peak_register, self.next_free_register);
         return id;
     }
 };
@@ -790,6 +796,7 @@ pub const Function = struct {
 pub const Chunk = struct {
     const Self = @This();
 
+    num_registers: u8,
     instructions: []Instruction,
     constants: []v.Value,
     shadow_types: []v.ValueType,
