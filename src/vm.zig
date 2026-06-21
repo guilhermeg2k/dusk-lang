@@ -4,6 +4,7 @@ const v = @import("value.zig");
 
 pub const VM = struct {
     const Self = @This();
+    const MIN_GC_THRESHOLD = 1000000; //1MB
 
     allocator: std.mem.Allocator,
     program: *const bc.Program,
@@ -23,6 +24,7 @@ pub const VM = struct {
             .heap = .{
                 .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
                 .ptr_store = std.AutoHashMap(*v.HeapValue, void).init(std.heap.page_allocator),
+                .threshold = MIN_GC_THRESHOLD,
             },
             .static_store = &.{},
         };
@@ -81,12 +83,12 @@ pub const VM = struct {
                     if (array.needsResize()) {
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
                         array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
-                        const old_size = v.Array.calc_size(array.capacity);
                         array = try array.resize(self.heap.arena.allocator());
-                        stack[stack_base + inst.a] = .{ .heap_obj = &array.obj };
+                        stack[stack_base + inst.a].heap_obj = &array.obj;
+                        try self.heap.ptr_store.put(&array.obj, {});
+
                         const new_size = v.Array.calc_size(array.capacity);
 
-                        self.heap.allocated -= old_size;
                         self.heap.allocated += new_size;
                     }
 
@@ -404,13 +406,13 @@ pub const VM = struct {
     }
 
     fn refreshStackHeapPtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.HeapValue {
-        const follow_forward = v.HeapValue.followForward(ptr);
+        const follow = v.HeapValue.followRelocated(ptr);
 
-        if (follow_forward) |forward| {
-            stack[stack_base + reg_idx] = .{ .heap_obj = forward };
+        if (follow) |relocated| {
+            stack[stack_base + reg_idx].heap_obj = relocated;
         }
 
-        return follow_forward orelse ptr;
+        return follow orelse ptr;
     }
 
     fn allocate(self: *Self, heap_obj: *v.HeapValue, bytes: usize) !void {
@@ -421,7 +423,6 @@ pub const VM = struct {
 
     fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
         if (self.heap.allocated + bytes > self.heap.threshold) {
-            std.log.debug("clearing {d} {d}", .{ self.heap.allocated + bytes, self.heap.threshold });
             try self.collectGarbage();
         }
     }
@@ -436,6 +437,7 @@ pub const VM = struct {
         var new_heap = Heap{
             .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator),
             .ptr_store = std.AutoHashMap(*v.HeapValue, void).init(self.allocator),
+            .threshold = MIN_GC_THRESHOLD,
         };
 
         const new_alloc = new_heap.arena.allocator();
@@ -477,7 +479,7 @@ pub const VM = struct {
             }
         }
 
-        new_heap.threshold = @max(new_heap.allocated * 2, 1000000);
+        new_heap.threshold = @max(new_heap.allocated * 2, MIN_GC_THRESHOLD);
         self.heap.arena.deinit();
         self.heap.ptr_store.deinit();
         self.heap = new_heap;
@@ -485,11 +487,16 @@ pub const VM = struct {
 
     fn copyValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value, alive_queue: *std.ArrayList(*v.HeapValue), heap: *Heap) !void {
         if (self.heap.ptr_store.contains(value.heap_obj)) {
-            if (value.heap_obj.forward) |fwd| {
+            var current = value.heap_obj;
+            while (current.relocated) |rel| {
+                current = rel;
+            }
+
+            if (current.gc_forward) |fwd| {
                 value.heap_obj = fwd;
             } else {
-                const new_ptr = try cloneHeapObj(new_alloc, value.heap_obj);
-                value.heap_obj.forward = new_ptr;
+                const new_ptr = try cloneHeapObj(new_alloc, current);
+                current.gc_forward = new_ptr;
                 value.heap_obj = new_ptr;
                 if (new_ptr.kind != .string) {
                     try alive_queue.append(self.allocator, new_ptr);
@@ -523,7 +530,7 @@ const Heap = struct {
     ptr_store: std.AutoHashMap(*v.HeapValue, void),
     object_count: usize = 0,
     allocated: usize = 0,
-    threshold: usize = 1000000,
+    threshold: usize,
 };
 
 const CallFrame = struct {

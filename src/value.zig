@@ -27,20 +27,21 @@ pub const HeapValue = extern struct {
     const Self = @This();
 
     kind: HeapValueType,
-    forward: ?*HeapValue = null,
+    gc_forward: ?*HeapValue = null,
+    relocated: ?*HeapValue = null,
 
     pub fn getParentPtr(comptime T: type, ptr: *Self) *T {
         return @as(*T, @fieldParentPtr("obj", ptr));
     }
 
-    pub fn followForward(ptr: *Self) ?*Self {
-        if (ptr.forward == null) {
-            return null;
+    pub fn followRelocated(ptr: *Self) ?*Self {
+        var cur = ptr;
+        while (cur.relocated) |rel| {
+            cur = rel;
         }
 
-        var cur = ptr;
-        while (cur.forward) |forward| {
-            cur = forward;
+        if (cur == ptr) {
+            return null;
         }
 
         return cur;
@@ -61,7 +62,6 @@ pub const Struct = extern struct {
 
         struct_ptr.obj = .{
             .kind = .@"struct",
-            .forward = null,
         };
 
         struct_ptr.field_count = field_size;
@@ -98,7 +98,8 @@ pub const Struct = extern struct {
         const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
-        new_obj.obj.forward = null;
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
         return new_obj;
     }
 };
@@ -119,7 +120,6 @@ pub const Array = extern struct {
 
         array.obj = .{
             .kind = .array,
-            .forward = null,
         };
 
         array.len = 0;
@@ -178,7 +178,11 @@ pub const Array = extern struct {
 
         const new_ptr = @as(*Self, @ptrCast(new_raw_slice.ptr));
 
-        cur_ptr.obj.forward = &new_ptr.obj;
+        new_ptr.obj = .{
+            .kind = .array,
+        };
+
+        cur_ptr.obj.relocated = &new_ptr.obj;
         cur_ptr = new_ptr;
         cur_ptr.capacity = new_capacity;
         return cur_ptr;
@@ -207,7 +211,8 @@ pub const Array = extern struct {
         const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
         @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
-        new_obj.obj.forward = null;
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
         return new_obj;
     }
 };
@@ -225,7 +230,6 @@ pub const String = extern struct {
 
         string_ptr.obj = .{
             .kind = .string,
-            .forward = null,
         };
 
         string_ptr.len = source.len;
@@ -254,8 +258,11 @@ pub const String = extern struct {
         const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
         const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
         @memcpy(new_bytes, old_bytes);
+
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
-        new_obj.obj.forward = null;
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
+
         return new_obj;
     }
 };

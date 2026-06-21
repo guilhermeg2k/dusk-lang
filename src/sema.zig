@@ -441,6 +441,11 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        const expr_type = self.type_table.getTypePtrById(expression_type_id);
+        if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .dynamic) {
+            expression_value.type_id = var_type_id;
+        }
+
         const uid = self.scope.genUid();
 
         self.scope.symbol_table.put(.{
