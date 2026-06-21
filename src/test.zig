@@ -11,7 +11,7 @@ fn runCase(src_file: []const u8) !void {
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
-    _ = try dusk.compile(src);
+    try dusk.compileAndRun(src);
 }
 
 fn runCaseError(src_file: []const u8, expected: anytype) !void {
@@ -300,4 +300,20 @@ test "sema error: duplicate fn def" {
 
 test "sema error: duplicate param name" {
     try runCaseError("duplicate-param-name.dsk", error.AlreadyDefined);
+}
+
+test "gc: basic" {
+    try runCase("gc-basic.dsk");
+}
+
+test "gc: nested structures" {
+    try runCase("gc-nested.dsk");
+}
+
+test "gc: across function calls" {
+    try runCase("gc-functions.dsk");
+}
+
+test "gc: array resize" {
+    try runCase("gc-resize.dsk");
 }

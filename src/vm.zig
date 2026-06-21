@@ -501,7 +501,7 @@ pub const VM = struct {
             _ = self.heap.arenas[old_idx].reset(.free_all);
             self.heap.peak_allocated = self.heap.allocated;
             self.heap.gc_queue.clearAndFree(self.allocator);
-            self.heap.gc_queue.ensureTotalCapacity(self.allocator, self.heap.object_count);
+            try self.heap.gc_queue.ensureTotalCapacity(self.allocator, self.heap.object_count);
         }
     }
 

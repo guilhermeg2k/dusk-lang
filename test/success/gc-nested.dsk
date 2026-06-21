@@ -1,0 +1,11 @@
+let kept_arr = [1, 2, 3]
+let kept = @(data = kept_arr, id = 7)
+
+let mut i = 0
+for i < 100000
+    let trash = @(data = [i, i, i], id = i)
+    i += 1
+
+assert(kept.id == 7)
+assert(kept.data[0] == 1)
+assert(kept.data[2] == 3)
