@@ -1,0 +1,28 @@
+let LIMIT: int = 100000
+
+let mut sieve: []bool = []
+let mut i: int = 0
+for i <= LIMIT
+    append(sieve, true)
+    i += 1
+
+sieve[0] = false
+sieve[1] = false
+
+let mut p: int = 2
+for p * p <= LIMIT
+    if sieve[p]
+        let mut m: int = p * p
+        for m <= LIMIT
+            sieve[m] = false
+            m += p
+    p += 1
+
+let mut count: int = 0
+let mut k: int = 2
+for k <= LIMIT
+    if sieve[k]
+        count += 1
+    k += 1
+
+echo(count)

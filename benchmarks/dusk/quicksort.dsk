@@ -1,0 +1,35 @@
+let swap = (mut arr: []int, i: int, j: int) -> void
+    let t: int = arr[i]
+    arr[i] = arr[j]
+    arr[j] = t
+
+let quicksort = (mut arr: []int, lo: int, hi: int) -> void
+    if lo >= hi
+        return
+
+    let mid: int = (lo + hi) // 2
+    let pivot: int = arr[mid]
+    let mut i: int = lo
+    let mut j: int = hi
+
+    for i <= j
+        for arr[i] < pivot
+            i += 1
+        for arr[j] > pivot
+            j -= 1
+        if i <= j
+            swap(arr, i, j)
+            i += 1
+            j -= 1
+
+    quicksort(arr, lo, j)
+    quicksort(arr, i, hi)
+
+let mut data: []int = []
+let mut n: int = 10000
+for n > 0
+    append(data, n)
+    n -= 1
+
+quicksort(data, 0, len(data) - 1)
+echo(data[5000])

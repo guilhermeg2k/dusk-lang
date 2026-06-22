@@ -4,3 +4,9 @@ zig-pkg
 dump/
 test_build
 *_dump.json
+__pycache__/
+
+# benchmark artifacts (charts in benchmarks/assets and benchmarks/benchmark.md are kept)
+benchmarks/results/
+benchmarks/build/
+benchmarks/.venv_bench/
