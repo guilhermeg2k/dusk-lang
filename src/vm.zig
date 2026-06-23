@@ -449,17 +449,21 @@ pub const VM = struct {
             const chunk = frame.function.kind.dusk;
             const cur_pc: u16 = @intCast(frame.cur_inst -| 1);
             const heap_map = util.binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
-            const bitmap: u32 = if (heap_map) |hm| hm.bitmap else 0;
+            const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
             const base = frame.stack_offset;
             for (0..chunk.num_registers) |i| {
-                if (bitmap & (@as(u32, 1) << @intCast(i)) != 0) {
+                if (bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
                     try self.copyHeapValue(new_alloc, &self.stack[base + i]);
                 }
             }
         }
 
         for (0..self.program.static_count) |i| {
-            if (self.program.static_heap_bitmap & (@as(u64, 1) << @intCast(i)) != 0) {
+            const word_idx = i >> 6;
+            const bit_idx = i & 63;
+            if (word_idx < self.program.static_heap_bitmap.len and
+                self.program.static_heap_bitmap[word_idx] & (@as(u64, 1) << @intCast(bit_idx)) != 0)
+            {
                 try self.copyHeapValue(new_alloc, &self.static_store[i]);
             }
         }
@@ -484,7 +488,7 @@ pub const VM = struct {
                     const desc = self.program.struct_descriptors[s.descriptor_id];
                     const fields = s.getDataPtr()[0..s.field_count];
                     for (0..s.field_count) |i| {
-                        if (desc.heap_bitmap & (@as(u32, 1) << @intCast(i)) != 0) {
+                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
                             try self.copyHeapValue(new_alloc, &fields[i]);
                         }
                     }

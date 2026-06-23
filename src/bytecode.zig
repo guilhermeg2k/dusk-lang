@@ -46,7 +46,7 @@ pub const BytecodeGen = struct {
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
     type_to_descriptor: std.AutoHashMap(sema.TypeId, u16),
-    static_heap_bitmap: u64 = 0,
+    static_heap_bitmap: std.ArrayList(u64) = .empty,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
         return Self{
@@ -119,7 +119,7 @@ pub const BytecodeGen = struct {
             .main_func_index = funcs.items.len - 1,
             .functions = try funcs.toOwnedSlice(self.allocator),
             .static_count = self.static_store.count(),
-            .static_heap_bitmap = self.static_heap_bitmap,
+            .static_heap_bitmap = try self.static_heap_bitmap.toOwnedSlice(self.allocator),
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
         };
     }
@@ -131,7 +131,12 @@ pub const BytecodeGen = struct {
             const slot_id = try self.static_store.getSlot(@"struct".type_id, field.identifier);
             const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
             if (vt.isHeapType()) {
-                self.static_heap_bitmap |= @as(u64, 1) << @intCast(slot_id);
+                const word_idx = slot_id >> 6;
+                const bit_idx = slot_id & 63;
+                while (self.static_heap_bitmap.items.len <= word_idx) {
+                    try self.static_heap_bitmap.append(self.allocator, 0);
+                }
+                self.static_heap_bitmap.items[word_idx] |= @as(u64, 1) << @intCast(bit_idx);
             }
 
             if (field.default_value) |default| {
@@ -801,12 +806,12 @@ pub const BytecodeGen = struct {
         return id;
     }
 
-    fn computeHeapBitmap(self: *Self) u32 {
-        var bitmap: u32 = 0;
+    fn computeHeapBitmap(self: *Self) u256 {
+        var bitmap: u256 = 0;
         for (0..self.peak_register) |i| {
             const vt = v.ValueType.fromTypeId(self.type_table, self.register_types[i]);
             if (vt.isHeapType()) {
-                bitmap |= @as(u32, 1) << @intCast(i);
+                bitmap |= @as(u256, 1) << @intCast(i);
             }
         }
         return bitmap;
@@ -824,11 +829,11 @@ pub const BytecodeGen = struct {
         if (self.type_to_descriptor.get(value.type_id)) |id| return id;
 
         const struct_data = value.data.struct_init;
-        var bitmap: u32 = 0;
+        var bitmap: u256 = 0;
         for (struct_data.values, 0..) |field_v, i| {
             const vt = v.ValueType.fromTypeId(self.type_table, field_v.type_id);
             if (vt.isHeapType()) {
-                bitmap |= @as(u32, 1) << @intCast(i);
+                bitmap |= @as(u256, 1) << @intCast(i);
             }
         }
 
@@ -844,19 +849,19 @@ pub const BytecodeGen = struct {
 
 pub const StructDescriptor = struct {
     field_count: u8,
-    heap_bitmap: u32,
+    heap_bitmap: u256,
 };
 
 pub const HeapMap = struct {
     pc: u16,
-    bitmap: u32,
+    bitmap: u256,
 };
 
 pub const Program = struct {
     main_func_index: usize,
     functions: []const Function,
     static_count: u16,
-    static_heap_bitmap: u64,
+    static_heap_bitmap: []const u64,
     struct_descriptors: []const StructDescriptor,
 };
 
