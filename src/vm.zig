@@ -435,7 +435,7 @@ pub const VM = struct {
         }
     }
 
-    fn collectGarbage(self: *Self) !void {
+    noinline fn collectGarbage(self: *Self) !void {
         const inactive: u1 = self.heap.active ^ 1;
         _ = self.heap.arenas[inactive].reset(.retain_capacity);
         const new_alloc = self.heap.arenas[inactive].allocator();
