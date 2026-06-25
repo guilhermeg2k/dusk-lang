@@ -2,5 +2,8 @@ let S = struct
     x: int
     f: (self: @) -> void
         return
+    end
+end
+
 let s = S(x = 1)
 s.g()

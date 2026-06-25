@@ -9,7 +9,8 @@ let Api = struct
     #Methods
     fetch: (self: @) -> string
         return self.ip
-
+    end
+end
 
 let api = Api("/me")
 

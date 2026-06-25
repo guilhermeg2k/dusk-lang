@@ -1,4 +1,5 @@
 let echo2: fn = () -> int
     return 2
+end
 
 assert(echo2() == 2)

@@ -1,5 +1,7 @@
 let S = struct
     let x = "value"
     y: int
+end
+
 let s = S(y = 1)
 S.missing = "fail"

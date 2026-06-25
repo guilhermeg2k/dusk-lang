@@ -1,9 +1,10 @@
 let mut arr: []int = []
 let mut i = 0
-for i < 50000
+for i < 50000 do
     append(arr, i)
     let trash = [i, i, i]
     i += 1
+end
 
 assert(len(arr) == 50000)
 assert(arr[0] == 0)

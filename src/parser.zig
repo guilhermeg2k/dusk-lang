@@ -34,18 +34,17 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self) !ast.Root {
-        return self.parseBlock();
+        return self.parseBlock(.eof);
     }
 
-    pub fn parseBlock(self: *Self) Errors!ast.Block {
+    pub fn parseBlock(self: *Self, extra_stop_at: Tag) Errors!ast.Block {
         var statements: std.ArrayList(ast.StatementNode) = .empty;
 
         var current_tk = self.peekCurrent();
-        while (current_tk.tag != .eof and current_tk.tag != .dedent) : (current_tk = self.peekCurrent()) {
-            if (self.peekCurrent().tag == .new_line) {
-                self.walk();
+        while (current_tk.tag != .eof and current_tk.tag != .end_kw) : (current_tk = self.peekCurrent()) {
+            if (current_tk.tag == extra_stop_at) {
+                break;
             }
-
             if (self.peekCurrent().tag == .eof) {
                 break;
             }
@@ -63,13 +62,10 @@ pub const Parser = struct {
         switch (tk.tag) {
             .let_kw => {
                 const let_stmt_value = try self.parseLetStmt();
-                const letStmt = ast.StatementNode{
+                return ast.StatementNode{
                     .data = .{ .let_stmt = let_stmt_value },
                     .loc = .{ .start = tk.loc.start, .end = let_stmt_value.value.loc.end },
                 };
-
-                if (self.peekCurrent().tag == .dedent) self.walk();
-                return letStmt;
             },
             .if_kw => {
                 if (self.isIfCapture()) {
@@ -110,6 +106,9 @@ pub const Parser = struct {
                 const return_stmt = try self.parseReturnStmt();
                 const end_pos = if (return_stmt.exp) |exp| exp.loc.end else tk.loc.end;
                 return ast.StatementNode{ .data = .{ .return_stmt = return_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+            },
+            .then_kw, .do_kw, .end_kw => {
+                return self.err_dispatcher.invalidSyntax("unexpected keyword", tk);
             },
             else => {
                 return self.err_dispatcher.invalidSyntax("let, if, for, return ...", tk);
@@ -216,9 +215,8 @@ pub const Parser = struct {
         const is_mut = self.match(.mut_kw);
         const identififer = try self.expect(.identifier);
 
-        _ = try self.expect(.indent);
-        const body = try self.parseBlock();
-        _ = try self.expect(.dedent);
+        _ = try self.expect(.then_kw);
+        const body = try self.parseBlock(.else_kw);
 
         const has_else = self.match(.else_kw);
         var else_block: ?ast.Block = null;
@@ -226,13 +224,13 @@ pub const Parser = struct {
         if (has_else) {
             const is_else_if = self.peekCurrent().tag == .if_kw;
             if (is_else_if) {
-                else_block = try self.parseBlock();
+                else_block = try self.parseBlock(.end_kw);
             } else {
-                _ = try self.expect(.indent);
-                else_block = try self.parseBlock();
-                _ = try self.expect(.dedent);
+                else_block = try self.parseBlock(.end_kw);
             }
         }
+
+        _ = try self.expect(.end_kw);
 
         return ast.IfCaptureStmt{
             .exp = exp,
@@ -250,30 +248,14 @@ pub const Parser = struct {
         const exp = try self.parseExp(0);
         var else_block: ?ast.Block = null;
 
-        _ = try self.expect(.indent);
-        const then_block = try self.parseBlock();
-        _ = try self.expect(.dedent);
+        _ = try self.expect(.then_kw);
+        const then_block = try self.parseBlock(.else_kw);
 
-        const has_else = self.match(.else_kw);
-        if (has_else) {
-            const is_else_if = self.peekCurrent().tag == .if_kw;
-            if (is_else_if) {
-                const if_tk = self.peekCurrent();
-                const else_if_stmt = try self.parseIfStmt();
-                const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                var stmts: std.ArrayList(ast.StatementNode) = .empty;
-                try stmts.append(self.allocator, ast.StatementNode{
-                    .data = .{ .if_stmt = else_if_stmt },
-                    .loc = .{ .start = if_tk.loc.start, .end = end_pos },
-                });
-                else_block = ast.Block{ .statements = stmts };
-            } else {
-                _ = try self.expect(.indent);
-                else_block = try self.parseBlock();
-                _ = try self.expect(.dedent);
-            }
+        if (self.match(.else_kw)) {
+            else_block = try self.parseBlock(.end_kw);
         }
 
+        _ = try self.expect(.end_kw);
         return ast.IfStmt{ .condition = exp, .then_block = then_block, .else_block = else_block };
     }
 
@@ -284,9 +266,9 @@ pub const Parser = struct {
         defer self.loop_depth -= 1;
 
         const condition = try self.parseExp(0);
-        _ = try self.expect(.indent);
-        const do_block = try self.parseBlock();
-        _ = try self.expect(.dedent);
+        _ = try self.expect(.do_kw);
+        const do_block = try self.parseBlock(.end_kw);
+        _ = try self.expect(.end_kw);
 
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
@@ -312,7 +294,6 @@ pub const Parser = struct {
     }
 
     fn parseStructDef(self: *Self) Errors!ast.Struct {
-        _ = try self.expect(.indent);
         var static_fields: std.ArrayList(ast.StructField) = .empty;
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
@@ -373,10 +354,7 @@ pub const Parser = struct {
                         try fields.append(self.allocator, strc_field);
                     }
                 },
-                .new_line => {
-                    self.walk();
-                },
-                .dedent, .eof => {
+                .end_kw, .eof => {
                     self.walk();
                     break;
                 },
@@ -394,7 +372,6 @@ pub const Parser = struct {
     }
 
     fn parseAnonymousStructDef(self: *Self) Errors!ast.Struct {
-        _ = try self.expect(.indent);
         var fields: std.ArrayList(ast.StructField) = .empty;
 
         while (true) {
@@ -408,10 +385,7 @@ pub const Parser = struct {
                     const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
                     try fields.append(self.allocator, strc_field);
                 },
-                .new_line => {
-                    self.walk();
-                },
-                .dedent, .eof => {
+                .end_kw, .eof => {
                     self.walk();
                     break;
                 },
@@ -433,11 +407,9 @@ pub const Parser = struct {
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
 
-        _ = self.match(.indent);
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnArgs();
         }
-        _ = self.match(.dedent);
 
         _ = try self.expect(.r_paren);
         _ = try self.expect(.arrow);
@@ -454,9 +426,8 @@ pub const Parser = struct {
             body_block = .{ .statements = statements };
         } else {
             return_type = try self.parseTypeAnnotation(false);
-            _ = try self.expect(.indent);
-            body_block = try self.parseBlock();
-            _ = try self.expect(.dedent);
+            body_block = try self.parseBlock(.end_kw);
+            _ = try self.expect(.end_kw);
         }
 
         return ast.FnDef{
@@ -469,7 +440,6 @@ pub const Parser = struct {
     fn parseFnArgs(self: *Self) Errors!std.ArrayList(ast.FnParam) {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
-            _ = self.match(.new_line);
             const arg = try self.parseFnArg();
             try arguments.append(self.allocator, arg);
             if (self.peekCurrent().tag != .comma) {
@@ -541,9 +511,7 @@ pub const Parser = struct {
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
         while (true) {
-            _ = self.match(.new_line);
-            const first_tk = self.peekCurrent();
-            if (first_tk.tag == .dedent) {
+            if (self.peekCurrent().tag == .r_paren) {
                 break;
             }
 
@@ -560,7 +528,7 @@ pub const Parser = struct {
                 }
 
                 if (exp.data != .identifier) {
-                    return self.err_dispatcher.invalidSyntax("identifier", first_tk);
+                    return self.err_dispatcher.invalidSyntax("identifier", .{ .tag = .identifier, .loc = exp.loc });
                 }
 
                 self.walk();
@@ -587,11 +555,22 @@ pub const Parser = struct {
         return args.toOwnedSlice(self.allocator);
     }
 
+    fn canStartExpression(tag: Tag) bool {
+        return switch (tag) {
+            .identifier, .int_literal, .float_literal, .string_literal,
+            .true_literal, .false_literal, .null_literal,
+            .l_paren, .l_bracket,
+            .not, .minus, .fn_kw, .at, .struct_kw,
+            => true,
+            else => false,
+        };
+    }
+
     fn parseReturnStmt(self: *Self) Errors!ast.ReturnStmt {
         self.walk();
         const cur_tk = self.peekCurrent();
 
-        if (cur_tk.tag == .new_line or cur_tk.tag == .dedent or cur_tk.tag == .eof) {
+        if (cur_tk.tag == .eof or !canStartExpression(cur_tk.tag)) {
             return ast.ReturnStmt{ .exp = null };
         }
 
@@ -627,22 +606,12 @@ pub const Parser = struct {
         exp = try self.parsePostfix(exp);
 
         while (true) {
-            var tk = self.peekCurrent();
-            if (tk.tag == .indent or tk.tag == .new_line) {
-                self.walk();
-            }
-
-            tk = self.peekCurrent();
+            const tk = self.peekCurrent();
             const op_bp = self.getBindingPower(tk.tag);
             if (op_bp <= min_bp) {
-                const previous_tk = self.peekBack();
-                if (previous_tk.tag == .indent or previous_tk.tag == .new_line) {
-                    self.walkBack();
-                }
                 break;
             }
 
-            tk = self.peekCurrent();
             if (tk.tag == .pipe) {
                 exp = try self.parsePipeOperator(exp);
                 continue;
@@ -775,7 +744,7 @@ pub const Parser = struct {
             if (tk.tag == .colon) {
                 return true;
             }
-            if (tk.tag == .new_line or tk.tag == .indent) {
+            if (tk.tag == .then_kw) {
                 return false;
             }
             self.walk();
@@ -820,9 +789,7 @@ pub const Parser = struct {
             //fnCall
             if (tk.tag == .l_paren) {
                 self.walk();
-                _ = self.match(.indent);
                 const args = try self.parseFnCallArgs();
-                _ = self.match(.dedent);
                 const r_paren = try self.expect(.r_paren);
 
                 const call_node = try ast.ExpNode.init(self.allocator, .{

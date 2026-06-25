@@ -30,6 +30,7 @@ let register_blast = () -> int
 
     # wide balanced tree consuming many locals simultaneously
     return (((((a + b) * (c + d)) + ((e + f) * (g + h))) * (((i + j) * (k + l)) + ((m + n) * (o + p)))) + ((((q + r) * (s + t)) + ((u + v) * (w + x))) + (y * z)))
+end
 
 let r1 = register_blast()
 assert(r1 > 0)
@@ -51,6 +52,7 @@ let param_blast = (v01: int, v02: int, v03: int, v04: int, v05: int, v06: int, v
     let m = j + k
     let n = l + m
     return n
+end
 
 let r2 = param_blast(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
 assert(r2 == 15)

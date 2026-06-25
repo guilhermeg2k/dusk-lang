@@ -4,12 +4,15 @@ let recurse = (depth: int) -> int
     # allocate heap objects to trigger GC at some depth
     let _marker = @(level = depth, data = [depth, depth + 1])
 
-    if depth <= 0
+    if depth <= 0 then
         return depth
+    end
 
     return depth + recurse(depth - 1)
 
 # 200 is well under the 256 frame limit but deep enough to test GC tracing
+end
+
 let result = recurse(200)
 assert(result == 20100)
 
@@ -19,10 +22,12 @@ let canary = [77, 88, 99]
 let recurse_with_trash = (depth: int) -> int
     let _trash = [depth, depth, depth, depth]
 
-    if depth <= 0
+    if depth <= 0 then
         return 0
+    end
 
     return depth + recurse_with_trash(depth - 1)
+end
 
 let sum = recurse_with_trash(250)
 assert(sum == 31375)

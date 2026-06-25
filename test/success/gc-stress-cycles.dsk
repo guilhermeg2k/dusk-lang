@@ -4,10 +4,11 @@ let array_canary = [42, 99, 1337]
 let struct_canary = @(x = 77, y = 88, flag = true)
 
 let mut i = 0
-for i < 500000
+for i < 500000 do
     let trash_arr = [i, i + 1, i + 2, i + 3, i + 4]
     let trash_s = @(a = i, b = i * 2, c = i * 3)
     i += 1
+end
 
 assert(array_canary[0] == 42)
 assert(array_canary[1] == 99)

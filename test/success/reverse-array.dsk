@@ -3,12 +3,14 @@ let reverse_list: fn = (mut arr: []string) -> []string
     let mut result: []string = []
     let mut i: int = n - 1
 
-    for i > -1
+    for i > -1 do
         let val: string = arr[i]
         append(result, val)
         i = i - 1
+    end
 
     return result
+end
 
 let mut arr: []string = ["Salve", "General", "Doutor", "Hoje", "Eu", "Não"]
 let reversed: []string = reverse_list(arr)

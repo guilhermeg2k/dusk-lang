@@ -2,5 +2,8 @@ let S = struct
     x: int
     f: (mut self: @) -> void
         self.x = 1
+    end
+end
+
 let s = S(x = 0)
 s.f()

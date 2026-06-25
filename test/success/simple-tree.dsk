@@ -6,6 +6,8 @@ let Node = struct
     add: (mut self: @, left: ?Node, right: ?Node) -> void
         self.left = left
         self.right = right
+    end
+end
 
 let mut root = Node(value = 50, left = null, right = null)
 
@@ -18,6 +20,7 @@ root.add(
 
 let print_node = (node: Node) -> void
     echo(node.value)
+end
 
 print_node(root)
 print_node(left_node)

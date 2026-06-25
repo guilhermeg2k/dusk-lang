@@ -6,9 +6,12 @@ let User = struct
 
     to_string: (self: @) -> string
         return self.username
+    end
 
     change_id: (mut self: @, id: string) -> void
         self.id = id
+    end
+end
 
 let user = User(id="1", auth_id="4", username="Geromel", auth_provider="discord")
 

@@ -14,6 +14,7 @@ echo(add2(y = 45))
 let User = struct
     username: string
     auth_method = "DUSK"
+end
 
 echo(User("Rogerinho"))
 

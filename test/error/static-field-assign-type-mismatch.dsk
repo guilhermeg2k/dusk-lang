@@ -1,5 +1,7 @@
 let S = struct
     let mut x: int = 0
     y: string
+end
+
 let s = S(y = "hello")
 S.x = "hello"
