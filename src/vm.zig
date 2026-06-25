@@ -94,7 +94,6 @@ pub const VM = struct {
 
                         const new_size = v.Array.calc_size(array.capacity);
                         self.heap.allocated += new_size;
-                        self.heap.peak_allocated = @max(self.heap.peak_allocated, self.heap.allocated);
                     }
 
                     const value = stack[stack_base + inst.b];
@@ -425,7 +424,6 @@ pub const VM = struct {
 
     fn allocate(self: *Self, bytes: usize) void {
         self.heap.allocated += bytes;
-        self.heap.peak_allocated = @max(self.heap.peak_allocated, self.heap.allocated);
         self.heap.object_count += 1;
     }
 
@@ -501,9 +499,8 @@ pub const VM = struct {
         self.heap.threshold = @max(self.heap.allocated * 2, MIN_GC_THRESHOLD);
 
         const old_idx: u1 = self.heap.active ^ 1;
-        if (self.heap.allocated < self.heap.peak_allocated / 4) {
-            _ = self.heap.arenas[old_idx].reset(.free_all);
-            self.heap.peak_allocated = self.heap.allocated;
+        if (self.heap.arenas[old_idx].queryCapacity() > self.heap.threshold) {
+            _ = self.heap.arenas[old_idx].reset(.{ .retain_with_limit = self.heap.threshold });
             self.heap.gc_queue.clearAndFree(self.allocator);
             try self.heap.gc_queue.ensureTotalCapacity(self.allocator, self.heap.object_count);
         }
@@ -552,7 +549,6 @@ const Heap = struct {
     gc_queue: std.ArrayList(*v.HeapValue) = .empty,
     object_count: usize = 0,
     allocated: usize = 0,
-    peak_allocated: usize = 0,
     threshold: usize,
 };
 
