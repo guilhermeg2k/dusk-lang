@@ -1,0 +1,17 @@
+# test GC interleaved with array resizes
+# grow a large array while creating trash; relocated pointers must be followed
+let mut growing: []int = []
+let canary = [99, 98, 97]
+
+let mut i: int = 0
+for i < 50000
+    append(growing, i)
+    let noise = [i, i + 1, i + 2, i + 3]
+    i += 1
+
+assert(len(growing) == 50000)
+assert(growing[0] == 0)
+assert(growing[25000] == 25000)
+assert(growing[49999] == 49999)
+assert(canary[0] == 99)
+assert(canary[2] == 97)

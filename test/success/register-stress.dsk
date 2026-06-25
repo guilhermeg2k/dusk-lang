@@ -1,0 +1,56 @@
+# max out register usage with 30+ locals and complex nested arithmetic
+# each local occupies one register; deeply nested expressions force more temporaries
+let register_blast = () -> int
+    let a = 1 + 1
+    let b = 1 + 2
+    let c = 2 + 1
+    let d = a + b
+    let e = b + c
+    let f = c + d
+    let g = d + e
+    let h = e + f
+    let i = f + g
+    let j = g + h
+    let k = h + i
+    let l = i + j
+    let m = j + k
+    let n = k + l
+    let o = l + m
+    let p = m + n
+    let q = n + o
+    let r = o + p
+    let s = p + q
+    let t = q + r
+    let u = r + s
+    let v = s + t
+    let w = t + u
+    let x = u + v
+    let y = v + w
+    let z = w + x
+
+    # wide balanced tree consuming many locals simultaneously
+    return (((((a + b) * (c + d)) + ((e + f) * (g + h))) * (((i + j) * (k + l)) + ((m + n) * (o + p)))) + ((((q + r) * (s + t)) + ((u + v) * (w + x))) + (y * z)))
+
+let r1 = register_blast()
+assert(r1 > 0)
+
+# second function: many parameters + deep nesting
+let param_blast = (v01: int, v02: int, v03: int, v04: int, v05: int, v06: int, v07: int, v08: int, v09: int, v10: int, v11: int, v12: int, v13: int, v14: int, v15: int) -> int
+    let a = v01 + v02
+    let b = v03 + v04
+    let c = v05 + v06
+    let d = v07 + v08
+    let e = v09 + v10
+    let f = v11 + v12
+    let g = v13 + v14
+    let h = v15 + a
+    let i = b + c
+    let j = d + e
+    let k = f + g
+    let l = h + i
+    let m = j + k
+    let n = l + m
+    return n
+
+let r2 = param_blast(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+assert(r2 == 15)

@@ -170,6 +170,10 @@ test "sema error: invalid return type" {
     try runCaseError("invalid-return-type.dsk", error.InvalidReturnType);
 }
 
+test "sema error: bare return in nonvoid fn" {
+    try runCaseError("bare-return-in-nonvoid-fn.dsk", error.InvalidReturnType);
+}
+
 test "sema error: invalid struct function" {
     try runCaseError("invalid-struct-function.dsk", error.InvalidStructField);
 }
@@ -316,4 +320,32 @@ test "gc: across function calls" {
 
 test "gc: array resize" {
     try runCase("gc-resize.dsk");
+}
+
+test "gc: stress cycles" {
+    try runCase("gc-stress-cycles.dsk");
+}
+
+test "gc: stress mixed types" {
+    try runCase("gc-stress-mixed.dsk");
+}
+
+test "gc: stress resize" {
+    try runCase("gc-stress-resize.dsk");
+}
+
+test "gc: stress complex flow" {
+    try runCase("gc-stress-complex-flow.dsk");
+}
+
+test "gc: static store survival" {
+    try runCase("gc-static-store.dsk");
+}
+
+test "register: stress" {
+    try runCase("register-stress.dsk");
+}
+
+test "recursion: deep frame stack" {
+    try runCase("deep-recursion.dsk");
 }

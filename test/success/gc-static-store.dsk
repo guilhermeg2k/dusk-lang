@@ -1,0 +1,19 @@
+# test that static struct fields survive GC cycles
+# struct with static fields referencing heap objects, plus heavy allocation
+let Config = struct
+    default_host: string = "localhost"
+    default_port: int = 9090
+    default_tags: []int = [1, 2, 3]
+
+let mut cfg = Config()
+
+let mut i = 0
+for i < 500000
+    let noise = [i, i + 1, i + 2]
+    i += 1
+
+assert(cfg.default_port == 9090)
+assert(cfg.default_tags[0] == 1)
+assert(cfg.default_tags[1] == 2)
+assert(cfg.default_tags[2] == 3)
+assert(i == 500000)

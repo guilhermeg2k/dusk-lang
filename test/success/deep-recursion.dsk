@@ -1,0 +1,31 @@
+# deep recursion (~200 frames) with heap allocations at every depth
+# GC must trace deep call frames; return value verified after unwinding
+let recurse = (depth: int) -> int
+    # allocate heap objects to trigger GC at some depth
+    let _marker = @(level = depth, data = [depth, depth + 1])
+
+    if depth <= 0
+        return depth
+
+    return depth + recurse(depth - 1)
+
+# 200 is well under the 256 frame limit but deep enough to test GC tracing
+let result = recurse(200)
+assert(result == 20100)
+
+# second test: create trash in deeper frames, keep canary at top
+let canary = [77, 88, 99]
+
+let recurse_with_trash = (depth: int) -> int
+    let _trash = [depth, depth, depth, depth]
+
+    if depth <= 0
+        return 0
+
+    return depth + recurse_with_trash(depth - 1)
+
+let sum = recurse_with_trash(250)
+assert(sum == 31375)
+assert(canary[0] == 77)
+assert(canary[1] == 88)
+assert(canary[2] == 99)
