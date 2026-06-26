@@ -555,12 +555,21 @@ pub const Parser = struct {
         return args.toOwnedSlice(self.allocator);
     }
 
-    fn canStartExpression(tag: Tag) bool {
+    fn canStartExpression(_: *Self, tag: Tag) bool {
         return switch (tag) {
-            .identifier, .int_literal, .float_literal, .string_literal,
-            .true_literal, .false_literal, .null_literal,
-            .l_paren, .l_bracket,
-            .not, .minus, .fn_kw, .at, .struct_kw,
+            .identifier,
+            .int_literal,
+            .float_literal,
+            .string_literal,
+            .true_literal,
+            .false_literal,
+            .null_literal,
+            .l_paren,
+            .l_bracket,
+            .not,
+            .minus,
+            .at,
+            .struct_kw,
             => true,
             else => false,
         };
@@ -570,7 +579,7 @@ pub const Parser = struct {
         self.walk();
         const cur_tk = self.peekCurrent();
 
-        if (cur_tk.tag == .eof or !canStartExpression(cur_tk.tag)) {
+        if (cur_tk.tag == .eof or !self.canStartExpression(cur_tk.tag)) {
             return ast.ReturnStmt{ .exp = null };
         }
 

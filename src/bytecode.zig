@@ -155,6 +155,7 @@ pub const BytecodeGen = struct {
         self.next_free_register = @intCast(func.params.len);
         self.peak_register = @intCast(func.params.len);
         self.var_register_id_by_uid.clearRetainingCapacity();
+        @memset(&self.register_types, self.type_table.getPrimitive(.void));
 
         for (func.params, 0..) |param, i| {
             try self.var_register_id_by_uid.put(param.uid, @intCast(i));
@@ -459,12 +460,10 @@ pub const BytecodeGen = struct {
 
             .i_array => {
                 try self.genArrayInit(value, target_reg);
-                self.register_types[target_reg] = value.type_id;
             },
 
             .struct_init => {
                 try self.genStructInit(value, target_reg);
-                self.register_types[target_reg] = value.type_id;
             },
 
             .binary_op => |bo| {
@@ -496,6 +495,7 @@ pub const BytecodeGen = struct {
 
         try self.chunk_instructions.append(self.allocator, init_inst);
         try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
 
         for (value.data.i_array.values) |vl| {
             try self.genArrayAppend(vl, target_reg);
@@ -625,6 +625,7 @@ pub const BytecodeGen = struct {
 
         try self.chunk_instructions.append(self.allocator, struct_init);
         try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
 
         for (@"struct".values, 0..) |field_v, i| {
             try self.genStructStore(target_reg, @intCast(i), field_v);

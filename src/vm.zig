@@ -507,6 +507,8 @@ pub const VM = struct {
     }
 
     fn copyHeapValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value) !void {
+        const raw: u64 = @bitCast(value.*);
+        if (raw == 0) return;
         var current = value.heap_obj;
         while (current.relocated) |rel| {
             current = rel;

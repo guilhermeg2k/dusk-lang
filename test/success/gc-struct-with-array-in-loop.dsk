@@ -1,0 +1,12 @@
+let run = () -> void
+    let canary = @(value = 42, extra = [42, 42, 42])
+    let mut i: int = 0
+    for i < 10000 do
+        let trash = @(value = i, extra = [i, i, i])
+        i += 1
+    end
+    assert(canary.value == 42)
+end
+
+run()
+

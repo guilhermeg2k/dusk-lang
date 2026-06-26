@@ -1,0 +1,17 @@
+# GC stress: array resize while struct canary survives
+let mut arr: []int = [0]
+let canary = @(id = 999, extra = [99, 99, 99])
+
+let mut i: int = 0
+for i < 30000 do
+    append(arr, i + 1)
+    let trash = [i, i, i]
+    i += 1
+end
+
+assert(len(arr) == 30001)
+assert(arr[0] == 0)
+assert(arr[30000] == 30000)
+assert(canary.id == 999)
+assert(canary.extra[0] == 99)
+

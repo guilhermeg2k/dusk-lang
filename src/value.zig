@@ -59,7 +59,7 @@ pub const Struct = extern struct {
         const total_bytes = Self.calc_size(field_size);
 
         const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
-        const struct_ptr = @as(*Self, @ptrCast(raw_memory.ptr));
+        const struct_ptr: *Self = @ptrCast(@alignCast(raw_memory.ptr));
 
         struct_ptr.obj = .{
             .kind = .@"struct",
@@ -67,6 +67,9 @@ pub const Struct = extern struct {
 
         struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
+
+        //note: autoset all not inicialized fields to null
+        @memset(struct_ptr.getDataPtr()[0..field_size], NULL_VALUE);
 
         return struct_ptr;
     }
