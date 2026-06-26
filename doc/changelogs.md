@@ -1,5 +1,17 @@
 # Changelogs
 
+## v0.10 - Frieren
+
+- Bytecode compiler generating a custom instruction set
+- Custom VM with bytecode interpreter, replacing the QuickJS JavaScript runtime
+- Garbage collector for heap-allocated values (strings, arrays, structs)
+- Keyword-delimited blocks: `if/then/end` and `for/do/end` replace Python-style indentation
+- New `elif` keyword as a shorthand for `else if` chains
+- Struct and function bodies now closed with `end` keyword
+- Added `--version` CLI flag
+- Removed `concat`, `stringify`, and `floor` built-in functions
+- Added benchmark suite (fib, primes, quicksort, mandelbrot, particles)
+
 ## v0.9 - Shinobu
 
 - Improved error messages with precise location highlighting (`^~~~` markers and line:col info)

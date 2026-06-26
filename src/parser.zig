@@ -34,26 +34,29 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self) !ast.Root {
-        return self.parseBlock(.eof);
+        return self.parseBlock(&.{});
     }
 
-    pub fn parseBlock(self: *Self, extra_stop_at: Tag) Errors!ast.Block {
+    pub fn parseBlock(self: *Self, extra_stop_tokens: []const Tag) Errors!ast.Block {
         var statements: std.ArrayList(ast.StatementNode) = .empty;
 
         var current_tk = self.peekCurrent();
-        while (current_tk.tag != .eof and current_tk.tag != .end_kw) : (current_tk = self.peekCurrent()) {
-            if (current_tk.tag == extra_stop_at) {
-                break;
-            }
-            if (self.peekCurrent().tag == .eof) {
-                break;
-            }
-
+        while (current_tk.tag != .eof and
+            current_tk.tag != .end_kw and
+            !isStopToken(current_tk.tag, extra_stop_tokens)) : (current_tk = self.peekCurrent())
+        {
             const stmt = try self.parseStmt();
             try statements.append(self.allocator, stmt);
         }
 
         return .{ .statements = statements };
+    }
+
+    fn isStopToken(tag: Tag, stops: []const Tag) bool {
+        for (stops) |t| {
+            if (tag == t) return true;
+        }
+        return false;
     }
 
     fn parseStmt(self: *Self) !ast.StatementNode {
@@ -107,7 +110,7 @@ pub const Parser = struct {
                 const end_pos = if (return_stmt.exp) |exp| exp.loc.end else tk.loc.end;
                 return ast.StatementNode{ .data = .{ .return_stmt = return_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
-            .then_kw, .do_kw, .end_kw => {
+            .then_kw, .do_kw, .end_kw, .elif_kw, .else_kw => {
                 return self.err_dispatcher.invalidSyntax("unexpected keyword", tk);
             },
             else => {
@@ -216,18 +219,13 @@ pub const Parser = struct {
         const identififer = try self.expect(.identifier);
 
         _ = try self.expect(.then_kw);
-        const body = try self.parseBlock(.else_kw);
+        const body = try self.parseBlock(&.{.else_kw});
 
         const has_else = self.match(.else_kw);
         var else_block: ?ast.Block = null;
 
         if (has_else) {
-            const is_else_if = self.peekCurrent().tag == .if_kw;
-            if (is_else_if) {
-                else_block = try self.parseBlock(.end_kw);
-            } else {
-                else_block = try self.parseBlock(.end_kw);
-            }
+            else_block = try self.parseBlock(&.{.end_kw});
         }
 
         _ = try self.expect(.end_kw);
@@ -245,18 +243,47 @@ pub const Parser = struct {
 
     fn parseIfStmt(self: *Self) Errors!ast.IfStmt {
         self.walk();
-        const exp = try self.parseExp(0);
-        var else_block: ?ast.Block = null;
+        const first_cond = try self.parseExp(0);
 
         _ = try self.expect(.then_kw);
-        const then_block = try self.parseBlock(.else_kw);
+        const then_block = try self.parseBlock(&.{ .else_kw, .elif_kw });
 
+        var elif_chain: std.ArrayList(ast.StatementNode) = .empty;
+
+        while (self.match(.elif_kw)) {
+            const elif_start = self.tokens[self.cur_index - 1].loc.start;
+
+            const cond = try self.parseExp(0);
+            _ = try self.expect(.then_kw);
+            const body = try self.parseBlock(&.{ .else_kw, .elif_kw });
+
+            var elif_end = self.tokens[self.cur_index - 1].loc.end;
+            if (body.statements.items.len > 0) {
+                elif_end = body.statements.items[body.statements.items.len - 1].loc.end;
+            }
+
+            try elif_chain.append(self.allocator, .{
+                .data = .{ .if_stmt = .{ .condition = cond, .then_block = body, .else_block = null } },
+                .loc = .{ .start = elif_start, .end = elif_end },
+            });
+        }
+
+        var else_block: ?ast.Block = null;
         if (self.match(.else_kw)) {
-            else_block = try self.parseBlock(.end_kw);
+            else_block = try self.parseBlock(&.{.end_kw});
         }
 
         _ = try self.expect(.end_kw);
-        return ast.IfStmt{ .condition = exp, .then_block = then_block, .else_block = else_block };
+
+        while (elif_chain.items.len > 0) {
+            var stmt_node = elif_chain.pop().?;
+            stmt_node.data.if_stmt.else_block = else_block;
+            var stmts: std.ArrayList(ast.StatementNode) = .empty;
+            try stmts.append(self.allocator, stmt_node);
+            else_block = .{ .statements = stmts };
+        }
+
+        return .{ .condition = first_cond, .then_block = then_block, .else_block = else_block };
     }
 
     fn parseForStmt(self: *Self) Errors!ast.ForStmt {
@@ -267,7 +294,7 @@ pub const Parser = struct {
 
         const condition = try self.parseExp(0);
         _ = try self.expect(.do_kw);
-        const do_block = try self.parseBlock(.end_kw);
+        const do_block = try self.parseBlock(&.{.end_kw});
         _ = try self.expect(.end_kw);
 
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
@@ -426,7 +453,7 @@ pub const Parser = struct {
             body_block = .{ .statements = statements };
         } else {
             return_type = try self.parseTypeAnnotation(false);
-            body_block = try self.parseBlock(.end_kw);
+            body_block = try self.parseBlock(&.{.end_kw});
             _ = try self.expect(.end_kw);
         }
 

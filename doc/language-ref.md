@@ -1,12 +1,12 @@
 # Language Reference
 
-This document provides a reference for **v0.9::Shinobu** of Dusk programming language.
+This document provides a reference for **v0.10::Frieren** of Dusk programming language.
 
 ## 1. Comments
 
 Dusk supports single-line comments starting with the `#` character.
 
-```rust
+```nim
 # This is a comment
 let x: int = 10 # Inline comment
 ```
@@ -17,7 +17,7 @@ let x: int = 10 # Inline comment
 
 Variables are declared using the `let` keyword. Type annotations are **optional** if the type can be inferred from the value.
 
-```rust
+```nim
 # Type is inferred from the value
 let name = "Dusk" # string
 let count = 100   # int
@@ -30,7 +30,7 @@ let is_active: bool = true
 
 Variables are immutable by default. To make a variable mutable, use the `mut` keyword.
 
-```rust
+```nim
 let x: int = 10
 # x = 20  <-- Error: Immutable variable
 
@@ -56,7 +56,7 @@ Arrays are dynamic lists of elements of the same type.
 - **Type Syntax**: `[]Type` (e.g., `[]int`, `[]string`)
 - **Literal Syntax**: `[val1, val2, ...]`
 
-```rust
+```nim
 let numbers: []int = [1, 2, 3, 4]
 let names: []string = ["Alice", "Bob"]
 ```
@@ -69,7 +69,7 @@ Structs are custom data types that group related data and methods.
 
 Structs are defined using the `struct` keyword. Structs can also contain nested struct definitions and default values for fields. Note that **nested structs can only contain fields**, they cannot contain methods or static fields.
 
-```rust
+```nim
 let User = struct
     id: string
     username: string
@@ -79,14 +79,18 @@ let User = struct
     address: struct
         city: string
         country: string
+    end
 
     # Method
     to_string: (self: @) -> string
-        return concat(self.id, self.username)
+        return self.username
+    end
 
     # Mutable Method
     change_id: (mut self: @, id: string) -> void
         self.id = id
+    end
+end
 ```
 
 The `@` symbol refers to the current struct type.
@@ -95,21 +99,15 @@ The `@` symbol refers to the current struct type.
 
 Structs are initialized by calling the struct name as a function. Named parameters are supported and recommended for clarity.
 
-```rust
+```nim
 let user = User(id="1", username="Geromel")
-
-# Multi-line initialization
-let user2 = User(
-    id = "2",
-    username = "Dusk",
-)
 ```
 
 #### Accessing Fields and Methods
 
 Fields and methods are accessed using the dot (`.`) operator.
 
-```rust
+```nim
 echo(user.username)
 user.change_id("100")
 echo(user.to_string())
@@ -125,7 +123,7 @@ Structs can have static fields and methods. Static fields are declared with `let
 2. **Instance fields**
 3. **Methods**
 
-```rust
+```nim
 let Api = struct
     # Static fields
     let ip: string = "127.0.0.1"
@@ -136,8 +134,9 @@ let Api = struct
 
     # Methods
     fetch: (self: @) -> string
-        let base = concat(Api.ip, Api.port)
-        return concat(base, self.endpoint)
+        return self.endpoint
+    end
+end
 
 # Accessing static fields
 Api.port = ":9090"
@@ -151,13 +150,15 @@ echo(Api.fetch(api))   # Static call
 
 Dusk supports anonymous struct initialization using the `@(...)` syntax.
 
-```rust
+```nim
 let Point2D = struct
     x: int
     y: int
+end
 
 let print_point = (point: Point2D) -> void
-    echo(stringify(point))
+    echo(point)
+end
 
 let point = Point2D(x = 10, y = 10)
 let point2: Point2D = @(x = 20, y = 20)
@@ -174,19 +175,21 @@ print_point(@(x=40,y=40))
 
 Dusk supports nullable types by prefixing the type with `?`. This means the value can either be of the specified type or `null`.
 
-```rust
+```nim
 let mut name: ?string = null
 name = "Dusk"
 ```
 
 You can use optional chaining (`?.`) to safely access fields of nullable structs. If any part of the chain is `null`, the result is `null`.
 
-```rust
+```nim
 let Country = struct
     name: string
+end
 
 let User = struct
     country: ?Country
+end
 
 let user = User(country=null)
 echo(user.country?.name) # null
@@ -242,34 +245,37 @@ Dusk supports implicit promotion of integers to floats when mixed in binary expr
 
 ## 4. Control Flow
 
-Dusk uses indentation (4 spaces) to define blocks.
+Dusk uses keyword-delimited blocks (`then`/`do`/`end`) and indentation for readability.
 
-### If / Else If / Else
+### If / Elif / Else
 
-Dusk supports `else if` for multiple conditions.
+Dusk supports `elif` for multiple conditions.
 
-```rust
-if x > 10
+```nim
+if x > 10 then
     echo("Greater than 10")
-else if x > 0
+elif x > 0 then
     echo("Between 1 and 10")
 else
     echo("0 or less")
+end
 ```
 
 ### Nullable Capture
 
 You can safely unwrap nullable values using the `if value: captured` syntax. The captured value is only available within the `if` block. You can also capture it as a mutable value using `if value: mut captured`.
 
-```rust
+```nim
 let mut username: ?string = null
 
-if username: name
+if username: name then
     echo(name)
+end
 
 username = "Dusk"
-if username: mut name
+if username: mut name then
     name = "Dusk 2.0"
+end
 ```
 
 > **Note on Mutability:** Capturing a primitive value (like `int`, `float`, `string`, `bool`) as `mut` will only mutate the captured local variable, not the original value. Mutating the original value through a capture only works for reference types like structs and arrays.
@@ -280,24 +286,27 @@ Dusk supports `for` loops, which can be conditional (like a `while` loop) or inf
 
 **Conditional Loop:**
 
-```rust
+```nim
 let mut i: int = 0
-for i < 5
+for i < 5 do
     echo(i)
     i += 1
+end
 ```
 
 **Infinite Loop:**
 
 An infinite loop is created using `for true`.
 
-```rust
+```nim
 let mut x = 10
-for true
+for true do
     echo(x)
     x -= 1
-    if x < 1
+    if x < 1 then
         break # exit the loop
+    end
+end
 ```
 
 ### Loop Control Statements
@@ -309,17 +318,20 @@ Dusk provides `break` and `continue` to control loop execution.
 
 **Example with `continue` and `break`:**
 
-```rust
+```nim
 let mut i = 0
-for i < 10
+for i < 10 do
     i += 1
-    if i % 2 == 0
+    if i % 2 == 0 then
         continue # Skip even numbers
+    end
 
-    if i > 7
+    if i > 7 then
         break # Exit loop
+    end
 
     echo(i) # Only prints 1, 3, 5, 7
+end
 ```
 
 ## 5. Functions
@@ -330,16 +342,17 @@ Functions are first-class citizens. Return types are only inferred for inline re
 
 The compiler can infer function types in most cases.
 
-```rust
+```nim
 let add = (a: int, b: int) -> int
     return a + b
+end
 ```
 
 #### Default Values
 
 Function parameters can have default values. When a default value is provided, the type annotation becomes optional and is inferred from the default value.
 
-```rust
+```nim
 let add = (x: int, y = 2) -> return x + y
 
 echo(add(10))        # 12
@@ -347,23 +360,11 @@ echo(add(10, 5))     # 15
 echo(add(y=10, x=5)) # 15
 ```
 
-#### Multiline Definition
-
-Function parameters can be defined across multiple lines for better readability.
-
-```rust
-let power = (
-    base: int,
-    exp: int
-) -> int
-    # ...
-```
-
 ### Inline Return
 
 For functions with a single return expression, you can use the inline `return`
 
-```rust
+```nim
 let add = (a: int, b: int) -> return a + b
 ```
 
@@ -371,19 +372,21 @@ let add = (a: int, b: int) -> return a + b
 
 If a function does not return a value, use `void`.
 
-```rust
+```nim
 let greet: fn = (name: string) -> void
-    echo(concat("Hello ", name))
+    echo(name)
+end
 ```
 
 ### Mutable Parameters
 
 By default, function parameters are immutable. To allow a function to modify a parameter (like an array), you can use the `mut` keyword. This is especially useful for in-place modifications.
 
-```rust
+```nim
 # The mut keyword allows this function to modify list
 let add_one = (mut list: []int) -> void
     append(list, 1)
+end
 
 let mut my_list = [10, 20]
 add_one(my_list)
@@ -394,21 +397,12 @@ echo(my_list) # Prints [10, 20, 1]
 
 Functions can be called using positional arguments or named parameters.
 
-```rust
+```nim
 let sum: int = add(5, 3)
 greet("Dusk")
 
 # Named parameters
 let result = add(a=10, b=20)
-```
-
-Dusk also supports multi-line function calls for better readability.
-
-```rust
-let total = add(
-    a = 5,
-    b = 15,
-)
 ```
 
 #### Pipe Operator
@@ -417,23 +411,21 @@ Dusk supports the pipe operator (`|>`), which allows passing the result of an ex
 
 The right-hand side of the pipe operator must be a function call. Parentheses are required even for functions with a single parameter.
 
-```rust
+```nim
 let add = (a: int, b: int) -> int
     return a + b
+end
 
 let is_even = (x: int) -> bool
     return (x % 2) == 0
+end
 
 # The following calls are equivalent:
 # is_even(add(2, 1))
 let res = 2 |> add(1) |> is_even()
 
 assert(res == false)
-```
 
-The pipe operator can also be split across multiple lines:
-
-```rust
 let res2 = 2
     |> add(2)
     |> is_even()
@@ -443,15 +435,12 @@ let res2 = 2
 
 Dusk provides a set of intrinsic functions.
 
-| Function    | Signature                                       | Description                                      |
-| :---------- | :---------------------------------------------- | :----------------------------------------------- |
-| `assert`    | `assert(cond: bool) -> void`                    | Raises a runtime error if the condition is false. |
-| `echo`      | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
-| `len`       | `len(arr: []dynamic) -> int`                    | Returns the length of an array.                  |
-| `append`    | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
-| `floor`     | `floor(n: float) -> int`                        | Rounds a float down to the nearest integer       |
-| `concat`    | `concat(s1: string, s2: string) -> string`      | Concatenates two strings.                        |
-| `stringify` | `stringify(obj: dynamic) -> string`             | Returns a JSON string representation of a value. |
+| Function | Signature                                       | Description                                      |
+| :------- | :---------------------------------------------- | :----------------------------------------------- |
+| `assert` | `assert(cond: bool) -> void`                    | Raises a runtime error if the condition is false. |
+| `echo`   | `echo(msg: dynamic) -> void`                    | Prints a value to stdout, followed by a newline. |
+| `len`    | `len(arr: []dynamic) -> int`                    | Returns the length of an array.                  |
+| `append` | `append(arr: []dynamic, item: dynamic) -> void` | Adds an item to the end of a mutable array.      |
 
 ## 7. Program Structure
 
@@ -460,4 +449,4 @@ Dusk provides a set of intrinsic functions.
 
 ## 8. Runtime
 
-- Currently, it transpiles to JS and evaluates it using embedded [quickjs](https://bellard.org/quickjs/).
+- Register-based virtual machine with a garbage collector.
