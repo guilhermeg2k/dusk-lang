@@ -68,9 +68,6 @@ pub const Struct = extern struct {
         struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
 
-        //note: autoset all not inicialized fields to null
-        @memset(struct_ptr.getDataPtr()[0..field_size], NULL_VALUE);
-
         return struct_ptr;
     }
 

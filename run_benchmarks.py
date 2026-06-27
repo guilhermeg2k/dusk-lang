@@ -600,16 +600,16 @@ def write_markdown(machine: dict, tools: dict, all_data: dict,
            "measured externally with "
            "[`hyperfine`](https://github.com/sharkdp/hyperfine) and peak memory "
            "with GNU `/usr/bin/time`; the benchmark programs contain **no "
-           "timing or instrumentation code**. This benchmark is not an evidence "
-           "that X is faster than Y, its main purpose is to track Dusk performance "
-           "specially on versions change, so we can easily notice performance problems/gains.\n",
+           "timing or instrumentation code**.\n"
+           "> This benchmark is not evidence that X is faster than Y, its main purpose is to track Dusk performance "
+           "specially on versions change, so we can notice performance problems/gains.\n",
            "Regenerate this file with:\n",
            "```bash\npython3 run_benchmarks.py\n```\n",
-           "## Machine\n",
-           md_table(["Field", "Value"], [[k, v] for k, v in machine.items()]),
            "> **Note:** This benchmark generation script and the algorithms were "
            "AI-generated. I haven't deeply reviewed them, so they may contain "
            "errors.\n",
+           "## Machine\n",
+           md_table(["Field", "Value"], [[k, v] for k, v in machine.items()]),
            "## Language toolchains\n",
            md_table(["Language", "Version / mode"],
                     [[f"**{k}**", f"**{v}**"] if k == "Dusk" else [k, v]

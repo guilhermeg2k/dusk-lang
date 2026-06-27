@@ -4,10 +4,10 @@ let MAX_ITER: int = 1000
 
 let mut sum: int = 0
 let mut py: int = 0
-for py < H
+for py < H do
     let cy: float = -1.0 + (py / H) * 2.0
     let mut px: int = 0
-    for px < W
+    for px < W do
         let cx: float = -2.5 + (px / W) * 3.5
 
         let mut zx: float = 0.0
@@ -16,15 +16,18 @@ for py < H
         let mut zy2: float = 0.0
         let mut iter: int = 0
 
-        for zx2 + zy2 <= 4.0 and iter < MAX_ITER
+        for zx2 + zy2 <= 4.0 and iter < MAX_ITER do
             zy = 2.0 * zx * zy + cy
             zx = zx2 - zy2 + cx
             zx2 = zx * zx
             zy2 = zy * zy
             iter += 1
+        end
 
         sum += iter
         px += 1
+    end
     py += 1
+end
 
 echo(sum)

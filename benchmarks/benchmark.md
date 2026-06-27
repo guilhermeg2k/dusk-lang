@@ -1,12 +1,15 @@
 # Benchmark
 
-Cross-language micro-benchmarks tracking **Dusk** against a native **Zig** baseline and five mainstream runtimes. Wall time is measured externally with [`hyperfine`](https://github.com/sharkdp/hyperfine) and peak memory with GNU `/usr/bin/time`; the benchmark programs contain **no timing or instrumentation code**. This benchmark is not an evidence that X is faster than Y, its main purpose is to track Dusk performance specially on versions change, so we can easily notice performance problems/gains.
+Cross-language micro-benchmarks tracking **Dusk** against a native **Zig** baseline and five mainstream runtimes. Wall time is measured externally with [`hyperfine`](https://github.com/sharkdp/hyperfine) and peak memory with GNU `/usr/bin/time`; the benchmark programs contain **no timing or instrumentation code**.
+> This benchmark is not evidence that X is faster than Y, its main purpose is to track Dusk performance specially on versions change, so we can notice performance problems/gains.
 
 Regenerate this file with:
 
 ```bash
 python3 run_benchmarks.py
 ```
+
+> **Note:** This benchmark generation script and the algorithms were AI-generated. I haven't deeply reviewed them, so they may contain errors.
 
 ## Machine
 
@@ -19,15 +22,13 @@ python3 run_benchmarks.py
 | Cores / Threads | 6 cores / 12 threads |
 | CPU max | 4.65 GHz |
 | Memory | 31.2 GiB total |
-| Date | 2026-06-24 04:18 UTC |
-
-> **Note:** This benchmark generation script and the algorithms were AI-generated. I haven't deeply reviewed them, so they may contain errors.
+| Date | 2026-06-27 21:31 UTC |
 
 ## Language toolchains
 
 | Language | Version / mode |
 | --- | --- |
-| **Dusk** | **0.10.0-devel (git 5ee4c87) — built with Zig 0.16.0, ReleaseFast** |
+| **Dusk** | **0.10.0 (git db50c05) — built with Zig 0.16.0, ReleaseFast** |
 | Zig (native) | 0.16.0 — native baseline, build-exe -OReleaseFast |
 | Java | openjdk version 25.0.3 2026-04-21 — precompiled with javac, JVM startup included |
 | Node.js | v22.22.2 |
@@ -54,13 +55,13 @@ Expected output: `9227465`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 19.2 ms | 389.9 µs | 18.6 ms | 21.2 ms | 1.00× | 0.7 MiB |
-| Java | 39.5 ms | 945.2 µs | 37.6 ms | 42.5 ms | 2.06× | 38.2 MiB |
-| Node.js | 146.2 ms | 3.0 ms | 142.8 ms | 155.2 ms | 7.62× | 58.6 MiB |
-| **Dusk** | **425.5 ms** | **27.9 ms** | **383.7 ms** | **469.3 ms** | **22.18×** | **1.0 MiB** |
-| Lua | 454.9 ms | 10.6 ms | 442.9 ms | 467.7 ms | 23.71× | 2.7 MiB |
-| Ruby | 690.9 ms | 5.7 ms | 685.0 ms | 697.4 ms | 36.02× | 14.4 MiB |
-| Python 3 | 885.3 ms | 13.0 ms | 869.3 ms | 900.9 ms | 46.15× | 9.3 MiB |
+| Zig (native) | 19.1 ms | 222.6 µs | 18.8 ms | 19.7 ms | 1.00× | 0.7 MiB |
+| Java | 41.6 ms | 801.1 µs | 38.5 ms | 43.6 ms | 2.18× | 38.3 MiB |
+| Node.js | 144.1 ms | 1.6 ms | 142.3 ms | 149.8 ms | 7.56× | 58.6 MiB |
+| **Dusk** | **399.5 ms** | **18.5 ms** | **372.7 ms** | **423.4 ms** | **20.95×** | **1.0 MiB** |
+| Lua | 453.9 ms | 10.2 ms | 442.4 ms | 466.7 ms | 23.80× | 2.7 MiB |
+| Ruby | 694.0 ms | 27.4 ms | 665.0 ms | 739.4 ms | 36.39× | 14.4 MiB |
+| Python 3 | 883.8 ms | 9.8 ms | 868.8 ms | 893.1 ms | 46.34× | 9.3 MiB |
 
 ![Recursive Fibonacci](assets/fib.png)
 
@@ -74,13 +75,13 @@ Expected output: `50049`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 5.7 ms | 581.6 µs | 4.6 ms | 8.3 ms | 1.00× | 3.8 MiB |
-| Java | 28.5 ms | 1.2 ms | 26.0 ms | 32.7 ms | 5.00× | 44.2 MiB |
-| Node.js | 141.9 ms | 1.7 ms | 139.2 ms | 144.6 ms | 24.90× | 86.0 MiB |
-| Lua | 257.5 ms | 10.9 ms | 242.7 ms | 281.6 ms | 45.19× | 21.4 MiB |
-| **Dusk** | **562.2 ms** | **21.7 ms** | **536.4 ms** | **590.2 ms** | **98.67×** | **16.7 MiB** |
-| Ruby | 1.540 s | 28.4 ms | 1.499 s | 1.578 s | 270.21× | 30.7 MiB |
-| Python 3 | 1.648 s | 20.7 ms | 1.615 s | 1.667 s | 289.23× | 35.0 MiB |
+| Zig (native) | 6.1 ms | 355.5 µs | 5.5 ms | 7.6 ms | 1.00× | 3.8 MiB |
+| Java | 31.0 ms | 1.2 ms | 29.6 ms | 34.4 ms | 5.12× | 44.1 MiB |
+| Node.js | 146.7 ms | 1.4 ms | 144.4 ms | 149.7 ms | 24.21× | 85.4 MiB |
+| Lua | 258.7 ms | 4.0 ms | 253.3 ms | 265.1 ms | 42.70× | 21.4 MiB |
+| **Dusk** | **453.6 ms** | **4.5 ms** | **446.5 ms** | **459.7 ms** | **74.87×** | **16.6 MiB** |
+| Ruby | 1.536 s | 136.7 ms | 1.445 s | 1.776 s | 253.48× | 30.7 MiB |
+| Python 3 | 1.642 s | 53.1 ms | 1.568 s | 1.702 s | 270.99× | 34.9 MiB |
 
 ![Particle System](assets/particles.png)
 
@@ -94,13 +95,13 @@ Expected output: `9592`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 400.1 µs | 46.4 µs | 322.8 µs | 820.2 µs | 1.00× | 0.8 MiB |
-| Lua | 4.4 ms | 177.7 µs | 4.0 ms | 5.3 ms | 10.89× | 4.8 MiB |
-| **Dusk** | **8.1 ms** | **314.0 µs** | **7.3 ms** | **10.0 ms** | **20.15×** | **3.6 MiB** |
-| Java | 12.9 ms | 352.1 µs | 12.2 ms | 14.8 ms | 32.17× | 38.2 MiB |
-| Python 3 | 21.2 ms | 559.5 µs | 20.3 ms | 23.4 ms | 52.96× | 10.0 MiB |
-| Ruby | 39.9 ms | 520.3 µs | 39.2 ms | 41.2 ms | 99.71× | 15.3 MiB |
-| Node.js | 68.3 ms | 2.4 ms | 66.6 ms | 82.1 ms | 170.79× | 59.9 MiB |
+| Zig (native) | 690.7 µs | 58.3 µs | 568.8 µs | 909.8 µs | 1.00× | 0.7 MiB |
+| Lua | 5.0 ms | 137.3 µs | 4.7 ms | 6.0 ms | 7.24× | 4.7 MiB |
+| **Dusk** | **10.7 ms** | **389.8 µs** | **9.8 ms** | **13.6 ms** | **15.53×** | **2.8 MiB** |
+| Java | 15.9 ms | 453.9 µs | 14.8 ms | 18.6 ms | 23.02× | 38.4 MiB |
+| Python 3 | 22.8 ms | 790.7 µs | 21.8 ms | 25.9 ms | 33.08× | 10.0 MiB |
+| Ruby | 44.0 ms | 454.0 µs | 43.4 ms | 46.3 ms | 63.72× | 15.3 MiB |
+| Node.js | 73.7 ms | 863.4 µs | 72.5 ms | 75.8 ms | 106.75× | 59.8 MiB |
 
 ![Sieve of Eratosthenes](assets/primes.png)
 
@@ -114,13 +115,13 @@ Expected output: `5001`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 328.1 µs | 35.2 µs | 278.2 µs | 478.3 µs | 1.00× | 0.7 MiB |
-| Lua | 2.6 ms | 102.2 µs | 2.4 ms | 4.3 ms | 7.88× | 3.0 MiB |
-| **Dusk** | **4.5 ms** | **270.8 µs** | **4.1 ms** | **7.4 ms** | **13.84×** | **1.4 MiB** |
-| Java | 12.3 ms | 705.9 µs | 11.4 ms | 18.7 ms | 37.57× | 38.5 MiB |
-| Python 3 | 12.7 ms | 318.7 µs | 12.2 ms | 14.3 ms | 38.81× | 9.5 MiB |
-| Ruby | 36.0 ms | 922.4 µs | 35.1 ms | 40.2 ms | 109.87× | 14.5 MiB |
-| Node.js | 66.5 ms | 1.4 ms | 64.0 ms | 70.7 ms | 202.72× | 58.9 MiB |
+| Zig (native) | 634.5 µs | 53.6 µs | 523.5 µs | 983.0 µs | 1.00× | 0.7 MiB |
+| Lua | 3.0 ms | 113.0 µs | 2.7 ms | 4.0 ms | 4.69× | 3.0 MiB |
+| **Dusk** | **5.0 ms** | **142.4 µs** | **4.7 ms** | **5.9 ms** | **7.87×** | **1.4 MiB** |
+| Python 3 | 14.1 ms | 287.1 µs | 13.7 ms | 15.8 ms | 22.21× | 9.6 MiB |
+| Java | 15.3 ms | 465.1 µs | 14.4 ms | 17.2 ms | 24.11× | 38.5 MiB |
+| Ruby | 39.9 ms | 461.4 µs | 39.3 ms | 41.2 ms | 62.90× | 14.7 MiB |
+| Node.js | 72.4 ms | 1.3 ms | 70.6 ms | 77.5 ms | 114.06× | 59.1 MiB |
 
 ![QuickSort](assets/quicksort.png)
 
@@ -134,13 +135,13 @@ Expected output: `141554306`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 306.3 ms | 563.5 µs | 305.7 ms | 307.6 ms | 1.00× | 0.7 MiB |
-| Java | 324.6 ms | 639.4 µs | 323.7 ms | 325.9 ms | 1.06× | 38.9 MiB |
-| Node.js | 374.0 ms | 993.3 µs | 372.6 ms | 375.8 ms | 1.22× | 60.7 MiB |
-| Lua | 4.334 s | 37.3 ms | 4.279 s | 4.366 s | 14.15× | 2.9 MiB |
-| **Dusk** | **5.952 s** | **164.5 ms** | **5.740 s** | **6.075 s** | **19.43×** | **1.0 MiB** |
-| Ruby | 9.491 s | 32.5 ms | 9.446 s | 9.532 s | 30.99× | 14.4 MiB |
-| Python 3 | 41.021 s | 2.980 s | 37.094 s | 44.079 s | 133.93× | 9.4 MiB |
+| Zig (native) | 306.5 ms | 426.2 µs | 306.0 ms | 307.3 ms | 1.00× | 0.7 MiB |
+| Java | 329.2 ms | 491.3 µs | 328.7 ms | 330.1 ms | 1.07× | 38.8 MiB |
+| Node.js | 380.8 ms | 945.8 µs | 379.7 ms | 382.3 ms | 1.24× | 61.0 MiB |
+| Lua | 4.307 s | 118.3 ms | 4.181 s | 4.447 s | 14.05× | 2.7 MiB |
+| **Dusk** | **5.582 s** | **150.0 ms** | **5.453 s** | **5.821 s** | **18.21×** | **1.0 MiB** |
+| Ruby | 9.675 s | 170.1 ms | 9.486 s | 9.840 s | 31.57× | 14.5 MiB |
+| Python 3 | 40.808 s | 1.796 s | 38.069 s | 42.919 s | 133.14× | 9.4 MiB |
 
 ![Mandelbrot](assets/mandelbrot.png)
 

@@ -33,7 +33,7 @@ pub const VM = struct {
         };
     }
 
-    pub fn run(self: *Self) !void {
+    pub noinline fn run(self: *Self) !void {
         try self.initStaticStore();
         self.initMainFrame();
 
