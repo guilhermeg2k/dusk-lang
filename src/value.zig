@@ -28,6 +28,8 @@ pub const HeapValue = extern struct {
 
     kind: HeapValueType,
     gc_forward: ?*HeapValue = null,
+    //note: maybe we should remove this relocated to decrease the size of this struct
+    // needs to evaluate the tradeoffs
     relocated: ?*HeapValue = null,
 
     pub fn getParentPtr(comptime T: type, ptr: *Self) *T {
@@ -72,15 +74,11 @@ pub const Struct = extern struct {
     }
 
     pub fn get(self: *const Self, i: usize) Value {
-        std.debug.assert(i < self.field_count);
-
         const items = self.getDataPtr();
         return items[i];
     }
 
     pub fn set(self: *Self, i: usize, value: Value) void {
-        std.debug.assert(i < self.field_count);
-
         const items = self.getDataPtr();
         items[i] = value;
     }
@@ -150,6 +148,7 @@ pub const Array = extern struct {
     }
 
     pub fn pop(self: *Self) !Value {
+        //note: poping null if len == 0
         if (self.len == 0) {
             return NULL_VALUE;
         }

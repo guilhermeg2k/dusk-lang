@@ -39,13 +39,13 @@ pub const VM = struct {
 
         const stack = self.stack[0..];
         var current_frame = &self.frames[self.frame_count - 1];
-        var ip: usize = 0;
+        var cur_instruction: usize = 0;
         var instructions = current_frame.function.kind.dusk.instructions;
         var stack_base: usize = 0;
 
         while (true) {
-            const inst = instructions[ip];
-            ip += 1;
+            const inst = instructions[cur_instruction];
+            cur_instruction += 1;
 
             switch (inst.op) {
                 .LOAD_CONST => {
@@ -54,7 +54,7 @@ pub const VM = struct {
 
                 .LOAD_STRING => {
                     const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
-                    current_frame.cur_inst = ip;
+                    current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.String.calc_size(str_data.len));
                     var string_obj = try v.String.init(self.heap.arenas[self.heap.active].allocator(), str_data);
                     self.allocate(v.String.calc_size(str_data.len));
@@ -66,7 +66,7 @@ pub const VM = struct {
                 },
 
                 .ARRAY_INIT => {
-                    current_frame.cur_inst = ip;
+                    current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.Array.calc_size(inst.c));
                     var new_array = try v.Array.init(self.heap.arenas[self.heap.active].allocator(), @enumFromInt(inst.b), inst.c);
                     self.allocate(v.Array.calc_size(new_array.capacity));
@@ -86,7 +86,7 @@ pub const VM = struct {
                     var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
 
                     if (array.needsResize()) {
-                        current_frame.cur_inst = ip;
+                        current_frame.cur_inst = cur_instruction;
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
                         array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
                         array = try array.resize(self.heap.arenas[self.heap.active].allocator());
@@ -124,7 +124,7 @@ pub const VM = struct {
                 .STRUCT_INIT => {
                     const desc_id = inst.bEx();
                     const desc = self.program.struct_descriptors[desc_id];
-                    current_frame.cur_inst = ip;
+                    current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.Struct.calc_size(desc.field_count));
                     var new_struct = try v.Struct.init(self.heap.arenas[self.heap.active].allocator(), desc.field_count, desc_id);
                     self.allocate(v.Struct.calc_size(new_struct.field_count));
@@ -345,7 +345,7 @@ pub const VM = struct {
                     const func = &self.program.functions[inst.bEx()];
                     switch (func.kind) {
                         .dusk => {
-                            current_frame.cur_inst = ip;
+                            current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
                             self.frames[self.frame_count] = .{
                                 .function = func,
@@ -354,7 +354,7 @@ pub const VM = struct {
                             };
                             self.frame_count += 1;
                             current_frame = &self.frames[self.frame_count - 1];
-                            ip = 0;
+                            cur_instruction = 0;
                             instructions = func.kind.dusk.instructions;
                             stack_base = new_offset;
                         },
@@ -367,12 +367,12 @@ pub const VM = struct {
                 },
 
                 .JUMP => {
-                    ip = inst.aEx();
+                    cur_instruction = inst.aEx();
                 },
 
                 .JUMP_IF_FALSE => {
                     if (!stack[stack_base + inst.a].bool) {
-                        ip = inst.bEx();
+                        cur_instruction = inst.bEx();
                     }
                 },
 
@@ -381,7 +381,7 @@ pub const VM = struct {
                     if (self.frame_count == 0) break;
                     stack[stack_base - 1] = stack[stack_base + inst.a];
                     current_frame = &self.frames[self.frame_count - 1];
-                    ip = current_frame.cur_inst;
+                    cur_instruction = current_frame.cur_inst;
                     instructions = current_frame.function.kind.dusk.instructions;
                     stack_base = current_frame.stack_offset;
                 },
@@ -450,7 +450,8 @@ pub const VM = struct {
             const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
             const base = frame.stack_offset;
             for (0..chunk.num_registers) |i| {
-                if (bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
+                const is_heap_value = bitmap & (@as(u256, 1) << @intCast(i)) != 0;
+                if (is_heap_value) {
                     try self.copyHeapValue(new_alloc, &self.stack[base + i]);
                 }
             }

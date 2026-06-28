@@ -2,14 +2,14 @@
 
 ## Dependencies
 
-- [Zig 0.15.2](https://ziglang.org/download/)
+- [Zig 0.16.0](https://ziglang.org/download/)
 
 ## Building
 
 - Clone the project: `git clone https://github.com/guilhermeg2k/dusk-lang.git <dir>`
 - Navigate to the cloned directory: `cd <dir>`
-- Checkout on the last release commit [Releases](https://github.com/guilhermeg2k/dusk-lang/releases/)
-- Run the build command: `zig build`
+- If you want most stable version checkout on the `release` branch
+- Run the build command: `zig build -Doptimize=ReleaseFast`
 - A binary file should be generated at `./zig-out/bin`
 - Execute a Dusk file using the generated binary: `./zig-out/bin/dusk <your-file.dsk>`
 

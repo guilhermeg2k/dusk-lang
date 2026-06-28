@@ -119,7 +119,7 @@ Structs can have static fields and methods. Static fields are declared with `let
 
 **Note:** Struct members must follow a specific order:
 
-1. **Static fields** (declared with `let`)
+1. **Static fields** (declared with `let` or `let mut`)
 2. **Instance fields**
 3. **Methods**
 
@@ -336,7 +336,7 @@ end
 
 ## 5. Functions
 
-Functions are first-class citizens. Return types are only inferred for inline returns; otherwise, they are mandatory.
+Return types are only inferred for inline returns; otherwise, they are mandatory.
 
 ### Definition
 

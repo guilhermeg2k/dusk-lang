@@ -924,9 +924,9 @@ pub const Chunk = struct {
                 .float64 => std.debug.print("{d}", .{constant.float64}),
                 .bool => std.debug.print("{}", .{constant.bool}),
                 .null => std.debug.print("null", .{}),
-                .string => unreachable,
                 .array => std.debug.print("<array>", .{}),
                 .@"struct" => std.debug.print("<struct>", .{}),
+                .string => unreachable,
             }
             std.debug.print("\n", .{});
         }

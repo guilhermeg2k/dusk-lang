@@ -59,3 +59,5 @@
 - Improve memory usage
 - Improve VM Performance
 - Files generation + caching (Each compilation step)
+- Improve int -> float promotion
+- Verify places where @panic should be used instead of unrecheable
