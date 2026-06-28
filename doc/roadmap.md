@@ -58,3 +58,4 @@
 - Fuzz testing
 - Improve memory usage
 - Improve VM Performance
+- Files generation + caching (Each compilation step)

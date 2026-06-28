@@ -37,14 +37,11 @@ pub const Parser = struct {
         return self.parseBlock(&.{});
     }
 
-    pub fn parseBlock(self: *Self, extra_stop_tokens: []const Tag) Errors!ast.Block {
+    pub fn parseBlock(self: *Self, extra_stop_tags: []const Tag) Errors!ast.Block {
         var statements: std.ArrayList(ast.StatementNode) = .empty;
 
         var current_tk = self.peekCurrent();
-        while (current_tk.tag != .eof and
-            current_tk.tag != .end_kw and
-            !isStopToken(current_tk.tag, extra_stop_tokens)) : (current_tk = self.peekCurrent())
-        {
+        while (!isStopToken(current_tk.tag, extra_stop_tags)) : (current_tk = self.peekCurrent()) {
             const stmt = try self.parseStmt();
             try statements.append(self.allocator, stmt);
         }
@@ -52,8 +49,9 @@ pub const Parser = struct {
         return .{ .statements = statements };
     }
 
-    fn isStopToken(tag: Tag, stops: []const Tag) bool {
-        for (stops) |t| {
+    fn isStopToken(tag: Tag, extrap_stop_tags: []const Tag) bool {
+        if (tag == .eof or tag == .end_kw) return true;
+        for (extrap_stop_tags) |t| {
             if (tag == t) return true;
         }
         return false;
@@ -225,7 +223,7 @@ pub const Parser = struct {
         var else_block: ?ast.Block = null;
 
         if (has_else) {
-            else_block = try self.parseBlock(&.{.end_kw});
+            else_block = try self.parseBlock(&.{});
         }
 
         _ = try self.expect(.end_kw);
@@ -263,14 +261,19 @@ pub const Parser = struct {
             }
 
             try elif_chain.append(self.allocator, .{
-                .data = .{ .if_stmt = .{ .condition = cond, .then_block = body, .else_block = null } },
-                .loc = .{ .start = elif_start, .end = elif_end },
+                .data = .{
+                    .if_stmt = .{ .condition = cond, .then_block = body, .else_block = null },
+                },
+                .loc = .{
+                    .start = elif_start,
+                    .end = elif_end,
+                },
             });
         }
 
         var else_block: ?ast.Block = null;
         if (self.match(.else_kw)) {
-            else_block = try self.parseBlock(&.{.end_kw});
+            else_block = try self.parseBlock(&.{});
         }
 
         _ = try self.expect(.end_kw);
@@ -294,7 +297,7 @@ pub const Parser = struct {
 
         const condition = try self.parseExp(0);
         _ = try self.expect(.do_kw);
-        const do_block = try self.parseBlock(&.{.end_kw});
+        const do_block = try self.parseBlock(&.{});
         _ = try self.expect(.end_kw);
 
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
@@ -453,7 +456,7 @@ pub const Parser = struct {
             body_block = .{ .statements = statements };
         } else {
             return_type = try self.parseTypeAnnotation(false);
-            body_block = try self.parseBlock(&.{.end_kw});
+            body_block = try self.parseBlock(&.{});
             _ = try self.expect(.end_kw);
         }
 
@@ -818,100 +821,70 @@ pub const Parser = struct {
     fn parsePostfix(self: *Self, left: *ast.ExpNode) Errors!*ast.ExpNode {
         var node = left;
 
-        while (true) {
+        var done = false;
+        while (!done) {
             const tk = self.peekCurrent();
 
-            //todo: should be a switch no?
-            //fnCall
-            if (tk.tag == .l_paren) {
-                self.walk();
-                const args = try self.parseFnCallArgs();
-                const r_paren = try self.expect(.r_paren);
+            switch (tk.tag) {
+                //fnCall
+                .l_paren => {
+                    self.walk();
+                    const args = try self.parseFnCallArgs();
+                    const r_paren = try self.expect(.r_paren);
 
-                const call_node = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{
-                        .fn_call = .{
-                            .are_arguments_named = args.len > 0 and args[0].identifier != null,
-                            .target = node,
-                            .arguments = args,
+                    //note: this is supporting only simple fn calls
+                    node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{
+                            .fn_call = .{
+                                .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                                .target = node,
+                                .arguments = args,
+                            },
                         },
-                    },
-                    .loc = .{ .start = node.loc.start, .end = r_paren.loc.end },
-                });
+                        .loc = .{ .start = node.loc.start, .end = r_paren.loc.end },
+                    });
+                },
 
-                node = call_node;
-                //note: this is supporting only simple fn calls
-                continue;
-            }
+                //arrays
+                .l_bracket => {
+                    self.walk();
 
-            //arrays
-            if (tk.tag == .l_bracket) {
-                self.walk();
+                    const index = try self.parseExp(0);
+                    const r_bracket = try self.expect(.r_bracket);
 
-                const index = try self.parseExp(0);
-                const r_bracket = try self.expect(.r_bracket);
+                    node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .indexed = .{
+                            .target = node,
+                            .index = index,
+                            .nullable = false,
+                        } },
+                        .loc = .{ .start = node.loc.start, .end = r_bracket.loc.end },
+                    });
+                },
 
-                const index_node = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .indexed = .{
-                        .target = node,
-                        .index = index,
-                        .nullable = false,
-                    } },
-                    .loc = .{ .start = node.loc.start, .end = r_bracket.loc.end },
-                });
+                //struct field member access
+                .dot, .question_mark_dot => {
+                    const nullable = tk.tag == .question_mark_dot;
+                    self.walk();
 
-                node = index_node;
-                continue;
-            }
+                    const id_token = try self.expect(.identifier);
+                    const id_node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .identifier = id_token.value(self.src) },
+                        .loc = id_token.loc,
+                    });
 
-            //struct field member access
-            if (tk.tag == .dot) {
-                self.walk();
-
-                const id_token = try self.expect(.identifier);
-                const id_node = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .identifier = id_token.value(self.src) },
-                    .loc = id_token.loc,
-                });
-
-                const index_node = try ast.ExpNode.init(self.allocator, .{ .data = .{
-                    .indexed = .{
-                        .target = node,
-                        .index = id_node,
-                        .nullable = false,
-                    },
-                }, .loc = .{ .start = node.loc.start, .end = id_token.loc.end } });
-
-                node = index_node;
-                continue;
-            }
-
-            //nullable struct field member access
-            if (tk.tag == .question_mark_dot) {
-                self.walk();
-
-                const id_token = try self.expect(.identifier);
-                const id_node = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .identifier = id_token.value(self.src) },
-                    .loc = id_token.loc,
-                });
-
-                const index_node = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{
-                        .indexed = .{
+                    node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .indexed = .{
                             .target = node,
                             .index = id_node,
-                            .nullable = true,
-                        },
-                    },
-                    .loc = .{ .start = node.loc.start, .end = id_token.loc.end },
-                });
+                            .nullable = nullable,
+                        } },
+                        .loc = .{ .start = node.loc.start, .end = id_token.loc.end },
+                    });
+                },
 
-                node = index_node;
-                continue;
+                else => done = true,
             }
-
-            break;
         }
 
         return node;
