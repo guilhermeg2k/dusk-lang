@@ -6,20 +6,6 @@ const sema = @import("sema.zig");
 pub const BytecodeGen = struct {
     const Self = @This();
 
-    const VOID_VALUE = ir.Value{
-        .type_id = 0, // in this ctx type does not matter
-        .data = .{
-            .i_void = {},
-        },
-    };
-
-    const TRUE_VALUE = ir.Value{
-        .type_id = 0, // in this ctx type does not matter
-        .data = .{
-            .i_bool = true,
-        },
-    };
-
     allocator: std.mem.Allocator,
     type_table: *sema.TypeTable,
 
@@ -280,7 +266,10 @@ pub const BytecodeGen = struct {
 
         try self.pushLoopCtx(loop_begin_idx);
 
-        const condition_reg = try self.genValue(loopStmt.condition orelse &TRUE_VALUE, self.consumeRegister());
+        const condition_reg = if (loopStmt.condition) |cond|
+            try self.genValue(cond, self.consumeRegister())
+        else
+            try self.genTrueValue(self.consumeRegister());
 
         const jump_pass_loop = Instruction{
             .op = .JUMP_IF_FALSE,
@@ -368,7 +357,7 @@ pub const BytecodeGen = struct {
                 .type_id = self.type_table.getPrimitive(.int),
                 .data = .{ .i_int = @intFromEnum(arg_value_type) },
             };
-            try self.genLoadConstFromIntermediateValue(&type_value, type_reg);
+            try self.genLoadConst(v.TypedValue.from_ir_value(&type_value), type_reg);
             self.register_types[type_reg] = self.type_table.getPrimitive(.int);
         }
 
@@ -388,7 +377,10 @@ pub const BytecodeGen = struct {
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
-        const return_value_register = try self.genValue(return_stmt.value orelse &VOID_VALUE, self.consumeRegister());
+        const return_value_register = if (return_stmt.value) |val|
+            try self.genValue(val, self.consumeRegister())
+        else
+            try self.genVoidValue(self.consumeRegister());
 
         const inst = Instruction{
             .op = .RETURN,
@@ -401,7 +393,7 @@ pub const BytecodeGen = struct {
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) anyerror!u8 {
         switch (value.data) {
             .i_int, .i_float, .i_bool, .i_null, .i_void => {
-                try self.genLoadConstFromIntermediateValue(value, target_reg);
+                try self.genLoadConst(v.TypedValue.from_ir_value(value), target_reg);
                 self.register_types[target_reg] = value.type_id;
             },
 
@@ -653,24 +645,34 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, struct_load);
     }
 
-    fn genLoadConstFromIntermediateValue(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const const_val = v.TypedValue.from_ir_value(value);
+    fn genLoadConst(self: *Self, const_val: v.TypedValue, target_reg: u8) !void {
         const result = try self.const_id_by_value.getOrPut(const_val);
         if (!result.found_existing) {
             result.value_ptr.* = @intCast(self.chunk_constants.items.len);
             try self.chunk_constants.append(self.allocator, const_val.value);
             try self.chunk_constants_types.append(self.allocator, const_val.type);
         }
-        const const_id = result.value_ptr.*;
 
         var load_const = Instruction{
             .op = .LOAD_CONST,
             .a = target_reg,
         };
 
-        load_const.putBEx(@intCast(const_id));
+        load_const.putBEx(@intCast(result.value_ptr.*));
 
         try self.chunk_instructions.append(self.allocator, load_const);
+    }
+
+    fn genVoidValue(self: *Self, target_reg: u8) !u8 {
+        try self.genLoadConst(.{ .value = .{ .null = {} }, .type = .null }, target_reg);
+        self.register_types[target_reg] = self.type_table.getPrimitive(.void);
+        return target_reg;
+    }
+
+    fn genTrueValue(self: *Self, target_reg: u8) !u8 {
+        try self.genLoadConst(.{ .value = .{ .bool = true }, .type = .bool }, target_reg);
+        self.register_types[target_reg] = self.type_table.getPrimitive(.boolean);
+        return target_reg;
     }
 
     fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {

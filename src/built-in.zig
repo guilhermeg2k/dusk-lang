@@ -8,6 +8,7 @@ const TypeId = sema.TypeId;
 const TypedIdentifier = sema.TypedIdentifier;
 const TypeTable = sema.TypeTable;
 
+//note: temporary as we don't impl modules
 pub const BuiltIn = struct {
     const Self = @This();
 
