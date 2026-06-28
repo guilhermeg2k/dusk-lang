@@ -26,13 +26,18 @@ pub const Dusk = struct {
     }
 
     pub fn compile(self: *Self, src: []const u8) !bc.Program {
-        var dusk_lexer = Lexer.init(self.allocator, src);
+        var compilation_pipeline_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer compilation_pipeline_arena.deinit();
+
+        const allocator = compilation_pipeline_arena.allocator();
+
+        var dusk_lexer = Lexer.init(allocator, src);
         const tokens = try dusk_lexer.list();
 
-        var dusk_parser = Parser.init(self.allocator, src, tokens.items);
+        var dusk_parser = Parser.init(allocator, src, tokens.items);
         const ast = try dusk_parser.parse();
 
-        var sema_analyzer = try SemaAnalyzer.init(self.allocator);
+        var sema_analyzer = try SemaAnalyzer.init(allocator);
         const ir = try sema_analyzer.analyze(&ast, src);
 
         var Bytecodegen = bc.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
@@ -45,6 +50,7 @@ pub const Dusk = struct {
         if (self.stdout_writer) |writer| {
             builtin.BuiltIn.setEchoWriter(writer);
         }
+
         var v = VM.init(&program);
         try v.run();
     }
