@@ -2,20 +2,23 @@ let Country = struct
     id: int
     name: string
     code: ?string
+end
 
 let Address = struct
     city: ?string
     state: ?string
     country: ?Country
     street: ?string
+end
 
 let UserInfo = struct
     address: ?Address
     phone: ?string
+end
 
 let User = struct
     info: ?UserInfo
-
+end
 
 let mut user = User(
     info = @(
@@ -32,32 +35,46 @@ let mut user = User(
     ),
 )
 
-if user.info?.address: address
-    if address.country?.name: name
-        echo(concat("country name is ", name))
-    if address.state: name
-        echo(concat("state name is ", name))
-    if address.city: name
-        echo(concat("city name is ", name))
+if user.info?.address: address then
+    if address.country?.name: name then
+        echo(name)
+    end
 
-if user.info: mut info
+    if address.state: name then
+        echo(name)
+    end
+
+    if address.city: name then
+        echo(name)
+    end
+end
+
+if user.info: mut info then
     info.phone = "40028922"
+end
 
-if user.info?.address?.country?.code: code
-    echo(concat("country code is ", code))
+if user.info?.address?.country?.code: code then
+    echo(code)
+end
 
-if user.info?.phone: phone
-    echo(concat("phone is ", phone))
+if user.info?.phone: phone then
+    echo(phone)
+end
 
-if user.info: mut info
+if user.info: mut info then
     info.phone = "40028922"
+end
 
-if user.info?.phone: phone
-    echo(concat("phone is ", phone))
+if user.info?.phone: phone then
+    echo(phone)
+end
+
 
 # NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
-if user.info?.address?.state: mut state_name
+if user.info?.address?.state: mut state_name then
     state_name = "SP"
+end
+
 
 # should still be DF
 echo(user.info?.address?.state)

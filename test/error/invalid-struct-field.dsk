@@ -1,4 +1,6 @@
 let S = struct
     a: int
+end
+
 let s = S(a = 1)
 echo(s.b)

@@ -8,6 +8,7 @@ let User = struct
         state: string
         city: string
         street: string
+    end
 
     default_address = @(
         country = "Brasil",
@@ -15,7 +16,7 @@ let User = struct
         city = "São Paulo",
         street = "Av. Paulista"
     )
-
+end
 
 let user = User(
     id="1",
@@ -29,6 +30,6 @@ let user = User(
     )
 )
 
-echo(stringify(user))
+echo(user)
 
 

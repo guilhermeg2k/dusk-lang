@@ -2,18 +2,25 @@ let bubble_sort: fn = (mut arr: []int) -> void
     let n: int = len(arr)
     let mut i: int = 0
 
-    for i < n
+    for i < n do
         let mut j: int = 0
 
-        for j < n - 1
+        for j < n - 1 do
             let aux: int = arr[j]
-            if arr[j] > arr[j + 1]
+            if arr[j] > arr[j + 1] then
                 arr[j] = arr[j + 1]
                 arr[j + 1] = aux
+            end
+
             j = j + 1
+        end
 
         i = i + 1
+    end
+end
 
 let mut v: []int = [1,2,51,22, 100, 500, 321, 21312, 21312]
+
 bubble_sort(v)
+
 echo(v)

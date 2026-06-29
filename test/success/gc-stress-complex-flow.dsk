@@ -1,0 +1,27 @@
+let canary = @(value = 42, extra = [42, 42, 42])
+
+let mut i = 0
+for i < 200000 do
+    let _a = [i, i * 2, i * 3]
+    i += 1
+end
+
+let mut j = 0
+for j < 200000 do
+    let _b = [j + 1, j + 2, j + 3, j + 4]
+    j += 1
+end
+
+if canary.value >= 0 then
+    let mut k = 0
+    for k < 1000 do
+        let _c = [k, k, k]
+        k += 1
+    end
+end
+
+assert(canary.value == 42)
+assert(canary.extra[0] == 42)
+assert(canary.extra[2] == 42)
+assert(i == 200000)
+assert(j == 200000)

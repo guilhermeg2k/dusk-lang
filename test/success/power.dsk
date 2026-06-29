@@ -1,16 +1,19 @@
 
 let power: fn = (base: int, exp: int) -> int
-    if exp == 0
+    if exp == 0 then
         return 1
+    end
 
     let x: int = exp % 2
-    if x == 0
+    if x == 0 then
         let half: int = power(base, exp // 2)
         return half * half
+    end
 
     return base * power(base, exp - 1)
+end
 
-echo(power(base=2, exp=0))
-echo(power(2, 3))
-echo(power(5, 2))
-echo(power(3, 4))
+assert(power(base=2, exp=0) == 1)
+assert(power(2, 3) == 8)
+assert(power(5, 2) == 25)
+assert(power(3, 4) == 81)

@@ -1,4 +1,6 @@
 let S = struct
     x: int
+end
+
 let s: ?S = null
 echo(s.x)

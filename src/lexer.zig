@@ -1,7 +1,11 @@
+const std = @import("std");
+const err = @import("error.zig");
+
+const LexerError = err.Errors;
+
 pub const Lexer = struct {
     const Self = @This();
 
-    const INDENTATION_WIDTH: usize = 4;
     const keywords = std.StaticStringMap(Tag).initComptime(.{
         .{ "let", Tag.let_kw },
         .{ "mut", Tag.mut_kw },
@@ -13,6 +17,7 @@ pub const Lexer = struct {
         .{ "struct", Tag.struct_kw },
         .{ "if", Tag.if_kw },
         .{ "else", Tag.else_kw },
+        .{ "elif", Tag.elif_kw },
         .{ "and", Tag.and_kw },
         .{ "or", Tag.or_kw },
         .{ "for", Tag.for_kw },
@@ -23,15 +28,15 @@ pub const Lexer = struct {
         .{ "fn", Tag.fn_kw },
         .{ "return", Tag.return_kw },
         .{ "null", Tag.null_literal },
+        .{ "then", Tag.then_kw },
+        .{ "do", Tag.do_kw },
+        .{ "end", Tag.end_kw },
     });
 
     allocator: std.mem.Allocator,
     src: []const u8 = "",
     err_dispatcher: err.ErrorDispatcher,
     cur_index: usize = 0,
-    last_indentation_level: usize = 0,
-    pending_dedents: usize = 0,
-    is_first_line: bool = true,
 
     pub fn init(allocator: std.mem.Allocator, src: []const u8) Self {
         return Self{
@@ -60,28 +65,7 @@ pub const Lexer = struct {
 
     fn next(self: *Self) Token {
         while (true) {
-            if (self.is_first_line) {
-                const cur_char = self.peekCurrent();
-
-                const is_first_char_white_space = cur_char == ' ' or cur_char == '\t';
-                if (is_first_char_white_space) {
-                    return Token.init(Tag.err, self.cur_index, self.cur_index);
-                }
-
-                self.is_first_line = false;
-            }
-
-            const has_pending_dedent = self.pending_dedents != 0;
-            if (has_pending_dedent) {
-                return self.popPendingDedent();
-            }
-
             const is_eof = self.cur_index >= self.src.len;
-            if (is_eof and self.last_indentation_level > 0) {
-                self.flushIndentation();
-                continue;
-            }
-
             if (is_eof) {
                 return Token.init(Tag.eof, self.cur_index, self.cur_index);
             }
@@ -96,10 +80,6 @@ pub const Lexer = struct {
                     }
                 },
                 '\n' => {
-                    const token = self.readNewLine();
-                    if (token) |tk| {
-                        return tk;
-                    }
                     continue;
                 },
                 '(' => {
@@ -185,83 +165,6 @@ pub const Lexer = struct {
         }
     }
 
-    fn readNewLine(self: *Self) ?Token {
-        const start = self.cur_index;
-        var spaces: usize = 0;
-
-        while (self.peekNext() == ' ') {
-            spaces += 1;
-            self.walk();
-        }
-
-        if (spaces % INDENTATION_WIDTH != 0) {
-            return Token.init(Tag.err, start, self.cur_index);
-        }
-
-        if (self.peekNext() == '\n') {
-            if (spaces > 0) {
-                return Token.init(Tag.err, start, self.cur_index);
-            }
-            return null;
-        }
-
-        const indentation_level = spaces / INDENTATION_WIDTH;
-        const is_isvalid_indentation = indentation_level > self.last_indentation_level and (indentation_level - self.last_indentation_level) > 1;
-
-        if (is_isvalid_indentation) {
-            return Token.init(Tag.err, start, self.cur_index);
-        }
-
-        if (indentation_level > self.last_indentation_level) {
-            self.last_indentation_level = indentation_level;
-            return Token.init(Tag.indent, start, self.cur_index);
-        }
-
-        if (indentation_level < self.last_indentation_level) {
-            self.pending_dedents = self.last_indentation_level - indentation_level;
-            self.last_indentation_level = indentation_level;
-            return null;
-        }
-
-        return Token.init(Tag.new_line, start, self.cur_index);
-    }
-
-    fn readExclamationMarkSymbol(self: *Self) Token {
-        return self.readComplexSymbol('=', Tag.not_eq, Tag.err);
-    }
-
-    fn readMinusSymbol(self: *Self) Token {
-        return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
-    }
-
-    fn readGreaterSymbol(self: *Self) Token {
-        return self.readComplexSymbol('=', Tag.ge, Tag.gt);
-    }
-
-    fn readLessThanSymbol(self: *Self) Token {
-        const next_char = self.peekNext();
-
-        if (next_char == '=') {
-            const start = self.cur_index;
-            self.walk();
-            return Token.init(Tag.le, start, self.cur_index);
-        }
-
-        return Token.init(Tag.lt, self.cur_index, self.cur_index);
-    }
-
-    fn readEqualsSymbol(self: *Self) Token {
-        const next_char = self.peekNext();
-
-        if (next_char == '=') {
-            const start = self.cur_index;
-            self.walk();
-            return Token.init(Tag.eq, start, self.cur_index);
-        }
-
-        return Token.init(Tag.double_eq, self.cur_index, self.cur_index);
-    }
-
     fn readNumberLiteral(self: *Self) Token {
         const start = self.cur_index;
         var next_char = self.peekNext();
@@ -317,16 +220,6 @@ pub const Lexer = struct {
         return Token.init(fallback_tag, self.cur_index, self.cur_index);
     }
 
-    fn popPendingDedent(self: *Self) Token {
-        self.pending_dedents -= 1;
-        return Token.init(Tag.dedent, self.cur_index, self.cur_index);
-    }
-
-    fn flushIndentation(self: *Self) void {
-        self.pending_dedents = self.last_indentation_level;
-        self.last_indentation_level = 0;
-    }
-
     fn walk(self: *Self) void {
         self.cur_index += 1;
     }
@@ -356,16 +249,8 @@ pub const Token = struct {
             return "EOF";
         }
 
-        if (self.tag == Tag.new_line) {
-            return "NL";
-        }
-
-        if (self.tag == Tag.dedent) {
-            return "DEDENT";
-        }
-
-        if (self.tag == Tag.indent) {
-            return "INDENT";
+        if (self.tag == Tag.string_literal) {
+            return src[self.loc.start + 1 .. self.loc.end];
         }
 
         return src[self.loc.start .. self.loc.end + 1];
@@ -391,6 +276,7 @@ pub const Tag = enum {
     struct_kw,
     if_kw,
     else_kw,
+    elif_kw,
     for_kw,
     continue_kw,
     break_kw,
@@ -398,6 +284,9 @@ pub const Tag = enum {
     or_kw,
     fn_kw,
     return_kw,
+    then_kw,
+    do_kw,
+    end_kw,
     string_literal,
     int_literal,
     float_literal,
@@ -432,9 +321,6 @@ pub const Tag = enum {
     double_slash,
     percent,
     pipe,
-    indent,
-    dedent,
-    new_line,
     eof,
     err,
 };
@@ -443,7 +329,3 @@ pub const Loc = struct {
     start: usize,
     end: usize,
 };
-
-const LexerError = err.Errors;
-const err = @import("error.zig");
-const std = @import("std");

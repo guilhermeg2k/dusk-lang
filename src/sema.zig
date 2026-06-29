@@ -1,3 +1,13 @@
+const util = @import("util.zig");
+const buildin = @import("built-in.zig");
+const err = @import("error.zig");
+const ir = @import("ir.zig");
+const ast = @import("ast.zig");
+const allocPrint = std.fmt.allocPrint;
+const std = @import("std");
+
+pub const Errors = err.Errors;
+
 pub const SemaAnalyzer = struct {
     const Self = @This();
 
@@ -125,6 +135,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" = .{
                     .identifier = identifier,
                     .fields_in_order = &.{},
+                    .field_index_by_name = .init(self.allocator),
                     .fields = .init(self.allocator),
                     .static_fields = .init(self.allocator),
                     .methods = .init(self.allocator),
@@ -135,7 +146,7 @@ pub const SemaAnalyzer = struct {
 
         return Symbol{
             .identifier = identifier,
-            .uid = self.scope.genFnUid(),
+            .uid = self.scope.genUid(),
             .type_id = self.type_table.getPrimitive(.meta),
             .kind = .{ .@"struct" = .{ .blueprint_type_id = blueprint_type_id } },
         };
@@ -166,10 +177,16 @@ pub const SemaAnalyzer = struct {
             try fields.put(arg.identifier.?, field);
         }
 
+        var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
+        for (fields_in_order.items, 0..) |field, i| {
+            try field_index_by_name.put(field.identifier, @intCast(i));
+        }
+
         return Struct{
             .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .field_index_by_name = field_index_by_name,
             .static_fields = .init(self.allocator),
             .methods = .init(self.allocator),
         };
@@ -204,8 +221,14 @@ pub const SemaAnalyzer = struct {
             try methods.put(func.identifier, fn_symbol.type_id);
         }
 
+        var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
+        for (fields_in_order.items, 0..) |field, i| {
+            try field_index_by_name.put(field.identifier, @intCast(i));
+        }
+
         const struct_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
         struct_type_ptr.kind.@"struct".fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
+        struct_type_ptr.kind.@"struct".field_index_by_name = field_index_by_name;
         struct_type_ptr.kind.@"struct".fields = fields;
         struct_type_ptr.kind.@"struct".static_fields = static_fields;
         struct_type_ptr.kind.@"struct".methods = methods;
@@ -385,7 +408,8 @@ pub const SemaAnalyzer = struct {
             const fn_symbol = self.scope.symbol_table.getOrError(let_stmt.identifier) catch {
                 return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc);
             };
-            const func = try self.visitFnDef(let_stmt.value, fn_symbol.uid, self.type_table.getTypePtrById(fn_symbol.type_id).kind.function, null);
+            const fn_metadata = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function;
+            const func = try self.visitFnDef(let_stmt.value, fn_metadata.uid, fn_metadata, null);
             try self.functions.append(self.allocator, func);
             return null;
         }
@@ -415,6 +439,11 @@ pub const SemaAnalyzer = struct {
                 try self.type_table.name(expression_type_id, self.allocator),
                 stmt.data.let_stmt.value.loc,
             );
+        }
+
+        const expr_type = self.type_table.getTypePtrById(expression_type_id);
+        if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .dynamic) {
+            expression_value.type_id = var_type_id;
         }
 
         const uid = self.scope.genUid();
@@ -561,10 +590,11 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
-                return ir.Instruction{ .update_var = .{
+                return ir.Instruction{ .store_var = .{
                     .identifier = id_symbol.identifier,
-                    .var_uid = id_symbol.uid,
+                    .uid = id_symbol.uid,
                     .value = assignment_value,
+                    .type_id = id_symbol.type_id,
                 } };
             },
             .indexed => {
@@ -690,10 +720,16 @@ pub const SemaAnalyzer = struct {
             try fields.put(field.identifier, struct_field);
         }
 
+        var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
+        for (fields_in_order.items, 0..) |field, i| {
+            try field_index_by_name.put(field.identifier, @intCast(i));
+        }
+
         return .{
             .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
+            .field_index_by_name = field_index_by_name,
             .static_fields = .init(self.allocator),
             .methods = .init(self.allocator),
         };
@@ -749,6 +785,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Struct{
             .uid = struct_symbol.uid,
+            .type_id = blueprint_type_id,
             .identifier = identifier,
             .fields = try fields.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),
@@ -891,6 +928,8 @@ pub const SemaAnalyzer = struct {
         var params: []const TypedIdentifier = undefined;
         var return_type: TypeId = undefined;
 
+        var is_struct_init = false;
+
         var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
         defer arg_exp_by_param_name.deinit();
 
@@ -903,19 +942,20 @@ pub const SemaAnalyzer = struct {
                 };
 
                 fn_identifier = symbol.identifier;
-                uid = symbol.uid;
-
                 switch (symbol.kind) {
                     .function => {
                         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
                         params = func.params;
                         return_type = func.return_type_id;
+                        uid = func.uid;
                     },
                     //when identifier is a struct we turn it into a struct inicialization
                     .@"struct" => |scope| {
                         const struct_def = self.type_table.getTypePtrById(scope.blueprint_type_id).kind.@"struct";
                         params = struct_def.fields_in_order;
                         return_type = scope.blueprint_type_id;
+                        uid = symbol.uid;
+                        is_struct_init = true;
                     },
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
@@ -923,10 +963,13 @@ pub const SemaAnalyzer = struct {
                             const func = type_ptr.kind.function;
                             params = func.params;
                             return_type = func.return_type_id;
+                            uid = func.uid;
                         } else if (type_ptr.kind == .@"struct") {
                             const struct_def = type_ptr.kind.@"struct";
                             params = struct_def.fields_in_order;
                             return_type = symbol.type_id;
+                            uid = symbol.uid;
+                            is_struct_init = true;
                         } else {
                             return self.err_dispatcher.invalidType(
                                 "function or struct",
@@ -1059,9 +1102,9 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const is_anonymous_struct_inicialization = fn_call.target.data == .anonymous_struct_identifier;
+        const is_struct_inicialization = is_struct_init or fn_call.target.data == .anonymous_struct_identifier;
 
-        if (is_anonymous_struct_inicialization) {
+        if (is_struct_inicialization) {
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
                 try keys.append(self.allocator, param.identifier);
@@ -1070,10 +1113,12 @@ pub const SemaAnalyzer = struct {
             return ir.Value.init(
                 self.allocator,
                 .{
-                    .data = .{ .struct_init = .{
-                        .keys = try keys.toOwnedSlice(self.allocator),
-                        .values = try fn_call_arguments_values.toOwnedSlice(self.allocator),
-                    } },
+                    .data = .{
+                        .struct_init = .{
+                            .keys = try keys.toOwnedSlice(self.allocator),
+                            .values = try fn_call_arguments_values.toOwnedSlice(self.allocator),
+                        },
+                    },
                     .type_id = return_type,
                 },
             );
@@ -1308,11 +1353,13 @@ pub const SemaAnalyzer = struct {
         }
 
         return ir.Value.init(self.allocator, .{
-            .data = .{ .binary_op = .{
-                .kind = self.astBinOpToIrBinOpKind(bin_exp.op, op_type),
-                .left = left_value,
-                .right = right_value,
-            } },
+            .data = .{
+                .binary_op = .{
+                    .kind = self.astBinOpToIrBinOpKind(bin_exp.op, left_type, right_type),
+                    .left = left_value,
+                    .right = right_value,
+                },
+            },
             .type_id = op_type,
         });
     }
@@ -1387,20 +1434,22 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, op_type: TypeId) ir.BinaryOpKind {
+    fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, left_type: TypeId, right_type: TypeId) ir.BinaryOpKind {
+        const is_float = self.type_table.eql(left_type, self.type_table.getPrimitive(.float)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.float));
+        const is_bool = self.type_table.eql(left_type, self.type_table.getPrimitive(.boolean)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.boolean));
         return switch (bin_op) {
-            .add => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_add else .i_add,
-            .sub => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_sub else .i_sub,
-            .mult => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_mult else .i_mult,
+            .add => if (is_float) .f_add else .i_add,
+            .sub => if (is_float) .f_sub else .i_sub,
+            .mult => if (is_float) .f_mult else .i_mult,
             .div => .f_div,
-            .trunc_div => .i_div,
-            .mod => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_mod else .i_mod,
-            .eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_eq else .i_cmp_eq,
-            .not_eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_neq else .i_cmp_neq,
-            .lt => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_lt else .i_cmp_lt,
-            .lt_or_eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_le else .i_cmp_le,
-            .gt => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_gt else .i_cmp_gt,
-            .gt_or_eq => if (self.type_table.eql(op_type, self.type_table.getPrimitive(.float))) .f_cmp_ge else .i_cmp_ge,
+            .trunc_div => .trunc_div,
+            .mod => if (is_float) .f_mod else .i_mod,
+            .eq => if (is_float) .f_cmp_eq else if (is_bool) .b_cmp_eq else .i_cmp_eq,
+            .not_eq => if (is_float) .f_cmp_neq else if (is_bool) .b_cmp_neq else .i_cmp_neq,
+            .lt => if (is_float) .f_cmp_lt else .i_cmp_lt,
+            .lt_or_eq => if (is_float) .f_cmp_le else .i_cmp_le,
+            .gt => if (is_float) .f_cmp_gt else .i_cmp_gt,
+            .gt_or_eq => if (is_float) .f_cmp_ge else .i_cmp_ge,
             .bool_or => .b_or,
             .bool_and => .b_and,
         };
@@ -1425,10 +1474,12 @@ const Scope = struct {
 
     pub fn init(alloc: std.mem.Allocator, return_type_id: TypeId, type_table: *TypeTable) !Self {
         const builtins = try buildin.BuiltIn.init(alloc, type_table);
+        const generated = try builtins.generate();
+        defer alloc.free(generated);
 
         var symbols = std.StringHashMap(Symbol).init(alloc);
 
-        for (try builtins.generate()) |func| {
+        for (generated) |func| {
             try symbols.put(func.symbol.identifier, func.symbol);
         }
 
@@ -1436,8 +1487,8 @@ const Scope = struct {
             .allocator = alloc,
             .symbol_table = try SymbolTable.init(alloc, null, symbols),
             .return_type_id = return_type_id,
-            .next_uid = 10,
-            .next_fn_uid = 7,
+            .next_uid = generated.len,
+            .next_fn_uid = generated.len,
         };
     }
 
@@ -1530,6 +1581,7 @@ const Struct = struct {
     fields: std.StringHashMap(TypedIdentifier),
     static_fields: std.StringHashMap(TypedIdentifier),
     fields_in_order: []const TypedIdentifier,
+    field_index_by_name: std.StringHashMap(u8),
     methods: std.StringHashMap(TypeId),
 };
 
@@ -1571,7 +1623,6 @@ pub const Type = struct {
 
         function: FuncMetadata,
         @"struct": Struct,
-
         array: TypeId,
     },
 
@@ -1813,13 +1864,3 @@ pub const TypeTable = struct {
         return new_id;
     }
 };
-
-pub const Errors = err.Errors;
-
-const util = @import("util.zig");
-const buildin = @import("built-in.zig");
-const err = @import("error.zig");
-const ir = @import("ir.zig");
-const ast = @import("ast.zig");
-const allocPrint = std.fmt.allocPrint;
-const std = @import("std");

@@ -1,2 +1,3 @@
 let f = (x: BadType) -> void
     return
+end

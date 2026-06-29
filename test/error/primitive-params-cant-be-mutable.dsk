@@ -1,2 +1,3 @@
 let f = (mut x: int) -> void
     return
+end

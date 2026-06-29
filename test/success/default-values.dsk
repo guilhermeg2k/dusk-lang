@@ -14,18 +14,19 @@ echo(add2(y = 45))
 let User = struct
     username: string
     auth_method = "DUSK"
+end
 
-echo(stringify(User("Rogerinho")))
+echo(User("Rogerinho"))
 
-echo(stringify(User("Rogerinho", "Y")))
+echo(User("Rogerinho", "Y"))
 
-echo(stringify(User(
+echo(User(
     username="Rogerinho",
-)))
+))
 
-echo(stringify(User(
+echo(User(
     username="Rogerinho",
     auth_method="T"
-)))
+))
 
 

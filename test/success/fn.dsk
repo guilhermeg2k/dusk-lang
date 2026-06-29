@@ -1,4 +1,0 @@
-let main: fn = () -> void
-    echo("Hello World")
-
-main()

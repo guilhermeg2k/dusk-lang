@@ -2,15 +2,20 @@ let bin_search = (arr: []int, target: int) -> int
     let mut low = 0
     let mut high = len(arr) - 1
 
-    for low <= high
+    for low <= high do
         let mid = (low + high) // 2
-        if arr[mid] == target
+        if arr[mid] == target then
             return mid
-        if arr[mid] < target
+        end
+
+        if arr[mid] < target then
             low = mid + 1
         else
             high = mid - 1
+        end
+    end
 
     return -1
+end
 
 echo(bin_search([1,2,3,4,10,20,24,50,90,203,404], 203))

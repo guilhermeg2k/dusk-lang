@@ -1,18 +1,23 @@
 let isPrime: fn = (n: int) -> bool
-    if n < 2 
+    if n < 2 then
         return false
+    end
 
     let mut i: int = 2
-    for i * i <= n
-        if n % i == 0
+    for i * i <= n do
+        if n % i == 0 then
             return false
+        end
+
         i = i + 1
+    end
 
     return true
+end
 
-echo(isPrime(1))
-echo(isPrime(3))
-echo(isPrime(5))
-echo(isPrime(7))
-echo(isPrime(9))
-echo(isPrime(18))
+assert(isPrime(1) == false)
+assert(isPrime(3) == true)
+assert(isPrime(5) == true)
+assert(isPrime(7) == true)
+assert(isPrime(9) == false)
+assert(isPrime(18) == false)

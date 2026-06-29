@@ -1,0 +1,21 @@
+let make_array: fn = (n: int) -> []int
+    let mut result: []int = []
+    let mut i = 0
+    for i < n do
+        append(result, i)
+        i += 1
+    end
+
+    return result
+end
+
+let mut i = 0
+for i < 10000 do
+    let trash = make_array(10)
+    i += 1
+end
+
+let kept = make_array(5)
+assert(len(kept) == 5)
+assert(kept[0] == 0)
+assert(kept[4] == 4)

@@ -1,3 +1,5 @@
 let f = (x: int) -> void
     return
+end
+
 f("hello")

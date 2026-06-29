@@ -11,7 +11,6 @@ pub const Block = struct {
 
 pub const Instruction = union(enum) {
     store_var: StoreVar,
-    update_var: UpdateVar,
     branch_if: BranchIf,
     loop: Loop,
     return_stmt: ReturnStmt,
@@ -23,6 +22,7 @@ pub const Instruction = union(enum) {
 
 pub const Struct = struct {
     uid: usize,
+    type_id: TypeId,
     identifier: []const u8,
     fields: []const StructField,
     static_fields: []const StructField,
@@ -156,7 +156,7 @@ pub const BinaryOpKind = enum {
     i_add,
     i_sub,
     i_mult,
-    i_div,
+    trunc_div,
     i_mod,
 
     i_cmp_eq,

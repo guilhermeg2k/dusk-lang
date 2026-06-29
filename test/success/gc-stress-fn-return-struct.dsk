@@ -1,0 +1,25 @@
+# GC stress: function returning struct-with-array, called in a loop
+# tests that register_types is correctly reset across function compilations (Bug 2)
+let Wrapper = struct
+    value: int
+    items: []int
+end
+
+let make_wrapper: fn = (n: int) -> Wrapper
+    return Wrapper(value = n, items = [n, n + 1, n + 2])
+end
+
+let canary = make_wrapper(42)
+
+let mut i: int = 0
+for i < 50000 do
+    let trash = make_wrapper(i)
+    i += 1
+end
+
+assert(canary.value == 42)
+assert(len(canary.items) == 3)
+assert(canary.items[0] == 42)
+assert(canary.items[1] == 43)
+assert(canary.items[2] == 44)
+

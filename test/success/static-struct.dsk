@@ -8,9 +8,9 @@ let Api = struct
 
     #Methods
     fetch: (self: @) -> string
-        let base = concat(Api.ip, Api.port)
-        return concat(base, self.endpoint)
-
+        return self.ip
+    end
+end
 
 let api = Api("/me")
 

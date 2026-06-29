@@ -1,4 +1,7 @@
 let f = (x: int) -> void
     return
+end
+
 let f = (y: int) -> void
     return
+end

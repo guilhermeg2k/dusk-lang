@@ -1,0 +1,12 @@
+let mut i = 0
+let kept = @(x = 42, y = 99)
+
+for i < 100000 do
+    let trash = [1, 2, 3, i]
+    let trash_struct = @(x = i, y = i * 2)
+    i += 1
+end
+
+assert(i == 100000)
+assert(kept.x == 42)
+assert(kept.y == 99)

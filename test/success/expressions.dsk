@@ -1,16 +1,34 @@
-echo(1 + 2 * 3) # Salve
-# Salve doutor
-echo((1 + 2) * 3)
-echo(10 + 5 % 2)
-echo((10 + 5) % 2)
-echo(10 - 2 - 3)
-echo(10 - (2 - 3))
-echo(-5 + 3)
-echo(-(5 + 3))
-echo(- -5)
-echo(true or false and false)
-echo(true or false and true)
-echo(!true and true)
-echo(5 > 2 + 5)
-echo(2 * (3 + 4 * 5))
-echo(((1 + 1) * (2 + 2)))
+let x1 = 1 + 2 * 3
+let x2 = (1 + 2) * 3
+let x3 = 10 + 5 % 2
+let x4 = (10 + 5) % 2
+let x5 = 10 - 2 - 3
+let x6 = 10 - (2 - 3)
+let x7 = -5 + 3
+let x8 = -(5 + 3)
+let x9 = -5
+let x10 = true or false and false
+let x11 = true or false and true
+let x12 = !true and true
+let x13 = 5 > 2 + 5
+let x14 = 2 * (3 + 4 * 5)
+let x15 = ((1 + 1) * (2 + 2))
+
+let o = 3.5//2
+
+assert(x1 == 7)
+assert(x2 == 9)
+assert(x3 == 11)
+assert(x4 == 1)
+assert(x5 == 5)
+assert(x6 == 11)
+assert(x7 == -2)
+assert(x8 == -8)
+assert(x9 == -5)
+assert(x10 == true)
+assert(x11 == true)
+assert(x12 == false)
+assert(x13 == false)
+assert(x14 == 46)
+assert(x15 == 8)
+assert(o == 1)

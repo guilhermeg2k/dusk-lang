@@ -1,0 +1,11 @@
+let x = 5
+
+if x > 10 then
+    echo(">10")
+elif x > 5 then
+    echo(">5")
+elif x > 0 then
+    echo(">0")
+else
+    echo("<=0")
+end

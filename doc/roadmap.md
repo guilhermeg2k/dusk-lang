@@ -2,10 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version: 0.10 - Frieren
-
-- Target wasm & evaluate with wasmtime
-
 ## Version 0.11 - Power
 
 - Enums
@@ -19,6 +15,7 @@
 ## Version 0.13 - Hiei
 
 - Fancy for (fon in like)
+- Capture for
 - Ternary operator
 - Nullish coalescing operator (??)
 
@@ -60,3 +57,7 @@
 - Code Formatter
 - Fuzz testing
 - Improve memory usage
+- Improve VM Performance
+- Files generation + caching (Each compilation step)
+- Improve int -> float promotion
+- Verify places where @panic should be used instead of unrecheable

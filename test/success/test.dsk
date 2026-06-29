@@ -1,0 +1,7 @@
+let x = 10
+
+if x > 10 then
+    echo(x)
+elif x <= 10 then
+    echo("salada")
+end

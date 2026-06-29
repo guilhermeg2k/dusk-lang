@@ -1,5 +1,5 @@
-let echo2: fn = () -> void
-    echo("Ecoing")
-    return
+let echo2: fn = () -> int
+    return 2
+end
 
-echo2()
+assert(echo2() == 2)

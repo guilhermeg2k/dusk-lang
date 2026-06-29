@@ -244,7 +244,9 @@ pub const ErrorDispatcher = struct {
 
         const exactLoc = self.findExactLoc(loc.start);
         const start_col = 6 + loc.start - exactLoc.line.start;
-        const range_len = if (loc.end > loc.start) (loc.end - loc.start) else 0;
+
+        const capped_end = @min(loc.end, exactLoc.line.end);
+        const range_len = if (capped_end > loc.start) (capped_end - loc.start) else 0;
 
         var error_loc_marker: [LINE_MAX_CHAR_COUNT]u8 = undefined;
         var error_loc_marker_len: usize = 0;
@@ -253,15 +255,24 @@ pub const ErrorDispatcher = struct {
         @memcpy(error_loc_marker[0..white_space_count], padding[0..white_space_count]);
         error_loc_marker_len += white_space_count;
 
-        error_loc_marker[error_loc_marker_len] = '^';
-        error_loc_marker_len += 1;
-
-        if (range_len > 0) {
-            const tilde_count = @min(range_len, LINE_MAX_CHAR_COUNT - error_loc_marker_len - 1);
-            @memset(error_loc_marker[error_loc_marker_len .. error_loc_marker_len + tilde_count], '~');
-            error_loc_marker_len += tilde_count;
+        if (error_loc_marker_len < LINE_MAX_CHAR_COUNT) {
             error_loc_marker[error_loc_marker_len] = '^';
             error_loc_marker_len += 1;
+        }
+
+        if (range_len > 0) {
+            const remaining_space = if (LINE_MAX_CHAR_COUNT > error_loc_marker_len + 1) LINE_MAX_CHAR_COUNT - error_loc_marker_len - 1 else 0;
+            const tilde_count = @min(range_len, remaining_space);
+
+            if (tilde_count > 0) {
+                @memset(error_loc_marker[error_loc_marker_len .. error_loc_marker_len + tilde_count], '~');
+                error_loc_marker_len += tilde_count;
+            }
+
+            if (error_loc_marker_len < LINE_MAX_CHAR_COUNT) {
+                error_loc_marker[error_loc_marker_len] = '^';
+                error_loc_marker_len += 1;
+            }
         }
 
         std.log.err(
@@ -351,6 +362,11 @@ pub const Errors = error{
     UnecessaryOptionalChain,
     NullableMustBeUnwrapped,
     InvalidParameterType,
+};
+
+pub const RunTimeError = error{
+    OutOfMemory,
+    ArrayOutOfBounds,
 };
 
 const std = @import("std");

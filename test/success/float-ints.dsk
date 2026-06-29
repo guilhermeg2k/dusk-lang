@@ -9,5 +9,3 @@ assert(i == 1)
 
 assert(f == f1)
 assert(i == i2)
-
-echo("dusk!")
