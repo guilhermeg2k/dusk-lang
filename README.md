@@ -16,7 +16,7 @@ A small/lightweight statically typed scripting language
 
 [Changelogs](doc/changelogs.md)
 
-[Benchmark](benchmarks/benchmark.md)
+[Benchmarks](benchmarks/benchmark.md)
 
 [Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/contributing.md)
 

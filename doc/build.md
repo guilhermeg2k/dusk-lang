@@ -23,5 +23,5 @@ After cloning the project you can also direct running it
 
 That is a simple test suit currently only checking if compiler does not crash while building some files:
 
-- To run it use the command `zig build test`
+- To run it use the command `zig build test --summary all`
 
