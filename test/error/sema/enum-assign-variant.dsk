@@ -1,0 +1,6 @@
+let S = enum
+    A
+    B
+end
+
+S.A = 42

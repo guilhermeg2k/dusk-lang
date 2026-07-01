@@ -44,7 +44,7 @@ pub const SemaAnalyzer = struct {
         self.src = src;
         self.err_dispatcher.src = src;
 
-        try self.hoistFunctionsAndStructs(root);
+        try self.hoistDeclarations(root);
 
         return .{
             .instructions = (try self.visitBlock(root)).instructions,
@@ -53,7 +53,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    pub fn hoistFunctionsAndStructs(self: *Self, root: *const ast.Root) !void {
+    pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
         //first hoist only names
         for (root.statements.items) |stmt| {
             if (stmt.data != .let_stmt) {
@@ -61,7 +61,7 @@ pub const SemaAnalyzer = struct {
             }
 
             const let_stmt = stmt.data.let_stmt;
-            if (let_stmt.value.data != .fn_def and let_stmt.value.data != .struct_def) {
+            if (let_stmt.value.data != .fn_def and let_stmt.value.data != .struct_def and let_stmt.value.data != .enum_def) {
                 continue;
             }
 
@@ -72,6 +72,10 @@ pub const SemaAnalyzer = struct {
                 },
                 .struct_def => {
                     const symbol = try self.createIncompleteStructSymbol(let_stmt.identifier);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
+                },
+                .enum_def => {
+                    const symbol = try self.createEnumSymbol(let_stmt.identifier, let_stmt.value);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
                 },
                 else => unreachable,
@@ -127,6 +131,34 @@ pub const SemaAnalyzer = struct {
         });
 
         return symbol;
+    }
+
+    fn createEnumSymbol(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !Symbol {
+        const enum_def = exp.data.enum_def;
+        var variants: std.StringHashMap(i64) = .init(self.allocator);
+
+        const is_explicit = enum_def.variants[0].value != null;
+        for (enum_def.variants, 0..) |variant, i| {
+            const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
+            try variants.put(variant.identifier, value);
+        }
+
+        const blueprint_type_id = try self.type_table.addType(.{
+            .kind = .{
+                .@"enum" = .{
+                    .identifier = identifier,
+                    .variants = variants,
+                },
+            },
+            .nullable = false,
+        });
+
+        return Symbol{
+            .identifier = identifier,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .@"enum" = .{ .blueprint_type_id = blueprint_type_id } },
+        };
     }
 
     fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !Symbol {
@@ -415,8 +447,18 @@ pub const SemaAnalyzer = struct {
         }
 
         if (let_stmt.value.data == .struct_def) {
+            if (let_stmt.is_mut) {
+                return self.err_dispatcher.invalidDefinition(stmt.loc);
+            }
             const struct_def = try self.visitStructDef(let_stmt.value, let_stmt.identifier);
             try self.structs.append(self.allocator, struct_def);
+            return null;
+        }
+
+        if (let_stmt.value.data == .enum_def) {
+            if (let_stmt.is_mut) {
+                return self.err_dispatcher.invalidDefinition(stmt.loc);
+            }
             return null;
         }
 
@@ -664,6 +706,9 @@ pub const SemaAnalyzer = struct {
                                 );
                             }
                         }
+                    },
+                    .@"enum" => {
+                        return self.err_dispatcher.notMutable(index_exp.index.data.identifier, index_exp.index.loc);
                     },
                     else => unreachable,
                 }
@@ -949,13 +994,19 @@ pub const SemaAnalyzer = struct {
                         return_type = func.return_type_id;
                         uid = func.uid;
                     },
-                    //when identifier is a struct we turn it into a struct inicialization
                     .@"struct" => |scope| {
                         const struct_def = self.type_table.getTypePtrById(scope.blueprint_type_id).kind.@"struct";
                         params = struct_def.fields_in_order;
                         return_type = scope.blueprint_type_id;
                         uid = symbol.uid;
                         is_struct_init = true;
+                    },
+                    .@"enum" => {
+                        return self.err_dispatcher.invalidType(
+                            "function or struct",
+                            try self.type_table.name(symbol.type_id, self.allocator),
+                            exp.loc,
+                        );
                     },
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
@@ -1203,6 +1254,23 @@ pub const SemaAnalyzer = struct {
                 };
             },
 
+            .@"enum" => {
+                const enum_def = self.type_table.getTypePtrById(target_type).kind.@"enum";
+                return switch (indexed_exp.index.data) {
+                    .identifier => |variant_name| {
+                        const value = enum_def.variants.get(variant_name) orelse {
+                            return self.err_dispatcher.invalidEnumVariant(enum_def.identifier, variant_name, exp.loc);
+                        };
+                        //note: turning into simple ints
+                        return ir.Value.init(self.allocator, .{
+                            .data = .{ .i_int = value },
+                            .type_id = target_type,
+                        });
+                    },
+                    else => unreachable,
+                };
+            },
+
             else => {
                 return self.err_dispatcher.invalidType("array or struct", try self.type_table.name(target_type, self.allocator), exp.loc);
             },
@@ -1214,7 +1282,11 @@ pub const SemaAnalyzer = struct {
         const id_symbol = self.scope.symbol_table.get(id);
 
         if (id_symbol) |symbol| {
-            const type_id = if (symbol.kind == .@"struct") symbol.kind.@"struct".blueprint_type_id else symbol.type_id;
+            const type_id = switch (symbol.kind) {
+                .@"struct" => |s| s.blueprint_type_id,
+                .@"enum" => |e| e.blueprint_type_id,
+                else => symbol.type_id,
+            };
             return ir.Value.init(self.allocator, .{
                 .data = .{ .identifier = .{
                     .uid = symbol.uid,
@@ -1388,8 +1460,12 @@ pub const SemaAnalyzer = struct {
                 return Errors.SemaError;
             },
             .@"struct" => |struct_name| {
-                const struct_symbol = try self.scope.symbol_table.getOrError(struct_name);
-                const blueprint_type_id = struct_symbol.kind.@"struct".blueprint_type_id;
+                const symbol = try self.scope.symbol_table.getOrError(struct_name);
+                const blueprint_type_id = switch (symbol.kind) {
+                    .@"struct" => |s| s.blueprint_type_id,
+                    .@"enum" => |e| e.blueprint_type_id,
+                    else => return Errors.SemaError,
+                };
                 return if (type_annotation.nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
             },
             .anonymous_struct => |struct_metadata| {
@@ -1430,6 +1506,7 @@ pub const SemaAnalyzer = struct {
                 }
                 unreachable;
             },
+            .@"enum" => target_type_id,
             else => unreachable,
         };
     }
@@ -1572,6 +1649,9 @@ pub const Symbol = struct {
         @"struct": struct {
             blueprint_type_id: TypeId,
         },
+        @"enum": struct {
+            blueprint_type_id: TypeId,
+        },
         function: void,
     },
 };
@@ -1590,6 +1670,11 @@ const FuncMetadata = struct {
     uid: usize,
     params: []const TypedIdentifier,
     return_type_id: TypeId,
+};
+
+const Enum = struct {
+    identifier: []const u8,
+    variants: std.StringHashMap(i64),
 };
 
 //note: idk about this
@@ -1623,6 +1708,7 @@ pub const Type = struct {
 
         function: FuncMetadata,
         @"struct": Struct,
+        @"enum": Enum,
         array: TypeId,
     },
 
@@ -1765,6 +1851,9 @@ pub const TypeTable = struct {
                     return std.fmt.allocPrint(allocator, "{s}anonymous struct", .{prefix});
                 }
                 return std.fmt.allocPrint(allocator, "{s}struct {s}", .{ prefix, s.identifier });
+            },
+            .@"enum" => |e| {
+                return std.fmt.allocPrint(allocator, "{s}enum {s}", .{ prefix, e.identifier });
             },
             .array => |inner_id| {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });

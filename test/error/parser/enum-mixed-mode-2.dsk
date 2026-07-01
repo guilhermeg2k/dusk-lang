@@ -1,0 +1,5 @@
+let Mixed = enum
+    Ok
+    NotFound = 404
+    Error = 500
+end

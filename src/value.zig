@@ -337,6 +337,7 @@ pub const ValueType = enum(u8) {
             .void, .null, .dynamic, .meta => .null,
             .array => .array,
             .@"struct" => .@"struct",
+            .@"enum" => .int64,
             .function => .null,
         };
     }

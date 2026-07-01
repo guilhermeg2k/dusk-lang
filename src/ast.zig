@@ -120,6 +120,7 @@ pub const Exp = union(enum) {
     fn_call: FnCall,
     fn_def: FnDef,
     struct_def: Struct,
+    enum_def: EnumDef,
     indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -190,6 +191,15 @@ pub const StructField = struct {
     is_mut: bool,
     type: ?*TypeAnnotation,
     default_value: ?*ExpNode,
+};
+
+pub const EnumDef = struct {
+    variants: []const EnumVariant,
+};
+
+pub const EnumVariant = struct {
+    identifier: []const u8,
+    value: ?i64,
 };
 
 pub const UnaryOp = enum {

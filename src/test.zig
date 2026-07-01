@@ -135,175 +135,259 @@ test "break continue" {
 }
 
 test "sema error: type mismatch" {
-    try runCaseError("type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: not defined" {
-    try runCaseError("not-defined.dsk", error.NotDefined);
+    try runCaseError("sema/not-defined.dsk", error.NotDefined);
 }
 
 test "sema error: not mutable" {
-    try runCaseError("not-mutable.dsk", error.NotMutable);
+    try runCaseError("sema/not-mutable.dsk", error.NotMutable);
 }
 
 test "sema error: already defined" {
-    try runCaseError("already-defined.dsk", error.AlreadyDefined);
+    try runCaseError("sema/already-defined.dsk", error.AlreadyDefined);
 }
 
 test "sema error: invalid struct field" {
-    try runCaseError("invalid-struct-field.dsk", error.InvalidStructField);
+    try runCaseError("sema/invalid-struct-field.dsk", error.InvalidStructField);
 }
 
 test "sema error: invalid number of args" {
-    try runCaseError("invalid-number-of-args.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/invalid-number-of-args.dsk", error.InvalidNumberOfArgs);
 }
 
 test "sema error: nullable must be unwrapped" {
-    try runCaseError("nullable-must-be-unwrapped.dsk", error.NullableMustBeUnwrapped);
+    try runCaseError("sema/nullable-must-be-unwrapped.dsk", error.NullableMustBeUnwrapped);
 }
 
 test "sema error: unnecessary optional chain" {
-    try runCaseError("unnecessary-optional-chain.dsk", error.UnecessaryOptionalChain);
+    try runCaseError("sema/unnecessary-optional-chain.dsk", error.UnecessaryOptionalChain);
 }
 
 test "sema error: invalid return type" {
-    try runCaseError("invalid-return-type.dsk", error.InvalidReturnType);
+    try runCaseError("sema/invalid-return-type.dsk", error.InvalidReturnType);
 }
 
 test "sema error: bare return in nonvoid fn" {
-    try runCaseError("bare-return-in-nonvoid-fn.dsk", error.InvalidReturnType);
+    try runCaseError("sema/bare-return-in-nonvoid-fn.dsk", error.InvalidReturnType);
 }
 
 test "sema error: invalid struct function" {
-    try runCaseError("invalid-struct-function.dsk", error.InvalidStructField);
+    try runCaseError("sema/invalid-struct-function.dsk", error.InvalidStructField);
 }
 
 test "sema error: invalid static struct field" {
-    try runCaseError("invalid-static-struct-field.dsk", error.InvalidStructField);
+    try runCaseError("sema/invalid-static-struct-field.dsk", error.InvalidStructField);
 }
 
 test "sema error: cant infer array literal type" {
-    try runCaseError("cant-infer-array-literal-type.dsk", error.CantInferArrayLiteralType);
+    try runCaseError("sema/cant-infer-array-literal-type.dsk", error.CantInferArrayLiteralType);
 }
 
 test "sema error: invalid parameter type" {
-    try runCaseError("invalid-parameter-type.dsk", error.InvalidParameterType);
+    try runCaseError("sema/invalid-parameter-type.dsk", error.InvalidParameterType);
 }
 
 test "sema error: primitive params cant be mutable" {
-    try runCaseError("primitive-params-cant-be-mutable.dsk", error.PrimitiveParamsCantBeMutable);
+    try runCaseError("sema/primitive-params-cant-be-mutable.dsk", error.PrimitiveParamsCantBeMutable);
 }
 
 test "sema error: unwrapped cant be mutable" {
-    try runCaseError("unwrapped-cant-be-mutable.dsk", error.UnwrappedCantBeMutable);
+    try runCaseError("sema/unwrapped-cant-be-mutable.dsk", error.UnwrappedCantBeMutable);
 }
 
 test "sema error: missing argument" {
-    try runCaseError("missing-argument.dsk", error.MissingArgument);
+    try runCaseError("sema/missing-argument.dsk", error.MissingArgument);
 }
 
 test "sema error: invalid indexing" {
-    try runCaseError("invalid-indexing.dsk", error.InvalidIndexing);
+    try runCaseError("sema/invalid-indexing.dsk", error.InvalidIndexing);
 }
 
 test "sema error: unknown type" {
-    try runCaseError("unknown-type.dsk", error.UnknownType);
+    try runCaseError("sema/unknown-type.dsk", error.UnknownType);
 }
 
 test "sema error: if condition not bool" {
-    try runCaseError("if-condition-not-bool.dsk", error.InvalidType);
+    try runCaseError("sema/if-condition-not-bool.dsk", error.InvalidType);
 }
 
 test "sema error: for condition not bool" {
-    try runCaseError("for-condition-not-bool.dsk", error.InvalidType);
+    try runCaseError("sema/for-condition-not-bool.dsk", error.InvalidType);
 }
 
 test "sema error: if capture on nonnullable" {
-    try runCaseError("if-capture-on-nonnullable.dsk", error.InvalidType);
+    try runCaseError("sema/if-capture-on-nonnullable.dsk", error.InvalidType);
 }
 
 test "sema error: assign type mismatch" {
-    try runCaseError("assign-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/assign-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: array assign type mismatch" {
-    try runCaseError("array-assign-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/array-assign-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: struct field assign type mismatch" {
-    try runCaseError("struct-field-assign-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/struct-field-assign-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: static field assign type mismatch" {
-    try runCaseError("static-field-assign-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/static-field-assign-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: call non function" {
-    try runCaseError("call-non-function.dsk", error.InvalidType);
+    try runCaseError("sema/call-non-function.dsk", error.InvalidType);
 }
 
 test "sema error: method call on nonstruct" {
-    try runCaseError("method-call-on-nonstruct.dsk", error.InvalidType);
+    try runCaseError("sema/method-call-on-nonstruct.dsk", error.InvalidType);
 }
 
 test "sema error: fn arg type mismatch" {
-    try runCaseError("fn-arg-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/fn-arg-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: binary op type mismatch" {
-    try runCaseError("binary-op-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/binary-op-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: binary bool type mismatch" {
-    try runCaseError("binary-bool-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/binary-bool-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: unary op type mismatch" {
-    try runCaseError("unary-op-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/unary-op-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: index into non array" {
-    try runCaseError("index-into-non-array.dsk", error.InvalidType);
+    try runCaseError("sema/index-into-non-array.dsk", error.InvalidType);
 }
 
 test "sema error: struct field default type mismatch" {
-    try runCaseError("struct-field-default-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/struct-field-default-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: param default type mismatch" {
-    try runCaseError("param-default-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/param-default-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: indexed assign notmut root" {
-    try runCaseError("indexed-assign-notmut-root.dsk", error.NotMutable);
+    try runCaseError("sema/indexed-assign-notmut-root.dsk", error.NotMutable);
 }
 
 test "sema error: static field not mutable" {
-    try runCaseError("static-field-not-mutable.dsk", error.NotMutable);
+    try runCaseError("sema/static-field-not-mutable.dsk", error.NotMutable);
 }
 
 test "sema error: self binding not mut" {
-    try runCaseError("self-binding-not-mut.dsk", error.NotMutable);
+    try runCaseError("sema/self-binding-not-mut.dsk", error.NotMutable);
 }
 
 test "sema error: assign undefined" {
-    try runCaseError("assign-undefined.dsk", error.NotDefined);
+    try runCaseError("sema/assign-undefined.dsk", error.NotDefined);
 }
 
 test "sema error: indexed assign undefined" {
-    try runCaseError("indexed-assign-undefined.dsk", error.NotDefined);
+    try runCaseError("sema/indexed-assign-undefined.dsk", error.NotDefined);
 }
 
 test "sema error: call undefined" {
-    try runCaseError("call-undefined.dsk", error.NotDefined);
+    try runCaseError("sema/call-undefined.dsk", error.NotDefined);
 }
 
 test "sema error: duplicate fn def" {
-    try runCaseError("duplicate-fn-def.dsk", error.AlreadyDefined);
+    try runCaseError("sema/duplicate-fn-def.dsk", error.AlreadyDefined);
 }
 
 test "sema error: duplicate param name" {
-    try runCaseError("duplicate-param-name.dsk", error.AlreadyDefined);
+    try runCaseError("sema/duplicate-param-name.dsk", error.AlreadyDefined);
+}
+
+test "sema error: unknown enum variant" {
+    try runCaseError("sema/enum-unknown-variant.dsk", error.InvalidStructField);
+}
+
+test "sema error: assign to enum variant" {
+    try runCaseError("sema/enum-assign-variant.dsk", error.NotMutable);
+}
+
+test "sema error: call enum as function" {
+    try runCaseError("sema/enum-call-as-function.dsk", error.InvalidType);
+}
+
+test "sema error: enum type coercion" {
+    try runCaseError("sema/enum-type-coercion.dsk", error.InvalidType);
+}
+
+test "sema error: mutable struct definition" {
+    try runCaseError("sema/mut-struct-definition.dsk", error.InvalidDefinition);
+}
+
+test "sema error: mutable enum definition" {
+    try runCaseError("sema/mut-enum-definition.dsk", error.InvalidDefinition);
+}
+
+test "syntax error: break outside loop" {
+    try runCaseError("parser/break-outside-loop.dsk", error.ParserError);
+}
+
+test "syntax error: continue outside loop" {
+    try runCaseError("parser/continue-outside-loop.dsk", error.ParserError);
+}
+
+test "syntax error: invalid statement" {
+    try runCaseError("parser/invalid-statement.dsk", error.ParserError);
+}
+
+test "syntax error: struct static after field" {
+    try runCaseError("parser/struct-static-after-field.dsk", error.ParserError);
+}
+
+test "syntax error: struct field after method" {
+    try runCaseError("parser/struct-field-after-method.dsk", error.ParserError);
+}
+
+test "syntax error: struct unexpected token" {
+    try runCaseError("parser/struct-unexpected-token.dsk", error.ParserError);
+}
+
+test "syntax error: struct missing colon fn" {
+    try runCaseError("parser/struct-missing-colon-fn.dsk", error.ParserError);
+}
+
+test "syntax error: struct field default missing colon" {
+    try runCaseError("parser/struct-field-default-missing-colon.dsk", error.ParserError);
+}
+
+test "syntax error: enum mixed explicit and implicit" {
+    try runCaseError("parser/enum-mixed-mode.dsk", error.ParserError);
+}
+
+test "syntax error: enum mixed implicit and explicit" {
+    try runCaseError("parser/enum-mixed-mode-2.dsk", error.ParserError);
+}
+
+test "syntax error: enum unexpected token" {
+    try runCaseError("parser/enum-unexpected-token.dsk", error.ParserError);
+}
+
+test "syntax error: fn args mixed named positional" {
+    try runCaseError("parser/fn-args-mixed-named.dsk", error.ParserError);
+}
+
+test "syntax error: fn args non identifier name" {
+    try runCaseError("parser/fn-args-non-identifier.dsk", error.ParserError);
+}
+
+test "syntax error: pipe non fn call" {
+    try runCaseError("parser/pipe-non-fn-call.dsk", error.ParserError);
+}
+
+test "syntax error: unknown type annotation" {
+    try runCaseError("parser/type-annotation-unknown.dsk", error.ParserError);
 }
 
 test "gc: basic" {

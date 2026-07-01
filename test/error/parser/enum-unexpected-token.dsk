@@ -1,0 +1,5 @@
+let Status = enum
+    Ok
+    42
+    Error
+end

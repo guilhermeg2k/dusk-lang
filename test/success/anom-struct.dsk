@@ -1,4 +1,4 @@
-let Point2D = struct
+Point2D = struct
     x: int
     y: int
 end
@@ -6,7 +6,6 @@ end
 let print_point = (point: Point2D) -> void
     echo(point)
 end
-
 let point = Point2D(x = 10, y = 10)
 let point2: Point2D = @(x = 20, y = 20)
 let point3 = @(x = 30, y = 30)

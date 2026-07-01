@@ -1,0 +1,4 @@
+let S = struct
+    x: int
+    let y = 1
+end

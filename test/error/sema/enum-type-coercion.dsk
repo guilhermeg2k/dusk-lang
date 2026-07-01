@@ -1,0 +1,8 @@
+let S = enum
+    A
+    B
+end
+
+let x: S = 42
+
+echo(x)

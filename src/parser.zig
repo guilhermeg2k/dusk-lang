@@ -432,6 +432,67 @@ pub const Parser = struct {
         };
     }
 
+    fn parseEnumDef(self: *Self) Errors!ast.EnumDef {
+        var variants: std.ArrayList(ast.EnumVariant) = .empty;
+        var mode: enum { none, implicit, explicit } = .none;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    const identifier = tk.value(self.src);
+
+                    if (self.match(.eq)) {
+                        switch (mode) {
+                            .none => mode = .explicit,
+                            .implicit => return self.err_dispatcher.invalidSyntax(
+                                "all enum variants to either have explicit values or none at all",
+                                tk,
+                            ),
+                            .explicit => {},
+                        }
+
+                        const value_tk = try self.expect(.int_literal);
+                        const value = std.fmt.parseInt(i64, value_tk.value(self.src), 10) catch {
+                            return self.err_dispatcher.invalidSyntax("integer literal", value_tk);
+                        };
+
+                        try variants.append(self.allocator, .{
+                            .identifier = identifier,
+                            .value = value,
+                        });
+                    } else {
+                        switch (mode) {
+                            .none => mode = .implicit,
+                            .explicit => return self.err_dispatcher.invalidSyntax(
+                                "all enum variants to either have explicit values or none at all",
+                                tk,
+                            ),
+                            .implicit => {},
+                        }
+
+                        try variants.append(self.allocator, .{
+                            .identifier = identifier,
+                            .value = null,
+                        });
+                    }
+                },
+                .end_kw, .eof => {
+                    self.walk();
+                    break;
+                },
+                else => {
+                    return self.err_dispatcher.invalidSyntax("identifier or 'end'", tk);
+                },
+            }
+        }
+
+        return ast.EnumDef{
+            .variants = try variants.toOwnedSlice(self.allocator),
+        };
+    }
+
     fn parseFnDef(self: *Self) Errors!ast.FnDef {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         var body_block: ast.Block = undefined;
@@ -600,6 +661,7 @@ pub const Parser = struct {
             .minus,
             .at,
             .struct_kw,
+            .enum_kw,
             => true,
             else => false,
         };
@@ -765,6 +827,14 @@ pub const Parser = struct {
                 const struct_def = try self.parseStructDef();
                 const struct_def_end = self.tokens[self.cur_index - 1].loc.end;
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .struct_def = struct_def }, .loc = .{ .start = tk.loc.start, .end = struct_def_end } });
+            },
+            .enum_kw => {
+                const enum_def = try self.parseEnumDef();
+                const enum_def_end = self.tokens[self.cur_index - 1].loc.end;
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .enum_def = enum_def },
+                    .loc = .{ .start = tk.loc.start, .end = enum_def_end },
+                });
             },
             else => {
                 return self.err_dispatcher.invalidSyntax("valid expression", tk);

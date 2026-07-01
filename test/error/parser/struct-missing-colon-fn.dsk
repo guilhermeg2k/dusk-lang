@@ -1,0 +1,5 @@
+let S = struct
+    foo (x: int) -> void
+        return
+    end
+end

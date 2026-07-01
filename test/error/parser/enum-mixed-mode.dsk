@@ -1,0 +1,5 @@
+let Mixed = enum
+    Ok = 200
+    Pending
+    Error = 500
+end
