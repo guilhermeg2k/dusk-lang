@@ -358,8 +358,8 @@ test "syntax error: struct missing colon fn" {
     try runCaseError("parser/struct-missing-colon-fn.dsk", error.ParserError);
 }
 
-test "syntax error: struct field default missing colon" {
-    try runCaseError("parser/struct-field-default-missing-colon.dsk", error.ParserError);
+test "semantic error: struct field default ident not defined" {
+    try runCaseError("parser/struct-field-default-missing-colon.dsk", error.NotDefined);
 }
 
 test "syntax error: enum mixed explicit and implicit" {

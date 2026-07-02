@@ -333,56 +333,73 @@ pub const Parser = struct {
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
-                //note: this is allowing define fn with let and it should not
                 .let_kw => {
-                    if (section != .static) {
-                        return self.err_dispatcher.invalidSyntax("static fields to be at the beginning of the struct", tk);
+                    self.walk();
+                    const is_mut = self.match(.mut_kw);
+                    const identifier_token = try self.expect(.identifier);
+                    if (self.match(.colon)) {
+                        if (section != .static) {
+                            return self.err_dispatcher.invalidSyntax(
+                                "static fields to be at the beginning of the struct",
+                                tk,
+                            );
+                        }
+                        const type_annotation = try self.parseTypeAnnotation(false);
+                        _ = try self.expect(.eq);
+                        const value = try self.parseExp(0);
+                        try static_fields.append(self.allocator, .{
+                            .identifier = identifier_token.value(self.src),
+                            .is_mut = is_mut,
+                            .type = type_annotation,
+                            .default_value = value,
+                        });
+                    } else if (self.match(.eq)) {
+                        if (self.match(.l_paren)) {
+                            if (is_mut) {
+                                return self.err_dispatcher.invalidSyntax(
+                                    "methods cannot be declared mutable",
+                                    tk,
+                                );
+                            }
+                            section = .func;
+                            const fn_def = try self.parseFnDef();
+                            const fn_def_end = self.tokens[self.cur_index - 1].loc.end;
+                            try funcs.append(self.allocator, .{
+                                .identifier = identifier_token.value(self.src),
+                                .def = try ast.ExpNode.init(self.allocator, .{
+                                    .loc = .{ .start = tk.loc.start, .end = fn_def_end },
+                                    .data = .{ .fn_def = fn_def },
+                                }),
+                            });
+                        } else {
+                            if (section != .static) {
+                                return self.err_dispatcher.invalidSyntax(
+                                    "static fields to be at the beginning of the struct",
+                                    tk,
+                                );
+                            }
+                            const value = try self.parseExp(0);
+                            try static_fields.append(self.allocator, .{
+                                .identifier = identifier_token.value(self.src),
+                                .is_mut = is_mut,
+                                .type = null,
+                                .default_value = value,
+                            });
+                        }
+                    } else {
+                        return self.err_dispatcher.invalidSyntax("':' or '='", tk);
                     }
-                    const let_stmt = try self.parseLetStmt();
-                    try static_fields.append(self.allocator, .{
-                        .identifier = let_stmt.identifier,
-                        .is_mut = let_stmt.is_mut,
-                        .type = let_stmt.type_annotation,
-                        .default_value = let_stmt.value,
-                    });
                 },
                 .identifier => {
                     self.walk();
                     const identifier = tk;
                     const has_type_annotation = self.match(.colon);
-                    const is_fn = self.match(.l_paren);
-                    const has_default_value = self.match(.eq);
-                    if (has_default_value) {
-                        if (self.match(.l_paren)) {
-                            return self.err_dispatcher.invalidSyntax("'colon'", self.peekBack());
-                        }
-                        self.walkBack();
+                    if (section == .func) {
+                        return self.err_dispatcher.invalidSyntax("instance fields to be before methods", tk);
                     }
-
-                    if (is_fn) {
-                        if (has_type_annotation == false) {
-                            return self.err_dispatcher.invalidSyntax("'colon'", self.peekBack());
-                        }
-                        section = .func;
-                        const fn_def = try self.parseFnDef();
-                        const fn_def_end = self.tokens[self.cur_index - 1].loc.end;
-                        try funcs.append(self.allocator, .{
-                            .identifier = identifier.value(self.src),
-                            .def = try ast.ExpNode.init(self.allocator, .{
-                                .loc = .{ .start = tk.loc.start, .end = fn_def_end },
-                                .data = .{
-                                    .fn_def = fn_def,
-                                },
-                            }),
-                        });
-                    } else {
-                        if (section == .func) {
-                            return self.err_dispatcher.invalidSyntax("instance fields to be before methods", tk);
-                        }
-                        section = .field;
-                        const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
-                        try fields.append(self.allocator, strc_field);
-                    }
+                    section = .field;
+                    const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
+                    try fields.append(self.allocator, strc_field);
                 },
                 .end_kw, .eof => {
                     self.walk();

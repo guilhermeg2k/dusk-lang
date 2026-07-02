@@ -1,6 +1,6 @@
 let S = struct
     x: int
-    f: (mut self: @) -> void
+    let f = (mut self: @) -> void
         self.x = 1
     end
 end

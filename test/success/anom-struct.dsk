@@ -1,4 +1,4 @@
-Point2D = struct
+let Point2D = struct
     x: int
     y: int
 end

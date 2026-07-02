@@ -6,8 +6,9 @@ let Api = struct
     #Fields
     endpoint: string = ""
 
+
     #Methods
-    fetch: (self: @) -> string
+    let fetch = (self: @) -> string
         return self.ip
     end
 end

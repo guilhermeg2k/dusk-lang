@@ -3,7 +3,7 @@ let Node = struct
     right: ?Node
     value: int
 
-    add: (mut self: @, left: ?Node, right: ?Node) -> void
+    let add = (mut self: @, left: ?Node, right: ?Node) -> void
         self.left = left
         self.right = right
     end

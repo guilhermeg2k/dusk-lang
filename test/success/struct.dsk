@@ -4,11 +4,11 @@ let User = struct
     username: string
     auth_provider: string
 
-    to_string: (self: @) -> string
+    let to_string = (self: @) -> string
         return self.username
     end
 
-    change_id: (mut self: @, id: string) -> void
+    let change_id = (mut self: @, id: string) -> void
         self.id = id
     end
 end
