@@ -330,13 +330,6 @@ test "syntax error: invalid statement" {
     try runCaseError("parser/invalid-statement.dsk", error.ParserError);
 }
 
-test "syntax error: struct static after field" {
-    try runCaseError("parser/struct-static-after-field.dsk", error.ParserError);
-}
-
-test "syntax error: struct field after method" {
-    try runCaseError("parser/struct-field-after-method.dsk", error.ParserError);
-}
 
 test "syntax error: struct unexpected token" {
     try runCaseError("parser/struct-unexpected-token.dsk", error.ParserError);

@@ -6,11 +6,7 @@ struct User
     address: struct
         country: string
         state: string
-        city: string
-        street: string
-    end
-
-    default_address = @(
+    end = @(
         country = "Brasil",
         state = "SP",
         city = "São Paulo",

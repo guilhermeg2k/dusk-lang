@@ -383,18 +383,10 @@ pub const Parser = struct {
         var fields: std.ArrayList(ast.StructField) = .empty;
         var funcs: std.ArrayList(ast.StructFn) = .empty;
 
-        var section: enum { static, field, func } = .static;
-
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
                 .let_kw => {
-                    if (section != .static) {
-                        return self.err_dispatcher.invalidSyntax(
-                            "static fields to be at the beginning of the struct",
-                            tk,
-                        );
-                    }
                     self.walk();
                     const is_mut = self.match(.mut_kw);
                     const identifier_token = try self.expect(.identifier);
@@ -422,7 +414,6 @@ pub const Parser = struct {
                 },
                 .func_kw => {
                     self.walk();
-                    section = .func;
                     const identifier_token = try self.expect(.identifier);
                     _ = try self.expect(.l_paren);
                     const fn_def = try self.parseFnDef();
@@ -436,10 +427,6 @@ pub const Parser = struct {
                     self.walk();
                     const identifier = tk;
                     const has_type_annotation = self.match(.colon);
-                    if (section == .func) {
-                        return self.err_dispatcher.invalidSyntax("instance fields to be before methods", tk);
-                    }
-                    section = .field;
                     const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
                     try fields.append(self.allocator, strc_field);
                 },
