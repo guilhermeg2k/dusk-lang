@@ -1,4 +1,4 @@
-let f = (a: int, b: int = 0) -> void
+func f(a: int, b: int = 0) -> void
     return
 end
 

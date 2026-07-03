@@ -12,6 +12,9 @@ pub const StatementNode = struct {
 
 pub const Statement = union(enum) {
     let_stmt: LetStmt,
+    func_stmt: FuncStmt,
+    struct_stmt: StructStmt,
+    enum_stmt: EnumStmt,
     if_stmt: IfStmt,
     if_capture_stmt: IfCaptureStmt,
     for_stmt: ForStmt,
@@ -20,6 +23,21 @@ pub const Statement = union(enum) {
     expression_stmt: *ExpNode,
     break_stmt: void,
     continue_stmt: void,
+};
+
+pub const FuncStmt = struct {
+    identifier: []const u8,
+    def: FnDef,
+};
+
+pub const StructStmt = struct {
+    identifier: []const u8,
+    def: Struct,
+};
+
+pub const EnumStmt = struct {
+    identifier: []const u8,
+    def: EnumDef,
 };
 
 pub const LetStmt = struct {
@@ -118,9 +136,6 @@ pub const Exp = union(enum) {
     array_literal: ArrayLiteral,
     null_literal: void,
     fn_call: FnCall,
-    fn_def: FnDef,
-    struct_def: Struct,
-    enum_def: EnumDef,
     indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -183,7 +198,8 @@ pub const Struct = struct {
 
 pub const StructFn = struct {
     identifier: []const u8,
-    def: *ExpNode,
+    def: FnDef,
+    loc: err.Loc,
 };
 
 pub const StructField = struct {

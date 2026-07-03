@@ -1,6 +1,6 @@
-let S = struct
+struct S
     x: int
-    let f = (self: @) -> void
+    func f(self: @) -> void
         return
     end
 end

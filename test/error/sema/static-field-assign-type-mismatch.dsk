@@ -1,4 +1,4 @@
-let S = struct
+struct S
     let mut x: int = 0
     y: string
 end

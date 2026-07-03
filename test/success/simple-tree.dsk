@@ -1,9 +1,9 @@
-let Node = struct
+struct Node
     left: ?Node
     right: ?Node
     value: int
 
-    let add = (mut self: @, left: ?Node, right: ?Node) -> void
+    func add(mut self: @, left: ?Node, right: ?Node) -> void
         self.left = left
         self.right = right
     end
@@ -18,7 +18,7 @@ root.add(
     right = @(value = 100, left = null, right = null)
 )
 
-let print_node = (node: Node) -> void
+func print_node(node: Node) -> void
     echo(node.value)
 end
 

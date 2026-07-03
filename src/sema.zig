@@ -56,56 +56,36 @@ pub const SemaAnalyzer = struct {
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
         //first hoist only names
         for (root.statements.items) |stmt| {
-            if (stmt.data != .let_stmt) {
-                continue;
-            }
-
-            const let_stmt = stmt.data.let_stmt;
-            if (let_stmt.value.data != .fn_def and let_stmt.value.data != .struct_def and let_stmt.value.data != .enum_def) {
-                continue;
-            }
-
-            switch (let_stmt.value.data) {
-                .fn_def => {
-                    const symbol = try self.createIncompleteFuncSymbol(let_stmt.identifier);
-                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
+            switch (stmt.data) {
+                .func_stmt => |fs| {
+                    const symbol = try self.createIncompleteFuncSymbol(fs.identifier);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(fs.identifier, stmt.loc);
                 },
-                .struct_def => {
-                    const symbol = try self.createIncompleteStructSymbol(let_stmt.identifier);
-                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
+                .struct_stmt => |ss| {
+                    const symbol = try self.createIncompleteStructSymbol(ss.identifier);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(ss.identifier, stmt.loc);
                 },
-                .enum_def => {
-                    const symbol = try self.createEnumSymbol(let_stmt.identifier, let_stmt.value);
-                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(let_stmt.identifier, let_stmt.value.loc);
+                .enum_stmt => |es| {
+                    const symbol = try self.createEnumSymbol(es.identifier, &es.def);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(es.identifier, stmt.loc);
                 },
-                else => unreachable,
+                .let_stmt => {},
+                else => {},
             }
         }
 
         //later complete the hoist fullfilling the types
         for (root.statements.items) |stmt| {
-            if (stmt.data != .let_stmt) {
-                continue;
-            }
-
-            const let_stmt = stmt.data.let_stmt;
-            if (let_stmt.value.data != .fn_def and let_stmt.value.data != .struct_def) {
-                continue;
-            }
-
-            switch (let_stmt.value.data) {
-                .fn_def => {
-                    const symbol = try self.scope.symbol_table.getOrError(let_stmt.identifier);
-                    try self.fulfillFuncType(symbol, let_stmt.value, null);
+            switch (stmt.data) {
+                .func_stmt => |fs| {
+                    const symbol = try self.scope.symbol_table.getOrError(fs.identifier);
+                    try self.fulfillFuncType(symbol, &fs.def, null, stmt.loc);
                 },
-                .struct_def => {
-                    const symbol = try self.scope.symbol_table.getOrError(let_stmt.identifier);
-                    try self.fulfillStructType(
-                        symbol,
-                        let_stmt.value,
-                    );
+                .struct_stmt => |ss| {
+                    const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
+                    try self.fulfillStructType(symbol, &ss.def);
                 },
-                else => unreachable,
+                else => {},
             }
         }
     }
@@ -133,8 +113,7 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn createEnumSymbol(self: *Self, identifier: []const u8, exp: *const ast.ExpNode) !Symbol {
-        const enum_def = exp.data.enum_def;
+    fn createEnumSymbol(self: *Self, identifier: []const u8, enum_def: *const ast.EnumDef) !Symbol {
         var variants: std.StringHashMap(i64) = .init(self.allocator);
 
         const is_explicit = enum_def.variants[0].value != null;
@@ -224,8 +203,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn fulfillStructType(self: *Self, struct_symbol: Symbol, exp: *const ast.ExpNode) !void {
-        const struct_def = exp.data.struct_def;
+    fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
         const blueprint_type_id = struct_symbol.kind.@"struct".blueprint_type_id;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
@@ -249,7 +227,7 @@ pub const SemaAnalyzer = struct {
         for (struct_def.funcs) |func| {
             //note: maybe this is not optimal because we only need the fn metadata
             const fn_symbol = try self.createIncompleteFuncSymbol(func.identifier);
-            try self.fulfillFuncType(fn_symbol, func.def, struct_symbol);
+            try self.fulfillFuncType(fn_symbol, &func.def, struct_symbol, func.loc);
             try methods.put(func.identifier, fn_symbol.type_id);
         }
 
@@ -301,8 +279,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn fulfillFuncType(self: *Self, fn_symbol: Symbol, exp: *ast.ExpNode, struct_symbol: ?Symbol) !void {
-        const fn_def = exp.data.fn_def;
+    fn fulfillFuncType(self: *Self, fn_symbol: Symbol, fn_def: *const ast.FnDef, struct_symbol: ?Symbol, loc: err.Loc) !void {
         var return_type_id: TypeId = undefined;
         var params_metadata: std.ArrayList(TypedIdentifier) = .empty;
 
@@ -317,7 +294,7 @@ pub const SemaAnalyzer = struct {
                 param_type_id = self.resolveTypeAnnotation(annotation, if (struct_symbol) |symbol| symbol.kind.@"struct".blueprint_type_id else null) catch {
                     return self.err_dispatcher.typeNotDefined(
                         try param.type_annotation.?.value(self.allocator),
-                        exp.loc,
+                        loc,
                     );
                 };
 
@@ -339,7 +316,7 @@ pub const SemaAnalyzer = struct {
                     param_default_value = value;
                     param_type_id = value.type_id;
                 } else {
-                    return self.err_dispatcher.invalidParameterType(param.identifier, exp.loc);
+                    return self.err_dispatcher.invalidParameterType(param.identifier, loc);
                 }
             }
 
@@ -351,7 +328,7 @@ pub const SemaAnalyzer = struct {
                     .kind = .{ .variable = .{ .is_mut = param.is_mut } },
                 },
             ) catch {
-                return self.err_dispatcher.alreadyDefined(param.identifier, exp.loc);
+                return self.err_dispatcher.alreadyDefined(param.identifier, loc);
             };
 
             try params_metadata.append(self.allocator, .{
@@ -364,7 +341,7 @@ pub const SemaAnalyzer = struct {
 
         if (fn_def.return_type) |r_type| {
             return_type_id = self.resolveTypeAnnotation(r_type, null) catch {
-                return self.err_dispatcher.typeNotDefined(r_type.type.primitive, exp.loc);
+                return self.err_dispatcher.typeNotDefined(r_type.type.primitive, loc);
             };
         } else if (fn_def.body_block.statements.items[0].data.return_stmt.exp) |return_exp| {
             const return_value = try self.evalExp(return_exp);
@@ -390,6 +367,9 @@ pub const SemaAnalyzer = struct {
         for (block.statements.items) |stmt| {
             const instruction = switch (stmt.data) {
                 .let_stmt => try self.visitLetStmt(&stmt),
+                .func_stmt => try self.visitFuncStmt(&stmt),
+                .struct_stmt => try self.visitStructStmt(&stmt),
+                .enum_stmt => try self.visitEnumStmt(&stmt),
                 .assign_stmt => try self.visitAssignStmt(&stmt),
                 .if_stmt => try self.visitIfStmt(&stmt),
                 .for_stmt => try self.visitForStmt(&stmt),
@@ -436,32 +416,6 @@ pub const SemaAnalyzer = struct {
         var var_type_id: TypeId = undefined;
         const let_stmt = stmt.data.let_stmt;
 
-        if (let_stmt.value.data == .fn_def) {
-            const fn_symbol = self.scope.symbol_table.getOrError(let_stmt.identifier) catch {
-                return self.err_dispatcher.notDefined(let_stmt.identifier, stmt.loc);
-            };
-            const fn_metadata = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function;
-            const func = try self.visitFnDef(let_stmt.value, fn_metadata.uid, fn_metadata, null);
-            try self.functions.append(self.allocator, func);
-            return null;
-        }
-
-        if (let_stmt.value.data == .struct_def) {
-            if (let_stmt.is_mut) {
-                return self.err_dispatcher.invalidDefinition(stmt.loc);
-            }
-            const struct_def = try self.visitStructDef(let_stmt.value, let_stmt.identifier);
-            try self.structs.append(self.allocator, struct_def);
-            return null;
-        }
-
-        if (let_stmt.value.data == .enum_def) {
-            if (let_stmt.is_mut) {
-                return self.err_dispatcher.invalidDefinition(stmt.loc);
-            }
-            return null;
-        }
-
         const expression_value = try self.evalExp(let_stmt.value);
         const expression_type_id = expression_value.type_id;
 
@@ -505,6 +459,30 @@ pub const SemaAnalyzer = struct {
             .type_id = var_type_id,
             .value = expression_value,
         } };
+    }
+
+    fn visitFuncStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
+        const func_stmt = stmt.data.func_stmt;
+        const fn_symbol = self.scope.symbol_table.getOrError(func_stmt.identifier) catch {
+            return self.err_dispatcher.notDefined(func_stmt.identifier, stmt.loc);
+        };
+        const fn_metadata = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function;
+        const func = try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, null, stmt.loc);
+        try self.functions.append(self.allocator, func);
+        return null;
+    }
+
+    fn visitStructStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
+        const struct_stmt = stmt.data.struct_stmt;
+        const struct_def = try self.visitStructDef(&struct_stmt.def, struct_stmt.identifier);
+        try self.structs.append(self.allocator, struct_def);
+        return null;
+    }
+
+    fn visitEnumStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
+        _ = self;
+        _ = stmt;
+        return null;
     }
 
     fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
@@ -780,14 +758,12 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn visitStructDef(self: *Self, exp: *const ast.ExpNode, identifier: []const u8) Errors!ir.Struct {
+    fn visitStructDef(self: *Self, struct_def: *const ast.Struct, identifier: []const u8) Errors!ir.Struct {
         const struct_symbol = try self.scope.symbol_table.getOrError(identifier);
         const blueprint_type_id = struct_symbol.kind.@"struct".blueprint_type_id;
         const prev_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
         defer self.scope.exit(prev_return_type);
-
-        const struct_def = exp.data.struct_def;
         var fields: std.ArrayList(ir.StructField) = .empty;
         var static_fields: std.ArrayList(ir.StructField) = .empty;
         var funcs: std.ArrayList(ir.Func) = .empty;
@@ -824,7 +800,7 @@ pub const SemaAnalyzer = struct {
             const fn_type_id = if (self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods.get(func.identifier)) |type_id| type_id else unreachable;
             const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
             const fn_name = func.identifier;
-            const fn_def = try self.visitFnDef(func.def, fn_metadata.uid, fn_metadata, fn_name);
+            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, fn_name, func.loc);
             try funcs.append(self.allocator, fn_def);
         }
 
@@ -840,12 +816,12 @@ pub const SemaAnalyzer = struct {
 
     fn visitFnDef(
         self: *Self,
-        exp: *const ast.ExpNode,
+        fn_def: *const ast.FnDef,
         uid: usize,
         metadata: FuncMetadata,
         override_name: ?[]const u8,
+        loc: err.Loc,
     ) Errors!ir.Func {
-        const fn_def = exp.data.fn_def;
         var params: std.ArrayList(ir.FuncParam) = .empty;
 
         const old_return_type = self.scope.return_type_id;
@@ -856,7 +832,7 @@ pub const SemaAnalyzer = struct {
             const arg_uid = self.scope.genUid();
 
             if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind != .array and self.type_table.getTypePtrById(param.type_id).kind != .@"struct") {
-                return self.err_dispatcher.primitiveParamsCantBeMutable(exp.loc);
+                return self.err_dispatcher.primitiveParamsCantBeMutable(loc);
             }
 
             try self.scope.symbol_table.put(.{
@@ -880,7 +856,7 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.type_table.name(self.scope.return_type_id, self.allocator),
                 try self.type_table.name(body.return_type, self.allocator),
-                exp.loc,
+                loc,
             );
         }
 
@@ -961,7 +937,10 @@ pub const SemaAnalyzer = struct {
             .binary_exp => {
                 return self.evalBinaryExp(exp);
             },
-            else => unreachable,
+            else => {
+                std.log.debug("{}", .{exp});
+                return Errors.InvalidExpression;
+            },
         }
     }
 

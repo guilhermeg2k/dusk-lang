@@ -1,4 +1,4 @@
-let Api = struct
+struct Api
     #Static fields
     let ip = "127.0.0.1"
     let mut port: string = "8080"
@@ -8,7 +8,7 @@ let Api = struct
 
 
     #Methods
-    let fetch = (self: @) -> string
+    func fetch(self: @) -> string
         return self.ip
     end
 end

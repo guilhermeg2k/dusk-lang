@@ -70,7 +70,7 @@ Structs are custom data types that group related data and methods.
 Structs are defined using the `struct` keyword. Structs can also contain nested struct definitions and default values for fields. Note that **nested structs can only contain fields**, they cannot contain methods or static fields.
 
 ```nim
-let User = struct
+struct User
     id: string
     username: string
     auth_method = "DUSK" # Field with default value
@@ -82,12 +82,12 @@ let User = struct
     end
 
     # Method
-    to_string: (self: @) -> string
+    func to_string(self: @) -> string
         return self.username
     end
 
     # Mutable Method
-    change_id: (mut self: @, id: string) -> void
+    func change_id(mut self: @, id: string) -> void
         self.id = id
     end
 end
@@ -124,7 +124,7 @@ Structs can have static fields and methods. Static fields are declared with `let
 3. **Methods**
 
 ```nim
-let Api = struct
+struct Api
     # Static fields
     let ip: string = "127.0.0.1"
     let mut port: string = "8080"
@@ -133,7 +133,7 @@ let Api = struct
     endpoint: string = ""
 
     # Methods
-    fetch: (self: @) -> string
+    func fetch(self: @) -> string
         return self.endpoint
     end
 end
@@ -156,7 +156,7 @@ let Point2D = struct
     y: int
 end
 
-let print_point = (point: Point2D) -> void
+func print_point(point: Point2D) -> void
     echo(point)
 end
 
@@ -183,11 +183,11 @@ name = "Dusk"
 You can use optional chaining (`?.`) to safely access fields of nullable structs. If any part of the chain is `null`, the result is `null`.
 
 ```nim
-let Country = struct
+struct Country
     name: string
 end
 
-let User = struct
+struct User
     country: ?Country
 end
 
@@ -340,10 +340,10 @@ Return types are only inferred for inline returns; otherwise, they are mandatory
 
 ### Definition
 
-The compiler can infer function types in most cases.
+Functions are defined using the `func` keyword.
 
 ```nim
-let add = (a: int, b: int) -> int
+func add(a: int, b: int) -> int
     return a + b
 end
 ```
@@ -353,7 +353,7 @@ end
 Function parameters can have default values. When a default value is provided, the type annotation becomes optional and is inferred from the default value.
 
 ```nim
-let add = (x: int, y = 2) -> return x + y
+func add(x: int, y = 2) -> return x + y
 
 echo(add(10))        # 12
 echo(add(10, 5))     # 15
@@ -365,7 +365,7 @@ echo(add(y=10, x=5)) # 15
 For functions with a single return expression, you can use the inline `return`
 
 ```nim
-let add = (a: int, b: int) -> return a + b
+func add(a: int, b: int) -> return a + b
 ```
 
 ### Void Functions
@@ -373,7 +373,7 @@ let add = (a: int, b: int) -> return a + b
 If a function does not return a value, use `void`.
 
 ```nim
-let greet: fn = (name: string) -> void
+func greet(name: string) -> void
     echo(name)
 end
 ```
@@ -384,7 +384,7 @@ By default, function parameters are immutable. To allow a function to modify a p
 
 ```nim
 # The mut keyword allows this function to modify list
-let add_one = (mut list: []int) -> void
+func add_one(mut list: []int) -> void
     append(list, 1)
 end
 
@@ -412,11 +412,11 @@ Dusk supports the pipe operator (`|>`), which allows passing the result of an ex
 The right-hand side of the pipe operator must be a function call. Parentheses are required even for functions with a single parameter.
 
 ```nim
-let add = (a: int, b: int) -> int
+func add(a: int, b: int) -> int
     return a + b
 end
 
-let is_even = (x: int) -> bool
+func is_even(x: int) -> bool
     return (x % 2) == 0
 end
 

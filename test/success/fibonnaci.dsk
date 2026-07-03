@@ -1,4 +1,4 @@
-let fib: fn = (n: int) -> int
+func fib(n: int) -> int
     if n <= 1 then
         return n
     end

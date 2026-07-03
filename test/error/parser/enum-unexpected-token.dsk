@@ -1,4 +1,4 @@
-let Status = enum
+enum Status
     Ok
     42
     Error

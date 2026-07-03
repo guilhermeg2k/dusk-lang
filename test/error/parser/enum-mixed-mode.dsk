@@ -1,4 +1,4 @@
-let Mixed = enum
+enum Mixed
     Ok = 200
     Pending
     Error = 500

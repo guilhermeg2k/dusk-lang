@@ -1,4 +1,4 @@
-let make_array: fn = (n: int) -> []int
+func make_array(n: int) -> []int
     let mut result: []int = []
     let mut i = 0
     for i < n do

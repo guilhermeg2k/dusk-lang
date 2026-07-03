@@ -1,9 +1,9 @@
-let Point2D = struct
+struct Point2D
     x: int
     y: int
 end
 
-let print_point = (point: Point2D) -> void
+func print_point(point: Point2D) -> void
     echo(point)
 end
 let point = Point2D(x = 10, y = 10)

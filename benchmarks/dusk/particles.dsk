@@ -1,4 +1,4 @@
-let Particle = struct
+struct Particle
     x: float
     y: float
     vx: float

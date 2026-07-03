@@ -68,6 +68,27 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = let_stmt_value.value.loc.end },
                 };
             },
+            .func_kw => {
+                const func_stmt_value = try self.parseFuncStmt();
+                return ast.StatementNode{
+                    .data = .{ .func_stmt = func_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .struct_kw => {
+                const struct_stmt_value = try self.parseStructStmt();
+                return ast.StatementNode{
+                    .data = .{ .struct_stmt = struct_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .enum_kw => {
+                const enum_stmt_value = try self.parseEnumStmt();
+                return ast.StatementNode{
+                    .data = .{ .enum_stmt = enum_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
             .if_kw => {
                 if (self.isIfCapture()) {
                     const if_capture = try self.parseIfCapture();
@@ -136,6 +157,40 @@ pub const Parser = struct {
             .is_mut = is_mutable,
             .type_annotation = type_annotation,
             .value = value,
+        };
+    }
+
+    fn parseFuncStmt(self: *Self) !ast.FuncStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        _ = try self.expect(.l_paren);
+        const fn_def = try self.parseFnDef();
+
+        return ast.FuncStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = fn_def,
+        };
+    }
+
+    fn parseStructStmt(self: *Self) !ast.StructStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        const struct_def = try self.parseStructDef();
+
+        return ast.StructStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = struct_def,
+        };
+    }
+
+    fn parseEnumStmt(self: *Self) !ast.EnumStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        const enum_def = try self.parseEnumDef();
+
+        return ast.EnumStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = enum_def,
         };
     }
 
@@ -334,16 +389,16 @@ pub const Parser = struct {
             const tk = self.peekCurrent();
             switch (tk.tag) {
                 .let_kw => {
+                    if (section != .static) {
+                        return self.err_dispatcher.invalidSyntax(
+                            "static fields to be at the beginning of the struct",
+                            tk,
+                        );
+                    }
                     self.walk();
                     const is_mut = self.match(.mut_kw);
                     const identifier_token = try self.expect(.identifier);
                     if (self.match(.colon)) {
-                        if (section != .static) {
-                            return self.err_dispatcher.invalidSyntax(
-                                "static fields to be at the beginning of the struct",
-                                tk,
-                            );
-                        }
                         const type_annotation = try self.parseTypeAnnotation(false);
                         _ = try self.expect(.eq);
                         const value = try self.parseExp(0);
@@ -354,41 +409,28 @@ pub const Parser = struct {
                             .default_value = value,
                         });
                     } else if (self.match(.eq)) {
-                        if (self.match(.l_paren)) {
-                            if (is_mut) {
-                                return self.err_dispatcher.invalidSyntax(
-                                    "methods cannot be declared mutable",
-                                    tk,
-                                );
-                            }
-                            section = .func;
-                            const fn_def = try self.parseFnDef();
-                            const fn_def_end = self.tokens[self.cur_index - 1].loc.end;
-                            try funcs.append(self.allocator, .{
-                                .identifier = identifier_token.value(self.src),
-                                .def = try ast.ExpNode.init(self.allocator, .{
-                                    .loc = .{ .start = tk.loc.start, .end = fn_def_end },
-                                    .data = .{ .fn_def = fn_def },
-                                }),
-                            });
-                        } else {
-                            if (section != .static) {
-                                return self.err_dispatcher.invalidSyntax(
-                                    "static fields to be at the beginning of the struct",
-                                    tk,
-                                );
-                            }
-                            const value = try self.parseExp(0);
-                            try static_fields.append(self.allocator, .{
-                                .identifier = identifier_token.value(self.src),
-                                .is_mut = is_mut,
-                                .type = null,
-                                .default_value = value,
-                            });
-                        }
+                        const value = try self.parseExp(0);
+                        try static_fields.append(self.allocator, .{
+                            .identifier = identifier_token.value(self.src),
+                            .is_mut = is_mut,
+                            .type = null,
+                            .default_value = value,
+                        });
                     } else {
                         return self.err_dispatcher.invalidSyntax("':' or '='", tk);
                     }
+                },
+                .func_kw => {
+                    self.walk();
+                    section = .func;
+                    const identifier_token = try self.expect(.identifier);
+                    _ = try self.expect(.l_paren);
+                    const fn_def = try self.parseFnDef();
+                    try funcs.append(self.allocator, .{
+                        .identifier = identifier_token.value(self.src),
+                        .def = fn_def,
+                        .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                    });
                 },
                 .identifier => {
                     self.walk();
@@ -677,8 +719,6 @@ pub const Parser = struct {
             .not,
             .minus,
             .at,
-            .struct_kw,
-            .enum_kw,
             => true,
             else => false,
         };
@@ -807,14 +847,6 @@ pub const Parser = struct {
                 );
             },
             .l_paren => {
-                const is_function_def = self.isFuncDef();
-
-                if (is_function_def) {
-                    const fn_def = try self.parseFnDef();
-                    const fn_def_end = self.tokens[self.cur_index - 1].loc.end;
-                    return ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_def = fn_def }, .loc = .{ .start = tk.loc.start, .end = fn_def_end } });
-                }
-
                 const exp = try self.parseExp(0);
                 _ = try self.expect(.r_paren);
                 return exp;
@@ -824,33 +856,12 @@ pub const Parser = struct {
                 const right = try self.parseExp(100);
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .unary_exp = .{ .op = op, .right = right } }, .loc = .{ .start = tk.loc.start, .end = right.loc.end } });
             },
-            .fn_kw => {
-                const fn_def = try self.parseFnDef();
-                const fn_def_end = self.tokens[self.cur_index - 1].loc.end;
-                return ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .fn_def = fn_def },
-                    .loc = .{ .start = tk.loc.start, .end = fn_def_end },
-                });
-            },
             .at => {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
                         .anonymous_struct_identifier = {},
                     },
                     .loc = tk.loc,
-                });
-            },
-            .struct_kw => {
-                const struct_def = try self.parseStructDef();
-                const struct_def_end = self.tokens[self.cur_index - 1].loc.end;
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .struct_def = struct_def }, .loc = .{ .start = tk.loc.start, .end = struct_def_end } });
-            },
-            .enum_kw => {
-                const enum_def = try self.parseEnumDef();
-                const enum_def_end = self.tokens[self.cur_index - 1].loc.end;
-                return ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .enum_def = enum_def },
-                    .loc = .{ .start = tk.loc.start, .end = enum_def_end },
                 });
             },
             else => {
@@ -878,31 +889,6 @@ pub const Parser = struct {
         }
 
         return false;
-    }
-
-    fn isFuncDef(self: *Self) bool {
-        const start_id = self.cur_index;
-        const tokens_scan_limit = 500;
-        var tokens_scanned: usize = 0;
-        defer self.cur_index = start_id;
-
-        var paren_depth: usize = 1;
-        while (paren_depth != 0 and tokens_scanned < tokens_scan_limit) {
-            switch (self.peekCurrent().tag) {
-                .l_paren => {
-                    paren_depth += 1;
-                },
-                .r_paren => {
-                    paren_depth -= 1;
-                },
-                else => {},
-            }
-            self.walk();
-            tokens_scanned += 1;
-        }
-
-        const tk = self.peekCurrent();
-        return tk.tag == .arrow or tk.tag == .return_kw;
     }
 
     fn parsePostfix(self: *Self, left: *ast.ExpNode) Errors!*ast.ExpNode {
@@ -1000,7 +986,7 @@ pub const Parser = struct {
         }
 
         return switch (tk.tag) {
-            .string_kw, .int_kw, .float_kw, .bool_kw, .fn_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+            .string_kw, .int_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .nullable = is_nullable,
             }),

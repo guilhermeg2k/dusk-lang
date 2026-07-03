@@ -1,14 +1,14 @@
-let Node = struct
+struct Node
     value: int
     next: ?Node
 end
 
-let LinkedList = struct
+struct LinkedList
     root: ?Node
     tail: ?Node
     len: int = 0
 
-    let add = (mut self: @, value: int) -> void
+    func add(mut self: @, value: int) -> void
         let new_node: Node = @(value = value, next = null)
 
         if self.tail: mut tail then
@@ -22,7 +22,7 @@ let LinkedList = struct
         self.len += 1
     end
 
-    let add_head = (mut self: @, value: int) -> void
+    func add_head(mut self: @, value: int) -> void
         let new_node = @(value = value, next = self.root)
         self.root = new_node
 
@@ -33,7 +33,7 @@ let LinkedList = struct
         self.len += 1
     end
 
-    let pop_value = (mut self: @, value: int) -> bool
+    func pop_value(mut self: @, value: int) -> bool
         let mut cur_node = self.root
         let mut previous_node: ?Node = null
 
@@ -66,7 +66,7 @@ let LinkedList = struct
         return false
     end
 
-    let pop = (mut self: @) -> void
+    func pop(mut self: @) -> void
         if self.root == null then
             return
         end
@@ -92,7 +92,7 @@ let LinkedList = struct
         self.len -= 1
     end
 
-    let contains = (self: @, value: int) -> bool
+    func contains(self: @, value: int) -> bool
         let mut cur_node = self.root
         for cur_node != null do
             if cur_node: c_node then
@@ -107,7 +107,7 @@ let LinkedList = struct
         return false
     end
 
-    let print = (self: @) -> void
+    func print(self: @) -> void
         let mut cur_node = self.root
         for cur_node != null do
             if cur_node: c_node then

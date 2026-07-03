@@ -1,14 +1,14 @@
-let User = struct
+struct User
     id: string
     auth_id: string
     username: string
     auth_provider: string
 
-    let to_string = (self: @) -> string
+    func to_string(self: @) -> string
         return self.username
     end
 
-    let change_id = (mut self: @, id: string) -> void
+    func change_id(mut self: @, id: string) -> void
         self.id = id
     end
 end

@@ -1,7 +1,7 @@
-let f = (x: int) -> void
+func f(x: int) -> void
     return
 end
 
-let f = (y: int) -> void
+func f(y: int) -> void
     return
 end

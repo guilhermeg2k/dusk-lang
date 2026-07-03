@@ -78,10 +78,6 @@ test "struct" {
     try runCase("struct.dsk");
 }
 
-test "multi-line-fn-def" {
-    try runCase("multiline-fn.dsk");
-}
-
 test "anonymous structs" {
     try runCase("anom-struct.dsk");
 }
@@ -322,14 +318,6 @@ test "sema error: enum type coercion" {
     try runCaseError("sema/enum-type-coercion.dsk", error.InvalidType);
 }
 
-test "sema error: mutable struct definition" {
-    try runCaseError("sema/mut-struct-definition.dsk", error.InvalidDefinition);
-}
-
-test "sema error: mutable enum definition" {
-    try runCaseError("sema/mut-enum-definition.dsk", error.InvalidDefinition);
-}
-
 test "syntax error: break outside loop" {
     try runCaseError("parser/break-outside-loop.dsk", error.ParserError);
 }
@@ -352,10 +340,6 @@ test "syntax error: struct field after method" {
 
 test "syntax error: struct unexpected token" {
     try runCaseError("parser/struct-unexpected-token.dsk", error.ParserError);
-}
-
-test "syntax error: struct missing colon fn" {
-    try runCaseError("parser/struct-missing-colon-fn.dsk", error.ParserError);
 }
 
 test "semantic error: struct field default ident not defined" {

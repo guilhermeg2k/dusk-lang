@@ -1,4 +1,4 @@
-let Mixed = enum
+enum Mixed
     Ok
     NotFound = 404
     Error = 500

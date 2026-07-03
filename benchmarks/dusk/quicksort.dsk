@@ -1,10 +1,10 @@
-let swap = (mut arr: []int, i: int, j: int) -> void
+func swap(mut arr: []int, i: int, j: int) -> void
     let t: int = arr[i]
     arr[i] = arr[j]
     arr[j] = t
 end
 
-let quicksort = (mut arr: []int, lo: int, hi: int) -> void
+func quicksort(mut arr: []int, lo: int, hi: int) -> void
     if lo >= hi then
         return
     end

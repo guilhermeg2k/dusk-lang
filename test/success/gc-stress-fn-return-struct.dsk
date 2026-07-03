@@ -1,11 +1,11 @@
 # GC stress: function returning struct-with-array, called in a loop
 # tests that register_types is correctly reset across function compilations (Bug 2)
-let Wrapper = struct
+struct Wrapper
     value: int
     items: []int
 end
 
-let make_wrapper: fn = (n: int) -> Wrapper
+func make_wrapper(n: int) -> Wrapper
     return Wrapper(value = n, items = [n, n + 1, n + 2])
 end
 

@@ -1,4 +1,4 @@
-let find_max: fn = (arr: []int) -> int
+func find_max(arr: []int) -> int
     let n: int = len(arr)
 
     if n == 0 then

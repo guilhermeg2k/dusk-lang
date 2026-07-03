@@ -1,6 +1,6 @@
 # max out register usage with 30+ locals and complex nested arithmetic
 # each local occupies one register; deeply nested expressions force more temporaries
-let register_blast = () -> int
+func register_blast() -> int
     let a = 1 + 1
     let b = 1 + 2
     let c = 2 + 1
@@ -36,7 +36,7 @@ let r1 = register_blast()
 assert(r1 > 0)
 
 # second function: many parameters + deep nesting
-let param_blast = (v01: int, v02: int, v03: int, v04: int, v05: int, v06: int, v07: int, v08: int, v09: int, v10: int, v11: int, v12: int, v13: int, v14: int, v15: int) -> int
+func param_blast(v01: int, v02: int, v03: int, v04: int, v05: int, v06: int, v07: int, v08: int, v09: int, v10: int, v11: int, v12: int, v13: int, v14: int, v15: int) -> int
     let a = v01 + v02
     let b = v03 + v04
     let c = v05 + v06

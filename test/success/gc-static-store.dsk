@@ -1,6 +1,6 @@
 # test that static struct fields survive GC cycles
 # struct with static fields referencing heap objects, plus heavy allocation
-let Config = struct
+struct Config
     default_host: string = "localhost"
     default_port: int = 9090
     default_tags: []int = [1, 2, 3]

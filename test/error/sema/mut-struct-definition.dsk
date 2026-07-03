@@ -1,3 +1,0 @@
-let mut S = struct
-    x: int
-end

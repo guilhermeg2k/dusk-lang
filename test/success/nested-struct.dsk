@@ -1,4 +1,4 @@
-let User = struct
+struct User
     id: string
     username: string
     auth_provider: string
@@ -31,5 +31,4 @@ let user = User(
 )
 
 echo(user)
-
 

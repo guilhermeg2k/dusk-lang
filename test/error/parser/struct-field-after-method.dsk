@@ -1,5 +1,5 @@
-let S = struct
-    let foo = () -> void
+struct S
+    func foo() -> void
         return
     end
     bar: int
