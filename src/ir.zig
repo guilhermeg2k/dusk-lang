@@ -1,7 +1,7 @@
 pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
-    structs: []const Struct,
+    defined_types: []const DefinedType,
 };
 
 pub const Block = struct {
@@ -20,12 +20,28 @@ pub const Instruction = union(enum) {
     continue_stmt: void,
 };
 
+pub const DefinedType = struct {
+    kind: union(enum) {
+        @"struct": Struct,
+        @"enum": Enum,
+    },
+};
+
 pub const Struct = struct {
     uid: usize,
     type_id: TypeId,
     identifier: []const u8,
     fields: []const StructField,
     static_fields: []const StructField,
+    funcs: []const Func,
+};
+
+pub const Enum = struct {
+    uid: usize,
+    type_id: TypeId,
+    identifier: []const u8,
+
+    variants: std.StringHashMap(i64),
     funcs: []const Func,
 };
 
@@ -103,7 +119,7 @@ pub const Value = struct {
         i_null: void,
         i_array: Array,
 
-        identifier: struct { uid: usize, identifier: []const u8 },
+        identifier: struct { uid: usize, value: []const u8 },
         indexed: IndexedValue,
 
         binary_op: BinaryOp,

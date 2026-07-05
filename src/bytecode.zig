@@ -73,10 +73,19 @@ pub const BytecodeGen = struct {
             try funcs.append(self.allocator, bf);
         }
 
-        for (program.structs) |@"struct"| {
-            try self.genStructStaticFields(@"struct");
-            for (@"struct".funcs) |func| {
-                try funcs.append(self.allocator, try self.genFunction(func));
+        for (program.defined_types) |dt| {
+            switch (dt.kind) {
+                .@"struct" => |s| {
+                    try self.genStructStaticFields(s);
+                    for (s.funcs) |func| {
+                        try funcs.append(self.allocator, try self.genFunction(func));
+                    }
+                },
+                .@"enum" => |e| {
+                    for (e.funcs) |func| {
+                        try funcs.append(self.allocator, try self.genFunction(func));
+                    }
+                },
             }
         }
 
@@ -92,14 +101,14 @@ pub const BytecodeGen = struct {
             .return_type = self.type_table.getPrimitive(.void),
         }));
 
-        // for (funcs.items) |func| {
-        //     switch (func.kind) {
-        //         .dusk => {
-        //             func.kind.dusk.disasamble();
-        //         },
-        //         else => {},
-        //     }
-        // }
+        for (funcs.items) |func| {
+            switch (func.kind) {
+                .dusk => {
+                    func.kind.dusk.disasamble();
+                },
+                else => {},
+            }
+        }
 
         return Program{
             .main_func_index = funcs.items.len - 1,

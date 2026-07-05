@@ -64,28 +64,28 @@ pub const Parser = struct {
             .let_kw => {
                 const let_stmt_value = try self.parseLetStmt();
                 return ast.StatementNode{
-                    .data = .{ .let_stmt = let_stmt_value },
+                    .data = .{ .let = let_stmt_value },
                     .loc = .{ .start = tk.loc.start, .end = let_stmt_value.value.loc.end },
                 };
             },
             .func_kw => {
                 const func_stmt_value = try self.parseFuncStmt();
                 return ast.StatementNode{
-                    .data = .{ .func_stmt = func_stmt_value },
+                    .data = .{ .func = func_stmt_value },
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
             .struct_kw => {
                 const struct_stmt_value = try self.parseStructStmt();
                 return ast.StatementNode{
-                    .data = .{ .struct_stmt = struct_stmt_value },
+                    .data = .{ .@"struct" = struct_stmt_value },
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
             .enum_kw => {
                 const enum_stmt_value = try self.parseEnumStmt();
                 return ast.StatementNode{
-                    .data = .{ .enum_stmt = enum_stmt_value },
+                    .data = .{ .@"enum" = enum_stmt_value },
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
@@ -94,18 +94,18 @@ pub const Parser = struct {
                     const if_capture = try self.parseIfCapture();
                     const end_pos = self.tokens[self.cur_index - 1].loc.end;
                     return ast.StatementNode{
-                        .data = .{ .if_capture_stmt = if_capture },
+                        .data = .{ .if_capture = if_capture },
                         .loc = .{ .start = tk.loc.start, .end = end_pos },
                     };
                 }
                 const if_stmt = try self.parseIfStmt();
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                return ast.StatementNode{ .data = .{ .if_stmt = if_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+                return ast.StatementNode{ .data = .{ .@"if" = if_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
             .for_kw => {
                 const for_stmt = try self.parseForStmt();
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                return ast.StatementNode{ .data = .{ .for_stmt = for_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+                return ast.StatementNode{ .data = .{ .@"for" = for_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
             .identifier => {
                 return self.parseIdentifierStmt();
@@ -115,19 +115,19 @@ pub const Parser = struct {
                     return self.err_dispatcher.invalidSyntax("break called outside a loop", tk);
                 }
                 self.walk();
-                return ast.StatementNode{ .data = .{ .break_stmt = {} }, .loc = tk.loc };
+                return ast.StatementNode{ .data = .{ .@"break" = {} }, .loc = tk.loc };
             },
             .continue_kw => {
                 if (self.loop_depth == 0) {
                     return self.err_dispatcher.invalidSyntax("continue called outside a loop", tk);
                 }
                 self.walk();
-                return ast.StatementNode{ .data = .{ .continue_stmt = {} }, .loc = tk.loc };
+                return ast.StatementNode{ .data = .{ .@"continue" = {} }, .loc = tk.loc };
             },
             .return_kw => {
                 const return_stmt = try self.parseReturnStmt();
                 const end_pos = if (return_stmt.exp) |exp| exp.loc.end else tk.loc.end;
-                return ast.StatementNode{ .data = .{ .return_stmt = return_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+                return ast.StatementNode{ .data = .{ .@"return" = return_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
             .then_kw, .do_kw, .end_kw, .elif_kw, .else_kw => {
                 return self.err_dispatcher.invalidSyntax("unexpected keyword", tk);
@@ -203,7 +203,7 @@ pub const Parser = struct {
                 self.walk();
                 const assign_exp = try self.parseExp(0);
                 return ast.StatementNode{
-                    .data = .{ .assign_stmt = .{
+                    .data = .{ .assign = .{
                         .target = expr,
                         .exp = assign_exp,
                     } },
@@ -224,7 +224,7 @@ pub const Parser = struct {
                 });
 
                 return ast.StatementNode{
-                    .data = .{ .assign_stmt = .{
+                    .data = .{ .assign = .{
                         .target = expr,
                         .exp = bin_exp,
                     } },
@@ -245,7 +245,7 @@ pub const Parser = struct {
                 });
 
                 return ast.StatementNode{
-                    .data = .{ .assign_stmt = .{
+                    .data = .{ .assign = .{
                         .target = expr,
                         .exp = bin_exp,
                     } },
@@ -255,7 +255,7 @@ pub const Parser = struct {
 
             else => {
                 return ast.StatementNode{
-                    .data = .{ .expression_stmt = expr },
+                    .data = .{ .expression = expr },
                     .loc = expr.loc,
                 };
             },
@@ -317,7 +317,7 @@ pub const Parser = struct {
 
             try elif_chain.append(self.allocator, .{
                 .data = .{
-                    .if_stmt = .{ .condition = cond, .then_block = body, .else_block = null },
+                    .@"if" = .{ .condition = cond, .then_block = body, .else_block = null },
                 },
                 .loc = .{
                     .start = elif_start,
@@ -335,7 +335,7 @@ pub const Parser = struct {
 
         while (elif_chain.items.len > 0) {
             var stmt_node = elif_chain.pop().?;
-            stmt_node.data.if_stmt.else_block = else_block;
+            stmt_node.data.@"if".else_block = else_block;
             var stmts: std.ArrayList(ast.StatementNode) = .empty;
             try stmts.append(self.allocator, stmt_node);
             else_block = .{ .statements = stmts };
@@ -418,7 +418,7 @@ pub const Parser = struct {
                     _ = try self.expect(.l_paren);
                     const fn_def = try self.parseFnDef();
                     try funcs.append(self.allocator, .{
-                        .data = .{ .func_stmt = .{
+                        .data = .{ .func = .{
                             .identifier = identifier_token.value(self.src),
                             .def = fn_def,
                         } },
@@ -534,7 +534,7 @@ pub const Parser = struct {
                     const fn_def = try self.parseFnDef();
                     try funcs.append(self.allocator, .{
                         .data = .{
-                            .func_stmt = .{
+                            .func = .{
                                 .identifier = identifier_token.value(self.src),
                                 .def = fn_def,
                             },
@@ -578,7 +578,7 @@ pub const Parser = struct {
             var statements: std.ArrayList(ast.StatementNode) = .empty;
             const ret_stmt = try self.parseReturnStmt();
             const return_stmt = ast.StatementNode{
-                .data = .{ .return_stmt = ret_stmt },
+                .data = .{ .@"return" = ret_stmt },
                 .loc = .{ .start = tk.loc.start, .end = if (ret_stmt.exp) |exp| exp.loc.end else tk.loc.end },
             };
             try statements.append(self.allocator, return_stmt);
@@ -1008,7 +1008,7 @@ pub const Parser = struct {
                 .nullable = is_nullable,
             }),
             .at => ast.TypeAnnotation.init(self.allocator, .{
-                .type = .{ .struct_self = {} },
+                .type = .{ .type_self = {} },
                 .nullable = is_nullable,
             }),
             .l_bracket => {

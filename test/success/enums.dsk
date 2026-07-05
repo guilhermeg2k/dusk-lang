@@ -1,0 +1,16 @@
+enum Color
+    Red
+    Blue
+    Green
+
+    func print(self: @) -> void
+        echo(self)
+    end
+end
+
+let red: Color = Color.Green
+
+echo(red)
+red.print()
+Color.print(red)
+

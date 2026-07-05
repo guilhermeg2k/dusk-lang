@@ -11,18 +11,18 @@ pub const StatementNode = struct {
 };
 
 pub const Statement = union(enum) {
-    let_stmt: LetStmt,
-    func_stmt: FuncStmt,
-    struct_stmt: StructStmt,
-    enum_stmt: EnumStmt,
-    if_stmt: IfStmt,
-    if_capture_stmt: IfCaptureStmt,
-    for_stmt: ForStmt,
-    assign_stmt: AssignStmt,
-    return_stmt: ReturnStmt,
-    expression_stmt: *ExpNode,
-    break_stmt: void,
-    continue_stmt: void,
+    let: LetStmt,
+    func: FuncStmt,
+    @"struct": StructStmt,
+    @"enum": EnumStmt,
+    @"if": IfStmt,
+    if_capture: IfCaptureStmt,
+    @"for": ForStmt,
+    assign: AssignStmt,
+    @"return": ReturnStmt,
+    expression: *ExpNode,
+    @"break": void,
+    @"continue": void,
 };
 
 pub const FuncStmt = struct {
@@ -78,7 +78,7 @@ pub const TypeAnnotation = struct {
         @"struct": []const u8,
         anonymous_struct: Struct,
         array: *TypeAnnotation,
-        struct_self: void,
+        type_self: void,
     },
 
     nullable: bool,
@@ -104,7 +104,7 @@ pub const TypeAnnotation = struct {
             .array => {
                 return std.fmt.allocPrint(alloc, "[]{s}", .{try self.type.array.value(alloc)});
             },
-            .struct_self => {
+            .type_self => {
                 return "@";
             },
         };

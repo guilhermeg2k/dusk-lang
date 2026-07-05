@@ -179,6 +179,19 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
+    pub fn invalidEnumFunction(self: *Self, enum_name: []const u8, function: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Function '{s}' does not exists on enum '{s}'",
+                .{ function, enum_name },
+            ),
+            loc,
+        );
+
+        return error.InvalidEnumFunction;
+    }
+
     pub fn invalidEnumVariant(self: *Self, enum_name: []const u8, variant: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
@@ -358,7 +371,6 @@ pub const Errors = error{
     LexerError,
     ParserError,
     SemaError,
-
     InvalidType,
     InvalidReturnType,
     InvalidExpression,
@@ -380,6 +392,7 @@ pub const Errors = error{
     UnecessaryOptionalChain,
     NullableMustBeUnwrapped,
     InvalidParameterType,
+    InvalidEnumFunction,
 };
 
 pub const RunTimeError = error{
