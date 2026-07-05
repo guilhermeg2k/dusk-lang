@@ -1,0 +1,12 @@
+enum Color
+    Red
+    Blue
+    Green
+
+    func from_int(i: int) -> Color
+        if(i == 0) then return Color.Red end
+        if(i == 1) then return Color.Blue end
+        if(i == 2) then return Color.Green end
+    end
+end
+

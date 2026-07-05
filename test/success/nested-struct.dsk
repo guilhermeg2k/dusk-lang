@@ -3,10 +3,7 @@ struct User
     username: string
     auth_provider: string
 
-    address: struct
-        country: string
-        state: string
-    end = @(
+    address = @(
         country = "Brasil",
         state = "SP",
         city = "São Paulo",

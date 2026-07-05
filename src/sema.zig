@@ -54,19 +54,18 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
-        //first hoist only names
         for (root.statements.items) |stmt| {
             switch (stmt.data) {
                 .func_stmt => |fs| {
-                    const symbol = try self.createIncompleteFuncSymbol(fs.identifier);
+                    const symbol = try self.createEmptyFuncSymbol(fs.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(fs.identifier, stmt.loc);
                 },
                 .struct_stmt => |ss| {
-                    const symbol = try self.createIncompleteStructSymbol(ss.identifier);
+                    const symbol = try self.createEmptyStructSymbol(ss.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(ss.identifier, stmt.loc);
                 },
                 .enum_stmt => |es| {
-                    const symbol = try self.createEnumSymbol(es.identifier, &es.def);
+                    const symbol = try self.createEmptyEnumSymbol(es.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .let_stmt => {},
@@ -74,7 +73,6 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        //later complete the hoist fullfilling the types
         for (root.statements.items) |stmt| {
             switch (stmt.data) {
                 .func_stmt => |fs| {
@@ -85,12 +83,17 @@ pub const SemaAnalyzer = struct {
                     const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
                     try self.fulfillStructType(symbol, &ss.def);
                 },
+
+                .enum_stmt => |ss| {
+                    const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
+                    try self.fulfillEnumType(symbol, &ss.def);
+                },
                 else => {},
             }
         }
     }
 
-    fn createIncompleteFuncSymbol(self: *Self, identifier: []const u8) !Symbol {
+    fn createEmptyFuncSymbol(self: *Self, identifier: []const u8) !Symbol {
         var symbol = Symbol{
             .identifier = identifier,
             .uid = self.scope.genUid(),
@@ -113,6 +116,30 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
+    fn createEmptyEnumSymbol(self: *Self, identifier: []const u8) !Symbol {
+        const blueprint_id = try self.type_table.addType(.{
+            .kind = .{
+                .@"enum" = .{
+                    .identifier = identifier,
+                    .variants = .init(self.allocator),
+                    .methods = .init(self.allocator),
+                },
+            },
+            .nullable = false,
+        });
+
+        return Symbol{
+            .identifier = identifier,
+            .uid = self.scope.genUid(),
+            .kind = .{
+                .@"enum" = .{
+                    .blueprint_type_id = blueprint_id,
+                },
+            },
+            .type_id = undefined,
+        };
+    }
+
     fn createEnumSymbol(self: *Self, identifier: []const u8, enum_def: *const ast.EnumDef) !Symbol {
         var variants: std.StringHashMap(i64) = .init(self.allocator);
 
@@ -127,6 +154,7 @@ pub const SemaAnalyzer = struct {
                 .@"enum" = .{
                     .identifier = identifier,
                     .variants = variants,
+                    .methods = .init(self.allocator),
                 },
             },
             .nullable = false,
@@ -140,7 +168,7 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createIncompleteStructSymbol(self: *Self, identifier: []const u8) !Symbol {
+    fn createEmptyStructSymbol(self: *Self, identifier: []const u8) !Symbol {
         const blueprint_type_id = try self.type_table.addType(.{
             .kind = .{
                 .@"struct" = .{
@@ -203,6 +231,29 @@ pub const SemaAnalyzer = struct {
         };
     }
 
+    fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
+        const blueprint_type_id = enum_symbol.kind.@"enum".blueprint_type_id;
+        var methods: std.StringHashMap(TypeId) = .init(self.allocator);
+        var variants: std.StringHashMap(i64) = .init(self.allocator);
+
+        const is_explicit = enum_def.variants[0].value != null;
+        for (enum_def.variants, 0..) |variant, i| {
+            const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
+            try variants.put(variant.identifier, value);
+        }
+
+        for (enum_def.funcs) |func_stmt| {
+            const func = func_stmt.data.func_stmt;
+            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
+            try self.fulfillFuncType(fn_symbol, &func.def, enum_symbol, func_stmt.loc);
+            try methods.put(func.identifier, fn_symbol.type_id);
+        }
+
+        const enum_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
+        enum_type_ptr.kind.@"enum".methods = methods;
+        enum_type_ptr.kind.@"enum".variants = variants;
+    }
+
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
         const blueprint_type_id = struct_symbol.kind.@"struct".blueprint_type_id;
         var fields_in_order: std.ArrayList(TypedIdentifier) = .empty;
@@ -224,10 +275,11 @@ pub const SemaAnalyzer = struct {
             try fields.put(field.identifier, struct_field);
         }
 
-        for (struct_def.funcs) |func| {
+        for (struct_def.funcs) |func_node| {
             //note: maybe this is not optimal because we only need the fn metadata
-            const fn_symbol = try self.createIncompleteFuncSymbol(func.identifier);
-            try self.fulfillFuncType(fn_symbol, &func.def, struct_symbol, func.loc);
+            const func = func_node.data.func_stmt;
+            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
+            try self.fulfillFuncType(fn_symbol, &func.def, struct_symbol, func_node.loc);
             try methods.put(func.identifier, fn_symbol.type_id);
         }
 
@@ -796,11 +848,12 @@ pub const SemaAnalyzer = struct {
             );
         }
 
-        for (struct_def.funcs) |func| {
+        for (struct_def.funcs) |func_node| {
+            const func = func_node.data.func_stmt;
             const fn_type_id = if (self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods.get(func.identifier)) |type_id| type_id else unreachable;
             const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
             const fn_name = func.identifier;
-            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, fn_name, func.loc);
+            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, fn_name, func_node.loc);
             try funcs.append(self.allocator, fn_def);
         }
 
@@ -818,7 +871,7 @@ pub const SemaAnalyzer = struct {
         self: *Self,
         fn_def: *const ast.FnDef,
         uid: usize,
-        metadata: FuncMetadata,
+        metadata: Func,
         override_name: ?[]const u8,
         loc: err.Loc,
     ) Errors!ir.Func {
@@ -1644,7 +1697,7 @@ const Struct = struct {
     methods: std.StringHashMap(TypeId),
 };
 
-const FuncMetadata = struct {
+const Func = struct {
     identifier: []const u8,
     uid: usize,
     params: []const TypedIdentifier,
@@ -1654,6 +1707,7 @@ const FuncMetadata = struct {
 const Enum = struct {
     identifier: []const u8,
     variants: std.StringHashMap(i64),
+    methods: std.StringHashMap(TypeId),
 };
 
 //note: idk about this
@@ -1683,12 +1737,13 @@ pub const Type = struct {
         void,
         null,
         dynamic,
+
         meta,
 
-        function: FuncMetadata,
+        function: Func,
+        array: TypeId,
         @"struct": Struct,
         @"enum": Enum,
-        array: TypeId,
     },
 
     nullable: bool,
@@ -1821,7 +1876,7 @@ pub const TypeTable = struct {
             .void => if (t.nullable) "nullable void" else "void",
             .null => if (t.nullable) "nullable null" else "null",
             .dynamic => if (t.nullable) "nullable dynamic" else "dynamic",
-            .meta => "struct definition",
+            .meta => "Meta Symbol",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
             },

@@ -6,7 +6,6 @@ struct Api
     #Fields
     endpoint: string = ""
 
-
     #Methods
     func fetch(self: @) -> string
         return self.ip

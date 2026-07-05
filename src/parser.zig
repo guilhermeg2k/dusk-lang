@@ -381,7 +381,7 @@ pub const Parser = struct {
     fn parseStructDef(self: *Self) Errors!ast.Struct {
         var static_fields: std.ArrayList(ast.StructField) = .empty;
         var fields: std.ArrayList(ast.StructField) = .empty;
-        var funcs: std.ArrayList(ast.StructFn) = .empty;
+        var funcs: std.ArrayList(ast.StatementNode) = .empty;
 
         while (true) {
             const tk = self.peekCurrent();
@@ -418,8 +418,10 @@ pub const Parser = struct {
                     _ = try self.expect(.l_paren);
                     const fn_def = try self.parseFnDef();
                     try funcs.append(self.allocator, .{
-                        .identifier = identifier_token.value(self.src),
-                        .def = fn_def,
+                        .data = .{ .func_stmt = .{
+                            .identifier = identifier_token.value(self.src),
+                            .def = fn_def,
+                        } },
                         .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                     });
                 },
@@ -480,6 +482,7 @@ pub const Parser = struct {
 
     fn parseEnumDef(self: *Self) Errors!ast.EnumDef {
         var variants: std.ArrayList(ast.EnumVariant) = .empty;
+        var funcs: std.ArrayList(ast.StatementNode) = .empty;
         var mode: enum { none, implicit, explicit } = .none;
 
         while (true) {
@@ -524,6 +527,24 @@ pub const Parser = struct {
                         });
                     }
                 },
+                .func_kw => {
+                    self.walk();
+                    const identifier_token = try self.expect(.identifier);
+                    _ = try self.expect(.l_paren);
+                    const fn_def = try self.parseFnDef();
+                    try funcs.append(self.allocator, .{
+                        .data = .{
+                            .func_stmt = .{
+                                .identifier = identifier_token.value(self.src),
+                                .def = fn_def,
+                            },
+                        },
+                        .loc = .{
+                            .start = tk.loc.start,
+                            .end = self.tokens[self.cur_index - 1].loc.end,
+                        },
+                    });
+                },
                 .end_kw, .eof => {
                     self.walk();
                     break;
@@ -536,6 +557,7 @@ pub const Parser = struct {
 
         return ast.EnumDef{
             .variants = try variants.toOwnedSlice(self.allocator),
+            .funcs = try funcs.toOwnedSlice(self.allocator),
         };
     }
 

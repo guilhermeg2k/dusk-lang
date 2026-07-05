@@ -334,11 +334,10 @@ pub const ValueType = enum(u8) {
             .float => .float64,
             .boolean => .bool,
             .string => .string,
-            .void, .null, .dynamic, .meta => .null,
             .array => .array,
             .@"struct" => .@"struct",
             .@"enum" => .int64,
-            .function => .null,
+            else => .null,
         };
     }
 };

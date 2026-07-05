@@ -193,13 +193,7 @@ pub const IndexedExp = struct {
 pub const Struct = struct {
     fields: []const StructField,
     static_fields: []const StructField,
-    funcs: []const StructFn,
-};
-
-pub const StructFn = struct {
-    identifier: []const u8,
-    def: FnDef,
-    loc: err.Loc,
+    funcs: []const StatementNode,
 };
 
 pub const StructField = struct {
@@ -211,6 +205,7 @@ pub const StructField = struct {
 
 pub const EnumDef = struct {
     variants: []const EnumVariant,
+    funcs: []const StatementNode,
 };
 
 pub const EnumVariant = struct {
