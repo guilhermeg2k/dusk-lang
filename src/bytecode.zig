@@ -76,12 +76,13 @@ pub const BytecodeGen = struct {
         for (program.defined_types) |dt| {
             switch (dt.kind) {
                 .@"struct" => |s| {
-                    try self.genStructStaticFields(s);
+                    try self.genStaticFields(s.type_id, s.static_fields);
                     for (s.funcs) |func| {
                         try funcs.append(self.allocator, try self.genFunction(func));
                     }
                 },
                 .@"enum" => |e| {
+                    try self.genStaticFields(e.type_id, e.static_fields);
                     for (e.funcs) |func| {
                         try funcs.append(self.allocator, try self.genFunction(func));
                     }
@@ -119,11 +120,11 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn genStructStaticFields(self: *Self, @"struct": ir.Struct) !void {
-        try self.static_store.registerStructFields(@"struct");
+    fn genStaticFields(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+        try self.static_store.registerFields(type_id, static_fields);
 
-        for (@"struct".static_fields) |field| {
-            const slot_id = try self.static_store.getSlot(@"struct".type_id, field.identifier);
+        for (static_fields) |field| {
+            const slot_id = try self.static_store.getSlot(type_id, field.identifier);
             const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
             if (vt.isHeapType()) {
                 try self.setStaticHeapBit(slot_id);
@@ -473,6 +474,20 @@ pub const BytecodeGen = struct {
                 try self.chunk_instructions.append(self.allocator, load_static);
                 self.register_types[target_reg] = value.type_id;
             },
+            .@"enum" => {
+                const field_name = idx.index.data.i_string;
+
+                var load_static = Instruction{
+                    .op = .STATIC_LOAD,
+                    .a = target_reg,
+                };
+
+                const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
+                load_static.putBEx(slot_id);
+
+                try self.chunk_instructions.append(self.allocator, load_static);
+                self.register_types[target_reg] = value.type_id;
+            },
             .array => {
                 const array_reg = try self.genValue(idx.target, self.consumeRegister());
                 defer self.freeRegister();
@@ -555,6 +570,16 @@ pub const BytecodeGen = struct {
                     try self.chunk_instructions.append(self.allocator, store_inst);
                     return;
                 }
+
+                const value_reg = try self.genValue(stmt.value, self.consumeRegister());
+                defer self.freeRegister();
+                var store = Instruction{ .op = .STATIC_STORE, .a = value_reg };
+                const slot_id = try self.static_store.getSlot(indexed.target.type_id, field_name);
+                store.putBEx(slot_id);
+                try self.chunk_instructions.append(self.allocator, store);
+            },
+            .@"enum" => {
+                const field_name = indexed.index.data.i_string;
 
                 const value_reg = try self.genValue(stmt.value, self.consumeRegister());
                 defer self.freeRegister();
@@ -1179,15 +1204,15 @@ pub const StaticStoreTable = struct {
         };
     }
 
-    pub fn registerStructFields(self: *Self, @"struct": ir.Struct) !void {
-        if (@"struct".static_fields.len == 0) return;
+    pub fn registerFields(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+        if (static_fields.len == 0) return;
 
-        const slot = try self.slots_by_type_id.getOrPut(@"struct".type_id);
+        const slot = try self.slots_by_type_id.getOrPut(type_id);
         if (!slot.found_existing) {
             slot.value_ptr.* = std.StringHashMap(u16).init(self.allocator);
         }
 
-        for (@"struct".static_fields) |field| {
+        for (static_fields) |field| {
             try slot.value_ptr.put(field.identifier, self.next_slot);
             self.next_slot += 1;
         }

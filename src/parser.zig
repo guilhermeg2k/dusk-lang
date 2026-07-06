@@ -358,7 +358,7 @@ pub const Parser = struct {
         return ast.ForStmt{ .condition = condition, .do_block = do_block };
     }
 
-    fn parseStructField(self: *Self, identifier: []const u8, has_type_annotation: bool) !ast.StructField {
+    fn parseField(self: *Self, identifier: []const u8, has_type_annotation: bool) !ast.Field {
         var type_annotation: ?*ast.TypeAnnotation = null;
         if (has_type_annotation) {
             type_annotation = try self.parseTypeAnnotation(true);
@@ -379,38 +379,21 @@ pub const Parser = struct {
     }
 
     fn parseStructDef(self: *Self) Errors!ast.Struct {
-        var static_fields: std.ArrayList(ast.StructField) = .empty;
-        var fields: std.ArrayList(ast.StructField) = .empty;
+        var static_fields: std.ArrayList(ast.Field) = .empty;
+        var fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
 
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
                 .let_kw => {
-                    self.walk();
-                    const is_mut = self.match(.mut_kw);
-                    const identifier_token = try self.expect(.identifier);
-                    if (self.match(.colon)) {
-                        const type_annotation = try self.parseTypeAnnotation(false);
-                        _ = try self.expect(.eq);
-                        const value = try self.parseExp(0);
-                        try static_fields.append(self.allocator, .{
-                            .identifier = identifier_token.value(self.src),
-                            .is_mut = is_mut,
-                            .type = type_annotation,
-                            .default_value = value,
-                        });
-                    } else if (self.match(.eq)) {
-                        const value = try self.parseExp(0);
-                        try static_fields.append(self.allocator, .{
-                            .identifier = identifier_token.value(self.src),
-                            .is_mut = is_mut,
-                            .type = null,
-                            .default_value = value,
-                        });
-                    } else {
-                        return self.err_dispatcher.invalidSyntax("':' or '='", tk);
-                    }
+                    const let_stmt = try self.parseLetStmt();
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .default_value = let_stmt.value,
+                    });
                 },
                 .func_kw => {
                     self.walk();
@@ -429,7 +412,7 @@ pub const Parser = struct {
                     self.walk();
                     const identifier = tk;
                     const has_type_annotation = self.match(.colon);
-                    const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
+                    const strc_field = try self.parseField(identifier.value(self.src), has_type_annotation);
                     try fields.append(self.allocator, strc_field);
                 },
                 .end_kw, .eof => {
@@ -450,7 +433,7 @@ pub const Parser = struct {
     }
 
     fn parseAnonymousStructDef(self: *Self) Errors!ast.Struct {
-        var fields: std.ArrayList(ast.StructField) = .empty;
+        var fields: std.ArrayList(ast.Field) = .empty;
 
         while (true) {
             const tk = self.peekCurrent();
@@ -460,7 +443,7 @@ pub const Parser = struct {
                     const identifier = tk;
                     const has_type_annotation = self.match(.colon);
 
-                    const strc_field = try self.parseStructField(identifier.value(self.src), has_type_annotation);
+                    const strc_field = try self.parseField(identifier.value(self.src), has_type_annotation);
                     try fields.append(self.allocator, strc_field);
                 },
                 .end_kw, .eof => {
@@ -482,6 +465,7 @@ pub const Parser = struct {
 
     fn parseEnumDef(self: *Self) Errors!ast.EnumDef {
         var variants: std.ArrayList(ast.EnumVariant) = .empty;
+        var static_fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
         var mode: enum { none, implicit, explicit } = .none;
 
@@ -545,18 +529,28 @@ pub const Parser = struct {
                         },
                     });
                 },
+                .let_kw => {
+                    const let_stmt = try self.parseLetStmt();
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .default_value = let_stmt.value,
+                    });
+                },
                 .end_kw, .eof => {
                     self.walk();
                     break;
                 },
                 else => {
-                    return self.err_dispatcher.invalidSyntax("identifier or 'end'", tk);
+                    return self.err_dispatcher.invalidSyntax("identifier, let, func or 'end'", tk);
                 },
             }
         }
 
         return ast.EnumDef{
             .variants = try variants.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
             .funcs = try funcs.toOwnedSlice(self.allocator),
         };
     }

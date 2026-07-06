@@ -31,8 +31,8 @@ pub const Struct = struct {
     uid: usize,
     type_id: TypeId,
     identifier: []const u8,
-    fields: []const StructField,
-    static_fields: []const StructField,
+    fields: []const Field,
+    static_fields: []const Field,
     funcs: []const Func,
 };
 
@@ -42,10 +42,11 @@ pub const Enum = struct {
     identifier: []const u8,
 
     variants: std.StringHashMap(i64),
+    static_fields: []const Field,
     funcs: []const Func,
 };
 
-pub const StructField = struct {
+pub const Field = struct {
     identifier: []const u8,
     type_id: TypeId,
     default_value: ?*Value,

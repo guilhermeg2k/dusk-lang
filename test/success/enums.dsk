@@ -1,4 +1,6 @@
 enum Color
+    let DEFAULT = Color.Green
+
     Red
     Blue
     Green
@@ -8,9 +10,10 @@ enum Color
     end
 end
 
-let red: Color = Color.Green
-
+let red: Color = Color.Red
 echo(red)
+
 red.print()
-Color.print(red)
+
+Color.DEFAULT.print()
 

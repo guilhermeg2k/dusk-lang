@@ -122,6 +122,7 @@ pub const SemaAnalyzer = struct {
                 .@"enum" = .{
                     .identifier = identifier,
                     .variants = .init(self.allocator),
+                    .static_fields = .init(self.allocator),
                     .methods = .init(self.allocator),
                 },
             },
@@ -131,12 +132,12 @@ pub const SemaAnalyzer = struct {
         return Symbol{
             .identifier = identifier,
             .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
             .kind = .{
                 .defined_type = .{
                     .blueprint_type_id = blueprint_id,
                 },
             },
-            .type_id = undefined,
         };
     }
 
@@ -154,6 +155,7 @@ pub const SemaAnalyzer = struct {
                 .@"enum" = .{
                     .identifier = identifier,
                     .variants = variants,
+                    .static_fields = .init(self.allocator),
                     .methods = .init(self.allocator),
                 },
             },
@@ -233,14 +235,24 @@ pub const SemaAnalyzer = struct {
 
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
+        const enum_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
+
         var methods: std.StringHashMap(TypeId) = .init(self.allocator);
         var variants: std.StringHashMap(i64) = .init(self.allocator);
+        var static_fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
 
         const is_explicit = enum_def.variants[0].value != null;
         for (enum_def.variants, 0..) |variant, i| {
             const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
             try variants.put(variant.identifier, value);
         }
+        enum_type_ptr.kind.@"enum".variants = variants;
+
+        for (enum_def.static_fields) |field| {
+            const enum_field = try self.createField(field, blueprint_type_id);
+            try static_fields.put(field.identifier, enum_field);
+        }
+        enum_type_ptr.kind.@"enum".static_fields = static_fields;
 
         for (enum_def.funcs) |func_stmt| {
             const func = func_stmt.data.func;
@@ -248,10 +260,7 @@ pub const SemaAnalyzer = struct {
             try self.fulfillFuncType(fn_symbol, &func.def, enum_symbol, func_stmt.loc);
             try methods.put(func.identifier, fn_symbol.type_id);
         }
-
-        const enum_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
         enum_type_ptr.kind.@"enum".methods = methods;
-        enum_type_ptr.kind.@"enum".variants = variants;
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
@@ -262,12 +271,12 @@ pub const SemaAnalyzer = struct {
         var methods: std.StringHashMap(TypeId) = .init(self.allocator);
 
         for (struct_def.static_fields) |field| {
-            const struct_field = try self.createStructField(field, blueprint_type_id);
+            const struct_field = try self.createField(field, blueprint_type_id);
             try static_fields.put(field.identifier, struct_field);
         }
 
         for (struct_def.fields) |field| {
-            const struct_field = try self.createStructField(field, blueprint_type_id);
+            const struct_field = try self.createField(field, blueprint_type_id);
             try fields_in_order.append(
                 self.allocator,
                 struct_field,
@@ -296,7 +305,7 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.@"struct".methods = methods;
     }
 
-    fn createStructField(self: *Self, field: ast.StructField, current_struct_type_id: ?TypeId) Errors!TypedIdentifier {
+    fn createField(self: *Self, field: ast.Field, current_struct_type_id: ?TypeId) Errors!TypedIdentifier {
         var field_type_id: TypeId = undefined;
         var field_default_value: ?*ir.Value = null;
 
@@ -537,7 +546,19 @@ pub const SemaAnalyzer = struct {
         const enum_symbol = try self.scope.symbol_table.getOrError(enum_stmt.identifier);
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
         const enum_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum";
+        var static_fields: std.ArrayList(ir.Field) = .empty;
         var funcs: std.ArrayList(ir.Func) = .empty;
+
+        for (enum_stmt.def.static_fields) |field| {
+            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else default_value.?.type_id;
+
+            try static_fields.append(self.allocator, .{
+                .identifier = field.identifier,
+                .type_id = field_type,
+                .default_value = default_value,
+            });
+        }
 
         for (enum_stmt.def.funcs) |func_node| {
             const func = func_node.data.func;
@@ -554,6 +575,7 @@ pub const SemaAnalyzer = struct {
                     .type_id = blueprint_type_id,
                     .identifier = enum_stmt.identifier,
                     .variants = enum_def.variants,
+                    .static_fields = try static_fields.toOwnedSlice(self.allocator),
                     .funcs = try funcs.toOwnedSlice(self.allocator),
                 },
             },
@@ -762,7 +784,24 @@ pub const SemaAnalyzer = struct {
                         }
                     },
                     .@"enum" => {
-                        return self.err_dispatcher.notMutable(index_exp.index.data.identifier, index_exp.index.loc);
+                        const enum_type_ptr = self.type_table.getTypePtrById(target_type);
+                        const enum_def = &enum_type_ptr.kind.@"enum";
+                        const field = enum_def.static_fields.get(index_exp.index.data.identifier) orelse return self.err_dispatcher.notMutable(
+                            index_exp.index.data.identifier,
+                            index_exp.index.loc,
+                        );
+
+                        if (!field.is_mut) {
+                            return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
+                        }
+
+                        if (!self.type_table.coerce(assignment_value_type, field.type_id)) {
+                            return self.err_dispatcher.invalidType(
+                                try self.type_table.name(field.type_id, self.allocator),
+                                try self.type_table.name(assignment_value_type, self.allocator),
+                                assign_stmt.exp.loc,
+                            );
+                        }
                     },
                     else => unreachable,
                 }
@@ -811,7 +850,7 @@ pub const SemaAnalyzer = struct {
         var fields: std.StringHashMap(TypedIdentifier) = .init(self.allocator);
 
         for (struct_def.fields) |field| {
-            const struct_field = try self.createStructField(field, null);
+            const struct_field = try self.createField(field, null);
             try fields_in_order.append(
                 self.allocator,
                 struct_field,
@@ -840,8 +879,8 @@ pub const SemaAnalyzer = struct {
         const prev_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
         defer self.scope.exit(prev_return_type);
-        var fields: std.ArrayList(ir.StructField) = .empty;
-        var static_fields: std.ArrayList(ir.StructField) = .empty;
+        var fields: std.ArrayList(ir.Field) = .empty;
+        var static_fields: std.ArrayList(ir.Field) = .empty;
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (struct_def.fields) |field| {
@@ -1043,6 +1082,7 @@ pub const SemaAnalyzer = struct {
                 };
 
                 fn_identifier = symbol.identifier;
+
                 switch (symbol.kind) {
                     .function => {
                         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
@@ -1093,7 +1133,6 @@ pub const SemaAnalyzer = struct {
                     },
                 }
             },
-            //note: not supporting functions stored in arrays
             .indexed => |indexed| {
                 const target = try self.evalExp(indexed.target);
                 const target_type_id = target.type_id;
@@ -1121,14 +1160,14 @@ pub const SemaAnalyzer = struct {
 
                         const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
 
-                        const target_symbol = try self.scope.symbol_table.getOrError(target.data.identifier.value);
-
-                        //autobind self
-                        if (fn_metadata.params.len > 0 and target_symbol.kind == .variable and target_type_id == fn_metadata.params[0].type_id) {
-                            if (fn_metadata.params[0].is_mut and !target_symbol.kind.variable.is_mut) {
-                                return self.err_dispatcher.notMutable(indexed.target.data.identifier, indexed.target.loc);
+                        if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
+                            if (self.shouldAutoBindSelf(target)) {
+                                const mutable = self.findIsFieldMut(target, s.static_fields);
+                                if (fn_metadata.params[0].is_mut and !mutable) {
+                                    return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
+                                }
+                                try fn_call_arguments_values.append(self.allocator, target);
                             }
-                            try fn_call_arguments_values.append(self.allocator, target);
                         }
 
                         params = fn_metadata.params;
@@ -1147,14 +1186,14 @@ pub const SemaAnalyzer = struct {
 
                         const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
 
-                        const target_symbol = try self.scope.symbol_table.getOrError(target.data.identifier.value);
-
-                        //autobind self
-                        if (fn_metadata.params.len > 0 and target_symbol.kind == .variable and target_type_id == fn_metadata.params[0].type_id) {
-                            if (fn_metadata.params[0].is_mut and !target_symbol.kind.variable.is_mut) {
-                                return self.err_dispatcher.notMutable(indexed.target.data.identifier, indexed.target.loc);
+                        if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
+                            if (self.shouldAutoBindSelf(target)) {
+                                const mutable = self.findIsFieldMut(target, e.static_fields);
+                                if (fn_metadata.params[0].is_mut and !mutable) {
+                                    return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
+                                }
+                                try fn_call_arguments_values.append(self.allocator, target);
                             }
-                            try fn_call_arguments_values.append(self.allocator, target);
                         }
 
                         params = fn_metadata.params;
@@ -1348,22 +1387,56 @@ pub const SemaAnalyzer = struct {
             .@"enum" => {
                 const enum_def = self.type_table.getTypePtrById(target_type).kind.@"enum";
                 return switch (indexed_exp.index.data) {
-                    .identifier => |variant_name| {
-                        const value = enum_def.variants.get(variant_name) orelse {
-                            return self.err_dispatcher.invalidEnumVariant(enum_def.identifier, variant_name, exp.loc);
-                        };
-                        //note: turning into simple ints
-                        return ir.Value.init(self.allocator, .{
-                            .data = .{ .i_int = value },
-                            .type_id = target_type,
-                        });
+                    .identifier => |member_name| {
+                        if (enum_def.variants.get(member_name)) |value| {
+                            return ir.Value.init(self.allocator, .{
+                                .data = .{ .i_int = value },
+                                .type_id = target_type,
+                            });
+                        }
+
+                        if (enum_def.static_fields.get(member_name)) |field| {
+                            const result_type = if (is_nullable) try self.type_table.getOrAddNullable(field.type_id) else field.type_id;
+
+                            return ir.Value.init(self.allocator, .{
+                                .data = .{
+                                    .indexed = .{
+                                        .target = target,
+                                        .index = try ir.Value.init(self.allocator, .{
+                                            .data = .{ .i_string = member_name },
+                                            .type_id = self.type_table.getPrimitive(.string),
+                                        }),
+                                    },
+                                },
+                                .type_id = result_type,
+                            });
+                        }
+
+                        if (enum_def.methods.get(member_name)) |method_type_id| {
+                            const result_type = if (is_nullable) try self.type_table.getOrAddNullable(method_type_id) else method_type_id;
+
+                            return ir.Value.init(self.allocator, .{
+                                .data = .{
+                                    .indexed = .{
+                                        .target = target,
+                                        .index = try ir.Value.init(self.allocator, .{
+                                            .data = .{ .i_string = member_name },
+                                            .type_id = self.type_table.getPrimitive(.string),
+                                        }),
+                                    },
+                                },
+                                .type_id = result_type,
+                            });
+                        }
+
+                        return self.err_dispatcher.invalidEnumVariant(enum_def.identifier, member_name, exp.loc);
                     },
                     else => unreachable,
                 };
             },
 
             else => {
-                return self.err_dispatcher.invalidType("array or struct", try self.type_table.name(target_type, self.allocator), exp.loc);
+                return self.err_dispatcher.invalidType("array, struct or enum", try self.type_table.name(target_type, self.allocator), exp.loc);
             },
         }
     }
@@ -1387,6 +1460,34 @@ pub const SemaAnalyzer = struct {
         }
 
         return self.err_dispatcher.notDefined(id, exp.loc);
+    }
+
+    fn findIsFieldMut(self: *Self, target: *ir.Value, static_fields: std.StringHashMap(TypedIdentifier)) bool {
+        var current = target;
+        while (true) {
+            switch (current.data) {
+                .identifier => {
+                    const sym = self.scope.symbol_table.get(current.data.identifier.value) orelse return false;
+                    return sym.kind.variable.is_mut;
+                },
+                .indexed => |idx| {
+                    const field_name = idx.index.data.i_string;
+                    if (static_fields.get(field_name)) |sf| return sf.is_mut;
+                    current = idx.target;
+                },
+                else => return false,
+            }
+        }
+    }
+
+    fn shouldAutoBindSelf(self: *Self, target: *ir.Value) bool {
+        if (target.data == .identifier) {
+            if (self.scope.symbol_table.get(target.data.identifier.value)) |sym| {
+                return sym.kind == .variable;
+            }
+            return false;
+        }
+        return true;
     }
 
     fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -1595,7 +1696,20 @@ pub const SemaAnalyzer = struct {
                 }
                 unreachable;
             },
-            .@"enum" => target_type_id,
+            .@"enum" => {
+                const enum_def = &target_type.kind.@"enum";
+                const field_name = index.data.i_string;
+                if (enum_def.static_fields.get(field_name)) |field| {
+                    return field.type_id;
+                }
+                if (enum_def.variants.get(field_name) != null) {
+                    return target_type_id;
+                }
+                if (enum_def.methods.get(field_name)) |method_type_id| {
+                    return method_type_id;
+                }
+                unreachable;
+            },
             else => unreachable,
         };
     }
@@ -1761,6 +1875,7 @@ const Func = struct {
 const Enum = struct {
     identifier: []const u8,
     variants: std.StringHashMap(i64),
+    static_fields: std.StringHashMap(TypedIdentifier),
     methods: std.StringHashMap(TypeId),
 };
 
