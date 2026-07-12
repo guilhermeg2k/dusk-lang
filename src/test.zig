@@ -355,6 +355,22 @@ test "syntax error: enum unexpected token" {
     try runCaseError("parser/enum-unexpected-token.dsk", error.ParserError);
 }
 
+test "syntax error: struct missing end" {
+    try runCaseError("parser/struct-missing-end.dsk", error.ParserError);
+}
+
+test "syntax error: enum missing end" {
+    try runCaseError("parser/enum-missing-end.dsk", error.ParserError);
+}
+
+test "syntax error: union missing end" {
+    try runCaseError("parser/union-missing-end.dsk", error.ParserError);
+}
+
+test "syntax error: anonymous struct missing end" {
+    try runCaseError("parser/anon-struct-missing-end.dsk", error.ParserError);
+}
+
 test "syntax error: fn args mixed named positional" {
     try runCaseError("parser/fn-args-mixed-named.dsk", error.ParserError);
 }

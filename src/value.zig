@@ -104,6 +104,66 @@ pub const Struct = extern struct {
     }
 };
 
+pub const Union = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    descriptor_id: u16,
+    active_tag: ?u16,
+
+    pub fn init(allocator: std.mem.Allocator, desc_id: u16) !*Self {
+        const total_bytes = Self.calc_size();
+
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
+        const union_ptr: *Self = @ptrCast(@alignCast(raw_memory.ptr));
+
+        union_ptr.obj = .{
+            .kind = .@"struct",
+        };
+
+        union_ptr.descriptor_id = desc_id;
+        union_ptr.active_tag = null;
+
+        return union_ptr;
+    }
+
+    pub fn get(self: *const Self, tag: u16) Value {
+        const items = self.getDataPtr();
+
+        if (self.active_tag) |active_tag| {
+            if (tag == active_tag) {
+                return items[0];
+            }
+        }
+
+        return NULL_VALUE;
+    }
+
+    pub fn set(self: *Self, tag: u16, value: Value) void {
+        const items = self.getDataPtr();
+        items[0] = value;
+        self.active_tag = tag;
+    }
+
+    pub fn getDataPtr(self: *const Self) [*]Value {
+        const data_pointer = @as([*]Self, @ptrCast(@constCast(self))) + 1;
+        return @ptrCast(data_pointer);
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self) + (@sizeOf(Value));
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const new_bytes = try allocator.alloc(u8, self.calc_size());
+        @memcpy(new_bytes, self.*);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
+        return new_obj;
+    }
+};
+
 pub const Array = extern struct {
     const Self = @This();
 

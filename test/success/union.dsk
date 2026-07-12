@@ -1,8 +1,7 @@
 union Response
     success: string
     error: string
+end
 
 let res = Response(success = "Sucesso")
 let err = Response(error = "Error")
-
-

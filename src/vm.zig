@@ -156,6 +156,43 @@ pub const VM = struct {
                     self.static_store[inst.bEx()] = stack[stack_base + inst.a];
                 },
 
+                .UNION_INIT => {
+                    const desc_id = inst.bEx();
+                    current_frame.cur_inst = cur_instruction;
+                    try self.maybeCollectGarbage(v.Union.calc_size());
+                    var new_union = try v.Union.init(self.heap.arenas[self.heap.active].allocator(), desc_id);
+                    self.allocate(v.Struct.calc_size(new_union.field_count));
+                    stack[stack_base + inst.a] = .{ .heap_obj = &new_union.obj };
+                },
+
+                .UNION_LOAD => {
+                    const union_ptr = stack[stack_base + inst.b].heap_obj;
+                    const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
+                    stack[stack_base + inst.a] = union_vl.get(@intCast(inst.c));
+                },
+
+                .UNION_STORE => {
+                    const union_ptr = stack[stack_base + inst.a].heap_obj;
+                    const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
+                    const vl = stack[stack_base + inst.c];
+                    union_vl.set(@intCast(inst.b), vl);
+                },
+
+                .LARGE_UNION_STORE => {
+                    const union_ptr = stack[stack_base + inst.a].heap_obj;
+                    const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
+                    const vl = stack[stack_base + inst.c];
+                    const tag_reg = stack[stack_base + inst.b];
+                    union_vl.set(@intCast(tag_reg.int64), vl);
+                },
+
+                .LARGE_UNION_LOAD => {
+                    const union_ptr = stack[stack_base + inst.b].heap_obj;
+                    const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
+                    const tag_reg = stack[stack_base + inst.c];
+                    stack[stack_base + inst.a] = union_vl.get(@intCast(tag_reg.int64));
+                },
+
                 .I_ADD => {
                     stack[stack_base + inst.a] = .{
                         .int64 = stack[stack_base + inst.b].int64 + stack[stack_base + inst.c].int64,

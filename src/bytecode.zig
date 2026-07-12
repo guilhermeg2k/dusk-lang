@@ -920,6 +920,10 @@ pub const BytecodeGen = struct {
     }
 };
 
+pub const UnionDescriptor = struct {
+    heap_bitmap: u256,
+};
+
 pub const StructDescriptor = struct {
     field_count: u8,
     heap_bitmap: u256,
@@ -936,6 +940,7 @@ pub const Program = struct {
     static_count: u16,
     static_heap_bitmap: []const u64,
     struct_descriptors: []const StructDescriptor,
+    union_descriptors: []const UnionDescriptor,
 };
 
 pub const HostFn = struct {
@@ -1108,6 +1113,10 @@ pub const OpCode = enum(u8) {
     STRUCT_INIT,
     STRUCT_LOAD,
     STRUCT_STORE,
+
+    UNION_INIT,
+    UNION_LOAD,
+    UNION_STORE,
 
     STATIC_LOAD,
     STATIC_STORE,

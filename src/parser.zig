@@ -434,10 +434,11 @@ pub const Parser = struct {
                     const strc_field = try self.parseField(identifier.value(self.src), has_type_annotation);
                     try fields.append(self.allocator, strc_field);
                 },
-                .end_kw, .eof => {
+                .end_kw => {
                     self.walk();
                     break;
                 },
+                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
                 else => {
                     return self.err_dispatcher.invalidSyntax("let or an identifier", tk);
                 },
@@ -465,10 +466,11 @@ pub const Parser = struct {
                     const strc_field = try self.parseField(identifier.value(self.src), has_type_annotation);
                     try fields.append(self.allocator, strc_field);
                 },
-                .end_kw, .eof => {
+                .end_kw => {
                     self.walk();
                     break;
                 },
+                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
                 else => {
                     return self.err_dispatcher.invalidSyntax("identifier", tk);
                 },
@@ -556,10 +558,11 @@ pub const Parser = struct {
                         .default_value = let_stmt.value,
                     });
                 },
-                .end_kw, .eof => {
+                .end_kw => {
                     self.walk();
                     break;
                 },
+                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
                 else => {
                     return self.err_dispatcher.invalidSyntax("identifier, let, func or 'end'", tk);
                 },
@@ -615,10 +618,11 @@ pub const Parser = struct {
                         .default_value = let_stmt.value,
                     });
                 },
-                .end_kw, .eof => {
+                .end_kw => {
                     self.walk();
                     break;
                 },
+                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
                 else => {
                     return self.err_dispatcher.invalidSyntax("identifier, let, func or 'end'", tk);
                 },
