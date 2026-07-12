@@ -1,0 +1,8 @@
+union Response
+    success: string
+    error: string
+
+let res = Response(success = "Sucesso")
+let err = Response(error = "Error")
+
+

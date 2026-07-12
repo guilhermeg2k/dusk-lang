@@ -1,6 +1,6 @@
 .{
     .name = .dusk,
-    .version = "0.10.0",
+    .version = "0.11.0-devel",
     .fingerprint = 0x194887165dc2592d,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

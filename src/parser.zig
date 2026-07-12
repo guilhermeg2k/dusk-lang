@@ -89,6 +89,16 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
+            .union_kw => {
+                const union_stmt_value = try self.parseUnionStmt();
+                return ast.StatementNode{
+                    .data = .{ .@"union" = union_stmt_value },
+                    .loc = .{
+                        .start = tk.loc.start,
+                        .end = self.tokens[self.cur_index - 1].loc.end,
+                    },
+                };
+            },
             .if_kw => {
                 if (self.isIfCapture()) {
                     const if_capture = try self.parseIfCapture();
@@ -163,7 +173,6 @@ pub const Parser = struct {
     fn parseFuncStmt(self: *Self) !ast.FuncStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
-        _ = try self.expect(.l_paren);
         const fn_def = try self.parseFnDef();
 
         return ast.FuncStmt{
@@ -191,6 +200,17 @@ pub const Parser = struct {
         return ast.EnumStmt{
             .identifier = identifier_token.value(self.src),
             .def = enum_def,
+        };
+    }
+
+    fn parseUnionStmt(self: *Self) !ast.UnionStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        const union_def = try self.parseUnionDef();
+
+        return ast.UnionStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = union_def,
         };
     }
 
@@ -398,7 +418,6 @@ pub const Parser = struct {
                 .func_kw => {
                     self.walk();
                     const identifier_token = try self.expect(.identifier);
-                    _ = try self.expect(.l_paren);
                     const fn_def = try self.parseFnDef();
                     try funcs.append(self.allocator, .{
                         .data = .{ .func = .{
@@ -514,7 +533,6 @@ pub const Parser = struct {
                 .func_kw => {
                     self.walk();
                     const identifier_token = try self.expect(.identifier);
-                    _ = try self.expect(.l_paren);
                     const fn_def = try self.parseFnDef();
                     try funcs.append(self.allocator, .{
                         .data = .{
@@ -555,7 +573,67 @@ pub const Parser = struct {
         };
     }
 
+    fn parseUnionDef(self: *Self) Errors!ast.UnionDef {
+        var variants: std.ArrayList(ast.UnionVariant) = .empty;
+        var static_fields: std.ArrayList(ast.Field) = .empty;
+        var funcs: std.ArrayList(ast.StatementNode) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    const identifier = tk.value(self.src);
+                    _ = try self.expect(.colon);
+                    const @"type" = try self.parseTypeAnnotation(true);
+
+                    try variants.append(self.allocator, .{ .identifier = identifier, .type = @"type" });
+                },
+                .func_kw => {
+                    self.walk();
+                    const identifier_token = try self.expect(.identifier);
+                    const fn_def = try self.parseFnDef();
+                    try funcs.append(self.allocator, .{
+                        .data = .{
+                            .func = .{
+                                .identifier = identifier_token.value(self.src),
+                                .def = fn_def,
+                            },
+                        },
+                        .loc = .{
+                            .start = tk.loc.start,
+                            .end = self.tokens[self.cur_index - 1].loc.end,
+                        },
+                    });
+                },
+                .let_kw => {
+                    const let_stmt = try self.parseLetStmt();
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .default_value = let_stmt.value,
+                    });
+                },
+                .end_kw, .eof => {
+                    self.walk();
+                    break;
+                },
+                else => {
+                    return self.err_dispatcher.invalidSyntax("identifier, let, func or 'end'", tk);
+                },
+            }
+        }
+
+        return ast.UnionDef{
+            .variants = try variants.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
+            .funcs = try funcs.toOwnedSlice(self.allocator),
+        };
+    }
+
     fn parseFnDef(self: *Self) Errors!ast.FnDef {
+        _ = try self.expect(.l_paren);
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
@@ -979,12 +1057,13 @@ pub const Parser = struct {
         };
     }
 
-    fn parseTypeAnnotation(self: *Self, allow_anonymous_struct: bool) !*ast.TypeAnnotation {
+    //note: this is allocating duplicates
+    fn parseTypeAnnotation(self: *Self, allow_anonymous_struct_definition: bool) !*ast.TypeAnnotation {
         const is_nullable = self.match(.question_mark);
         const tk = self.peekCurrent();
         self.walk();
 
-        if (!allow_anonymous_struct and tk.tag == .struct_kw) {
+        if (!allow_anonymous_struct_definition and tk.tag == .struct_kw) {
             return self.err_dispatcher.invalidSyntax("type string, number, bool, void, ...", tk);
         }
 

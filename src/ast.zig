@@ -15,6 +15,7 @@ pub const Statement = union(enum) {
     func: FuncStmt,
     @"struct": StructStmt,
     @"enum": EnumStmt,
+    @"union": UnionStmt,
     @"if": IfStmt,
     if_capture: IfCaptureStmt,
     @"for": ForStmt,
@@ -38,6 +39,11 @@ pub const StructStmt = struct {
 pub const EnumStmt = struct {
     identifier: []const u8,
     def: EnumDef,
+};
+
+pub const UnionStmt = struct {
+    identifier: []const u8,
+    def: UnionDef,
 };
 
 pub const LetStmt = struct {
@@ -212,6 +218,17 @@ pub const EnumDef = struct {
 pub const EnumVariant = struct {
     identifier: []const u8,
     value: ?i64,
+};
+
+pub const UnionDef = struct {
+    variants: []const UnionVariant,
+    static_fields: []const Field,
+    funcs: []const StatementNode,
+};
+
+pub const UnionVariant = struct {
+    identifier: []const u8,
+    type: *TypeAnnotation,
 };
 
 pub const UnaryOp = enum {
