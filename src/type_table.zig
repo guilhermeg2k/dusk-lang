@@ -2,93 +2,6 @@ const std = @import("std");
 const util = @import("util.zig");
 const ir = @import("ir.zig");
 
-pub const Struct = struct {
-    identifier: []const u8,
-    fields: std.StringHashMap(TypedIdentifier),
-    static_fields: std.StringHashMap(TypedIdentifier),
-    fields_in_order: []const TypedIdentifier,
-    field_index_by_name: std.StringHashMap(u8),
-    methods: std.StringHashMap(TypeId),
-};
-
-pub const Func = struct {
-    identifier: []const u8,
-    uid: usize,
-    params: []const TypedIdentifier,
-    return_type_id: TypeId,
-};
-
-pub const Enum = struct {
-    identifier: []const u8,
-    variants: std.StringHashMap(i64),
-    static_fields: std.StringHashMap(TypedIdentifier),
-    methods: std.StringHashMap(TypeId),
-};
-
-pub const Union = struct {
-    identifier: []const u8,
-    variants: std.StringHashMap(TypeId),
-    static_fields: std.StringHashMap(TypedIdentifier),
-    methods: std.StringHashMap(TypeId),
-};
-
-//note: idk about this
-pub const TypedIdentifier = struct {
-    const Self = @This();
-
-    identifier: []const u8,
-    type_id: TypeId,
-    is_mut: bool,
-    default_value: ?*ir.Value,
-
-    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
-        const ptr = try allocator.create(Self);
-        ptr.* = exp;
-        return ptr;
-    }
-};
-
-pub const Type = struct {
-    const Self = @This();
-
-    kind: union(enum) {
-        float,
-        int,
-        string,
-        boolean,
-        void,
-        null,
-        dynamic,
-
-        meta,
-
-        function: Func,
-        array: TypeId,
-        @"struct": Struct,
-        @"enum": Enum,
-        @"union": Union,
-    },
-
-    nullable: bool,
-
-    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
-        const ptr = try allocator.create(Self);
-        ptr.* = exp;
-        return ptr;
-    }
-};
-
-pub const PrimitiveType = enum {
-    float,
-    int,
-    string,
-    boolean,
-    void,
-    null,
-    dynamic,
-    meta,
-};
-
 pub const TypeId = u64;
 
 pub const TypeTable = struct {
@@ -212,6 +125,9 @@ pub const TypeTable = struct {
             .@"enum" => |e| {
                 return std.fmt.allocPrint(allocator, "{s}enum {s}", .{ prefix, e.identifier });
             },
+            .@"union" => |u| {
+                return std.fmt.allocPrint(allocator, "{s}union {s}", .{ prefix, u.identifier });
+            },
             .array => |inner_id| {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
             },
@@ -308,5 +224,92 @@ pub const TypeTable = struct {
         try self.anom_structs.put(anom_struct_signature, new_id);
 
         return new_id;
+    }
+};
+
+pub const PrimitiveType = enum {
+    float,
+    int,
+    string,
+    boolean,
+    void,
+    null,
+    dynamic,
+    meta,
+};
+
+pub const Struct = struct {
+    identifier: []const u8,
+    fields: std.StringHashMap(TypedIdentifier),
+    static_fields: std.StringHashMap(TypedIdentifier),
+    fields_in_order: []const TypedIdentifier,
+    field_index_by_name: std.StringHashMap(u8),
+    methods: std.StringHashMap(TypeId),
+};
+
+pub const Func = struct {
+    identifier: []const u8,
+    uid: usize,
+    params: []const TypedIdentifier,
+    return_type_id: TypeId,
+};
+
+pub const Enum = struct {
+    identifier: []const u8,
+    variants: std.StringHashMap(i64),
+    static_fields: std.StringHashMap(TypedIdentifier),
+    methods: std.StringHashMap(TypeId),
+};
+
+pub const Union = struct {
+    identifier: []const u8,
+    variants: std.StringHashMap(TypeId),
+    static_fields: std.StringHashMap(TypedIdentifier),
+    methods: std.StringHashMap(TypeId),
+};
+
+//note: idk about this
+pub const TypedIdentifier = struct {
+    const Self = @This();
+
+    identifier: []const u8,
+    type_id: TypeId,
+    is_mut: bool,
+    default_value: ?*ir.Value,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
+    }
+};
+
+pub const Type = struct {
+    const Self = @This();
+
+    kind: union(enum) {
+        float,
+        int,
+        string,
+        boolean,
+        void,
+        null,
+        dynamic,
+
+        meta,
+
+        function: Func,
+        array: TypeId,
+        @"struct": Struct,
+        @"enum": Enum,
+        @"union": Union,
+    },
+
+    nullable: bool,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
     }
 };

@@ -69,7 +69,10 @@ pub const SemaAnalyzer = struct {
                     const symbol = try self.createEmptyEnumSymbol(es.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(es.identifier, stmt.loc);
                 },
-                .let => {},
+                .@"union" => |un| {
+                    const symbol = try self.createEmptyUnionSymbol(un.identifier);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(un.identifier, stmt.loc);
+                },
                 else => {},
             }
         }
@@ -88,6 +91,11 @@ pub const SemaAnalyzer = struct {
                 .@"enum" => |ss| {
                     const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
                     try self.fulfillEnumType(symbol, &ss.def);
+                },
+
+                .@"union" => |us| {
+                    const symbol = try self.scope.symbol_table.getOrError(us.identifier);
+                    try self.fulfillUnionType(symbol, &us.def);
                 },
                 else => {},
             }
@@ -121,6 +129,31 @@ pub const SemaAnalyzer = struct {
         const blueprint_id = try self.type_table.addType(.{
             .kind = .{
                 .@"enum" = .{
+                    .identifier = identifier,
+                    .variants = .init(self.allocator),
+                    .static_fields = .init(self.allocator),
+                    .methods = .init(self.allocator),
+                },
+            },
+            .nullable = false,
+        });
+
+        return Symbol{
+            .identifier = identifier,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{
+                .defined_type = .{
+                    .blueprint_type_id = blueprint_id,
+                },
+            },
+        };
+    }
+
+    fn createEmptyUnionSymbol(self: *Self, identifier: []const u8) !Symbol {
+        const blueprint_id = try self.type_table.addType(.{
+            .kind = .{
+                .@"union" = .{
                     .identifier = identifier,
                     .variants = .init(self.allocator),
                     .static_fields = .init(self.allocator),
@@ -261,6 +294,36 @@ pub const SemaAnalyzer = struct {
             try methods.put(func.identifier, fn_symbol.type_id);
         }
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".methods = methods;
+    }
+
+    fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef) !void {
+        const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+
+        var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
+        var variants: std.StringHashMap(tt.TypeId) = .init(self.allocator);
+        var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
+
+        for (union_def.variants) |variant| {
+            try variants.put(variant.identifier, try self.resolveTypeAnnotation(variant.type, blueprint_type_id));
+        }
+
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".variants = variants;
+
+        for (union_def.static_fields) |field| {
+            const enum_field = try self.createField(field, blueprint_type_id);
+            try static_fields.put(field.identifier, enum_field);
+        }
+
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".static_fields = static_fields;
+
+        for (union_def.funcs) |func_stmt| {
+            const func = func_stmt.data.func;
+            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
+            try self.fulfillFuncType(fn_symbol, &func.def, union_symbol, func_stmt.loc);
+            try methods.put(func.identifier, fn_symbol.type_id);
+        }
+
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".methods = methods;
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
@@ -432,6 +495,7 @@ pub const SemaAnalyzer = struct {
                 .func => try self.visitFuncStmt(&stmt),
                 .@"struct" => try self.visitStructStmt(&stmt),
                 .@"enum" => try self.visitEnumStmt(&stmt),
+                .@"union" => try self.visitUnionStmt(&stmt),
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"if" => try self.visitIfStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
@@ -580,6 +644,50 @@ pub const SemaAnalyzer = struct {
                 },
             },
         });
+        return null;
+    }
+
+    fn visitUnionStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
+        const union_stmt = stmt.data.@"union";
+        const union_symbol = try self.scope.symbol_table.getOrError(union_stmt.identifier);
+        const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+        const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
+
+        var static_fields: std.ArrayList(ir.Field) = .empty;
+        var funcs: std.ArrayList(ir.Func) = .empty;
+
+        for (union_stmt.def.static_fields) |field| {
+            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else default_value.?.type_id;
+
+            try static_fields.append(self.allocator, .{
+                .identifier = field.identifier,
+                .type_id = field_type,
+                .default_value = default_value,
+            });
+        }
+
+        for (union_stmt.def.funcs) |func_node| {
+            const func = func_node.data.func;
+            const fn_type_id = union_def.methods.get(func.identifier) orelse continue;
+            const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
+            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, func.identifier, func_node.loc);
+            try funcs.append(self.allocator, fn_def);
+        }
+
+        try self.defined_types.append(self.allocator, .{
+            .kind = .{
+                .@"union" = .{
+                    .uid = union_symbol.uid,
+                    .type_id = blueprint_type_id,
+                    .identifier = union_stmt.identifier,
+                    .variants = union_def.variants,
+                    .static_fields = try static_fields.toOwnedSlice(self.allocator),
+                    .funcs = try funcs.toOwnedSlice(self.allocator),
+                },
+            },
+        });
+
         return null;
     }
 
