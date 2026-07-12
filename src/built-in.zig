@@ -2,11 +2,12 @@ const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const sema = @import("sema.zig");
+const tt = @import("type_table.zig");
 
 const Symbol = sema.Symbol;
-const TypeId = sema.TypeId;
-const TypedIdentifier = sema.TypedIdentifier;
-const TypeTable = sema.TypeTable;
+const TypeId = tt.TypeId;
+const TypedIdentifier = tt.TypedIdentifier;
+const TypeTable = tt.TypeTable;
 
 //note: temporary as we don't impl modules
 pub const BuiltIn = struct {

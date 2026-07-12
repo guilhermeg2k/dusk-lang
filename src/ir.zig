@@ -1,3 +1,6 @@
+const std = @import("std");
+const TypeId = @import("type_table.zig").TypeId;
+
 pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
@@ -24,6 +27,7 @@ pub const DefinedType = struct {
     kind: union(enum) {
         @"struct": Struct,
         @"enum": Enum,
+        @"union": Union,
     },
 };
 
@@ -42,6 +46,16 @@ pub const Enum = struct {
     identifier: []const u8,
 
     variants: std.StringHashMap(i64),
+    static_fields: []const Field,
+    funcs: []const Func,
+};
+
+pub const Union = struct {
+    uid: usize,
+    type_id: TypeId,
+    identifier: []const u8,
+
+    variants: std.StringHashMap(TypeId),
     static_fields: []const Field,
     funcs: []const Func,
 };
@@ -203,8 +217,3 @@ pub const BinaryOpKind = enum {
     b_cmp_eq,
     b_cmp_neq,
 };
-
-const std = @import("std");
-const sema = @import("sema.zig");
-const SemaError = sema.Errors;
-const TypeId = sema.TypeId;

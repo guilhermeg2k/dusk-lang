@@ -1,17 +1,17 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const v = @import("value.zig");
-const sema = @import("sema.zig");
+const tt = @import("type_table.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    type_table: *sema.TypeTable,
+    type_table: *tt.TypeTable,
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
 
-    register_types: [256]sema.TypeId = [_]sema.TypeId{0} ** 256,
+    register_types: [256]tt.TypeId = [_]tt.TypeId{0} ** 256,
     next_free_register: u8 = 0,
     peak_register: u8 = 0,
 
@@ -32,14 +32,14 @@ pub const BytecodeGen = struct {
 
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
-    type_id_to_struct_descriptor_idx: std.AutoHashMap(sema.TypeId, u16),
+    type_id_to_struct_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     static_heap_bitmap: std.ArrayList(u64) = .empty,
 
-    pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
+    pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
             .allocator = alloc,
             .type_table = type_table,
-            .register_types = [_]sema.TypeId{type_table.getPrimitive(.void)} ** 256,
+            .register_types = [_]tt.TypeId{type_table.getPrimitive(.void)} ** 256,
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
             .peak_register = 0,
@@ -56,7 +56,7 @@ pub const BytecodeGen = struct {
             .static_store = StaticStoreTable.init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
-            .type_id_to_struct_descriptor_idx = std.AutoHashMap(sema.TypeId, u16).init(alloc),
+            .type_id_to_struct_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
         };
     }
 
@@ -138,7 +138,7 @@ pub const BytecodeGen = struct {
         try funcs.append(self.allocator, try self.genFunction(func));
     }
 
-    fn registerStaticFields(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+    fn registerStaticFields(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
         try self.static_store.registerFields(type_id, static_fields);
 
         for (static_fields) |field| {
@@ -150,7 +150,7 @@ pub const BytecodeGen = struct {
         }
     }
 
-    fn emitStaticInit(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+    fn emitStaticInit(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
         for (static_fields) |field| {
             if (field.default_value) |default| {
                 const slot_id = try self.static_store.getSlot(type_id, field.identifier);
@@ -1217,16 +1217,16 @@ pub const StaticStoreTable = struct {
 
     allocator: std.mem.Allocator,
     next_slot: u16 = 0,
-    slots_by_type_id: std.AutoHashMap(sema.TypeId, std.StringHashMap(u16)),
+    slots_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
 
     pub fn init(alloc: std.mem.Allocator) Self {
         return Self{
             .allocator = alloc,
-            .slots_by_type_id = std.AutoHashMap(sema.TypeId, std.StringHashMap(u16)).init(alloc),
+            .slots_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
         };
     }
 
-    pub fn registerFields(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+    pub fn registerFields(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
         if (static_fields.len == 0) return;
 
         const slot = try self.slots_by_type_id.getOrPut(type_id);
@@ -1240,7 +1240,7 @@ pub const StaticStoreTable = struct {
         }
     }
 
-    pub fn getSlot(self: *const Self, type_id: sema.TypeId, field_name: []const u8) !u16 {
+    pub fn getSlot(self: *const Self, type_id: tt.TypeId, field_name: []const u8) !u16 {
         const type_slots = self.slots_by_type_id.get(type_id) orelse return error.UnableToFindSlot;
         return type_slots.get(field_name) orelse return error.UnableToFindSlot;
     }

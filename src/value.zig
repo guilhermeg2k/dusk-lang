@@ -1,7 +1,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
-const sema = @import("sema.zig");
+const tt = @import("type_table.zig");
 
 const NULL_VALUE = Value{
     .null = {},
@@ -327,7 +327,7 @@ pub const ValueType = enum(u8) {
         };
     }
 
-    pub fn fromTypeId(type_table: *sema.TypeTable, type_id: sema.TypeId) ValueType {
+    pub fn fromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) ValueType {
         const ty = type_table.getTypePtrById(type_id);
         return switch (ty.kind) {
             .int => .int64,
