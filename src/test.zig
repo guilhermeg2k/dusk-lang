@@ -74,6 +74,10 @@ test "inline return" {
     try runCase("inline-return.dsk");
 }
 
+test "enums" {
+    try runCase("enums.dsk");
+}
+
 test "struct" {
     try runCase("struct.dsk");
 }

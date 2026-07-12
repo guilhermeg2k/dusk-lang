@@ -235,7 +235,6 @@ pub const SemaAnalyzer = struct {
 
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
-        const enum_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
 
         var methods: std.StringHashMap(TypeId) = .init(self.allocator);
         var variants: std.StringHashMap(i64) = .init(self.allocator);
@@ -246,13 +245,13 @@ pub const SemaAnalyzer = struct {
             const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
             try variants.put(variant.identifier, value);
         }
-        enum_type_ptr.kind.@"enum".variants = variants;
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".variants = variants;
 
         for (enum_def.static_fields) |field| {
             const enum_field = try self.createField(field, blueprint_type_id);
             try static_fields.put(field.identifier, enum_field);
         }
-        enum_type_ptr.kind.@"enum".static_fields = static_fields;
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".static_fields = static_fields;
 
         for (enum_def.funcs) |func_stmt| {
             const func = func_stmt.data.func;
@@ -260,7 +259,7 @@ pub const SemaAnalyzer = struct {
             try self.fulfillFuncType(fn_symbol, &func.def, enum_symbol, func_stmt.loc);
             try methods.put(func.identifier, fn_symbol.type_id);
         }
-        enum_type_ptr.kind.@"enum".methods = methods;
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".methods = methods;
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
@@ -1226,6 +1225,10 @@ pub const SemaAnalyzer = struct {
 
         if (required_params_len > total_args_len) {
             return self.err_dispatcher.invalidNumberOfArgs(required_params_len, total_args_len, exp.loc);
+        }
+
+        if (total_args_len > params.len) {
+            return self.err_dispatcher.invalidNumberOfArgs(params.len, total_args_len, exp.loc);
         }
 
         if (fn_call.are_arguments_named) {

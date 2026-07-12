@@ -43,6 +43,10 @@ pub const VM = struct {
         var instructions = current_frame.function.kind.dusk.instructions;
         var stack_base: usize = 0;
 
+        if (instructions.len == 0) {
+            return;
+        }
+
         while (true) {
             const inst = instructions[cur_instruction];
             cur_instruction += 1;

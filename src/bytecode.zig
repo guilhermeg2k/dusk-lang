@@ -26,6 +26,7 @@ pub const BytecodeGen = struct {
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
+    fn_index_by_uid: std.AutoHashMap(usize, u16),
 
     static_store: StaticStoreTable,
 
@@ -51,6 +52,7 @@ pub const BytecodeGen = struct {
             .loop_stack = .empty,
             .break_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .static_store = StaticStoreTable.init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
@@ -60,56 +62,41 @@ pub const BytecodeGen = struct {
 
     pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
         var funcs: std.ArrayList(Function) = .empty;
-        self.next_free_register = 0;
-        self.peak_register = 0;
-        self.type_id_to_struct_descriptor_idx.clearRetainingCapacity();
-        self.var_register_id_by_uid.clearRetainingCapacity();
 
         for (builtins) |bf| {
             switch (bf.kind) {
                 .@"inline" => |inl| try self.inline_functions_by_uid.put(bf.uid, inl),
                 else => {},
             }
+            try self.fn_index_by_uid.put(bf.uid, @intCast(funcs.items.len));
             try funcs.append(self.allocator, bf);
         }
 
         for (program.defined_types) |dt| {
             switch (dt.kind) {
+                .@"struct" => |s| try self.registerStaticFields(s.type_id, s.static_fields),
+                .@"enum" => |e| try self.registerStaticFields(e.type_id, e.static_fields),
+            }
+        }
+
+        for (program.defined_types) |dt| {
+            switch (dt.kind) {
                 .@"struct" => |s| {
-                    try self.genStaticFields(s.type_id, s.static_fields);
-                    for (s.funcs) |func| {
-                        try funcs.append(self.allocator, try self.genFunction(func));
-                    }
+                    for (s.funcs) |func| try self.addFunction(&funcs, func);
                 },
                 .@"enum" => |e| {
-                    try self.genStaticFields(e.type_id, e.static_fields);
-                    for (e.funcs) |func| {
-                        try funcs.append(self.allocator, try self.genFunction(func));
-                    }
+                    for (e.funcs) |func| try self.addFunction(&funcs, func);
                 },
             }
         }
 
         for (program.functions) |func| {
-            try funcs.append(self.allocator, try self.genFunction(func));
+            try self.addFunction(&funcs, func);
         }
 
-        try funcs.append(self.allocator, try self.genFunction(.{
-            .uid = 0,
-            .identifier = "$main",
-            .params = &.{},
-            .body = program.instructions,
-            .return_type = self.type_table.getPrimitive(.void),
-        }));
+        const main_func = try self.genMainFunc(program);
 
-        for (funcs.items) |func| {
-            switch (func.kind) {
-                .dusk => {
-                    func.kind.dusk.disasamble();
-                },
-                else => {},
-            }
-        }
+        try funcs.append(self.allocator, main_func);
 
         return Program{
             .main_func_index = funcs.items.len - 1,
@@ -120,7 +107,38 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn genStaticFields(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+    fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
+        self.next_free_register = 0;
+        self.peak_register = 0;
+        self.var_register_id_by_uid.clearRetainingCapacity();
+        @memset(&self.register_types, self.type_table.getPrimitive(.void));
+
+        for (program.defined_types) |dt| {
+            switch (dt.kind) {
+                .@"struct" => |s| try self.emitStaticInit(s.type_id, s.static_fields),
+                .@"enum" => |e| try self.emitStaticInit(e.type_id, e.static_fields),
+            }
+        }
+
+        return Function{
+            .uid = 0,
+            .name = "$main",
+            .kind = .{ .dusk = try self.genFunctionChunk(.{
+                .uid = 0,
+                .identifier = "$main",
+                .params = &.{},
+                .body = program.instructions,
+                .return_type = self.type_table.getPrimitive(.void),
+            }) },
+        };
+    }
+
+    fn addFunction(self: *Self, funcs: *std.ArrayList(Function), func: ir.Func) !void {
+        try self.fn_index_by_uid.put(func.uid, @intCast(funcs.items.len));
+        try funcs.append(self.allocator, try self.genFunction(func));
+    }
+
+    fn registerStaticFields(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
         try self.static_store.registerFields(type_id, static_fields);
 
         for (static_fields) |field| {
@@ -129,14 +147,18 @@ pub const BytecodeGen = struct {
             if (vt.isHeapType()) {
                 try self.setStaticHeapBit(slot_id);
             }
+        }
+    }
 
+    fn emitStaticInit(self: *Self, type_id: sema.TypeId, static_fields: []const ir.Field) !void {
+        for (static_fields) |field| {
             if (field.default_value) |default| {
+                const slot_id = try self.static_store.getSlot(type_id, field.identifier);
                 const reg = try self.genValue(default, self.consumeRegister());
                 defer self.freeRegister();
 
                 var store = Instruction{ .op = .STATIC_STORE, .a = reg };
                 store.putBEx(slot_id);
-
                 try self.chunk_instructions.append(self.allocator, store);
             }
         }
@@ -358,7 +380,7 @@ pub const BytecodeGen = struct {
             .a = target_reg,
         };
 
-        fn_call.putBEx(@intCast(fc.fn_uid));
+        fn_call.putBEx(self.fn_index_by_uid.get(fc.fn_uid) orelse unreachable);
 
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();

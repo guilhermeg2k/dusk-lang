@@ -1,4 +1,0 @@
-struct S
-    x: int
-    let y = 1
-end

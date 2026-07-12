@@ -1,19 +1,120 @@
+# ========== Implicit enum values ==========
 enum Color
-    let DEFAULT = Color.Green
-
     Red
-    Blue
     Green
+    Blue
+end
 
-    func print(self: @) -> void
-        echo(self)
+echo(Color.Red)
+echo(Color.Green)
+
+# ========== Explicit enum values ==========
+enum HttpStatus
+    Ok = 200
+    NotFound = 404
+    ServerError = 500
+end
+
+echo(HttpStatus.Ok)
+echo(HttpStatus.ServerError)
+
+# ========== Static fields ==========
+enum Direction
+    let DEFAULT = Direction.North
+    let mut counter = 0
+
+    North
+    South
+    East
+    West
+end
+
+echo(Direction.DEFAULT)
+Direction.counter = 42
+echo(Direction.counter)
+
+# ========== Static field with type annotation ==========
+enum Config
+    let name: string = "test_config"
+
+    A
+    B
+end
+
+echo(Config.name)
+
+# ========== Enum as type annotation ==========
+let col: Color = Color.Blue
+echo(col)
+
+# ========== Equality comparisons ==========
+if Color.Red == Color.Red then
+    echo(100)
+end
+
+if Color.Red != Color.Blue then
+    echo(101)
+end
+
+# ========== Enum in function params and return types ==========
+func get_color() -> Color
+    return Color.Red
+end
+
+func is_red(c: Color) -> bool
+    return c == Color.Red
+end
+
+echo(get_color())
+echo(is_red(Color.Red))
+echo(is_red(Color.Green))
+
+# ========== Enum in arrays ==========
+let colors = [Color.Red, Color.Green, Color.Blue]
+echo(colors[0])
+echo(colors[2])
+
+# ========== Nullable enum ==========
+let maybe: ?Color = null
+let maybe2: ?Color = Color.Green
+echo(maybe2)
+
+# ========== Multiple enums in same scope ==========
+enum Status
+    Active
+    Inactive
+end
+
+let s = Status.Active
+echo(s)
+
+# ========== Enum methods ==========
+enum GameState
+    let DEFAULT = GameState.Playing
+
+    Stopped
+    Playing
+    End
+
+    func is_playing(self: @) -> bool
+        return self == GameState.Playing
+    end
+
+    func next(self: @) -> GameState
+        if self == GameState.Stopped then
+            return GameState.Playing
+        end
+
+        if self == GameState.Playing then
+            return GameState.End
+        end
+
+        return GameState.Stopped
     end
 end
 
-let red: Color = Color.Red
-echo(red)
+let mut gs = GameState.DEFAULT
+echo(gs.is_playing())
 
-red.print()
-
-Color.DEFAULT.print()
-
+gs = gs.next()
+echo(gs.is_playing())

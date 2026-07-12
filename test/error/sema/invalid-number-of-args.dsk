@@ -2,4 +2,6 @@ func add(a: int, b: int) -> int
     return a + b
 end
 
+echo(add(1, 2, 3))
+
 echo(add(1))

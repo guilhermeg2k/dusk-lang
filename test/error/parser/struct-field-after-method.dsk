@@ -1,6 +1,0 @@
-struct S
-    func foo() -> void
-        return
-    end
-    bar: int
-end
