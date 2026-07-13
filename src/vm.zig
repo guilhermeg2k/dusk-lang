@@ -161,7 +161,7 @@ pub const VM = struct {
                     current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.Union.calc_size());
                     var new_union = try v.Union.init(self.heap.arenas[self.heap.active].allocator(), desc_id);
-                    self.allocate(v.Struct.calc_size(new_union.field_count));
+                    self.allocate(v.Union.calc_size());
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_union.obj };
                 },
 
@@ -533,6 +533,16 @@ pub const VM = struct {
                         }
                     }
                 },
+                .@"union" => {
+                    const u = v.HeapValue.getParentPtr(v.Union, obj);
+                    if (u.active_tag != v.Union.NO_TAG) {
+                        const desc = self.program.union_descriptors[u.descriptor_id];
+                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(u.active_tag)) != 0) {
+                            const slot = u.getDataPtr();
+                            try self.copyHeapValue(new_alloc, &slot[0]);
+                        }
+                    }
+                },
                 else => {},
             }
         }
@@ -574,6 +584,7 @@ pub const VM = struct {
         return switch (obj_ptr.kind) {
             .array => &(try v.HeapValue.getParentPtr(v.Array, obj_ptr).clone(allocator)).obj,
             .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
+            .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
             .string => &(try v.HeapValue.getParentPtr(v.String, obj_ptr).clone(allocator)).obj,
         };
     }
@@ -582,6 +593,7 @@ pub const VM = struct {
         return switch (ptr.kind) {
             .array => v.Array.calc_size(v.HeapValue.getParentPtr(v.Array, ptr).capacity),
             .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
+            .@"union" => v.Union.calc_size(),
             .string => v.String.calc_size(v.HeapValue.getParentPtr(v.String, ptr).len),
         };
     }

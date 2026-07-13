@@ -21,6 +21,7 @@ const HeapValueType = enum(u8) {
     array,
     @"struct",
     string,
+    @"union",
 };
 
 pub const HeapValue = extern struct {
@@ -107,9 +108,11 @@ pub const Struct = extern struct {
 pub const Union = extern struct {
     const Self = @This();
 
+    pub const NO_TAG: u16 = 0xFFFF;
+
     obj: HeapValue,
     descriptor_id: u16,
-    active_tag: ?u16,
+    active_tag: u16,
 
     pub fn init(allocator: std.mem.Allocator, desc_id: u16) !*Self {
         const total_bytes = Self.calc_size();
@@ -118,11 +121,11 @@ pub const Union = extern struct {
         const union_ptr: *Self = @ptrCast(@alignCast(raw_memory.ptr));
 
         union_ptr.obj = .{
-            .kind = .@"struct",
+            .kind = .@"union",
         };
 
         union_ptr.descriptor_id = desc_id;
-        union_ptr.active_tag = null;
+        union_ptr.active_tag = NO_TAG;
 
         return union_ptr;
     }
@@ -130,10 +133,8 @@ pub const Union = extern struct {
     pub fn get(self: *const Self, tag: u16) Value {
         const items = self.getDataPtr();
 
-        if (self.active_tag) |active_tag| {
-            if (tag == active_tag) {
-                return items[0];
-            }
+        if (self.active_tag != NO_TAG and tag == self.active_tag) {
+            return items[0];
         }
 
         return NULL_VALUE;
@@ -155,8 +156,10 @@ pub const Union = extern struct {
     }
 
     pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
-        const new_bytes = try allocator.alloc(u8, self.calc_size());
-        @memcpy(new_bytes, self.*);
+        const size = Self.calc_size();
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
         const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
         new_obj.obj.gc_forward = null;
         new_obj.obj.relocated = null;
@@ -355,10 +358,11 @@ pub const ValueType = enum(u8) {
     //note: maybe this needs to get the inner type?
     array,
     @"struct",
+    @"union",
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .array, .@"struct" => true,
+            .string, .array, .@"struct", .@"union" => true,
             else => false,
         };
     }
@@ -396,11 +400,11 @@ pub const ValueType = enum(u8) {
             .string => .string,
             .array => .array,
             .@"struct" => .@"struct",
+            .@"union" => .@"union",
             .@"enum" => .int64,
             else => .null,
         };
-    }
-};
+    }};
 
 pub const TypedValueHashContext = struct {
     pub fn hash(_: @This(), tv: TypedValue) u64 {
@@ -415,6 +419,7 @@ pub const TypedValueHashContext = struct {
             .string => unreachable,
             .array => unreachable,
             .@"struct" => unreachable,
+            .@"union" => unreachable,
         }
         return hasher.final();
     }
@@ -429,6 +434,7 @@ pub const TypedValueHashContext = struct {
             .string => unreachable,
             .array => unreachable,
             .@"struct" => unreachable,
+            .@"union" => unreachable,
         };
     }
 };

@@ -91,6 +91,11 @@ pub const StructInit = struct {
     values: []*Value,
 };
 
+pub const UnionInit = struct {
+    tag: ?[]const u8,
+    value: ?*Value,
+};
+
 pub const StoreVar = struct {
     uid: usize,
     identifier: []const u8,
@@ -142,6 +147,7 @@ pub const Value = struct {
 
         fn_call: FnCall,
         struct_init: StructInit,
+        union_init: UnionInit,
     },
 
     type_id: TypeId,

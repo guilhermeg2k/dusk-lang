@@ -215,6 +215,9 @@ pub const BuiltIn = struct {
                 }
                 writer.print(" }}", .{}) catch {};
             },
+            .@"union" => {
+                writer.print("<union>", .{}) catch {};
+            },
         }
     }
 

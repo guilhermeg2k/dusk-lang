@@ -33,6 +33,9 @@ pub const BytecodeGen = struct {
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
     type_id_to_struct_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
+    union_descriptors: std.ArrayList(UnionDescriptor),
+    type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
+    union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     static_heap_bitmap: std.ArrayList(u64) = .empty,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
@@ -57,6 +60,9 @@ pub const BytecodeGen = struct {
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
             .type_id_to_struct_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
+            .union_descriptors = .empty,
+            .type_id_to_union_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
+            .union_tag_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
         };
     }
 
@@ -76,6 +82,7 @@ pub const BytecodeGen = struct {
             switch (dt.kind) {
                 .@"struct" => |s| try self.registerStaticFields(s.type_id, s.static_fields),
                 .@"enum" => |e| try self.registerStaticFields(e.type_id, e.static_fields),
+                .@"union" => |u| try self.registerStaticFields(u.type_id, u.static_fields),
             }
         }
 
@@ -86,6 +93,9 @@ pub const BytecodeGen = struct {
                 },
                 .@"enum" => |e| {
                     for (e.funcs) |func| try self.addFunction(&funcs, func);
+                },
+                .@"union" => |u| {
+                    for (u.funcs) |func| try self.addFunction(&funcs, func);
                 },
             }
         }
@@ -104,6 +114,7 @@ pub const BytecodeGen = struct {
             .static_count = self.static_store.count(),
             .static_heap_bitmap = try self.static_heap_bitmap.toOwnedSlice(self.allocator),
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
+            .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
         };
     }
 
@@ -117,6 +128,7 @@ pub const BytecodeGen = struct {
             switch (dt.kind) {
                 .@"struct" => |s| try self.emitStaticInit(s.type_id, s.static_fields),
                 .@"enum" => |e| try self.emitStaticInit(e.type_id, e.static_fields),
+                .@"union" => |u| try self.emitStaticInit(u.type_id, u.static_fields),
             }
         }
 
@@ -456,6 +468,10 @@ pub const BytecodeGen = struct {
                 try self.genStructInit(value, target_reg);
             },
 
+            .union_init => {
+                try self.genUnionInit(value, target_reg);
+            },
+
             .binary_op => |bo| {
                 try self.genBinOp(bo, target_reg);
             },
@@ -514,6 +530,36 @@ pub const BytecodeGen = struct {
                 const array_reg = try self.genValue(idx.target, self.consumeRegister());
                 defer self.freeRegister();
                 try self.genArrayLoad(target_reg, array_reg, idx.index);
+                self.register_types[target_reg] = value.type_id;
+            },
+            .@"union" => {
+                const field_name = idx.index.data.i_string;
+                const tag_index = try self.unionTagIndex(idx.target.type_id, field_name);
+                const union_reg = try self.genValue(idx.target, self.consumeRegister());
+                defer self.freeRegister();
+
+                if (tag_index <= std.math.maxInt(u8)) {
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .UNION_LOAD,
+                        .a = target_reg,
+                        .b = union_reg,
+                        .c = @intCast(tag_index),
+                    });
+                } else {
+                    const tag_reg = self.consumeRegister();
+                    defer self.freeRegister();
+                    const tag_value = ir.Value{
+                        .type_id = self.type_table.getPrimitive(.int),
+                        .data = .{ .i_int = @intCast(tag_index) },
+                    };
+                    try self.genLoadConst(v.TypedValue.from_ir_value(&tag_value), tag_reg);
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .LARGE_UNION_LOAD,
+                        .a = target_reg,
+                        .b = union_reg,
+                        .c = tag_reg,
+                    });
+                }
                 self.register_types[target_reg] = value.type_id;
             },
             else => unreachable,
@@ -918,6 +964,80 @@ pub const BytecodeGen = struct {
         try self.type_id_to_struct_descriptor_idx.put(value.type_id, id);
         return id;
     }
+
+    fn genUnionInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const union_init = value.data.union_init;
+        const desc_id = try self.getOrCreateUnionDescriptor(value.type_id);
+
+        var init_inst = Instruction{ .op = .UNION_INIT, .a = target_reg };
+        init_inst.putBEx(desc_id);
+        try self.chunk_instructions.append(self.allocator, init_inst);
+        try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
+
+        if (union_init.tag) |tag_name| {
+            if (union_init.value) |payload| {
+                const tag_index = try self.unionTagIndex(value.type_id, tag_name);
+                const value_reg = try self.genValue(payload, self.consumeRegister());
+                defer self.freeRegister();
+
+                if (tag_index <= std.math.maxInt(u8)) {
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .UNION_STORE,
+                        .a = target_reg,
+                        .b = @intCast(tag_index),
+                        .c = value_reg,
+                    });
+                } else {
+                    const tag_reg = self.consumeRegister();
+                    defer self.freeRegister();
+                    const tag_value = ir.Value{
+                        .type_id = self.type_table.getPrimitive(.int),
+                        .data = .{ .i_int = @intCast(tag_index) },
+                    };
+                    try self.genLoadConst(v.TypedValue.from_ir_value(&tag_value), tag_reg);
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .LARGE_UNION_STORE,
+                        .a = target_reg,
+                        .b = tag_reg,
+                        .c = value_reg,
+                    });
+                }
+            }
+        }
+    }
+
+    fn getOrCreateUnionDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
+        if (self.type_id_to_union_descriptor_idx.get(type_id)) |id| return id;
+
+        const union_def = self.type_table.getTypePtrById(type_id).kind.@"union";
+
+        var tag_map = std.StringHashMap(u16).init(self.allocator);
+        var bitmap: u256 = 0;
+
+        var it = union_def.variants.iterator();
+        var tag: u16 = 0;
+        while (it.next()) |entry| {
+            try tag_map.put(entry.key_ptr.*, tag);
+            const vt = v.ValueType.fromTypeId(self.type_table, entry.value_ptr.*);
+            if (vt.isHeapType()) {
+                bitmap |= @as(u256, 1) << @intCast(tag);
+            }
+            tag += 1;
+        }
+
+        const id: u16 = @intCast(self.union_descriptors.items.len);
+        try self.union_descriptors.append(self.allocator, .{ .heap_bitmap = bitmap });
+        try self.type_id_to_union_descriptor_idx.put(type_id, id);
+        try self.union_tag_by_type_id.put(type_id, tag_map);
+        return id;
+    }
+
+    fn unionTagIndex(self: *Self, type_id: tt.TypeId, name: []const u8) !u16 {
+        _ = try self.getOrCreateUnionDescriptor(type_id);
+        const tag_map = self.union_tag_by_type_id.get(type_id).?;
+        return tag_map.get(name) orelse error.UnableToFindSlot;
+    }
 };
 
 pub const UnionDescriptor = struct {
@@ -987,6 +1107,7 @@ pub const Chunk = struct {
                 .null => std.debug.print("null", .{}),
                 .array => std.debug.print("<array>", .{}),
                 .@"struct" => std.debug.print("<struct>", .{}),
+                .@"union" => std.debug.print("<union>", .{}),
                 .string => unreachable,
             }
             std.debug.print("\n", .{});
@@ -1060,6 +1181,11 @@ pub const Chunk = struct {
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
+            .UNION_INIT => std.debug.print("R[{d}] D[{d}]", .{ inst.a, inst.bEx() }),
+            .UNION_LOAD => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .UNION_STORE => std.debug.print("R[{d}] T[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .LARGE_UNION_LOAD => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .LARGE_UNION_STORE => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
         }
@@ -1117,6 +1243,8 @@ pub const OpCode = enum(u8) {
     UNION_INIT,
     UNION_LOAD,
     UNION_STORE,
+    LARGE_UNION_LOAD,
+    LARGE_UNION_STORE,
 
     STATIC_LOAD,
     STATIC_STORE,

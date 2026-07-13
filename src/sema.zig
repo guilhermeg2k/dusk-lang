@@ -314,7 +314,7 @@ pub const SemaAnalyzer = struct {
             try static_fields.put(field.identifier, enum_field);
         }
 
-        self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".static_fields = static_fields;
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".static_fields = static_fields;
 
         for (union_def.funcs) |func_stmt| {
             const func = func_stmt.data.func;
@@ -911,6 +911,12 @@ pub const SemaAnalyzer = struct {
                             );
                         }
                     },
+                    .@"union" => {
+                        return self.err_dispatcher.notMutable(
+                            index_exp.index.data.identifier,
+                            index_exp.index.loc,
+                        );
+                    },
                     else => unreachable,
                 }
 
@@ -1208,6 +1214,9 @@ pub const SemaAnalyzer = struct {
                                 uid = symbol.uid;
                                 is_struct_init = true;
                             },
+                            .@"union" => {
+                                return self.evalUnionInit(exp, dt.blueprint_type_id);
+                            },
                             .@"enum" => {
                                 return self.err_dispatcher.invalidType(
                                     "function or struct",
@@ -1432,6 +1441,40 @@ pub const SemaAnalyzer = struct {
         );
     }
 
+    fn evalUnionInit(self: *Self, exp: *const ast.ExpNode, blueprint_type_id: tt.TypeId) !*ir.Value {
+        const fn_call = exp.data.fn_call;
+        const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
+
+        if (!fn_call.are_arguments_named or fn_call.arguments.len != 1) {
+            return self.err_dispatcher.invalidType(
+                "a single named variant argument",
+                try self.type_table.name(blueprint_type_id, self.allocator),
+                exp.loc,
+            );
+        }
+
+        const arg = fn_call.arguments[0];
+        const variant_name = arg.identifier.?;
+
+        const variant_type_id = union_def.variants.get(variant_name) orelse {
+            return self.err_dispatcher.invalidEnumVariant(union_def.identifier, variant_name, exp.loc);
+        };
+
+        const value = try self.evalExp(arg.exp);
+        if (!self.type_table.coerce(value.type_id, variant_type_id)) {
+            return self.err_dispatcher.invalidType(
+                try self.type_table.name(variant_type_id, self.allocator),
+                try self.type_table.name(value.type_id, self.allocator),
+                arg.exp.loc,
+            );
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .union_init = .{ .tag = variant_name, .value = value } },
+            .type_id = blueprint_type_id,
+        });
+    }
+
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const indexed_exp = exp.data.indexed;
         const is_nullable = indexed_exp.nullable;
@@ -1542,6 +1585,33 @@ pub const SemaAnalyzer = struct {
                         }
 
                         return self.err_dispatcher.invalidEnumVariant(enum_def.identifier, member_name, exp.loc);
+                    },
+                    else => unreachable,
+                };
+            },
+
+            .@"union" => {
+                const union_def = self.type_table.getTypePtrById(target_type).kind.@"union";
+                return switch (indexed_exp.index.data) {
+                    .identifier => |member_name| {
+                        const variant_type_id = union_def.variants.get(member_name) orelse {
+                            return self.err_dispatcher.invalidEnumVariant(union_def.identifier, member_name, exp.loc);
+                        };
+
+                        const result_type = try self.type_table.getOrAddNullable(variant_type_id);
+
+                        return ir.Value.init(self.allocator, .{
+                            .data = .{
+                                .indexed = .{
+                                    .target = target,
+                                    .index = try ir.Value.init(self.allocator, .{
+                                        .data = .{ .i_string = member_name },
+                                        .type_id = self.type_table.getPrimitive(.string),
+                                    }),
+                                },
+                            },
+                            .type_id = result_type,
+                        });
                     },
                     else => unreachable,
                 };
