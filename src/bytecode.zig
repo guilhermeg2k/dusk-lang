@@ -1249,6 +1249,12 @@ pub const OpCode = enum(u8) {
     STATIC_LOAD,
     STATIC_STORE,
 
+    NULL_BOX_INIT,
+    NULL_BOX_STORE,
+    NULL_BOX_UNWRAP,
+
+    NULL_BOX_NNULL,
+
     I_ADD,
     I_SUB,
     I_MULT,

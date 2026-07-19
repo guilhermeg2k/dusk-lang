@@ -22,6 +22,7 @@ const HeapValueType = enum(u8) {
     @"struct",
     string,
     @"union",
+    null_box,
 };
 
 pub const HeapValue = extern struct {
@@ -331,6 +332,39 @@ pub const String = extern struct {
     }
 };
 
+pub const Nullable = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    not_null: bool, // 0 = null, 1 = not null
+    value: ?Value,
+
+    pub fn init(allocator: std.mem.Allocator, is_null: bool, value: ?Value) !*Self {
+        const ptr = try allocator.create(Self);
+
+        ptr.not_null = !is_null;
+        ptr.value = value;
+        ptr.obj = .{
+            .kind = .null_box,
+        };
+
+        return ptr;
+    }
+
+    pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
+        const cloned = try Self.init(allocator, .{
+            .not_null = self.not_null,
+            .value = self.value,
+        });
+
+        return cloned;
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
+    }
+};
+
 pub const TypedValue = struct {
     value: Value,
     type: ValueType,
@@ -359,40 +393,22 @@ pub const ValueType = enum(u8) {
     array,
     @"struct",
     @"union",
+    nullable,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .array, .@"struct", .@"union" => true,
+            .string, .array, .@"struct", .@"union", .nullable => true,
             else => false,
-        };
-    }
-
-    pub fn from_ir_value(value: *const ir.Value) ValueType {
-        return switch (value.data) {
-            .i_int => .int64,
-            .i_float => .float64,
-            .i_bool => .bool,
-            .i_string => .string,
-            .i_null, .i_void => .null,
-            .i_array => .array,
-            .binary_op => |bo| switch (bo.kind) {
-                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .int64,
-                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .bool,
-                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .float64,
-                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .bool,
-                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .bool,
-            },
-            .unary_op => |uo| switch (uo.kind) {
-                .not => .bool,
-                .i_neg => .int64,
-                .f_neg => .float64,
-            },
-            else => .null,
         };
     }
 
     pub fn fromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) ValueType {
         const ty = type_table.getTypePtrById(type_id);
+
+        if (ty.nullable) {
+            return .nullable;
+        }
+
         return switch (ty.kind) {
             .int => .int64,
             .float => .float64,
@@ -402,9 +418,10 @@ pub const ValueType = enum(u8) {
             .@"struct" => .@"struct",
             .@"union" => .@"union",
             .@"enum" => .int64,
-            else => .null,
+            else => unreachable,
         };
-    }};
+    }
+};
 
 pub const TypedValueHashContext = struct {
     pub fn hash(_: @This(), tv: TypedValue) u64 {

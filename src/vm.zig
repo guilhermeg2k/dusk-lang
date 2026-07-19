@@ -60,8 +60,8 @@ pub const VM = struct {
                     const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
                     current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.String.calc_size(str_data.len));
-                    var string_obj = try v.String.init(self.heap.arenas[self.heap.active].allocator(), str_data);
-                    self.allocate(v.String.calc_size(str_data.len));
+                    var string_obj = try v.String.init(self.getCurrentHeapAllocator(), str_data);
+                    self.increaseHeapAllocationCount(v.String.calc_size(str_data.len));
                     stack[stack_base + inst.a] = .{ .heap_obj = &string_obj.obj };
                 },
 
@@ -72,8 +72,8 @@ pub const VM = struct {
                 .ARRAY_INIT => {
                     current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.Array.calc_size(inst.c));
-                    var new_array = try v.Array.init(self.heap.arenas[self.heap.active].allocator(), @enumFromInt(inst.b), inst.c);
-                    self.allocate(v.Array.calc_size(new_array.capacity));
+                    var new_array = try v.Array.init(self.getCurrentHeapAllocator(), @enumFromInt(inst.b), inst.c);
+                    self.increaseHeapAllocationCount(v.Array.calc_size(new_array.capacity));
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_array.obj };
                 },
 
@@ -93,7 +93,7 @@ pub const VM = struct {
                         current_frame.cur_inst = cur_instruction;
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
                         array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
-                        array = try array.resize(self.heap.arenas[self.heap.active].allocator());
+                        array = try array.resize(self.getCurrentHeapAllocator());
                         stack[stack_base + inst.a].heap_obj = &array.obj;
 
                         const new_size = v.Array.calc_size(array.capacity);
@@ -130,8 +130,8 @@ pub const VM = struct {
                     const desc = self.program.struct_descriptors[desc_id];
                     current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.Struct.calc_size(desc.field_count));
-                    var new_struct = try v.Struct.init(self.heap.arenas[self.heap.active].allocator(), desc.field_count, desc_id);
-                    self.allocate(v.Struct.calc_size(new_struct.field_count));
+                    var new_struct = try v.Struct.init(self.getCurrentHeapAllocator(), desc.field_count, desc_id);
+                    self.increaseHeapAllocationCount(v.Struct.calc_size(new_struct.field_count));
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_struct.obj };
                 },
 
@@ -160,8 +160,8 @@ pub const VM = struct {
                     const desc_id = inst.bEx();
                     current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(v.Union.calc_size());
-                    var new_union = try v.Union.init(self.heap.arenas[self.heap.active].allocator(), desc_id);
-                    self.allocate(v.Union.calc_size());
+                    var new_union = try v.Union.init(self.getCurrentHeapAllocator(), desc_id);
+                    self.increaseHeapAllocationCount(v.Union.calc_size());
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_union.obj };
                 },
 
@@ -191,6 +191,42 @@ pub const VM = struct {
                     const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
                     const tag_reg = stack[stack_base + inst.c];
                     stack[stack_base + inst.a] = union_vl.get(@intCast(tag_reg.int64));
+                },
+
+                .NULL_BOX_INIT => {
+                    const size = v.Nullable.calc_size();
+                    try self.maybeCollectGarbage(size);
+                    const new_null = v.Nullable.init(self.getCurrentHeapAllocator(), true, null);
+                    self.increaseHeapAllocationCount(size);
+                    stack[stack_base + inst.a] = .{ .heap_obj = &new_null.obj };
+                },
+
+                .NULL_BOX_STORE => {
+                    const nullable_ptr = stack[stack_base + inst.a].heap_obj;
+                    const nullable_vl = v.HeapValue.getParentPtr(v.Nullable, nullable_ptr);
+                    const not_null = stack[stack_base + inst.b];
+
+                    nullable_vl.not_null = not_null;
+
+                    if (not_null) {
+                        const new_value = stack[stack_base + inst.c];
+                        nullable_vl.value = new_value;
+                    } else {
+                        nullable_vl.value = null;
+                    }
+                },
+
+                .NULL_BOX_UNWRAP => {
+                    const nullable_ptr = stack[stack_base + inst.b].heap_obj;
+                    const nullable_vl = v.HeapValue.getParentPtr(v.Nullable, nullable_ptr);
+                    stack[stack_base + inst.a] = nullable_vl.value;
+                },
+
+                .NULL_BOX_NNULL => {
+                    const box_ptr = stack[stack_base + inst.b].heap_obj;
+                    const box_vl = v.HeapValue.getParentPtr(v.Nullable, box_ptr);
+                    //note: currently others heap values are being boxed and is not needed we could just compare it to null
+                    return box_vl.not_null;
                 },
 
                 .I_ADD => {
@@ -463,7 +499,7 @@ pub const VM = struct {
         return follow orelse ptr;
     }
 
-    fn allocate(self: *Self, bytes: usize) void {
+    fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
         self.heap.allocated += bytes;
         self.heap.object_count += 1;
     }
@@ -596,6 +632,10 @@ pub const VM = struct {
             .@"union" => v.Union.calc_size(),
             .string => v.String.calc_size(v.HeapValue.getParentPtr(v.String, ptr).len),
         };
+    }
+
+    fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
+        return self.heap.arenas[self.heap.active].allocator();
     }
 };
 
