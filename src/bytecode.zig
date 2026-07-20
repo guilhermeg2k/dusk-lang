@@ -222,6 +222,8 @@ pub const BytecodeGen = struct {
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
         };
 
+        // chunk.disasamble();
+
         return chunk;
     }
 
@@ -1101,9 +1103,6 @@ pub const BytecodeGen = struct {
         };
 
         if (null_box_init.value) |val| {
-            if (!null_box_init.not_null) {
-                unreachable;
-            }
             const value_reg = try self.genValue(val, self.consumeRegister());
             defer self.freeRegister();
             init_inst.c = value_reg;
@@ -1181,6 +1180,7 @@ pub const Chunk = struct {
                 .array => std.debug.print("<array>", .{}),
                 .@"struct" => std.debug.print("<struct>", .{}),
                 .@"union" => std.debug.print("<union>", .{}),
+                .nullable => std.debug.print("<nullable:", .{}),
                 .string => unreachable,
             }
             std.debug.print("\n", .{});
@@ -1261,6 +1261,12 @@ pub const Chunk = struct {
             .LARGE_UNION_STORE => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
+            .NULL_BOX_INIT,
+            .NULL_BOX_STORE,
+            => std.debug.print("R[{d}] B[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .NULL_BOX_UNWRAP,
+            .NULL_BOX_NNULL,
+            => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
         }
         std.debug.print("\n", .{});
     }

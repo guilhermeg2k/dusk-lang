@@ -348,10 +348,10 @@ pub const NullBox = extern struct {
     kind: ValueType,
     value: Value,
 
-    pub fn init(allocator: std.mem.Allocator, is_null: bool, value: Value) !*Self {
+    pub fn init(allocator: std.mem.Allocator, not_null: bool, value: Value) !*Self {
         const ptr = try allocator.create(Self);
 
-        ptr.not_null = !is_null;
+        ptr.not_null = not_null;
         ptr.value = value;
         ptr.obj = .{
             .kind = .null_box,
@@ -430,6 +430,7 @@ pub const ValueType = enum(u8) {
             .@"enum" => .int64,
             //note: void -> null
             .void => .null,
+            .null => .null,
             else => {
                 std.debug.print("{}", .{ty});
                 unreachable;

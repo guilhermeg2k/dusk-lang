@@ -238,7 +238,12 @@ pub const SemaAnalyzer = struct {
 
         for (fn_call.arguments) |arg| {
             const exp_value = try self.evalExp(arg.exp);
-            const field_type_id = exp_value.type_id;
+            var field_type_id = exp_value.type_id;
+            if (field_type_id == self.type_table.getPrimitive(.null)) {
+                field_type_id = try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.dynamic));
+            } else if (self.type_table.getTypePtrById(field_type_id).kind == .@"struct") {
+                field_type_id = try self.type_table.getOrAddNullable(field_type_id);
+            }
             const field: tt.TypedIdentifier = .{
                 .identifier = arg.identifier.?,
                 .is_mut = is_mut,
@@ -629,8 +634,22 @@ pub const SemaAnalyzer = struct {
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (enum_stmt.def.static_fields) |field| {
-            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else default_value.?.type_id;
+            const raw_default: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else raw_default.?.type_id;
+
+            const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
+                const ft = self.type_table.getTypePtrById(field_type);
+                if (ft.nullable) {
+                    break :blk try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{
+                            .not_null = dv.type_id != self.type_table.getPrimitive(.null),
+                            .value = dv,
+                        } },
+                        .type_id = dv.type_id,
+                    });
+                }
+                break :blk dv;
+            } else null;
 
             try static_fields.append(self.allocator, .{
                 .identifier = field.identifier,
@@ -672,8 +691,22 @@ pub const SemaAnalyzer = struct {
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (union_stmt.def.static_fields) |field| {
-            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else default_value.?.type_id;
+            const raw_default: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
+            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else raw_default.?.type_id;
+
+            const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
+                const ft = self.type_table.getTypePtrById(field_type);
+                if (ft.nullable) {
+                    break :blk try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{
+                            .not_null = dv.type_id != self.type_table.getPrimitive(.null),
+                            .value = dv,
+                        } },
+                        .type_id = dv.type_id,
+                    });
+                }
+                break :blk dv;
+            } else null;
 
             try static_fields.append(self.allocator, .{
                 .identifier = field.identifier,
@@ -849,9 +882,12 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notMutable(target_root.data.identifier, target_root.loc);
                 }
 
+                var field_maybe_nullable_type_id: tt.TypeId = undefined;
+
                 switch (self.type_table.getTypePtrById(target_type).kind) {
                     .array => {
-                        if (!self.type_table.coerce(assignment_value_type, self.type_table.getTypePtrById(target_symbol.type_id).kind.array)) {
+                        field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_symbol.type_id).kind.array;
+                        if (!self.type_table.coerce(assignment_value_type, field_maybe_nullable_type_id)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(target_symbol.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -870,6 +906,8 @@ pub const SemaAnalyzer = struct {
                                 index_exp.index.loc,
                             );
 
+                            field_maybe_nullable_type_id = field.type_id;
+
                             if (!self.type_table.coerce(assignment_value_type, field.type_id)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
@@ -883,6 +921,8 @@ pub const SemaAnalyzer = struct {
                                 index_exp.index.data.identifier,
                                 index_exp.index.loc,
                             );
+
+                            field_maybe_nullable_type_id = field.type_id;
 
                             if (!field.is_mut) {
                                 return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
@@ -905,6 +945,8 @@ pub const SemaAnalyzer = struct {
                             index_exp.index.loc,
                         );
 
+                        field_maybe_nullable_type_id = field.type_id;
+
                         if (!field.is_mut) {
                             return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                         }
@@ -926,10 +968,22 @@ pub const SemaAnalyzer = struct {
                     else => unreachable,
                 }
 
+                const field_type = self.type_table.getTypePtrById(field_maybe_nullable_type_id);
+                const boxed_value = if (field_type.nullable)
+                    try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{
+                            .not_null = assignment_value.type_id != self.type_table.getPrimitive(.null),
+                            .value = assignment_value,
+                        } },
+                        .type_id = assignment_value.type_id,
+                    })
+                else
+                    assignment_value;
+
                 return ir.Instruction{
                     .update_indexed = .{
                         .target = try self.evalExp(assign_stmt.target),
-                        .value = assignment_value,
+                        .value = boxed_value,
                     },
                 };
             },
@@ -1418,6 +1472,20 @@ pub const SemaAnalyzer = struct {
         const is_struct_inicialization = is_struct_init or fn_call.target.data == .anonymous_struct_identifier;
 
         if (is_struct_inicialization) {
+            for (params, fn_call_arguments_values.items, 0..) |param, _, i| {
+                const param_type = self.type_table.getTypePtrById(param.type_id);
+                if (param_type.nullable) {
+                    const current = fn_call_arguments_values.items[i];
+                    fn_call_arguments_values.items[i] = try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{
+                            .not_null = current.type_id != self.type_table.getPrimitive(.null),
+                            .value = current,
+                        } },
+                        .type_id = current.type_id,
+                    });
+                }
+            }
+
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
                 try keys.append(self.allocator, param.identifier);
@@ -1471,14 +1539,26 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidEnumVariant(union_def.identifier, variant_name, exp.loc);
         };
 
-        const value = try self.evalExp(arg.exp);
-        if (!self.type_table.coerce(value.type_id, variant_type_id)) {
+        const raw_value = try self.evalExp(arg.exp);
+        if (!self.type_table.coerce(raw_value.type_id, variant_type_id)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(variant_type_id, self.allocator),
-                try self.type_table.name(value.type_id, self.allocator),
+                try self.type_table.name(raw_value.type_id, self.allocator),
                 arg.exp.loc,
             );
         }
+
+        const variant_type = self.type_table.getTypePtrById(variant_type_id);
+        const value = if (variant_type.nullable)
+            try ir.Value.init(self.allocator, .{
+                .data = .{ .null_box_init = .{
+                    .not_null = raw_value.type_id != self.type_table.getPrimitive(.null),
+                    .value = raw_value,
+                } },
+                .type_id = raw_value.type_id,
+            })
+        else
+            raw_value;
 
         return ir.Value.init(self.allocator, .{
             .data = .{ .union_init = .{ .tag = variant_name, .value = value } },
