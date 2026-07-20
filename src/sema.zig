@@ -579,11 +579,26 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
 
+        const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
+
+        const boxed_value = if (var_type_ptr.nullable)
+            try ir.Value.init(self.allocator, .{
+                .data = .{
+                    .null_box_init = .{
+                        .not_null = expression_value.type_id != self.type_table.getPrimitive(.null),
+                        .value = expression_value,
+                    },
+                },
+                .type_id = expression_value.type_id,
+            })
+        else
+            expression_value;
+
         return ir.Instruction{ .store_var = .{
             .uid = uid,
             .identifier = let_stmt.identifier,
             .type_id = var_type_id,
-            .value = expression_value,
+            .value = boxed_value,
         } };
     }
 
@@ -712,6 +727,7 @@ pub const SemaAnalyzer = struct {
         const if_capture_stmt = stmt.data.if_capture;
         const exp_value = try self.evalExp(if_capture_stmt.exp);
         const exp_type = exp_value.type_id;
+
         var instructions: std.ArrayList(ir.Instruction) = .empty;
 
         if (self.type_table.getTypePtrById(exp_type).nullable == false) {
@@ -723,27 +739,6 @@ pub const SemaAnalyzer = struct {
         }
 
         const captured_type_id = self.type_table.typeIdByNullableTypeId.get(exp_type).?;
-
-        const aux_var_id = self.scope.genUid();
-        const aux_var_name = try std.fmt.allocPrint(self.allocator, "$captured_${d}", .{aux_var_id});
-
-        const store_aux_var_inst = ir.Instruction{ .store_var = .{
-            .uid = aux_var_id,
-            .identifier = aux_var_name,
-            .type_id = captured_type_id,
-            .value = exp_value,
-        } };
-
-        const aux_var_value = try ir.Value.init(self.allocator, .{
-            .data = .{
-                .identifier = .{
-                    .uid = aux_var_id,
-                    .value = aux_var_name,
-                },
-            },
-            .type_id = captured_type_id,
-        });
-
         const captured_symbol = Symbol{
             .uid = self.scope.genUid(),
             .identifier = if_capture_stmt.identifier.name,
@@ -754,40 +749,37 @@ pub const SemaAnalyzer = struct {
         try self.scope.symbol_table.put(captured_symbol);
         defer _ = self.scope.symbol_table.remove(captured_symbol.identifier);
 
-        const store_captured_var_inst = ir.Instruction{ .store_var = .{
-            .uid = captured_symbol.uid,
-            .identifier = captured_symbol.identifier,
-            .type_id = captured_type_id,
-            .value = aux_var_value,
-        } };
-
-        const check_null_condition = try ir.Value.init(
-            self.allocator,
-            .{
-                .data = .{
-                    .binary_op = .{
-                        .kind = .b_cmp_neq,
-                        .left = aux_var_value,
-                        .right = try ir.Value.init(self.allocator, .{
-                            .data = .{ .i_null = {} },
-                            .type_id = self.type_table.getPrimitive(.null),
-                        }),
-                    },
-                },
-                .type_id = self.type_table.getPrimitive(.boolean),
-            },
-        );
-
         const then_block = (try self.visitBlock(&if_capture_stmt.body)).instructions;
         const else_block = if (if_capture_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{};
 
-        const check_null_if_inst = ir.Instruction{ .branch_if = .{
-            .condition = check_null_condition,
+        const condition = try ir.Value.init(self.allocator, .{
+            .data = .{
+                .unary_op = .{
+                    .kind = .box_not_null,
+                    .right = exp_value,
+                },
+            },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        });
+
+        const check_not_null_inst = ir.Instruction{ .branch_if = .{
+            .condition = condition,
             .then_block = then_block,
             .else_block = else_block,
         } };
 
-        try instructions.appendSlice(self.allocator, &.{ store_aux_var_inst, store_captured_var_inst, check_null_if_inst });
+        const store_captured_var_inst = ir.Instruction{
+            .unwrap_null_box = .{
+                .unwrapped = .{
+                    .uid = captured_symbol.uid,
+                    .identifier = captured_symbol.identifier,
+                    .type_id = captured_type_id,
+                },
+                .null_box = exp_value,
+            },
+        };
+
+        try instructions.appendSlice(self.allocator, &.{ store_captured_var_inst, check_not_null_inst });
         return instructions.toOwnedSlice(self.allocator);
     }
 
@@ -814,6 +806,20 @@ pub const SemaAnalyzer = struct {
                         try self.type_table.name(assignment_value_type, self.allocator),
                         assign_stmt.exp.loc,
                     );
+                }
+
+                const id_symbol_type_ptr = self.type_table.getTypePtrById(id_symbol.type_id);
+
+                const not_null = assignment_value.type_id != self.type_table.getPrimitive(.null);
+
+                if (id_symbol_type_ptr.nullable) {
+                    return ir.Instruction{ .update_null_box = .{
+                        .identifier = id_symbol.identifier,
+                        .uid = id_symbol.uid,
+                        .not_null = not_null,
+                        .value = if (not_null) assignment_value else null,
+                        .type_id = id_symbol.type_id,
+                    } };
                 }
 
                 return ir.Instruction{ .store_var = .{
@@ -1381,8 +1387,13 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.invalidType(try self.type_table.name(param.type_id, self.allocator), try self.type_table.name(arg_type, self.allocator), _exp.loc);
                 }
 
+                const arg_type_ptr = self.type_table.getTypePtrById(arg_type);
+                if (arg_type_ptr.kind == .array and self.type_table.getTypePtrById(arg_type_ptr.kind.array).kind == .dynamic) {
+                    fn_call_arg_value.type_id = param.type_id;
+                }
+
                 if (self.type_table.getTypePtrById(param.type_id).kind == .@"struct" and param.is_mut and fn_call_arg_value.data == .identifier) {
-                    const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.value);
+                    const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.name);
                     if (!symbol.kind.variable.is_mut) {
                         return self.err_dispatcher.notMutable(symbol.identifier, _exp.loc);
                     }
@@ -1390,9 +1401,9 @@ pub const SemaAnalyzer = struct {
 
                 if (self.type_table.getTypePtrById(param.type_id).kind == .array and param.is_mut and _exp.data != .array_literal) {
                     if (fn_call_arg_value.data == .identifier) {
-                        const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.value);
+                        const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.name);
                         if (!symbol.kind.variable.is_mut) {
-                            return self.err_dispatcher.notMutable(fn_call_arg_value.data.identifier.value, _exp.loc);
+                            return self.err_dispatcher.notMutable(fn_call_arg_value.data.identifier.name, _exp.loc);
                         }
                     }
                 }
@@ -1635,7 +1646,7 @@ pub const SemaAnalyzer = struct {
             return ir.Value.init(self.allocator, .{
                 .data = .{ .identifier = .{
                     .uid = symbol.uid,
-                    .value = symbol.identifier,
+                    .name = symbol.identifier,
                 } },
                 .type_id = type_id,
             });
@@ -1649,7 +1660,7 @@ pub const SemaAnalyzer = struct {
         while (true) {
             switch (current.data) {
                 .identifier => {
-                    const sym = self.scope.symbol_table.get(current.data.identifier.value) orelse return false;
+                    const sym = self.scope.symbol_table.get(current.data.identifier.name) orelse return false;
                     return sym.kind.variable.is_mut;
                 },
                 .indexed => |idx| {
@@ -1664,7 +1675,7 @@ pub const SemaAnalyzer = struct {
 
     fn shouldAutoBindSelf(self: *Self, target: *ir.Value) bool {
         if (target.data == .identifier) {
-            if (self.scope.symbol_table.get(target.data.identifier.value)) |sym| {
+            if (self.scope.symbol_table.get(target.data.identifier.name)) |sym| {
                 return sym.kind == .variable;
             }
             return false;

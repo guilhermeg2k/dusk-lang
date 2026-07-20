@@ -232,6 +232,7 @@ pub const BytecodeGen = struct {
                     _ = try self.genStoreVar(store_var);
                 },
                 .expression_stmt => |stmt| {
+                    //note: consuming a register
                     _ = try self.genValue(stmt.value, self.consumeRegister());
                 },
                 .branch_if => |stmt| {
@@ -245,6 +246,12 @@ pub const BytecodeGen = struct {
                 },
                 .update_indexed => |stmt| {
                     _ = try self.genUpdateArrayValue(stmt);
+                },
+                .unwrap_null_box => |stmt| {
+                    _ = try self.genUnwrapNullBox(stmt, self.consumeRegister());
+                },
+                .update_null_box => |stmt| {
+                    try self.genUpadateNullBox(stmt);
                 },
                 .break_stmt => try self.genBreak(),
                 .continue_stmt => try self.genContinue(),
@@ -470,6 +477,10 @@ pub const BytecodeGen = struct {
 
             .union_init => {
                 try self.genUnionInit(value, target_reg);
+            },
+
+            .null_box_init => {
+                try self.genNullBoxInit(value, target_reg);
             },
 
             .binary_op => |bo| {
@@ -765,6 +776,44 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, load_const);
     }
 
+    fn genUnwrapNullBox(self: *Self, stmt: ir.UnwrapNullBox, target_reg: u8) !u8 {
+        const box_reg = try self.genValue(stmt.null_box, self.consumeRegister());
+        defer self.freeRegisterN(1);
+
+        const unwrap_isnt = Instruction{
+            .op = .NULL_BOX_UNWRAP,
+            .a = target_reg,
+            .b = box_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, unwrap_isnt);
+        try self.var_register_id_by_uid.put(stmt.unwrapped.uid, target_reg);
+        self.register_types[target_reg] = stmt.unwrapped.type_id;
+
+        return target_reg;
+    }
+
+    fn genUpadateNullBox(self: *Self, stmt: ir.UpdateNullBox) !void {
+        const box_reg = self.var_register_id_by_uid.get(stmt.uid) orelse return BytecodeError.UndefinedVariable;
+
+        var store_inst = Instruction{
+            .op = .NULL_BOX_STORE,
+            .a = box_reg,
+            .b = @intFromBool(stmt.not_null),
+        };
+
+        if (stmt.value) |value| {
+            if (!stmt.not_null) {
+                unreachable;
+            }
+            const value_reg = try self.genValue(value, self.consumeRegister());
+            defer self.freeRegister();
+            store_inst.c = value_reg;
+        }
+
+        try self.chunk_instructions.append(self.allocator, store_inst);
+    }
+
     fn genVoidValue(self: *Self, target_reg: u8) !u8 {
         try self.genLoadConst(.{ .value = .{ .null = {} }, .type = .null }, target_reg);
         self.register_types[target_reg] = self.type_table.getPrimitive(.void);
@@ -872,11 +921,11 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn genUnaryOp(self: *Self, bo: ir.UnaryOp, target_reg: u8) !void {
-        const aux_reg = try self.genValue(bo.right, self.consumeRegister());
+    fn genUnaryOp(self: *Self, uo: ir.UnaryOp, target_reg: u8) !void {
+        const aux_reg = try self.genValue(uo.right, self.consumeRegister());
         defer self.freeRegister();
 
-        const op = OpCode.fromUnaryOp(bo.kind);
+        const op = OpCode.fromUnaryOp(uo.kind);
         const op_inst = Instruction{
             .op = op,
             .a = target_reg,
@@ -884,8 +933,10 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, op_inst);
-        self.register_types[target_reg] = switch (bo.kind) {
+
+        self.register_types[target_reg] = switch (uo.kind) {
             .not => self.type_table.getPrimitive(.boolean),
+            .box_not_null => self.type_table.getPrimitive(.boolean),
             .i_neg => self.type_table.getPrimitive(.int),
             .f_neg => self.type_table.getPrimitive(.float),
         };
@@ -1037,6 +1088,28 @@ pub const BytecodeGen = struct {
         _ = try self.getOrCreateUnionDescriptor(type_id);
         const tag_map = self.union_tag_by_type_id.get(type_id).?;
         return tag_map.get(name) orelse error.UnableToFindSlot;
+    }
+
+    fn genNullBoxInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const null_box_init = value.data.null_box_init;
+        self.register_types[target_reg] = value.type_id;
+
+        var init_inst = Instruction{
+            .op = .NULL_BOX_INIT,
+            .a = target_reg,
+            .b = @intFromBool(null_box_init.not_null),
+        };
+
+        if (null_box_init.value) |val| {
+            if (!null_box_init.not_null) {
+                unreachable;
+            }
+            const value_reg = try self.genValue(val, self.consumeRegister());
+            defer self.freeRegister();
+            init_inst.c = value_reg;
+        }
+
+        try self.chunk_instructions.append(self.allocator, init_inst);
     }
 };
 
@@ -1305,6 +1378,7 @@ pub const OpCode = enum(u8) {
 
     pub fn fromUnaryOp(op: ir.UnaryOpKind) Self {
         return switch (op) {
+            .box_not_null => Self.NULL_BOX_NNULL,
             .not => Self.B_NOT,
             .i_neg => Self.I_NEG,
             .f_neg => Self.F_NEG,

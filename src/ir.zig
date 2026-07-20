@@ -19,6 +19,8 @@ pub const Instruction = union(enum) {
     return_stmt: ReturnStmt,
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
+    unwrap_null_box: UnwrapNullBox,
+    update_null_box: UpdateNullBox,
     break_stmt: void,
     continue_stmt: void,
 };
@@ -96,6 +98,11 @@ pub const UnionInit = struct {
     value: ?*Value,
 };
 
+pub const NullBoxInit = struct {
+    not_null: bool,
+    value: ?*Value,
+};
+
 pub const StoreVar = struct {
     uid: usize,
     identifier: []const u8,
@@ -139,7 +146,7 @@ pub const Value = struct {
         i_null: void,
         i_array: Array,
 
-        identifier: struct { uid: usize, value: []const u8 },
+        identifier: struct { uid: usize, name: []const u8 },
         indexed: IndexedValue,
 
         binary_op: BinaryOp,
@@ -148,6 +155,7 @@ pub const Value = struct {
         fn_call: FnCall,
         struct_init: StructInit,
         union_init: UnionInit,
+        null_box_init: NullBoxInit,
     },
 
     type_id: TypeId,
@@ -167,6 +175,23 @@ pub const BinaryOp = struct {
     right: *Value,
 };
 
+pub const NullBoxNNullOp = struct {
+    value: *Value,
+};
+
+pub const UnwrapNullBox = struct {
+    unwrapped: struct { uid: usize, identifier: []const u8, type_id: TypeId },
+    null_box: *Value,
+};
+
+pub const UpdateNullBox = struct {
+    uid: usize,
+    type_id: TypeId,
+    identifier: []const u8,
+    not_null: bool,
+    value: ?*Value,
+};
+
 pub const IndexedValue = struct {
     target: *Value,
     index: *Value,
@@ -184,6 +209,7 @@ pub const FnCall = struct {
 };
 
 pub const UnaryOpKind = enum {
+    box_not_null,
     i_neg,
     f_neg,
     not,

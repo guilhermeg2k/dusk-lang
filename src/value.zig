@@ -3,8 +3,16 @@ const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
 const tt = @import("type_table.zig");
 
-const NULL_VALUE = Value{
+pub const NULL_VALUE = Value{
     .null = {},
+};
+
+pub const TRUE_VALUE = Value{
+    .bool = true,
+};
+
+pub const FALSE_VALUE = Value{
+    .bool = false,
 };
 
 pub const Value = extern union {
@@ -332,14 +340,15 @@ pub const String = extern struct {
     }
 };
 
-pub const Nullable = extern struct {
+pub const NullBox = extern struct {
     const Self = @This();
 
     obj: HeapValue,
     not_null: bool, // 0 = null, 1 = not null
-    value: ?Value,
+    kind: ValueType,
+    value: Value,
 
-    pub fn init(allocator: std.mem.Allocator, is_null: bool, value: ?Value) !*Self {
+    pub fn init(allocator: std.mem.Allocator, is_null: bool, value: Value) !*Self {
         const ptr = try allocator.create(Self);
 
         ptr.not_null = !is_null;
@@ -352,10 +361,11 @@ pub const Nullable = extern struct {
     }
 
     pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
-        const cloned = try Self.init(allocator, .{
-            .not_null = self.not_null,
-            .value = self.value,
-        });
+        const cloned = try Self.init(
+            allocator,
+            self.not_null,
+            self.value,
+        );
 
         return cloned;
     }
@@ -418,7 +428,12 @@ pub const ValueType = enum(u8) {
             .@"struct" => .@"struct",
             .@"union" => .@"union",
             .@"enum" => .int64,
-            else => unreachable,
+            //note: void -> null
+            .void => .null,
+            else => {
+                std.debug.print("{}", .{ty});
+                unreachable;
+            },
         };
     }
 };
@@ -435,6 +450,7 @@ pub const TypedValueHashContext = struct {
             .null => {},
             .string => unreachable,
             .array => unreachable,
+            .nullable => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
         }
@@ -448,6 +464,7 @@ pub const TypedValueHashContext = struct {
             .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
             .bool => a.value.bool == b.value.bool,
             .null => true,
+            .nullable => unreachable,
             .string => unreachable,
             .array => unreachable,
             .@"struct" => unreachable,

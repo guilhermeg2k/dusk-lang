@@ -194,17 +194,25 @@ pub const VM = struct {
                 },
 
                 .NULL_BOX_INIT => {
-                    const size = v.Nullable.calc_size();
+                    const size = v.NullBox.calc_size();
                     try self.maybeCollectGarbage(size);
-                    const new_null = v.Nullable.init(self.getCurrentHeapAllocator(), true, null);
+
+                    const not_null = inst.b == 1;
+                    var new_null = try v.NullBox.init(self.getCurrentHeapAllocator(), not_null, v.NULL_VALUE);
+
+                    if (not_null) {
+                        const value = self.stack[stack_base + inst.c];
+                        new_null.value = value;
+                    }
+
                     self.increaseHeapAllocationCount(size);
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_null.obj };
                 },
 
                 .NULL_BOX_STORE => {
                     const nullable_ptr = stack[stack_base + inst.a].heap_obj;
-                    const nullable_vl = v.HeapValue.getParentPtr(v.Nullable, nullable_ptr);
-                    const not_null = stack[stack_base + inst.b];
+                    const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, nullable_ptr);
+                    const not_null = inst.b == 1;
 
                     nullable_vl.not_null = not_null;
 
@@ -212,21 +220,23 @@ pub const VM = struct {
                         const new_value = stack[stack_base + inst.c];
                         nullable_vl.value = new_value;
                     } else {
-                        nullable_vl.value = null;
+                        nullable_vl.value = v.NULL_VALUE;
                     }
                 },
 
                 .NULL_BOX_UNWRAP => {
                     const nullable_ptr = stack[stack_base + inst.b].heap_obj;
-                    const nullable_vl = v.HeapValue.getParentPtr(v.Nullable, nullable_ptr);
-                    stack[stack_base + inst.a] = nullable_vl.value;
+                    const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, nullable_ptr);
+                    if (nullable_vl.not_null) {
+                        stack[stack_base + inst.a] = nullable_vl.value;
+                    }
                 },
 
                 .NULL_BOX_NNULL => {
                     const box_ptr = stack[stack_base + inst.b].heap_obj;
-                    const box_vl = v.HeapValue.getParentPtr(v.Nullable, box_ptr);
+                    const box_vl = v.HeapValue.getParentPtr(v.NullBox, box_ptr);
                     //note: currently others heap values are being boxed and is not needed we could just compare it to null
-                    return box_vl.not_null;
+                    stack[stack_base + inst.a] = if (box_vl.not_null) v.TRUE_VALUE else v.FALSE_VALUE;
                 },
 
                 .I_ADD => {
@@ -621,6 +631,7 @@ pub const VM = struct {
             .array => &(try v.HeapValue.getParentPtr(v.Array, obj_ptr).clone(allocator)).obj,
             .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
             .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
+            .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
             .string => &(try v.HeapValue.getParentPtr(v.String, obj_ptr).clone(allocator)).obj,
         };
     }
@@ -630,6 +641,7 @@ pub const VM = struct {
             .array => v.Array.calc_size(v.HeapValue.getParentPtr(v.Array, ptr).capacity),
             .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
             .@"union" => v.Union.calc_size(),
+            .null_box => v.NullBox.calc_size(),
             .string => v.String.calc_size(v.HeapValue.getParentPtr(v.String, ptr).len),
         };
     }
