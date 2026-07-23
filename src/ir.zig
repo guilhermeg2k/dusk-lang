@@ -99,7 +99,6 @@ pub const UnionInit = struct {
 };
 
 pub const NullBoxInit = struct {
-    not_null: bool,
     value: ?*Value,
 };
 
@@ -188,7 +187,6 @@ pub const UpdateNullBox = struct {
     uid: usize,
     type_id: TypeId,
     identifier: []const u8,
-    not_null: bool,
     value: ?*Value,
 };
 

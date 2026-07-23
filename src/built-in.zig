@@ -192,11 +192,21 @@ pub const BuiltIn = struct {
             .float64 => writer.print("{d}", .{value.float64}) catch @panic("failed to print float64"),
             .bool => writer.print("{}", .{value.bool}) catch @panic("failed to print bool"),
             .string => {
-                const str = v.HeapValue.getParentPtr(v.String, value.heap_obj);
-                writer.print("{s}", .{str.slice()}) catch @panic("failed to print string");
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    const str = v.HeapValue.getParentPtr(v.String, value.heap_obj);
+                    writer.print("{s}", .{str.slice()}) catch @panic("failed to print string");
+                }
             },
             .null => writer.print("null", .{}) catch @panic("failed to print null"),
             .array => {
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                    return;
+                }
                 const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj);
                 const data = array.getDataPtr();
                 writer.print("[", .{}) catch @panic("failed to print array bracket");
@@ -207,24 +217,35 @@ pub const BuiltIn = struct {
                 writer.print("]", .{}) catch @panic("failed to print array bracket");
             },
             .nullable => {
-                const nullable = v.HeapValue.getParentPtr(v.NullBox, value.heap_obj);
-                if (nullable.not_null) {
-                    printValue(writer, nullable.value, nullable.kind);
-                } else {
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
                     writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    const nullable = v.HeapValue.getParentPtr(v.NullBox, value.heap_obj);
+                    printValue(writer, nullable.value, nullable.kind);
                 }
             },
             .@"struct" => {
-                const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
-                writer.print("{{ ", .{}) catch @panic("failed to print struct brace");
-                for (0..s.field_count) |i| {
-                    if (i > 0) writer.print(", ", .{}) catch @panic("failed to print struct separator");
-                    writer.print("{d}", .{s.get(i).int64}) catch @panic("failed to print struct field");
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
+                    writer.print("{{ ", .{}) catch @panic("failed to print struct brace");
+                    for (0..s.field_count) |i| {
+                        if (i > 0) writer.print(", ", .{}) catch @panic("failed to print struct separator");
+                        writer.print("{d}", .{s.get(i).int64}) catch @panic("failed to print struct field");
+                    }
+                    writer.print(" }}", .{}) catch @panic("failed to print struct brace");
                 }
-                writer.print(" }}", .{}) catch @panic("failed to print struct brace");
             },
             .@"union" => {
-                writer.print("<union>", .{}) catch @panic("failed to print union");
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    writer.print("<union>", .{}) catch @panic("failed to print union");
+                }
             },
         }
     }

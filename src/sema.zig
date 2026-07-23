@@ -584,16 +584,9 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
 
-        const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
-
-        const boxed_value = if (var_type_ptr.nullable)
+        const boxed_value = if (self.typeNeedsNullBox(var_type_id, expression_value.type_id))
             try ir.Value.init(self.allocator, .{
-                .data = .{
-                    .null_box_init = .{
-                        .not_null = expression_value.type_id != self.type_table.getPrimitive(.null),
-                        .value = expression_value,
-                    },
-                },
+                .data = .{ .null_box_init = .{ .value = expression_value } },
                 .type_id = expression_value.type_id,
             })
         else
@@ -638,13 +631,9 @@ pub const SemaAnalyzer = struct {
             const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else raw_default.?.type_id;
 
             const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
-                const ft = self.type_table.getTypePtrById(field_type);
-                if (ft.nullable) {
+                if (self.typeNeedsNullBox(field_type, dv.type_id)) {
                     break :blk try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{
-                            .not_null = dv.type_id != self.type_table.getPrimitive(.null),
-                            .value = dv,
-                        } },
+                        .data = .{ .null_box_init = .{ .value = dv } },
                         .type_id = dv.type_id,
                     });
                 }
@@ -695,13 +684,9 @@ pub const SemaAnalyzer = struct {
             const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else raw_default.?.type_id;
 
             const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
-                const ft = self.type_table.getTypePtrById(field_type);
-                if (ft.nullable) {
+                if (self.typeNeedsNullBox(field_type, dv.type_id)) {
                     break :blk try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{
-                            .not_null = dv.type_id != self.type_table.getPrimitive(.null),
-                            .value = dv,
-                        } },
+                        .data = .{ .null_box_init = .{ .value = dv } },
                         .type_id = dv.type_id,
                     });
                 }
@@ -801,16 +786,30 @@ pub const SemaAnalyzer = struct {
             .else_block = else_block,
         } };
 
-        const store_captured_var_inst = ir.Instruction{
-            .unwrap_null_box = .{
-                .unwrapped = .{
-                    .uid = captured_symbol.uid,
-                    .identifier = captured_symbol.identifier,
-                    .type_id = captured_type_id,
-                },
-                .null_box = exp_value,
-            },
+        const captured_base_kind = self.type_table.getTypePtrById(captured_type_id).kind;
+        const captured_needs_unwrap = switch (captured_base_kind) {
+            .int, .float, .boolean, .@"enum" => true,
+            else => false,
         };
+
+        const store_captured_var_inst = if (captured_needs_unwrap)
+            ir.Instruction{
+                .unwrap_null_box = .{
+                    .unwrapped = .{
+                        .uid = captured_symbol.uid,
+                        .identifier = captured_symbol.identifier,
+                        .type_id = captured_type_id,
+                    },
+                    .null_box = exp_value,
+                },
+            }
+        else
+            ir.Instruction{ .store_var = .{
+                .uid = captured_symbol.uid,
+                .identifier = captured_symbol.identifier,
+                .value = exp_value,
+                .type_id = captured_type_id,
+            } };
 
         try instructions.appendSlice(self.allocator, &.{ store_captured_var_inst, check_not_null_inst });
         return instructions.toOwnedSlice(self.allocator);
@@ -843,14 +842,20 @@ pub const SemaAnalyzer = struct {
 
                 const id_symbol_type_ptr = self.type_table.getTypePtrById(id_symbol.type_id);
 
-                const not_null = assignment_value.type_id != self.type_table.getPrimitive(.null);
-
                 if (id_symbol_type_ptr.nullable) {
-                    return ir.Instruction{ .update_null_box = .{
+                    if (self.typeNeedsNullBox(id_symbol.type_id, assignment_value.type_id)) {
+                        return ir.Instruction{ .update_null_box = .{
+                            .identifier = id_symbol.identifier,
+                            .uid = id_symbol.uid,
+                            .value = assignment_value,
+                            .type_id = id_symbol.type_id,
+                        } };
+                    }
+
+                    return ir.Instruction{ .store_var = .{
                         .identifier = id_symbol.identifier,
                         .uid = id_symbol.uid,
-                        .not_null = not_null,
-                        .value = if (not_null) assignment_value else null,
+                        .value = assignment_value,
                         .type_id = id_symbol.type_id,
                     } };
                 }
@@ -968,13 +973,9 @@ pub const SemaAnalyzer = struct {
                     else => unreachable,
                 }
 
-                const field_type = self.type_table.getTypePtrById(field_maybe_nullable_type_id);
-                const boxed_value = if (field_type.nullable)
+                const boxed_value = if (self.typeNeedsNullBox(field_maybe_nullable_type_id, assignment_value.type_id))
                     try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{
-                            .not_null = assignment_value.type_id != self.type_table.getPrimitive(.null),
-                            .value = assignment_value,
-                        } },
+                        .data = .{ .null_box_init = .{ .value = assignment_value } },
                         .type_id = assignment_value.type_id,
                     })
                 else
@@ -1473,14 +1474,10 @@ pub const SemaAnalyzer = struct {
 
         if (is_struct_inicialization) {
             for (params, fn_call_arguments_values.items, 0..) |param, _, i| {
-                const param_type = self.type_table.getTypePtrById(param.type_id);
-                if (param_type.nullable) {
+                if (self.typeNeedsNullBox(param.type_id, fn_call_arguments_values.items[i].type_id)) {
                     const current = fn_call_arguments_values.items[i];
                     fn_call_arguments_values.items[i] = try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{
-                            .not_null = current.type_id != self.type_table.getPrimitive(.null),
-                            .value = current,
-                        } },
+                        .data = .{ .null_box_init = .{ .value = current } },
                         .type_id = current.type_id,
                     });
                 }
@@ -1548,13 +1545,9 @@ pub const SemaAnalyzer = struct {
             );
         }
 
-        const variant_type = self.type_table.getTypePtrById(variant_type_id);
-        const value = if (variant_type.nullable)
+        const value = if (self.typeNeedsNullBox(variant_type_id, raw_value.type_id))
             try ir.Value.init(self.allocator, .{
-                .data = .{ .null_box_init = .{
-                    .not_null = raw_value.type_id != self.type_table.getPrimitive(.null),
-                    .value = raw_value,
-                } },
+                .data = .{ .null_box_init = .{ .value = raw_value } },
                 .type_id = raw_value.type_id,
             })
         else
@@ -1884,6 +1877,43 @@ pub const SemaAnalyzer = struct {
             },
             //note: allowing everything
             .eq, .not_eq => {
+                const left_nullable = self.type_table.getTypePtrById(left_type).nullable;
+                const right_nullable = self.type_table.getTypePtrById(right_type).nullable;
+                const left_is_null = self.type_table.getTypePtrById(left_type).kind == .null;
+                const right_is_null = self.type_table.getTypePtrById(right_type).kind == .null;
+
+                if (left_nullable and right_is_null) {
+                    const nnull = try ir.Value.init(self.allocator, .{
+                        .data = .{ .unary_op = .{ .kind = .box_not_null, .right = left_value } },
+                        .type_id = self.type_table.getPrimitive(.boolean),
+                    });
+
+                    if (bin_exp.op == .eq) {
+                        return ir.Value.init(self.allocator, .{
+                            .data = .{ .unary_op = .{ .kind = .not, .right = nnull } },
+                            .type_id = self.type_table.getPrimitive(.boolean),
+                        });
+                    }
+
+                    return nnull;
+                }
+
+                if (right_nullable and left_is_null) {
+                    const nnull = try ir.Value.init(self.allocator, .{
+                        .data = .{ .unary_op = .{ .kind = .box_not_null, .right = right_value } },
+                        .type_id = self.type_table.getPrimitive(.boolean),
+                    });
+
+                    if (bin_exp.op == .eq) {
+                        return ir.Value.init(self.allocator, .{
+                            .data = .{ .unary_op = .{ .kind = .not, .right = nnull } },
+                            .type_id = self.type_table.getPrimitive(.boolean),
+                        });
+                    }
+
+                    return nnull;
+                }
+
                 op_type = self.type_table.getPrimitive(.boolean);
             },
         }
@@ -1898,6 +1928,19 @@ pub const SemaAnalyzer = struct {
             },
             .type_id = op_type,
         });
+    }
+
+    fn typeNeedsNullBox(self: *Self, target_type: tt.TypeId, value_type: tt.TypeId) bool {
+        const target = self.type_table.getTypePtrById(target_type);
+        if (!target.nullable) return false;
+        if (value_type == self.type_table.getPrimitive(.null)) return false;
+        if (self.type_table.getTypePtrById(value_type).nullable) return false;
+        const base_id = self.type_table.typeIdByNullableTypeId.get(target_type).?;
+        const base = self.type_table.getTypePtrById(base_id);
+        return switch (base.kind) {
+            .int, .float, .boolean, .@"enum" => true,
+            else => false,
+        };
     }
 
     fn isExpressionMutable(self: *Self, exp: *ast.ExpNode) bool {

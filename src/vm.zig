@@ -197,46 +197,44 @@ pub const VM = struct {
                     const size = v.NullBox.calc_size();
                     try self.maybeCollectGarbage(size);
 
-                    const not_null = inst.b == 1;
-                    var new_null = try v.NullBox.init(self.getCurrentHeapAllocator(), not_null, v.NULL_VALUE);
-
-                    if (not_null) {
-                        const value = self.stack[stack_base + inst.c];
-                        new_null.value = value;
-                    }
+                    const value = self.stack[stack_base + inst.c];
+                    var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), value);
 
                     self.increaseHeapAllocationCount(size);
-                    stack[stack_base + inst.a] = .{ .heap_obj = &new_null.obj };
+                    stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
                 },
 
                 .NULL_BOX_STORE => {
-                    const nullable_ptr = stack[stack_base + inst.a].heap_obj;
-                    const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, nullable_ptr);
                     const not_null = inst.b == 1;
-
-                    nullable_vl.not_null = not_null;
 
                     if (not_null) {
                         const new_value = stack[stack_base + inst.c];
-                        nullable_vl.value = new_value;
+                        const current_raw: u64 = @bitCast(stack[stack_base + inst.a]);
+                        if (current_raw == 0) {
+                            const size = v.NullBox.calc_size();
+                            try self.maybeCollectGarbage(size);
+                            var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), new_value);
+                            self.increaseHeapAllocationCount(size);
+                            stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
+                        } else {
+                            const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, stack[stack_base + inst.a].heap_obj);
+                            nullable_vl.value = new_value;
+                        }
                     } else {
-                        nullable_vl.value = v.NULL_VALUE;
+                        stack[stack_base + inst.a] = v.NULL_VALUE;
                     }
                 },
 
                 .NULL_BOX_UNWRAP => {
+                    const raw: u64 = @bitCast(stack[stack_base + inst.b]);
+                    if (raw == 0) return;
                     const nullable_ptr = stack[stack_base + inst.b].heap_obj;
                     const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, nullable_ptr);
-                    if (nullable_vl.not_null) {
-                        stack[stack_base + inst.a] = nullable_vl.value;
-                    }
+                    stack[stack_base + inst.a] = nullable_vl.value;
                 },
 
                 .NULL_BOX_NNULL => {
-                    const box_ptr = stack[stack_base + inst.b].heap_obj;
-                    const box_vl = v.HeapValue.getParentPtr(v.NullBox, box_ptr);
-                    //note: currently others heap values are being boxed and is not needed we could just compare it to null
-                    stack[stack_base + inst.a] = if (box_vl.not_null) v.TRUE_VALUE else v.FALSE_VALUE;
+                    stack[stack_base + inst.a] = if (@as(u64, @bitCast(stack[stack_base + inst.b])) != 0) v.TRUE_VALUE else v.FALSE_VALUE;
                 },
 
                 .I_ADD => {

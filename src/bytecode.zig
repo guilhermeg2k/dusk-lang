@@ -222,7 +222,7 @@ pub const BytecodeGen = struct {
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
         };
 
-        // chunk.disasamble();
+        chunk.disasamble();
 
         return chunk;
     }
@@ -231,7 +231,7 @@ pub const BytecodeGen = struct {
         for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
-                    _ = try self.genStoreVar(store_var);
+                    try self.genStoreVar(store_var);
                 },
                 .expression_stmt => |stmt| {
                     //note: consuming a register
@@ -510,7 +510,9 @@ pub const BytecodeGen = struct {
                 if (@"struct".field_index_by_name.get(field_name)) |field_index| {
                     const struct_reg = try self.genValue(idx.target, self.consumeRegister());
                     defer self.freeRegister();
+
                     try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
+                    self.register_types[target_reg] = value.type_id;
                     return;
                 }
 
@@ -801,13 +803,10 @@ pub const BytecodeGen = struct {
         var store_inst = Instruction{
             .op = .NULL_BOX_STORE,
             .a = box_reg,
-            .b = @intFromBool(stmt.not_null),
+            .b = @intFromBool(stmt.value != null),
         };
 
         if (stmt.value) |value| {
-            if (!stmt.not_null) {
-                unreachable;
-            }
             const value_reg = try self.genValue(value, self.consumeRegister());
             defer self.freeRegister();
             store_inst.c = value_reg;
@@ -1099,13 +1098,13 @@ pub const BytecodeGen = struct {
         var init_inst = Instruction{
             .op = .NULL_BOX_INIT,
             .a = target_reg,
-            .b = @intFromBool(null_box_init.not_null),
         };
 
         if (null_box_init.value) |val| {
             const value_reg = try self.genValue(val, self.consumeRegister());
             defer self.freeRegister();
             init_inst.c = value_reg;
+            init_inst.b = 1;
         }
 
         try self.chunk_instructions.append(self.allocator, init_inst);

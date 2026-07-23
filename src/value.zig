@@ -3,9 +3,7 @@ const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
 const tt = @import("type_table.zig");
 
-pub const NULL_VALUE = Value{
-    .null = {},
-};
+pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
 
 pub const TRUE_VALUE = Value{
     .bool = true,
@@ -344,30 +342,18 @@ pub const NullBox = extern struct {
     const Self = @This();
 
     obj: HeapValue,
-    not_null: bool, // 0 = null, 1 = not null
     kind: ValueType,
     value: Value,
 
-    pub fn init(allocator: std.mem.Allocator, not_null: bool, value: Value) !*Self {
+    pub fn init(allocator: std.mem.Allocator, value: Value) !*Self {
         const ptr = try allocator.create(Self);
-
-        ptr.not_null = not_null;
         ptr.value = value;
-        ptr.obj = .{
-            .kind = .null_box,
-        };
-
+        ptr.obj = .{ .kind = .null_box };
         return ptr;
     }
 
     pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
-        const cloned = try Self.init(
-            allocator,
-            self.not_null,
-            self.value,
-        );
-
-        return cloned;
+        return try Self.init(allocator, self.value);
     }
 
     pub fn calc_size() usize {
@@ -385,7 +371,7 @@ pub const TypedValue = struct {
             .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
             .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
             .i_string => unreachable,
-            .i_null, .i_void => TypedValue{ .value = .{ .null = {} }, .type = .null },
+            .i_null, .i_void => TypedValue{ .value = NULL_VALUE, .type = .null },
             .i_array => TypedValue{ .value = undefined, .type = .array },
             else => unreachable,
         };

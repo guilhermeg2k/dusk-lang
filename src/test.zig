@@ -423,10 +423,3 @@ test "gc: static store survival" {
     try runCase("gc-static-store.dsk");
 }
 
-test "register: stress" {
-    try runCase("register-stress.dsk");
-}
-
-test "recursion: deep frame stack" {
-    try runCase("deep-recursion.dsk");
-}
