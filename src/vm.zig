@@ -478,7 +478,7 @@ pub const VM = struct {
     fn initStaticStore(self: *Self) !void {
         if (self.program.static_count > 0) {
             self.static_store = try self.allocator.alloc(v.Value, self.program.static_count);
-            @memset(self.static_store, v.Value{ .null = {} });
+            @memset(self.static_store, v.NULL_VALUE);
         }
     }
 

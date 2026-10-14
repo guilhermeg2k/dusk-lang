@@ -816,7 +816,7 @@ pub const BytecodeGen = struct {
     }
 
     fn genVoidValue(self: *Self, target_reg: u8) !u8 {
-        try self.genLoadConst(.{ .value = .{ .null = {} }, .type = .null }, target_reg);
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
         self.register_types[target_reg] = self.type_table.getPrimitive(.void);
         return target_reg;
     }
