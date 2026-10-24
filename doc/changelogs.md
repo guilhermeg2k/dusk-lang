@@ -3,6 +3,16 @@
 ## v0.11 - Power (in development)
 
 - First version developed with AI assistance (see [AI Usage](ai-disclaimer.md))
+- Enums with explicit values, methods and static fields
+- Unions (`union U ... end`), built with a single named variant: `U(variant = value)`
+- Reading a union variant returns a nullable (`?T`), `null` when it isn't the active variant
+- Union methods (`u.method()` and `U.method(u)`) and static fields
+- Fixed nullable primitives (`?int`, `?float`, `?bool`) not being tracked by the garbage collector
+- Fixed garbage collector losing arrays of unions and arrays of nullables
+- Fixed `if value: captured` on a null primitive ending the program
+- Fixed `echo` on nullable values
+- Fixed compiler crash when calling a method on an indexed array item (`items[i].method()`)
+- Added `bench.py`: a Dusk-only benchmark runner with JSON output and `--compare <git-ref>` to measure a change against another version
 
 ## v0.10 - Frieren
 

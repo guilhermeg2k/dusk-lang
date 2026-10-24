@@ -1,0 +1,64 @@
+union Item
+    count: int
+    name: string
+    tags: []string
+end
+
+struct Holder
+    item: Item
+    maybe: ?Item
+end
+
+let items = [Item(name = "keep"), Item(count = 7), Item(tags = ["a", "b"])]
+let holder = Holder(item = Item(count = 3), maybe = Item(name = "held"))
+let mut appended: []Item = [Item(count = 0)]
+
+let mut i = 0
+for i < 300000 do
+    let junk = ["garbage garbage garbage", "more garbage here"]
+    if i % 1000 == 0 then
+        append(appended, Item(count = i))
+    end
+    i += 1
+end
+
+if items[0].name: s then
+    echo(s)
+else
+    assert(false)
+end
+
+if items[1].count: c then
+    assert(c == 7)
+else
+    assert(false)
+end
+
+if items[2].tags: t then
+    assert(len(t) == 2)
+else
+    assert(false)
+end
+
+if holder.item.count: c then
+    assert(c == 3)
+else
+    assert(false)
+end
+
+if holder.maybe: m then
+    if m.name: s then
+        echo(s)
+    else
+        assert(false)
+    end
+else
+    assert(false)
+end
+
+assert(len(appended) == 301)
+if appended[300].count: c then
+    assert(c == 299000)
+else
+    assert(false)
+end

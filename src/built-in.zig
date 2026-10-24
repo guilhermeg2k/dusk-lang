@@ -220,9 +220,18 @@ pub const BuiltIn = struct {
                 const raw: u64 = @bitCast(value);
                 if (raw == 0) {
                     writer.print("null", .{}) catch @panic("failed to print null");
-                } else {
-                    const nullable = v.HeapValue.getParentPtr(v.NullBox, value.heap_obj);
-                    printValue(writer, nullable.value, nullable.kind);
+                    return;
+                }
+                // only primitives are boxed, nullable heap values are the object itself
+                switch (value.heap_obj.kind) {
+                    .null_box => {
+                        const nullable = v.HeapValue.getParentPtr(v.NullBox, value.heap_obj);
+                        printValue(writer, nullable.value, nullable.kind);
+                    },
+                    .string => printValue(writer, value, .string),
+                    .array => printValue(writer, value, .array),
+                    .@"struct" => printValue(writer, value, .@"struct"),
+                    .@"union" => printValue(writer, value, .@"union"),
                 }
             },
             .@"struct" => {

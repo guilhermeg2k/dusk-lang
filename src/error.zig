@@ -204,6 +204,43 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
+    pub fn invalidUnionVariant(self: *Self, union_name: []const u8, variant: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "union '{s}' has no variant '{s}'",
+                .{ union_name, variant },
+            ),
+            loc,
+        );
+        return error.InvalidUnionVariant;
+    }
+
+    pub fn invalidUnionMember(self: *Self, union_name: []const u8, member: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "union '{s}' has no variant, static field or function '{s}'",
+                .{ union_name, member },
+            ),
+            loc,
+        );
+        return error.InvalidUnionMember;
+    }
+
+    pub fn invalidUnionFunction(self: *Self, union_name: []const u8, function: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Function '{s}' does not exists on union '{s}'",
+                .{ function, union_name },
+            ),
+            loc,
+        );
+
+        return error.InvalidUnionFunction;
+    }
+
     pub fn invalidDefinition(self: *Self, loc: Loc) Errors {
         self.log("struct and enum definitions cannot be mutable", loc);
         return error.InvalidDefinition;
@@ -393,6 +430,9 @@ pub const Errors = error{
     NullableMustBeUnwrapped,
     InvalidParameterType,
     InvalidEnumFunction,
+    InvalidUnionVariant,
+    InvalidUnionMember,
+    InvalidUnionFunction,
 };
 
 pub const RunTimeError = error{

@@ -965,10 +965,30 @@ pub const SemaAnalyzer = struct {
                         }
                     },
                     .@"union" => {
-                        return self.err_dispatcher.notMutable(
-                            index_exp.index.data.identifier,
-                            index_exp.index.loc,
-                        );
+                        const union_def = &self.type_table.getTypePtrById(target_type).kind.@"union";
+                        const member_name = index_exp.index.data.identifier;
+
+                        // variants can't be assigned in place, a new union must be built instead
+                        const field = union_def.static_fields.get(member_name) orelse {
+                            if (union_def.variants.contains(member_name)) {
+                                return self.err_dispatcher.notMutable(member_name, index_exp.index.loc);
+                            }
+                            return self.err_dispatcher.invalidUnionMember(union_def.identifier, member_name, index_exp.index.loc);
+                        };
+
+                        field_maybe_nullable_type_id = field.type_id;
+
+                        if (!field.is_mut) {
+                            return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
+                        }
+
+                        if (!self.type_table.coerce(assignment_value_type, field.type_id)) {
+                            return self.err_dispatcher.invalidType(
+                                try self.type_table.name(field.type_id, self.allocator),
+                                try self.type_table.name(assignment_value_type, self.allocator),
+                                assign_stmt.exp.loc,
+                            );
+                        }
                     },
                     else => unreachable,
                 }
@@ -1316,7 +1336,7 @@ pub const SemaAnalyzer = struct {
                 const target_type_id = target.type_id;
                 const target_type_ptr = self.type_table.getTypePtrById(target_type_id);
 
-                if (target_type_ptr.kind != .@"struct" and target_type_ptr.kind != .@"enum") {
+                if (target_type_ptr.kind != .@"struct" and target_type_ptr.kind != .@"enum" and target_type_ptr.kind != .@"union") {
                     return self.err_dispatcher.invalidType(
                         "a defined type such as struct/enums or union",
                         try self.type_table.name(target_type_id, self.allocator),
@@ -1367,6 +1387,32 @@ pub const SemaAnalyzer = struct {
                         if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
                             if (self.shouldAutoBindSelf(target)) {
                                 const mutable = self.findIsFieldMut(target, e.static_fields);
+                                if (fn_metadata.params[0].is_mut and !mutable) {
+                                    return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
+                                }
+                                try fn_call_arguments_values.append(self.allocator, target);
+                            }
+                        }
+
+                        params = fn_metadata.params;
+                        return_type = fn_metadata.return_type_id;
+                        uid = fn_metadata.uid;
+                        fn_identifier = fn_name;
+                    },
+                    .@"union" => |u| {
+                        const fn_type_id = u.methods.get(fn_name) orelse {
+                            return self.err_dispatcher.invalidUnionFunction(
+                                u.identifier,
+                                fn_name,
+                                exp.loc,
+                            );
+                        };
+
+                        const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
+
+                        if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
+                            if (self.shouldAutoBindSelf(target)) {
+                                const mutable = self.findIsFieldMut(target, u.static_fields);
                                 if (fn_metadata.params[0].is_mut and !mutable) {
                                     return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
                                 }
@@ -1533,7 +1579,7 @@ pub const SemaAnalyzer = struct {
         const variant_name = arg.identifier.?;
 
         const variant_type_id = union_def.variants.get(variant_name) orelse {
-            return self.err_dispatcher.invalidEnumVariant(union_def.identifier, variant_name, exp.loc);
+            return self.err_dispatcher.invalidUnionVariant(union_def.identifier, variant_name, exp.loc);
         };
 
         const raw_value = try self.evalExp(arg.exp);
@@ -1678,11 +1724,19 @@ pub const SemaAnalyzer = struct {
                 const union_def = self.type_table.getTypePtrById(target_type).kind.@"union";
                 return switch (indexed_exp.index.data) {
                     .identifier => |member_name| {
-                        const variant_type_id = union_def.variants.get(member_name) orelse {
-                            return self.err_dispatcher.invalidEnumVariant(union_def.identifier, member_name, exp.loc);
-                        };
+                        // reading a variant is always ?T: null when it isn't the active one
+                        const result_type = if (union_def.variants.get(member_name)) |variant_type_id|
+                            try self.type_table.getOrAddNullable(variant_type_id)
+                        else blk: {
+                            const member_type_id = if (union_def.static_fields.get(member_name)) |field|
+                                field.type_id
+                            else if (union_def.methods.get(member_name)) |method_type_id|
+                                method_type_id
+                            else
+                                return self.err_dispatcher.invalidUnionMember(union_def.identifier, member_name, exp.loc);
 
-                        const result_type = try self.type_table.getOrAddNullable(variant_type_id);
+                            break :blk if (is_nullable) try self.type_table.getOrAddNullable(member_type_id) else member_type_id;
+                        };
 
                         return ir.Value.init(self.allocator, .{
                             .data = .{
@@ -1702,7 +1756,7 @@ pub const SemaAnalyzer = struct {
             },
 
             else => {
-                return self.err_dispatcher.invalidType("array, struct or enum", try self.type_table.name(target_type, self.allocator), exp.loc);
+                return self.err_dispatcher.invalidType("array, struct, enum or union", try self.type_table.name(target_type, self.allocator), exp.loc);
             },
         }
     }
@@ -1737,8 +1791,10 @@ pub const SemaAnalyzer = struct {
                     return sym.kind.variable.is_mut;
                 },
                 .indexed => |idx| {
-                    const field_name = idx.index.data.i_string;
-                    if (static_fields.get(field_name)) |sf| return sf.is_mut;
+                    // array indexes aren't field names, mutability comes from the root
+                    if (idx.index.data == .i_string) {
+                        if (static_fields.get(idx.index.data.i_string)) |sf| return sf.is_mut;
+                    }
                     current = idx.target;
                 },
                 else => return false,
