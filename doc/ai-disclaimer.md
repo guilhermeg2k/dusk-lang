@@ -17,5 +17,5 @@ Up to commit [`5107f82`](https://github.com/guilhermeg2k/dusk-lang/commit/5107f8
 - Design decisions (syntax, semantics, roadmap) stay mine.
 
 This approach is inspired by how Mitchell Hashimoto handles AI in
-[Ghostty](https://github.com/ghostty-org/ghostty): be open about it,
+Ghostty ([AI policy](https://github.com/ghostty-org/ghostty/blob/main/AI_POLICY.md)): be open about it,
 and keep a human accountable for the result.
