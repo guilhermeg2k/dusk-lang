@@ -535,17 +535,31 @@ pub const SemaAnalyzer = struct {
             }
 
             if (instruction) |i| {
-                if (i == .return_stmt) {
-                    return_type = self.scope.return_type_id;
-                }
                 try instructions.append(self.allocator, i);
             }
+        }
+
+        if (alwaysReturns(instructions.items)) {
+            return_type = self.scope.return_type_id;
         }
 
         return ir.Block{
             .return_type = return_type,
             .instructions = try instructions.toOwnedSlice(self.allocator),
         };
+    }
+
+    fn alwaysReturns(instructions: []const ir.Instruction) bool {
+        for (instructions) |inst| {
+            switch (inst) {
+                .return_stmt => return true,
+                .branch_if => |branch| {
+                    if (branch.else_block.len > 0 and alwaysReturns(branch.then_block) and alwaysReturns(branch.else_block)) return true;
+                },
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
@@ -966,10 +980,23 @@ pub const SemaAnalyzer = struct {
             null_insts = (try self.visitBlock(&when_stmt.else_block.?)).instructions;
         }
 
+        var unconditional_prong_idx: ?usize = null;
+        if (when_stmt.else_block == null) {
+            var idx = when_stmt.prongs.len;
+            while (idx > 0) {
+                idx -= 1;
+                if (when_stmt.prongs[idx].pattern != .null_case) {
+                    unconditional_prong_idx = idx;
+                    break;
+                }
+            }
+        }
+
         var prong_idx = when_stmt.prongs.len;
         while (prong_idx > 0) {
             prong_idx -= 1;
             const prong = when_stmt.prongs[prong_idx];
+            const is_unconditional = unconditional_prong_idx == prong_idx;
 
             switch (prong.pattern) {
                 .null_case => {
@@ -1018,7 +1045,8 @@ pub const SemaAnalyzer = struct {
                     };
 
                     try body.appendSlice(self.allocator, (try self.visitBlock(&prong.body)).instructions);
-                    chain = try self.wrapBranch(condition, try body.toOwnedSlice(self.allocator), chain);
+                    const body_insts = try body.toOwnedSlice(self.allocator);
+                    chain = if (is_unconditional) body_insts else try self.wrapBranch(condition, body_insts, chain);
                 },
                 .values => {
                     var condition: ?*ir.Value = null;
@@ -1031,7 +1059,7 @@ pub const SemaAnalyzer = struct {
                     }
 
                     const body = (try self.visitBlock(&prong.body)).instructions;
-                    chain = try self.wrapBranch(condition.?, body, chain);
+                    chain = if (is_unconditional) body else try self.wrapBranch(condition.?, body, chain);
                 },
             }
         }

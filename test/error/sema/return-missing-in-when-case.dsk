@@ -1,0 +1,11 @@
+enum Color
+    Red
+    Green
+end
+
+func f(c: Color) -> int
+    when c
+        Color.Red then return 1 end
+        Color.Green then echo(2) end
+    end
+end
