@@ -78,6 +78,14 @@ test "enums" {
     try runCase("enums.dsk");
 }
 
+test "union" {
+    try runCase("union.dsk");
+}
+
+test "nullable echo" {
+    try runCase("nullable-echo.dsk");
+}
+
 test "struct" {
     try runCase("struct.dsk");
 }
@@ -322,6 +330,42 @@ test "sema error: enum type coercion" {
     try runCaseError("sema/enum-type-coercion.dsk", error.InvalidType);
 }
 
+test "sema error: unknown union variant" {
+    try runCaseError("sema/union-unknown-variant.dsk", error.InvalidUnionVariant);
+}
+
+test "sema error: unknown union member" {
+    try runCaseError("sema/union-unknown-member.dsk", error.InvalidUnionMember);
+}
+
+test "sema error: unknown union method" {
+    try runCaseError("sema/union-unknown-method.dsk", error.InvalidUnionFunction);
+}
+
+test "sema error: union payload type mismatch" {
+    try runCaseError("sema/union-payload-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: union init with positional argument" {
+    try runCaseError("sema/union-init-positional.dsk", error.InvalidType);
+}
+
+test "sema error: union init with multiple arguments" {
+    try runCaseError("sema/union-init-multiple-args.dsk", error.InvalidType);
+}
+
+test "sema error: assign to union variant" {
+    try runCaseError("sema/union-assign-variant.dsk", error.NotMutable);
+}
+
+test "sema error: union static field not mutable" {
+    try runCaseError("sema/union-static-field-not-mutable.dsk", error.NotMutable);
+}
+
+test "sema error: union static field type mismatch" {
+    try runCaseError("sema/union-static-field-type-mismatch.dsk", error.InvalidType);
+}
+
 test "syntax error: break outside loop" {
     try runCaseError("parser/break-outside-loop.dsk", error.ParserError);
 }
@@ -421,5 +465,13 @@ test "gc: stress complex flow" {
 
 test "gc: static store survival" {
     try runCase("gc-static-store.dsk");
+}
+
+test "gc: unions in arrays and structs" {
+    try runCase("union-gc.dsk");
+}
+
+test "gc: nullables in arrays and structs" {
+    try runCase("gc-nullable.dsk");
 }
 

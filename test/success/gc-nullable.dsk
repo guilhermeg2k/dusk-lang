@@ -1,0 +1,46 @@
+struct Point
+    x: ?int
+    label: ?string
+end
+
+let a: ?string = "keep"
+let b: ?int = 41
+let strings: []?string = [a, null]
+let ints: []?int = [b, null]
+let p = Point(x = 7, label = "point")
+let empty = Point(x = null, label = null)
+
+let mut i = 0
+for i < 300000 do
+    let junk = ["garbage garbage garbage", "more garbage here"]
+    let tmp = Point(x = i, label = "tmp")
+    i += 1
+end
+
+if strings[0]: s then
+    echo(s)
+else
+    assert(false)
+end
+
+if ints[0]: x then
+    assert(x == 41)
+else
+    assert(false)
+end
+
+if b: x then
+    assert(x == 41)
+else
+    assert(false)
+end
+
+if p.x: x then
+    assert(x == 7)
+else
+    assert(false)
+end
+
+if empty.x: _ then
+    assert(false)
+end

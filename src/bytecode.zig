@@ -222,7 +222,7 @@ pub const BytecodeGen = struct {
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
         };
 
-        chunk.disasamble();
+        // chunk.disasamble();
 
         return chunk;
     }
@@ -547,8 +547,23 @@ pub const BytecodeGen = struct {
                 try self.genArrayLoad(target_reg, array_reg, idx.index);
                 self.register_types[target_reg] = value.type_id;
             },
-            .@"union" => {
+            .@"union" => |@"union"| {
                 const field_name = idx.index.data.i_string;
+
+                if (!@"union".variants.contains(field_name)) {
+                    var load_static = Instruction{
+                        .op = .STATIC_LOAD,
+                        .a = target_reg,
+                    };
+
+                    const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
+                    load_static.putBEx(slot_id);
+
+                    try self.chunk_instructions.append(self.allocator, load_static);
+                    self.register_types[target_reg] = value.type_id;
+                    return;
+                }
+
                 const tag_index = try self.unionTagIndex(idx.target.type_id, field_name);
                 const union_reg = try self.genValue(idx.target, self.consumeRegister());
                 defer self.freeRegister();
@@ -560,6 +575,7 @@ pub const BytecodeGen = struct {
                         .b = union_reg,
                         .c = @intCast(tag_index),
                     });
+                    try self.recordHeapMap();
                 } else {
                     const tag_reg = self.consumeRegister();
                     defer self.freeRegister();
@@ -574,6 +590,7 @@ pub const BytecodeGen = struct {
                         .b = union_reg,
                         .c = tag_reg,
                     });
+                    try self.recordHeapMap();
                 }
                 self.register_types[target_reg] = value.type_id;
             },
@@ -661,7 +678,7 @@ pub const BytecodeGen = struct {
                 store.putBEx(slot_id);
                 try self.chunk_instructions.append(self.allocator, store);
             },
-            .@"enum" => {
+            .@"enum", .@"union" => {
                 const field_name = indexed.index.data.i_string;
 
                 const value_reg = try self.genValue(stmt.value, self.consumeRegister());
@@ -800,19 +817,22 @@ pub const BytecodeGen = struct {
     fn genUpadateNullBox(self: *Self, stmt: ir.UpdateNullBox) !void {
         const box_reg = self.var_register_id_by_uid.get(stmt.uid) orelse return BytecodeError.UndefinedVariable;
 
+        // b = 0 stores null, otherwise b = inner value kind + 1
         var store_inst = Instruction{
             .op = .NULL_BOX_STORE,
             .a = box_reg,
-            .b = @intFromBool(stmt.value != null),
+            .b = 0,
         };
 
         if (stmt.value) |value| {
             const value_reg = try self.genValue(value, self.consumeRegister());
             defer self.freeRegister();
+            store_inst.b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, value.type_id)) + 1;
             store_inst.c = value_reg;
         }
 
         try self.chunk_instructions.append(self.allocator, store_inst);
+        try self.recordHeapMap();
     }
 
     fn genVoidValue(self: *Self, target_reg: u8) !u8 {
@@ -1000,9 +1020,12 @@ pub const BytecodeGen = struct {
         if (self.type_id_to_struct_descriptor_idx.get(value.type_id)) |id| return id;
 
         const struct_data = value.data.struct_init;
+        const struct_def = self.type_table.getTypePtrById(value.type_id).kind.@"struct";
         var bitmap: u256 = 0;
-        for (struct_data.values, 0..) |field_v, i| {
-            const vt = v.ValueType.fromTypeId(self.type_table, field_v.type_id);
+        // use the declared field types, the init values may be null or not yet boxed
+        for (struct_data.keys, 0..) |key, i| {
+            const field = struct_def.fields.get(key) orelse unreachable;
+            const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
             if (vt.isHeapType()) {
                 bitmap |= @as(u256, 1) << @intCast(i);
             }
@@ -1066,20 +1089,30 @@ pub const BytecodeGen = struct {
 
         var tag_map = std.StringHashMap(u16).init(self.allocator);
         var bitmap: u256 = 0;
+        var box_bitmap: u256 = 0;
+        const variant_kinds = try self.allocator.alloc(v.ValueType, union_def.variants.count());
 
         var it = union_def.variants.iterator();
         var tag: u16 = 0;
         while (it.next()) |entry| {
             try tag_map.put(entry.key_ptr.*, tag);
             const vt = v.ValueType.fromTypeId(self.type_table, entry.value_ptr.*);
+            variant_kinds[tag] = vt;
             if (vt.isHeapType()) {
                 bitmap |= @as(u256, 1) << @intCast(tag);
+            } else {
+                // reading a primitive variant yields ?T, which needs a null box
+                box_bitmap |= @as(u256, 1) << @intCast(tag);
             }
             tag += 1;
         }
 
         const id: u16 = @intCast(self.union_descriptors.items.len);
-        try self.union_descriptors.append(self.allocator, .{ .heap_bitmap = bitmap });
+        try self.union_descriptors.append(self.allocator, .{
+            .heap_bitmap = bitmap,
+            .box_bitmap = box_bitmap,
+            .variant_kinds = variant_kinds,
+        });
         try self.type_id_to_union_descriptor_idx.put(type_id, id);
         try self.union_tag_by_type_id.put(type_id, tag_map);
         return id;
@@ -1093,26 +1126,33 @@ pub const BytecodeGen = struct {
 
     fn genNullBoxInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
         const null_box_init = value.data.null_box_init;
-        self.register_types[target_reg] = value.type_id;
 
-        var init_inst = Instruction{
-            .op = .NULL_BOX_INIT,
-            .a = target_reg,
+        const val = null_box_init.value orelse {
+            try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+            self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
+            return;
         };
 
-        if (null_box_init.value) |val| {
-            const value_reg = try self.genValue(val, self.consumeRegister());
-            defer self.freeRegister();
-            init_inst.c = value_reg;
-            init_inst.b = 1;
-        }
+        const value_reg = try self.genValue(val, self.consumeRegister());
+        defer self.freeRegister();
 
-        try self.chunk_instructions.append(self.allocator, init_inst);
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, val.type_id)),
+            .c = value_reg,
+        });
+        try self.recordHeapMap();
+
+        // the ir value carries the inner type, but the register holds the box
+        self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
     }
 };
 
 pub const UnionDescriptor = struct {
     heap_bitmap: u256,
+    box_bitmap: u256,
+    variant_kinds: []const v.ValueType,
 };
 
 pub const StructDescriptor = struct {
@@ -1376,7 +1416,17 @@ pub const OpCode = enum(u8) {
 
     pub fn canTriggerGc(self: Self) bool {
         return switch (self) {
-            .ARRAY_INIT, .ARRAY_APPEND, .STRUCT_INIT, .LOAD_STRING, .CALL => true,
+            .ARRAY_INIT,
+            .ARRAY_APPEND,
+            .STRUCT_INIT,
+            .UNION_INIT,
+            .UNION_LOAD,
+            .LARGE_UNION_LOAD,
+            .NULL_BOX_INIT,
+            .NULL_BOX_STORE,
+            .LOAD_STRING,
+            .CALL,
+            => true,
             else => false,
         };
     }

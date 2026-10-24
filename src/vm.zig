@@ -166,9 +166,8 @@ pub const VM = struct {
                 },
 
                 .UNION_LOAD => {
-                    const union_ptr = stack[stack_base + inst.b].heap_obj;
-                    const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
-                    stack[stack_base + inst.a] = union_vl.get(@intCast(inst.c));
+                    current_frame.cur_inst = cur_instruction;
+                    try self.loadUnionVariant(stack, stack_base, inst.a, inst.b, inst.c);
                 },
 
                 .UNION_STORE => {
@@ -187,33 +186,35 @@ pub const VM = struct {
                 },
 
                 .LARGE_UNION_LOAD => {
-                    const union_ptr = stack[stack_base + inst.b].heap_obj;
-                    const union_vl = v.HeapValue.getParentPtr(v.Union, union_ptr);
                     const tag_reg = stack[stack_base + inst.c];
-                    stack[stack_base + inst.a] = union_vl.get(@intCast(tag_reg.int64));
+                    current_frame.cur_inst = cur_instruction;
+                    try self.loadUnionVariant(stack, stack_base, inst.a, inst.b, @intCast(tag_reg.int64));
                 },
 
                 .NULL_BOX_INIT => {
                     const size = v.NullBox.calc_size();
+                    current_frame.cur_inst = cur_instruction;
                     try self.maybeCollectGarbage(size);
 
                     const value = self.stack[stack_base + inst.c];
-                    var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), value);
+                    var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), value, @enumFromInt(inst.b));
 
                     self.increaseHeapAllocationCount(size);
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
                 },
 
                 .NULL_BOX_STORE => {
-                    const not_null = inst.b == 1;
+                    // b = 0 stores null, otherwise b = inner value kind + 1
+                    const not_null = inst.b != 0;
 
                     if (not_null) {
                         const new_value = stack[stack_base + inst.c];
                         const current_raw: u64 = @bitCast(stack[stack_base + inst.a]);
                         if (current_raw == 0) {
                             const size = v.NullBox.calc_size();
+                            current_frame.cur_inst = cur_instruction;
                             try self.maybeCollectGarbage(size);
-                            var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), new_value);
+                            var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), new_value, @enumFromInt(inst.b - 1));
                             self.increaseHeapAllocationCount(size);
                             stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
                         } else {
@@ -227,10 +228,15 @@ pub const VM = struct {
 
                 .NULL_BOX_UNWRAP => {
                     const raw: u64 = @bitCast(stack[stack_base + inst.b]);
-                    if (raw == 0) return;
-                    const nullable_ptr = stack[stack_base + inst.b].heap_obj;
-                    const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, nullable_ptr);
-                    stack[stack_base + inst.a] = nullable_vl.value;
+                    // the unwrap runs before the not-null check of an if capture,
+                    // which then skips the block, so null just passes through
+                    if (raw == 0) {
+                        stack[stack_base + inst.a] = v.NULL_VALUE;
+                    } else {
+                        const nullable_ptr = stack[stack_base + inst.b].heap_obj;
+                        const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, nullable_ptr);
+                        stack[stack_base + inst.a] = nullable_vl.value;
+                    }
                 },
 
                 .NULL_BOX_NNULL => {
@@ -491,6 +497,28 @@ pub const VM = struct {
         self.frame_count = 1;
     }
 
+    // Reading a variant yields ?T. Primitive payloads must be boxed so the null box
+    // can tell "inactive variant" apart from a payload whose bits are zero.
+    noinline fn loadUnionVariant(self: *Self, stack: []v.Value, stack_base: usize, target_reg: u8, union_reg: u8, tag: u16) !void {
+        var union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
+        const desc = self.program.union_descriptors[union_vl.descriptor_id];
+        const needs_box = desc.box_bitmap & (@as(u256, 1) << @intCast(tag)) != 0;
+
+        if (!needs_box or union_vl.active_tag != tag) {
+            stack[stack_base + target_reg] = union_vl.get(tag);
+            return;
+        }
+
+        const size = v.NullBox.calc_size();
+        try self.maybeCollectGarbage(size);
+        // the union may have been moved by the gc
+        union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
+
+        var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), union_vl.get(tag), desc.variant_kinds[tag]);
+        self.increaseHeapAllocationCount(size);
+        stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
+    }
+
     fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.Array {
         const refreshed_pointer = refreshStackHeapPtr(stack, stack_base, reg_idx, ptr);
         const array = v.HeapValue.getParentPtr(v.Array, refreshed_pointer);
@@ -558,7 +586,7 @@ pub const VM = struct {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
                     switch (array.kind) {
-                        .string, .@"struct", .array => {
+                        .string, .@"struct", .array, .@"union", .nullable => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
                                 try self.copyHeapValue(new_alloc, item);

@@ -77,6 +77,9 @@ pub const Struct = extern struct {
 
         struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
+        // fields are stored one by one after init and a gc can run in between,
+        // so they must start as null instead of garbage
+        @memset(struct_ptr.getDataPtr()[0..field_size], NULL_VALUE);
 
         return struct_ptr;
     }
@@ -345,15 +348,16 @@ pub const NullBox = extern struct {
     kind: ValueType,
     value: Value,
 
-    pub fn init(allocator: std.mem.Allocator, value: Value) !*Self {
+    pub fn init(allocator: std.mem.Allocator, value: Value, kind: ValueType) !*Self {
         const ptr = try allocator.create(Self);
         ptr.value = value;
+        ptr.kind = kind;
         ptr.obj = .{ .kind = .null_box };
         return ptr;
     }
 
     pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
-        return try Self.init(allocator, self.value);
+        return try Self.init(allocator, self.value, self.kind);
     }
 
     pub fn calc_size() usize {
