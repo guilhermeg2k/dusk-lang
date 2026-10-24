@@ -1,0 +1,73 @@
+# `@(variant = value)` builds a union wherever a union type is expected
+
+union U
+    a: int
+    b: string
+end
+
+struct Holder
+    u: U
+    maybe: ?U
+end
+
+func take(x: U) -> int
+    if x.a: n then
+        return n
+    end
+    return -1
+end
+
+func make() -> U
+    return @(b = "made")
+end
+
+func count(items: []U) -> int
+    return len(items)
+end
+
+# let with a type annotation, nullable included
+let v: U = @(a = 2)
+let mut m: ?U = @(a = 3)
+assert(take(v) == 2)
+
+# assignment
+m = @(b = "now")
+if m: value then
+    assert(take(value) == -1)
+else
+    assert(false)
+end
+
+# arguments and return values
+assert(take(@(a = 4)) == 4)
+assert(take(make()) == -1)
+
+# struct fields, at init and on assignment
+let mut h = Holder(u = @(a = 5), maybe = @(b = "h"))
+assert(take(h.u) == 5)
+h.u = @(a = 7)
+assert(take(h.u) == 7)
+
+# union payloads
+union Outer
+    inner: U
+    other: int
+end
+
+let o = Outer(inner = @(a = 8))
+if o.inner: inner then
+    assert(take(inner) == 8)
+else
+    assert(false)
+end
+
+# array literals, with a declared or an inferred item type
+let xs: []U = [@(a = 1), U(b = "x")]
+let ys = [U(b = "x"), @(a = 9)]
+assert(len(xs) == 2)
+assert(take(ys[1]) == 9)
+assert(count([@(a = 3)]) == 1)
+
+# plain anonymous structs are unchanged
+let p = @(x = 1, y = 2)
+assert(p.x == 1)

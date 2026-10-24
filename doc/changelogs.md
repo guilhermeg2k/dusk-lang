@@ -7,11 +7,15 @@
 - Unions (`union U ... end`), built with a single named variant: `U(variant = value)`
 - Reading a union variant returns a nullable (`?T`), `null` when it isn't the active variant
 - Union methods (`u.method()` and `U.method(u)`) and static fields
+- Anonymous syntax for unions: `@(variant = value)` builds a union wherever a union type is expected (annotated `let`, assignment, arguments, returns, struct fields, payloads and array literals)
+- Clearer error for `mut` union params (including `mut self`): union variants can't be changed in place
 - Fixed nullable primitives (`?int`, `?float`, `?bool`) not being tracked by the garbage collector
 - Fixed garbage collector losing arrays of unions and arrays of nullables
 - Fixed `if value: captured` on a null primitive ending the program
 - Fixed `echo` on nullable values
 - Fixed compiler crash when calling a method on an indexed array item (`items[i].method()`)
+- Fixed optional chaining (`?.`) crashing when a link in the chain is null, and when the chain ends in an `int`/`float`/`bool`/enum field
+- Fixed compiler crash when assigning or passing an empty array literal (`list = []`)
 - Added `bench.py`: a Dusk-only benchmark runner with JSON output and `--compare <git-ref>` to measure a change against another version
 
 ## v0.10 - Frieren

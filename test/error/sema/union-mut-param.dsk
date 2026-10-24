@@ -1,0 +1,8 @@
+union U
+    a: int
+    b: string
+
+    func set_b(mut self: @, s: string) -> void
+        echo(s)
+    end
+end
