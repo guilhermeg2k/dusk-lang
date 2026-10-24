@@ -94,6 +94,18 @@ test "union anonymous syntax" {
     try runCase("union-anonymous.dsk");
 }
 
+test "when" {
+    try runCase("when.dsk");
+}
+
+test "call result assigned to an older variable" {
+    try runCase("call-assign.dsk");
+}
+
+test "nullable primitive args and returns" {
+    try runCase("nullable-primitive-args.dsk");
+}
+
 test "empty array literal" {
     try runCase("empty-array-literal.dsk");
 }
@@ -384,6 +396,74 @@ test "sema error: mutable union param" {
 
 test "sema error: anonymous union unknown variant" {
     try runCaseError("sema/union-anonymous-unknown-variant.dsk", error.InvalidUnionVariant);
+}
+
+test "sema error: when not exhaustive enum" {
+    try runCaseError("sema/when-not-exhaustive-enum.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when not exhaustive union" {
+    try runCaseError("sema/when-not-exhaustive-union.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when int needs else" {
+    try runCaseError("sema/when-int-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when nullable missing null" {
+    try runCaseError("sema/when-nullable-missing-null.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when useless else" {
+    try runCaseError("sema/when-useless-else.dsk", error.WhenUselessElse);
+}
+
+test "sema error: when duplicate case" {
+    try runCaseError("sema/when-duplicate-case.dsk", error.WhenDuplicateCase);
+}
+
+test "sema error: when duplicate variant" {
+    try runCaseError("sema/when-duplicate-variant.dsk", error.WhenDuplicateCase);
+}
+
+test "sema error: when unknown variant" {
+    try runCaseError("sema/when-unknown-variant.dsk", error.InvalidUnionVariant);
+}
+
+test "sema error: when case type mismatch" {
+    try runCaseError("sema/when-case-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: when unsupported subject" {
+    try runCaseError("sema/when-unsupported-subject.dsk", error.InvalidType);
+}
+
+test "sema error: when float subject" {
+    try runCaseError("sema/when-float-subject.dsk", error.InvalidType);
+}
+
+test "sema error: when union case without capture" {
+    try runCaseError("sema/when-union-case-without-capture.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when variant case on enum" {
+    try runCaseError("sema/when-variant-case-on-enum.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when null case on non-nullable" {
+    try runCaseError("sema/when-null-case-non-nullable.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when non-literal int case" {
+    try runCaseError("sema/when-non-literal-int-case.dsk", error.WhenInvalidCase);
+}
+
+test "parser error: when case missing end" {
+    try runCaseError("parser/when-case-missing-end.dsk", error.ParserError);
+}
+
+test "parser error: when case missing then" {
+    try runCaseError("parser/when-case-missing-then.dsk", error.ParserError);
 }
 
 test "syntax error: break outside loop" {

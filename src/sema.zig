@@ -178,10 +178,13 @@ pub const SemaAnalyzer = struct {
     fn createEnumSymbol(self: *Self, identifier: []const u8, enum_def: *const ast.EnumDef) !Symbol {
         var variants: std.StringHashMap(i64) = .init(self.allocator);
 
+        const variants_in_order = try self.allocator.alloc([]const u8, enum_def.variants.len);
+
         const is_explicit = enum_def.variants[0].value != null;
         for (enum_def.variants, 0..) |variant, i| {
             const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
             try variants.put(variant.identifier, value);
+            variants_in_order[i] = variant.identifier;
         }
 
         const blueprint_type_id = try self.type_table.addType(.{
@@ -189,6 +192,7 @@ pub const SemaAnalyzer = struct {
                 .@"enum" = .{
                     .identifier = identifier,
                     .variants = variants,
+                    .variants_in_order = variants_in_order,
                     .static_fields = .init(self.allocator),
                     .methods = .init(self.allocator),
                 },
@@ -279,12 +283,16 @@ pub const SemaAnalyzer = struct {
         var variants: std.StringHashMap(i64) = .init(self.allocator);
         var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
+        const variants_in_order = try self.allocator.alloc([]const u8, enum_def.variants.len);
+
         const is_explicit = enum_def.variants[0].value != null;
         for (enum_def.variants, 0..) |variant, i| {
             const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
             try variants.put(variant.identifier, value);
+            variants_in_order[i] = variant.identifier;
         }
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".variants = variants;
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".variants_in_order = variants_in_order;
 
         for (enum_def.static_fields) |field| {
             const enum_field = try self.createField(field, blueprint_type_id);
@@ -308,11 +316,14 @@ pub const SemaAnalyzer = struct {
         var variants: std.StringHashMap(tt.TypeId) = .init(self.allocator);
         var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
-        for (union_def.variants) |variant| {
+        const variants_in_order = try self.allocator.alloc([]const u8, union_def.variants.len);
+        for (union_def.variants, 0..) |variant, i| {
             try variants.put(variant.identifier, try self.resolveTypeAnnotation(variant.type, blueprint_type_id));
+            variants_in_order[i] = variant.identifier;
         }
 
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".variants = variants;
+        self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".variants_in_order = variants_in_order;
 
         for (union_def.static_fields) |field| {
             const enum_field = try self.createField(field, blueprint_type_id);
@@ -508,12 +519,18 @@ pub const SemaAnalyzer = struct {
                 .@"break" => ir.Instruction{ .break_stmt = {} },
                 .@"continue" => ir.Instruction{ .continue_stmt = {} },
                 .@"return" => try self.visitReturnStmt(&stmt),
-                .if_capture => null,
+                .if_capture, .when => null,
             };
 
             if (stmt.data == .if_capture) {
                 const if_capture_insts = try self.visitIfCaptureStmt(&stmt);
                 try instructions.appendSlice(self.allocator, if_capture_insts);
+                continue;
+            }
+
+            if (stmt.data == .when) {
+                const when_insts = try self.visitWhenStmt(&stmt);
+                try instructions.appendSlice(self.allocator, when_insts);
                 continue;
             }
 
@@ -818,6 +835,268 @@ pub const SemaAnalyzer = struct {
 
         try instructions.appendSlice(self.allocator, &.{ store_captured_var_inst, check_not_null_inst });
         return instructions.toOwnedSlice(self.allocator);
+    }
+
+    fn visitWhenStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        const when_stmt = stmt.data.when;
+        const subject = try self.evalExp(when_stmt.subject);
+        const subject_type = subject.type_id;
+        const subject_type_name = try self.type_table.name(subject_type, self.allocator);
+
+        const is_nullable = self.type_table.getTypePtrById(subject_type).nullable;
+        const base_type = if (is_nullable) self.type_table.typeIdByNullableTypeId.get(subject_type) orelse
+            return self.err_dispatcher.invalidType("int, enum or union", subject_type_name, when_stmt.subject.loc)
+        else
+            subject_type;
+
+        const base_kind = self.type_table.getTypePtrById(base_type).kind;
+        switch (base_kind) {
+            .int, .@"enum", .@"union" => {},
+            else => return self.err_dispatcher.invalidType("int, enum or union", subject_type_name, when_stmt.subject.loc),
+        }
+
+        var seen_values: std.AutoHashMap(i64, void) = .init(self.allocator);
+        var seen_variants: std.StringHashMap(void) = .init(self.allocator);
+        var has_null_case = false;
+
+        const prong_values = try self.allocator.alloc([]*ir.Value, when_stmt.prongs.len);
+
+        for (when_stmt.prongs, 0..) |prong, prong_idx| {
+            prong_values[prong_idx] = &.{};
+
+            switch (prong.pattern) {
+                .null_case => {
+                    if (!is_nullable) {
+                        return self.err_dispatcher.whenInvalidCase(
+                            try std.fmt.allocPrint(self.allocator, "'null' case on non-nullable '{s}'", .{subject_type_name}),
+                            prong.loc,
+                        );
+                    }
+                    if (has_null_case) return self.err_dispatcher.whenDuplicateCase("null", prong.loc);
+                    has_null_case = true;
+                },
+                .variant => |variant| {
+                    if (base_kind != .@"union") {
+                        return self.err_dispatcher.whenInvalidCase(
+                            try std.fmt.allocPrint(self.allocator, "'variant: capture' cases are only for unions, found '{s}'", .{subject_type_name}),
+                            prong.loc,
+                        );
+                    }
+                    if (!base_kind.@"union".variants.contains(variant.name)) {
+                        return self.err_dispatcher.invalidUnionVariant(base_kind.@"union".identifier, variant.name, prong.loc);
+                    }
+                    if (seen_variants.contains(variant.name)) return self.err_dispatcher.whenDuplicateCase(variant.name, prong.loc);
+                    try seen_variants.put(variant.name, {});
+                },
+                .values => |exps| {
+                    if (base_kind == .@"union") {
+                        return self.err_dispatcher.whenInvalidCase("union cases are written as 'variant: capture'", prong.loc);
+                    }
+
+                    const values = try self.allocator.alloc(*ir.Value, exps.len);
+                    for (exps, 0..) |exp, i| {
+                        const value = try self.evalWhenCaseValue(exp, base_type);
+                        const key = value.data.i_int;
+                        if (seen_values.contains(key)) {
+                            return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
+                        }
+                        try seen_values.put(key, {});
+                        values[i] = value;
+                    }
+                    prong_values[prong_idx] = values;
+                },
+            }
+        }
+
+        var missing: std.ArrayList(u8) = .empty;
+        switch (base_kind) {
+            .@"enum" => |enum_def| for (enum_def.variants_in_order) |name| {
+                if (!seen_values.contains(enum_def.variants.get(name).?)) try appendMissing(self.allocator, &missing, name);
+            },
+            .@"union" => |union_def| for (union_def.variants_in_order) |name| {
+                if (!seen_variants.contains(name)) try appendMissing(self.allocator, &missing, name);
+            },
+            else => {},
+        }
+        if (is_nullable and !has_null_case) try appendMissing(self.allocator, &missing, "null");
+
+        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
+        if (when_stmt.else_block == null) {
+            if (base_kind == .int) return self.err_dispatcher.whenNeedsElse(subject_type_name, when_loc);
+            if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
+        } else if (base_kind != .int and missing.items.len == 0) {
+            return self.err_dispatcher.whenUselessElse(when_stmt.else_loc.?);
+        }
+
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+
+        const subject_uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .store_var = .{
+            .uid = subject_uid,
+            .identifier = "when",
+            .type_id = subject_type,
+            .value = subject,
+        } });
+        const subject_ref = try ir.Value.init(self.allocator, .{
+            .data = .{ .identifier = .{ .uid = subject_uid, .name = "when" } },
+            .type_id = subject_type,
+        });
+
+        var unwrapped_ref = subject_ref;
+        if (is_nullable) {
+            const unwrapped_uid = self.scope.genUid();
+            unwrapped_ref = try ir.Value.init(self.allocator, .{
+                .data = .{ .identifier = .{ .uid = unwrapped_uid, .name = "when" } },
+                .type_id = base_type,
+            });
+
+            try instructions.append(self.allocator, if (base_kind == .@"union")
+                .{ .store_var = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = base_type, .value = subject_ref } }
+            else
+                .{ .unwrap_null_box = .{
+                    .unwrapped = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = base_type },
+                    .null_box = subject_ref,
+                } });
+        }
+
+        var chain: []const ir.Instruction = if (when_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{};
+
+        var null_insts: []const ir.Instruction = &.{};
+        if (is_nullable and !has_null_case) {
+            null_insts = (try self.visitBlock(&when_stmt.else_block.?)).instructions;
+        }
+
+        var prong_idx = when_stmt.prongs.len;
+        while (prong_idx > 0) {
+            prong_idx -= 1;
+            const prong = when_stmt.prongs[prong_idx];
+
+            switch (prong.pattern) {
+                .null_case => {
+                    null_insts = (try self.visitBlock(&prong.body)).instructions;
+                    continue;
+                },
+                .variant => |variant| {
+                    const union_def = base_kind.@"union";
+                    const variant_type_id = union_def.variants.get(variant.name).?;
+
+                    const tag = try ir.Value.init(self.allocator, .{
+                        .data = .{ .union_tag = unwrapped_ref },
+                        .type_id = self.type_table.getPrimitive(.int),
+                    });
+                    const tag_index = for (union_def.variants_in_order, 0..) |name, i| {
+                        if (std.mem.eql(u8, name, variant.name)) break i;
+                    } else unreachable;
+                    const condition = try self.cmpEq(tag, try ir.Value.init(self.allocator, .{
+                        .data = .{ .i_int = @intCast(tag_index) },
+                        .type_id = self.type_table.getPrimitive(.int),
+                    }));
+
+                    var body: std.ArrayList(ir.Instruction) = .empty;
+                    const is_ignored = std.mem.eql(u8, variant.capture, "_");
+                    const captured_symbol = Symbol{
+                        .uid = self.scope.genUid(),
+                        .identifier = variant.capture,
+                        .type_id = variant_type_id,
+                        .kind = .{ .variable = .{ .is_mut = false } },
+                    };
+
+                    if (!is_ignored) {
+                        try body.append(self.allocator, .{ .store_var = .{
+                            .uid = captured_symbol.uid,
+                            .identifier = captured_symbol.identifier,
+                            .type_id = variant_type_id,
+                            .value = try ir.Value.init(self.allocator, .{
+                                .data = .{ .union_payload = unwrapped_ref },
+                                .type_id = variant_type_id,
+                            }),
+                        } });
+                        try self.scope.symbol_table.put(captured_symbol);
+                    }
+                    defer if (!is_ignored) {
+                        _ = self.scope.symbol_table.remove(captured_symbol.identifier);
+                    };
+
+                    try body.appendSlice(self.allocator, (try self.visitBlock(&prong.body)).instructions);
+                    chain = try self.wrapBranch(condition, try body.toOwnedSlice(self.allocator), chain);
+                },
+                .values => {
+                    var condition: ?*ir.Value = null;
+                    for (prong_values[prong_idx]) |value| {
+                        const eq = try self.cmpEq(unwrapped_ref, value);
+                        condition = if (condition) |c| try ir.Value.init(self.allocator, .{
+                            .data = .{ .binary_op = .{ .kind = .b_or, .left = c, .right = eq } },
+                            .type_id = self.type_table.getPrimitive(.boolean),
+                        }) else eq;
+                    }
+
+                    const body = (try self.visitBlock(&prong.body)).instructions;
+                    chain = try self.wrapBranch(condition.?, body, chain);
+                },
+            }
+        }
+
+        if (is_nullable) {
+            const not_null = try ir.Value.init(self.allocator, .{
+                .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
+                .type_id = self.type_table.getPrimitive(.boolean),
+            });
+            chain = try self.wrapBranch(not_null, chain, null_insts);
+        }
+
+        try instructions.appendSlice(self.allocator, chain);
+        return instructions.toOwnedSlice(self.allocator);
+    }
+
+    fn evalWhenCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) Errors!*ir.Value {
+        if (self.type_table.getTypePtrById(expected_type).kind == .int) {
+            const literal: ?i64 = switch (exp.data) {
+                .int_literal => |i| i,
+                .unary_exp => |un| if (un.op == .neg and un.right.data == .int_literal) -un.right.data.int_literal else null,
+                else => null,
+            };
+
+            if (literal == null) {
+                const value = try self.evalExp(exp);
+                if (!self.type_table.eql(value.type_id, expected_type)) {
+                    return self.err_dispatcher.invalidType("int", try self.type_table.name(value.type_id, self.allocator), exp.loc);
+                }
+                return self.err_dispatcher.whenInvalidCase("int cases must be int literals", exp.loc);
+            }
+
+            return ir.Value.init(self.allocator, .{ .data = .{ .i_int = literal.? }, .type_id = expected_type });
+        }
+
+        const value = try self.evalExp(exp);
+        if (!self.type_table.eql(value.type_id, expected_type)) {
+            return self.err_dispatcher.invalidType(
+                try self.type_table.name(expected_type, self.allocator),
+                try self.type_table.name(value.type_id, self.allocator),
+                exp.loc,
+            );
+        }
+        if (value.data != .i_int) {
+            return self.err_dispatcher.whenInvalidCase("enum cases must be variants, like 'Color.Red'", exp.loc);
+        }
+        return value;
+    }
+
+    fn cmpEq(self: *Self, left: *ir.Value, right: *ir.Value) !*ir.Value {
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = .i_cmp_eq, .left = left, .right = right } },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        });
+    }
+
+    fn wrapBranch(self: *Self, condition: *ir.Value, then_block: []const ir.Instruction, else_block: []const ir.Instruction) ![]const ir.Instruction {
+        const branch = try self.allocator.alloc(ir.Instruction, 1);
+        branch[0] = .{ .branch_if = .{ .condition = condition, .then_block = then_block, .else_block = else_block } };
+        return branch;
+    }
+
+    fn appendMissing(allocator: std.mem.Allocator, missing: *std.ArrayList(u8), name: []const u8) !void {
+        if (missing.items.len > 0) try missing.appendSlice(allocator, ", ");
+        try missing.appendSlice(allocator, name);
     }
 
     fn visitAssignStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
@@ -1209,8 +1488,16 @@ pub const SemaAnalyzer = struct {
                 );
             }
 
+            const boxed_value = if (self.typeNeedsNullBox(self.scope.return_type_id, exp_value_type))
+                try ir.Value.init(self.allocator, .{
+                    .data = .{ .null_box_init = .{ .value = exp_value } },
+                    .type_id = exp_value_type,
+                })
+            else
+                exp_value;
+
             return ir.Instruction{ .return_stmt = .{
-                .value = exp_value,
+                .value = boxed_value,
             } };
         }
 
@@ -1553,18 +1840,19 @@ pub const SemaAnalyzer = struct {
             }
         }
 
+        for (params, fn_call_arguments_values.items, 0..) |param, _, i| {
+            if (self.typeNeedsNullBox(param.type_id, fn_call_arguments_values.items[i].type_id)) {
+                const current = fn_call_arguments_values.items[i];
+                fn_call_arguments_values.items[i] = try ir.Value.init(self.allocator, .{
+                    .data = .{ .null_box_init = .{ .value = current } },
+                    .type_id = current.type_id,
+                });
+            }
+        }
+
         const is_struct_inicialization = is_struct_init or fn_call.target.data == .anonymous_struct_identifier;
 
         if (is_struct_inicialization) {
-            for (params, fn_call_arguments_values.items, 0..) |param, _, i| {
-                if (self.typeNeedsNullBox(param.type_id, fn_call_arguments_values.items[i].type_id)) {
-                    const current = fn_call_arguments_values.items[i];
-                    fn_call_arguments_values.items[i] = try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{ .value = current } },
-                        .type_id = current.type_id,
-                    });
-                }
-            }
 
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {

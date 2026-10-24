@@ -257,6 +257,7 @@ pub const Func = struct {
 pub const Enum = struct {
     identifier: []const u8,
     variants: std.StringHashMap(i64),
+    variants_in_order: []const []const u8 = &.{},
     static_fields: std.StringHashMap(TypedIdentifier),
     methods: std.StringHashMap(TypeId),
 };
@@ -264,6 +265,7 @@ pub const Enum = struct {
 pub const Union = struct {
     identifier: []const u8,
     variants: std.StringHashMap(TypeId),
+    variants_in_order: []const []const u8 = &.{},
     static_fields: std.StringHashMap(TypedIdentifier),
     methods: std.StringHashMap(TypeId),
 };

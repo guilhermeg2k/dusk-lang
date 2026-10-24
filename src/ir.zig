@@ -155,6 +155,8 @@ pub const Value = struct {
         struct_init: StructInit,
         union_init: UnionInit,
         null_box_init: NullBoxInit,
+        union_tag: *Value,
+        union_payload: *Value,
     },
 
     type_id: TypeId,

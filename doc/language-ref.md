@@ -280,6 +280,53 @@ end
 
 > **Note on Mutability:** Capturing a primitive value (like `int`, `float`, `string`, `bool`) as `mut` will only mutate the captured local variable, not the original value. Mutating the original value through a capture only works for reference types like structs and arrays.
 
+### When
+
+`when` runs the case that matches a value. It works on `int`, enums, unions and nullable versions of these. Each case is `<pattern> then ... end`, and the whole statement ends with `end`. Cases never fall through.
+
+```nim
+when color
+    Color.Red then echo("red") end
+    Color.Green, Color.Blue then
+        echo("cold")
+    end
+end
+
+when code
+    200 then echo("ok") end
+    404, 410 then echo("gone") end
+    else then echo("other") end
+end
+```
+
+Union cases name a variant and capture its payload, like `if u.variant: x`. Use `_` to ignore it:
+
+```nim
+when shape
+    circle: r then echo(3 * r * r) end
+    square: _ then echo("square") end
+end
+```
+
+A nullable subject (`?Color`, `?Shape`, `?int`) can have a `null` case. Inside the other cases the value isn't null anymore:
+
+```nim
+when maybe_shape
+    null then echo("none") end
+    circle: r then echo(r) end
+    square: s then echo(s) end
+end
+```
+
+Rules:
+
+- Enum and union cases must cover every variant (and `null` for a nullable subject), or have an `else` case. An `else` that can never run is an error.
+- `int` subjects always need an `else` case. Int cases must be literals.
+- Enum cases use the full name (`Color.Red`).
+- A value or variant can only appear in one case.
+- `string` and `float` subjects aren't supported yet.
+- `break`, `continue` and `return` inside a case act on the enclosing loop or function.
+
 ### Loops
 
 Dusk supports `for` loops, which can be conditional (like a `while` loop) or infinite.

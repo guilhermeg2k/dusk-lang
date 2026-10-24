@@ -1,0 +1,17 @@
+enum Color
+    Red
+    Green
+    Blue
+end
+
+union Shape
+    circle: int
+    square: int
+end
+
+let c = Color.Red
+when c
+    Color.Red then echo(1) end
+    Color.Green, Color.Blue then echo(2) end
+    else then echo(3) end
+end
