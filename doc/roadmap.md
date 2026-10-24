@@ -15,7 +15,7 @@
 
 ## Version 0.13 - Hiei
 
-- Fancy for (fon in like)
+- Fancy for (for in like)
 - Ranges (`1..5`) for `for` and `when` cases
 - `when` on floats (range cases only, e.g. `0.0..1.0 then`)
 - `when`, `if` as expression

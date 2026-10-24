@@ -10,6 +10,7 @@
 - Anonymous syntax for unions: `@(variant = value)` builds a union wherever a union type is expected (annotated `let`, assignment, arguments, returns, struct fields, payloads and array literals)
 - `when` statement: branches on `int`, enums, unions (with payload capture) and their nullable versions, with a `null` case. Sema checks that every enum/union variant is handled, that `int` subjects have an `else`, that no `else` is unreachable, and that no case is repeated
 - Union variant tags now follow declaration order
+- Functions can return only from inside branches: an `if/elif/else` where every branch returns, or a `when` where every case returns, counts as returning
 - Clearer error for `mut` union params (including `mut self`): union variants can't be changed in place
 - Fixed nullable primitives (`?int`, `?float`, `?bool`) not being tracked by the garbage collector
 - Fixed garbage collector losing arrays of unions and arrays of nullables
@@ -20,6 +21,7 @@
 - Fixed compiler crash when assigning or passing an empty array literal (`list = []`)
 - Fixed assigning a call result to a variable declared before other variables (`out = len(a)`) crashing or giving garbage
 - Fixed passing a plain value to a `?int`/`?float`/`?bool`/`?Enum` parameter, or returning one from a function returning such a type, crashing the program
+- Rewrote the language reference for v0.11: enums, unions, nullables, operator precedence, errors and known limitations
 - Added `bench.py`: a Dusk-only benchmark runner with JSON output and `--compare <git-ref>` to measure a change against another version
 
 ## v0.10 - Frieren

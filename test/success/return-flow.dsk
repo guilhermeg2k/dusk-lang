@@ -1,0 +1,118 @@
+func sign(x: int) -> int
+    if x > 0 then
+        return 1
+    elif x < 0 then
+        return -1
+    else
+        return 0
+    end
+end
+
+assert(sign(5) == 1)
+assert(sign(-5) == -1)
+assert(sign(0) == 0)
+
+func first_or(items: []int, fallback: int) -> int
+    if len(items) > 0 then
+        let value = items[0]
+        return value
+    end
+    return fallback
+end
+
+assert(first_or([7], 1) == 7)
+assert(first_or([], 1) == 1)
+
+func unwrap_or(n: ?int, fallback: int) -> int
+    if n: value then
+        return value
+    else
+        return fallback
+    end
+end
+
+assert(unwrap_or(3, 0) == 3)
+assert(unwrap_or(null, 0) == 0)
+
+enum Color
+    Red
+    Green
+    Blue
+end
+
+func code(c: Color) -> int
+    when c
+        Color.Red then return 1 end
+        Color.Green then return 2 end
+        Color.Blue then return 3 end
+    end
+end
+
+assert(code(Color.Red) == 1)
+assert(code(Color.Green) == 2)
+assert(code(Color.Blue) == 3)
+
+union Shape
+    circle: int
+    square: int
+
+    func area(self: @) -> int
+        when self
+            circle: r then return 3 * r * r end
+            square: side then return side * side end
+        end
+    end
+end
+
+assert(Shape(circle = 2).area() == 12)
+assert(Shape(square = 3).area() == 9)
+
+func describe(n: int) -> string
+    when n
+        0 then return "zero" end
+        1, 2 then return "small" end
+        else then return "big" end
+    end
+end
+
+assert(len([describe(0), describe(2), describe(9)]) == 3)
+
+func maybe_code(c: ?Color) -> int
+    when c
+        null then return 0 end
+        Color.Red then return 1 end
+        else then return 9 end
+    end
+end
+
+assert(maybe_code(null) == 0)
+assert(maybe_code(Color.Red) == 1)
+assert(maybe_code(Color.Blue) == 9)
+
+func nested(a: bool, b: bool) -> int
+    if a then
+        if b then
+            return 1
+        else
+            return 2
+        end
+    else
+        return 3
+    end
+end
+
+assert(nested(true, true) == 1)
+assert(nested(true, false) == 2)
+assert(nested(false, true) == 3)
+
+func single(s: Shape) -> int
+    let mut total = 0
+    when s
+        circle: r then total = r end
+        square: side then total = side end
+    end
+    return total
+end
+
+assert(single(Shape(square = 4)) == 4)
+assert(single(Shape(circle = 5)) == 5)

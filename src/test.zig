@@ -98,6 +98,10 @@ test "when" {
     try runCase("when.dsk");
 }
 
+test "returns inside branches" {
+    try runCase("return-flow.dsk");
+}
+
 test "call result assigned to an older variable" {
     try runCase("call-assign.dsk");
 }
@@ -204,6 +208,18 @@ test "sema error: invalid return type" {
 
 test "sema error: bare return in nonvoid fn" {
     try runCaseError("sema/bare-return-in-nonvoid-fn.dsk", error.InvalidReturnType);
+}
+
+test "sema error: return only in if" {
+    try runCaseError("sema/return-only-in-if.dsk", error.InvalidReturnType);
+}
+
+test "sema error: return missing in elif" {
+    try runCaseError("sema/return-missing-in-elif.dsk", error.InvalidReturnType);
+}
+
+test "sema error: return missing in when case" {
+    try runCaseError("sema/return-missing-in-when-case.dsk", error.InvalidReturnType);
 }
 
 test "sema error: invalid struct function" {
