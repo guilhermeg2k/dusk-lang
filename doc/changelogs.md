@@ -1,5 +1,9 @@
 # Changelogs
 
+## v0.11 - Power (in development)
+
+- First version developed with AI assistance (see [AI Usage](ai-disclaimer.md))
+
 ## v0.10 - Frieren
 
 - Bytecode compiler generating a custom instruction set

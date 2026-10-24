@@ -18,6 +18,8 @@ A small/lightweight statically typed scripting language
 
 [Benchmarks](benchmarks/benchmark.md)
 
+[AI Usage](doc/ai-disclaimer.md)
+
 [Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/contributing.md)
 
 [License](https://github.com/guilhermeg2k/dusk-lang/blob/main/LICENSE)
