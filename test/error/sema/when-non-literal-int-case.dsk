@@ -1,0 +1,17 @@
+enum Color
+    Red
+    Green
+    Blue
+end
+
+union Shape
+    circle: int
+    square: int
+end
+
+let n = 3
+let m = 3
+when n
+    m then echo(0) end
+    else then echo(1) end
+end

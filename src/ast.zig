@@ -18,6 +18,7 @@ pub const Statement = union(enum) {
     @"union": UnionStmt,
     @"if": IfStmt,
     if_capture: IfCaptureStmt,
+    when: WhenStmt,
     @"for": ForStmt,
     assign: AssignStmt,
     @"return": ReturnStmt,
@@ -64,6 +65,23 @@ pub const IfCaptureStmt = struct {
     identifier: struct { name: []const u8, is_mut: bool },
     body: Block,
     else_block: ?Block,
+};
+
+pub const WhenStmt = struct {
+    subject: *ExpNode,
+    prongs: []const WhenProng,
+    else_block: ?Block,
+    else_loc: ?err.Loc,
+};
+
+pub const WhenProng = struct {
+    pattern: union(enum) {
+        values: []const *ExpNode,
+        variant: struct { name: []const u8, capture: []const u8 },
+        null_case: void,
+    },
+    body: Block,
+    loc: err.Loc,
 };
 
 pub const ForStmt = struct {

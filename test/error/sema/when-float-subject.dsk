@@ -1,0 +1,16 @@
+enum Color
+    Red
+    Green
+    Blue
+end
+
+union Shape
+    circle: int
+    square: int
+end
+
+let f = 1.5
+when f
+    1.5 then echo(1) end
+    else then echo(0) end
+end

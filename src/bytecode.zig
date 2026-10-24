@@ -374,6 +374,15 @@ pub const BytecodeGen = struct {
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const call_reg = self.consumeRegister();
+            defer self.freeRegister();
+            try self.genFnCall(fc, value, call_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
         for (fc.args) |arg| {
             _ = try self.genValue(arg, self.consumeRegister());
         }
@@ -483,6 +492,20 @@ pub const BytecodeGen = struct {
 
             .null_box_init => {
                 try self.genNullBoxInit(value, target_reg);
+            },
+
+            .union_tag => |un| {
+                const union_reg = try self.genValue(un, self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_TAG, .a = target_reg, .b = union_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .union_payload => |un| {
+                const union_reg = try self.genValue(un, self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_PAYLOAD, .a = target_reg, .b = union_reg });
+                self.register_types[target_reg] = value.type_id;
             },
 
             .binary_op => |bo| {
@@ -1169,11 +1192,10 @@ pub const BytecodeGen = struct {
         var box_bitmap: u256 = 0;
         const variant_kinds = try self.allocator.alloc(v.ValueType, union_def.variants.count());
 
-        var it = union_def.variants.iterator();
-        var tag: u16 = 0;
-        while (it.next()) |entry| {
-            try tag_map.put(entry.key_ptr.*, tag);
-            const vt = v.ValueType.fromTypeId(self.type_table, entry.value_ptr.*);
+        for (union_def.variants_in_order, 0..) |variant_name, i| {
+            const tag: u16 = @intCast(i);
+            try tag_map.put(variant_name, tag);
+            const vt = v.ValueType.fromTypeId(self.type_table, union_def.variants.get(variant_name).?);
             variant_kinds[tag] = vt;
             if (vt.isHeapType()) {
                 bitmap |= @as(u256, 1) << @intCast(tag);
@@ -1181,7 +1203,6 @@ pub const BytecodeGen = struct {
                 // reading a primitive variant yields ?T, which needs a null box
                 box_bitmap |= @as(u256, 1) << @intCast(tag);
             }
-            tag += 1;
         }
 
         const id: u16 = @intCast(self.union_descriptors.items.len);
@@ -1375,6 +1396,7 @@ pub const Chunk = struct {
             .UNION_STORE => std.debug.print("R[{d}] T[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .LARGE_UNION_LOAD => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .LARGE_UNION_STORE => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .UNION_TAG, .UNION_PAYLOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .NULL_BOX_INIT,
@@ -1440,6 +1462,8 @@ pub const OpCode = enum(u8) {
     UNION_STORE,
     LARGE_UNION_LOAD,
     LARGE_UNION_STORE,
+    UNION_TAG,
+    UNION_PAYLOAD,
 
     STATIC_LOAD,
     STATIC_STORE,

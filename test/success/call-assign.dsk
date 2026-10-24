@@ -1,0 +1,22 @@
+func id(n: int) -> int
+    return n
+end
+
+func f(a: []int) -> int
+    let mut out = 0
+    let other = 5
+    out = len(a)
+    assert(other == 5)
+    return out
+end
+
+assert(f([1, 2, 3]) == 3)
+
+func g() -> int
+    let mut out = 0
+    let other = 5
+    out = id(7)
+    out = id(out) + other
+    return out
+end
+assert(g() == 12)

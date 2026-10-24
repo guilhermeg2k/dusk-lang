@@ -112,6 +112,11 @@ pub const Parser = struct {
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
                 return ast.StatementNode{ .data = .{ .@"if" = if_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
+            .when_kw => {
+                const when_stmt = try self.parseWhenStmt();
+                const end_pos = self.tokens[self.cur_index - 1].loc.end;
+                return ast.StatementNode{ .data = .{ .when = when_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+            },
             .for_kw => {
                 const for_stmt = try self.parseForStmt();
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
@@ -362,6 +367,67 @@ pub const Parser = struct {
         }
 
         return .{ .condition = first_cond, .then_block = then_block, .else_block = else_block };
+    }
+
+    fn parseWhenStmt(self: *Self) Errors!ast.WhenStmt {
+        self.walk();
+        const subject = try self.parseExp(0);
+
+        var prongs: std.ArrayList(ast.WhenProng) = .empty;
+        var else_block: ?ast.Block = null;
+        var else_loc: ?err.Loc = null;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            if (tk.tag == .end_kw or tk.tag == .eof) break;
+
+            if (tk.tag == .else_kw) {
+                self.walk();
+                _ = try self.expect(.then_kw);
+                else_block = try self.parseBlock(&.{});
+                _ = try self.expect(.end_kw);
+                else_loc = tk.loc;
+                break;
+            }
+
+            const pattern: @FieldType(ast.WhenProng, "pattern") = blk: {
+                if (self.match(.null_literal)) break :blk .null_case;
+
+                if (tk.tag == .identifier and self.peekNext().tag == .colon) {
+                    self.walk();
+                    self.walk();
+                    const capture = try self.expect(.identifier);
+                    break :blk .{ .variant = .{ .name = tk.value(self.src), .capture = capture.value(self.src) } };
+                }
+
+                var values: std.ArrayList(*ast.ExpNode) = .empty;
+                try values.append(self.allocator, try self.parseExp(0));
+                while (self.match(.comma)) {
+                    try values.append(self.allocator, try self.parseExp(0));
+                }
+                break :blk .{ .values = try values.toOwnedSlice(self.allocator) };
+            };
+
+            const pattern_end = self.tokens[self.cur_index - 1].loc.end;
+            _ = try self.expect(.then_kw);
+            const body = try self.parseBlock(&.{.else_kw});
+            _ = try self.expect(.end_kw);
+
+            try prongs.append(self.allocator, .{
+                .pattern = pattern,
+                .body = body,
+                .loc = .{ .start = tk.loc.start, .end = pattern_end },
+            });
+        }
+
+        _ = try self.expect(.end_kw);
+
+        return .{
+            .subject = subject,
+            .prongs = try prongs.toOwnedSlice(self.allocator),
+            .else_block = else_block,
+            .else_loc = else_loc,
+        };
     }
 
     fn parseForStmt(self: *Self) Errors!ast.ForStmt {

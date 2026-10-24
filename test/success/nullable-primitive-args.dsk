@@ -1,0 +1,42 @@
+enum Color
+    Red
+    Green
+end
+
+func or_zero(n: ?int) -> int
+    if n: x then
+        return x
+    end
+    return 0
+end
+
+assert(or_zero(10) == 10)
+assert(or_zero(null) == 0)
+
+func is_green(c: ?Color) -> bool
+    if c: x then
+        return x == Color.Green
+    end
+    return false
+end
+
+assert(is_green(Color.Green))
+assert(!is_green(Color.Red))
+assert(!is_green(null))
+
+func half(n: int) -> ?float
+    if n == 0 then
+        return null
+    end
+    return n / 2
+end
+
+if half(3): h then
+    assert(h == 1.5)
+else
+    assert(false)
+end
+
+if half(0): _ then
+    assert(false)
+end

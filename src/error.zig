@@ -253,6 +253,52 @@ pub const ErrorDispatcher = struct {
         return error.UnionParamsCantBeMutable;
     }
 
+    pub fn whenNotExhaustive(self: *Self, missing: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "when is not exhaustive, missing: {s}",
+                .{missing},
+            ),
+            loc,
+        );
+        return error.WhenNotExhaustive;
+    }
+
+    pub fn whenNeedsElse(self: *Self, subject_type: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "when on '{s}' must have an else case",
+                .{subject_type},
+            ),
+            loc,
+        );
+        return error.WhenNotExhaustive;
+    }
+
+    pub fn whenUselessElse(self: *Self, loc: Loc) Errors {
+        self.log("else is never reached: every case is already handled", loc);
+        return error.WhenUselessElse;
+    }
+
+    pub fn whenDuplicateCase(self: *Self, case: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "case '{s}' is already handled",
+                .{case},
+            ),
+            loc,
+        );
+        return error.WhenDuplicateCase;
+    }
+
+    pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) Errors {
+        self.log(msg, loc);
+        return error.WhenInvalidCase;
+    }
+
     pub fn invalidDefinition(self: *Self, loc: Loc) Errors {
         self.log("struct and enum definitions cannot be mutable", loc);
         return error.InvalidDefinition;
@@ -446,6 +492,10 @@ pub const Errors = error{
     InvalidUnionMember,
     InvalidUnionFunction,
     UnionParamsCantBeMutable,
+    WhenNotExhaustive,
+    WhenUselessElse,
+    WhenDuplicateCase,
+    WhenInvalidCase,
 };
 
 pub const RunTimeError = error{

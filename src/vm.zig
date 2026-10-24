@@ -191,6 +191,16 @@ pub const VM = struct {
                     try self.loadUnionVariant(stack, stack_base, inst.a, inst.b, @intCast(tag_reg.int64));
                 },
 
+                .UNION_TAG => {
+                    const union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + inst.b].heap_obj);
+                    stack[stack_base + inst.a] = .{ .int64 = union_vl.active_tag };
+                },
+
+                .UNION_PAYLOAD => {
+                    const union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + inst.b].heap_obj);
+                    stack[stack_base + inst.a] = union_vl.getDataPtr()[0];
+                },
+
                 .NULL_BOX_INIT => {
                     const size = v.NullBox.calc_size();
                     current_frame.cur_inst = cur_instruction;

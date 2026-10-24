@@ -6,7 +6,7 @@
 
 - Enums
 - Unions
-- Switch
+- When
 
 ## Version 0.12 - Kanade
 
@@ -16,6 +16,9 @@
 ## Version 0.13 - Hiei
 
 - Fancy for (fon in like)
+- Ranges (`1..5`) for `for` and `when` cases
+- `when` on floats (range cases only, e.g. `0.0..1.0 then`)
+- `when`, `if` as expression
 - Capture for
 - Ternary operator
 - Nullish coalescing operator (??)
@@ -44,6 +47,7 @@
 - Multiline Comments
 - Multiline strings
 - Strings operations
+- `when` on strings
 - String interpolation
 
 ## Version 0.19 - Shigeo
