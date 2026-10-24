@@ -504,6 +504,18 @@ pub const BytecodeGen = struct {
     fn genIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
         const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
+        // sema only allows a nullable target through `?.`
+        if (target_type.nullable) {
+            const is_instance_member = switch (target_type.kind) {
+                .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
+                .@"union" => |u| u.variants.contains(idx.index.data.i_string),
+                else => false,
+            };
+            if (is_instance_member) {
+                return self.genNullableIndexedLoad(idx, value, target_reg);
+            }
+        }
+
         switch (target_type.kind) {
             .@"struct" => |@"struct"| {
                 const field_name = idx.index.data.i_string;
@@ -564,37 +576,102 @@ pub const BytecodeGen = struct {
                     return;
                 }
 
-                const tag_index = try self.unionTagIndex(idx.target.type_id, field_name);
                 const union_reg = try self.genValue(idx.target, self.consumeRegister());
                 defer self.freeRegister();
 
-                if (tag_index <= std.math.maxInt(u8)) {
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .UNION_LOAD,
-                        .a = target_reg,
-                        .b = union_reg,
-                        .c = @intCast(tag_index),
-                    });
-                    try self.recordHeapMap();
-                } else {
-                    const tag_reg = self.consumeRegister();
-                    defer self.freeRegister();
-                    const tag_value = ir.Value{
-                        .type_id = self.type_table.getPrimitive(.int),
-                        .data = .{ .i_int = @intCast(tag_index) },
-                    };
-                    try self.genLoadConst(v.TypedValue.from_ir_value(&tag_value), tag_reg);
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .LARGE_UNION_LOAD,
-                        .a = target_reg,
-                        .b = union_reg,
-                        .c = tag_reg,
-                    });
-                    try self.recordHeapMap();
-                }
+                try self.genUnionLoad(target_reg, union_reg, idx.target.type_id, field_name);
                 self.register_types[target_reg] = value.type_id;
             },
             else => unreachable,
+        }
+    }
+
+    // Optional chaining (`target?.member`): the result is null when the target is null.
+    //   cond   = target != null
+    //   result = null
+    //   JUMP_IF_FALSE cond -> end
+    //   result = <member load>, boxed when the member is a non-nullable primitive
+    // end:
+    fn genNullableIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
+        const target_type = self.type_table.getTypePtrById(idx.target.type_id);
+        const member_name = idx.index.data.i_string;
+
+        const obj_reg = try self.genValue(idx.target, self.consumeRegister());
+        const cond_reg = self.consumeRegister();
+        defer self.freeRegisterN(2);
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_NNULL,
+            .a = cond_reg,
+            .b = obj_reg,
+        });
+        self.register_types[cond_reg] = self.type_table.getPrimitive(.boolean);
+
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+        self.register_types[target_reg] = value.type_id;
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = cond_reg });
+        const jump_idx = self.chunk_instructions.items.len - 1;
+
+        switch (target_type.kind) {
+            .@"struct" => |@"struct"| {
+                const field_index = @"struct".field_index_by_name.get(member_name) orelse unreachable;
+                const field_type_id = (@"struct".fields.get(member_name) orelse unreachable).type_id;
+                const field_kind = v.ValueType.fromTypeId(self.type_table, field_type_id);
+
+                if (field_kind.isHeapType()) {
+                    try self.genStructLoad(target_reg, obj_reg, @intCast(field_index));
+                } else {
+                    const raw_reg = self.consumeRegister();
+                    defer self.freeRegister();
+
+                    try self.genStructLoad(raw_reg, obj_reg, @intCast(field_index));
+                    self.register_types[raw_reg] = field_type_id;
+
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .NULL_BOX_INIT,
+                        .a = target_reg,
+                        .b = @intFromEnum(field_kind),
+                        .c = raw_reg,
+                    });
+                    try self.recordHeapMap();
+                }
+            },
+            // UNION_LOAD already boxes primitive variants
+            .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, member_name),
+            else => unreachable,
+        }
+
+        self.chunk_instructions.items[jump_idx].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genUnionLoad(self: *Self, target_reg: u8, union_reg: u8, union_type_id: tt.TypeId, variant_name: []const u8) !void {
+        const tag_index = try self.unionTagIndex(union_type_id, variant_name);
+
+        if (tag_index <= std.math.maxInt(u8)) {
+            try self.chunk_instructions.append(self.allocator, .{
+                .op = .UNION_LOAD,
+                .a = target_reg,
+                .b = union_reg,
+                .c = @intCast(tag_index),
+            });
+            try self.recordHeapMap();
+        } else {
+            const tag_reg = self.consumeRegister();
+            defer self.freeRegister();
+            const tag_value = ir.Value{
+                .type_id = self.type_table.getPrimitive(.int),
+                .data = .{ .i_int = @intCast(tag_index) },
+            };
+            try self.genLoadConst(v.TypedValue.from_ir_value(&tag_value), tag_reg);
+            try self.chunk_instructions.append(self.allocator, .{
+                .op = .LARGE_UNION_LOAD,
+                .a = target_reg,
+                .b = union_reg,
+                .c = tag_reg,
+            });
+            try self.recordHeapMap();
         }
     }
 

@@ -241,6 +241,18 @@ pub const ErrorDispatcher = struct {
         return error.InvalidUnionFunction;
     }
 
+    pub fn unionParamsCantBeMutable(self: *Self, param_name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Union param '{s}' can't be mutable: union variants can't be changed in place, return a new union instead",
+                .{param_name},
+            ),
+            loc,
+        );
+        return error.UnionParamsCantBeMutable;
+    }
+
     pub fn invalidDefinition(self: *Self, loc: Loc) Errors {
         self.log("struct and enum definitions cannot be mutable", loc);
         return error.InvalidDefinition;
@@ -433,6 +445,7 @@ pub const Errors = error{
     InvalidUnionVariant,
     InvalidUnionMember,
     InvalidUnionFunction,
+    UnionParamsCantBeMutable,
 };
 
 pub const RunTimeError = error{

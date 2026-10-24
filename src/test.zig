@@ -86,6 +86,18 @@ test "nullable echo" {
     try runCase("nullable-echo.dsk");
 }
 
+test "optional chaining" {
+    try runCase("optional-chaining.dsk");
+}
+
+test "union anonymous syntax" {
+    try runCase("union-anonymous.dsk");
+}
+
+test "empty array literal" {
+    try runCase("empty-array-literal.dsk");
+}
+
 test "struct" {
     try runCase("struct.dsk");
 }
@@ -364,6 +376,14 @@ test "sema error: union static field not mutable" {
 
 test "sema error: union static field type mismatch" {
     try runCaseError("sema/union-static-field-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: mutable union param" {
+    try runCaseError("sema/union-mut-param.dsk", error.UnionParamsCantBeMutable);
+}
+
+test "sema error: anonymous union unknown variant" {
+    try runCaseError("sema/union-anonymous-unknown-variant.dsk", error.InvalidUnionVariant);
 }
 
 test "syntax error: break outside loop" {

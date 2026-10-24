@@ -547,11 +547,16 @@ pub const SemaAnalyzer = struct {
         var var_type_id: tt.TypeId = undefined;
         const let_stmt = stmt.data.let;
 
-        const expression_value = try self.evalExp(let_stmt.value);
+        const annotated_type_id = if (let_stmt.type_annotation) |type_annotation|
+            try self.resolveTypeAnnotation(type_annotation, null)
+        else
+            null;
+
+        const expression_value = try self.evalExpExpecting(let_stmt.value, annotated_type_id);
         const expression_type_id = expression_value.type_id;
 
-        if (let_stmt.type_annotation) |type_annotation| {
-            var_type_id = try self.resolveTypeAnnotation(type_annotation, null);
+        if (annotated_type_id) |type_id| {
+            var_type_id = type_id;
         } else {
             var_type_id = expression_type_id;
             const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
@@ -825,7 +830,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notDefined(id, assign_stmt.target.loc);
                 };
 
-                const assignment_value = try self.evalExp(assign_stmt.exp);
+                const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
                 const assignment_value_type = assignment_value.type_id;
 
                 if (!id_symbol.kind.variable.is_mut) {
@@ -871,7 +876,12 @@ pub const SemaAnalyzer = struct {
                 const index_exp = assign_stmt.target.data.indexed;
                 const target = try self.evalExp(index_exp.target);
                 const target_type = target.type_id;
-                const assignment_value = try self.evalExp(assign_stmt.exp);
+                // the assigned member's type is only needed to give `@(...)` a type
+                const expected_type_id = if (isAnonymousInit(assign_stmt.exp))
+                    (try self.evalExp(assign_stmt.target)).type_id
+                else
+                    null;
+                const assignment_value = try self.evalExpExpecting(assign_stmt.exp, expected_type_id);
                 const assignment_value_type = assignment_value.type_id;
 
                 var target_root = index_exp.target;
@@ -1142,6 +1152,10 @@ pub const SemaAnalyzer = struct {
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
+            if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind == .@"union") {
+                return self.err_dispatcher.unionParamsCantBeMutable(param.identifier, loc);
+            }
+
             if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind != .array and self.type_table.getTypePtrById(param.type_id).kind != .@"struct") {
                 return self.err_dispatcher.primitiveParamsCantBeMutable(loc);
             }
@@ -1184,7 +1198,7 @@ pub const SemaAnalyzer = struct {
         const return_stmt = stmt.data.@"return";
 
         if (return_stmt.exp) |exp| {
-            const exp_value = try self.evalExp(exp);
+            const exp_value = try self.evalExpExpecting(exp, self.scope.return_type_id);
             const exp_value_type = exp_value.type_id;
 
             if (!self.type_table.coerce(exp_value_type, self.scope.return_type_id)) {
@@ -1213,6 +1227,29 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
+    fn isAnonymousInit(exp: *const ast.ExpNode) bool {
+        return exp.data == .fn_call and exp.data.fn_call.target.data == .anonymous_struct_identifier;
+    }
+
+    // `@(variant = value)` has no union type of its own: when a union is expected it is
+    // built as that union, like `U(variant = value)`. Anything else is evaluated as usual.
+    fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
+        if (expected_type_id) |expected| {
+            const base_type_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
+            const base_kind = self.type_table.getTypePtrById(base_type_id).kind;
+
+            if (isAnonymousInit(exp) and base_kind == .@"union") {
+                return self.evalUnionInit(exp, base_type_id);
+            }
+
+            if (exp.data == .array_literal and base_kind == .array) {
+                return self.evalArrayLiteral(exp, base_kind.array);
+            }
+        }
+
+        return self.evalExp(exp);
+    }
+
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
             .float_literal => {
@@ -1231,7 +1268,7 @@ pub const SemaAnalyzer = struct {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_null = {} }, .type_id = self.type_table.getPrimitive(.null) });
             },
             .array_literal => {
-                return self.evalArrayLiteral(exp);
+                return self.evalArrayLiteral(exp, null);
             },
             .identifier => {
                 return self.evalIdentifier(exp);
@@ -1481,7 +1518,7 @@ pub const SemaAnalyzer = struct {
             }
 
             if (arg_exp) |_exp| {
-                const fn_call_arg_value = try self.evalExp(_exp);
+                const fn_call_arg_value = try self.evalExpExpecting(_exp, param.type_id);
                 const arg_type = fn_call_arg_value.type_id;
 
                 if (!self.type_table.coerce(arg_type, param.type_id)) {
@@ -1582,7 +1619,7 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.invalidUnionVariant(union_def.identifier, variant_name, exp.loc);
         };
 
-        const raw_value = try self.evalExp(arg.exp);
+        const raw_value = try self.evalExpExpecting(arg.exp, variant_type_id);
         if (!self.type_table.coerce(raw_value.type_id, variant_type_id)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(variant_type_id, self.allocator),
@@ -1812,13 +1849,16 @@ pub const SemaAnalyzer = struct {
         return true;
     }
 
-    fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+    fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode, expected_item_type_id: ?tt.TypeId) !*ir.Value {
         var values: std.ArrayList(*ir.Value) = .empty;
         const array_literal = exp.data.array_literal;
         var array_literal_type: tt.TypeId = self.type_table.getPrimitive(.dynamic);
 
         for (array_literal.exps) |e| {
-            const exp_value = try self.evalExp(e);
+            // without a declared item type, later items follow the first one
+            const item_type_id = expected_item_type_id orelse
+                if (array_literal_type == self.type_table.getPrimitive(.dynamic)) null else array_literal_type;
+            const exp_value = try self.evalExpExpecting(e, item_type_id);
             const exp_value_type = exp_value.type_id;
 
             if (array_literal_type == self.type_table.getPrimitive(.dynamic)) {
@@ -1830,6 +1870,11 @@ pub const SemaAnalyzer = struct {
             }
 
             try values.append(self.allocator, exp_value);
+        }
+
+        // an empty literal (`list = []`) takes the expected item type when there is one
+        if (array_literal.exps.len == 0) {
+            if (expected_item_type_id) |item_type_id| array_literal_type = item_type_id;
         }
 
         const array_type_id = try self.type_table.getOrAddArray(array_literal_type);
