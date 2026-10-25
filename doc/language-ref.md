@@ -623,3 +623,4 @@ These are known gaps in v0.11. Most are planned in the [roadmap](roadmap.md).
 - **Nullable arrays**: `?[]int` can't hold `null` yet.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
+- **Union size**: a union can have at most 256 variants.

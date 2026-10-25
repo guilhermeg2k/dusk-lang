@@ -82,6 +82,10 @@ test "union" {
     try runCase("union.dsk");
 }
 
+test "union with the max number of variants" {
+    try runCase("union-max-variants.dsk");
+}
+
 test "nullable echo" {
     try runCase("nullable-echo.dsk");
 }
@@ -404,6 +408,10 @@ test "sema error: union static field not mutable" {
 
 test "sema error: union static field type mismatch" {
     try runCaseError("sema/union-static-field-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: union with too many variants" {
+    try runCaseError("sema/union-too-many-variants.dsk", error.TooManyUnionVariants);
 }
 
 test "sema error: mutable union param" {

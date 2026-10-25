@@ -77,8 +77,6 @@ pub const Struct = extern struct {
 
         struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
-        // fields are stored one by one after init and a gc can run in between,
-        // so they must start as null instead of garbage
         @memset(struct_ptr.getDataPtr()[0..field_size], NULL_VALUE);
 
         return struct_ptr;
