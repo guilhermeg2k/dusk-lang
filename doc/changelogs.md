@@ -22,6 +22,7 @@
 - `@` must now be followed by `(...)`: `let x = @` or `@.foo` is a syntax error, not a compiler crash. `@(...)` is parsed as its own expression, not as a call
 - Renamed sema's `alwaysReturns` to `areAllPathsReturning`
 - Renamed internal booleans to read as yes/no questions: the `nullable` type flag is now `is_nullable`, `coerce` is now `canCoerce`, `typeNeedsNullBox` is now `needsNullBox`, `findIsFieldMut` is now `isFieldMut`, plus a few locals
+- Split sema's `visitWhenStmt` into smaller steps: resolving the subject, checking cases, checking exhaustiveness, storing the subject and lowering each case
 - Fixed assigning a call result to a variable declared before other variables (`out = len(a)`) crashing or giving garbage
 - Fixed passing a plain value to a `?int`/`?float`/`?bool`/`?Enum` parameter, or returning one from a function returning such a type, crashing the program
 - Rewrote the language reference for v0.11: enums, unions, nullables, operator precedence, errors and known limitations
