@@ -12,6 +12,7 @@
 - Union variant tags now follow declaration order
 - Functions can return only from inside branches: an `if/elif/else` where every branch returns, or a `when` where every case returns, counts as returning
 - Clearer error for `mut` union params (including `mut self`): union variants can't be changed in place
+- Unions are limited to 256 variants, with a clear error past that
 - Fixed nullable primitives (`?int`, `?float`, `?bool`) not being tracked by the garbage collector
 - Fixed garbage collector losing arrays of unions and arrays of nullables
 - Fixed `if value: captured` on a null primitive ending the program
@@ -19,16 +20,17 @@
 - Fixed compiler crash when calling a method on an indexed array item (`items[i].method()`)
 - Fixed optional chaining (`?.`) crashing when a link in the chain is null, and when the chain ends in an `int`/`float`/`bool`/enum field
 - Fixed compiler crash when assigning or passing an empty array literal (`list = []`)
-- `@` must now be followed by `(...)`: `let x = @` or `@.foo` is a syntax error, not a compiler crash. `@(...)` is parsed as its own expression, not as a call
-- Renamed sema's `alwaysReturns` to `areAllPathsReturning`
-- Renamed internal booleans to read as yes/no questions: the `nullable` type flag is now `is_nullable`, `coerce` is now `canCoerce`, `typeNeedsNullBox` is now `needsNullBox`, `findIsFieldMut` is now `isFieldMut`, plus a few locals
-- Split sema's `visitWhenStmt` into smaller steps: resolving the subject, checking cases, checking exhaustiveness, storing the subject and lowering each case
-- Unions are limited to 256 variants, with a clear error past that. A bigger union used to crash the compiler. Removed the unreachable `LARGE_UNION_LOAD`/`LARGE_UNION_STORE` opcodes
-- `NULL_BOX_STORE` in the VM handles the null case first with an early `continue`, so the store path is no longer nested
 - Fixed assigning a call result to a variable declared before other variables (`out = len(a)`) crashing or giving garbage
 - Fixed passing a plain value to a `?int`/`?float`/`?bool`/`?Enum` parameter, or returning one from a function returning such a type, crashing the program
+- Fixed compiler crash on a bare `@` (`let x = @`, `@.foo`): `@` must be followed by `(...)`, otherwise it's a syntax error
+- Fixed compiler crash on unions with more than 256 variants
 - Rewrote the language reference for v0.11: enums, unions, nullables, operator precedence, errors and known limitations
 - Added `bench.py`: a Dusk-only benchmark runner with JSON output and `--compare <git-ref>` to measure a change against another version
+- Internal: `@(...)` is parsed as its own `anonymous_init` expression, not as a call
+- Internal: renamed booleans to read as yes/no questions (`nullable` type flag → `is_nullable`, `coerce` → `canCoerce`, `typeNeedsNullBox` → `needsNullBox`, `findIsFieldMut` → `isFieldMut`, `alwaysReturns` → `areAllPathsReturning`, plus a few locals)
+- Internal: split sema's `visitWhenStmt` into smaller steps: resolving the subject, checking cases, checking exhaustiveness, storing the subject and lowering each case
+- Internal: removed the unreachable `LARGE_UNION_LOAD`/`LARGE_UNION_STORE` opcodes
+- Internal: `NULL_BOX_STORE` in the VM handles the null case first with an early `continue`
 
 ## v0.10 - Frieren
 
