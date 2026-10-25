@@ -1,6 +1,6 @@
 # Changelogs
 
-## v0.11 - Power (in development)
+## v0.11 - Power
 
 - First version developed with AI assistance (see [AI Usage](ai-disclaimer.md))
 - Enums with explicit values, methods and static fields
