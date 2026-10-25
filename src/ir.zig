@@ -5,6 +5,7 @@ pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
     defined_types: []const DefinedType,
+    error_names: []const []const u8,
 };
 
 pub const Block = struct {
@@ -17,6 +18,7 @@ pub const Instruction = union(enum) {
     branch_if: BranchIf,
     loop: Loop,
     return_stmt: ReturnStmt,
+    return_error: ReturnError,
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
@@ -130,6 +132,30 @@ pub const ReturnStmt = struct {
     value: ?*Value,
 };
 
+pub const ReturnError = struct {
+    value: *Value,
+};
+
+pub const TryCall = struct {
+    call: *Value,
+    is_top_level: bool,
+};
+
+pub const CatchCall = struct {
+    call: *Value,
+    fallback: union(enum) {
+        value: *Value,
+        block: CatchBlock,
+    },
+};
+
+pub const CatchBlock = struct {
+    capture_uid: usize,
+    capture_identifier: []const u8,
+    capture_type_id: TypeId,
+    instructions: []const Instruction,
+};
+
 pub const ExpressionStmt = struct {
     value: *Value,
 };
@@ -157,6 +183,8 @@ pub const Value = struct {
         null_box_init: NullBoxInit,
         union_tag: *Value,
         union_payload: *Value,
+        try_call: TryCall,
+        catch_call: CatchCall,
     },
 
     type_id: TypeId,

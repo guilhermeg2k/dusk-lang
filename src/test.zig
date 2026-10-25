@@ -26,6 +26,18 @@ fn runCaseError(src_file: []const u8, expected: anytype) !void {
     try testing.expectError(expected, dusk.compile(src));
 }
 
+fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const cwd = std.Io.Dir.cwd();
+    const file_path = try std.fmt.allocPrint(arena.allocator(), "test/runtime/{s}", .{src_file});
+    const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
+
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    try testing.expectError(expected, dusk.compileAndRun(src));
+}
+
 test "echo-2" {
     try runCase("echo-2.dsk");
 }
@@ -603,3 +615,146 @@ test "gc: nullables in arrays and structs" {
     try runCase("gc-nullable.dsk");
 }
 
+test "errors: try" {
+    try runCase("errors-try.dsk");
+}
+
+test "errors: catch" {
+    try runCase("errors-catch.dsk");
+}
+
+test "errors: inferred sets" {
+    try runCase("errors-inferred.dsk");
+}
+
+test "errors: values" {
+    try runCase("errors-values.dsk");
+}
+
+test "gc: errors" {
+    try runCase("errors-gc.dsk");
+}
+
+test "sema error: unhandled call" {
+    try runCaseError("sema/errors-unhandled-call.dsk", error.UnhandledError);
+}
+
+test "sema error: unhandled call statement" {
+    try runCaseError("sema/errors-unhandled-call-stmt.dsk", error.UnhandledError);
+}
+
+test "sema error: unhandled call argument" {
+    try runCaseError("sema/errors-unhandled-call-arg.dsk", error.UnhandledError);
+}
+
+test "sema error: try in non-failing function" {
+    try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
+}
+
+test "sema error: try in inline return" {
+    try runCaseError("sema/errors-try-inline-return.dsk", error.TryOutsideFailingFunction);
+}
+
+test "sema error: try on non-failing call" {
+    try runCaseError("sema/errors-try-non-failing-call.dsk", error.NotAFailingCall);
+}
+
+test "sema error: catch on non-failing call" {
+    try runCaseError("sema/errors-catch-non-failing-call.dsk", error.NotAFailingCall);
+}
+
+test "sema error: try on non-call" {
+    try runCaseError("sema/errors-try-non-call.dsk", error.NotAFailingCall);
+}
+
+test "sema error: error not in set (return)" {
+    try runCaseError("sema/errors-not-in-set-return.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: error not in set (try)" {
+    try runCaseError("sema/errors-not-in-set-try.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: error not in set (inferred chain)" {
+    try runCaseError("sema/errors-not-in-set-inferred-chain.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: error not in set (captured)" {
+    try runCaseError("sema/errors-not-in-set-captured.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: catch block falls through" {
+    try runCaseError("sema/errors-catch-block-falls-through.dsk", error.CatchBlockMustLeave);
+}
+
+test "sema error: catch default type mismatch" {
+    try runCaseError("sema/errors-catch-default-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: duplicate error variant" {
+    try runCaseError("sema/errors-duplicate-variant.dsk", error.AlreadyDefined);
+}
+
+test "sema error: failing return wrong type" {
+    try runCaseError("sema/errors-return-wrong-type.dsk", error.InvalidReturnType);
+}
+
+test "sema error: not an error set" {
+    try runCaseError("sema/errors-not-an-error-set.dsk", error.NotAnErrorSet);
+}
+
+test "sema error: inferred error passed where it does not fit" {
+    try runCaseError("sema/errors-inferred-set-arg-not-in-set.dsk", error.ErrorNotInSet);
+}
+
+test "parser error: error set missing end" {
+    try runCaseError("parser/errors-set-missing-end.dsk", error.ParserError);
+}
+
+test "parser error: error variant with payload" {
+    try runCaseError("parser/errors-set-variant-payload.dsk", error.ParserError);
+}
+
+test "parser error: error union type in let" {
+    try runCaseError("parser/errors-union-type-in-let.dsk", error.ParserError);
+}
+
+test "parser error: catch block missing end" {
+    try runCaseError("parser/errors-catch-block-missing-end.dsk", error.ParserError);
+}
+
+test "runtime error: top-level try" {
+    try runCaseRuntimeError("errors-top-level-try.dsk", error.UnhandledError);
+}
+
+test "errors: when on caught errors" {
+    try runCase("errors-when.dsk");
+}
+
+test "sema error: when on error not exhaustive" {
+    try runCaseError("sema/errors-when-not-exhaustive.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when on inferred error not exhaustive" {
+    try runCaseError("sema/errors-when-not-exhaustive-inferred.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when error case not in set" {
+    try runCaseError("sema/errors-when-error-not-in-set.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: when error case not in inferred set" {
+    try runCaseError("sema/errors-when-error-not-in-set-inferred.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: when on inferred error useless else" {
+    try runCaseError("sema/errors-when-useless-else-inferred.dsk", error.WhenUselessElse);
+}
+
+test "sema error: when on failing call" {
+    try runCaseError("sema/errors-when-failing-call-subject.dsk", error.UnhandledError);
+}
+
+test "sema error: when duplicate error case" {
+    try runCaseError("sema/errors-when-duplicate-case.dsk", error.WhenDuplicateCase);
+}

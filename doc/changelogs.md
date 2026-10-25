@@ -1,5 +1,15 @@
 # Changelogs
 
+## v0.12 - Kanade
+
+- Error handling: error sets (`error ParseError ... end`), functions that can fail (`-> E!T`, or `-> !T` to infer the error set from the body), `try` to pass an error on, and `catch` with a fallback value (`f() catch 0`) or a block (`f() catch e then ... end`)
+- A call to a function that can fail must be handled with `try` or `catch`. Sema checks that every error a function can return is in its declared set, also through chains of inferred sets and recursion
+- Error values can be stored, passed to functions, compared with `==`/`!=` and matched with `when` (exhaustive, also for inferred sets). An error from an inferred set can go wherever a declared set is expected, as long as every error it can hold is in that set
+- A failing `try` at the top level stops the program with `unhandled error <Set.Error>`
+- `error`, `try` and `catch` are now keywords, so they can't be used as names (e.g. a union variant called `error`)
+- Fixed compiler crash when a function calls another function defined after it (mutual recursion)
+- Language reference: new Error Handling section
+
 ## v0.11 - Power
 
 - First version developed with AI assistance (see [AI Usage](ai-disclaimer.md))

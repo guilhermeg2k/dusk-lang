@@ -1,0 +1,115 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+error MathError
+    DivByZero
+end
+
+func parse(n: int) -> ParseError!int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    if n < 0 then
+        return ParseError.BadDigit
+    end
+    return n
+end
+
+func parse_twice(n: int) -> ParseError!int
+    let a = try parse(n)
+    let b = try parse(a + 1)
+    return a + b
+end
+
+func parse_deep(n: int) -> ParseError!int
+    return try parse_twice(n) + try parse_twice(n)
+end
+
+assert((parse_twice(2) catch 0) == 5)
+assert((parse_twice(0) catch 0) == 0)
+assert((parse_deep(1) catch 0) == 6)
+assert((parse_deep(-1) catch 99) == 99)
+assert(try parse(5) == 5)
+
+struct Calculator
+    total: int
+
+    func divide(self: @, by: int) -> MathError!int
+        if by == 0 then
+            return MathError.DivByZero
+        end
+        return self.total // by
+    end
+
+    func halve(self: @) -> MathError!int
+        return try self.divide(2)
+    end
+end
+
+let calc = Calculator(total = 10)
+assert((calc.divide(5) catch 0) == 2)
+assert((calc.divide(0) catch -1) == -1)
+assert(try calc.halve() == 5)
+assert((Calculator.divide(calc, 0) catch -2) == -2)
+
+struct Counter
+    let mut count = 0
+end
+
+func check(n: int) -> ParseError!void
+    if n == 0 then
+        return ParseError.Empty
+    end
+    Counter.count += 1
+end
+
+func check_all(n: int) -> ParseError!void
+    try check(n)
+    try check(n)
+end
+
+try check_all(1)
+assert(Counter.count == 2)
+check_all(0) catch e then
+    assert(e == ParseError.Empty)
+end
+assert(Counter.count == 2)
+
+func label(n: int) -> ParseError!string
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return "ok"
+end
+
+let text = label(0) catch "fallback"
+echo(text)
+func find(n: int) -> ParseError!?int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    if n == 1 then
+        return null
+    end
+    return n
+end
+
+let maybe = find(0) catch null
+assert(maybe == null)
+let found = find(1) catch 5
+assert(found == null)
+let other = find(3) catch null
+if other: o then
+    assert(o == 3)
+else
+    assert(false)
+end
+
+func next(n: int) -> int
+    return n + 1
+end
+
+assert((2 |> parse() catch 0) == 2)
+assert(try parse(next(1)) == 2)

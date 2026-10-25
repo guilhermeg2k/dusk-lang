@@ -99,6 +99,13 @@ pub const Parser = struct {
                     },
                 };
             },
+            .error_kw => {
+                const error_set_stmt = try self.parseErrorSetStmt();
+                return ast.StatementNode{
+                    .data = .{ .error_set = error_set_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
             .if_kw => {
                 if (self.isIfCapture()) {
                     const if_capture = try self.parseIfCapture();
@@ -122,7 +129,7 @@ pub const Parser = struct {
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
                 return ast.StatementNode{ .data = .{ .@"for" = for_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
-            .identifier => {
+            .identifier, .try_kw => {
                 return self.parseIdentifierStmt();
             },
             .break_kw => {
@@ -216,6 +223,33 @@ pub const Parser = struct {
         return ast.UnionStmt{
             .identifier = identifier_token.value(self.src),
             .def = union_def,
+        };
+    }
+
+    fn parseErrorSetStmt(self: *Self) !ast.ErrorSetStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        var variants: std.ArrayList(ast.ErrorVariant) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    try variants.append(self.allocator, .{ .identifier = tk.value(self.src), .loc = tk.loc });
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
+                else => return self.err_dispatcher.invalidSyntax("identifier or 'end'", tk),
+            }
+        }
+
+        return ast.ErrorSetStmt{
+            .identifier = identifier_token.value(self.src),
+            .variants = try variants.toOwnedSlice(self.allocator),
         };
     }
 
@@ -707,6 +741,7 @@ pub const Parser = struct {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
+        var error_set: ?ast.FnErrorSet = null;
 
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnArgs();
@@ -726,7 +761,22 @@ pub const Parser = struct {
             try statements.append(self.allocator, return_stmt);
             body_block = .{ .statements = statements };
         } else {
+            if (tk.tag == .not) {
+                self.walk();
+                error_set = .{ .inferred = tk.loc };
+            }
+
             return_type = try self.parseTypeAnnotation(false);
+
+            if (error_set == null and self.peekCurrent().tag == .not) {
+                if (return_type.?.type != .@"struct" or return_type.?.is_nullable) {
+                    return self.err_dispatcher.invalidSyntax("error set name before '!'", self.peekCurrent());
+                }
+                error_set = .{ .named = .{ .identifier = return_type.?.type.@"struct", .loc = tk.loc } };
+                self.walk();
+                return_type = try self.parseTypeAnnotation(false);
+            }
+
             body_block = try self.parseBlock(&.{});
             _ = try self.expect(.end_kw);
         }
@@ -735,6 +785,7 @@ pub const Parser = struct {
             .params = try arguments.toOwnedSlice(self.allocator),
             .body_block = body_block,
             .return_type = return_type,
+            .error_set = error_set,
         };
     }
 
@@ -870,6 +921,7 @@ pub const Parser = struct {
             .not,
             .minus,
             .at,
+            .try_kw,
             => true,
             else => false,
         };
@@ -910,6 +962,34 @@ pub const Parser = struct {
         return right;
     }
 
+    fn parseCatch(self: *Self, operand: *ast.ExpNode) Errors!*ast.ExpNode {
+        self.walk();
+        const tk = self.peekCurrent();
+
+        if (tk.tag == .identifier and self.peekNext().tag == .then_kw) {
+            self.walk();
+            self.walk();
+            const body = try self.parseBlock(&.{});
+            const end_tk = try self.expect(.end_kw);
+            return ast.ExpNode.init(self.allocator, .{
+                .data = .{ .catch_exp = .{
+                    .operand = operand,
+                    .fallback = .{ .block = .{ .capture = tk.value(self.src), .body = body } },
+                } },
+                .loc = .{ .start = operand.loc.start, .end = end_tk.loc.end },
+            });
+        }
+
+        const value = try self.parseExp(self.getBindingPower(.catch_kw) - 1);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .catch_exp = .{
+                .operand = operand,
+                .fallback = .{ .value = value },
+            } },
+            .loc = .{ .start = operand.loc.start, .end = value.loc.end },
+        });
+    }
+
     fn parseExp(self: *Self, min_bp: u8) Errors!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
@@ -923,6 +1003,11 @@ pub const Parser = struct {
 
             if (tk.tag == .pipe) {
                 exp = try self.parsePipeOperator(exp);
+                continue;
+            }
+
+            if (tk.tag == .catch_kw) {
+                exp = try self.parseCatch(exp);
                 continue;
             }
 
@@ -1001,6 +1086,10 @@ pub const Parser = struct {
                 const exp = try self.parseExp(0);
                 _ = try self.expect(.r_paren);
                 return exp;
+            },
+            .try_kw => {
+                const operand = try self.parseExp(100);
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .try_exp = .{ .operand = operand } }, .loc = .{ .start = tk.loc.start, .end = operand.loc.end } });
             },
             .not, .minus => {
                 const op = try ast.UnaryOp.fromTag(tk.tag);
@@ -1127,6 +1216,7 @@ pub const Parser = struct {
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {
         return switch (tag) {
+            .catch_kw => 3,
             .pipe => 5,
             .or_kw => 10,
             .and_kw => 20,

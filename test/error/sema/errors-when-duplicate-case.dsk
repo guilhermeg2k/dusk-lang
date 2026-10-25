@@ -1,0 +1,27 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+error IoError
+    NotFound
+end
+
+func parse(n: int) -> ParseError!int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return n
+end
+
+func load(n: int) -> !int
+    return try parse(n)
+end
+
+parse(0) catch e then
+    when e
+        ParseError.Empty then echo(1) end
+        ParseError.Empty then echo(2) end
+        else then echo(3) end
+    end
+end

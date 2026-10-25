@@ -1,0 +1,54 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+error IoError
+    NotFound
+end
+
+let e = ParseError.Empty
+let mut last: ParseError = ParseError.BadDigit
+assert(e == ParseError.Empty)
+assert(e != last)
+last = ParseError.Empty
+assert(e == last)
+assert(ParseError.Empty != IoError.NotFound)
+
+struct Report
+    code: ParseError
+    cause: ?IoError
+end
+
+let r = Report(code = ParseError.BadDigit, cause = null)
+assert(r.code == ParseError.BadDigit)
+assert(r.cause == null)
+
+let r2 = Report(code = ParseError.Empty, cause = IoError.NotFound)
+if r2.cause: c then
+    assert(c == IoError.NotFound)
+else
+    assert(false)
+end
+
+let list = [ParseError.Empty, ParseError.BadDigit]
+assert(list[1] == ParseError.BadDigit)
+assert(len(list) == 2)
+
+func same(a: ParseError, b: ParseError) -> bool
+    return a == b
+end
+
+assert(same(ParseError.Empty, ParseError.Empty))
+assert(!same(ParseError.Empty, ParseError.BadDigit))
+
+func pick(is_first: bool) -> ParseError
+    if is_first then
+        return ParseError.Empty
+    end
+    return ParseError.BadDigit
+end
+
+assert(pick(false) == ParseError.BadDigit)
+echo(ParseError.Empty)
+echo(IoError.NotFound)

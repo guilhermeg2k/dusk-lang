@@ -1,10 +1,10 @@
 union Response
     success: string
-    error: string
+    failure: string
 end
 
 let res = Response(success = "Sucesso")
-let err = Response(error = "Error")
+let err = Response(failure = "Error")
 
 if res.success: msg then
     echo(msg)
@@ -12,16 +12,16 @@ else
     assert(false)
 end
 
-if res.error: _ then
+if res.failure: _ then
     assert(false)
 end
 
-if err.error: msg then
+if err.failure: msg then
     echo(msg)
 end
 
 echo(res.success)
-echo(res.error)
+echo(res.failure)
 
 # Primitive payloads
 enum Color
@@ -118,7 +118,7 @@ func fetch(id: int) -> Response
     if id == 1 then
         return Response(success = "found")
     end
-    return Response(error = "not found")
+    return Response(failure = "not found")
 end
 
 func is_success(r: Response) -> bool
@@ -143,7 +143,7 @@ else
     assert(false)
 end
 
-let mut current = Response(error = "pending")
+let mut current = Response(failure = "pending")
 current = Response(success = "done")
 assert(is_success(current))
 

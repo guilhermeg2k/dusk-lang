@@ -22,6 +22,10 @@ pub const SemaAnalyzer = struct {
     scope: Scope,
     err_dispatcher: err.ErrorDispatcher,
 
+    fn_depth: usize = 0,
+    error_edges: std.ArrayList(ErrorEdge) = .empty,
+    pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
+
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
 
@@ -47,16 +51,183 @@ pub const SemaAnalyzer = struct {
 
         try self.hoistDeclarations(root);
 
+        const instructions = (try self.visitBlock(root)).instructions;
+        try self.resolveErrorEdges();
+        try self.checkPendingWhens();
+
         return .{
-            .instructions = (try self.visitBlock(root)).instructions,
+            .instructions = instructions,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
+            .error_names = self.type_table.error_names.items,
         };
+    }
+
+    fn resolveErrorEdges(self: *Self) !void {
+        var is_changed = true;
+        while (is_changed) {
+            is_changed = false;
+            for (self.error_edges.items) |edge| {
+                const to_set = self.errorSetOf(edge.to);
+                if (!to_set.is_inferred) continue;
+                for (self.errorSetOf(edge.from).ids.keys()) |id| {
+                    if (to_set.has(id)) continue;
+                    try to_set.ids.put(self.allocator, id, {});
+                    is_changed = true;
+                }
+            }
+        }
+
+        for (self.error_edges.items) |edge| {
+            const to_set = self.errorSetOf(edge.to);
+            if (to_set.is_inferred) continue;
+            for (self.errorSetOf(edge.from).ids.keys()) |id| {
+                if (to_set.has(id)) continue;
+                return self.err_dispatcher.errorNotInSet(
+                    self.type_table.error_names.items[@intCast(id)],
+                    try self.type_table.name(edge.to, self.allocator),
+                    edge.loc,
+                );
+            }
+        }
+    }
+
+    fn checkPendingWhens(self: *Self) !void {
+        for (self.pending_when_checks.items) |check| {
+            const set = self.errorSetOf(check.set_type_id);
+            var seen: std.AutoHashMap(i64, void) = .init(self.allocator);
+
+            for (check.when_stmt.prongs, 0..) |prong, prong_idx| {
+                for (check.values[prong_idx], 0..) |value, i| {
+                    const id = value.data.i_int;
+                    if (!set.has(id)) {
+                        return self.err_dispatcher.errorNotInSet(
+                            self.type_table.error_names.items[@intCast(id)],
+                            try self.type_table.name(check.set_type_id, self.allocator),
+                            prong.pattern.values[i].loc,
+                        );
+                    }
+                    try seen.put(id, {});
+                }
+            }
+
+            var missing: std.ArrayList(u8) = .empty;
+            for (set.ids.keys()) |id| {
+                if (!seen.contains(id)) try appendMissing(self.allocator, &missing, self.type_table.error_names.items[@intCast(id)]);
+            }
+            if (check.is_null_missing) try appendMissing(self.allocator, &missing, "null");
+
+            if (check.when_stmt.else_block == null and missing.items.len > 0) {
+                return self.err_dispatcher.whenNotExhaustive(missing.items, check.when_loc);
+            }
+            if (check.when_stmt.else_block != null and missing.items.len == 0) {
+                return self.err_dispatcher.whenUselessElse(check.when_stmt.else_loc.?);
+            }
+        }
+    }
+
+    fn errorSetOf(self: *Self, set_type_id: tt.TypeId) *tt.ErrorSet {
+        return self.type_table.getTypePtrById(set_type_id).kind.@"enum".error_set.?;
+    }
+
+    fn createErrorSetSymbol(self: *Self, stmt: *const ast.ErrorSetStmt) !Symbol {
+        var variants: std.StringHashMap(i64) = .init(self.allocator);
+        const variants_in_order = try self.allocator.alloc([]const u8, stmt.variants.len);
+        const error_set = try self.allocator.create(tt.ErrorSet);
+        error_set.* = .{ .is_inferred = false };
+
+        for (stmt.variants, 0..) |variant, i| {
+            if (variants.contains(variant.identifier)) {
+                return self.err_dispatcher.alreadyDefined(variant.identifier, variant.loc);
+            }
+            const id = try self.type_table.addErrorName(stmt.identifier, variant.identifier);
+            try variants.put(variant.identifier, id);
+            try error_set.ids.put(self.allocator, id, {});
+            variants_in_order[i] = variant.identifier;
+        }
+
+        const blueprint_type_id = try self.type_table.addType(.{
+            .kind = .{
+                .@"enum" = .{
+                    .identifier = stmt.identifier,
+                    .variants = variants,
+                    .variants_in_order = variants_in_order,
+                    .static_fields = .init(self.allocator),
+                    .methods = .init(self.allocator),
+                    .error_set = error_set,
+                },
+            },
+            .is_nullable = false,
+        });
+
+        return Symbol{
+            .identifier = stmt.identifier,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = blueprint_type_id } },
+        };
+    }
+
+    fn createInferredErrorSet(self: *Self, fn_name: []const u8) !tt.TypeId {
+        const error_set = try self.allocator.create(tt.ErrorSet);
+        error_set.* = .{ .is_inferred = true };
+
+        return self.type_table.addType(.{
+            .kind = .{
+                .@"enum" = .{
+                    .identifier = fn_name,
+                    .variants = .init(self.allocator),
+                    .static_fields = .init(self.allocator),
+                    .methods = .init(self.allocator),
+                    .error_set = error_set,
+                },
+            },
+            .is_nullable = false,
+        });
+    }
+
+    fn resolveFnErrorSet(self: *Self, fn_error_set: ast.FnErrorSet, fn_name: []const u8) !tt.TypeId {
+        switch (fn_error_set) {
+            .inferred => return self.createInferredErrorSet(fn_name),
+            .named => |named| {
+                const symbol = self.scope.symbol_table.getOrError(named.identifier) catch {
+                    return self.err_dispatcher.typeNotDefined(named.identifier, named.loc);
+                };
+                if (symbol.kind != .defined_type or !self.type_table.isErrorSet(symbol.kind.defined_type.blueprint_type_id)) {
+                    return self.err_dispatcher.notAnErrorSet(named.identifier, named.loc);
+                }
+                return symbol.kind.defined_type.blueprint_type_id;
+            },
+        }
+    }
+
+    fn canCoerce(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !bool {
+        if (self.type_table.canCoerce(from, to)) return true;
+
+        const from_is_nullable = self.type_table.getTypePtrById(from).is_nullable;
+        const to_is_nullable = self.type_table.getTypePtrById(to).is_nullable;
+        if (from_is_nullable and !to_is_nullable) return false;
+
+        const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
+        const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
+        if (!self.type_table.isErrorSet(from_base) or !self.type_table.isErrorSet(to_base)) return false;
+        if (!self.errorSetOf(from_base).is_inferred or self.errorSetOf(to_base).is_inferred) return false;
+
+        try self.addErrorEdge(from_base, to_base, loc);
+        return true;
+    }
+
+    fn addErrorEdge(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !void {
+        try self.error_edges.append(self.allocator, .{ .from = from, .to = to, .loc = loc });
     }
 
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
         for (root.statements.items) |stmt| {
             switch (stmt.data) {
+                .error_set => |es| {
+                    const symbol = try self.createErrorSetSymbol(&es);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(es.identifier, stmt.loc);
+                },
                 .func => |fs| {
                     const symbol = try self.createEmptyFuncSymbol(fs.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(fs.identifier, stmt.loc);
@@ -402,7 +573,7 @@ pub const SemaAnalyzer = struct {
             field_default_value = value;
 
             if (field.type) |_type| {
-                if (!self.type_table.canCoerce(value_type_id, field_type_id)) {
+                if (!try self.canCoerce(value_type_id, field_type_id, field.default_value.?.loc)) {
                     const field_type_ptr = self.type_table.getTypePtrById(field_type_id);
                     return self.err_dispatcher.invalidType(
                         try _type.value(self.allocator),
@@ -429,6 +600,8 @@ pub const SemaAnalyzer = struct {
 
         //create a temporary scope just for inline return type inference
         try self.scope.enter(self.type_table.getPrimitive(.void));
+        self.fn_depth += 1;
+        defer self.fn_depth -= 1;
 
         for (fn_def.params) |param| {
             var param_default_value: ?*ir.Value = null;
@@ -447,7 +620,7 @@ pub const SemaAnalyzer = struct {
                     const value = try self.evalExp(default_value);
                     param_default_value = value;
                     const value_type_id = value.type_id;
-                    if (!self.type_table.canCoerce(value_type_id, param_type_id)) {
+                    if (!try self.canCoerce(value_type_id, param_type_id, param.default_value.?.loc)) {
                         return self.err_dispatcher.invalidType(
                             try self.type_table.name(param_type_id, self.allocator),
                             try self.type_table.name(value_type_id, self.allocator),
@@ -495,6 +668,15 @@ pub const SemaAnalyzer = struct {
             return_type_id = self.type_table.getPrimitive(.void);
         }
 
+        if (fn_def.error_set) |fn_error_set| {
+            const fn_name = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.identifier;
+            const error_set_type_id = try self.resolveFnErrorSet(fn_error_set, fn_name);
+            return_type_id = try self.type_table.addType(.{
+                .kind = .{ .error_union = .{ .error_set = error_set_type_id, .payload = return_type_id } },
+                .is_nullable = false,
+            });
+        }
+
         //restore main scope
         self.scope.exit(self.type_table.getPrimitive(.void));
 
@@ -516,6 +698,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" => try self.visitStructStmt(&stmt),
                 .@"enum" => try self.visitEnumStmt(&stmt),
                 .@"union" => try self.visitUnionStmt(&stmt),
+                .error_set => null,
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"if" => try self.visitIfStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
@@ -566,15 +749,135 @@ pub const SemaAnalyzer = struct {
         return false;
     }
 
-    fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
+    fn isBlockLeaving(instructions: []const ir.Instruction) bool {
+        for (instructions) |inst| {
+            switch (inst) {
+                .return_stmt, .return_error, .break_stmt, .continue_stmt => return true,
+                .branch_if => |branch| {
+                    if (branch.else_block.len > 0 and isBlockLeaving(branch.then_block) and isBlockLeaving(branch.else_block)) return true;
+                },
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const expression_stmt = stmt.data.expression;
 
-        if (expression_stmt.data != .fn_call) {
-            return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc);
-        }
+        const value = switch (expression_stmt.data) {
+            .fn_call => try self.evalExp(expression_stmt),
+            .try_exp => try self.evalTry(expression_stmt),
+            .catch_exp => try self.evalCatch(expression_stmt, true),
+            else => return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc),
+        };
 
         return ir.Instruction{
-            .expression_stmt = .{ .value = try self.evalFnCall(expression_stmt) },
+            .expression_stmt = .{ .value = value },
+        };
+    }
+
+    fn evalFailingCall(self: *Self, exp: *const ast.ExpNode, keyword: []const u8) Errors!*ir.Value {
+        if (exp.data != .fn_call) {
+            return self.err_dispatcher.notAFailingCall(keyword, exp.loc);
+        }
+
+        const call = try self.evalFnCall(exp);
+        if (!self.type_table.isErrorUnion(call.type_id)) {
+            return self.err_dispatcher.notAFailingCall(keyword, exp.loc);
+        }
+
+        return call;
+    }
+
+    fn evalTry(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
+        const call = try self.evalFailingCall(exp.data.try_exp.operand, "try");
+        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
+        const is_top_level = self.fn_depth == 0;
+
+        if (!is_top_level) {
+            if (!self.type_table.isErrorUnion(self.scope.return_type_id)) {
+                return self.err_dispatcher.tryOutsideFailingFunction(exp.loc);
+            }
+            const current_set = self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union.error_set;
+            try self.addErrorEdge(error_union.error_set, current_set, exp.loc);
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .try_call = .{ .call = call, .is_top_level = is_top_level } },
+            .type_id = error_union.payload,
+        });
+    }
+
+    fn evalCatch(self: *Self, exp: *const ast.ExpNode, is_statement: bool) Errors!*ir.Value {
+        const catch_exp = exp.data.catch_exp;
+        const call = try self.evalFailingCall(catch_exp.operand, "catch");
+        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
+        const payload = error_union.payload;
+
+        switch (catch_exp.fallback) {
+            .value => |fallback_exp| {
+                const fallback = try self.evalExpExpecting(fallback_exp, payload);
+                if (!try self.canCoerce(fallback.type_id, payload, fallback_exp.loc)) {
+                    return self.err_dispatcher.invalidType(
+                        try self.type_table.name(payload, self.allocator),
+                        try self.type_table.name(fallback.type_id, self.allocator),
+                        fallback_exp.loc,
+                    );
+                }
+
+                const boxed_fallback = if (self.needsNullBox(payload, fallback.type_id))
+                    try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{ .value = fallback } },
+                        .type_id = fallback.type_id,
+                    })
+                else
+                    fallback;
+
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .catch_call = .{ .call = call, .fallback = .{ .value = boxed_fallback } } },
+                    .type_id = payload,
+                });
+            },
+            .block => |block| {
+                const captured_symbol = Symbol{
+                    .uid = self.scope.genUid(),
+                    .identifier = block.capture,
+                    .type_id = error_union.error_set,
+                    .kind = .{ .variable = .{ .is_mut = false } },
+                };
+
+                try self.scope.enter(self.scope.return_type_id);
+                defer self.scope.exit(self.scope.return_type_id);
+                try self.scope.symbol_table.put(captured_symbol);
+
+                const body = try self.visitBlock(&block.body);
+                const is_value_used = !is_statement and payload != self.type_table.getPrimitive(.void);
+                if (is_value_used and !isBlockLeaving(body.instructions)) {
+                    return self.err_dispatcher.catchBlockMustLeave(exp.loc);
+                }
+
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .catch_call = .{
+                        .call = call,
+                        .fallback = .{ .block = .{
+                            .capture_uid = captured_symbol.uid,
+                            .capture_identifier = captured_symbol.identifier,
+                            .capture_type_id = captured_symbol.type_id,
+                            .instructions = body.instructions,
+                        } },
+                    } },
+                    .type_id = payload,
+                });
+            },
+        }
+    }
+
+    fn callName(exp: *const ast.ExpNode) []const u8 {
+        return switch (exp.data.fn_call.target.data) {
+            .identifier => |id| id,
+            .indexed => |indexed| if (indexed.index.data == .identifier) indexed.index.data.identifier else "function",
+            else => "function",
         };
     }
 
@@ -600,7 +903,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        if (!self.type_table.canCoerce(expression_type_id, var_type_id)) {
+        if (!try self.canCoerce(expression_type_id, var_type_id, stmt.data.let.value.loc)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(var_type_id, self.allocator),
                 try self.type_table.name(expression_type_id, self.allocator),
@@ -983,6 +1286,18 @@ pub const SemaAnalyzer = struct {
 
     fn checkWhenExhaustive(self: *Self, stmt: *const ast.StatementNode, subject: WhenSubject, prongs: WhenProngs) Errors!void {
         const when_stmt = stmt.data.when;
+        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
+
+        if (self.type_table.isErrorSet(subject.base_type) and self.errorSetOf(subject.base_type).is_inferred) {
+            try self.pending_when_checks.append(self.allocator, .{
+                .when_stmt = stmt.data.when,
+                .values = prongs.values,
+                .set_type_id = subject.base_type,
+                .is_null_missing = subject.is_nullable and !prongs.has_null_case,
+                .when_loc = when_loc,
+            });
+            return;
+        }
 
         var missing: std.ArrayList(u8) = .empty;
         switch (subject.base_kind) {
@@ -996,7 +1311,6 @@ pub const SemaAnalyzer = struct {
         }
         if (subject.is_nullable and !prongs.has_null_case) try appendMissing(self.allocator, &missing, "null");
 
-        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
         if (when_stmt.else_block == null) {
             if (subject.base_kind == .int) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
             if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
@@ -1110,7 +1424,36 @@ pub const SemaAnalyzer = struct {
         unreachable;
     }
 
+    fn evalWhenErrorCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) Errors!*ir.Value {
+        const value = try self.evalExp(exp);
+        if (!self.type_table.isErrorSet(value.type_id) or self.type_table.getTypePtrById(value.type_id).is_nullable) {
+            return self.err_dispatcher.invalidType(
+                try self.type_table.name(expected_type, self.allocator),
+                try self.type_table.name(value.type_id, self.allocator),
+                exp.loc,
+            );
+        }
+        if (value.data != .i_int) {
+            return self.err_dispatcher.whenInvalidCase("error cases must be error names, like 'ParseError.Empty'", exp.loc);
+        }
+
+        const set = self.errorSetOf(expected_type);
+        if (!set.is_inferred and !set.has(value.data.i_int)) {
+            return self.err_dispatcher.errorNotInSet(
+                self.type_table.error_names.items[@intCast(value.data.i_int)],
+                try self.type_table.name(expected_type, self.allocator),
+                exp.loc,
+            );
+        }
+
+        return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected_type });
+    }
+
     fn evalWhenCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) Errors!*ir.Value {
+        if (self.type_table.isErrorSet(expected_type)) {
+            return self.evalWhenErrorCaseValue(exp, expected_type);
+        }
+
         if (self.type_table.getTypePtrById(expected_type).kind == .int) {
             const literal: ?i64 = switch (exp.data) {
                 .int_literal => |i| i,
@@ -1178,7 +1521,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notMutable(id, assign_stmt.target.loc);
                 }
 
-                if (!self.type_table.canCoerce(assignment_value_type, id_symbol.type_id)) {
+                if (!try self.canCoerce(assignment_value_type, id_symbol.type_id, assign_stmt.exp.loc)) {
                     return self.err_dispatcher.invalidType(
                         try self.type_table.name(id_symbol.type_id, self.allocator),
                         try self.type_table.name(assignment_value_type, self.allocator),
@@ -1243,7 +1586,7 @@ pub const SemaAnalyzer = struct {
                 switch (self.type_table.getTypePtrById(target_type).kind) {
                     .array => {
                         field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_symbol.type_id).kind.array;
-                        if (!self.type_table.canCoerce(assignment_value_type, field_maybe_nullable_type_id)) {
+                        if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(target_symbol.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -1264,7 +1607,7 @@ pub const SemaAnalyzer = struct {
 
                             field_maybe_nullable_type_id = field.type_id;
 
-                            if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                            if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
                                     try self.type_table.name(assignment_value_type, self.allocator),
@@ -1284,7 +1627,7 @@ pub const SemaAnalyzer = struct {
                                 return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                             }
 
-                            if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                            if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
                                     try self.type_table.name(assignment_value_type, self.allocator),
@@ -1307,7 +1650,7 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                         }
 
-                        if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                        if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(field.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -1333,7 +1676,7 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                         }
 
-                        if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                        if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(field.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -1489,6 +1832,8 @@ pub const SemaAnalyzer = struct {
         const old_return_type = self.scope.return_type_id;
         try self.scope.enter(metadata.return_type_id);
         defer self.scope.exit(old_return_type);
+        self.fn_depth += 1;
+        defer self.fn_depth -= 1;
 
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
@@ -1517,8 +1862,10 @@ pub const SemaAnalyzer = struct {
         }
 
         const body = try self.visitBlock(&fn_def.body_block);
+        const is_failing_void = self.type_table.isErrorUnion(self.scope.return_type_id) and
+            self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union.payload == self.type_table.getPrimitive(.void);
 
-        if (!self.type_table.canCoerce(body.return_type, self.scope.return_type_id)) {
+        if (!is_failing_void and !self.type_table.canCoerce(body.return_type, self.scope.return_type_id)) {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.type_table.name(self.scope.return_type_id, self.allocator),
                 try self.type_table.name(body.return_type, self.allocator),
@@ -1538,11 +1885,15 @@ pub const SemaAnalyzer = struct {
     fn visitReturnStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const return_stmt = stmt.data.@"return";
 
+        if (self.type_table.isErrorUnion(self.scope.return_type_id)) {
+            return self.visitFailingReturnStmt(stmt);
+        }
+
         if (return_stmt.exp) |exp| {
             const exp_value = try self.evalExpExpecting(exp, self.scope.return_type_id);
             const exp_value_type = exp_value.type_id;
 
-            if (!self.type_table.canCoerce(exp_value_type, self.scope.return_type_id)) {
+            if (!try self.canCoerce(exp_value_type, self.scope.return_type_id, exp.loc)) {
                 return self.err_dispatcher.invalidFunctionReturnType(
                     try self.type_table.name(self.scope.return_type_id, self.allocator),
                     try self.type_table.name(exp_value_type, self.allocator),
@@ -1574,6 +1925,63 @@ pub const SemaAnalyzer = struct {
         return ir.Instruction{ .return_stmt = .{
             .value = null,
         } };
+    }
+
+    fn visitFailingReturnStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
+        const return_stmt = stmt.data.@"return";
+        const error_union = self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union;
+        const payload = error_union.payload;
+
+        const exp = return_stmt.exp orelse {
+            if (payload != self.type_table.getPrimitive(.void)) {
+                return self.err_dispatcher.invalidFunctionReturnType(
+                    try self.type_table.name(payload, self.allocator),
+                    "void",
+                    stmt.loc,
+                );
+            }
+            return ir.Instruction{ .return_stmt = .{ .value = null } };
+        };
+
+        const value = try self.evalExpExpecting(exp, payload);
+
+        if (self.type_table.isErrorSet(value.type_id) and !self.type_table.getTypePtrById(value.type_id).is_nullable) {
+            const target_set = self.errorSetOf(error_union.error_set);
+
+            if (value.data == .i_int) {
+                if (target_set.is_inferred) {
+                    try target_set.ids.put(self.allocator, value.data.i_int, {});
+                } else if (!target_set.has(value.data.i_int)) {
+                    return self.err_dispatcher.errorNotInSet(
+                        self.type_table.error_names.items[@intCast(value.data.i_int)],
+                        try self.type_table.name(error_union.error_set, self.allocator),
+                        exp.loc,
+                    );
+                }
+            } else {
+                try self.addErrorEdge(value.type_id, error_union.error_set, exp.loc);
+            }
+
+            return ir.Instruction{ .return_error = .{ .value = value } };
+        }
+
+        if (!try self.canCoerce(value.type_id, payload, exp.loc)) {
+            return self.err_dispatcher.invalidFunctionReturnType(
+                try self.type_table.name(self.scope.return_type_id, self.allocator),
+                try self.type_table.name(value.type_id, self.allocator),
+                exp.loc,
+            );
+        }
+
+        const boxed_value = if (self.needsNullBox(payload, value.type_id))
+            try ir.Value.init(self.allocator, .{
+                .data = .{ .null_box_init = .{ .value = value } },
+                .type_id = value.type_id,
+            })
+        else
+            value;
+
+        return ir.Instruction{ .return_stmt = .{ .value = boxed_value } };
     }
 
     fn isAnonymousInit(exp: *const ast.ExpNode) bool {
@@ -1621,7 +2029,17 @@ pub const SemaAnalyzer = struct {
                 return self.evalIdentifier(exp);
             },
             .fn_call => {
-                return self.evalFnCall(exp);
+                const call = try self.evalFnCall(exp);
+                if (self.type_table.isErrorUnion(call.type_id)) {
+                    return self.err_dispatcher.unhandledError(callName(exp), exp.loc);
+                }
+                return call;
+            },
+            .try_exp => {
+                return self.evalTry(exp);
+            },
+            .catch_exp => {
+                return self.evalCatch(exp, false);
             },
             .anonymous_init => {
                 return self.evalAnonymousStructInit(exp);
@@ -1862,7 +2280,7 @@ pub const SemaAnalyzer = struct {
                 const fn_call_arg_value = try self.evalExpExpecting(_exp, param.type_id);
                 const arg_type = fn_call_arg_value.type_id;
 
-                if (!self.type_table.canCoerce(arg_type, param.type_id)) {
+                if (!try self.canCoerce(arg_type, param.type_id, _exp.loc)) {
                     return self.err_dispatcher.invalidType(try self.type_table.name(param.type_id, self.allocator), try self.type_table.name(arg_type, self.allocator), _exp.loc);
                 }
 
@@ -1974,7 +2392,7 @@ pub const SemaAnalyzer = struct {
         };
 
         const raw_value = try self.evalExpExpecting(arg.exp, variant_type_id);
-        if (!self.type_table.canCoerce(raw_value.type_id, variant_type_id)) {
+        if (!try self.canCoerce(raw_value.type_id, variant_type_id, arg.exp.loc)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(variant_type_id, self.allocator),
                 try self.type_table.name(raw_value.type_id, self.allocator),
@@ -2219,7 +2637,7 @@ pub const SemaAnalyzer = struct {
                 array_literal_type = exp_value_type;
             }
 
-            if (!self.type_table.canCoerce(exp_value_type, array_literal_type)) {
+            if (!try self.canCoerce(exp_value_type, array_literal_type, exp.loc)) {
                 return self.err_dispatcher.invalidType(try self.type_table.name(array_literal_type, self.allocator), try self.type_table.name(exp_value_type, self.allocator), exp.loc);
             }
 
@@ -2514,6 +2932,12 @@ pub const SemaAnalyzer = struct {
     }
 };
 
+const ErrorEdge = struct {
+    from: tt.TypeId,
+    to: tt.TypeId,
+    loc: err.Loc,
+};
+
 const Scope = struct {
     const Self = @This();
 
@@ -2633,6 +3057,14 @@ const WhenSubject = struct {
     is_nullable: bool,
     base_type: tt.TypeId,
     base_kind: @FieldType(tt.Type, "kind"),
+};
+
+const PendingWhenCheck = struct {
+    when_stmt: ast.WhenStmt,
+    values: [][]*ir.Value,
+    set_type_id: tt.TypeId,
+    is_null_missing: bool,
+    when_loc: err.Loc,
 };
 
 const WhenProngs = struct {

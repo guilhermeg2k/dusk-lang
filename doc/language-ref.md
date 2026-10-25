@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.11 - Power**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.12 - Kanade**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -16,9 +16,10 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 8. [Operators](#8-operators)
 9. [Control Flow](#9-control-flow)
 10. [Functions](#10-functions)
-11. [Built-in Functions](#11-built-in-functions)
-12. [Errors](#12-errors)
-13. [Known Limitations](#13-known-limitations)
+11. [Error Handling](#11-error-handling)
+12. [Built-in Functions](#12-built-in-functions)
+13. [Errors](#13-errors)
+14. [Known Limitations](#14-known-limitations)
 
 ## 1. Basics
 
@@ -39,9 +40,9 @@ let x = 10 # an inline comment
 
 **Line breaks** aren't significant. A statement can span several lines, but two expressions on consecutive lines can also join into one: `when n` followed by `-1 then` on the next line is read as `when n - 1`.
 
-**Hoisting**: functions, structs, enums and unions can be used before they're defined. Variables must be defined before use.
+**Hoisting**: functions, structs, enums, unions and error sets can be used before they're defined. Variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -74,7 +75,7 @@ y = 20
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
-Strings have no escape sequences (`"a\nb"` prints `a\nb` as written) and no operations yet. See [Known Limitations](#13-known-limitations).
+Strings have no escape sequences (`"a\nb"` prints `a\nb` as written) and no operations yet. See [Known Limitations](#14-known-limitations).
 
 ### Arrays
 
@@ -240,11 +241,11 @@ A union holds exactly one of several variants, and each variant carries a value 
 ```nim
 union Response
     success: string
-    error: string
+    failure: string
 end
 
 let ok = Response(success = "saved")
-let failed = Response(error = "not found")
+let failed = Response(failure = "not found")
 ```
 
 Build a union by calling its name with exactly one named variant. Where a union type is expected (annotated `let`, assignment, argument, return value, field or array item), `@(variant = value)` works too:
@@ -254,7 +255,7 @@ func fetch(id: int) -> Response
     if id == 1 then
         return @(success = "found")
     end
-    return @(error = "missing")
+    return @(failure = "missing")
 end
 ```
 
@@ -273,7 +274,7 @@ To handle every variant, use [`when`](#when):
 ```nim
 when fetch(2)
     success: message then echo(message) end
-    error: reason then echo(reason) end
+    failure: reason then echo(reason) end
 end
 ```
 
@@ -282,9 +283,9 @@ end
 To change a union, assign a new one. This works for `let mut` variables, struct fields and array items:
 
 ```nim
-let mut status = Response(error = "pending")
+let mut status = Response(failure = "pending")
 status = Response(success = "done")
-status = @(error = "timeout")
+status = @(failure = "timeout")
 ```
 
 Writing to a single variant (`status.success = "x"`) is an error. Union parameters, including `self`, can't be `mut` either, so a function that changes a union returns the new one:
@@ -378,13 +379,14 @@ From lowest to highest:
 
 | Operators                       | Description           |
 | :------------------------------ | :-------------------- |
+| `catch`                         | Error fallback        |
 | `\|>`                           | Pipe                  |
 | `or`                            | Logical or            |
 | `and`                           | Logical and           |
 | `==` `!=` `<` `<=` `>` `>=`     | Comparison            |
 | `+` `-`                         | Addition, subtraction |
 | `*` `/` `//` `%`                | Multiplication, division, modulo |
-| `-x` `!x`                       | Negation, logical not |
+| `-x` `!x` `try x`               | Negation, logical not, try |
 | `x.y` `x?.y` `x[i]` `f()`       | Access, index, call   |
 
 Use parentheses to change the order.
@@ -427,7 +429,7 @@ The condition must be a `bool`. For nullable capture (`if value: name then`), se
 
 ### When
 
-`when` runs the case that matches a value. It works on `int`, enums, unions and their nullable versions. Each case is `pattern then ... end`, and the statement ends with `end`. Cases never fall through.
+`when` runs the case that matches a value. It works on `int`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the statement ends with `end`. Cases never fall through.
 
 ```nim
 when color
@@ -587,9 +589,123 @@ assert(result == false)
 
 ### Scope
 
-A function can see its parameters, its own variables, other functions and types, and static fields. It **can't** see variables declared at the top level of the program (see [Known Limitations](#13-known-limitations)).
+A function can see its parameters, its own variables, other functions and types, and static fields. It **can't** see variables declared at the top level of the program (see [Known Limitations](#14-known-limitations)).
 
-## 11. Built-in Functions
+## 11. Error Handling
+
+A function that can fail says so in its return type. Errors are values: the caller has to handle them, and nothing is thrown or unwound.
+
+### Error sets
+
+An error set lists the errors a function can return. Errors have no payload.
+
+```nim
+error ParseError
+    Empty
+    BadDigit
+end
+```
+
+An error is written like an enum variant (`ParseError.Empty`). It can be stored in variables, fields, arrays and nullables (`?ParseError`), passed around, and compared with `==` and `!=`, also against errors from other sets. `echo` prints its number.
+
+### Functions that can fail
+
+`E!T` means "returns a `T`, or fails with an error from `E`". `return` with a `T` succeeds, `return` with an error fails.
+
+```nim
+func parse_digit(n: int) -> ParseError!int
+    if n < 0 then
+        return ParseError.BadDigit
+    end
+    return n
+end
+```
+
+`!T` lets the compiler work out the error set from the body: every error the function returns, and every error it passes on with `try`.
+
+```nim
+func double(n: int) -> !int
+    let digit = try parse_digit(n)
+    return digit * 2
+end
+```
+
+`E!void` and `!void` are allowed: the function can end without a `return`.
+
+`E!T` and `!T` only exist as return types. A call to a function that can fail must be handled right away with `try` or `catch`: `let x = parse_digit(1)` is a compile error.
+
+### try
+
+`try call` gives the value if the call succeeds. If it fails, the current function returns the same error.
+
+```nim
+func sum(a: int, b: int) -> ParseError!int
+    return try parse_digit(a) + try parse_digit(b)
+end
+```
+
+- The current function must be able to fail. With an explicit set (`ParseError!int`), every error the call can return must be in it.
+- At the top level, outside any function, a failing `try` stops the program: `error: unhandled error ParseError.BadDigit`.
+- `try` applies to the call right after it, including `.` and `[]` (`try a.b(c)`).
+
+### catch
+
+`call catch value` uses `value` when the call fails. It must have the call's success type.
+
+```nim
+let n = parse_digit(-1) catch 0
+let m = parse_digit(-1) catch parse_digit(2) catch 0
+```
+
+`call catch e then ... end` runs a block with the error bound to `e`. When the result is used (`let`, assignment, argument, `return`), the block must leave with `return`, `break` or `continue`. Used as a statement, or for an `E!void` call, it can just end.
+
+```nim
+func describe(n: int) -> int
+    let digit = parse_digit(n) catch e then
+        return -1
+    end
+    return digit
+end
+
+parse_digit(-1) catch e then
+    echo(e)
+end
+```
+
+`catch` has the lowest precedence of all operators: `parse_digit(1) catch 0 == 0` is `parse_digit(1) catch (0 == 0)`. Use parentheses: `(parse_digit(1) catch 0) == 0`.
+
+### Branching on errors
+
+Catch the error, then use [`when`](#when) on it. Cases name the errors, and without an `else` every error the call can return must be listed:
+
+```nim
+let digit = parse_digit(n) catch e then
+    when e
+        ParseError.Empty then return 0 end
+        ParseError.BadDigit then return -1 end
+    end
+end
+```
+
+This also works when the error set is inferred (`!T`): the cases must then cover every error the function can return.
+
+A caught error can also be passed to a function, stored in a field or assigned to a variable typed with an error set. This works when every error it can hold is in that set, for inferred sets too:
+
+```nim
+func report(e: ParseError) -> void
+    echo(e)
+end
+
+double(-1) catch e then
+    report(e)
+end
+```
+
+### Runtime errors
+
+Errors are for failures the program expects. A failed `assert` or an index out of bounds still stops the program and can't be caught.
+
+## 12. Built-in Functions
 
 `T` means any type.
 
@@ -602,7 +718,7 @@ A function can see its parameters, its own variables, other functions and types,
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
 
-## 12. Errors
+## 13. Errors
 
 Compile errors point to the line and column of the problem:
 
@@ -612,11 +728,11 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds) stop the program.
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
 
-## 13. Known Limitations
+## 14. Known Limitations
 
-These are known gaps in v0.11. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.12. Most are planned in the [roadmap](roadmap.md).
 
 - **Top-level variables inside functions**: reading a top-level `let` from a function fails with `UndefinedVariable`. Pass it as a parameter, or use a static field.
 - **Strings**: no escape sequences, concatenation or interpolation, and `==` compares identity (v0.18).
