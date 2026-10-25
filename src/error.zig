@@ -241,6 +241,18 @@ pub const ErrorDispatcher = struct {
         return error.InvalidUnionFunction;
     }
 
+    pub fn tooManyUnionVariants(self: *Self, union_name: []const u8, max: usize, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "union '{s}' has too many variants: the limit is {d}",
+                .{ union_name, max },
+            ),
+            loc,
+        );
+        return error.TooManyUnionVariants;
+    }
+
     pub fn unionParamsCantBeMutable(self: *Self, param_name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
@@ -492,6 +504,7 @@ pub const Errors = error{
     InvalidUnionMember,
     InvalidUnionFunction,
     UnionParamsCantBeMutable,
+    TooManyUnionVariants,
     WhenNotExhaustive,
     WhenUselessElse,
     WhenDuplicateCase,

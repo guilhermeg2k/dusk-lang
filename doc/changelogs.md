@@ -23,6 +23,8 @@
 - Renamed sema's `alwaysReturns` to `areAllPathsReturning`
 - Renamed internal booleans to read as yes/no questions: the `nullable` type flag is now `is_nullable`, `coerce` is now `canCoerce`, `typeNeedsNullBox` is now `needsNullBox`, `findIsFieldMut` is now `isFieldMut`, plus a few locals
 - Split sema's `visitWhenStmt` into smaller steps: resolving the subject, checking cases, checking exhaustiveness, storing the subject and lowering each case
+- Unions are limited to 256 variants, with a clear error past that. A bigger union used to crash the compiler. Removed the unreachable `LARGE_UNION_LOAD`/`LARGE_UNION_STORE` opcodes
+- `NULL_BOX_STORE` in the VM handles the null case first with an early `continue`, so the store path is no longer nested
 - Fixed assigning a call result to a variable declared before other variables (`out = len(a)`) crashing or giving garbage
 - Fixed passing a plain value to a `?int`/`?float`/`?bool`/`?Enum` parameter, or returning one from a function returning such a type, crashing the program
 - Rewrote the language reference for v0.11: enums, unions, nullables, operator precedence, errors and known limitations

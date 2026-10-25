@@ -95,7 +95,7 @@ pub const SemaAnalyzer = struct {
 
                 .@"union" => |us| {
                     const symbol = try self.scope.symbol_table.getOrError(us.identifier);
-                    try self.fulfillUnionType(symbol, &us.def);
+                    try self.fulfillUnionType(symbol, &us.def, stmt.loc);
                 },
                 else => {},
             }
@@ -309,8 +309,12 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".methods = methods;
     }
 
-    fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef) !void {
+    fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef, loc: err.Loc) !void {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+
+        if (union_def.variants.len > tt.Union.MAX_VARIANTS) {
+            return self.err_dispatcher.tooManyUnionVariants(union_symbol.identifier, tt.Union.MAX_VARIANTS, loc);
+        }
 
         var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
         var variants: std.StringHashMap(tt.TypeId) = .init(self.allocator);

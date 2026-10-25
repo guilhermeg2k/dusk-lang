@@ -672,30 +672,13 @@ pub const BytecodeGen = struct {
     fn genUnionLoad(self: *Self, target_reg: u8, union_reg: u8, union_type_id: tt.TypeId, variant_name: []const u8) !void {
         const tag_index = try self.unionTagIndex(union_type_id, variant_name);
 
-        if (tag_index <= std.math.maxInt(u8)) {
-            try self.chunk_instructions.append(self.allocator, .{
-                .op = .UNION_LOAD,
-                .a = target_reg,
-                .b = union_reg,
-                .c = @intCast(tag_index),
-            });
-            try self.recordHeapMap();
-        } else {
-            const tag_reg = self.consumeRegister();
-            defer self.freeRegister();
-            const tag_value = ir.Value{
-                .type_id = self.type_table.getPrimitive(.int),
-                .data = .{ .i_int = @intCast(tag_index) },
-            };
-            try self.genLoadConst(v.TypedValue.from_ir_value(&tag_value), tag_reg);
-            try self.chunk_instructions.append(self.allocator, .{
-                .op = .LARGE_UNION_LOAD,
-                .a = target_reg,
-                .b = union_reg,
-                .c = tag_reg,
-            });
-            try self.recordHeapMap();
-        }
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .UNION_LOAD,
+            .a = target_reg,
+            .b = union_reg,
+            .c = @intCast(tag_index),
+        });
+        try self.recordHeapMap();
     }
 
     fn genArrayInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
@@ -1156,28 +1139,12 @@ pub const BytecodeGen = struct {
                 const value_reg = try self.genValue(payload, self.consumeRegister());
                 defer self.freeRegister();
 
-                if (tag_index <= std.math.maxInt(u8)) {
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .UNION_STORE,
-                        .a = target_reg,
-                        .b = @intCast(tag_index),
-                        .c = value_reg,
-                    });
-                } else {
-                    const tag_reg = self.consumeRegister();
-                    defer self.freeRegister();
-                    const tag_value = ir.Value{
-                        .type_id = self.type_table.getPrimitive(.int),
-                        .data = .{ .i_int = @intCast(tag_index) },
-                    };
-                    try self.genLoadConst(v.TypedValue.from_ir_value(&tag_value), tag_reg);
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .LARGE_UNION_STORE,
-                        .a = target_reg,
-                        .b = tag_reg,
-                        .c = value_reg,
-                    });
-                }
+                try self.chunk_instructions.append(self.allocator, .{
+                    .op = .UNION_STORE,
+                    .a = target_reg,
+                    .b = @intCast(tag_index),
+                    .c = value_reg,
+                });
             }
         }
     }
@@ -1394,8 +1361,6 @@ pub const Chunk = struct {
             .UNION_INIT => std.debug.print("R[{d}] D[{d}]", .{ inst.a, inst.bEx() }),
             .UNION_LOAD => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .UNION_STORE => std.debug.print("R[{d}] T[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
-            .LARGE_UNION_LOAD => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
-            .LARGE_UNION_STORE => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .UNION_TAG, .UNION_PAYLOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
@@ -1460,8 +1425,6 @@ pub const OpCode = enum(u8) {
     UNION_INIT,
     UNION_LOAD,
     UNION_STORE,
-    LARGE_UNION_LOAD,
-    LARGE_UNION_STORE,
     UNION_TAG,
     UNION_PAYLOAD,
 
@@ -1522,7 +1485,6 @@ pub const OpCode = enum(u8) {
             .STRUCT_INIT,
             .UNION_INIT,
             .UNION_LOAD,
-            .LARGE_UNION_LOAD,
             .NULL_BOX_INIT,
             .NULL_BOX_STORE,
             .LOAD_STRING,

@@ -263,6 +263,8 @@ pub const Enum = struct {
 };
 
 pub const Union = struct {
+    pub const MAX_VARIANTS = 256;
+
     identifier: []const u8,
     variants: std.StringHashMap(TypeId),
     variants_in_order: []const []const u8 = &.{},
