@@ -539,7 +539,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        if (alwaysReturns(instructions.items)) {
+        if (areAllPathsReturning(instructions.items)) {
             return_type = self.scope.return_type_id;
         }
 
@@ -549,12 +549,12 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn alwaysReturns(instructions: []const ir.Instruction) bool {
+    fn areAllPathsReturning(instructions: []const ir.Instruction) bool {
         for (instructions) |inst| {
             switch (inst) {
                 .return_stmt => return true,
                 .branch_if => |branch| {
-                    if (branch.else_block.len > 0 and alwaysReturns(branch.then_block) and alwaysReturns(branch.else_block)) return true;
+                    if (branch.else_block.len > 0 and areAllPathsReturning(branch.then_block) and areAllPathsReturning(branch.else_block)) return true;
                 },
                 else => {},
             }
@@ -859,9 +859,7 @@ pub const SemaAnalyzer = struct {
 
         const is_nullable = self.type_table.getTypePtrById(subject_type).nullable;
         const base_type = if (is_nullable) self.type_table.typeIdByNullableTypeId.get(subject_type) orelse
-            return self.err_dispatcher.invalidType("int, enum or union", subject_type_name, when_stmt.subject.loc)
-        else
-            subject_type;
+            return self.err_dispatcher.invalidType("int, enum or union", subject_type_name, when_stmt.subject.loc) else subject_type;
 
         const base_kind = self.type_table.getTypePtrById(base_type).kind;
         switch (base_kind) {
@@ -1873,7 +1871,6 @@ pub const SemaAnalyzer = struct {
         }
 
         if (is_struct_init) {
-
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
                 try keys.append(self.allocator, param.identifier);

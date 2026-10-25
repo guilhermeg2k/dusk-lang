@@ -20,6 +20,7 @@
 - Fixed optional chaining (`?.`) crashing when a link in the chain is null, and when the chain ends in an `int`/`float`/`bool`/enum field
 - Fixed compiler crash when assigning or passing an empty array literal (`list = []`)
 - `@` must now be followed by `(...)`: `let x = @` or `@.foo` is a syntax error, not a compiler crash. `@(...)` is parsed as its own expression, not as a call
+- Renamed sema's `alwaysReturns` to `areAllPathsReturning`
 - Fixed assigning a call result to a variable declared before other variables (`out = len(a)`) crashing or giving garbage
 - Fixed passing a plain value to a `?int`/`?float`/`?bool`/`?Enum` parameter, or returning one from a function returning such a type, crashing the program
 - Rewrote the language reference for v0.11: enums, unions, nullables, operator precedence, errors and known limitations
