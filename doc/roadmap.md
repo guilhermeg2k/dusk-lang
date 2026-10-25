@@ -2,12 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version 0.11 - Power
-
-- Enums
-- Unions
-- When
-
 ## Version 0.12 - Kanade
 
 - Error Handling
