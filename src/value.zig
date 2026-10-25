@@ -405,7 +405,7 @@ pub const ValueType = enum(u8) {
     pub fn fromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) ValueType {
         const ty = type_table.getTypePtrById(type_id);
 
-        if (ty.nullable) {
+        if (ty.is_nullable) {
             return .nullable;
         }
 

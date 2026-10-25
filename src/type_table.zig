@@ -32,7 +32,7 @@ pub const TypeTable = struct {
                     .dynamic => .{ .dynamic = {} },
                     .meta => .{ .meta = {} },
                 },
-                .nullable = false,
+                .is_nullable = false,
             });
 
             try primitives.put(primitive_type, @intCast(i));
@@ -61,7 +61,7 @@ pub const TypeTable = struct {
         return a == b;
     }
 
-    pub fn coerce(self: *Self, from: TypeId, to: TypeId) bool {
+    pub fn canCoerce(self: *Self, from: TypeId, to: TypeId) bool {
         if (from == to) return true;
 
         const type_from = self.getTypePtrById(from);
@@ -69,15 +69,15 @@ pub const TypeTable = struct {
 
         if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
 
-        if (!type_from.nullable and type_to.nullable) {
+        if (!type_from.is_nullable and type_to.is_nullable) {
             if (type_from.kind == .null) return true;
             if (self.typeIdByNullableTypeId.get(to)) |unwrapped| {
-                return self.coerce(from, unwrapped);
+                return self.canCoerce(from, unwrapped);
             }
         }
 
         if (type_from.kind == .array and type_to.kind == .array) {
-            return self.coerce(type_from.kind.array, type_to.kind.array);
+            return self.canCoerce(type_from.kind.array, type_to.kind.array);
         }
 
         if (type_from.kind == .@"struct" and type_to.kind == .@"struct") {
@@ -102,16 +102,16 @@ pub const TypeTable = struct {
 
     pub fn name(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
         const t = self.getTypePtrById(id);
-        const prefix = if (t.nullable) "nullable " else "";
+        const prefix = if (t.is_nullable) "nullable " else "";
 
         return switch (t.kind) {
-            .float => if (t.nullable) "nullable float" else "float",
-            .int => if (t.nullable) "nullable int" else "int",
-            .string => if (t.nullable) "nullable string" else "string",
-            .boolean => if (t.nullable) "nullable boolean" else "boolean",
-            .void => if (t.nullable) "nullable void" else "void",
-            .null => if (t.nullable) "nullable null" else "null",
-            .dynamic => if (t.nullable) "nullable dynamic" else "dynamic",
+            .float => if (t.is_nullable) "nullable float" else "float",
+            .int => if (t.is_nullable) "nullable int" else "int",
+            .string => if (t.is_nullable) "nullable string" else "string",
+            .boolean => if (t.is_nullable) "nullable boolean" else "boolean",
+            .void => if (t.is_nullable) "nullable void" else "void",
+            .null => if (t.is_nullable) "nullable null" else "null",
+            .dynamic => if (t.is_nullable) "nullable dynamic" else "dynamic",
             .meta => "Meta Symbol",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
@@ -140,7 +140,7 @@ pub const TypeTable = struct {
     }
 
     pub fn getOrAddNullable(self: *Self, typeId: TypeId) !TypeId {
-        if (self.getTypePtrById(typeId).nullable) return typeId;
+        if (self.getTypePtrById(typeId).is_nullable) return typeId;
 
         const nullable_type = self.nullableTypeIdByTypeId.get(typeId);
 
@@ -152,7 +152,7 @@ pub const TypeTable = struct {
 
         try self.types.append(self.allocator, .{
             .kind = @"type".kind,
-            .nullable = true,
+            .is_nullable = true,
         });
 
         const id: TypeId = @intCast(self.types.items.len - 1);
@@ -172,7 +172,7 @@ pub const TypeTable = struct {
             .kind = .{
                 .array = inner,
             },
-            .nullable = false,
+            .is_nullable = false,
         });
 
         const new_type_id: TypeId = @intCast(self.types.items.len - 1);
@@ -217,7 +217,7 @@ pub const TypeTable = struct {
             .kind = .{
                 .@"struct" = anom_struct,
             },
-            .nullable = false,
+            .is_nullable = false,
         });
 
         const new_id: TypeId = @intCast(self.types.items.len - 1);
@@ -307,7 +307,7 @@ pub const Type = struct {
         @"union": Union,
     },
 
-    nullable: bool,
+    is_nullable: bool,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
