@@ -853,218 +853,42 @@ pub const SemaAnalyzer = struct {
 
     fn visitWhenStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
         const when_stmt = stmt.data.when;
-        const subject = try self.evalExp(when_stmt.subject);
-        const subject_type = subject.type_id;
-        const subject_type_name = try self.type_table.name(subject_type, self.allocator);
-
-        const is_nullable = self.type_table.getTypePtrById(subject_type).is_nullable;
-        const base_type = if (is_nullable) self.type_table.typeIdByNullableTypeId.get(subject_type) orelse
-            return self.err_dispatcher.invalidType("int, enum or union", subject_type_name, when_stmt.subject.loc) else subject_type;
-
-        const base_kind = self.type_table.getTypePtrById(base_type).kind;
-        switch (base_kind) {
-            .int, .@"enum", .@"union" => {},
-            else => return self.err_dispatcher.invalidType("int, enum or union", subject_type_name, when_stmt.subject.loc),
-        }
-
-        var seen_values: std.AutoHashMap(i64, void) = .init(self.allocator);
-        var seen_variants: std.StringHashMap(void) = .init(self.allocator);
-        var has_null_case = false;
-
-        const prong_values = try self.allocator.alloc([]*ir.Value, when_stmt.prongs.len);
-
-        for (when_stmt.prongs, 0..) |prong, prong_idx| {
-            prong_values[prong_idx] = &.{};
-
-            switch (prong.pattern) {
-                .null_case => {
-                    if (!is_nullable) {
-                        return self.err_dispatcher.whenInvalidCase(
-                            try std.fmt.allocPrint(self.allocator, "'null' case on non-nullable '{s}'", .{subject_type_name}),
-                            prong.loc,
-                        );
-                    }
-                    if (has_null_case) return self.err_dispatcher.whenDuplicateCase("null", prong.loc);
-                    has_null_case = true;
-                },
-                .variant => |variant| {
-                    if (base_kind != .@"union") {
-                        return self.err_dispatcher.whenInvalidCase(
-                            try std.fmt.allocPrint(self.allocator, "'variant: capture' cases are only for unions, found '{s}'", .{subject_type_name}),
-                            prong.loc,
-                        );
-                    }
-                    if (!base_kind.@"union".variants.contains(variant.name)) {
-                        return self.err_dispatcher.invalidUnionVariant(base_kind.@"union".identifier, variant.name, prong.loc);
-                    }
-                    if (seen_variants.contains(variant.name)) return self.err_dispatcher.whenDuplicateCase(variant.name, prong.loc);
-                    try seen_variants.put(variant.name, {});
-                },
-                .values => |exps| {
-                    if (base_kind == .@"union") {
-                        return self.err_dispatcher.whenInvalidCase("union cases are written as 'variant: capture'", prong.loc);
-                    }
-
-                    const values = try self.allocator.alloc(*ir.Value, exps.len);
-                    for (exps, 0..) |exp, i| {
-                        const value = try self.evalWhenCaseValue(exp, base_type);
-                        const key = value.data.i_int;
-                        if (seen_values.contains(key)) {
-                            return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
-                        }
-                        try seen_values.put(key, {});
-                        values[i] = value;
-                    }
-                    prong_values[prong_idx] = values;
-                },
-            }
-        }
-
-        var missing: std.ArrayList(u8) = .empty;
-        switch (base_kind) {
-            .@"enum" => |enum_def| for (enum_def.variants_in_order) |name| {
-                if (!seen_values.contains(enum_def.variants.get(name).?)) try appendMissing(self.allocator, &missing, name);
-            },
-            .@"union" => |union_def| for (union_def.variants_in_order) |name| {
-                if (!seen_variants.contains(name)) try appendMissing(self.allocator, &missing, name);
-            },
-            else => {},
-        }
-        if (is_nullable and !has_null_case) try appendMissing(self.allocator, &missing, "null");
-
-        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
-        if (when_stmt.else_block == null) {
-            if (base_kind == .int) return self.err_dispatcher.whenNeedsElse(subject_type_name, when_loc);
-            if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
-        } else if (base_kind != .int and missing.items.len == 0) {
-            return self.err_dispatcher.whenUselessElse(when_stmt.else_loc.?);
-        }
+        const subject = try self.resolveWhenSubject(when_stmt.subject);
+        const prongs = try self.checkWhenProngs(&when_stmt, subject);
+        try self.checkWhenExhaustive(stmt, subject, prongs);
 
         var instructions: std.ArrayList(ir.Instruction) = .empty;
-
-        const subject_uid = self.scope.genUid();
-        try instructions.append(self.allocator, .{ .store_var = .{
-            .uid = subject_uid,
-            .identifier = "when",
-            .type_id = subject_type,
-            .value = subject,
-        } });
-        const subject_ref = try ir.Value.init(self.allocator, .{
-            .data = .{ .identifier = .{ .uid = subject_uid, .name = "when" } },
-            .type_id = subject_type,
-        });
-
-        var unwrapped_ref = subject_ref;
-        if (is_nullable) {
-            const unwrapped_uid = self.scope.genUid();
-            unwrapped_ref = try ir.Value.init(self.allocator, .{
-                .data = .{ .identifier = .{ .uid = unwrapped_uid, .name = "when" } },
-                .type_id = base_type,
-            });
-
-            try instructions.append(self.allocator, if (base_kind == .@"union")
-                .{ .store_var = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = base_type, .value = subject_ref } }
-            else
-                .{ .unwrap_null_box = .{
-                    .unwrapped = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = base_type },
-                    .null_box = subject_ref,
-                } });
-        }
+        const refs = try self.storeWhenSubject(&instructions, subject);
 
         var chain: []const ir.Instruction = if (when_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{};
 
         var null_insts: []const ir.Instruction = &.{};
-        if (is_nullable and !has_null_case) {
+        if (subject.is_nullable and !prongs.has_null_case) {
             null_insts = (try self.visitBlock(&when_stmt.else_block.?)).instructions;
         }
 
-        var unconditional_prong_idx: ?usize = null;
-        if (when_stmt.else_block == null) {
-            var idx = when_stmt.prongs.len;
-            while (idx > 0) {
-                idx -= 1;
-                if (when_stmt.prongs[idx].pattern != .null_case) {
-                    unconditional_prong_idx = idx;
-                    break;
-                }
-            }
-        }
+        const unconditional_prong_idx = if (when_stmt.else_block == null) findUnconditionalProng(when_stmt.prongs) else null;
 
         var prong_idx = when_stmt.prongs.len;
         while (prong_idx > 0) {
             prong_idx -= 1;
             const prong = when_stmt.prongs[prong_idx];
-            const is_unconditional = unconditional_prong_idx == prong_idx;
 
-            switch (prong.pattern) {
+            const lowered = switch (prong.pattern) {
                 .null_case => {
                     null_insts = (try self.visitBlock(&prong.body)).instructions;
                     continue;
                 },
-                .variant => |variant| {
-                    const union_def = base_kind.@"union";
-                    const variant_type_id = union_def.variants.get(variant.name).?;
+                .variant => try self.lowerWhenVariantProng(&prong, subject, refs.unwrapped),
+                .values => try self.lowerWhenValuesProng(&prong, prongs.values[prong_idx], refs.unwrapped),
+            };
 
-                    const tag = try ir.Value.init(self.allocator, .{
-                        .data = .{ .union_tag = unwrapped_ref },
-                        .type_id = self.type_table.getPrimitive(.int),
-                    });
-                    const tag_index = for (union_def.variants_in_order, 0..) |name, i| {
-                        if (std.mem.eql(u8, name, variant.name)) break i;
-                    } else unreachable;
-                    const condition = try self.cmpEq(tag, try ir.Value.init(self.allocator, .{
-                        .data = .{ .i_int = @intCast(tag_index) },
-                        .type_id = self.type_table.getPrimitive(.int),
-                    }));
-
-                    var body: std.ArrayList(ir.Instruction) = .empty;
-                    const is_ignored = std.mem.eql(u8, variant.capture, "_");
-                    const captured_symbol = Symbol{
-                        .uid = self.scope.genUid(),
-                        .identifier = variant.capture,
-                        .type_id = variant_type_id,
-                        .kind = .{ .variable = .{ .is_mut = false } },
-                    };
-
-                    if (!is_ignored) {
-                        try body.append(self.allocator, .{ .store_var = .{
-                            .uid = captured_symbol.uid,
-                            .identifier = captured_symbol.identifier,
-                            .type_id = variant_type_id,
-                            .value = try ir.Value.init(self.allocator, .{
-                                .data = .{ .union_payload = unwrapped_ref },
-                                .type_id = variant_type_id,
-                            }),
-                        } });
-                        try self.scope.symbol_table.put(captured_symbol);
-                    }
-                    defer if (!is_ignored) {
-                        _ = self.scope.symbol_table.remove(captured_symbol.identifier);
-                    };
-
-                    try body.appendSlice(self.allocator, (try self.visitBlock(&prong.body)).instructions);
-                    const body_insts = try body.toOwnedSlice(self.allocator);
-                    chain = if (is_unconditional) body_insts else try self.wrapBranch(condition, body_insts, chain);
-                },
-                .values => {
-                    var condition: ?*ir.Value = null;
-                    for (prong_values[prong_idx]) |value| {
-                        const eq = try self.cmpEq(unwrapped_ref, value);
-                        condition = if (condition) |c| try ir.Value.init(self.allocator, .{
-                            .data = .{ .binary_op = .{ .kind = .b_or, .left = c, .right = eq } },
-                            .type_id = self.type_table.getPrimitive(.boolean),
-                        }) else eq;
-                    }
-
-                    const body = (try self.visitBlock(&prong.body)).instructions;
-                    chain = if (is_unconditional) body else try self.wrapBranch(condition.?, body, chain);
-                },
-            }
+            chain = if (unconditional_prong_idx == prong_idx) lowered.body else try self.wrapBranch(lowered.condition, lowered.body, chain);
         }
 
-        if (is_nullable) {
+        if (subject.is_nullable) {
             const not_null = try ir.Value.init(self.allocator, .{
-                .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
+                .data = .{ .unary_op = .{ .kind = .box_not_null, .right = refs.subject } },
                 .type_id = self.type_table.getPrimitive(.boolean),
             });
             chain = try self.wrapBranch(not_null, chain, null_insts);
@@ -1072,6 +896,214 @@ pub const SemaAnalyzer = struct {
 
         try instructions.appendSlice(self.allocator, chain);
         return instructions.toOwnedSlice(self.allocator);
+    }
+
+    fn resolveWhenSubject(self: *Self, exp: *const ast.ExpNode) Errors!WhenSubject {
+        const value = try self.evalExp(exp);
+        const type_name = try self.type_table.name(value.type_id, self.allocator);
+        const is_nullable = self.type_table.getTypePtrById(value.type_id).is_nullable;
+        const base_type = self.type_table.typeIdByNullableTypeId.get(value.type_id) orelse value.type_id;
+        const base_kind = self.type_table.getTypePtrById(base_type).kind;
+
+        switch (base_kind) {
+            .int, .@"enum", .@"union" => {},
+            else => return self.err_dispatcher.invalidType("int, enum or union", type_name, exp.loc),
+        }
+
+        return .{
+            .value = value,
+            .type_name = type_name,
+            .is_nullable = is_nullable,
+            .base_type = base_type,
+            .base_kind = base_kind,
+        };
+    }
+
+    fn checkWhenProngs(self: *Self, when_stmt: *const ast.WhenStmt, subject: WhenSubject) Errors!WhenProngs {
+        var prongs: WhenProngs = .{
+            .values = try self.allocator.alloc([]*ir.Value, when_stmt.prongs.len),
+            .seen_values = .init(self.allocator),
+            .seen_variants = .init(self.allocator),
+            .has_null_case = false,
+        };
+
+        for (when_stmt.prongs, 0..) |prong, prong_idx| {
+            prongs.values[prong_idx] = &.{};
+
+            switch (prong.pattern) {
+                .null_case => {
+                    if (!subject.is_nullable) {
+                        return self.err_dispatcher.whenInvalidCase(
+                            try std.fmt.allocPrint(self.allocator, "'null' case on non-nullable '{s}'", .{subject.type_name}),
+                            prong.loc,
+                        );
+                    }
+                    if (prongs.has_null_case) return self.err_dispatcher.whenDuplicateCase("null", prong.loc);
+                    prongs.has_null_case = true;
+                },
+                .variant => |variant| {
+                    if (subject.base_kind != .@"union") {
+                        return self.err_dispatcher.whenInvalidCase(
+                            try std.fmt.allocPrint(self.allocator, "'variant: capture' cases are only for unions, found '{s}'", .{subject.type_name}),
+                            prong.loc,
+                        );
+                    }
+                    if (!subject.base_kind.@"union".variants.contains(variant.name)) {
+                        return self.err_dispatcher.invalidUnionVariant(subject.base_kind.@"union".identifier, variant.name, prong.loc);
+                    }
+                    if (prongs.seen_variants.contains(variant.name)) return self.err_dispatcher.whenDuplicateCase(variant.name, prong.loc);
+                    try prongs.seen_variants.put(variant.name, {});
+                },
+                .values => |exps| {
+                    if (subject.base_kind == .@"union") {
+                        return self.err_dispatcher.whenInvalidCase("union cases are written as 'variant: capture'", prong.loc);
+                    }
+
+                    const values = try self.allocator.alloc(*ir.Value, exps.len);
+                    for (exps, 0..) |exp, i| {
+                        const value = try self.evalWhenCaseValue(exp, subject.base_type);
+                        const key = value.data.i_int;
+                        if (prongs.seen_values.contains(key)) {
+                            return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
+                        }
+                        try prongs.seen_values.put(key, {});
+                        values[i] = value;
+                    }
+                    prongs.values[prong_idx] = values;
+                },
+            }
+        }
+
+        return prongs;
+    }
+
+    fn checkWhenExhaustive(self: *Self, stmt: *const ast.StatementNode, subject: WhenSubject, prongs: WhenProngs) Errors!void {
+        const when_stmt = stmt.data.when;
+
+        var missing: std.ArrayList(u8) = .empty;
+        switch (subject.base_kind) {
+            .@"enum" => |enum_def| for (enum_def.variants_in_order) |name| {
+                if (!prongs.seen_values.contains(enum_def.variants.get(name).?)) try appendMissing(self.allocator, &missing, name);
+            },
+            .@"union" => |union_def| for (union_def.variants_in_order) |name| {
+                if (!prongs.seen_variants.contains(name)) try appendMissing(self.allocator, &missing, name);
+            },
+            else => {},
+        }
+        if (subject.is_nullable and !prongs.has_null_case) try appendMissing(self.allocator, &missing, "null");
+
+        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
+        if (when_stmt.else_block == null) {
+            if (subject.base_kind == .int) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
+            if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
+        } else if (subject.base_kind != .int and missing.items.len == 0) {
+            return self.err_dispatcher.whenUselessElse(when_stmt.else_loc.?);
+        }
+    }
+
+    fn storeWhenSubject(self: *Self, instructions: *std.ArrayList(ir.Instruction), subject: WhenSubject) Errors!WhenSubjectRefs {
+        const subject_uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .store_var = .{
+            .uid = subject_uid,
+            .identifier = "when",
+            .type_id = subject.value.type_id,
+            .value = subject.value,
+        } });
+        const subject_ref = try ir.Value.init(self.allocator, .{
+            .data = .{ .identifier = .{ .uid = subject_uid, .name = "when" } },
+            .type_id = subject.value.type_id,
+        });
+
+        if (!subject.is_nullable) return .{ .subject = subject_ref, .unwrapped = subject_ref };
+
+        const unwrapped_uid = self.scope.genUid();
+        const unwrapped_ref = try ir.Value.init(self.allocator, .{
+            .data = .{ .identifier = .{ .uid = unwrapped_uid, .name = "when" } },
+            .type_id = subject.base_type,
+        });
+
+        try instructions.append(self.allocator, if (subject.base_kind == .@"union")
+            .{ .store_var = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = subject.base_type, .value = subject_ref } }
+        else
+            .{ .unwrap_null_box = .{
+                .unwrapped = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = subject.base_type },
+                .null_box = subject_ref,
+            } });
+
+        return .{ .subject = subject_ref, .unwrapped = unwrapped_ref };
+    }
+
+    fn findUnconditionalProng(prongs: []const ast.WhenProng) ?usize {
+        var idx = prongs.len;
+        while (idx > 0) {
+            idx -= 1;
+            if (prongs[idx].pattern != .null_case) return idx;
+        }
+        return null;
+    }
+
+    fn lowerWhenVariantProng(self: *Self, prong: *const ast.WhenProng, subject: WhenSubject, unwrapped_ref: *ir.Value) Errors!LoweredProng {
+        const variant = prong.pattern.variant;
+        const union_def = subject.base_kind.@"union";
+        const variant_type_id = union_def.variants.get(variant.name).?;
+
+        const tag = try ir.Value.init(self.allocator, .{
+            .data = .{ .union_tag = unwrapped_ref },
+            .type_id = self.type_table.getPrimitive(.int),
+        });
+        const condition = try self.cmpEq(tag, try ir.Value.init(self.allocator, .{
+            .data = .{ .i_int = @intCast(unionTagIndex(union_def, variant.name)) },
+            .type_id = self.type_table.getPrimitive(.int),
+        }));
+
+        var body: std.ArrayList(ir.Instruction) = .empty;
+        const is_ignored = std.mem.eql(u8, variant.capture, "_");
+        const captured_symbol = Symbol{
+            .uid = self.scope.genUid(),
+            .identifier = variant.capture,
+            .type_id = variant_type_id,
+            .kind = .{ .variable = .{ .is_mut = false } },
+        };
+
+        if (!is_ignored) {
+            try body.append(self.allocator, .{ .store_var = .{
+                .uid = captured_symbol.uid,
+                .identifier = captured_symbol.identifier,
+                .type_id = variant_type_id,
+                .value = try ir.Value.init(self.allocator, .{
+                    .data = .{ .union_payload = unwrapped_ref },
+                    .type_id = variant_type_id,
+                }),
+            } });
+            try self.scope.symbol_table.put(captured_symbol);
+        }
+
+        defer if (!is_ignored) {
+            _ = self.scope.symbol_table.remove(captured_symbol.identifier);
+        };
+
+        try body.appendSlice(self.allocator, (try self.visitBlock(&prong.body)).instructions);
+        return .{ .condition = condition, .body = try body.toOwnedSlice(self.allocator) };
+    }
+
+    fn lowerWhenValuesProng(self: *Self, prong: *const ast.WhenProng, values: []const *ir.Value, unwrapped_ref: *ir.Value) Errors!LoweredProng {
+        var condition: ?*ir.Value = null;
+        for (values) |value| {
+            const eq = try self.cmpEq(unwrapped_ref, value);
+            condition = if (condition) |c| try ir.Value.init(self.allocator, .{
+                .data = .{ .binary_op = .{ .kind = .b_or, .left = c, .right = eq } },
+                .type_id = self.type_table.getPrimitive(.boolean),
+            }) else eq;
+        }
+
+        return .{ .condition = condition.?, .body = (try self.visitBlock(&prong.body)).instructions };
+    }
+
+    fn unionTagIndex(union_def: tt.Union, variant_name: []const u8) usize {
+        for (union_def.variants_in_order, 0..) |name, i| {
+            if (std.mem.eql(u8, name, variant_name)) return i;
+        }
+        unreachable;
     }
 
     fn evalWhenCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) Errors!*ir.Value {
@@ -1544,8 +1576,6 @@ pub const SemaAnalyzer = struct {
         return exp.data == .anonymous_init;
     }
 
-    // `@(variant = value)` has no union type of its own: when a union is expected it is
-    // built as that union, like `U(variant = value)`. Anything else is evaluated as usual.
     fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
         if (expected_type_id) |expected| {
             const base_type_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
@@ -2591,4 +2621,29 @@ pub const Symbol = struct {
         },
         function: void,
     },
+};
+
+const WhenSubject = struct {
+    value: *ir.Value,
+    type_name: []const u8,
+    is_nullable: bool,
+    base_type: tt.TypeId,
+    base_kind: @FieldType(tt.Type, "kind"),
+};
+
+const WhenProngs = struct {
+    values: [][]*ir.Value,
+    seen_values: std.AutoHashMap(i64, void),
+    seen_variants: std.StringHashMap(void),
+    has_null_case: bool,
+};
+
+const WhenSubjectRefs = struct {
+    subject: *ir.Value,
+    unwrapped: *ir.Value,
+};
+
+const LoweredProng = struct {
+    condition: *ir.Value,
+    body: []const ir.Instruction,
 };
