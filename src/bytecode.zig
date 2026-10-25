@@ -528,7 +528,7 @@ pub const BytecodeGen = struct {
         const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
         // sema only allows a nullable target through `?.`
-        if (target_type.nullable) {
+        if (target_type.is_nullable) {
             const is_instance_member = switch (target_type.kind) {
                 .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
                 .@"union" => |u| u.variants.contains(idx.index.data.i_string),

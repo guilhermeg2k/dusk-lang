@@ -93,7 +93,7 @@ pub const BuiltIn = struct {
                     .return_type_id = return_type_id,
                 },
             },
-            .nullable = false,
+            .is_nullable = false,
         });
         return id;
     }

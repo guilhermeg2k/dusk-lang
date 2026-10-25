@@ -1056,8 +1056,8 @@ pub const Parser = struct {
     fn parsePostfix(self: *Self, left: *ast.ExpNode) Errors!*ast.ExpNode {
         var node = left;
 
-        var done = false;
-        while (!done) {
+        var is_done = false;
+        while (!is_done) {
             const tk = self.peekCurrent();
 
             switch (tk.tag) {
@@ -1091,7 +1091,7 @@ pub const Parser = struct {
                         .data = .{ .indexed = .{
                             .target = node,
                             .index = index,
-                            .nullable = false,
+                            .is_nullable = false,
                         } },
                         .loc = .{ .start = node.loc.start, .end = r_bracket.loc.end },
                     });
@@ -1099,7 +1099,7 @@ pub const Parser = struct {
 
                 //struct field member access
                 .dot, .question_mark_dot => {
-                    const nullable = tk.tag == .question_mark_dot;
+                    const is_nullable = tk.tag == .question_mark_dot;
                     self.walk();
 
                     const id_token = try self.expect(.identifier);
@@ -1112,13 +1112,13 @@ pub const Parser = struct {
                         .data = .{ .indexed = .{
                             .target = node,
                             .index = id_node,
-                            .nullable = nullable,
+                            .is_nullable = is_nullable,
                         } },
                         .loc = .{ .start = node.loc.start, .end = id_token.loc.end },
                     });
                 },
 
-                else => done = true,
+                else => is_done = true,
             }
         }
 
@@ -1139,38 +1139,38 @@ pub const Parser = struct {
     }
 
     //note: this is allocating duplicates
-    fn parseTypeAnnotation(self: *Self, allow_anonymous_struct_definition: bool) !*ast.TypeAnnotation {
+    fn parseTypeAnnotation(self: *Self, can_define_anonymous_struct: bool) !*ast.TypeAnnotation {
         const is_nullable = self.match(.question_mark);
         const tk = self.peekCurrent();
         self.walk();
 
-        if (!allow_anonymous_struct_definition and tk.tag == .struct_kw) {
+        if (!can_define_anonymous_struct and tk.tag == .struct_kw) {
             return self.err_dispatcher.invalidSyntax("type string, number, bool, void, ...", tk);
         }
 
         return switch (tk.tag) {
             .string_kw, .int_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
-                .nullable = is_nullable,
+                .is_nullable = is_nullable,
             }),
             .identifier => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .@"struct" = tk.value(self.src) },
-                .nullable = is_nullable,
+                .is_nullable = is_nullable,
             }),
             .struct_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .anonymous_struct = try self.parseAnonymousStructDef() },
-                .nullable = is_nullable,
+                .is_nullable = is_nullable,
             }),
             .at => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .type_self = {} },
-                .nullable = is_nullable,
+                .is_nullable = is_nullable,
             }),
             .l_bracket => {
                 _ = try self.expect(.r_bracket);
                 const arr_type = try self.parseTypeAnnotation(false);
                 return ast.TypeAnnotation.init(self.allocator, .{
                     .type = .{ .array = arr_type },
-                    .nullable = is_nullable,
+                    .is_nullable = is_nullable,
                 });
             },
             else => {

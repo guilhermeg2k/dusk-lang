@@ -215,9 +215,9 @@ pub const VM = struct {
 
                 .NULL_BOX_STORE => {
                     // b = 0 stores null, otherwise b = inner value kind + 1
-                    const not_null = inst.b != 0;
+                    const is_not_null = inst.b != 0;
 
-                    if (not_null) {
+                    if (is_not_null) {
                         const new_value = stack[stack_base + inst.c];
                         const current_raw: u64 = @bitCast(stack[stack_base + inst.a]);
                         if (current_raw == 0) {

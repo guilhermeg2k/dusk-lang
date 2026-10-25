@@ -105,7 +105,7 @@ pub const TypeAnnotation = struct {
         type_self: void,
     },
 
-    nullable: bool,
+    is_nullable: bool,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -216,7 +216,7 @@ pub const ReturnStmt = struct {
 pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
-    nullable: bool,
+    is_nullable: bool,
 };
 
 pub const Struct = struct {
