@@ -26,6 +26,7 @@
 - Fixed compiler crash on unions with more than 256 variants
 - Rewrote the language reference for v0.11: enums, unions, nullables, operator precedence, errors and known limitations
 - Added `bench.py`: a Dusk-only benchmark runner with JSON output and `--compare <git-ref>` to measure a change against another version
+- Regenerated the benchmark report for v0.11
 - Internal: `@(...)` is parsed as its own `anonymous_init` expression, not as a call
 - Internal: renamed booleans to read as yes/no questions (`nullable` type flag → `is_nullable`, `coerce` → `canCoerce`, `typeNeedsNullBox` → `needsNullBox`, `findIsFieldMut` → `isFieldMut`, `alwaysReturns` → `areAllPathsReturning`, plus a few locals)
 - Internal: split sema's `visitWhenStmt` into smaller steps: resolving the subject, checking cases, checking exhaustiveness, storing the subject and lowering each case
