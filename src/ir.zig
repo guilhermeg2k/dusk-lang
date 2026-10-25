@@ -1,7 +1,10 @@
+const std = @import("std");
+const TypeId = @import("type_table.zig").TypeId;
+
 pub const Program = struct {
     instructions: []const Instruction,
     functions: []const Func,
-    structs: []const Struct,
+    defined_types: []const DefinedType,
 };
 
 pub const Block = struct {
@@ -16,20 +19,50 @@ pub const Instruction = union(enum) {
     return_stmt: ReturnStmt,
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
+    unwrap_null_box: UnwrapNullBox,
+    update_null_box: UpdateNullBox,
     break_stmt: void,
     continue_stmt: void,
+};
+
+pub const DefinedType = struct {
+    kind: union(enum) {
+        @"struct": Struct,
+        @"enum": Enum,
+        @"union": Union,
+    },
 };
 
 pub const Struct = struct {
     uid: usize,
     type_id: TypeId,
     identifier: []const u8,
-    fields: []const StructField,
-    static_fields: []const StructField,
+    fields: []const Field,
+    static_fields: []const Field,
     funcs: []const Func,
 };
 
-pub const StructField = struct {
+pub const Enum = struct {
+    uid: usize,
+    type_id: TypeId,
+    identifier: []const u8,
+
+    variants: std.StringHashMap(i64),
+    static_fields: []const Field,
+    funcs: []const Func,
+};
+
+pub const Union = struct {
+    uid: usize,
+    type_id: TypeId,
+    identifier: []const u8,
+
+    variants: std.StringHashMap(TypeId),
+    static_fields: []const Field,
+    funcs: []const Func,
+};
+
+pub const Field = struct {
     identifier: []const u8,
     type_id: TypeId,
     default_value: ?*Value,
@@ -58,6 +91,15 @@ pub const UpdateIndexed = struct {
 pub const StructInit = struct {
     keys: [][]const u8,
     values: []*Value,
+};
+
+pub const UnionInit = struct {
+    tag: ?[]const u8,
+    value: ?*Value,
+};
+
+pub const NullBoxInit = struct {
+    value: ?*Value,
 };
 
 pub const StoreVar = struct {
@@ -103,7 +145,7 @@ pub const Value = struct {
         i_null: void,
         i_array: Array,
 
-        identifier: struct { uid: usize, identifier: []const u8 },
+        identifier: struct { uid: usize, name: []const u8 },
         indexed: IndexedValue,
 
         binary_op: BinaryOp,
@@ -111,6 +153,10 @@ pub const Value = struct {
 
         fn_call: FnCall,
         struct_init: StructInit,
+        union_init: UnionInit,
+        null_box_init: NullBoxInit,
+        union_tag: *Value,
+        union_payload: *Value,
     },
 
     type_id: TypeId,
@@ -130,6 +176,22 @@ pub const BinaryOp = struct {
     right: *Value,
 };
 
+pub const NullBoxNNullOp = struct {
+    value: *Value,
+};
+
+pub const UnwrapNullBox = struct {
+    unwrapped: struct { uid: usize, identifier: []const u8, type_id: TypeId },
+    null_box: *Value,
+};
+
+pub const UpdateNullBox = struct {
+    uid: usize,
+    type_id: TypeId,
+    identifier: []const u8,
+    value: ?*Value,
+};
+
 pub const IndexedValue = struct {
     target: *Value,
     index: *Value,
@@ -147,6 +209,7 @@ pub const FnCall = struct {
 };
 
 pub const UnaryOpKind = enum {
+    box_not_null,
     i_neg,
     f_neg,
     not,
@@ -186,8 +249,3 @@ pub const BinaryOpKind = enum {
     b_cmp_eq,
     b_cmp_neq,
 };
-
-const std = @import("std");
-const sema = @import("sema.zig");
-const SemaError = sema.Errors;
-const TypeId = sema.TypeId;

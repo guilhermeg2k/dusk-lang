@@ -6,6 +6,7 @@
 
 - Enums
 - Unions
+- When
 
 ## Version 0.12 - Kanade
 
@@ -14,43 +15,44 @@
 
 ## Version 0.13 - Hiei
 
-- Fancy for (fon in like)
+- Fancy for (for in like)
+- Ranges (`1..5`) for `for` and `when` cases
+- `when` on floats (range cases only, e.g. `0.0..1.0 then`)
+- `when`, `if` as expression
 - Capture for
 - Ternary operator
 - Nullish coalescing operator (??)
 
 ## Version 0.14 - Garou
 
-- Pattern match
-
-## Version 0.15 - Simon
-
 - Meta structs
 - Generics
 
-## Version 0.16 - Fujiwara
+## Version 0.15 - Simon
+
+- Closures (& fn as anything (argument, item, etc))
+
+## Version 0.16 - Enjin
+
+- Coroutines
+
+
+## Version 0.17 - Fujiwara
 
 - Modules
 - Privates~
 
-## Version 0.17 - Yoruichi
+## Version 0.18 - Youku
 
 - Multiline Comments
 - Multiline strings
 - Strings operations
+- `when` on strings
 - String interpolation
-
-## Version 0.18 - Youku
-
-- Closures (& fn as anything (argument, item, etc))
 
 ## Version 0.19 - Shigeo
 
 - Collections: Lists, Sets, HashMaps, Tuples
-
-## Version 0.20 - Enjin
-
-- Coroutines
 
 ## Backlog
 

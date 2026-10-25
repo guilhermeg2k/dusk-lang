@@ -11,15 +11,40 @@ pub const StatementNode = struct {
 };
 
 pub const Statement = union(enum) {
-    let_stmt: LetStmt,
-    if_stmt: IfStmt,
-    if_capture_stmt: IfCaptureStmt,
-    for_stmt: ForStmt,
-    assign_stmt: AssignStmt,
-    return_stmt: ReturnStmt,
-    expression_stmt: *ExpNode,
-    break_stmt: void,
-    continue_stmt: void,
+    let: LetStmt,
+    func: FuncStmt,
+    @"struct": StructStmt,
+    @"enum": EnumStmt,
+    @"union": UnionStmt,
+    @"if": IfStmt,
+    if_capture: IfCaptureStmt,
+    when: WhenStmt,
+    @"for": ForStmt,
+    assign: AssignStmt,
+    @"return": ReturnStmt,
+    expression: *ExpNode,
+    @"break": void,
+    @"continue": void,
+};
+
+pub const FuncStmt = struct {
+    identifier: []const u8,
+    def: FnDef,
+};
+
+pub const StructStmt = struct {
+    identifier: []const u8,
+    def: Struct,
+};
+
+pub const EnumStmt = struct {
+    identifier: []const u8,
+    def: EnumDef,
+};
+
+pub const UnionStmt = struct {
+    identifier: []const u8,
+    def: UnionDef,
 };
 
 pub const LetStmt = struct {
@@ -42,6 +67,23 @@ pub const IfCaptureStmt = struct {
     else_block: ?Block,
 };
 
+pub const WhenStmt = struct {
+    subject: *ExpNode,
+    prongs: []const WhenProng,
+    else_block: ?Block,
+    else_loc: ?err.Loc,
+};
+
+pub const WhenProng = struct {
+    pattern: union(enum) {
+        values: []const *ExpNode,
+        variant: struct { name: []const u8, capture: []const u8 },
+        null_case: void,
+    },
+    body: Block,
+    loc: err.Loc,
+};
+
 pub const ForStmt = struct {
     condition: *ExpNode,
     do_block: Block,
@@ -60,10 +102,10 @@ pub const TypeAnnotation = struct {
         @"struct": []const u8,
         anonymous_struct: Struct,
         array: *TypeAnnotation,
-        struct_self: void,
+        type_self: void,
     },
 
-    nullable: bool,
+    is_nullable: bool,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -86,7 +128,7 @@ pub const TypeAnnotation = struct {
             .array => {
                 return std.fmt.allocPrint(alloc, "[]{s}", .{try self.type.array.value(alloc)});
             },
-            .struct_self => {
+            .type_self => {
                 return "@";
             },
         };
@@ -114,12 +156,10 @@ pub const Exp = union(enum) {
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
-    anonymous_struct_identifier: void,
+    anonymous_init: AnonymousInit,
     array_literal: ArrayLiteral,
     null_literal: void,
     fn_call: FnCall,
-    fn_def: FnDef,
-    struct_def: Struct,
     indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -159,6 +199,11 @@ pub const FnCall = struct {
     arguments: []const FnCallArg,
 };
 
+pub const AnonymousInit = struct {
+    are_arguments_named: bool,
+    arguments: []const FnCallArg,
+};
+
 pub const FnCallArg = struct {
     identifier: ?[]const u8,
     exp: *ExpNode,
@@ -171,25 +216,42 @@ pub const ReturnStmt = struct {
 pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
-    nullable: bool,
+    is_nullable: bool,
 };
 
 pub const Struct = struct {
-    fields: []const StructField,
-    static_fields: []const StructField,
-    funcs: []const StructFn,
+    fields: []const Field,
+    static_fields: []const Field,
+    funcs: []const StatementNode,
 };
 
-pub const StructFn = struct {
-    identifier: []const u8,
-    def: *ExpNode,
-};
-
-pub const StructField = struct {
+pub const Field = struct {
     identifier: []const u8,
     is_mut: bool,
     type: ?*TypeAnnotation,
     default_value: ?*ExpNode,
+};
+
+pub const EnumDef = struct {
+    variants: []const EnumVariant,
+    static_fields: []const Field,
+    funcs: []const StatementNode,
+};
+
+pub const EnumVariant = struct {
+    identifier: []const u8,
+    value: ?i64,
+};
+
+pub const UnionDef = struct {
+    variants: []const UnionVariant,
+    static_fields: []const Field,
+    funcs: []const StatementNode,
+};
+
+pub const UnionVariant = struct {
+    identifier: []const u8,
+    type: *TypeAnnotation,
 };
 
 pub const UnaryOp = enum {

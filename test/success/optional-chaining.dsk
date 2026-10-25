@@ -1,0 +1,124 @@
+enum Level
+    Low
+    High
+end
+
+struct Country
+    id: int
+    rate: float
+    active: bool
+    level: Level
+    name: string
+    code: ?string
+end
+
+struct Address
+    country: ?Country
+end
+
+struct User
+    address: ?Address
+end
+
+let full = User(address = Address(country = Country(id = 5, rate = 1.5, active = true, level = Level.High, name = "Brasil", code = null)))
+let no_country = User(address = Address(country = null))
+let no_address = User(address = null)
+
+# primitive fields at the end of a chain
+if full.address?.country?.id: id then
+    assert(id == 5)
+else
+    assert(false)
+end
+
+if full.address?.country?.rate: rate then
+    assert(rate == 1.5)
+else
+    assert(false)
+end
+
+if full.address?.country?.active: active then
+    assert(active)
+else
+    assert(false)
+end
+
+if full.address?.country?.level: level then
+    assert(level == Level.High)
+else
+    assert(false)
+end
+
+# heap and nullable fields at the end of a chain
+if full.address?.country?.name: name then
+    echo(name)
+else
+    assert(false)
+end
+
+if full.address?.country?.code: _ then
+    assert(false)
+end
+
+# null in the middle of a chain
+if no_country.address?.country?.id: _ then
+    assert(false)
+end
+
+if no_address.address?.country?.name: _ then
+    assert(false)
+end
+
+# null at the start of a chain
+if no_address.address?.country: _ then
+    assert(false)
+end
+
+echo(full.address?.country?.id)
+echo(no_country.address?.country?.id)
+echo(no_address.address?.country?.name)
+
+# unions behind a nullable
+union Response
+    status: int
+    body: string
+end
+
+struct Request
+    response: ?Response
+end
+
+let done = Request(response = Response(status = 200))
+let pending = Request(response = null)
+
+if done.response?.status: status then
+    assert(status == 200)
+else
+    assert(false)
+end
+
+if done.response?.body: _ then
+    assert(false)
+end
+
+if pending.response?.status: _ then
+    assert(false)
+end
+
+echo(done.response?.status)
+echo(pending.response?.body)
+
+# chains surviving the gc
+let mut total = 0
+let mut i = 0
+for i < 200000 do
+    let junk = ["garbage garbage garbage", "more garbage here"]
+    if full.address?.country?.id: id then
+        total += id
+    end
+    if no_country.address?.country?.id: id then
+        total += id
+    end
+    i += 1
+end
+assert(total == 1000000)

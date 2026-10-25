@@ -1,17 +1,17 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const v = @import("value.zig");
-const sema = @import("sema.zig");
+const tt = @import("type_table.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    type_table: *sema.TypeTable,
+    type_table: *tt.TypeTable,
 
     var_register_id_by_uid: std.AutoHashMap(usize, u8),
 
-    register_types: [256]sema.TypeId = [_]sema.TypeId{0} ** 256,
+    register_types: [256]tt.TypeId = [_]tt.TypeId{0} ** 256,
     next_free_register: u8 = 0,
     peak_register: u8 = 0,
 
@@ -26,19 +26,23 @@ pub const BytecodeGen = struct {
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
+    fn_index_by_uid: std.AutoHashMap(usize, u16),
 
     static_store: StaticStoreTable,
 
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
-    type_id_to_struct_descriptor_idx: std.AutoHashMap(sema.TypeId, u16),
+    type_id_to_struct_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
+    union_descriptors: std.ArrayList(UnionDescriptor),
+    type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
+    union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     static_heap_bitmap: std.ArrayList(u64) = .empty,
 
-    pub fn init(alloc: std.mem.Allocator, type_table: *sema.TypeTable) Self {
+    pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
             .allocator = alloc,
             .type_table = type_table,
-            .register_types = [_]sema.TypeId{type_table.getPrimitive(.void)} ** 256,
+            .register_types = [_]tt.TypeId{type_table.getPrimitive(.void)} ** 256,
             .var_register_id_by_uid = std.AutoHashMap(usize, u8).init(alloc),
             .next_free_register = 0,
             .peak_register = 0,
@@ -51,55 +55,58 @@ pub const BytecodeGen = struct {
             .loop_stack = .empty,
             .break_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .static_store = StaticStoreTable.init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
-            .type_id_to_struct_descriptor_idx = std.AutoHashMap(sema.TypeId, u16).init(alloc),
+            .type_id_to_struct_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
+            .union_descriptors = .empty,
+            .type_id_to_union_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
+            .union_tag_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
         };
     }
 
     pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
         var funcs: std.ArrayList(Function) = .empty;
-        self.next_free_register = 0;
-        self.peak_register = 0;
-        self.type_id_to_struct_descriptor_idx.clearRetainingCapacity();
-        self.var_register_id_by_uid.clearRetainingCapacity();
 
         for (builtins) |bf| {
             switch (bf.kind) {
                 .@"inline" => |inl| try self.inline_functions_by_uid.put(bf.uid, inl),
                 else => {},
             }
+            try self.fn_index_by_uid.put(bf.uid, @intCast(funcs.items.len));
             try funcs.append(self.allocator, bf);
         }
 
-        for (program.structs) |@"struct"| {
-            try self.genStructStaticFields(@"struct");
-            for (@"struct".funcs) |func| {
-                try funcs.append(self.allocator, try self.genFunction(func));
+        for (program.defined_types) |dt| {
+            switch (dt.kind) {
+                .@"struct" => |s| try self.registerStaticFields(s.type_id, s.static_fields),
+                .@"enum" => |e| try self.registerStaticFields(e.type_id, e.static_fields),
+                .@"union" => |u| try self.registerStaticFields(u.type_id, u.static_fields),
+            }
+        }
+
+        for (program.defined_types) |dt| {
+            switch (dt.kind) {
+                .@"struct" => |s| {
+                    for (s.funcs) |func| try self.addFunction(&funcs, func);
+                },
+                .@"enum" => |e| {
+                    for (e.funcs) |func| try self.addFunction(&funcs, func);
+                },
+                .@"union" => |u| {
+                    for (u.funcs) |func| try self.addFunction(&funcs, func);
+                },
             }
         }
 
         for (program.functions) |func| {
-            try funcs.append(self.allocator, try self.genFunction(func));
+            try self.addFunction(&funcs, func);
         }
 
-        try funcs.append(self.allocator, try self.genFunction(.{
-            .uid = 0,
-            .identifier = "$main",
-            .params = &.{},
-            .body = program.instructions,
-            .return_type = self.type_table.getPrimitive(.void),
-        }));
+        const main_func = try self.genMainFunc(program);
 
-        // for (funcs.items) |func| {
-        //     switch (func.kind) {
-        //         .dusk => {
-        //             func.kind.dusk.disasamble();
-        //         },
-        //         else => {},
-        //     }
-        // }
+        try funcs.append(self.allocator, main_func);
 
         return Program{
             .main_func_index = funcs.items.len - 1,
@@ -107,26 +114,63 @@ pub const BytecodeGen = struct {
             .static_count = self.static_store.count(),
             .static_heap_bitmap = try self.static_heap_bitmap.toOwnedSlice(self.allocator),
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
+            .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
         };
     }
 
-    fn genStructStaticFields(self: *Self, @"struct": ir.Struct) !void {
-        try self.static_store.registerStructFields(@"struct");
+    fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
+        self.next_free_register = 0;
+        self.peak_register = 0;
+        self.var_register_id_by_uid.clearRetainingCapacity();
+        @memset(&self.register_types, self.type_table.getPrimitive(.void));
 
-        for (@"struct".static_fields) |field| {
-            const slot_id = try self.static_store.getSlot(@"struct".type_id, field.identifier);
+        for (program.defined_types) |dt| {
+            switch (dt.kind) {
+                .@"struct" => |s| try self.emitStaticInit(s.type_id, s.static_fields),
+                .@"enum" => |e| try self.emitStaticInit(e.type_id, e.static_fields),
+                .@"union" => |u| try self.emitStaticInit(u.type_id, u.static_fields),
+            }
+        }
+
+        return Function{
+            .uid = 0,
+            .name = "$main",
+            .kind = .{ .dusk = try self.genFunctionChunk(.{
+                .uid = 0,
+                .identifier = "$main",
+                .params = &.{},
+                .body = program.instructions,
+                .return_type = self.type_table.getPrimitive(.void),
+            }) },
+        };
+    }
+
+    fn addFunction(self: *Self, funcs: *std.ArrayList(Function), func: ir.Func) !void {
+        try self.fn_index_by_uid.put(func.uid, @intCast(funcs.items.len));
+        try funcs.append(self.allocator, try self.genFunction(func));
+    }
+
+    fn registerStaticFields(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
+        try self.static_store.registerFields(type_id, static_fields);
+
+        for (static_fields) |field| {
+            const slot_id = try self.static_store.getSlot(type_id, field.identifier);
             const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
             if (vt.isHeapType()) {
                 try self.setStaticHeapBit(slot_id);
             }
+        }
+    }
 
+    fn emitStaticInit(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
+        for (static_fields) |field| {
             if (field.default_value) |default| {
+                const slot_id = try self.static_store.getSlot(type_id, field.identifier);
                 const reg = try self.genValue(default, self.consumeRegister());
                 defer self.freeRegister();
 
                 var store = Instruction{ .op = .STATIC_STORE, .a = reg };
                 store.putBEx(slot_id);
-
                 try self.chunk_instructions.append(self.allocator, store);
             }
         }
@@ -178,6 +222,8 @@ pub const BytecodeGen = struct {
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
         };
 
+        // chunk.disasamble();
+
         return chunk;
     }
 
@@ -185,9 +231,10 @@ pub const BytecodeGen = struct {
         for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
-                    _ = try self.genStoreVar(store_var);
+                    try self.genStoreVar(store_var);
                 },
                 .expression_stmt => |stmt| {
+                    //note: consuming a register
                     _ = try self.genValue(stmt.value, self.consumeRegister());
                 },
                 .branch_if => |stmt| {
@@ -201,6 +248,12 @@ pub const BytecodeGen = struct {
                 },
                 .update_indexed => |stmt| {
                     _ = try self.genUpdateArrayValue(stmt);
+                },
+                .unwrap_null_box => |stmt| {
+                    _ = try self.genUnwrapNullBox(stmt, self.consumeRegister());
+                },
+                .update_null_box => |stmt| {
+                    try self.genUpadateNullBox(stmt);
                 },
                 .break_stmt => try self.genBreak(),
                 .continue_stmt => try self.genContinue(),
@@ -321,6 +374,15 @@ pub const BytecodeGen = struct {
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const call_reg = self.consumeRegister();
+            defer self.freeRegister();
+            try self.genFnCall(fc, value, call_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
         for (fc.args) |arg| {
             _ = try self.genValue(arg, self.consumeRegister());
         }
@@ -348,7 +410,7 @@ pub const BytecodeGen = struct {
             .a = target_reg,
         };
 
-        fn_call.putBEx(@intCast(fc.fn_uid));
+        fn_call.putBEx(self.fn_index_by_uid.get(fc.fn_uid) orelse unreachable);
 
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
@@ -424,6 +486,28 @@ pub const BytecodeGen = struct {
                 try self.genStructInit(value, target_reg);
             },
 
+            .union_init => {
+                try self.genUnionInit(value, target_reg);
+            },
+
+            .null_box_init => {
+                try self.genNullBoxInit(value, target_reg);
+            },
+
+            .union_tag => |un| {
+                const union_reg = try self.genValue(un, self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_TAG, .a = target_reg, .b = union_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .union_payload => |un| {
+                const union_reg = try self.genValue(un, self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_PAYLOAD, .a = target_reg, .b = union_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+
             .binary_op => |bo| {
                 try self.genBinOp(bo, target_reg);
             },
@@ -443,15 +527,43 @@ pub const BytecodeGen = struct {
     fn genIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
         const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
+        // sema only allows a nullable target through `?.`
+        if (target_type.is_nullable) {
+            const is_instance_member = switch (target_type.kind) {
+                .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
+                .@"union" => |u| u.variants.contains(idx.index.data.i_string),
+                else => false,
+            };
+            if (is_instance_member) {
+                return self.genNullableIndexedLoad(idx, value, target_reg);
+            }
+        }
+
         switch (target_type.kind) {
             .@"struct" => |@"struct"| {
                 const field_name = idx.index.data.i_string;
                 if (@"struct".field_index_by_name.get(field_name)) |field_index| {
                     const struct_reg = try self.genValue(idx.target, self.consumeRegister());
                     defer self.freeRegister();
+
                     try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
+                    self.register_types[target_reg] = value.type_id;
                     return;
                 }
+
+                var load_static = Instruction{
+                    .op = .STATIC_LOAD,
+                    .a = target_reg,
+                };
+
+                const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
+                load_static.putBEx(slot_id);
+
+                try self.chunk_instructions.append(self.allocator, load_static);
+                self.register_types[target_reg] = value.type_id;
+            },
+            .@"enum" => {
+                const field_name = idx.index.data.i_string;
 
                 var load_static = Instruction{
                     .op = .STATIC_LOAD,
@@ -470,8 +582,103 @@ pub const BytecodeGen = struct {
                 try self.genArrayLoad(target_reg, array_reg, idx.index);
                 self.register_types[target_reg] = value.type_id;
             },
+            .@"union" => |@"union"| {
+                const field_name = idx.index.data.i_string;
+
+                if (!@"union".variants.contains(field_name)) {
+                    var load_static = Instruction{
+                        .op = .STATIC_LOAD,
+                        .a = target_reg,
+                    };
+
+                    const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
+                    load_static.putBEx(slot_id);
+
+                    try self.chunk_instructions.append(self.allocator, load_static);
+                    self.register_types[target_reg] = value.type_id;
+                    return;
+                }
+
+                const union_reg = try self.genValue(idx.target, self.consumeRegister());
+                defer self.freeRegister();
+
+                try self.genUnionLoad(target_reg, union_reg, idx.target.type_id, field_name);
+                self.register_types[target_reg] = value.type_id;
+            },
             else => unreachable,
         }
+    }
+
+    // Optional chaining (`target?.member`): the result is null when the target is null.
+    //   cond   = target != null
+    //   result = null
+    //   JUMP_IF_FALSE cond -> end
+    //   result = <member load>, boxed when the member is a non-nullable primitive
+    // end:
+    fn genNullableIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
+        const target_type = self.type_table.getTypePtrById(idx.target.type_id);
+        const member_name = idx.index.data.i_string;
+
+        const obj_reg = try self.genValue(idx.target, self.consumeRegister());
+        const cond_reg = self.consumeRegister();
+        defer self.freeRegisterN(2);
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_NNULL,
+            .a = cond_reg,
+            .b = obj_reg,
+        });
+        self.register_types[cond_reg] = self.type_table.getPrimitive(.boolean);
+
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+        self.register_types[target_reg] = value.type_id;
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = cond_reg });
+        const jump_idx = self.chunk_instructions.items.len - 1;
+
+        switch (target_type.kind) {
+            .@"struct" => |@"struct"| {
+                const field_index = @"struct".field_index_by_name.get(member_name) orelse unreachable;
+                const field_type_id = (@"struct".fields.get(member_name) orelse unreachable).type_id;
+                const field_kind = v.ValueType.fromTypeId(self.type_table, field_type_id);
+
+                if (field_kind.isHeapType()) {
+                    try self.genStructLoad(target_reg, obj_reg, @intCast(field_index));
+                } else {
+                    const raw_reg = self.consumeRegister();
+                    defer self.freeRegister();
+
+                    try self.genStructLoad(raw_reg, obj_reg, @intCast(field_index));
+                    self.register_types[raw_reg] = field_type_id;
+
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .NULL_BOX_INIT,
+                        .a = target_reg,
+                        .b = @intFromEnum(field_kind),
+                        .c = raw_reg,
+                    });
+                    try self.recordHeapMap();
+                }
+            },
+            // UNION_LOAD already boxes primitive variants
+            .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, member_name),
+            else => unreachable,
+        }
+
+        self.chunk_instructions.items[jump_idx].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genUnionLoad(self: *Self, target_reg: u8, union_reg: u8, union_type_id: tt.TypeId, variant_name: []const u8) !void {
+        const tag_index = try self.unionTagIndex(union_type_id, variant_name);
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .UNION_LOAD,
+            .a = target_reg,
+            .b = union_reg,
+            .c = @intCast(tag_index),
+        });
+        try self.recordHeapMap();
     }
 
     fn genArrayInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
@@ -546,6 +753,16 @@ pub const BytecodeGen = struct {
                     try self.chunk_instructions.append(self.allocator, store_inst);
                     return;
                 }
+
+                const value_reg = try self.genValue(stmt.value, self.consumeRegister());
+                defer self.freeRegister();
+                var store = Instruction{ .op = .STATIC_STORE, .a = value_reg };
+                const slot_id = try self.static_store.getSlot(indexed.target.type_id, field_name);
+                store.putBEx(slot_id);
+                try self.chunk_instructions.append(self.allocator, store);
+            },
+            .@"enum", .@"union" => {
+                const field_name = indexed.index.data.i_string;
 
                 const value_reg = try self.genValue(stmt.value, self.consumeRegister());
                 defer self.freeRegister();
@@ -663,8 +880,46 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, load_const);
     }
 
+    fn genUnwrapNullBox(self: *Self, stmt: ir.UnwrapNullBox, target_reg: u8) !u8 {
+        const box_reg = try self.genValue(stmt.null_box, self.consumeRegister());
+        defer self.freeRegisterN(1);
+
+        const unwrap_isnt = Instruction{
+            .op = .NULL_BOX_UNWRAP,
+            .a = target_reg,
+            .b = box_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, unwrap_isnt);
+        try self.var_register_id_by_uid.put(stmt.unwrapped.uid, target_reg);
+        self.register_types[target_reg] = stmt.unwrapped.type_id;
+
+        return target_reg;
+    }
+
+    fn genUpadateNullBox(self: *Self, stmt: ir.UpdateNullBox) !void {
+        const box_reg = self.var_register_id_by_uid.get(stmt.uid) orelse return BytecodeError.UndefinedVariable;
+
+        // b = 0 stores null, otherwise b = inner value kind + 1
+        var store_inst = Instruction{
+            .op = .NULL_BOX_STORE,
+            .a = box_reg,
+            .b = 0,
+        };
+
+        if (stmt.value) |value| {
+            const value_reg = try self.genValue(value, self.consumeRegister());
+            defer self.freeRegister();
+            store_inst.b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, value.type_id)) + 1;
+            store_inst.c = value_reg;
+        }
+
+        try self.chunk_instructions.append(self.allocator, store_inst);
+        try self.recordHeapMap();
+    }
+
     fn genVoidValue(self: *Self, target_reg: u8) !u8 {
-        try self.genLoadConst(.{ .value = .{ .null = {} }, .type = .null }, target_reg);
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
         self.register_types[target_reg] = self.type_table.getPrimitive(.void);
         return target_reg;
     }
@@ -770,11 +1025,11 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn genUnaryOp(self: *Self, bo: ir.UnaryOp, target_reg: u8) !void {
-        const aux_reg = try self.genValue(bo.right, self.consumeRegister());
+    fn genUnaryOp(self: *Self, uo: ir.UnaryOp, target_reg: u8) !void {
+        const aux_reg = try self.genValue(uo.right, self.consumeRegister());
         defer self.freeRegister();
 
-        const op = OpCode.fromUnaryOp(bo.kind);
+        const op = OpCode.fromUnaryOp(uo.kind);
         const op_inst = Instruction{
             .op = op,
             .a = target_reg,
@@ -782,8 +1037,10 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, op_inst);
-        self.register_types[target_reg] = switch (bo.kind) {
+
+        self.register_types[target_reg] = switch (uo.kind) {
             .not => self.type_table.getPrimitive(.boolean),
+            .box_not_null => self.type_table.getPrimitive(.boolean),
             .i_neg => self.type_table.getPrimitive(.int),
             .f_neg => self.type_table.getPrimitive(.float),
         };
@@ -846,9 +1103,12 @@ pub const BytecodeGen = struct {
         if (self.type_id_to_struct_descriptor_idx.get(value.type_id)) |id| return id;
 
         const struct_data = value.data.struct_init;
+        const struct_def = self.type_table.getTypePtrById(value.type_id).kind.@"struct";
         var bitmap: u256 = 0;
-        for (struct_data.values, 0..) |field_v, i| {
-            const vt = v.ValueType.fromTypeId(self.type_table, field_v.type_id);
+        // use the declared field types, the init values may be null or not yet boxed
+        for (struct_data.keys, 0..) |key, i| {
+            const field = struct_def.fields.get(key) orelse unreachable;
+            const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
             if (vt.isHeapType()) {
                 bitmap |= @as(u256, 1) << @intCast(i);
             }
@@ -862,6 +1122,102 @@ pub const BytecodeGen = struct {
         try self.type_id_to_struct_descriptor_idx.put(value.type_id, id);
         return id;
     }
+
+    fn genUnionInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const union_init = value.data.union_init;
+        const desc_id = try self.getOrCreateUnionDescriptor(value.type_id);
+
+        var init_inst = Instruction{ .op = .UNION_INIT, .a = target_reg };
+        init_inst.putBEx(desc_id);
+        try self.chunk_instructions.append(self.allocator, init_inst);
+        try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
+
+        if (union_init.tag) |tag_name| {
+            if (union_init.value) |payload| {
+                const tag_index = try self.unionTagIndex(value.type_id, tag_name);
+                const value_reg = try self.genValue(payload, self.consumeRegister());
+                defer self.freeRegister();
+
+                try self.chunk_instructions.append(self.allocator, .{
+                    .op = .UNION_STORE,
+                    .a = target_reg,
+                    .b = @intCast(tag_index),
+                    .c = value_reg,
+                });
+            }
+        }
+    }
+
+    fn getOrCreateUnionDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
+        if (self.type_id_to_union_descriptor_idx.get(type_id)) |id| return id;
+
+        const union_def = self.type_table.getTypePtrById(type_id).kind.@"union";
+
+        var tag_map = std.StringHashMap(u16).init(self.allocator);
+        var bitmap: u256 = 0;
+        var box_bitmap: u256 = 0;
+        const variant_kinds = try self.allocator.alloc(v.ValueType, union_def.variants.count());
+
+        for (union_def.variants_in_order, 0..) |variant_name, i| {
+            const tag: u16 = @intCast(i);
+            try tag_map.put(variant_name, tag);
+            const vt = v.ValueType.fromTypeId(self.type_table, union_def.variants.get(variant_name).?);
+            variant_kinds[tag] = vt;
+            if (vt.isHeapType()) {
+                bitmap |= @as(u256, 1) << @intCast(tag);
+            } else {
+                // reading a primitive variant yields ?T, which needs a null box
+                box_bitmap |= @as(u256, 1) << @intCast(tag);
+            }
+        }
+
+        const id: u16 = @intCast(self.union_descriptors.items.len);
+        try self.union_descriptors.append(self.allocator, .{
+            .heap_bitmap = bitmap,
+            .box_bitmap = box_bitmap,
+            .variant_kinds = variant_kinds,
+        });
+        try self.type_id_to_union_descriptor_idx.put(type_id, id);
+        try self.union_tag_by_type_id.put(type_id, tag_map);
+        return id;
+    }
+
+    fn unionTagIndex(self: *Self, type_id: tt.TypeId, name: []const u8) !u16 {
+        _ = try self.getOrCreateUnionDescriptor(type_id);
+        const tag_map = self.union_tag_by_type_id.get(type_id).?;
+        return tag_map.get(name) orelse error.UnableToFindSlot;
+    }
+
+    fn genNullBoxInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const null_box_init = value.data.null_box_init;
+
+        const val = null_box_init.value orelse {
+            try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+            self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
+            return;
+        };
+
+        const value_reg = try self.genValue(val, self.consumeRegister());
+        defer self.freeRegister();
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, val.type_id)),
+            .c = value_reg,
+        });
+        try self.recordHeapMap();
+
+        // the ir value carries the inner type, but the register holds the box
+        self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
+    }
+};
+
+pub const UnionDescriptor = struct {
+    heap_bitmap: u256,
+    box_bitmap: u256,
+    variant_kinds: []const v.ValueType,
 };
 
 pub const StructDescriptor = struct {
@@ -880,6 +1236,7 @@ pub const Program = struct {
     static_count: u16,
     static_heap_bitmap: []const u64,
     struct_descriptors: []const StructDescriptor,
+    union_descriptors: []const UnionDescriptor,
 };
 
 pub const HostFn = struct {
@@ -926,6 +1283,8 @@ pub const Chunk = struct {
                 .null => std.debug.print("null", .{}),
                 .array => std.debug.print("<array>", .{}),
                 .@"struct" => std.debug.print("<struct>", .{}),
+                .@"union" => std.debug.print("<union>", .{}),
+                .nullable => std.debug.print("<nullable:", .{}),
                 .string => unreachable,
             }
             std.debug.print("\n", .{});
@@ -999,8 +1358,18 @@ pub const Chunk = struct {
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
+            .UNION_INIT => std.debug.print("R[{d}] D[{d}]", .{ inst.a, inst.bEx() }),
+            .UNION_LOAD => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .UNION_STORE => std.debug.print("R[{d}] T[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .UNION_TAG, .UNION_PAYLOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
+            .NULL_BOX_INIT,
+            .NULL_BOX_STORE,
+            => std.debug.print("R[{d}] B[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .NULL_BOX_UNWRAP,
+            .NULL_BOX_NNULL,
+            => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
         }
         std.debug.print("\n", .{});
     }
@@ -1053,8 +1422,20 @@ pub const OpCode = enum(u8) {
     STRUCT_LOAD,
     STRUCT_STORE,
 
+    UNION_INIT,
+    UNION_LOAD,
+    UNION_STORE,
+    UNION_TAG,
+    UNION_PAYLOAD,
+
     STATIC_LOAD,
     STATIC_STORE,
+
+    NULL_BOX_INIT,
+    NULL_BOX_STORE,
+    NULL_BOX_UNWRAP,
+
+    NULL_BOX_NNULL,
 
     I_ADD,
     I_SUB,
@@ -1099,13 +1480,23 @@ pub const OpCode = enum(u8) {
 
     pub fn canTriggerGc(self: Self) bool {
         return switch (self) {
-            .ARRAY_INIT, .ARRAY_APPEND, .STRUCT_INIT, .LOAD_STRING, .CALL => true,
+            .ARRAY_INIT,
+            .ARRAY_APPEND,
+            .STRUCT_INIT,
+            .UNION_INIT,
+            .UNION_LOAD,
+            .NULL_BOX_INIT,
+            .NULL_BOX_STORE,
+            .LOAD_STRING,
+            .CALL,
+            => true,
             else => false,
         };
     }
 
     pub fn fromUnaryOp(op: ir.UnaryOpKind) Self {
         return switch (op) {
+            .box_not_null => Self.NULL_BOX_NNULL,
             .not => Self.B_NOT,
             .i_neg => Self.I_NEG,
             .f_neg => Self.F_NEG,
@@ -1161,30 +1552,30 @@ pub const StaticStoreTable = struct {
 
     allocator: std.mem.Allocator,
     next_slot: u16 = 0,
-    slots_by_type_id: std.AutoHashMap(sema.TypeId, std.StringHashMap(u16)),
+    slots_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
 
     pub fn init(alloc: std.mem.Allocator) Self {
         return Self{
             .allocator = alloc,
-            .slots_by_type_id = std.AutoHashMap(sema.TypeId, std.StringHashMap(u16)).init(alloc),
+            .slots_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
         };
     }
 
-    pub fn registerStructFields(self: *Self, @"struct": ir.Struct) !void {
-        if (@"struct".static_fields.len == 0) return;
+    pub fn registerFields(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
+        if (static_fields.len == 0) return;
 
-        const slot = try self.slots_by_type_id.getOrPut(@"struct".type_id);
+        const slot = try self.slots_by_type_id.getOrPut(type_id);
         if (!slot.found_existing) {
             slot.value_ptr.* = std.StringHashMap(u16).init(self.allocator);
         }
 
-        for (@"struct".static_fields) |field| {
+        for (static_fields) |field| {
             try slot.value_ptr.put(field.identifier, self.next_slot);
             self.next_slot += 1;
         }
     }
 
-    pub fn getSlot(self: *const Self, type_id: sema.TypeId, field_name: []const u8) !u16 {
+    pub fn getSlot(self: *const Self, type_id: tt.TypeId, field_name: []const u8) !u16 {
         const type_slots = self.slots_by_type_id.get(type_id) orelse return error.UnableToFindSlot;
         return type_slots.get(field_name) orelse return error.UnableToFindSlot;
     }

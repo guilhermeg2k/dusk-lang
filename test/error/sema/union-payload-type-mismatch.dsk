@@ -1,0 +1,9 @@
+union U
+    let count = 1
+    let mut hits = 0
+
+    a: int
+    b: string
+end
+
+let u = U(a = "text")

@@ -1,16 +1,9 @@
-let User = struct
+struct User
     id: string
     username: string
     auth_provider: string
 
-    address: struct
-        country: string
-        state: string
-        city: string
-        street: string
-    end
-
-    default_address = @(
+    address = @(
         country = "Brasil",
         state = "SP",
         city = "São Paulo",
@@ -31,5 +24,4 @@ let user = User(
 )
 
 echo(user)
-
 

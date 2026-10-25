@@ -1,10 +1,10 @@
-let add = (a: int, b: int) -> return a + b
+func add(a: int, b: int) -> return a + b
 
-let is_even = (x: int) -> return (x % 2) == 0
+func is_even(x: int) -> return (x % 2) == 0
 
 let res = 2 |> add(1) |> is_even()
 
-let sub = (a: int, b: int) -> return a - b
+func sub(a: int, b: int) -> return a - b
 
 let res2 = 2
     |> add(2)

@@ -1,0 +1,5 @@
+struct S
+    x: int = "hello"
+end
+
+let s = S()

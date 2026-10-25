@@ -1,0 +1,5 @@
+enum Status
+    Ok
+    42
+    Error
+end

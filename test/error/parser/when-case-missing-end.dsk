@@ -1,0 +1,5 @@
+let n = 1
+when n
+    1 then echo(1)
+    else then echo(2) end
+end

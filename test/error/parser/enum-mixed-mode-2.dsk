@@ -1,0 +1,5 @@
+enum Mixed
+    Ok
+    NotFound = 404
+    Error = 500
+end

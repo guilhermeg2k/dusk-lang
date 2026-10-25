@@ -1,0 +1,7 @@
+func f(x: int) -> void
+    return
+end
+
+func f(y: int) -> void
+    return
+end

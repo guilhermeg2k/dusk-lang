@@ -1,0 +1,16 @@
+enum Color
+    Red
+    Green
+    Blue
+end
+
+union Shape
+    circle: int
+    square: int
+end
+
+let name = "dusk"
+when name
+    "dusk" then echo(1) end
+    else then echo(0) end
+end

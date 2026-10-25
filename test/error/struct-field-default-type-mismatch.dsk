@@ -1,5 +1,0 @@
-let S = struct
-    x: int = "hello"
-end
-
-let s = S()

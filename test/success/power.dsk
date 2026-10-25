@@ -1,5 +1,5 @@
 
-let power: fn = (base: int, exp: int) -> int
+func power(base: int, exp: int) -> int
     if exp == 0 then
         return 1
     end

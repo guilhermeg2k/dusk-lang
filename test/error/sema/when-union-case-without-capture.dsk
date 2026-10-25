@@ -1,0 +1,16 @@
+enum Color
+    Red
+    Green
+    Blue
+end
+
+union Shape
+    circle: int
+    square: int
+end
+
+let s = Shape(circle = 1)
+when s
+    Shape(circle = 1) then echo(1) end
+    else then echo(0) end
+end

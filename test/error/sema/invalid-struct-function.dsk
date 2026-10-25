@@ -1,0 +1,9 @@
+struct S
+    x: int
+    func f(self: @) -> void
+        return
+    end
+end
+
+let s = S(x = 1)
+s.g()

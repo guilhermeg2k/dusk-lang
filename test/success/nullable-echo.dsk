@@ -1,0 +1,29 @@
+struct User
+    name: string
+end
+
+let s: ?string = "dusk"
+let ns: ?string = null
+let i: ?int = 5
+let ni: ?int = null
+let f: ?float = 1.5
+let b: ?bool = true
+let u: ?User = User(name = "user")
+let nu: ?User = null
+
+echo(s)
+echo(ns)
+echo(i)
+echo(ni)
+echo(f)
+echo(b)
+echo(u)
+echo(nu)
+
+# capturing a null primitive must skip the block, not stop the program
+let mut reached = false
+if ni: x then
+    assert(false)
+end
+reached = true
+assert(reached)

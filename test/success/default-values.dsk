@@ -1,17 +1,17 @@
-let add = (x: int, y = 2) -> return x + y
+func add(x: int, y = 2) -> return x + y
 
 echo(add(50))
 echo(add(x = 50))
 echo(add(50,50))
 echo(add(y = 50,x = 50))
 
-let add2 = (x: int = 2, y: int) -> return x + y
+func add2(x: int = 2, y: int) -> return x + y
 
 echo(add2(10, 10))
 echo(add2(y = 10, x = 10))
 echo(add2(y = 45))
 
-let User = struct
+struct User
     username: string
     auth_method = "DUSK"
 end
@@ -28,5 +28,4 @@ echo(User(
     username="Rogerinho",
     auth_method="T"
 ))
-
 

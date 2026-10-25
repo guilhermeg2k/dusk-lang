@@ -1,0 +1,6 @@
+union U
+    a: int
+    b: string
+end
+
+let u: U = @(c = 1)

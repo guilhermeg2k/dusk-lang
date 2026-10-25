@@ -1,4 +1,4 @@
-let reverse_list: fn = (mut arr: []string) -> []string
+func reverse_list(mut arr: []string) -> []string
     let n: int = len(arr)
     let mut result: []string = []
     let mut i: int = n - 1

@@ -10,3 +10,7 @@ __pycache__/
 benchmarks/results/
 benchmarks/build/
 benchmarks/.venv_bench/
+
+# claude code
+CLAUDE.md
+.claude/

@@ -1,0 +1,3 @@
+union Response
+    success: string
+    error: string

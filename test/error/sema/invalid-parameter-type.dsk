@@ -1,0 +1,3 @@
+func f(x) -> void
+    return
+end

@@ -1,4 +1,4 @@
-let bin_search = (arr: []int, target: int) -> int
+func bin_search(arr: []int, target: int) -> int
     let mut low = 0
     let mut high = len(arr) - 1
 

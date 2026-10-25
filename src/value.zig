@@ -1,10 +1,16 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
-const sema = @import("sema.zig");
+const tt = @import("type_table.zig");
 
-const NULL_VALUE = Value{
-    .null = {},
+pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
+
+pub const TRUE_VALUE = Value{
+    .bool = true,
+};
+
+pub const FALSE_VALUE = Value{
+    .bool = false,
 };
 
 pub const Value = extern union {
@@ -21,6 +27,8 @@ const HeapValueType = enum(u8) {
     array,
     @"struct",
     string,
+    @"union",
+    null_box,
 };
 
 pub const HeapValue = extern struct {
@@ -69,6 +77,7 @@ pub const Struct = extern struct {
 
         struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
+        @memset(struct_ptr.getDataPtr()[0..field_size], NULL_VALUE);
 
         return struct_ptr;
     }
@@ -94,6 +103,68 @@ pub const Struct = extern struct {
 
     pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
         const size = Self.calc_size(self.field_count);
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
+        return new_obj;
+    }
+};
+
+pub const Union = extern struct {
+    const Self = @This();
+
+    pub const NO_TAG: u16 = 0xFFFF;
+
+    obj: HeapValue,
+    descriptor_id: u16,
+    active_tag: u16,
+
+    pub fn init(allocator: std.mem.Allocator, desc_id: u16) !*Self {
+        const total_bytes = Self.calc_size();
+
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
+        const union_ptr: *Self = @ptrCast(@alignCast(raw_memory.ptr));
+
+        union_ptr.obj = .{
+            .kind = .@"union",
+        };
+
+        union_ptr.descriptor_id = desc_id;
+        union_ptr.active_tag = NO_TAG;
+
+        return union_ptr;
+    }
+
+    pub fn get(self: *const Self, tag: u16) Value {
+        const items = self.getDataPtr();
+
+        if (self.active_tag != NO_TAG and tag == self.active_tag) {
+            return items[0];
+        }
+
+        return NULL_VALUE;
+    }
+
+    pub fn set(self: *Self, tag: u16, value: Value) void {
+        const items = self.getDataPtr();
+        items[0] = value;
+        self.active_tag = tag;
+    }
+
+    pub fn getDataPtr(self: *const Self) [*]Value {
+        const data_pointer = @as([*]Self, @ptrCast(@constCast(self))) + 1;
+        return @ptrCast(data_pointer);
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self) + (@sizeOf(Value));
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const size = Self.calc_size();
         const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
         const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
         @memcpy(new_bytes, old_bytes);
@@ -268,6 +339,30 @@ pub const String = extern struct {
     }
 };
 
+pub const NullBox = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    kind: ValueType,
+    value: Value,
+
+    pub fn init(allocator: std.mem.Allocator, value: Value, kind: ValueType) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.value = value;
+        ptr.kind = kind;
+        ptr.obj = .{ .kind = .null_box };
+        return ptr;
+    }
+
+    pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
+        return try Self.init(allocator, self.value, self.kind);
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
+    }
+};
+
 pub const TypedValue = struct {
     value: Value,
     type: ValueType,
@@ -278,7 +373,7 @@ pub const TypedValue = struct {
             .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
             .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
             .i_string => unreachable,
-            .i_null, .i_void => TypedValue{ .value = .{ .null = {} }, .type = .null },
+            .i_null, .i_void => TypedValue{ .value = NULL_VALUE, .type = .null },
             .i_array => TypedValue{ .value = undefined, .type = .array },
             else => unreachable,
         };
@@ -295,49 +390,39 @@ pub const ValueType = enum(u8) {
     //note: maybe this needs to get the inner type?
     array,
     @"struct",
+    @"union",
+    nullable,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .array, .@"struct" => true,
+            .string, .array, .@"struct", .@"union", .nullable => true,
             else => false,
         };
     }
 
-    pub fn from_ir_value(value: *const ir.Value) ValueType {
-        return switch (value.data) {
-            .i_int => .int64,
-            .i_float => .float64,
-            .i_bool => .bool,
-            .i_string => .string,
-            .i_null, .i_void => .null,
-            .i_array => .array,
-            .binary_op => |bo| switch (bo.kind) {
-                .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => .int64,
-                .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => .bool,
-                .f_add, .f_sub, .f_mult, .f_div, .f_mod => .float64,
-                .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => .bool,
-                .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => .bool,
-            },
-            .unary_op => |uo| switch (uo.kind) {
-                .not => .bool,
-                .i_neg => .int64,
-                .f_neg => .float64,
-            },
-            else => .null,
-        };
-    }
-
-    pub fn fromTypeId(type_table: *sema.TypeTable, type_id: sema.TypeId) ValueType {
+    pub fn fromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) ValueType {
         const ty = type_table.getTypePtrById(type_id);
+
+        if (ty.is_nullable) {
+            return .nullable;
+        }
+
         return switch (ty.kind) {
             .int => .int64,
             .float => .float64,
             .boolean => .bool,
             .string => .string,
-            .void, .null, .dynamic, .meta => .null,
             .array => .array,
             .@"struct" => .@"struct",
-            .function => .null,
+            .@"union" => .@"union",
+            .@"enum" => .int64,
+            //note: void -> null
+            .void => .null,
+            .null => .null,
+            else => {
+                std.debug.print("{}", .{ty});
+                unreachable;
+            },
         };
     }
 };
@@ -354,7 +439,9 @@ pub const TypedValueHashContext = struct {
             .null => {},
             .string => unreachable,
             .array => unreachable,
+            .nullable => unreachable,
             .@"struct" => unreachable,
+            .@"union" => unreachable,
         }
         return hasher.final();
     }
@@ -366,9 +453,11 @@ pub const TypedValueHashContext = struct {
             .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
             .bool => a.value.bool == b.value.bool,
             .null => true,
+            .nullable => unreachable,
             .string => unreachable,
             .array => unreachable,
             .@"struct" => unreachable,
+            .@"union" => unreachable,
         };
     }
 };

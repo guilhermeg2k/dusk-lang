@@ -1,4 +1,4 @@
-let filter_evens: fn = (arr: []int) -> []int
+func filter_evens(arr: []int) -> []int
     let mut result : []int = []
     let n: int = len(arr)
     let mut i: int = 0

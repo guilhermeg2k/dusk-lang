@@ -2,11 +2,12 @@ const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const sema = @import("sema.zig");
+const tt = @import("type_table.zig");
 
 const Symbol = sema.Symbol;
-const TypeId = sema.TypeId;
-const TypedIdentifier = sema.TypedIdentifier;
-const TypeTable = sema.TypeTable;
+const TypeId = tt.TypeId;
+const TypedIdentifier = tt.TypedIdentifier;
+const TypeTable = tt.TypeTable;
 
 //note: temporary as we don't impl modules
 pub const BuiltIn = struct {
@@ -92,7 +93,7 @@ pub const BuiltIn = struct {
                     .return_type_id = return_type_id,
                 },
             },
-            .nullable = false,
+            .is_nullable = false,
         });
         return id;
     }
@@ -187,32 +188,73 @@ pub const BuiltIn = struct {
 
     fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void {
         switch (ty) {
-            .int64 => writer.print("{d}", .{value.int64}) catch {},
-            .float64 => writer.print("{d}", .{value.float64}) catch {},
-            .bool => writer.print("{}", .{value.bool}) catch {},
+            .int64 => writer.print("{d}", .{value.int64}) catch @panic("failed to print int64"),
+            .float64 => writer.print("{d}", .{value.float64}) catch @panic("failed to print float64"),
+            .bool => writer.print("{}", .{value.bool}) catch @panic("failed to print bool"),
             .string => {
-                const str = v.HeapValue.getParentPtr(v.String, value.heap_obj);
-                writer.print("{s}", .{str.slice()}) catch {};
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    const str = v.HeapValue.getParentPtr(v.String, value.heap_obj);
+                    writer.print("{s}", .{str.slice()}) catch @panic("failed to print string");
+                }
             },
-            .null => writer.print("null", .{}) catch {},
+            .null => writer.print("null", .{}) catch @panic("failed to print null"),
             .array => {
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                    return;
+                }
                 const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj);
                 const data = array.getDataPtr();
-                writer.print("[", .{}) catch {};
+                writer.print("[", .{}) catch @panic("failed to print array bracket");
                 for (0..array.len) |i| {
-                    if (i > 0) writer.print(", ", .{}) catch {};
+                    if (i > 0) writer.print(", ", .{}) catch @panic("failed to print array separator");
                     printValue(writer, data[i], array.kind);
                 }
-                writer.print("]", .{}) catch {};
+                writer.print("]", .{}) catch @panic("failed to print array bracket");
+            },
+            .nullable => {
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                    return;
+                }
+                // only primitives are boxed, nullable heap values are the object itself
+                switch (value.heap_obj.kind) {
+                    .null_box => {
+                        const nullable = v.HeapValue.getParentPtr(v.NullBox, value.heap_obj);
+                        printValue(writer, nullable.value, nullable.kind);
+                    },
+                    .string => printValue(writer, value, .string),
+                    .array => printValue(writer, value, .array),
+                    .@"struct" => printValue(writer, value, .@"struct"),
+                    .@"union" => printValue(writer, value, .@"union"),
+                }
             },
             .@"struct" => {
-                const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
-                writer.print("{{ ", .{}) catch {};
-                for (0..s.field_count) |i| {
-                    if (i > 0) writer.print(", ", .{}) catch {};
-                    writer.print("{d}", .{s.get(i).int64}) catch {};
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
+                    writer.print("{{ ", .{}) catch @panic("failed to print struct brace");
+                    for (0..s.field_count) |i| {
+                        if (i > 0) writer.print(", ", .{}) catch @panic("failed to print struct separator");
+                        writer.print("{d}", .{s.get(i).int64}) catch @panic("failed to print struct field");
+                    }
+                    writer.print(" }}", .{}) catch @panic("failed to print struct brace");
                 }
-                writer.print(" }}", .{}) catch {};
+            },
+            .@"union" => {
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                } else {
+                    writer.print("<union>", .{}) catch @panic("failed to print union");
+                }
             },
         }
     }

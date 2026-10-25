@@ -1,0 +1,7 @@
+struct S
+    let x = "value"
+    y: int
+end
+
+let s = S(y = 1)
+S.x = "new"

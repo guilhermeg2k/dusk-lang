@@ -112,26 +112,26 @@ for items: item, index
   Functions
 ###
 
-let main = () -> void
+func main() -> void
   echo('Hello, World!')
 
 ###
   Return types needs to be expliced declared
 ###
 
-let add = (a: number, b: number) -> number
+func add(a: number, b: number) -> number
   return a + b
 
 # Default values
-let add = (a: number, b: number = 2) -> number
+func add(a: number, b: number = 2) -> number
   return a + b
 
 # Arguments can be chained if all are of the same type
-let add = (a, b: number) -> number
+func add(a, b: number) -> number
     return a + b
 
 # Inline return
-let add = (a, b: number) return a + b
+func add(a, b: number) return a + b
 
 ###
     Function return can be piped to another function

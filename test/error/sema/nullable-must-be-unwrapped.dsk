@@ -1,0 +1,6 @@
+struct S
+    x: int
+end
+
+let s: ?S = null
+echo(s.x)

@@ -1,22 +1,22 @@
-let Country = struct
+struct Country
     id: int
     name: string
     code: ?string
 end
 
-let Address = struct
+struct Address
     city: ?string
     state: ?string
     country: ?Country
     street: ?string
 end
 
-let UserInfo = struct
+struct UserInfo
     address: ?Address
     phone: ?string
 end
 
-let User = struct
+struct User
     info: ?UserInfo
 end
 

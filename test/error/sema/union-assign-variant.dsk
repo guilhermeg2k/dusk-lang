@@ -1,0 +1,10 @@
+union U
+    let count = 1
+    let mut hits = 0
+
+    a: int
+    b: string
+end
+
+let mut u = U(a = 1)
+u.a = 2

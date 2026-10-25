@@ -179,6 +179,143 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
+    pub fn invalidEnumFunction(self: *Self, enum_name: []const u8, function: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Function '{s}' does not exists on enum '{s}'",
+                .{ function, enum_name },
+            ),
+            loc,
+        );
+
+        return error.InvalidEnumFunction;
+    }
+
+    pub fn invalidEnumVariant(self: *Self, enum_name: []const u8, variant: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "enum '{s}' has no variant '{s}'",
+                .{ enum_name, variant },
+            ),
+            loc,
+        );
+        return error.InvalidStructField;
+    }
+
+    pub fn invalidUnionVariant(self: *Self, union_name: []const u8, variant: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "union '{s}' has no variant '{s}'",
+                .{ union_name, variant },
+            ),
+            loc,
+        );
+        return error.InvalidUnionVariant;
+    }
+
+    pub fn invalidUnionMember(self: *Self, union_name: []const u8, member: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "union '{s}' has no variant, static field or function '{s}'",
+                .{ union_name, member },
+            ),
+            loc,
+        );
+        return error.InvalidUnionMember;
+    }
+
+    pub fn invalidUnionFunction(self: *Self, union_name: []const u8, function: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Function '{s}' does not exists on union '{s}'",
+                .{ function, union_name },
+            ),
+            loc,
+        );
+
+        return error.InvalidUnionFunction;
+    }
+
+    pub fn tooManyUnionVariants(self: *Self, union_name: []const u8, max: usize, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "union '{s}' has too many variants: the limit is {d}",
+                .{ union_name, max },
+            ),
+            loc,
+        );
+        return error.TooManyUnionVariants;
+    }
+
+    pub fn unionParamsCantBeMutable(self: *Self, param_name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Union param '{s}' can't be mutable: union variants can't be changed in place, return a new union instead",
+                .{param_name},
+            ),
+            loc,
+        );
+        return error.UnionParamsCantBeMutable;
+    }
+
+    pub fn whenNotExhaustive(self: *Self, missing: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "when is not exhaustive, missing: {s}",
+                .{missing},
+            ),
+            loc,
+        );
+        return error.WhenNotExhaustive;
+    }
+
+    pub fn whenNeedsElse(self: *Self, subject_type: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "when on '{s}' must have an else case",
+                .{subject_type},
+            ),
+            loc,
+        );
+        return error.WhenNotExhaustive;
+    }
+
+    pub fn whenUselessElse(self: *Self, loc: Loc) Errors {
+        self.log("else is never reached: every case is already handled", loc);
+        return error.WhenUselessElse;
+    }
+
+    pub fn whenDuplicateCase(self: *Self, case: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "case '{s}' is already handled",
+                .{case},
+            ),
+            loc,
+        );
+        return error.WhenDuplicateCase;
+    }
+
+    pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) Errors {
+        self.log(msg, loc);
+        return error.WhenInvalidCase;
+    }
+
+    pub fn invalidDefinition(self: *Self, loc: Loc) Errors {
+        self.log("struct and enum definitions cannot be mutable", loc);
+        return error.InvalidDefinition;
+    }
+
     pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) Errors {
         self.log(
             "Can't infer anonymous struct type",
@@ -341,7 +478,6 @@ pub const Errors = error{
     LexerError,
     ParserError,
     SemaError,
-
     InvalidType,
     InvalidReturnType,
     InvalidExpression,
@@ -356,12 +492,23 @@ pub const Errors = error{
     UnwrappedCantBeMutable,
     SelfOutsideStruct,
     InvalidStructField,
+    InvalidDefinition,
     CantInferAnonymousStruct,
     PrimitiveParamsCantBeMutable,
     CantInferArrayLiteralType,
     UnecessaryOptionalChain,
     NullableMustBeUnwrapped,
     InvalidParameterType,
+    InvalidEnumFunction,
+    InvalidUnionVariant,
+    InvalidUnionMember,
+    InvalidUnionFunction,
+    UnionParamsCantBeMutable,
+    TooManyUnionVariants,
+    WhenNotExhaustive,
+    WhenUselessElse,
+    WhenDuplicateCase,
+    WhenInvalidCase,
 };
 
 pub const RunTimeError = error{
