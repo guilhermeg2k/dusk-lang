@@ -1008,11 +1008,22 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .unary_exp = .{ .op = op, .right = right } }, .loc = .{ .start = tk.loc.start, .end = right.loc.end } });
             },
             .at => {
+                const l_paren = self.peekCurrent();
+                if (l_paren.tag != .l_paren) {
+                    return self.err_dispatcher.invalidSyntax("'(' after '@'", l_paren);
+                }
+                self.walk();
+                const args = try self.parseFnCallArgs();
+                const r_paren = try self.expect(.r_paren);
+
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
-                        .anonymous_struct_identifier = {},
+                        .anonymous_init = .{
+                            .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                            .arguments = args,
+                        },
                     },
-                    .loc = tk.loc,
+                    .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end },
                 });
             },
             else => {

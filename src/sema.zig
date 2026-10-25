@@ -231,16 +231,16 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createAnonymousStructFromFnCall(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !tt.Struct {
-        const fn_call = exp.data.fn_call;
+    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !tt.Struct {
+        const anonymous_init = exp.data.anonymous_init;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
-        if (fn_call.are_arguments_named == false) {
+        if (anonymous_init.are_arguments_named == false) {
             return self.err_dispatcher.cantInferAnonymousStruct(exp.loc);
         }
 
-        for (fn_call.arguments) |arg| {
+        for (anonymous_init.arguments) |arg| {
             const exp_value = try self.evalExp(arg.exp);
             var field_type_id = exp_value.type_id;
             if (field_type_id == self.type_table.getPrimitive(.null)) {
@@ -1543,7 +1543,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn isAnonymousInit(exp: *const ast.ExpNode) bool {
-        return exp.data == .fn_call and exp.data.fn_call.target.data == .anonymous_struct_identifier;
+        return exp.data == .anonymous_init;
     }
 
     // `@(variant = value)` has no union type of its own: when a union is expected it is
@@ -1554,7 +1554,7 @@ pub const SemaAnalyzer = struct {
             const base_kind = self.type_table.getTypePtrById(base_type_id).kind;
 
             if (isAnonymousInit(exp) and base_kind == .@"union") {
-                return self.evalUnionInit(exp, base_type_id);
+                return self.evalUnionInit(exp, exp.data.anonymous_init.arguments, base_type_id);
             }
 
             if (exp.data == .array_literal and base_kind == .array) {
@@ -1591,6 +1591,9 @@ pub const SemaAnalyzer = struct {
             .fn_call => {
                 return self.evalFnCall(exp);
             },
+            .anonymous_init => {
+                return self.evalAnonymousStructInit(exp);
+            },
             .indexed => {
                 return self.evalIndexedExp(exp);
             },
@@ -1599,10 +1602,6 @@ pub const SemaAnalyzer = struct {
             },
             .binary_exp => {
                 return self.evalBinaryExp(exp);
-            },
-            else => {
-                std.log.debug("{}", .{exp});
-                return Errors.InvalidExpression;
             },
         }
     }
@@ -1648,7 +1647,7 @@ pub const SemaAnalyzer = struct {
                                 is_struct_init = true;
                             },
                             .@"union" => {
-                                return self.evalUnionInit(exp, dt.blueprint_type_id);
+                                return self.evalUnionInit(exp, fn_call.arguments, dt.blueprint_type_id);
                             },
                             .@"enum" => {
                                 return self.err_dispatcher.invalidType(
@@ -1780,11 +1779,6 @@ pub const SemaAnalyzer = struct {
                     else => unreachable,
                 }
             },
-            .anonymous_struct_identifier => {
-                const anonymous_struct = try self.createAnonymousStructFromFnCall(exp, false);
-                params = anonymous_struct.fields_in_order;
-                return_type = try self.type_table.getOrAddAnonymousStruct(anonymous_struct);
-            },
             else => unreachable,
         }
 
@@ -1878,9 +1872,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const is_struct_inicialization = is_struct_init or fn_call.target.data == .anonymous_struct_identifier;
-
-        if (is_struct_inicialization) {
+        if (is_struct_init) {
 
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
@@ -1916,11 +1908,26 @@ pub const SemaAnalyzer = struct {
         );
     }
 
-    fn evalUnionInit(self: *Self, exp: *const ast.ExpNode, blueprint_type_id: tt.TypeId) !*ir.Value {
-        const fn_call = exp.data.fn_call;
+    fn evalAnonymousStructInit(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+        const anonymous_struct = try self.createAnonymousStruct(exp, false);
+        const keys = try self.allocator.alloc([]const u8, anonymous_struct.fields_in_order.len);
+        const values = try self.allocator.alloc(*ir.Value, anonymous_struct.fields_in_order.len);
+
+        for (anonymous_struct.fields_in_order, 0..) |field, i| {
+            keys[i] = field.identifier;
+            values[i] = field.default_value.?;
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .struct_init = .{ .keys = keys, .values = values } },
+            .type_id = try self.type_table.getOrAddAnonymousStruct(anonymous_struct),
+        });
+    }
+
+    fn evalUnionInit(self: *Self, exp: *const ast.ExpNode, arguments: []const ast.FnCallArg, blueprint_type_id: tt.TypeId) !*ir.Value {
         const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
 
-        if (!fn_call.are_arguments_named or fn_call.arguments.len != 1) {
+        if (arguments.len != 1 or arguments[0].identifier == null) {
             return self.err_dispatcher.invalidType(
                 "a single named variant argument",
                 try self.type_table.name(blueprint_type_id, self.allocator),
@@ -1928,7 +1935,7 @@ pub const SemaAnalyzer = struct {
             );
         }
 
-        const arg = fn_call.arguments[0];
+        const arg = arguments[0];
         const variant_name = arg.identifier.?;
 
         const variant_type_id = union_def.variants.get(variant_name) orelse {

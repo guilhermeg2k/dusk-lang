@@ -539,6 +539,10 @@ test "syntax error: fn args non identifier name" {
     try runCaseError("parser/fn-args-non-identifier.dsk", error.ParserError);
 }
 
+test "syntax error: anonymous init missing paren" {
+    try runCaseError("parser/anon-init-missing-paren.dsk", error.ParserError);
+}
+
 test "syntax error: pipe non fn call" {
     try runCaseError("parser/pipe-non-fn-call.dsk", error.ParserError);
 }

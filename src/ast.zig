@@ -156,7 +156,7 @@ pub const Exp = union(enum) {
     string_literal: []const u8,
     bool_literal: bool,
     identifier: []const u8,
-    anonymous_struct_identifier: void,
+    anonymous_init: AnonymousInit,
     array_literal: ArrayLiteral,
     null_literal: void,
     fn_call: FnCall,
@@ -195,6 +195,11 @@ pub const FnParam = struct {
 
 pub const FnCall = struct {
     target: *ExpNode,
+    are_arguments_named: bool,
+    arguments: []const FnCallArg,
+};
+
+pub const AnonymousInit = struct {
     are_arguments_named: bool,
     arguments: []const FnCallArg,
 };
