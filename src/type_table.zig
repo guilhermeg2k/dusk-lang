@@ -87,6 +87,7 @@ pub const TypeTable = struct {
         }
 
         if (type_from.kind == .array and type_to.kind == .array) {
+            if (type_from.is_nullable and !type_to.is_nullable) return false;
             return self.canCoerce(type_from.kind.array, type_to.kind.array);
         }
 

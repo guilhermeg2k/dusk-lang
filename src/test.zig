@@ -758,3 +758,23 @@ test "sema error: when on failing call" {
 test "sema error: when duplicate error case" {
     try runCaseError("sema/errors-when-duplicate-case.dsk", error.WhenDuplicateCase);
 }
+
+test "nullable arrays" {
+    try runCase("nullable-arrays.dsk");
+}
+
+test "sema error: index into nullable array" {
+    try runCaseError("sema/nullable-array-index.dsk", error.NullableMustBeUnwrapped);
+}
+
+test "sema error: len of nullable array" {
+    try runCaseError("sema/nullable-array-len.dsk", error.InvalidType);
+}
+
+test "sema error: nullable array to array" {
+    try runCaseError("sema/nullable-array-to-array.dsk", error.InvalidType);
+}
+
+test "sema error: field default doesn't match declared type" {
+    try runCaseError("sema/field-default-declared-type-mismatch.dsk", error.InvalidType);
+}

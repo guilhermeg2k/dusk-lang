@@ -326,7 +326,7 @@ echo(Shape(square = 3).area())
 
 ## 7. Nullables
 
-A `?` before a type allows `null` as a value. It works for primitives, enums, structs and unions (not arrays yet).
+A `?` before a type allows `null` as a value. It works for primitives, enums, structs, unions, arrays (`?[]int`) and error sets. `[]?int` is an array whose items can be null.
 
 ```nim
 let mut name: ?string = null
@@ -736,7 +736,6 @@ These are known gaps in v0.12. Most are planned in the [roadmap](roadmap.md).
 
 - **Top-level variables inside functions**: reading a top-level `let` from a function fails with `UndefinedVariable`. Pass it as a parameter, or use a static field.
 - **Strings**: no escape sequences, concatenation or interpolation, and `==` compares identity (v0.18).
-- **Nullable arrays**: `?[]int` can't hold `null` yet.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
 - **Union size**: a union can have at most 256 variants.

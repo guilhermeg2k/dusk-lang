@@ -572,18 +572,15 @@ pub const SemaAnalyzer = struct {
             const value_type_id = value.type_id;
             field_default_value = value;
 
-            if (field.type) |_type| {
-                if (!try self.canCoerce(value_type_id, field_type_id, field.default_value.?.loc)) {
-                    const field_type_ptr = self.type_table.getTypePtrById(field_type_id);
-                    return self.err_dispatcher.invalidType(
-                        try _type.value(self.allocator),
-                        @tagName(field_type_ptr.kind),
-                        field.default_value.?.loc,
-                    );
-                }
+            if (field.type == null) {
+                field_type_id = value_type_id;
+            } else if (!try self.canCoerce(value_type_id, field_type_id, field.default_value.?.loc)) {
+                return self.err_dispatcher.invalidType(
+                    try field.type.?.value(self.allocator),
+                    try self.type_table.name(value_type_id, self.allocator),
+                    field.default_value.?.loc,
+                );
             }
-
-            field_type_id = value.type_id;
         }
 
         return tt.TypedIdentifier{
@@ -2624,7 +2621,7 @@ pub const SemaAnalyzer = struct {
     fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode, expected_item_type_id: ?tt.TypeId) !*ir.Value {
         var values: std.ArrayList(*ir.Value) = .empty;
         const array_literal = exp.data.array_literal;
-        var array_literal_type: tt.TypeId = self.type_table.getPrimitive(.dynamic);
+        var array_literal_type: tt.TypeId = expected_item_type_id orelse self.type_table.getPrimitive(.dynamic);
 
         for (array_literal.exps) |e| {
             // without a declared item type, later items follow the first one
@@ -2641,12 +2638,15 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.invalidType(try self.type_table.name(array_literal_type, self.allocator), try self.type_table.name(exp_value_type, self.allocator), exp.loc);
             }
 
-            try values.append(self.allocator, exp_value);
-        }
+            const item_value = if (self.needsNullBox(array_literal_type, exp_value_type))
+                try ir.Value.init(self.allocator, .{
+                    .data = .{ .null_box_init = .{ .value = exp_value } },
+                    .type_id = exp_value_type,
+                })
+            else
+                exp_value;
 
-        // an empty literal (`list = []`) takes the expected item type when there is one
-        if (array_literal.exps.len == 0) {
-            if (expected_item_type_id) |item_type_id| array_literal_type = item_type_id;
+            try values.append(self.allocator, item_value);
         }
 
         const array_type_id = try self.type_table.getOrAddArray(array_literal_type);
@@ -2854,7 +2854,8 @@ pub const SemaAnalyzer = struct {
             },
             .array => {
                 const inner_type_id = try self.resolveTypeAnnotation(type_annotation.type.array, current_defined_type_type_id);
-                return try self.type_table.getOrAddArray(inner_type_id);
+                const array_type_id = try self.type_table.getOrAddArray(inner_type_id);
+                return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(array_type_id) else array_type_id;
             },
             .type_self => {
                 if (current_defined_type_type_id) |type_type_id| {
