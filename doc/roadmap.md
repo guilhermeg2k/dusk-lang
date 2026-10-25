@@ -5,7 +5,6 @@
 ## Version 0.12 - Kanade
 
 - Error Handling
-- Defer
 
 ## Version 0.13 - Hiei
 
