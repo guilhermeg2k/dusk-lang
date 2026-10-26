@@ -21,6 +21,7 @@ pub const Statement = union(enum) {
     if_capture: IfCaptureStmt,
     when: WhenStmt,
     @"for": ForStmt,
+    for_capture: ForCaptureStmt,
     assign: AssignStmt,
     @"return": ReturnStmt,
     expression: *ExpNode,
@@ -97,6 +98,13 @@ pub const WhenProng = struct {
 
 pub const ForStmt = struct {
     condition: *ExpNode,
+    do_block: Block,
+};
+
+pub const ForCaptureStmt = struct {
+    source: *ExpNode,
+    item: []const u8,
+    index: ?[]const u8,
     do_block: Block,
 };
 

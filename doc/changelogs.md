@@ -2,6 +2,9 @@
 
 ## v0.12 - Kanade
 
+- Array capture loops: `for items: item, index do ... end`, with an optional zero-based index and `_` to ignore captures. Captures are immutable and scoped to the body
+- Capture loops evaluate their array and length once, read each item as they reach it, and exclude appended items. `continue` advances to the next item
+
 - `if`, nullable-capture `if` and `when` now work as expressions. Branches produce their final expression, with statements allowed before it; value-producing `if` requires `else`
 - Conditional expressions infer compatible result types, promote mixed numeric results, support nullable results and propagate expected types into branch values, anonymous initializers and empty arrays
 - Expression branches can `return`, `break` or `continue` without supplying a value. Existing statement forms retain their behavior

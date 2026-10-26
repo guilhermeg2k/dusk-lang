@@ -1,0 +1,55 @@
+let items = [4, 5, 6]
+let mut total = 0
+
+for items: item, index do
+    assert(item == index + 4)
+    total += item
+end
+
+assert(total == 15)
+
+for items: item do
+    total += item
+end
+
+assert(total == 30)
+
+for items: _, index do
+    total += index
+end
+
+for items: item, _ do
+    total += item
+end
+
+for items: _, _ do
+    total += 1
+end
+
+assert(total == 51)
+let empty: []int = []
+
+for empty: item do
+    assert(false)
+end
+
+for [7]: item, index do
+    assert(item == 7)
+    assert(index == 0)
+end
+
+let item = 90
+let index = 80
+
+for items: item, index do
+    assert(item == index + 4)
+end
+
+assert(item == 90)
+assert(index == 80)
+
+for items: items do
+    assert(items >= 4)
+end
+
+assert(len(items) == 3)

@@ -1,0 +1,11 @@
+struct Entry
+    number: int
+
+    func update(mut self: @) -> void
+        self.number = 2
+    end
+end
+
+for [Entry(1)]: entry do
+    entry.update()
+end

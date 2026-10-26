@@ -1,0 +1,55 @@
+struct Calls
+    let mut count = 0
+end
+
+func make_items() -> []int
+    Calls.count += 1
+    return [1, 2, 3]
+end
+
+let mut total = 0
+
+for make_items(): item do
+    total += item
+end
+
+assert(Calls.count == 1)
+assert(total == 6)
+let mut items = [1, 2, 3]
+
+for items: item, index do
+    assert(item == index + 1)
+    append(items, 99)
+end
+
+assert(len(items) == 6)
+let mut values = [1, 2, 3]
+
+for values: item, index do
+    if index == 0 then
+        values[1] = 20
+    end
+
+    if index == 1 then
+        assert(item == 20)
+    end
+end
+
+let mut original = [7, 8]
+let mut visits = 0
+
+for original: item, index do
+    original = [99]
+    assert(item == index + 7)
+    visits += 1
+end
+
+assert(visits == 2)
+assert(original[0] == 99)
+let optional: ?[]int = [3, 4]
+
+if optional: unwrapped then
+    for unwrapped: item do
+        assert(item >= 3)
+    end
+end

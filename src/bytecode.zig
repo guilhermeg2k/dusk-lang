@@ -25,6 +25,7 @@ pub const BytecodeGen = struct {
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
+    continue_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
@@ -54,6 +55,7 @@ pub const BytecodeGen = struct {
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
+            .continue_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .static_store = StaticStoreTable.init(alloc),
@@ -342,7 +344,7 @@ pub const BytecodeGen = struct {
         const saved_next_free = self.next_free_register;
         const loop_begin_idx = self.chunk_instructions.items.len;
 
-        try self.pushLoopCtx(loop_begin_idx);
+        try self.pushLoopCtx();
 
         const condition_reg = if (loopStmt.condition) |cond|
             try self.genValue(cond, self.consumeRegister())
@@ -358,6 +360,14 @@ pub const BytecodeGen = struct {
         const jump_if_false_idx = self.chunk_instructions.items.len - 1;
 
         try self.genInstructionBlock(loopStmt.do_block);
+
+        const advancement_begin = self.chunk_instructions.items.len;
+        const context = self.loop_stack.items[self.loop_stack.items.len - 1];
+        for (self.continue_patches.items[context.first_continue_patch_index..]) |patch_index| {
+            self.chunk_instructions.items[patch_index].putAEx(@intCast(advancement_begin));
+        }
+        self.continue_patches.shrinkRetainingCapacity(context.first_continue_patch_index);
+        try self.genInstructionBlock(loopStmt.advancement);
 
         var jump_to_begin = Instruction{
             .op = .JUMP,
@@ -381,16 +391,14 @@ pub const BytecodeGen = struct {
     }
 
     fn genContinue(self: *Self) !void {
-        const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
-        var jump = Instruction{ .op = .JUMP };
-        jump.putAEx(@intCast(loop_ctx.loop_begin));
-        try self.chunk_instructions.append(self.allocator, jump);
+        try self.continue_patches.append(self.allocator, self.chunk_instructions.items.len);
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
     }
 
-    fn pushLoopCtx(self: *Self, loop_begin: usize) !void {
+    fn pushLoopCtx(self: *Self) !void {
         try self.loop_stack.append(self.allocator, LoopContext{
-            .loop_begin = loop_begin,
             .first_break_patch_idx = self.break_patches.items.len,
+            .first_continue_patch_index = self.continue_patches.items.len,
         });
     }
 
@@ -574,6 +582,13 @@ pub const BytecodeGen = struct {
                 self.freeRegisterN(self.next_free_register - saved_next_free);
             },
             .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
+            .array_length => |array| {
+                const saved_next_free = self.next_free_register;
+                const array_register = try self.genValue(array, self.consumeRegister());
+                try self.chunk_instructions.append(self.allocator, .{ .op = .ARRAY_LEN, .a = target_reg, .b = array_register });
+                self.register_types[target_reg] = value.type_id;
+                self.freeRegisterN(self.next_free_register - saved_next_free);
+            },
         }
 
         return target_reg;
@@ -1672,8 +1687,8 @@ const FailingCallHandler = union(enum) {
 };
 
 const LoopContext = struct {
-    loop_begin: usize,
     first_break_patch_idx: usize,
+    first_continue_patch_index: usize,
 };
 
 pub const StaticStoreTable = struct {

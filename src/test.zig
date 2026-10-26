@@ -881,3 +881,91 @@ test "if-expression-nullable-to-plain" {
 test "conditional break is not a function return" {
     try runCaseError("sema/conditional-break-is-not-return.dsk", error.InvalidReturnType);
 }
+
+test "for-capture" {
+    try runCase("for-capture.dsk");
+}
+
+test "for-capture-source" {
+    try runCase("for-capture-source.dsk");
+}
+
+test "for-capture-flow" {
+    try runCase("for-capture-flow.dsk");
+}
+
+test "for-capture-heap" {
+    try runCase("for-capture-heap.dsk");
+}
+
+test "for-capture-non-array" {
+    try runCaseError("sema/for-capture-non-array.dsk", error.InvalidType);
+}
+
+test "for-capture-nullable-array" {
+    try runCaseError("sema/for-capture-nullable-array.dsk", error.InvalidType);
+}
+
+test "for-capture-duplicate" {
+    try runCaseError("sema/for-capture-duplicate.dsk", error.AlreadyDefined);
+}
+
+test "for-capture-item-assignment" {
+    try runCaseError("sema/for-capture-item-assignment.dsk", error.NotMutable);
+}
+
+test "for-capture-index-assignment" {
+    try runCaseError("sema/for-capture-index-assignment.dsk", error.NotMutable);
+}
+
+test "for-capture-item-leaks" {
+    try runCaseError("sema/for-capture-item-leaks.dsk", error.NotDefined);
+}
+
+test "for-capture-index-leaks" {
+    try runCaseError("sema/for-capture-index-leaks.dsk", error.NotDefined);
+}
+
+test "for-capture-ignored-binding" {
+    try runCaseError("sema/for-capture-ignored-binding.dsk", error.NotDefined);
+}
+
+test "for-capture-struct-mutation" {
+    try runCaseError("sema/for-capture-struct-mutation.dsk", error.NotMutable);
+}
+
+test "for-capture-array-mutation" {
+    try runCaseError("sema/for-capture-array-mutation.dsk", error.NotMutable);
+}
+
+test "for-capture-missing-return" {
+    try runCaseError("sema/for-capture-missing-return.dsk", error.InvalidReturnType);
+}
+
+test "for-capture-missing-item" {
+    try runCaseError("parser/for-capture-missing-item.dsk", error.ParserError);
+}
+
+test "for-capture-missing-index" {
+    try runCaseError("parser/for-capture-missing-index.dsk", error.ParserError);
+}
+
+test "for-capture-extra-binding" {
+    try runCaseError("parser/for-capture-extra-binding.dsk", error.ParserError);
+}
+
+test "for-capture-mutable" {
+    try runCaseError("parser/for-capture-mutable.dsk", error.ParserError);
+}
+
+test "for-capture-missing-do" {
+    try runCaseError("parser/for-capture-missing-do.dsk", error.ParserError);
+}
+
+test "for-capture-mut-method" {
+    try runCaseError("sema/for-capture-mut-method.dsk", error.NotMutable);
+}
+
+test "for-capture-array-assignment" {
+    try runCaseError("sema/for-capture-array-assignment.dsk", error.NotMutable);
+}

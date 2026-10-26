@@ -525,7 +525,24 @@ for i < 5 do
 end
 ```
 
-`break` leaves the innermost loop, and `continue` jumps to its next iteration. Both are errors outside a loop.
+Arrays can be traversed with a capture loop. The first capture is the item; the optional second capture is its zero-based `int` index:
+
+```nim
+let items = [10, 20, 30]
+for items: item, index do
+    echo(item, index)
+end
+
+for items: item do
+    echo(item)
+end
+```
+
+Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors; use a mutable source array and its index to update elements explicitly.
+
+The source can be any expression returning a non-nullable array. Unwrap nullable arrays first. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
+
+`break` leaves the innermost loop, and `continue` jumps to its next iteration. Both are errors outside a loop. In a capture loop, `continue` advances to the next item.
 
 ```nim
 let mut n = 0

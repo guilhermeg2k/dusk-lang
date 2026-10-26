@@ -712,8 +712,13 @@ pub const SemaAnalyzer = struct {
                 .@"break" => ir.Instruction{ .break_stmt = {} },
                 .@"continue" => ir.Instruction{ .continue_stmt = {} },
                 .@"return" => try self.visitReturnStmt(&stmt),
-                .if_capture, .when => null,
+                .if_capture, .when, .for_capture => null,
             };
+
+            if (stmt.data == .for_capture) {
+                try instructions.appendSlice(self.allocator, try self.visitForCaptureStmt(&stmt));
+                continue;
+            }
 
             if (stmt.data == .if_capture) {
                 const if_capture_insts = try self.visitIfCaptureStmt(&stmt);
@@ -811,7 +816,7 @@ pub const SemaAnalyzer = struct {
     fn doesValueExit(value: *const ir.Value, needs_return: bool) bool {
         return switch (value.data) {
             .block_value => |block| if (needs_return) areAllPathsReturning(block.instructions) else !block.can_complete,
-            .int_to_float => |operand| doesValueExit(operand, needs_return),
+            .int_to_float, .array_length => |operand| doesValueExit(operand, needs_return),
             .binary_op => |binary| doesValueExit(binary.left, needs_return) or doesValueExit(binary.right, needs_return),
             .unary_op => |unary| doesValueExit(unary.right, needs_return),
             .null_box_init => |box| if (box.value) |operand| doesValueExit(operand, needs_return) else false,
@@ -1684,7 +1689,10 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notDefined(target_root.data.identifier, target_root.loc);
                 };
 
-                if (target_symbol.kind == .variable and !target_symbol.kind.variable.is_mut and self.type_table.getTypePtrById(target_type).kind != .@"struct") {
+                const is_immutable_target = target_symbol.kind == .variable and
+                    (target_symbol.kind.variable.is_read_only or
+                        (!target_symbol.kind.variable.is_mut and self.type_table.getTypePtrById(target_type).kind != .@"struct"));
+                if (is_immutable_target) {
                     return self.err_dispatcher.notMutable(target_root.data.identifier, target_root.loc);
                 }
 
@@ -1839,6 +1847,69 @@ pub const SemaAnalyzer = struct {
             .condition = condition_value,
             .do_block = block.instructions,
         } };
+    }
+
+    fn createLoopVariable(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value) Errors!*ir.Value {
+        const uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .store_var = .{ .uid = uid, .identifier = name, .type_id = value.type_id, .value = value } });
+        return ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = uid, .name = name } }, .type_id = value.type_id });
+    }
+
+    fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, loc: err.Loc) Errors!void {
+        if (std.mem.eql(u8, name, "_")) return;
+        if (self.scope.symbol_table.symbols.contains(name)) return self.err_dispatcher.alreadyDefined(name, loc);
+        const reference = try self.createLoopVariable(instructions, name, value);
+        try self.scope.symbol_table.put(.{
+            .uid = reference.data.identifier.uid,
+            .identifier = name,
+            .type_id = value.type_id,
+            .kind = .{ .variable = .{ .is_mut = false, .is_read_only = true } },
+        });
+    }
+
+    fn visitForCaptureStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        const capture = stmt.data.for_capture;
+        const source = try self.evalExp(capture.source);
+        const source_type = self.type_table.getTypePtrById(source.type_id);
+        const is_array_source = !source_type.is_nullable and source_type.kind == .array;
+        if (!is_array_source) return self.err_dispatcher.invalidType("array", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
+        const item_type = source_type.kind.array;
+        const integer_type = self.type_table.getPrimitive(.int);
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const source_reference = try self.createLoopVariable(&instructions, "loop source", source);
+        const length = try ir.Value.init(self.allocator, .{ .data = .{ .array_length = source_reference }, .type_id = integer_type });
+        const length_reference = try self.createLoopVariable(&instructions, "loop length", length);
+        const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = integer_type });
+        const cursor = try self.createLoopVariable(&instructions, "loop cursor", zero);
+        const condition = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = .i_cmp_lt, .left = cursor, .right = length_reference } },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        });
+        const item = try ir.Value.init(self.allocator, .{
+            .data = .{ .indexed = .{ .target = source_reference, .index = cursor } },
+            .type_id = item_type,
+        });
+        var body: std.ArrayList(ir.Instruction) = .empty;
+        {
+            try self.scope.enter(self.scope.return_type_id);
+            defer self.scope.exit(self.scope.return_type_id);
+            try self.bindLoopCapture(&body, capture.item, item, stmt.loc);
+            if (capture.index) |index| try self.bindLoopCapture(&body, index, cursor, stmt.loc);
+            try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
+        }
+        const one = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 1 }, .type_id = integer_type });
+        const next_cursor = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = .i_add, .left = cursor, .right = one } },
+            .type_id = integer_type,
+        });
+        const advancement = try self.allocator.alloc(ir.Instruction, 1);
+        advancement[0] = .{ .store_var = .{ .uid = cursor.data.identifier.uid, .identifier = "loop cursor", .type_id = integer_type, .value = next_cursor } };
+        try instructions.append(self.allocator, .{ .loop = .{
+            .condition = condition,
+            .do_block = try body.toOwnedSlice(self.allocator),
+            .advancement = advancement,
+        } });
+        return instructions.toOwnedSlice(self.allocator);
     }
 
     fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.Struct) !tt.Struct {
@@ -3338,6 +3409,7 @@ pub const Symbol = struct {
     kind: union(enum) {
         variable: struct {
             is_mut: bool,
+            is_read_only: bool = false,
         },
         defined_type: struct {
             blueprint_type_id: tt.TypeId,

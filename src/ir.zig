@@ -124,6 +124,7 @@ pub const BranchIf = struct {
 };
 
 pub const Loop = struct {
+    advancement: []const Instruction = &.{},
     condition: ?*Value,
     do_block: []const Instruction,
 };
@@ -193,6 +194,7 @@ pub const Value = struct {
         catch_call: CatchCall,
         block_value: BlockValue,
         int_to_float: *Value,
+        array_length: *Value,
     },
 
     type_id: TypeId,

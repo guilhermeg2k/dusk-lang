@@ -113,7 +113,7 @@ pub const Parser = struct {
             .for_kw => {
                 const for_stmt = try self.parseForStmt();
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                return ast.StatementNode{ .data = .{ .@"for" = for_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+                return ast.StatementNode{ .data = for_stmt, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
             .identifier, .try_kw => {
                 return self.parseIdentifierStmt();
@@ -439,18 +439,26 @@ pub const Parser = struct {
         };
     }
 
-    fn parseForStmt(self: *Self) Errors!ast.ForStmt {
+    fn parseForStmt(self: *Self) Errors!ast.Statement {
         self.walk();
 
         self.loop_depth += 1;
         defer self.loop_depth -= 1;
 
         const condition = try self.parseExp(0);
+        if (self.match(.colon)) {
+            const item = try self.expect(.identifier);
+            const index = if (self.match(.comma)) (try self.expect(.identifier)).value(self.src) else null;
+            _ = try self.expect(.do_kw);
+            const body = try self.parseBlock(&.{});
+            _ = try self.expect(.end_kw);
+            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .index = index, .do_block = body } };
+        }
         _ = try self.expect(.do_kw);
         const do_block = try self.parseBlock(&.{});
         _ = try self.expect(.end_kw);
 
-        return ast.ForStmt{ .condition = condition, .do_block = do_block };
+        return .{ .@"for" = .{ .condition = condition, .do_block = do_block } };
     }
 
     fn parseField(self: *Self, identifier: []const u8, has_type_annotation: bool) !ast.Field {
