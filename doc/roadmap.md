@@ -4,12 +4,11 @@
 
 ## Version 0.12 - Kanade
 
-- Error Handling
+- Error Handling (implemented)
 - `when`, `if` as expressions (implemented)
-- Fancy for (for in like)
+- Capture for (arrays implemented)
 - Ranges (`1..5`) for `for` and `when` cases (implemented)
 - `when` on floats (range cases only, e.g. `0.0..1.0 then`) (implemented)
-- Capture for (arrays implemented)
 - Ternary operator
 - Nullish coalescing operator (??)
 
