@@ -13,29 +13,29 @@
 
 ## Version 0.13 - Garou
 
-- Meta structs
-- Generics
-
-## Version 0.14 - Simon
-
-- Closures (& fn as anything (argument, item, etc))
-
-## Version 0.15 - Enjin
-
-- Coroutines
-
-## Version 0.16 - Fujiwara
-
-- Modules
-- Privates~
-
-## Version 0.18 - Youku
-
 - Multiline Comments
 - Multiline strings
 - Strings operations
 - `when` on strings
 - String interpolation
+
+## Version 0.14 - Simon
+
+- Meta structs
+- Generics
+
+## Version 0.15 - Enjin
+
+- Closures (& fn as anything (argument, item, etc))
+
+## Version 0.16 - Fujiwara
+
+- Coroutines
+
+## Version 0.18 - Youku
+
+- Modules
+- Privates~
 
 ## Version 0.19 - Shigeo
 
