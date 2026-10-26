@@ -996,6 +996,17 @@ pub const Parser = struct {
                 continue;
             }
 
+            if (tk.tag == .range) {
+                if (exp.data == .range) return self.err_dispatcher.invalidSyntax("a single range", tk);
+                self.walk();
+                const end = try self.parseExp(op_bp);
+                exp = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .range = .{ .start = exp, .end = end } },
+                    .loc = .{ .start = exp.loc.start, .end = end.loc.end },
+                });
+                continue;
+            }
+
             //if dont break or continue it means it's a binary op
             const op_token = self.peekCurrent();
             const op = try ast.BinaryOp.fromTag(op_token.tag);
@@ -1203,6 +1214,7 @@ pub const Parser = struct {
             .or_kw => 10,
             .and_kw => 20,
             .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,
+            .range => 35,
             .plus, .minus => 40,
             .star, .slash, .double_slash, .percent => 50,
             .l_paren => 60,

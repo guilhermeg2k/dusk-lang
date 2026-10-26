@@ -187,6 +187,12 @@ pub const Exp = union(enum) {
     if_exp: IfStmt,
     if_capture_exp: IfCaptureStmt,
     when_exp: WhenStmt,
+    range: Range,
+};
+
+pub const Range = struct {
+    start: *ExpNode,
+    end: *ExpNode,
 };
 
 pub const TryExp = struct {

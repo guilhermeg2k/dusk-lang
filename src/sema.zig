@@ -1301,7 +1301,7 @@ pub const SemaAnalyzer = struct {
                     continue;
                 },
                 .variant => try self.lowerWhenVariantProng(&prong, subject, refs.unwrapped, result),
-                .values => try self.lowerWhenValuesProng(&prong, prongs.values[prong_idx], refs.unwrapped, result),
+                .values => try self.lowerWhenValuesProng(&prong, prongs.values[prong_idx], prongs.ranges[prong_idx], refs.unwrapped, result),
             };
 
             chain = if (unconditional_prong_idx == prong_idx) lowered.body else try self.wrapBranch(lowered.condition, lowered.body, chain);
@@ -1327,8 +1327,8 @@ pub const SemaAnalyzer = struct {
         const base_kind = self.type_table.getTypePtrById(base_type).kind;
 
         switch (base_kind) {
-            .int, .@"enum", .@"union" => {},
-            else => return self.err_dispatcher.invalidType("int, enum or union", type_name, exp.loc),
+            .int, .float, .@"enum", .@"union" => {},
+            else => return self.err_dispatcher.invalidType("int, float, enum or union", type_name, exp.loc),
         }
 
         return .{
@@ -1343,6 +1343,7 @@ pub const SemaAnalyzer = struct {
     fn checkWhenProngs(self: *Self, when_stmt: *const ast.WhenStmt, subject: WhenSubject) Errors!WhenProngs {
         var prongs: WhenProngs = .{
             .values = try self.allocator.alloc([]*ir.Value, when_stmt.prongs.len),
+            .ranges = try self.allocator.alloc([]?WhenRange, when_stmt.prongs.len),
             .seen_values = .init(self.allocator),
             .seen_variants = .init(self.allocator),
             .has_null_case = false,
@@ -1350,6 +1351,7 @@ pub const SemaAnalyzer = struct {
 
         for (when_stmt.prongs, 0..) |prong, prong_idx| {
             prongs.values[prong_idx] = &.{};
+            prongs.ranges[prong_idx] = &.{};
 
             switch (prong.pattern) {
                 .null_case => {
@@ -1381,21 +1383,94 @@ pub const SemaAnalyzer = struct {
                     }
 
                     const values = try self.allocator.alloc(*ir.Value, exps.len);
+                    const ranges = try self.allocator.alloc(?WhenRange, exps.len);
+
                     for (exps, 0..) |exp, i| {
+                        if (exp.data == .range) {
+                            const range = try self.evalWhenRange(exp, subject);
+                            try self.checkWhenRangeOverlap(&prongs, range, exp.loc);
+                            values[i] = range.start;
+                            ranges[i] = range;
+                            continue;
+                        }
+
+                        if (subject.base_kind == .float) return self.err_dispatcher.whenInvalidCase("float cases must be ranges, like '0.0..1.0'", exp.loc);
                         const value = try self.evalWhenCaseValue(exp, subject.base_type);
                         const key = value.data.i_int;
+
                         if (prongs.seen_values.contains(key)) {
                             return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
                         }
+
+                        if (subject.base_kind == .int) try self.checkWhenRangeOverlap(&prongs, .{ .start = value, .end = value }, exp.loc);
                         try prongs.seen_values.put(key, {});
                         values[i] = value;
+                        ranges[i] = null;
                     }
+
                     prongs.values[prong_idx] = values;
+                    prongs.ranges[prong_idx] = ranges;
                 },
             }
         }
 
         return prongs;
+    }
+
+    fn isNumericWhenSubject(subject: WhenSubject) bool {
+        return subject.base_kind == .int or subject.base_kind == .float;
+    }
+
+    fn evalWhenRangeBound(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject) Errors!*ir.Value {
+        if (subject.base_kind == .int) return self.evalWhenCaseValue(exp, subject.base_type);
+        const literal: ?f64 = switch (exp.data) {
+            .float_literal => |number| number,
+            .int_literal => |number| @floatFromInt(number),
+            .unary_exp => |unary| if (unary.op == .neg) switch (unary.right.data) {
+                .float_literal => |number| -number,
+                .int_literal => |number| -@as(f64, @floatFromInt(number)),
+                else => null,
+            } else null,
+            else => null,
+        };
+
+        if (literal == null) return self.err_dispatcher.whenInvalidCase("float range bounds must be numeric literals", exp.loc);
+        if (!std.math.isFinite(literal.?)) return self.err_dispatcher.whenInvalidCase("float range bounds must be finite", exp.loc);
+        return ir.Value.init(self.allocator, .{ .data = .{ .i_float = literal.? }, .type_id = subject.base_type });
+    }
+
+    fn evalWhenRange(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject) Errors!WhenRange {
+        if (!isNumericWhenSubject(subject)) return self.err_dispatcher.whenInvalidCase("range cases require an int or float subject", exp.loc);
+        const start = try self.evalWhenRangeBound(exp.data.range.start, subject);
+        const end = try self.evalWhenRangeBound(exp.data.range.end, subject);
+        const are_bounds_ordered = if (subject.base_kind == .int) start.data.i_int <= end.data.i_int else start.data.i_float <= end.data.i_float;
+        if (!are_bounds_ordered) return self.err_dispatcher.whenInvalidCase("range start must not exceed its end", exp.loc);
+        return .{ .start = start, .end = end };
+    }
+
+    fn checkWhenRangeOverlap(self: *Self, prongs: *WhenProngs, range: WhenRange, loc: err.Loc) Errors!void {
+        for (prongs.seen_ranges.items) |previous| {
+            const has_overlap = if (range.start.data == .i_int)
+                range.start.data.i_int <= previous.end.data.i_int and previous.start.data.i_int <= range.end.data.i_int
+            else
+                range.start.data.i_float <= previous.end.data.i_float and previous.start.data.i_float <= range.end.data.i_float;
+
+            if (has_overlap) return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[loc.start .. loc.end + 1], loc);
+        }
+
+        try prongs.seen_ranges.append(self.allocator, range);
+    }
+
+    fn createBinaryValue(self: *Self, kind: ir.BinaryOpKind, left: *ir.Value, right: *ir.Value, type_id: tt.TypeId) Errors!*ir.Value {
+        return ir.Value.init(self.allocator, .{ .data = .{ .binary_op = .{ .kind = kind, .left = left, .right = right } }, .type_id = type_id });
+    }
+
+    fn lowerWhenRangeCondition(self: *Self, subject: *ir.Value, range: WhenRange) Errors!*ir.Value {
+        const boolean_type = self.type_table.getPrimitive(.boolean);
+        const is_float = range.start.data == .i_float;
+        const is_at_least_start = try self.createBinaryValue(if (is_float) .f_cmp_ge else .i_cmp_ge, subject, range.start, boolean_type);
+        const is_at_most_end = try self.createBinaryValue(if (is_float) .f_cmp_le else .i_cmp_le, subject, range.end, boolean_type);
+        return self.createBinaryValue(.b_and, is_at_least_start, is_at_most_end, boolean_type);
     }
 
     fn checkWhenExhaustive(self: *Self, stmt: *const ast.StatementNode, subject: WhenSubject, prongs: WhenProngs) Errors!void {
@@ -1426,9 +1501,9 @@ pub const SemaAnalyzer = struct {
         if (subject.is_nullable and !prongs.has_null_case) try appendMissing(self.allocator, &missing, "null");
 
         if (when_stmt.else_block == null) {
-            if (subject.base_kind == .int) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
+            if (isNumericWhenSubject(subject)) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
             if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
-        } else if (subject.base_kind != .int and missing.items.len == 0) {
+        } else if (!isNumericWhenSubject(subject) and missing.items.len == 0) {
             return self.err_dispatcher.whenUselessElse(when_stmt.else_loc.?);
         }
     }
@@ -1517,14 +1592,14 @@ pub const SemaAnalyzer = struct {
         return .{ .condition = condition, .body = try body.toOwnedSlice(self.allocator) };
     }
 
-    fn lowerWhenValuesProng(self: *Self, prong: *const ast.WhenProng, values: []const *ir.Value, unwrapped_ref: *ir.Value, result: ?*BranchResult) Errors!LoweredProng {
+    fn lowerWhenValuesProng(self: *Self, prong: *const ast.WhenProng, values: []const *ir.Value, ranges: []const ?WhenRange, unwrapped_ref: *ir.Value, result: ?*BranchResult) Errors!LoweredProng {
         var condition: ?*ir.Value = null;
-        for (values) |value| {
-            const eq = try self.cmpEq(unwrapped_ref, value);
-            condition = if (condition) |c| try ir.Value.init(self.allocator, .{
-                .data = .{ .binary_op = .{ .kind = .b_or, .left = c, .right = eq } },
+        for (values, ranges) |value, range| {
+            const matches_pattern = if (range) |bounds| try self.lowerWhenRangeCondition(unwrapped_ref, bounds) else try self.cmpEq(unwrapped_ref, value);
+            condition = if (condition) |previous_condition| try ir.Value.init(self.allocator, .{
+                .data = .{ .binary_op = .{ .kind = .b_or, .left = previous_condition, .right = matches_pattern } },
                 .type_id = self.type_table.getPrimitive(.boolean),
-            }) else eq;
+            }) else matches_pattern;
         }
 
         return .{ .condition = condition.?, .body = (try self.visitBranchBlock(&prong.body, result)).instructions };
@@ -1867,8 +1942,70 @@ pub const SemaAnalyzer = struct {
         });
     }
 
+    fn lowerCaptureLoopBody(self: *Self, capture: ast.ForCaptureStmt, item: *ir.Value, index: *ir.Value, loc: err.Loc) Errors![]const ir.Instruction {
+        var body: std.ArrayList(ir.Instruction) = .empty;
+        try self.scope.enter(self.scope.return_type_id);
+        defer self.scope.exit(self.scope.return_type_id);
+        try self.bindLoopCapture(&body, capture.item, item, loc);
+        if (capture.index) |name| try self.bindLoopCapture(&body, name, index, loc);
+        try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
+        return body.toOwnedSlice(self.allocator);
+    }
+
+    fn evalIntegerRangeBound(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
+        const value = try self.evalExp(exp);
+
+        if (!self.type_table.eql(value.type_id, self.type_table.getPrimitive(.int))) {
+            return self.err_dispatcher.invalidType("int", try self.type_table.name(value.type_id, self.allocator), exp.loc);
+        }
+
+        return value;
+    }
+
+    fn createLoopUpdate(reference: *ir.Value, value: *ir.Value) ir.Instruction {
+        return .{ .store_var = .{ .uid = reference.data.identifier.uid, .identifier = reference.data.identifier.name, .type_id = reference.type_id, .value = value } };
+    }
+
+    fn appendLoopIncrement(self: *Self, instructions: *std.ArrayList(ir.Instruction), reference: *ir.Value) Errors!void {
+        const one = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 1 }, .type_id = reference.type_id });
+        const next = try self.createBinaryValue(.i_add, reference, one, reference.type_id);
+        try instructions.append(self.allocator, createLoopUpdate(reference, next));
+    }
+
+    fn lowerRangeAdvancement(self: *Self, cursor: *ir.Value, end: *ir.Value, is_running: *ir.Value, index: ?*ir.Value) Errors![]const ir.Instruction {
+        const is_last_item = try self.cmpEq(cursor, end);
+        const stopped = try ir.Value.init(self.allocator, .{ .data = .{ .i_bool = false }, .type_id = is_running.type_id });
+        const stop_instructions = try self.allocator.alloc(ir.Instruction, 1);
+        stop_instructions[0] = createLoopUpdate(is_running, stopped);
+        var advancement: std.ArrayList(ir.Instruction) = .empty;
+        try self.appendLoopIncrement(&advancement, cursor);
+        if (index) |reference| try self.appendLoopIncrement(&advancement, reference);
+        return self.wrapBranch(is_last_item, stop_instructions, try advancement.toOwnedSlice(self.allocator));
+    }
+
+    fn visitForRangeStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        const capture = stmt.data.for_capture;
+        const range = capture.source.data.range;
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const start = try self.evalIntegerRangeBound(range.start);
+        const cursor = try self.createLoopVariable(&instructions, "range cursor", start);
+        const end = try self.evalIntegerRangeBound(range.end);
+        const end_reference = try self.createLoopVariable(&instructions, "range end", end);
+        const boolean_type = self.type_table.getPrimitive(.boolean);
+        const has_items = try self.createBinaryValue(.i_cmp_le, cursor, end_reference, boolean_type);
+        const is_running = try self.createLoopVariable(&instructions, "range is running", has_items);
+        const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = self.type_table.getPrimitive(.int) });
+        const needs_index = if (capture.index) |name| !std.mem.eql(u8, name, "_") else false;
+        const index = if (needs_index) try self.createLoopVariable(&instructions, "range index", zero) else zero;
+        const body = try self.lowerCaptureLoopBody(capture, cursor, index, stmt.loc);
+        const advancement = try self.lowerRangeAdvancement(cursor, end_reference, is_running, if (needs_index) index else null);
+        try instructions.append(self.allocator, .{ .loop = .{ .condition = is_running, .do_block = body, .advancement = advancement } });
+        return instructions.toOwnedSlice(self.allocator);
+    }
+
     fn visitForCaptureStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
         const capture = stmt.data.for_capture;
+        if (capture.source.data == .range) return self.visitForRangeStmt(stmt);
         const source = try self.evalExp(capture.source);
         const source_type = self.type_table.getTypePtrById(source.type_id);
         const is_array_source = !source_type.is_nullable and source_type.kind == .array;
@@ -1889,14 +2026,7 @@ pub const SemaAnalyzer = struct {
             .data = .{ .indexed = .{ .target = source_reference, .index = cursor } },
             .type_id = item_type,
         });
-        var body: std.ArrayList(ir.Instruction) = .empty;
-        {
-            try self.scope.enter(self.scope.return_type_id);
-            defer self.scope.exit(self.scope.return_type_id);
-            try self.bindLoopCapture(&body, capture.item, item, stmt.loc);
-            if (capture.index) |index| try self.bindLoopCapture(&body, index, cursor, stmt.loc);
-            try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
-        }
+        const body = try self.lowerCaptureLoopBody(capture, item, cursor, stmt.loc);
         const one = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 1 }, .type_id = integer_type });
         const next_cursor = try ir.Value.init(self.allocator, .{
             .data = .{ .binary_op = .{ .kind = .i_add, .left = cursor, .right = one } },
@@ -1906,7 +2036,7 @@ pub const SemaAnalyzer = struct {
         advancement[0] = .{ .store_var = .{ .uid = cursor.data.identifier.uid, .identifier = "loop cursor", .type_id = integer_type, .value = next_cursor } };
         try instructions.append(self.allocator, .{ .loop = .{
             .condition = condition,
-            .do_block = try body.toOwnedSlice(self.allocator),
+            .do_block = body,
             .advancement = advancement,
         } });
         return instructions.toOwnedSlice(self.allocator);
@@ -2313,6 +2443,7 @@ pub const SemaAnalyzer = struct {
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
             .if_exp, .if_capture_exp, .when_exp => return self.evalConditional(exp, null, true),
+            .range => return self.err_dispatcher.invalidExpression("range in a capture loop or when case", "range value", exp.loc),
             .float_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_float = exp.data.float_literal }, .type_id = self.type_table.getPrimitive(.float) });
             },
@@ -3434,8 +3565,15 @@ const PendingWhenCheck = struct {
     when_loc: err.Loc,
 };
 
+const WhenRange = struct {
+    start: *ir.Value,
+    end: *ir.Value,
+};
+
 const WhenProngs = struct {
     values: [][]*ir.Value,
+    ranges: [][]?WhenRange,
+    seen_ranges: std.ArrayList(WhenRange) = .empty,
     seen_values: std.AutoHashMap(i64, void),
     seen_variants: std.StringHashMap(void),
     has_null_case: bool,

@@ -475,7 +475,7 @@ test "sema error: when unsupported subject" {
 }
 
 test "sema error: when float subject" {
-    try runCaseError("sema/when-float-subject.dsk", error.InvalidType);
+    try runCaseError("sema/when-float-subject.dsk", error.WhenInvalidCase);
 }
 
 test "sema error: when union case without capture" {
@@ -968,4 +968,160 @@ test "for-capture-mut-method" {
 
 test "for-capture-array-assignment" {
     try runCaseError("sema/for-capture-array-assignment.dsk", error.NotMutable);
+}
+
+test "range-loops" {
+    try runCase("range-loops.dsk");
+}
+
+test "range-loop-flow" {
+    try runCase("range-loop-flow.dsk");
+}
+
+test "range-loop-bounds" {
+    try runCase("range-loop-bounds.dsk");
+}
+
+test "when-integer-ranges" {
+    try runCase("when-integer-ranges.dsk");
+}
+
+test "when-float-ranges" {
+    try runCase("when-float-ranges.dsk");
+}
+
+test "range-loop-float" {
+    try runCaseError("sema/range-loop-float.dsk", error.InvalidType);
+}
+
+test "range-loop-mixed-bounds" {
+    try runCaseError("sema/range-loop-mixed-bounds.dsk", error.InvalidType);
+}
+
+test "range-loop-nullable-bound" {
+    try runCaseError("sema/range-loop-nullable-bound.dsk", error.InvalidType);
+}
+
+test "range-loop-string-bound" {
+    try runCaseError("sema/range-loop-string-bound.dsk", error.InvalidType);
+}
+
+test "range-loop-duplicate-capture" {
+    try runCaseError("sema/range-loop-duplicate-capture.dsk", error.AlreadyDefined);
+}
+
+test "range-loop-immutable-value" {
+    try runCaseError("sema/range-loop-immutable-value.dsk", error.NotMutable);
+}
+
+test "range-loop-immutable-index" {
+    try runCaseError("sema/range-loop-immutable-index.dsk", error.NotMutable);
+}
+
+test "range-loop-capture-leaks" {
+    try runCaseError("sema/range-loop-capture-leaks.dsk", error.NotDefined);
+}
+
+test "range-stored-value" {
+    try runCaseError("sema/range-stored-value.dsk", error.InvalidExpression);
+}
+
+test "range-no-capture" {
+    try runCaseError("sema/range-no-capture.dsk", error.InvalidExpression);
+}
+
+test "when-range-reversed" {
+    try runCaseError("sema/when-range-reversed.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-overlap" {
+    try runCaseError("sema/when-range-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-touching" {
+    try runCaseError("sema/when-range-touching.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-literal-overlap" {
+    try runCaseError("sema/when-range-literal-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-literal-range-overlap" {
+    try runCaseError("sema/when-literal-range-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-list-overlap" {
+    try runCaseError("sema/when-range-list-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-runtime-bound" {
+    try runCaseError("sema/when-range-runtime-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-expression-bound" {
+    try runCaseError("sema/when-range-expression-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-float-on-int" {
+    try runCaseError("sema/when-range-float-on-int.dsk", error.InvalidType);
+}
+
+test "when-range-enum-subject" {
+    try runCaseError("sema/when-range-enum-subject.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-needs-else" {
+    try runCaseError("sema/when-range-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "when-float-range-needs-else" {
+    try runCaseError("sema/when-float-range-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "when-float-range-overlap" {
+    try runCaseError("sema/when-float-range-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-float-range-touching" {
+    try runCaseError("sema/when-float-range-touching.dsk", error.WhenDuplicateCase);
+}
+
+test "when-float-range-reversed" {
+    try runCaseError("sema/when-float-range-reversed.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-range-runtime-bound" {
+    try runCaseError("sema/when-float-range-runtime-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-range-string-bound" {
+    try runCaseError("sema/when-float-range-string-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-scalar-in-list" {
+    try runCaseError("sema/when-float-scalar-in-list.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-null-non-nullable" {
+    try runCaseError("sema/when-float-null-non-nullable.dsk", error.WhenInvalidCase);
+}
+
+test "range-missing-end" {
+    try runCaseError("parser/range-missing-end.dsk", error.ParserError);
+}
+
+test "range-chained" {
+    try runCaseError("parser/range-chained.dsk", error.ParserError);
+}
+
+test "range-missing-start" {
+    try runCaseError("parser/range-missing-start.dsk", error.ParserError);
+}
+
+test "range-three-dots" {
+    try runCaseError("parser/range-three-dots.dsk", error.ParserError);
+}
+
+test "when-float-range-infinite-bound" {
+    try runCaseError("sema/when-float-range-infinite-bound.dsk", error.WhenInvalidCase);
 }

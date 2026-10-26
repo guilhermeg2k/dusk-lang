@@ -384,6 +384,7 @@ From lowest to highest:
 | `or`                            | Logical or            |
 | `and`                           | Logical and           |
 | `==` `!=` `<` `<=` `>` `>=`     | Comparison            |
+| `..`                            | Inclusive range       |
 | `+` `-`                         | Addition, subtraction |
 | `*` `/` `//` `%`                | Multiplication, division, modulo |
 | `-x` `!x` `try x`               | Negation, logical not, try |
@@ -429,7 +430,7 @@ The condition must be a `bool`. For nullable capture (`if value: name then`), se
 
 ### When
 
-`when` runs the case that matches a value. It works on `int`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the whole `when` ends with `end`. Cases never fall through.
+`when` runs the case that matches a value. It works on `int`, `float`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the whole `when` ends with `end`. Cases never fall through.
 
 ```nim
 when color
@@ -468,11 +469,34 @@ end
 Rules:
 
 - Enum and union cases must cover every variant, and `null` for a nullable subject, unless there's an `else`. An `else` that can never run is an error.
-- `int` subjects always need an `else`. Int cases must be literals (`1`, `-1`).
+- `int` and `float` subjects always need an `else`, even if ranges appear to cover every value.
+- Int cases can be literals (`1`, `-1`) or inclusive ranges (`1..5`). A case can combine them (`1..5, 8, 10..12 then ... end`). Range bounds must be int literals.
+- Float cases must be inclusive ranges (`0.0..1.0`), not individual values. Bounds must be finite numeric literals; int bounds are promoted to float. NaN and infinities reach `else`.
+- A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).
 - A value or variant can only appear in one case.
-- `string` and `float` subjects aren't supported yet.
+- `string` subjects aren't supported yet.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
+
+Range matching uses the same rules in statements and expressions:
+
+```nim
+let category = when temperature
+    0.0..10.0 then
+        "cold"
+    end
+
+    10.1..25.0 then
+        "mild"
+    end
+
+    else then
+        "other"
+    end
+end
+```
+
+For a negative first case, parenthesize its lower bound (`(-5)..(-1)`) so the minus is not parsed as part of the subject expression.
 
 ### Conditional expressions
 
@@ -541,6 +565,20 @@ end
 Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors; use a mutable source array and its index to update elements explicitly.
 
 The source can be any expression returning a non-nullable array. Unwrap nullable arrays first. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
+
+A range keeps its lower and upper bounds separate. Ranges are supported directly in capture loops and `when` cases; they cannot be stored in variables, passed as arguments or returned as values yet.
+
+Integer ranges use the same capture syntax, without allocating an array:
+
+```nim
+for 1..5: value, index do
+    echo(value, index)
+end
+```
+
+`1..5` includes both endpoints, producing `1`, `2`, `3`, `4`, `5`. The optional index counts from zero. Bounds can be integer expressions, evaluated once from left to right before the loop starts. Arithmetic binds more tightly than `..`, so `start + 1..stop * 2` uses those arithmetic results as its bounds.
+
+Iteration advances by one. Equal endpoints produce one item; a start greater than the end produces no items. The loop stops at its upper bound without incrementing past it, including at the largest `int`. Float range iteration, descending steps and open-ended ranges are not supported.
 
 `break` leaves the innermost loop, and `continue` jumps to its next iteration. Both are errors outside a loop. In a capture loop, `continue` advances to the next item.
 

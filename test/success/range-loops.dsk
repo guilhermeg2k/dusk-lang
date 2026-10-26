@@ -1,0 +1,54 @@
+let mut total = 0
+
+for 1..5: value, index do
+    assert(value == index + 1)
+    total += value
+end
+
+assert(total == 15)
+
+for 3..3: value, index do
+    assert(value == 3)
+    assert(index == 0)
+    total += value
+end
+
+for 5..1: value do
+    assert(false)
+end
+
+for -3..(-1): value, index do
+    assert(value == index - 3)
+    total += value
+end
+
+assert(total == 12)
+
+for 1 + 1..2 * 2: value do
+    total += value
+end
+
+assert(total == 21)
+
+for (1..2): _, index do
+    total += index
+end
+
+for 1..2: value, _ do
+    total += value
+end
+
+for 1..2: _, _ do
+    total += 1
+end
+
+assert(total == 27)
+let value = 90
+let index = 80
+
+for 1..2: value, index do
+    assert(value == index + 1)
+end
+
+assert(value == 90)
+assert(index == 80)

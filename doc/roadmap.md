@@ -7,8 +7,8 @@
 - Error Handling
 - `when`, `if` as expressions (implemented)
 - Fancy for (for in like)
-- Ranges (`1..5`) for `for` and `when` cases
-- `when` on floats (range cases only, e.g. `0.0..1.0 then`)
+- Ranges (`1..5`) for `for` and `when` cases (implemented)
+- `when` on floats (range cases only, e.g. `0.0..1.0 then`) (implemented)
 - Capture for (arrays implemented)
 - Ternary operator
 - Nullish coalescing operator (??)

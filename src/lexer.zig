@@ -122,7 +122,7 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('.', Tag.question_mark_dot, Tag.question_mark);
                 },
                 '.' => {
-                    return Token.init(Tag.dot, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol('.', Tag.range, Tag.dot);
                 },
                 '*' => {
                     return Token.init(Tag.star, self.cur_index, self.cur_index);
@@ -178,8 +178,11 @@ pub const Lexer = struct {
 
         while (std.ascii.isDigit(next_char) or next_char == '.') {
             if (next_char == '.') {
+                const is_range_start = self.cur_index + 2 < self.src.len and self.src[self.cur_index + 2] == '.';
+                if (is_range_start or is_float) break;
                 is_float = true;
             }
+
             self.walk();
             next_char = self.peekNext();
         }
@@ -319,6 +322,7 @@ pub const Tag = enum {
     ge,
     at,
     dot,
+    range,
     question_mark,
     question_mark_dot,
     l_bracket,

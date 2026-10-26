@@ -2,6 +2,10 @@
 
 ## v0.12 - Kanade
 
+- Inclusive integer range loops: `for start..stop: value, index do ... end`, with optional indexes and ignored captures. Bounds are evaluated once, iteration allocates no array, and reversed bounds produce no items
+- Integer `when` cases accept literal ranges and mixtures of ranges and individual literals. Float and nullable-float subjects are supported with range cases only; bounds are finite numeric literals
+- Numeric `when` subjects require `else`; overlapping cases, shared endpoints and reversed case ranges are compile errors. Range loops stop safely at the largest integer
+
 - Array capture loops: `for items: item, index do ... end`, with an optional zero-based index and `_` to ignore captures. Captures are immutable and scoped to the body
 - Capture loops evaluate their array and length once, read each item as they reach it, and exclude appended items. `continue` advances to the next item
 

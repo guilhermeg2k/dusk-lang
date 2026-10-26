@@ -1,0 +1,9 @@
+let start = 1
+
+when 3
+    start..5 then
+    end
+
+    else then
+    end
+end
