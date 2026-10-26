@@ -1,0 +1,48 @@
+let flag: ?bool = false
+let absent_flag: ?bool = null
+assert((flag orelse false or true) == false)
+assert(((flag orelse false) or true) == true)
+assert((absent_flag orelse 1 < 2 and true) == true)
+let present: ?int = 3
+let absent: ?int = null
+
+func double(value: int) -> int
+    return value * 2
+end
+
+assert((present orelse 10 |> double()) == 3)
+assert(((present orelse 10) |> double()) == 6)
+assert((absent orelse 1 + 2 * 3) == 7)
+assert(2 * (absent orelse 4) == 8)
+
+error Failure
+    Missing
+end
+
+func failing() -> Failure!int
+    return Failure.Missing
+end
+
+func maybe_failing(is_failure: bool) -> Failure!?int
+    if is_failure then
+        return Failure.Missing
+    end
+
+    return null
+end
+
+assert((absent orelse failing() catch 9) == 9)
+assert((present orelse failing() catch 9) == 3)
+assert(((maybe_failing(true) catch absent orelse 8) orelse 0) == 8)
+assert(((maybe_failing(false) catch absent orelse 8) orelse 0) == 0)
+let conditional = absent orelse when 1
+    1 then
+        12
+    end
+
+    else then
+        13
+    end
+end
+
+assert(conditional == 12)

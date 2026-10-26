@@ -2,6 +2,9 @@
 
 ## v0.12 - Kanade
 
+- Nullable fallback: `value orelse fallback` evaluates its left operand once, unwraps it when non-null and evaluates the fallback only for null. Nullable fallbacks support chains; compatible result types use conditional-expression inference and numeric promotion
+- `orelse` is now a reserved keyword. It groups right-to-left at the same precedence as `catch`, and supports contextual anonymous initializers and empty arrays
+
 - Inclusive integer range loops: `for start..stop: value, index do ... end`, with optional indexes and ignored captures. Bounds are evaluated once, iteration allocates no array, and reversed bounds produce no items
 - Integer `when` cases accept literal ranges and mixtures of ranges and individual literals. Float and nullable-float subjects are supported with range cases only; bounds are finite numeric literals
 - Numeric `when` subjects require `else`; overlapping cases, shared endpoints and reversed case ranges are compile errors. Range loops stop safely at the largest integer

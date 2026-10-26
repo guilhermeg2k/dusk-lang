@@ -1125,3 +1125,91 @@ test "range-three-dots" {
 test "when-float-range-infinite-bound" {
     try runCaseError("sema/when-float-range-infinite-bound.dsk", error.WhenInvalidCase);
 }
+
+test "orelse-values" {
+    try runCase("orelse-values.dsk");
+}
+
+test "orelse-evaluation" {
+    try runCase("orelse-evaluation.dsk");
+}
+
+test "orelse-context" {
+    try runCase("orelse-context.dsk");
+}
+
+test "orelse-families" {
+    try runCase("orelse-families.dsk");
+}
+
+test "orelse-precedence" {
+    try runCase("orelse-precedence.dsk");
+}
+
+test "orelse-flow-heap" {
+    try runCase("orelse-flow-heap.dsk");
+}
+
+test "orelse-non-nullable" {
+    try runCaseError("sema/orelse-non-nullable.dsk", error.InvalidType);
+}
+
+test "orelse-incompatible" {
+    try runCaseError("sema/orelse-incompatible.dsk", error.InvalidType);
+}
+
+test "orelse-nullable-incompatible" {
+    try runCaseError("sema/orelse-nullable-incompatible.dsk", error.InvalidType);
+}
+
+test "orelse-void" {
+    try runCaseError("sema/orelse-void.dsk", error.InvalidExpression);
+}
+
+test "orelse-void-discarded" {
+    try runCaseError("sema/orelse-void-discarded.dsk", error.InvalidExpression);
+}
+
+test "orelse-null-void" {
+    try runCaseError("sema/orelse-null-void.dsk", error.InvalidExpression);
+}
+
+test "orelse-nullable-to-plain" {
+    try runCaseError("sema/orelse-nullable-to-plain.dsk", error.InvalidType);
+}
+
+test "orelse-context-mismatch" {
+    try runCaseError("sema/orelse-context-mismatch.dsk", error.InvalidType);
+}
+
+test "orelse-no-array-promotion" {
+    try runCaseError("sema/orelse-no-array-promotion.dsk", error.InvalidType);
+}
+
+test "orelse-unhandled-error" {
+    try runCaseError("sema/orelse-unhandled-error.dsk", error.UnhandledError);
+}
+
+test "orelse-missing-fallback" {
+    try runCaseError("parser/orelse-missing-fallback.dsk", error.ParserError);
+}
+
+test "orelse-missing-operand" {
+    try runCaseError("parser/orelse-missing-operand.dsk", error.ParserError);
+}
+
+test "orelse-keyword" {
+    try runCaseError("parser/orelse-keyword.dsk", error.ParserError);
+}
+
+test "orelse-direct-return" {
+    try runCaseError("parser/orelse-direct-return.dsk", error.ParserError);
+}
+
+test "orelse-direct-break" {
+    try runCaseError("parser/orelse-direct-break.dsk", error.ParserError);
+}
+
+test "orelse-direct-continue" {
+    try runCaseError("parser/orelse-direct-continue.dsk", error.ParserError);
+}

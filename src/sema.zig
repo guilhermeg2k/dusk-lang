@@ -757,13 +757,18 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitBranchTail(self: *Self, statement: *const ast.StatementNode, result: *BranchResult) Errors!ir.Instruction {
-        const value = try self.evalExpExpecting(statement.data.expression, result.expected_type_id);
+        const value = try self.evalExpWithContext(statement.data.expression, result.expected_type_id, result.context_type_id);
+        return self.storeBranchValue(value, result, statement.loc);
+    }
+
+    fn storeBranchValue(self: *Self, value: *ir.Value, result: *BranchResult, loc: err.Loc) Errors!ir.Instruction {
         if (isValueLeaving(value)) return .{ .expression_stmt = .{ .value = value } };
         if (value.type_id == self.type_table.getPrimitive(.void)) {
-            return self.err_dispatcher.invalidExpression("a branch value", "void", statement.loc);
+            return self.err_dispatcher.invalidExpression("a branch value", "void", loc);
         }
+
         const stored_value = try ir.Value.init(self.allocator, value.*);
-        try result.values.append(self.allocator, .{ .value = stored_value, .loc = statement.loc });
+        try result.values.append(self.allocator, .{ .value = stored_value, .loc = loc });
         return .{ .store_var = .{
             .uid = result.uid,
             .identifier = "branch result",
@@ -877,7 +882,7 @@ pub const SemaAnalyzer = struct {
 
         const value = switch (expression_stmt.data) {
             .if_exp, .if_capture_exp, .when_exp => try self.evalConditional(expression_stmt, null, false),
-            .fn_call => try self.evalExp(expression_stmt),
+            .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
             .try_exp => try self.evalTry(expression_stmt),
             .catch_exp => try self.evalCatch(expression_stmt, true),
             else => return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc),
@@ -1924,7 +1929,7 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn createLoopVariable(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value) Errors!*ir.Value {
+    fn storeTemporaryValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value) Errors!*ir.Value {
         const uid = self.scope.genUid();
         try instructions.append(self.allocator, .{ .store_var = .{ .uid = uid, .identifier = name, .type_id = value.type_id, .value = value } });
         return ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = uid, .name = name } }, .type_id = value.type_id });
@@ -1933,7 +1938,7 @@ pub const SemaAnalyzer = struct {
     fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, loc: err.Loc) Errors!void {
         if (std.mem.eql(u8, name, "_")) return;
         if (self.scope.symbol_table.symbols.contains(name)) return self.err_dispatcher.alreadyDefined(name, loc);
-        const reference = try self.createLoopVariable(instructions, name, value);
+        const reference = try self.storeTemporaryValue(instructions, name, value);
         try self.scope.symbol_table.put(.{
             .uid = reference.data.identifier.uid,
             .identifier = name,
@@ -1988,15 +1993,15 @@ pub const SemaAnalyzer = struct {
         const range = capture.source.data.range;
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const start = try self.evalIntegerRangeBound(range.start);
-        const cursor = try self.createLoopVariable(&instructions, "range cursor", start);
+        const cursor = try self.storeTemporaryValue(&instructions, "range cursor", start);
         const end = try self.evalIntegerRangeBound(range.end);
-        const end_reference = try self.createLoopVariable(&instructions, "range end", end);
+        const end_reference = try self.storeTemporaryValue(&instructions, "range end", end);
         const boolean_type = self.type_table.getPrimitive(.boolean);
         const has_items = try self.createBinaryValue(.i_cmp_le, cursor, end_reference, boolean_type);
-        const is_running = try self.createLoopVariable(&instructions, "range is running", has_items);
+        const is_running = try self.storeTemporaryValue(&instructions, "range is running", has_items);
         const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = self.type_table.getPrimitive(.int) });
         const needs_index = if (capture.index) |name| !std.mem.eql(u8, name, "_") else false;
-        const index = if (needs_index) try self.createLoopVariable(&instructions, "range index", zero) else zero;
+        const index = if (needs_index) try self.storeTemporaryValue(&instructions, "range index", zero) else zero;
         const body = try self.lowerCaptureLoopBody(capture, cursor, index, stmt.loc);
         const advancement = try self.lowerRangeAdvancement(cursor, end_reference, is_running, if (needs_index) index else null);
         try instructions.append(self.allocator, .{ .loop = .{ .condition = is_running, .do_block = body, .advancement = advancement } });
@@ -2013,11 +2018,11 @@ pub const SemaAnalyzer = struct {
         const item_type = source_type.kind.array;
         const integer_type = self.type_table.getPrimitive(.int);
         var instructions: std.ArrayList(ir.Instruction) = .empty;
-        const source_reference = try self.createLoopVariable(&instructions, "loop source", source);
+        const source_reference = try self.storeTemporaryValue(&instructions, "loop source", source);
         const length = try ir.Value.init(self.allocator, .{ .data = .{ .array_length = source_reference }, .type_id = integer_type });
-        const length_reference = try self.createLoopVariable(&instructions, "loop length", length);
+        const length_reference = try self.storeTemporaryValue(&instructions, "loop length", length);
         const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = integer_type });
-        const cursor = try self.createLoopVariable(&instructions, "loop cursor", zero);
+        const cursor = try self.storeTemporaryValue(&instructions, "loop cursor", zero);
         const condition = try ir.Value.init(self.allocator, .{
             .data = .{ .binary_op = .{ .kind = .i_cmp_lt, .left = cursor, .right = length_reference } },
             .type_id = self.type_table.getPrimitive(.boolean),
@@ -2296,14 +2301,20 @@ pub const SemaAnalyzer = struct {
 
     fn isConditional(exp: *const ast.ExpNode) bool {
         return switch (exp.data) {
-            .if_exp, .if_capture_exp, .when_exp => true,
+            .if_exp, .if_capture_exp, .when_exp, .orelse_exp => true,
             else => false,
         };
     }
 
     fn evalConditional(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, needs_value: bool) Errors!*ir.Value {
+        return self.evalConditionalWithContext(exp, expected_type_id, null, needs_value);
+    }
+
+    fn evalConditionalWithContext(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, context_type_id: ?tt.TypeId, needs_value: bool) Errors!*ir.Value {
+        if (exp.data == .orelse_exp) return self.evalOrelse(exp, expected_type_id, context_type_id);
+
         const expected = if (expected_type_id == self.type_table.getPrimitive(.dynamic)) null else expected_type_id;
-        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .loc = exp.loc };
+        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .context_type_id = context_type_id, .loc = exp.loc };
         const branch_result = if (needs_value) &result else null;
         const statement = ast.StatementNode{
             .data = switch (exp.data) {
@@ -2324,19 +2335,26 @@ pub const SemaAnalyzer = struct {
             .when_exp => try self.lowerWhen(&statement, branch_result),
             else => unreachable,
         };
-        var result_type = expected orelse self.type_table.getPrimitive(.void);
-        if (needs_value and result.values.items.len > 0) {
-            if (expected == null) {
+        return self.finishBranchResult(&result, instructions);
+    }
+
+    fn finishBranchResult(self: *Self, result: *BranchResult, instructions: []const ir.Instruction) Errors!*ir.Value {
+        var result_type = result.expected_type_id orelse self.type_table.getPrimitive(.void);
+
+        if (result.values.items.len > 0) {
+            if (result.expected_type_id == null) {
                 result_type = result.values.items[0].value.type_id;
                 for (result.values.items[1..]) |branch_value| {
                     result_type = try self.mergeBranchTypes(result_type, branch_value.value.type_id, branch_value.loc);
                 }
             }
+
             for (result.values.items) |branch_value| {
                 const original = try ir.Value.init(self.allocator, branch_value.value.*);
                 branch_value.value.* = (try self.convertBranchValue(original, result_type, branch_value.loc)).*;
             }
         }
+
         return ir.Value.init(self.allocator, .{
             .data = .{ .block_value = .{
                 .instructions = instructions,
@@ -2345,6 +2363,78 @@ pub const SemaAnalyzer = struct {
             } },
             .type_id = result_type,
         });
+    }
+
+    fn orelseFallbackContext(self: *Self, payload_type: tt.TypeId, inherited_context: ?tt.TypeId) ?tt.TypeId {
+        if (inherited_context) |context| return context;
+        return switch (self.type_table.getTypePtrById(payload_type).kind) {
+            .@"struct", .@"union", .array => payload_type,
+            else => null,
+        };
+    }
+
+    fn evalOrelse(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) Errors!*ir.Value {
+        const coalescing = exp.data.orelse_exp;
+        const expected = if (expected_type == self.type_table.getPrimitive(.dynamic)) null else expected_type;
+        const operand = try self.evalExpWithContext(coalescing.operand, null, expected orelse context_type);
+        const null_type = self.type_table.getPrimitive(.null);
+        const is_null_operand = operand.type_id == null_type;
+        const is_nullable = self.type_table.getTypePtrById(operand.type_id).is_nullable;
+
+        if (!is_nullable and !is_null_operand) {
+            return self.err_dispatcher.invalidType("nullable or null", try self.type_table.name(operand.type_id, self.allocator), coalescing.operand.loc);
+        }
+
+        const payload_type = self.type_table.typeIdByNullableTypeId.get(operand.type_id) orelse null_type;
+        const fallback_context = self.orelseFallbackContext(payload_type, context_type);
+        const fallback = try self.evalExpWithContext(coalescing.fallback, expected, fallback_context);
+        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .loc = exp.loc };
+        const fallback_instruction = try self.storeBranchValue(fallback, &result, coalescing.fallback.loc);
+
+        if (is_null_operand) {
+            const instructions = try self.allocator.alloc(ir.Instruction, 2);
+            instructions[0] = .{ .expression_stmt = .{ .value = operand } };
+            instructions[1] = fallback_instruction;
+            return self.finishBranchResult(&result, instructions);
+        }
+
+        return self.lowerOrelseBranch(operand, payload_type, fallback_instruction, &result, coalescing.operand.loc);
+    }
+
+    fn unwrapOrelseValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), operand: *ir.Value, payload_type: tt.TypeId) Errors!*ir.Value {
+        if (!self.needsNullBox(operand.type_id, payload_type)) {
+            return ir.Value.init(self.allocator, .{ .data = operand.data, .type_id = payload_type });
+        }
+
+        const selected_uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .unwrap_null_box = .{
+            .unwrapped = .{ .uid = selected_uid, .identifier = "orelse selected", .type_id = payload_type },
+            .null_box = operand,
+        } });
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .identifier = .{ .uid = selected_uid, .name = "orelse selected" } },
+            .type_id = payload_type,
+        });
+    }
+
+    fn lowerOrelseBranch(self: *Self, operand: *ir.Value, payload_type: tt.TypeId, fallback: ir.Instruction, result: *BranchResult, loc: err.Loc) Errors!*ir.Value {
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const operand_reference = try self.storeTemporaryValue(&instructions, "orelse operand", operand);
+        var selected_instructions: std.ArrayList(ir.Instruction) = .empty;
+        const selected = try self.unwrapOrelseValue(&selected_instructions, operand_reference, payload_type);
+        const fallback_instructions = try self.allocator.alloc(ir.Instruction, 1);
+        fallback_instructions[0] = fallback;
+        try selected_instructions.append(self.allocator, try self.storeBranchValue(selected, result, loc));
+        const condition = try ir.Value.init(self.allocator, .{
+            .data = .{ .unary_op = .{ .kind = .box_not_null, .right = operand_reference } },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        });
+        try instructions.append(self.allocator, .{ .branch_if = .{
+            .condition = condition,
+            .then_block = try selected_instructions.toOwnedSlice(self.allocator),
+            .else_block = fallback_instructions,
+        } });
+        return self.finishBranchResult(result, try instructions.toOwnedSlice(self.allocator));
     }
 
     fn mergeBranchTypes(self: *Self, first: tt.TypeId, second: tt.TypeId, loc: err.Loc) Errors!tt.TypeId {
@@ -2413,6 +2503,13 @@ pub const SemaAnalyzer = struct {
         return exp.data == .anonymous_init;
     }
 
+    fn evalExpWithContext(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) Errors!*ir.Value {
+        if (expected_type != null) return self.evalExpExpecting(exp, expected_type);
+        if (isConditional(exp)) return self.evalConditionalWithContext(exp, null, context_type, true);
+        const needs_context = isAnonymousInit(exp) or exp.data == .array_literal;
+        return self.evalExpExpecting(exp, if (needs_context) context_type else null);
+    }
+
     fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
         if (isConditional(exp)) return self.evalConditional(exp, expected_type_id, true);
         if (expected_type_id) |expected| {
@@ -2442,7 +2539,7 @@ pub const SemaAnalyzer = struct {
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
-            .if_exp, .if_capture_exp, .when_exp => return self.evalConditional(exp, null, true),
+            .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null, true),
             .range => return self.err_dispatcher.invalidExpression("range in a capture loop or when case", "range value", exp.loc),
             .float_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_float = exp.data.float_literal }, .type_id = self.type_table.getPrimitive(.float) });
@@ -3592,6 +3689,7 @@ const LoweredProng = struct {
 const BranchResult = struct {
     uid: usize,
     expected_type_id: ?tt.TypeId,
+    context_type_id: ?tt.TypeId = null,
     loc: err.Loc,
     values: std.ArrayList(BranchValue) = .empty,
 };

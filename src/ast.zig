@@ -184,6 +184,7 @@ pub const Exp = union(enum) {
     binary_exp: BinaryExp,
     try_exp: TryExp,
     catch_exp: CatchExp,
+    orelse_exp: OrelseExp,
     if_exp: IfStmt,
     if_capture_exp: IfCaptureStmt,
     when_exp: WhenStmt,
@@ -197,6 +198,11 @@ pub const Range = struct {
 
 pub const TryExp = struct {
     operand: *ExpNode,
+};
+
+pub const OrelseExp = struct {
+    operand: *ExpNode,
+    fallback: *ExpNode,
 };
 
 pub const CatchExp = struct {

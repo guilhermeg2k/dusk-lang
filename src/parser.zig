@@ -975,6 +975,15 @@ pub const Parser = struct {
         });
     }
 
+    fn parseOrelse(self: *Self, operand: *ast.ExpNode) Errors!*ast.ExpNode {
+        self.walk();
+        const fallback = try self.parseExp(self.getBindingPower(.orelse_kw) - 1);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .orelse_exp = .{ .operand = operand, .fallback = fallback } },
+            .loc = .{ .start = operand.loc.start, .end = fallback.loc.end },
+        });
+    }
+
     fn parseExp(self: *Self, min_bp: u8) Errors!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
@@ -993,6 +1002,11 @@ pub const Parser = struct {
 
             if (tk.tag == .catch_kw) {
                 exp = try self.parseCatch(exp);
+                continue;
+            }
+
+            if (tk.tag == .orelse_kw) {
+                exp = try self.parseOrelse(exp);
                 continue;
             }
 
@@ -1209,7 +1223,7 @@ pub const Parser = struct {
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {
         return switch (tag) {
-            .catch_kw => 3,
+            .catch_kw, .orelse_kw => 3,
             .pipe => 5,
             .or_kw => 10,
             .and_kw => 20,

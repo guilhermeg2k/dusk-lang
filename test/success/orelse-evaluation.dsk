@@ -1,0 +1,43 @@
+struct Calls
+    let mut source = 0
+    let mut fallback = 0
+end
+
+func source(is_present: bool) -> ?int
+    Calls.source += 1
+    return if is_present then
+        5
+    else
+        null
+    end
+end
+
+func fallback() -> int
+    Calls.fallback += 1
+    return 9
+end
+
+assert((source(true) orelse fallback()) == 5)
+assert(Calls.source == 1)
+assert(Calls.fallback == 0)
+assert((source(false) orelse fallback()) == 9)
+assert(Calls.source == 2)
+assert(Calls.fallback == 1)
+assert((source(true) orelse source(false) orelse fallback()) == 5)
+assert(Calls.source == 3)
+assert(Calls.fallback == 1)
+source(true) orelse fallback()
+assert(Calls.source == 4)
+assert(Calls.fallback == 1)
+source(false) orelse fallback()
+assert(Calls.source == 5)
+assert(Calls.fallback == 2)
+let selected = (if source(false) == null then
+    null
+else
+    null
+end) orelse fallback()
+
+assert(selected == 9)
+assert(Calls.source == 6)
+assert(Calls.fallback == 3)

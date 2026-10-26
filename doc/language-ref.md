@@ -42,7 +42,7 @@ let x = 10 # an inline comment
 
 **Hoisting**: functions, structs, enums, unions and error sets can be used before they're defined. Variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -352,6 +352,35 @@ end
 
 `if value: mut name` makes the captured variable mutable. For structs, this changes the original value. For primitives (`int`, `float`, `bool`, `string`), it only changes the local copy.
 
+### Nullable fallback
+
+`value orelse fallback` unwraps a non-null value, or evaluates the fallback when the value is null:
+
+```nim
+let count: ?int = null
+let selected = count orelse 10
+
+let primary: ?int = null
+let secondary: ?int = 4
+let total = primary orelse secondary orelse 0
+```
+
+The left operand is evaluated once. The fallback runs only when it is needed; `false`, zero and empty arrays are non-null values. The left operand must be nullable or `null`. A nullable fallback keeps the result nullable; adding a non-null final fallback unwraps the chain.
+
+Result types follow conditional-expression rules, including numeric promotion (`?int orelse float` produces `float`). Expected types apply to contextual initializers; otherwise the left payload type supplies context for anonymous initializers and empty arrays. Incompatible types and `void` fallbacks are errors.
+
+`orelse` has the same precedence as `catch`, below pipes, logical operators, comparisons and arithmetic. Both group right-to-left:
+
+```nim
+let number = primary orelse secondary orelse 0
+let is_ready = maybe_ready orelse first or second
+let result = maybe_number orelse fetch_number() catch 0
+```
+
+These group as `primary orelse (secondary orelse 0)`, `maybe_ready orelse (first or second)` and `maybe_number orelse (fetch_number() catch 0)`. To compare a coalesced result, write `(maybe_number orelse 0) == 0`. To pipe the selected result, write `(maybe_number orelse 0) |> process()`.
+
+Fallbacks are expressions, including `if` and `when` expressions. Direct `orelse return`, `orelse break` and `orelse continue` forms are not supported. `orelse` is a reserved keyword.
+
 ### Optional chaining
 
 `?.` reads a field, variant or method of a nullable value. If any link in the chain is null, the result is `null`. The result is always nullable.
@@ -379,7 +408,7 @@ From lowest to highest:
 
 | Operators                       | Description           |
 | :------------------------------ | :-------------------- |
-| `catch`                         | Error fallback        |
+| `catch` `orelse`                | Error / nullable fallback |
 | `\|>`                           | Pipe                  |
 | `or`                            | Logical or            |
 | `and`                           | Logical and           |

@@ -9,8 +9,7 @@
 - Capture for (arrays implemented)
 - Ranges (`1..5`) for `for` and `when` cases (implemented)
 - `when` on floats (range cases only, e.g. `0.0..1.0 then`) (implemented)
-- Ternary operator
-- Nullish coalescing operator (??)
+- Nullable fallback (`orelse`) (implemented)
 
 ## Version 0.13 - Garou
 
