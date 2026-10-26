@@ -156,6 +156,12 @@ pub const CatchBlock = struct {
     instructions: []const Instruction,
 };
 
+pub const BlockValue = struct {
+    instructions: []const Instruction,
+    result_uid: usize,
+    can_complete: bool,
+};
+
 pub const ExpressionStmt = struct {
     value: *Value,
 };
@@ -185,6 +191,8 @@ pub const Value = struct {
         union_payload: *Value,
         try_call: TryCall,
         catch_call: CatchCall,
+        block_value: BlockValue,
+        int_to_float: *Value,
     },
 
     type_id: TypeId,

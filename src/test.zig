@@ -514,7 +514,6 @@ test "syntax error: invalid statement" {
     try runCaseError("parser/invalid-statement.dsk", error.ParserError);
 }
 
-
 test "syntax error: struct unexpected token" {
     try runCaseError("parser/struct-unexpected-token.dsk", error.ParserError);
 }
@@ -777,4 +776,108 @@ test "sema error: nullable array to array" {
 
 test "sema error: field default doesn't match declared type" {
     try runCaseError("sema/field-default-declared-type-mismatch.dsk", error.InvalidType);
+}
+
+test "conditional-expressions" {
+    try runCase("conditional-expressions.dsk");
+}
+
+test "conditional-expression-types" {
+    try runCase("conditional-expression-types.dsk");
+}
+
+test "conditional-expression-captures" {
+    try runCase("conditional-expression-captures.dsk");
+}
+
+test "when-expressions" {
+    try runCase("when-expressions.dsk");
+}
+
+test "conditional-expression-flow" {
+    try runCase("conditional-expression-flow.dsk");
+}
+
+test "conditional-expression-heap" {
+    try runCase("conditional-expression-heap.dsk");
+}
+
+test "if-expression-missing-else" {
+    try runCaseError("sema/if-expression-missing-else.dsk", error.InvalidExpression);
+}
+
+test "if-expression-empty-branch" {
+    try runCaseError("sema/if-expression-empty-branch.dsk", error.InvalidExpression);
+}
+
+test "if-expression-declaration-tail" {
+    try runCaseError("sema/if-expression-declaration-tail.dsk", error.InvalidExpression);
+}
+
+test "if-expression-assignment-tail" {
+    try runCaseError("sema/if-expression-assignment-tail.dsk", error.InvalidExpression);
+}
+
+test "if-expression-void-tail" {
+    try runCaseError("sema/if-expression-void-tail.dsk", error.InvalidExpression);
+}
+
+test "if-expression-type-mismatch" {
+    try runCaseError("sema/if-expression-type-mismatch.dsk", error.InvalidType);
+}
+
+test "if-expression-context-mismatch" {
+    try runCaseError("sema/if-expression-context-mismatch.dsk", error.InvalidType);
+}
+
+test "if-expression-capture-missing-else" {
+    try runCaseError("sema/if-expression-capture-missing-else.dsk", error.InvalidExpression);
+}
+
+test "if-expression-capture-else-scope" {
+    try runCaseError("sema/if-expression-capture-else-scope.dsk", error.NotDefined);
+}
+
+test "if-expression-capture-leaks" {
+    try runCaseError("sema/if-expression-capture-leaks.dsk", error.NotDefined);
+}
+
+test "if-expression-local-leaks" {
+    try runCaseError("sema/if-expression-local-leaks.dsk", error.NotDefined);
+}
+
+test "when-expression-missing-value" {
+    try runCaseError("sema/when-expression-missing-value.dsk", error.InvalidExpression);
+}
+
+test "when-expression-type-mismatch" {
+    try runCaseError("sema/when-expression-type-mismatch.dsk", error.InvalidType);
+}
+
+test "when-expression-not-exhaustive" {
+    try runCaseError("sema/when-expression-not-exhaustive.dsk", error.WhenNotExhaustive);
+}
+
+test "when-expression-useless-else" {
+    try runCaseError("sema/when-expression-useless-else.dsk", error.WhenUselessElse);
+}
+
+test "when-expression-capture-leaks" {
+    try runCaseError("sema/when-expression-capture-leaks.dsk", error.NotDefined);
+}
+
+test "if-expression-condition-not-bool" {
+    try runCaseError("sema/if-expression-condition-not-bool.dsk", error.InvalidType);
+}
+
+test "if-expression-non-tail-value" {
+    try runCaseError("sema/if-expression-non-tail-value.dsk", error.InvalidType);
+}
+
+test "if-expression-nullable-to-plain" {
+    try runCaseError("sema/if-expression-nullable-to-plain.dsk", error.InvalidType);
+}
+
+test "conditional break is not a function return" {
+    try runCaseError("sema/conditional-break-is-not-return.dsk", error.InvalidReturnType);
 }

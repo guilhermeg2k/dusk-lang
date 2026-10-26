@@ -176,6 +176,9 @@ pub const Exp = union(enum) {
     binary_exp: BinaryExp,
     try_exp: TryExp,
     catch_exp: CatchExp,
+    if_exp: IfStmt,
+    if_capture_exp: IfCaptureStmt,
+    when_exp: WhenStmt,
 };
 
 pub const TryExp = struct {

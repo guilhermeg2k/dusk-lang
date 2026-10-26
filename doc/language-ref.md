@@ -425,11 +425,11 @@ else
 end
 ```
 
-The condition must be a `bool`. For nullable capture (`if value: name then`), see [Nullables](#capture).
+The condition must be a `bool`. For nullable capture (`if value: name then`), see [Nullables](#capture). Both forms can also [produce a value](#conditional-expressions).
 
 ### When
 
-`when` runs the case that matches a value. It works on `int`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the statement ends with `end`. Cases never fall through.
+`when` runs the case that matches a value. It works on `int`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the whole `when` ends with `end`. Cases never fall through.
 
 ```nim
 when color
@@ -473,6 +473,45 @@ Rules:
 - A value or variant can only appear in one case.
 - `string` and `float` subjects aren't supported yet.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
+
+### Conditional expressions
+
+`if` and `when` can produce values in declarations, assignments, arguments, returns, array items and other expressions. Each selected branch produces its final expression:
+
+```nim
+let size = if is_ready then 10 else 0 end
+
+func sign(n: int) -> return if n > 0 then 1 elif n < 0 then -1 else 0 end
+
+let description = when code
+    200 then "ok" end
+    404 then "missing" end
+    else then "other" end
+end
+```
+
+A branch can run statements before its final expression. Nested `if` and `when` expressions work too:
+
+```nim
+let total = if is_ready then
+    let base = 10
+    base * 2
+else
+    0
+end
+
+let count = if maybe_count: captured then captured else 0 end
+```
+
+Rules:
+
+- An `if` used for its value requires `else`. A `when` uses the same exhaustiveness rules as its statement form.
+- Every branch that finishes normally must end in a value expression. An empty branch, an assignment, a declaration or a `void` call cannot supply that value.
+- `return` exits the enclosing function; `break` and `continue` act on the enclosing loop. A path that exits this way does not need to supply a branch value.
+- Only the selected branch runs. Conditions are tested once each as needed; a `when` subject or nullable-capture subject is evaluated once.
+- Branch locals and captured names are visible only in their own branch.
+- An enclosing expected type applies to every branch, including anonymous initializers and empty arrays. Otherwise compatible branch types determine the result: `int` with `float` produces `float`, and a value with `null` produces its nullable type. Numeric promotion also works for nullable numeric results. Incompatible types are errors; numeric promotion does not extend to array items.
+- Used as statements, `if` and `when` keep their existing behavior. Statement `if` does not require `else`.
 
 ### Loops
 

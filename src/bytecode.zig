@@ -557,9 +557,57 @@ pub const BytecodeGen = struct {
             .catch_call => |cc| {
                 try self.genFailingCall(cc.call, value, target_reg, .{ .catch_call = cc });
             },
+            .block_value => |block| {
+                const saved_variables = try self.var_register_id_by_uid.clone();
+                defer {
+                    self.var_register_id_by_uid.deinit();
+                    self.var_register_id_by_uid = saved_variables;
+                }
+                const saved_next_free = self.next_free_register;
+                const result_register = self.consumeRegister();
+                try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, result_register);
+                self.register_types[result_register] = value.type_id;
+                try self.var_register_id_by_uid.put(block.result_uid, result_register);
+                try self.genInstructionBlock(block.instructions);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_register });
+                self.register_types[target_reg] = value.type_id;
+                self.freeRegisterN(self.next_free_register - saved_next_free);
+            },
+            .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
         }
 
         return target_reg;
+    }
+
+    fn genIntToFloat(self: *Self, operand: *const ir.Value, result_type: tt.TypeId, target_register: u8) !void {
+        if (!self.type_table.getTypePtrById(operand.type_id).is_nullable) {
+            _ = try self.genValue(operand, target_register);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = target_register });
+            self.register_types[target_register] = result_type;
+            return;
+        }
+        const saved_next_free = self.next_free_register;
+        const operand_register = try self.genValue(operand, self.consumeRegister());
+        const condition_register = self.consumeRegister();
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_register);
+        self.register_types[target_register] = result_type;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_NNULL, .a = condition_register, .b = operand_register });
+        self.register_types[condition_register] = self.type_table.getPrimitive(.boolean);
+        const null_jump_index = self.chunk_instructions.items.len;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_register });
+        const number_register = self.consumeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_UNWRAP, .a = number_register, .b = operand_register });
+        try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = number_register });
+        self.register_types[number_register] = self.type_table.getPrimitive(.float);
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_register,
+            .b = @intFromEnum(v.ValueType.float64),
+            .c = number_register,
+        });
+        try self.recordHeapMap();
+        self.chunk_instructions.items[null_jump_index].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn genFailingCall(self: *Self, call: *const ir.Value, value: *const ir.Value, target_reg: u8, handler: FailingCallHandler) !void {
