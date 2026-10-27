@@ -2,53 +2,40 @@
 
 > This is a moving target and can change anytime
 
-## Version 0.11 - Power
-
-- Enums
-- Unions
-- When
-
 ## Version 0.12 - Kanade
 
-- Error Handling
-- Defer
+- Error Handling (implemented)
+- `when`, `if` as expressions (implemented)
+- Capture for (arrays implemented)
+- Ranges (`1..5`) for `for` and `when` cases (implemented)
+- `when` on floats (range cases only, e.g. `0.0..1.0 then`) (implemented)
+- Nullable fallback (`orelse`) (implemented)
 
-## Version 0.13 - Hiei
-
-- Fancy for (for in like)
-- Ranges (`1..5`) for `for` and `when` cases
-- `when` on floats (range cases only, e.g. `0.0..1.0 then`)
-- `when`, `if` as expression
-- Capture for
-- Ternary operator
-- Nullish coalescing operator (??)
-
-## Version 0.14 - Garou
-
-- Meta structs
-- Generics
-
-## Version 0.15 - Simon
-
-- Closures (& fn as anything (argument, item, etc))
-
-## Version 0.16 - Enjin
-
-- Coroutines
-
-
-## Version 0.17 - Fujiwara
-
-- Modules
-- Privates~
-
-## Version 0.18 - Youku
+## Version 0.13 - Garou
 
 - Multiline Comments
 - Multiline strings
 - Strings operations
 - `when` on strings
 - String interpolation
+
+## Version 0.14 - Simon
+
+- Meta structs
+- Generics
+
+## Version 0.15 - Enjin
+
+- Closures (& fn as anything (argument, item, etc))
+
+## Version 0.16 - Fujiwara
+
+- Coroutines
+
+## Version 0.18 - Youku
+
+- Modules
+- Privates~
 
 ## Version 0.19 - Shigeo
 

@@ -16,10 +16,12 @@ pub const Statement = union(enum) {
     @"struct": StructStmt,
     @"enum": EnumStmt,
     @"union": UnionStmt,
+    error_set: ErrorSetStmt,
     @"if": IfStmt,
     if_capture: IfCaptureStmt,
     when: WhenStmt,
     @"for": ForStmt,
+    for_capture: ForCaptureStmt,
     assign: AssignStmt,
     @"return": ReturnStmt,
     expression: *ExpNode,
@@ -45,6 +47,16 @@ pub const EnumStmt = struct {
 pub const UnionStmt = struct {
     identifier: []const u8,
     def: UnionDef,
+};
+
+pub const ErrorSetStmt = struct {
+    identifier: []const u8,
+    variants: []const ErrorVariant,
+};
+
+pub const ErrorVariant = struct {
+    identifier: []const u8,
+    loc: err.Loc,
 };
 
 pub const LetStmt = struct {
@@ -86,6 +98,13 @@ pub const WhenProng = struct {
 
 pub const ForStmt = struct {
     condition: *ExpNode,
+    do_block: Block,
+};
+
+pub const ForCaptureStmt = struct {
+    source: *ExpNode,
+    item: []const u8,
+    index: ?[]const u8,
     do_block: Block,
 };
 
@@ -163,6 +182,35 @@ pub const Exp = union(enum) {
     indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
+    try_exp: TryExp,
+    catch_exp: CatchExp,
+    orelse_exp: OrelseExp,
+    if_exp: IfStmt,
+    if_capture_exp: IfCaptureStmt,
+    when_exp: WhenStmt,
+    range: Range,
+};
+
+pub const Range = struct {
+    start: *ExpNode,
+    end: *ExpNode,
+};
+
+pub const TryExp = struct {
+    operand: *ExpNode,
+};
+
+pub const OrelseExp = struct {
+    operand: *ExpNode,
+    fallback: *ExpNode,
+};
+
+pub const CatchExp = struct {
+    operand: *ExpNode,
+    fallback: union(enum) {
+        value: *ExpNode,
+        block: struct { capture: []const u8, body: Block },
+    },
 };
 
 pub const ArrayLiteral = struct {
@@ -183,7 +231,13 @@ pub const BinaryExp = struct {
 pub const FnDef = struct {
     params: []const FnParam,
     return_type: ?*TypeAnnotation,
+    error_set: ?FnErrorSet = null,
     body_block: Block,
+};
+
+pub const FnErrorSet = union(enum) {
+    inferred: err.Loc,
+    named: struct { identifier: []const u8, loc: err.Loc },
 };
 
 pub const FnParam = struct {

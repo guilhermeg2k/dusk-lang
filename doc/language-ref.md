@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.11 - Power**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.12 - Kanade**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -16,9 +16,10 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 8. [Operators](#8-operators)
 9. [Control Flow](#9-control-flow)
 10. [Functions](#10-functions)
-11. [Built-in Functions](#11-built-in-functions)
-12. [Errors](#12-errors)
-13. [Known Limitations](#13-known-limitations)
+11. [Error Handling](#11-error-handling)
+12. [Built-in Functions](#12-built-in-functions)
+13. [Errors](#13-errors)
+14. [Known Limitations](#14-known-limitations)
 
 ## 1. Basics
 
@@ -39,9 +40,9 @@ let x = 10 # an inline comment
 
 **Line breaks** aren't significant. A statement can span several lines, but two expressions on consecutive lines can also join into one: `when n` followed by `-1 then` on the next line is read as `when n - 1`.
 
-**Hoisting**: functions, structs, enums and unions can be used before they're defined. Variables must be defined before use.
+**Hoisting**: functions, structs, enums, unions and error sets can be used before they're defined. Variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -74,7 +75,7 @@ y = 20
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
-Strings have no escape sequences (`"a\nb"` prints `a\nb` as written) and no operations yet. See [Known Limitations](#13-known-limitations).
+Strings have no escape sequences (`"a\nb"` prints `a\nb` as written) and no operations yet. See [Known Limitations](#14-known-limitations).
 
 ### Arrays
 
@@ -240,11 +241,11 @@ A union holds exactly one of several variants, and each variant carries a value 
 ```nim
 union Response
     success: string
-    error: string
+    failure: string
 end
 
 let ok = Response(success = "saved")
-let failed = Response(error = "not found")
+let failed = Response(failure = "not found")
 ```
 
 Build a union by calling its name with exactly one named variant. Where a union type is expected (annotated `let`, assignment, argument, return value, field or array item), `@(variant = value)` works too:
@@ -254,7 +255,7 @@ func fetch(id: int) -> Response
     if id == 1 then
         return @(success = "found")
     end
-    return @(error = "missing")
+    return @(failure = "missing")
 end
 ```
 
@@ -273,7 +274,7 @@ To handle every variant, use [`when`](#when):
 ```nim
 when fetch(2)
     success: message then echo(message) end
-    error: reason then echo(reason) end
+    failure: reason then echo(reason) end
 end
 ```
 
@@ -282,9 +283,9 @@ end
 To change a union, assign a new one. This works for `let mut` variables, struct fields and array items:
 
 ```nim
-let mut status = Response(error = "pending")
+let mut status = Response(failure = "pending")
 status = Response(success = "done")
-status = @(error = "timeout")
+status = @(failure = "timeout")
 ```
 
 Writing to a single variant (`status.success = "x"`) is an error. Union parameters, including `self`, can't be `mut` either, so a function that changes a union returns the new one:
@@ -325,7 +326,7 @@ echo(Shape(square = 3).area())
 
 ## 7. Nullables
 
-A `?` before a type allows `null` as a value. It works for primitives, enums, structs and unions (not arrays yet).
+A `?` before a type allows `null` as a value. It works for primitives, enums, structs, unions, arrays (`?[]int`) and error sets. `[]?int` is an array whose items can be null.
 
 ```nim
 let mut name: ?string = null
@@ -350,6 +351,35 @@ end
 ```
 
 `if value: mut name` makes the captured variable mutable. For structs, this changes the original value. For primitives (`int`, `float`, `bool`, `string`), it only changes the local copy.
+
+### Nullable fallback
+
+`value orelse fallback` unwraps a non-null value, or evaluates the fallback when the value is null:
+
+```nim
+let count: ?int = null
+let selected = count orelse 10
+
+let primary: ?int = null
+let secondary: ?int = 4
+let total = primary orelse secondary orelse 0
+```
+
+The left operand is evaluated once. The fallback runs only when it is needed; `false`, zero and empty arrays are non-null values. The left operand must be nullable or `null`. A nullable fallback keeps the result nullable; adding a non-null final fallback unwraps the chain.
+
+Result types follow conditional-expression rules, including numeric promotion (`?int orelse float` produces `float`). Expected types apply to contextual initializers; otherwise the left payload type supplies context for anonymous initializers and empty arrays. Incompatible types and `void` fallbacks are errors.
+
+`orelse` has the same precedence as `catch`, below pipes, logical operators, comparisons and arithmetic. Both group right-to-left:
+
+```nim
+let number = primary orelse secondary orelse 0
+let is_ready = maybe_ready orelse first or second
+let result = maybe_number orelse fetch_number() catch 0
+```
+
+These group as `primary orelse (secondary orelse 0)`, `maybe_ready orelse (first or second)` and `maybe_number orelse (fetch_number() catch 0)`. To compare a coalesced result, write `(maybe_number orelse 0) == 0`. To pipe the selected result, write `(maybe_number orelse 0) |> process()`.
+
+Fallbacks are expressions, including `if` and `when` expressions. Direct `orelse return`, `orelse break` and `orelse continue` forms are not supported. `orelse` is a reserved keyword.
 
 ### Optional chaining
 
@@ -378,13 +408,15 @@ From lowest to highest:
 
 | Operators                       | Description           |
 | :------------------------------ | :-------------------- |
+| `catch` `orelse`                | Error / nullable fallback |
 | `\|>`                           | Pipe                  |
 | `or`                            | Logical or            |
 | `and`                           | Logical and           |
 | `==` `!=` `<` `<=` `>` `>=`     | Comparison            |
+| `..`                            | Inclusive range       |
 | `+` `-`                         | Addition, subtraction |
 | `*` `/` `//` `%`                | Multiplication, division, modulo |
-| `-x` `!x`                       | Negation, logical not |
+| `-x` `!x` `try x`               | Negation, logical not, try |
 | `x.y` `x?.y` `x[i]` `f()`       | Access, index, call   |
 
 Use parentheses to change the order.
@@ -423,11 +455,11 @@ else
 end
 ```
 
-The condition must be a `bool`. For nullable capture (`if value: name then`), see [Nullables](#capture).
+The condition must be a `bool`. For nullable capture (`if value: name then`), see [Nullables](#capture). Both forms can also [produce a value](#conditional-expressions).
 
 ### When
 
-`when` runs the case that matches a value. It works on `int`, enums, unions and their nullable versions. Each case is `pattern then ... end`, and the statement ends with `end`. Cases never fall through.
+`when` runs the case that matches a value. It works on `int`, `float`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the whole `when` ends with `end`. Cases never fall through.
 
 ```nim
 when color
@@ -466,11 +498,73 @@ end
 Rules:
 
 - Enum and union cases must cover every variant, and `null` for a nullable subject, unless there's an `else`. An `else` that can never run is an error.
-- `int` subjects always need an `else`. Int cases must be literals (`1`, `-1`).
+- `int` and `float` subjects always need an `else`, even if ranges appear to cover every value.
+- Int cases can be literals (`1`, `-1`) or inclusive ranges (`1..5`). A case can combine them (`1..5, 8, 10..12 then ... end`). Range bounds must be int literals.
+- Float cases must be inclusive ranges (`0.0..1.0`), not individual values. Bounds must be finite numeric literals; int bounds are promoted to float. NaN and infinities reach `else`.
+- A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).
 - A value or variant can only appear in one case.
-- `string` and `float` subjects aren't supported yet.
+- `string` subjects aren't supported yet.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
+
+Range matching uses the same rules in statements and expressions:
+
+```nim
+let category = when temperature
+    0.0..10.0 then
+        "cold"
+    end
+
+    10.1..25.0 then
+        "mild"
+    end
+
+    else then
+        "other"
+    end
+end
+```
+
+For a negative first case, parenthesize its lower bound (`(-5)..(-1)`) so the minus is not parsed as part of the subject expression.
+
+### Conditional expressions
+
+`if` and `when` can produce values in declarations, assignments, arguments, returns, array items and other expressions. Each selected branch produces its final expression:
+
+```nim
+let size = if is_ready then 10 else 0 end
+
+func sign(n: int) -> return if n > 0 then 1 elif n < 0 then -1 else 0 end
+
+let description = when code
+    200 then "ok" end
+    404 then "missing" end
+    else then "other" end
+end
+```
+
+A branch can run statements before its final expression. Nested `if` and `when` expressions work too:
+
+```nim
+let total = if is_ready then
+    let base = 10
+    base * 2
+else
+    0
+end
+
+let count = if maybe_count: captured then captured else 0 end
+```
+
+Rules:
+
+- An `if` used for its value requires `else`. A `when` uses the same exhaustiveness rules as its statement form.
+- Every branch that finishes normally must end in a value expression. An empty branch, an assignment, a declaration or a `void` call cannot supply that value.
+- `return` exits the enclosing function; `break` and `continue` act on the enclosing loop. A path that exits this way does not need to supply a branch value.
+- Only the selected branch runs. Conditions are tested once each as needed; a `when` subject or nullable-capture subject is evaluated once.
+- Branch locals and captured names are visible only in their own branch.
+- An enclosing expected type applies to every branch, including anonymous initializers and empty arrays. Otherwise compatible branch types determine the result: `int` with `float` produces `float`, and a value with `null` produces its nullable type. Numeric promotion also works for nullable numeric results. Incompatible types are errors; numeric promotion does not extend to array items.
+- Used as statements, `if` and `when` keep their existing behavior. Statement `if` does not require `else`.
 
 ### Loops
 
@@ -484,7 +578,38 @@ for i < 5 do
 end
 ```
 
-`break` leaves the innermost loop, and `continue` jumps to its next iteration. Both are errors outside a loop.
+Arrays can be traversed with a capture loop. The first capture is the item; the optional second capture is its zero-based `int` index:
+
+```nim
+let items = [10, 20, 30]
+for items: item, index do
+    echo(item, index)
+end
+
+for items: item do
+    echo(item)
+end
+```
+
+Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors; use a mutable source array and its index to update elements explicitly.
+
+The source can be any expression returning a non-nullable array. Unwrap nullable arrays first. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
+
+A range keeps its lower and upper bounds separate. Ranges are supported directly in capture loops and `when` cases; they cannot be stored in variables, passed as arguments or returned as values yet.
+
+Integer ranges use the same capture syntax, without allocating an array:
+
+```nim
+for 1..5: value, index do
+    echo(value, index)
+end
+```
+
+`1..5` includes both endpoints, producing `1`, `2`, `3`, `4`, `5`. The optional index counts from zero. Bounds can be integer expressions, evaluated once from left to right before the loop starts. Arithmetic binds more tightly than `..`, so `start + 1..stop * 2` uses those arithmetic results as its bounds.
+
+Iteration advances by one. Equal endpoints produce one item; a start greater than the end produces no items. The loop stops at its upper bound without incrementing past it, including at the largest `int`. Float range iteration, descending steps and open-ended ranges are not supported.
+
+`break` leaves the innermost loop, and `continue` jumps to its next iteration. Both are errors outside a loop. In a capture loop, `continue` advances to the next item.
 
 ```nim
 let mut n = 0
@@ -587,9 +712,123 @@ assert(result == false)
 
 ### Scope
 
-A function can see its parameters, its own variables, other functions and types, and static fields. It **can't** see variables declared at the top level of the program (see [Known Limitations](#13-known-limitations)).
+A function can see its parameters, its own variables, other functions and types, and static fields. It **can't** see variables declared at the top level of the program (see [Known Limitations](#14-known-limitations)).
 
-## 11. Built-in Functions
+## 11. Error Handling
+
+A function that can fail says so in its return type. Errors are values: the caller has to handle them, and nothing is thrown or unwound.
+
+### Error sets
+
+An error set lists the errors a function can return. Errors have no payload.
+
+```nim
+error ParseError
+    Empty
+    BadDigit
+end
+```
+
+An error is written like an enum variant (`ParseError.Empty`). It can be stored in variables, fields, arrays and nullables (`?ParseError`), passed around, and compared with `==` and `!=`, also against errors from other sets. `echo` prints its number.
+
+### Functions that can fail
+
+`E!T` means "returns a `T`, or fails with an error from `E`". `return` with a `T` succeeds, `return` with an error fails.
+
+```nim
+func parse_digit(n: int) -> ParseError!int
+    if n < 0 then
+        return ParseError.BadDigit
+    end
+    return n
+end
+```
+
+`!T` lets the compiler work out the error set from the body: every error the function returns, and every error it passes on with `try`.
+
+```nim
+func double(n: int) -> !int
+    let digit = try parse_digit(n)
+    return digit * 2
+end
+```
+
+`E!void` and `!void` are allowed: the function can end without a `return`.
+
+`E!T` and `!T` only exist as return types. A call to a function that can fail must be handled right away with `try` or `catch`: `let x = parse_digit(1)` is a compile error.
+
+### try
+
+`try call` gives the value if the call succeeds. If it fails, the current function returns the same error.
+
+```nim
+func sum(a: int, b: int) -> ParseError!int
+    return try parse_digit(a) + try parse_digit(b)
+end
+```
+
+- The current function must be able to fail. With an explicit set (`ParseError!int`), every error the call can return must be in it.
+- At the top level, outside any function, a failing `try` stops the program: `error: unhandled error ParseError.BadDigit`.
+- `try` applies to the call right after it, including `.` and `[]` (`try a.b(c)`).
+
+### catch
+
+`call catch value` uses `value` when the call fails. It must have the call's success type.
+
+```nim
+let n = parse_digit(-1) catch 0
+let m = parse_digit(-1) catch parse_digit(2) catch 0
+```
+
+`call catch e then ... end` runs a block with the error bound to `e`. When the result is used (`let`, assignment, argument, `return`), the block must leave with `return`, `break` or `continue`. Used as a statement, or for an `E!void` call, it can just end.
+
+```nim
+func describe(n: int) -> int
+    let digit = parse_digit(n) catch e then
+        return -1
+    end
+    return digit
+end
+
+parse_digit(-1) catch e then
+    echo(e)
+end
+```
+
+`catch` has the lowest precedence of all operators: `parse_digit(1) catch 0 == 0` is `parse_digit(1) catch (0 == 0)`. Use parentheses: `(parse_digit(1) catch 0) == 0`.
+
+### Branching on errors
+
+Catch the error, then use [`when`](#when) on it. Cases name the errors, and without an `else` every error the call can return must be listed:
+
+```nim
+let digit = parse_digit(n) catch e then
+    when e
+        ParseError.Empty then return 0 end
+        ParseError.BadDigit then return -1 end
+    end
+end
+```
+
+This also works when the error set is inferred (`!T`): the cases must then cover every error the function can return.
+
+A caught error can also be passed to a function, stored in a field or assigned to a variable typed with an error set. This works when every error it can hold is in that set, for inferred sets too:
+
+```nim
+func report(e: ParseError) -> void
+    echo(e)
+end
+
+double(-1) catch e then
+    report(e)
+end
+```
+
+### Runtime errors
+
+Errors are for failures the program expects. A failed `assert` or an index out of bounds still stops the program and can't be caught.
+
+## 12. Built-in Functions
 
 `T` means any type.
 
@@ -602,7 +841,7 @@ A function can see its parameters, its own variables, other functions and types,
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
 
-## 12. Errors
+## 13. Errors
 
 Compile errors point to the line and column of the problem:
 
@@ -612,15 +851,14 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds) stop the program.
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
 
-## 13. Known Limitations
+## 14. Known Limitations
 
-These are known gaps in v0.11. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.12. Most are planned in the [roadmap](roadmap.md).
 
 - **Top-level variables inside functions**: reading a top-level `let` from a function fails with `UndefinedVariable`. Pass it as a parameter, or use a static field.
 - **Strings**: no escape sequences, concatenation or interpolation, and `==` compares identity (v0.18).
-- **Nullable arrays**: `?[]int` can't hold `null` yet.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
 - **Union size**: a union can have at most 256 variants.

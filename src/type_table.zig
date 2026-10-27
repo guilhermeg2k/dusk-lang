@@ -15,6 +15,7 @@ pub const TypeTable = struct {
     nullableTypeIdByTypeId: std.AutoHashMap(TypeId, TypeId),
     typeIdByNullableTypeId: std.AutoHashMap(TypeId, TypeId),
     anom_structs: std.StringHashMap(TypeId),
+    error_names: std.ArrayList([]const u8),
 
     pub fn init(alloc: std.mem.Allocator) !Self {
         var primitives = std.AutoHashMap(PrimitiveType, TypeId).init(alloc);
@@ -46,6 +47,7 @@ pub const TypeTable = struct {
             .nullableTypeIdByTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .typeIdByNullableTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .anom_structs = std.StringHashMap(TypeId).init(alloc),
+            .error_names = .empty,
         };
     }
 
@@ -76,7 +78,16 @@ pub const TypeTable = struct {
             }
         }
 
+        if (self.isErrorSet(from) and self.isErrorSet(to)) {
+            const from_set = type_from.kind.@"enum".error_set.?;
+            const to_set = type_to.kind.@"enum".error_set.?;
+            if (from_set.is_inferred or to_set.is_inferred) return false;
+            if (type_from.is_nullable and !type_to.is_nullable) return false;
+            return from_set.isSubsetOf(to_set);
+        }
+
         if (type_from.kind == .array and type_to.kind == .array) {
+            if (type_from.is_nullable and !type_to.is_nullable) return false;
             return self.canCoerce(type_from.kind.array, type_to.kind.array);
         }
 
@@ -123,7 +134,18 @@ pub const TypeTable = struct {
                 return std.fmt.allocPrint(allocator, "{s}struct {s}", .{ prefix, s.identifier });
             },
             .@"enum" => |e| {
+                if (e.error_set) |set| {
+                    if (set.is_inferred) {
+                        return std.fmt.allocPrint(allocator, "{s}error set of '{s}'", .{ prefix, e.identifier });
+                    }
+                    return std.fmt.allocPrint(allocator, "{s}error {s}", .{ prefix, e.identifier });
+                }
                 return std.fmt.allocPrint(allocator, "{s}enum {s}", .{ prefix, e.identifier });
+            },
+            .error_union => |eu| {
+                const set = self.getTypePtrById(eu.error_set).kind.@"enum";
+                const set_name = if (set.error_set.?.is_inferred) "" else set.identifier;
+                return std.fmt.allocPrint(allocator, "{s}!{s}", .{ set_name, try self.name(eu.payload, allocator) });
             },
             .@"union" => |u| {
                 return std.fmt.allocPrint(allocator, "{s}union {s}", .{ prefix, u.identifier });
@@ -132,6 +154,23 @@ pub const TypeTable = struct {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
             },
         };
+    }
+
+    pub fn isErrorSet(self: *Self, id: TypeId) bool {
+        const t = self.getTypePtrById(id);
+        return t.kind == .@"enum" and t.kind.@"enum".error_set != null;
+    }
+
+    pub fn isErrorUnion(self: *Self, id: TypeId) bool {
+        return self.getTypePtrById(id).kind == .error_union;
+    }
+
+    pub fn addErrorName(self: *Self, set_name: []const u8, variant: []const u8) !i64 {
+        if (self.error_names.items.len == 0) {
+            try self.error_names.append(self.allocator, "");
+        }
+        try self.error_names.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ set_name, variant }));
+        return @intCast(self.error_names.items.len - 1);
     }
 
     pub fn addType(self: *Self, typ: Type) !TypeId {
@@ -260,6 +299,28 @@ pub const Enum = struct {
     variants_in_order: []const []const u8 = &.{},
     static_fields: std.StringHashMap(TypedIdentifier),
     methods: std.StringHashMap(TypeId),
+    error_set: ?*ErrorSet = null,
+};
+
+pub const ErrorSet = struct {
+    is_inferred: bool,
+    ids: std.AutoArrayHashMapUnmanaged(i64, void) = .empty,
+
+    pub fn has(self: *const ErrorSet, id: i64) bool {
+        return self.ids.contains(id);
+    }
+
+    pub fn isSubsetOf(self: *const ErrorSet, other: *const ErrorSet) bool {
+        for (self.ids.keys()) |id| {
+            if (!other.has(id)) return false;
+        }
+        return true;
+    }
+};
+
+pub const ErrorUnion = struct {
+    error_set: TypeId,
+    payload: TypeId,
 };
 
 pub const Union = struct {
@@ -307,6 +368,7 @@ pub const Type = struct {
         @"struct": Struct,
         @"enum": Enum,
         @"union": Union,
+        error_union: ErrorUnion,
     },
 
     is_nullable: bool,

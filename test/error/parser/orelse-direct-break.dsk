@@ -1,0 +1,4 @@
+for true do
+    let optional: ?int = null
+    let selected = optional orelse break
+end

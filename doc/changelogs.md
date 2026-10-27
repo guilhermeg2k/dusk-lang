@@ -1,5 +1,33 @@
 # Changelogs
 
+## v0.12 - Kanade
+
+- Nullable fallback: `value orelse fallback` evaluates its left operand once, unwraps it when non-null and evaluates the fallback only for null. Nullable fallbacks support chains; compatible result types use conditional-expression inference and numeric promotion
+- `orelse` is now a reserved keyword. It groups right-to-left at the same precedence as `catch`, and supports contextual anonymous initializers and empty arrays
+
+- Inclusive integer range loops: `for start..stop: value, index do ... end`, with optional indexes and ignored captures. Bounds are evaluated once, iteration allocates no array, and reversed bounds produce no items
+- Integer `when` cases accept literal ranges and mixtures of ranges and individual literals. Float and nullable-float subjects are supported with range cases only; bounds are finite numeric literals
+- Numeric `when` subjects require `else`; overlapping cases, shared endpoints and reversed case ranges are compile errors. Range loops stop safely at the largest integer
+
+- Array capture loops: `for items: item, index do ... end`, with an optional zero-based index and `_` to ignore captures. Captures are immutable and scoped to the body
+- Capture loops evaluate their array and length once, read each item as they reach it, and exclude appended items. `continue` advances to the next item
+
+- `if`, nullable-capture `if` and `when` now work as expressions. Branches produce their final expression, with statements allowed before it; value-producing `if` requires `else`
+- Conditional expressions infer compatible result types, promote mixed numeric results, support nullable results and propagate expected types into branch values, anonymous initializers and empty arrays
+- Expression branches can `return`, `break` or `continue` without supplying a value. Existing statement forms retain their behavior
+- Nullable captures evaluate their subject once, unwrap only in the matching branch and keep captured names out of `else`; union captures also preserve outer variables with the same name
+
+- Error handling: error sets (`error ParseError ... end`), functions that can fail (`-> E!T`, or `-> !T` to infer the error set from the body), `try` to pass an error on, and `catch` with a fallback value (`f() catch 0`) or a block (`f() catch e then ... end`)
+- A call to a function that can fail must be handled with `try` or `catch`. Sema checks that every error a function can return is in its declared set, also through chains of inferred sets and recursion
+- Error values can be stored, passed to functions, compared with `==`/`!=` and matched with `when` (exhaustive, also for inferred sets). An error from an inferred set can go wherever a declared set is expected, as long as every error it can hold is in that set
+- A failing `try` at the top level stops the program with `unhandled error <Set.Error>`
+- `error`, `try` and `catch` are now keywords, so they can't be used as names (e.g. a union variant called `error`)
+- Fixed compiler crash when a function calls another function defined after it (mutual recursion)
+- Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`
+- Fixed struct fields with both a type and a default (`retries: ?int = null`) taking the default's type instead of the declared one
+- Fixed array literals ignoring the declared item type (`let a: []?int = [null, 1]`)
+- Language reference: new Error Handling section
+
 ## v0.11 - Power
 
 - First version developed with AI assistance (see [AI Usage](ai-disclaimer.md))

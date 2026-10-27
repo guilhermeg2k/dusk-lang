@@ -1,0 +1,107 @@
+struct Counter
+    let mut calls = 0
+end
+
+func tick(value: int) -> int
+    Counter.calls += 1
+    return value
+end
+
+let selected = if tick(1) == 1 then tick(2) elif tick(3) == 3 then tick(4) else tick(5) end
+assert(selected == 2)
+assert(Counter.calls == 2)
+
+let matched = when tick(2)
+    1 then tick(8) end
+    2 then tick(9) end
+    else then tick(10) end
+end
+
+assert(matched == 9)
+assert(Counter.calls == 4)
+
+func early_exit(is_early: bool) -> int
+    let value = if is_early then return 7 else 3 end
+    return value + 1
+end
+
+assert(early_exit(true) == 7)
+assert(early_exit(false) == 4)
+
+func all_return(is_first: bool) -> int
+    let unreachable_value = if is_first then return 1 else return 2 end
+end
+
+assert(all_return(true) == 1)
+assert(all_return(false) == 2)
+
+func case_exit(number: int) -> int
+    let value = when number
+        0 then return 10 end
+        else then 20 end
+    end
+
+    return value
+end
+
+assert(case_exit(0) == 10)
+assert(case_exit(1) == 20)
+
+let mut index = 0
+let mut total = 0
+
+for true do
+    index += 1
+
+    let value = if index == 2 then continue elif index == 5 then break else index end
+    total += value
+end
+
+assert(total == 8)
+
+let mut case_index = 0
+let mut case_total = 0
+
+for true do
+    case_index += 1
+
+    let value = when case_index
+        2 then continue end
+        5 then break end
+        else then case_index end
+    end
+
+    case_total += value
+end
+
+assert(case_total == 8)
+
+func nested_return(is_first: bool) -> int
+    let value = 1 + if is_first then return 11 else return 12 end
+end
+
+assert(nested_return(true) == 11)
+assert(nested_return(false) == 12)
+
+func identity(number: int) -> return number
+
+func argument_return(is_first: bool) -> int
+    identity(if is_first then return 13 else return 14 end)
+end
+
+assert(argument_return(true) == 13)
+assert(argument_return(false) == 14)
+
+func prefix_exit(is_first: bool) -> int
+    let value = if true then
+        if is_first then return 15 else return 16 end
+        let unreachable_local = 1
+    else
+        2
+    end
+
+    return value
+end
+
+assert(prefix_exit(true) == 15)
+assert(prefix_exit(false) == 16)

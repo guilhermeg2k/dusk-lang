@@ -1,0 +1,111 @@
+let mut total = 0
+
+for [1, 2, 3, 4]: item do
+    if item == 2 then
+        continue
+    end
+
+    if item == 4 then
+        break
+    end
+
+    total += item
+end
+
+assert(total == 4)
+let mut visits = 0
+
+for [1, 2, 3]: outer do
+    for [1, 2, 3]: inner do
+        if inner == 2 then
+            continue
+        end
+
+        if outer == 3 then
+            break
+        end
+
+        visits += 1
+    end
+end
+
+assert(visits == 4)
+let mut counter = 0
+
+for counter < 3 do
+    counter += 1
+
+    for [1, 2]: item do
+        if item == 1 then
+            continue
+        end
+
+        visits += 1
+    end
+
+    continue
+end
+
+assert(visits == 7)
+
+for [1, 2, 3]: item do
+    let value = if item == 2 then
+        continue
+    else
+        item
+    end
+
+    total += value
+end
+
+assert(total == 8)
+
+for [1, 2, 3]: item do
+    let value = when item
+        2 then
+            break
+        end
+
+        else then
+            item
+        end
+    end
+
+    total += value
+end
+
+assert(total == 9)
+
+func find() -> int
+    for [1, 2, 3]: item do
+        if item == 2 then
+            return item
+        end
+    end
+
+    return 0
+end
+
+assert(find() == 2)
+
+let mut mixed_total = 0
+
+for [1, 2, 3]: outer do
+    if outer == 1 then
+        continue
+    end
+
+    let mut inner = 0
+
+    for inner < 3 do
+        inner += 1
+
+        if inner == 2 then
+            continue
+        end
+
+        mixed_total += outer
+    end
+end
+
+assert(mixed_total == 10)

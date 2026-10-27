@@ -22,6 +22,10 @@ pub const SemaAnalyzer = struct {
     scope: Scope,
     err_dispatcher: err.ErrorDispatcher,
 
+    fn_depth: usize = 0,
+    error_edges: std.ArrayList(ErrorEdge) = .empty,
+    pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
+
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
 
@@ -47,16 +51,183 @@ pub const SemaAnalyzer = struct {
 
         try self.hoistDeclarations(root);
 
+        const instructions = (try self.visitBlock(root)).instructions;
+        try self.resolveErrorEdges();
+        try self.checkPendingWhens();
+
         return .{
-            .instructions = (try self.visitBlock(root)).instructions,
+            .instructions = instructions,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
+            .error_names = self.type_table.error_names.items,
         };
+    }
+
+    fn resolveErrorEdges(self: *Self) !void {
+        var is_changed = true;
+        while (is_changed) {
+            is_changed = false;
+            for (self.error_edges.items) |edge| {
+                const to_set = self.errorSetOf(edge.to);
+                if (!to_set.is_inferred) continue;
+                for (self.errorSetOf(edge.from).ids.keys()) |id| {
+                    if (to_set.has(id)) continue;
+                    try to_set.ids.put(self.allocator, id, {});
+                    is_changed = true;
+                }
+            }
+        }
+
+        for (self.error_edges.items) |edge| {
+            const to_set = self.errorSetOf(edge.to);
+            if (to_set.is_inferred) continue;
+            for (self.errorSetOf(edge.from).ids.keys()) |id| {
+                if (to_set.has(id)) continue;
+                return self.err_dispatcher.errorNotInSet(
+                    self.type_table.error_names.items[@intCast(id)],
+                    try self.type_table.name(edge.to, self.allocator),
+                    edge.loc,
+                );
+            }
+        }
+    }
+
+    fn checkPendingWhens(self: *Self) !void {
+        for (self.pending_when_checks.items) |check| {
+            const set = self.errorSetOf(check.set_type_id);
+            var seen: std.AutoHashMap(i64, void) = .init(self.allocator);
+
+            for (check.when_stmt.prongs, 0..) |prong, prong_idx| {
+                for (check.values[prong_idx], 0..) |value, i| {
+                    const id = value.data.i_int;
+                    if (!set.has(id)) {
+                        return self.err_dispatcher.errorNotInSet(
+                            self.type_table.error_names.items[@intCast(id)],
+                            try self.type_table.name(check.set_type_id, self.allocator),
+                            prong.pattern.values[i].loc,
+                        );
+                    }
+                    try seen.put(id, {});
+                }
+            }
+
+            var missing: std.ArrayList(u8) = .empty;
+            for (set.ids.keys()) |id| {
+                if (!seen.contains(id)) try appendMissing(self.allocator, &missing, self.type_table.error_names.items[@intCast(id)]);
+            }
+            if (check.is_null_missing) try appendMissing(self.allocator, &missing, "null");
+
+            if (check.when_stmt.else_block == null and missing.items.len > 0) {
+                return self.err_dispatcher.whenNotExhaustive(missing.items, check.when_loc);
+            }
+            if (check.when_stmt.else_block != null and missing.items.len == 0) {
+                return self.err_dispatcher.whenUselessElse(check.when_stmt.else_loc.?);
+            }
+        }
+    }
+
+    fn errorSetOf(self: *Self, set_type_id: tt.TypeId) *tt.ErrorSet {
+        return self.type_table.getTypePtrById(set_type_id).kind.@"enum".error_set.?;
+    }
+
+    fn createErrorSetSymbol(self: *Self, stmt: *const ast.ErrorSetStmt) !Symbol {
+        var variants: std.StringHashMap(i64) = .init(self.allocator);
+        const variants_in_order = try self.allocator.alloc([]const u8, stmt.variants.len);
+        const error_set = try self.allocator.create(tt.ErrorSet);
+        error_set.* = .{ .is_inferred = false };
+
+        for (stmt.variants, 0..) |variant, i| {
+            if (variants.contains(variant.identifier)) {
+                return self.err_dispatcher.alreadyDefined(variant.identifier, variant.loc);
+            }
+            const id = try self.type_table.addErrorName(stmt.identifier, variant.identifier);
+            try variants.put(variant.identifier, id);
+            try error_set.ids.put(self.allocator, id, {});
+            variants_in_order[i] = variant.identifier;
+        }
+
+        const blueprint_type_id = try self.type_table.addType(.{
+            .kind = .{
+                .@"enum" = .{
+                    .identifier = stmt.identifier,
+                    .variants = variants,
+                    .variants_in_order = variants_in_order,
+                    .static_fields = .init(self.allocator),
+                    .methods = .init(self.allocator),
+                    .error_set = error_set,
+                },
+            },
+            .is_nullable = false,
+        });
+
+        return Symbol{
+            .identifier = stmt.identifier,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = blueprint_type_id } },
+        };
+    }
+
+    fn createInferredErrorSet(self: *Self, fn_name: []const u8) !tt.TypeId {
+        const error_set = try self.allocator.create(tt.ErrorSet);
+        error_set.* = .{ .is_inferred = true };
+
+        return self.type_table.addType(.{
+            .kind = .{
+                .@"enum" = .{
+                    .identifier = fn_name,
+                    .variants = .init(self.allocator),
+                    .static_fields = .init(self.allocator),
+                    .methods = .init(self.allocator),
+                    .error_set = error_set,
+                },
+            },
+            .is_nullable = false,
+        });
+    }
+
+    fn resolveFnErrorSet(self: *Self, fn_error_set: ast.FnErrorSet, fn_name: []const u8) !tt.TypeId {
+        switch (fn_error_set) {
+            .inferred => return self.createInferredErrorSet(fn_name),
+            .named => |named| {
+                const symbol = self.scope.symbol_table.getOrError(named.identifier) catch {
+                    return self.err_dispatcher.typeNotDefined(named.identifier, named.loc);
+                };
+                if (symbol.kind != .defined_type or !self.type_table.isErrorSet(symbol.kind.defined_type.blueprint_type_id)) {
+                    return self.err_dispatcher.notAnErrorSet(named.identifier, named.loc);
+                }
+                return symbol.kind.defined_type.blueprint_type_id;
+            },
+        }
+    }
+
+    fn canCoerce(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !bool {
+        if (self.type_table.canCoerce(from, to)) return true;
+
+        const from_is_nullable = self.type_table.getTypePtrById(from).is_nullable;
+        const to_is_nullable = self.type_table.getTypePtrById(to).is_nullable;
+        if (from_is_nullable and !to_is_nullable) return false;
+
+        const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
+        const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
+        if (!self.type_table.isErrorSet(from_base) or !self.type_table.isErrorSet(to_base)) return false;
+        if (!self.errorSetOf(from_base).is_inferred or self.errorSetOf(to_base).is_inferred) return false;
+
+        try self.addErrorEdge(from_base, to_base, loc);
+        return true;
+    }
+
+    fn addErrorEdge(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !void {
+        try self.error_edges.append(self.allocator, .{ .from = from, .to = to, .loc = loc });
     }
 
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
         for (root.statements.items) |stmt| {
             switch (stmt.data) {
+                .error_set => |es| {
+                    const symbol = try self.createErrorSetSymbol(&es);
+                    self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(es.identifier, stmt.loc);
+                },
                 .func => |fs| {
                     const symbol = try self.createEmptyFuncSymbol(fs.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(fs.identifier, stmt.loc);
@@ -397,22 +568,19 @@ pub const SemaAnalyzer = struct {
         }
 
         if (field.default_value) |initial_value| {
-            const value = try self.evalExp(initial_value);
+            const value = try self.evalExpExpecting(initial_value, if (field.type != null) field_type_id else null);
             const value_type_id = value.type_id;
             field_default_value = value;
 
-            if (field.type) |_type| {
-                if (!self.type_table.canCoerce(value_type_id, field_type_id)) {
-                    const field_type_ptr = self.type_table.getTypePtrById(field_type_id);
-                    return self.err_dispatcher.invalidType(
-                        try _type.value(self.allocator),
-                        @tagName(field_type_ptr.kind),
-                        field.default_value.?.loc,
-                    );
-                }
+            if (field.type == null) {
+                field_type_id = value_type_id;
+            } else if (!try self.canCoerce(value_type_id, field_type_id, field.default_value.?.loc)) {
+                return self.err_dispatcher.invalidType(
+                    try field.type.?.value(self.allocator),
+                    try self.type_table.name(value_type_id, self.allocator),
+                    field.default_value.?.loc,
+                );
             }
-
-            field_type_id = value.type_id;
         }
 
         return tt.TypedIdentifier{
@@ -429,6 +597,8 @@ pub const SemaAnalyzer = struct {
 
         //create a temporary scope just for inline return type inference
         try self.scope.enter(self.type_table.getPrimitive(.void));
+        self.fn_depth += 1;
+        defer self.fn_depth -= 1;
 
         for (fn_def.params) |param| {
             var param_default_value: ?*ir.Value = null;
@@ -444,10 +614,10 @@ pub const SemaAnalyzer = struct {
                 };
 
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExp(default_value);
+                    const value = try self.evalExpExpecting(default_value, param_type_id);
                     param_default_value = value;
                     const value_type_id = value.type_id;
-                    if (!self.type_table.canCoerce(value_type_id, param_type_id)) {
+                    if (!try self.canCoerce(value_type_id, param_type_id, param.default_value.?.loc)) {
                         return self.err_dispatcher.invalidType(
                             try self.type_table.name(param_type_id, self.allocator),
                             try self.type_table.name(value_type_id, self.allocator),
@@ -495,6 +665,15 @@ pub const SemaAnalyzer = struct {
             return_type_id = self.type_table.getPrimitive(.void);
         }
 
+        if (fn_def.error_set) |fn_error_set| {
+            const fn_name = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.identifier;
+            const error_set_type_id = try self.resolveFnErrorSet(fn_error_set, fn_name);
+            return_type_id = try self.type_table.addType(.{
+                .kind = .{ .error_union = .{ .error_set = error_set_type_id, .payload = return_type_id } },
+                .is_nullable = false,
+            });
+        }
+
         //restore main scope
         self.scope.exit(self.type_table.getPrimitive(.void));
 
@@ -502,20 +681,30 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.params = try params_metadata.toOwnedSlice(self.allocator);
     }
 
-    pub fn visitBlock(self: *Self, block: *const ast.Block) !ir.Block {
+    pub fn visitBlock(self: *Self, block: *const ast.Block) Errors!ir.Block {
+        return self.visitBranchBlock(block, null);
+    }
+
+    fn visitBranchBlock(self: *Self, block: *const ast.Block, result: ?*BranchResult) Errors!ir.Block {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type_id);
         defer self.scope.exit(self.scope.return_type_id);
 
         var return_type: tt.TypeId = self.type_table.getPrimitive(.void);
 
-        for (block.statements.items) |stmt| {
+        for (block.statements.items, 0..) |stmt, statement_index| {
+            const is_value_tail = result != null and statement_index + 1 == block.statements.items.len;
+            if (is_value_tail and stmt.data == .expression) {
+                try instructions.append(self.allocator, try self.visitBranchTail(&stmt, result.?));
+                break;
+            }
             const instruction = switch (stmt.data) {
                 .let => try self.visitLetStmt(&stmt),
                 .func => try self.visitFuncStmt(&stmt),
                 .@"struct" => try self.visitStructStmt(&stmt),
                 .@"enum" => try self.visitEnumStmt(&stmt),
                 .@"union" => try self.visitUnionStmt(&stmt),
+                .error_set => null,
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"if" => try self.visitIfStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
@@ -523,8 +712,13 @@ pub const SemaAnalyzer = struct {
                 .@"break" => ir.Instruction{ .break_stmt = {} },
                 .@"continue" => ir.Instruction{ .continue_stmt = {} },
                 .@"return" => try self.visitReturnStmt(&stmt),
-                .if_capture, .when => null,
+                .if_capture, .when, .for_capture => null,
             };
+
+            if (stmt.data == .for_capture) {
+                try instructions.appendSlice(self.allocator, try self.visitForCaptureStmt(&stmt));
+                continue;
+            }
 
             if (stmt.data == .if_capture) {
                 const if_capture_insts = try self.visitIfCaptureStmt(&stmt);
@@ -541,6 +735,15 @@ pub const SemaAnalyzer = struct {
             if (instruction) |i| {
                 try instructions.append(self.allocator, i);
             }
+            if (result != null and isBlockLeaving(instructions.items)) break;
+        }
+
+        if (result != null) {
+            const has_value_tail = block.statements.items.len > 0 and block.statements.items[block.statements.items.len - 1].data == .expression;
+            if (!has_value_tail and !isBlockLeaving(instructions.items)) {
+                const loc = if (block.statements.items.len > 0) block.statements.items[block.statements.items.len - 1].loc else result.?.loc;
+                return self.err_dispatcher.invalidExpression("a final expression or an early exit", "a branch without a value", loc);
+            }
         }
 
         if (areAllPathsReturning(instructions.items)) {
@@ -553,11 +756,52 @@ pub const SemaAnalyzer = struct {
         };
     }
 
+    fn visitBranchTail(self: *Self, statement: *const ast.StatementNode, result: *BranchResult) Errors!ir.Instruction {
+        const value = try self.evalExpWithContext(statement.data.expression, result.expected_type_id, result.context_type_id);
+        return self.storeBranchValue(value, result, statement.loc);
+    }
+
+    fn storeBranchValue(self: *Self, value: *ir.Value, result: *BranchResult, loc: err.Loc) Errors!ir.Instruction {
+        if (isValueLeaving(value)) return .{ .expression_stmt = .{ .value = value } };
+        if (value.type_id == self.type_table.getPrimitive(.void)) {
+            return self.err_dispatcher.invalidExpression("a branch value", "void", loc);
+        }
+
+        const stored_value = try ir.Value.init(self.allocator, value.*);
+        try result.values.append(self.allocator, .{ .value = stored_value, .loc = loc });
+        return .{ .store_var = .{
+            .uid = result.uid,
+            .identifier = "branch result",
+            .type_id = stored_value.type_id,
+            .value = stored_value,
+        } };
+    }
+
     fn areAllPathsReturning(instructions: []const ir.Instruction) bool {
         for (instructions) |inst| {
             switch (inst) {
-                .return_stmt => return true,
+                .return_stmt, .return_error => return true,
+                .store_var => |store| {
+                    if (isValueReturning(store.value)) return true;
+                },
+                .expression_stmt => |expression| {
+                    if (isValueReturning(expression.value)) return true;
+                },
+                .update_indexed => |update| {
+                    if (isValueReturning(update.target) or isValueReturning(update.value)) return true;
+                },
+                .update_null_box => |update| {
+                    if (update.value) |value| {
+                        if (isValueReturning(value)) return true;
+                    }
+                },
+                .loop => |loop| {
+                    if (loop.condition) |condition| {
+                        if (isValueReturning(condition)) return true;
+                    }
+                },
                 .branch_if => |branch| {
+                    if (isValueReturning(branch.condition)) return true;
                     if (branch.else_block.len > 0 and areAllPathsReturning(branch.then_block) and areAllPathsReturning(branch.else_block)) return true;
                 },
                 else => {},
@@ -566,15 +810,190 @@ pub const SemaAnalyzer = struct {
         return false;
     }
 
-    fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
+    fn isValueReturning(value: *const ir.Value) bool {
+        return doesValueExit(value, true);
+    }
+
+    fn isValueLeaving(value: *const ir.Value) bool {
+        return doesValueExit(value, false);
+    }
+
+    fn doesValueExit(value: *const ir.Value, needs_return: bool) bool {
+        return switch (value.data) {
+            .block_value => |block| if (needs_return) areAllPathsReturning(block.instructions) else !block.can_complete,
+            .int_to_float, .array_length => |operand| doesValueExit(operand, needs_return),
+            .binary_op => |binary| doesValueExit(binary.left, needs_return) or doesValueExit(binary.right, needs_return),
+            .unary_op => |unary| doesValueExit(unary.right, needs_return),
+            .null_box_init => |box| if (box.value) |operand| doesValueExit(operand, needs_return) else false,
+            .fn_call => |call| doAnyValuesExit(call.args, needs_return),
+            .struct_init => |initialization| doAnyValuesExit(initialization.values, needs_return),
+            .i_array => |array| doAnyValuesExit(array.values, needs_return),
+            .union_init => |initialization| if (initialization.value) |operand| doesValueExit(operand, needs_return) else false,
+            .indexed => |indexed| doesValueExit(indexed.target, needs_return) or doesValueExit(indexed.index, needs_return),
+            .union_tag, .union_payload => |operand| doesValueExit(operand, needs_return),
+            .try_call => |call| doesValueExit(call.call, needs_return),
+            .catch_call => |call| doesValueExit(call.call, needs_return),
+            else => false,
+        };
+    }
+
+    fn doAnyValuesExit(values: []const *ir.Value, needs_return: bool) bool {
+        for (values) |value| {
+            if (doesValueExit(value, needs_return)) return true;
+        }
+        return false;
+    }
+
+    fn isBlockLeaving(instructions: []const ir.Instruction) bool {
+        for (instructions) |inst| {
+            switch (inst) {
+                .return_stmt, .return_error, .break_stmt, .continue_stmt => return true,
+                .store_var => |store| {
+                    if (isValueLeaving(store.value)) return true;
+                },
+                .expression_stmt => |expression| {
+                    if (isValueLeaving(expression.value)) return true;
+                },
+                .update_indexed => |update| {
+                    if (isValueLeaving(update.target) or isValueLeaving(update.value)) return true;
+                },
+                .update_null_box => |update| {
+                    if (update.value) |value| {
+                        if (isValueLeaving(value)) return true;
+                    }
+                },
+                .loop => |loop| {
+                    if (loop.condition) |condition| {
+                        if (isValueLeaving(condition)) return true;
+                    }
+                },
+                .branch_if => |branch| {
+                    if (isValueLeaving(branch.condition)) return true;
+                    if (branch.else_block.len > 0 and isBlockLeaving(branch.then_block) and isBlockLeaving(branch.else_block)) return true;
+                },
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    fn visitExpressionStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
         const expression_stmt = stmt.data.expression;
 
-        if (expression_stmt.data != .fn_call) {
-            return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc);
-        }
+        const value = switch (expression_stmt.data) {
+            .if_exp, .if_capture_exp, .when_exp => try self.evalConditional(expression_stmt, null, false),
+            .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
+            .try_exp => try self.evalTry(expression_stmt),
+            .catch_exp => try self.evalCatch(expression_stmt, true),
+            else => return self.err_dispatcher.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc),
+        };
 
         return ir.Instruction{
-            .expression_stmt = .{ .value = try self.evalFnCall(expression_stmt) },
+            .expression_stmt = .{ .value = value },
+        };
+    }
+
+    fn evalFailingCall(self: *Self, exp: *const ast.ExpNode, keyword: []const u8) Errors!*ir.Value {
+        if (exp.data != .fn_call) {
+            return self.err_dispatcher.notAFailingCall(keyword, exp.loc);
+        }
+
+        const call = try self.evalFnCall(exp);
+        if (!self.type_table.isErrorUnion(call.type_id)) {
+            return self.err_dispatcher.notAFailingCall(keyword, exp.loc);
+        }
+
+        return call;
+    }
+
+    fn evalTry(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
+        const call = try self.evalFailingCall(exp.data.try_exp.operand, "try");
+        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
+        const is_top_level = self.fn_depth == 0;
+
+        if (!is_top_level) {
+            if (!self.type_table.isErrorUnion(self.scope.return_type_id)) {
+                return self.err_dispatcher.tryOutsideFailingFunction(exp.loc);
+            }
+            const current_set = self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union.error_set;
+            try self.addErrorEdge(error_union.error_set, current_set, exp.loc);
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .try_call = .{ .call = call, .is_top_level = is_top_level } },
+            .type_id = error_union.payload,
+        });
+    }
+
+    fn evalCatch(self: *Self, exp: *const ast.ExpNode, is_statement: bool) Errors!*ir.Value {
+        const catch_exp = exp.data.catch_exp;
+        const call = try self.evalFailingCall(catch_exp.operand, "catch");
+        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
+        const payload = error_union.payload;
+
+        switch (catch_exp.fallback) {
+            .value => |fallback_exp| {
+                const fallback = try self.evalExpExpecting(fallback_exp, payload);
+                if (!try self.canCoerce(fallback.type_id, payload, fallback_exp.loc)) {
+                    return self.err_dispatcher.invalidType(
+                        try self.type_table.name(payload, self.allocator),
+                        try self.type_table.name(fallback.type_id, self.allocator),
+                        fallback_exp.loc,
+                    );
+                }
+
+                const boxed_fallback = if (self.needsNullBox(payload, fallback.type_id))
+                    try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{ .value = fallback } },
+                        .type_id = fallback.type_id,
+                    })
+                else
+                    fallback;
+
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .catch_call = .{ .call = call, .fallback = .{ .value = boxed_fallback } } },
+                    .type_id = payload,
+                });
+            },
+            .block => |block| {
+                const captured_symbol = Symbol{
+                    .uid = self.scope.genUid(),
+                    .identifier = block.capture,
+                    .type_id = error_union.error_set,
+                    .kind = .{ .variable = .{ .is_mut = false } },
+                };
+
+                try self.scope.enter(self.scope.return_type_id);
+                defer self.scope.exit(self.scope.return_type_id);
+                try self.scope.symbol_table.put(captured_symbol);
+
+                const body = try self.visitBlock(&block.body);
+                const is_value_used = !is_statement and payload != self.type_table.getPrimitive(.void);
+                if (is_value_used and !isBlockLeaving(body.instructions)) {
+                    return self.err_dispatcher.catchBlockMustLeave(exp.loc);
+                }
+
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .catch_call = .{
+                        .call = call,
+                        .fallback = .{ .block = .{
+                            .capture_uid = captured_symbol.uid,
+                            .capture_identifier = captured_symbol.identifier,
+                            .capture_type_id = captured_symbol.type_id,
+                            .instructions = body.instructions,
+                        } },
+                    } },
+                    .type_id = payload,
+                });
+            },
+        }
+    }
+
+    fn callName(exp: *const ast.ExpNode) []const u8 {
+        return switch (exp.data.fn_call.target.data) {
+            .identifier => |id| id,
+            .indexed => |indexed| if (indexed.index.data == .identifier) indexed.index.data.identifier else "function",
+            else => "function",
         };
     }
 
@@ -600,7 +1019,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        if (!self.type_table.canCoerce(expression_type_id, var_type_id)) {
+        if (!try self.canCoerce(expression_type_id, var_type_id, stmt.data.let.value.loc)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(var_type_id, self.allocator),
                 try self.type_table.name(expression_type_id, self.allocator),
@@ -667,8 +1086,9 @@ pub const SemaAnalyzer = struct {
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (enum_stmt.def.static_fields) |field| {
-            const raw_default: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else raw_default.?.type_id;
+            const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
+            const raw_default: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const field_type = annotated_type orelse raw_default.?.type_id;
 
             const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
                 if (self.needsNullBox(field_type, dv.type_id)) {
@@ -720,8 +1140,9 @@ pub const SemaAnalyzer = struct {
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (union_stmt.def.static_fields) |field| {
-            const raw_default: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else raw_default.?.type_id;
+            const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
+            const raw_default: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const field_type = annotated_type orelse raw_default.?.type_id;
 
             const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
                 if (self.needsNullBox(field_type, dv.type_id)) {
@@ -765,7 +1186,14 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
+        return self.lowerIf(stmt, null);
+    }
+
+    fn lowerIf(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors!ir.Instruction {
         const if_stmt = stmt.data.@"if";
+        if (result != null and if_stmt.else_block == null) {
+            return self.err_dispatcher.invalidExpression("else in an if expression", "if without else", stmt.loc);
+        }
 
         const condition_value = try self.evalExp(if_stmt.condition);
         const condition_value_type = condition_value.type_id;
@@ -776,86 +1204,80 @@ pub const SemaAnalyzer = struct {
 
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
-            .then_block = (try self.visitBlock(&if_stmt.then_block)).instructions,
-            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{},
+            .then_block = (try self.visitBranchBlock(&if_stmt.then_block, result)).instructions,
+            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).instructions else &.{},
         } };
     }
 
     fn visitIfCaptureStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
-        const if_capture_stmt = stmt.data.if_capture;
-        const exp_value = try self.evalExp(if_capture_stmt.exp);
-        const exp_type = exp_value.type_id;
+        return self.lowerIfCapture(stmt, null);
+    }
+
+    fn lowerIfCapture(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors![]ir.Instruction {
+        const capture = stmt.data.if_capture;
+        if (result != null and capture.else_block == null) {
+            return self.err_dispatcher.invalidExpression("else in an if expression", "if without else", stmt.loc);
+        }
+        const subject = try self.evalExp(capture.exp);
+        if (!self.type_table.getTypePtrById(subject.type_id).is_nullable) {
+            return self.err_dispatcher.invalidType("nullable", try self.type_table.name(subject.type_id, self.allocator), capture.exp.loc);
+        }
+        if (capture.identifier.is_mut and !self.isExpressionMutable(capture.exp)) {
+            return self.err_dispatcher.unwrappedValueCantBeMutable(capture.identifier.name, stmt.loc);
+        }
 
         var instructions: std.ArrayList(ir.Instruction) = .empty;
-
-        if (self.type_table.getTypePtrById(exp_type).is_nullable == false) {
-            return self.err_dispatcher.invalidType("nullable", try self.type_table.name(exp_type, self.allocator), if_capture_stmt.exp.loc);
-        }
-
-        if (if_capture_stmt.identifier.is_mut and !self.isExpressionMutable(if_capture_stmt.exp)) {
-            return self.err_dispatcher.unwrappedValueCantBeMutable(if_capture_stmt.identifier.name, stmt.loc);
-        }
-
-        const captured_type_id = self.type_table.typeIdByNullableTypeId.get(exp_type).?;
+        const subject_uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .store_var = .{
+            .uid = subject_uid,
+            .identifier = "capture subject",
+            .type_id = subject.type_id,
+            .value = subject,
+        } });
+        const subject_ref = try ir.Value.init(self.allocator, .{
+            .data = .{ .identifier = .{ .uid = subject_uid, .name = "capture subject" } },
+            .type_id = subject.type_id,
+        });
+        const captured_type_id = self.type_table.typeIdByNullableTypeId.get(subject.type_id).?;
         const captured_symbol = Symbol{
             .uid = self.scope.genUid(),
-            .identifier = if_capture_stmt.identifier.name,
+            .identifier = capture.identifier.name,
             .type_id = captured_type_id,
-            .kind = .{ .variable = .{ .is_mut = if_capture_stmt.identifier.is_mut } },
+            .kind = .{ .variable = .{ .is_mut = capture.identifier.is_mut } },
         };
-
-        try self.scope.symbol_table.put(captured_symbol);
-        defer _ = self.scope.symbol_table.remove(captured_symbol.identifier);
-
-        const then_block = (try self.visitBlock(&if_capture_stmt.body)).instructions;
-        const else_block = if (if_capture_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{};
-
+        var then_instructions: std.ArrayList(ir.Instruction) = .empty;
+        const captured_needs_unwrap = self.needsNullBox(subject.type_id, captured_type_id);
+        try then_instructions.append(self.allocator, if (captured_needs_unwrap)
+            .{ .unwrap_null_box = .{
+                .unwrapped = .{ .uid = captured_symbol.uid, .identifier = captured_symbol.identifier, .type_id = captured_type_id },
+                .null_box = subject_ref,
+            } }
+        else
+            .{ .store_var = .{ .uid = captured_symbol.uid, .identifier = captured_symbol.identifier, .type_id = captured_type_id, .value = subject_ref } });
+        {
+            try self.scope.enter(self.scope.return_type_id);
+            defer self.scope.exit(self.scope.return_type_id);
+            try self.scope.symbol_table.put(captured_symbol);
+            try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).instructions);
+        }
+        const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).instructions else &.{};
         const condition = try ir.Value.init(self.allocator, .{
-            .data = .{
-                .unary_op = .{
-                    .kind = .box_not_null,
-                    .right = exp_value,
-                },
-            },
+            .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
             .type_id = self.type_table.getPrimitive(.boolean),
         });
-
-        const check_not_null_inst = ir.Instruction{ .branch_if = .{
+        try instructions.append(self.allocator, .{ .branch_if = .{
             .condition = condition,
-            .then_block = then_block,
-            .else_block = else_block,
-        } };
-
-        const captured_base_kind = self.type_table.getTypePtrById(captured_type_id).kind;
-        const captured_needs_unwrap = switch (captured_base_kind) {
-            .int, .float, .boolean, .@"enum" => true,
-            else => false,
-        };
-
-        const store_captured_var_inst = if (captured_needs_unwrap)
-            ir.Instruction{
-                .unwrap_null_box = .{
-                    .unwrapped = .{
-                        .uid = captured_symbol.uid,
-                        .identifier = captured_symbol.identifier,
-                        .type_id = captured_type_id,
-                    },
-                    .null_box = exp_value,
-                },
-            }
-        else
-            ir.Instruction{ .store_var = .{
-                .uid = captured_symbol.uid,
-                .identifier = captured_symbol.identifier,
-                .value = exp_value,
-                .type_id = captured_type_id,
-            } };
-
-        try instructions.appendSlice(self.allocator, &.{ store_captured_var_inst, check_not_null_inst });
+            .then_block = try then_instructions.toOwnedSlice(self.allocator),
+            .else_block = else_instructions,
+        } });
         return instructions.toOwnedSlice(self.allocator);
     }
 
     fn visitWhenStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        return self.lowerWhen(stmt, null);
+    }
+
+    fn lowerWhen(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors![]ir.Instruction {
         const when_stmt = stmt.data.when;
         const subject = try self.resolveWhenSubject(when_stmt.subject);
         const prongs = try self.checkWhenProngs(&when_stmt, subject);
@@ -864,11 +1286,11 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const refs = try self.storeWhenSubject(&instructions, subject);
 
-        var chain: []const ir.Instruction = if (when_stmt.else_block) |else_blc| (try self.visitBlock(&else_blc)).instructions else &.{};
+        var chain: []const ir.Instruction = if (when_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).instructions else &.{};
 
         var null_insts: []const ir.Instruction = &.{};
         if (subject.is_nullable and !prongs.has_null_case) {
-            null_insts = (try self.visitBlock(&when_stmt.else_block.?)).instructions;
+            null_insts = (try self.visitBranchBlock(&when_stmt.else_block.?, result)).instructions;
         }
 
         const unconditional_prong_idx = if (when_stmt.else_block == null) findUnconditionalProng(when_stmt.prongs) else null;
@@ -880,11 +1302,11 @@ pub const SemaAnalyzer = struct {
 
             const lowered = switch (prong.pattern) {
                 .null_case => {
-                    null_insts = (try self.visitBlock(&prong.body)).instructions;
+                    null_insts = (try self.visitBranchBlock(&prong.body, result)).instructions;
                     continue;
                 },
-                .variant => try self.lowerWhenVariantProng(&prong, subject, refs.unwrapped),
-                .values => try self.lowerWhenValuesProng(&prong, prongs.values[prong_idx], refs.unwrapped),
+                .variant => try self.lowerWhenVariantProng(&prong, subject, refs.unwrapped, result),
+                .values => try self.lowerWhenValuesProng(&prong, prongs.values[prong_idx], prongs.ranges[prong_idx], refs.unwrapped, result),
             };
 
             chain = if (unconditional_prong_idx == prong_idx) lowered.body else try self.wrapBranch(lowered.condition, lowered.body, chain);
@@ -910,8 +1332,8 @@ pub const SemaAnalyzer = struct {
         const base_kind = self.type_table.getTypePtrById(base_type).kind;
 
         switch (base_kind) {
-            .int, .@"enum", .@"union" => {},
-            else => return self.err_dispatcher.invalidType("int, enum or union", type_name, exp.loc),
+            .int, .float, .@"enum", .@"union" => {},
+            else => return self.err_dispatcher.invalidType("int, float, enum or union", type_name, exp.loc),
         }
 
         return .{
@@ -926,6 +1348,7 @@ pub const SemaAnalyzer = struct {
     fn checkWhenProngs(self: *Self, when_stmt: *const ast.WhenStmt, subject: WhenSubject) Errors!WhenProngs {
         var prongs: WhenProngs = .{
             .values = try self.allocator.alloc([]*ir.Value, when_stmt.prongs.len),
+            .ranges = try self.allocator.alloc([]?WhenRange, when_stmt.prongs.len),
             .seen_values = .init(self.allocator),
             .seen_variants = .init(self.allocator),
             .has_null_case = false,
@@ -933,6 +1356,7 @@ pub const SemaAnalyzer = struct {
 
         for (when_stmt.prongs, 0..) |prong, prong_idx| {
             prongs.values[prong_idx] = &.{};
+            prongs.ranges[prong_idx] = &.{};
 
             switch (prong.pattern) {
                 .null_case => {
@@ -964,16 +1388,33 @@ pub const SemaAnalyzer = struct {
                     }
 
                     const values = try self.allocator.alloc(*ir.Value, exps.len);
+                    const ranges = try self.allocator.alloc(?WhenRange, exps.len);
+
                     for (exps, 0..) |exp, i| {
+                        if (exp.data == .range) {
+                            const range = try self.evalWhenRange(exp, subject);
+                            try self.checkWhenRangeOverlap(&prongs, range, exp.loc);
+                            values[i] = range.start;
+                            ranges[i] = range;
+                            continue;
+                        }
+
+                        if (subject.base_kind == .float) return self.err_dispatcher.whenInvalidCase("float cases must be ranges, like '0.0..1.0'", exp.loc);
                         const value = try self.evalWhenCaseValue(exp, subject.base_type);
                         const key = value.data.i_int;
+
                         if (prongs.seen_values.contains(key)) {
                             return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
                         }
+
+                        if (subject.base_kind == .int) try self.checkWhenRangeOverlap(&prongs, .{ .start = value, .end = value }, exp.loc);
                         try prongs.seen_values.put(key, {});
                         values[i] = value;
+                        ranges[i] = null;
                     }
+
                     prongs.values[prong_idx] = values;
+                    prongs.ranges[prong_idx] = ranges;
                 },
             }
         }
@@ -981,8 +1422,76 @@ pub const SemaAnalyzer = struct {
         return prongs;
     }
 
+    fn isNumericWhenSubject(subject: WhenSubject) bool {
+        return subject.base_kind == .int or subject.base_kind == .float;
+    }
+
+    fn evalWhenRangeBound(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject) Errors!*ir.Value {
+        if (subject.base_kind == .int) return self.evalWhenCaseValue(exp, subject.base_type);
+        const literal: ?f64 = switch (exp.data) {
+            .float_literal => |number| number,
+            .int_literal => |number| @floatFromInt(number),
+            .unary_exp => |unary| if (unary.op == .neg) switch (unary.right.data) {
+                .float_literal => |number| -number,
+                .int_literal => |number| -@as(f64, @floatFromInt(number)),
+                else => null,
+            } else null,
+            else => null,
+        };
+
+        if (literal == null) return self.err_dispatcher.whenInvalidCase("float range bounds must be numeric literals", exp.loc);
+        if (!std.math.isFinite(literal.?)) return self.err_dispatcher.whenInvalidCase("float range bounds must be finite", exp.loc);
+        return ir.Value.init(self.allocator, .{ .data = .{ .i_float = literal.? }, .type_id = subject.base_type });
+    }
+
+    fn evalWhenRange(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject) Errors!WhenRange {
+        if (!isNumericWhenSubject(subject)) return self.err_dispatcher.whenInvalidCase("range cases require an int or float subject", exp.loc);
+        const start = try self.evalWhenRangeBound(exp.data.range.start, subject);
+        const end = try self.evalWhenRangeBound(exp.data.range.end, subject);
+        const are_bounds_ordered = if (subject.base_kind == .int) start.data.i_int <= end.data.i_int else start.data.i_float <= end.data.i_float;
+        if (!are_bounds_ordered) return self.err_dispatcher.whenInvalidCase("range start must not exceed its end", exp.loc);
+        return .{ .start = start, .end = end };
+    }
+
+    fn checkWhenRangeOverlap(self: *Self, prongs: *WhenProngs, range: WhenRange, loc: err.Loc) Errors!void {
+        for (prongs.seen_ranges.items) |previous| {
+            const has_overlap = if (range.start.data == .i_int)
+                range.start.data.i_int <= previous.end.data.i_int and previous.start.data.i_int <= range.end.data.i_int
+            else
+                range.start.data.i_float <= previous.end.data.i_float and previous.start.data.i_float <= range.end.data.i_float;
+
+            if (has_overlap) return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[loc.start .. loc.end + 1], loc);
+        }
+
+        try prongs.seen_ranges.append(self.allocator, range);
+    }
+
+    fn createBinaryValue(self: *Self, kind: ir.BinaryOpKind, left: *ir.Value, right: *ir.Value, type_id: tt.TypeId) Errors!*ir.Value {
+        return ir.Value.init(self.allocator, .{ .data = .{ .binary_op = .{ .kind = kind, .left = left, .right = right } }, .type_id = type_id });
+    }
+
+    fn lowerWhenRangeCondition(self: *Self, subject: *ir.Value, range: WhenRange) Errors!*ir.Value {
+        const boolean_type = self.type_table.getPrimitive(.boolean);
+        const is_float = range.start.data == .i_float;
+        const is_at_least_start = try self.createBinaryValue(if (is_float) .f_cmp_ge else .i_cmp_ge, subject, range.start, boolean_type);
+        const is_at_most_end = try self.createBinaryValue(if (is_float) .f_cmp_le else .i_cmp_le, subject, range.end, boolean_type);
+        return self.createBinaryValue(.b_and, is_at_least_start, is_at_most_end, boolean_type);
+    }
+
     fn checkWhenExhaustive(self: *Self, stmt: *const ast.StatementNode, subject: WhenSubject, prongs: WhenProngs) Errors!void {
         const when_stmt = stmt.data.when;
+        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
+
+        if (self.type_table.isErrorSet(subject.base_type) and self.errorSetOf(subject.base_type).is_inferred) {
+            try self.pending_when_checks.append(self.allocator, .{
+                .when_stmt = stmt.data.when,
+                .values = prongs.values,
+                .set_type_id = subject.base_type,
+                .is_null_missing = subject.is_nullable and !prongs.has_null_case,
+                .when_loc = when_loc,
+            });
+            return;
+        }
 
         var missing: std.ArrayList(u8) = .empty;
         switch (subject.base_kind) {
@@ -996,11 +1505,10 @@ pub const SemaAnalyzer = struct {
         }
         if (subject.is_nullable and !prongs.has_null_case) try appendMissing(self.allocator, &missing, "null");
 
-        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
         if (when_stmt.else_block == null) {
-            if (subject.base_kind == .int) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
+            if (isNumericWhenSubject(subject)) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
             if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
-        } else if (subject.base_kind != .int and missing.items.len == 0) {
+        } else if (!isNumericWhenSubject(subject) and missing.items.len == 0) {
             return self.err_dispatcher.whenUselessElse(when_stmt.else_loc.?);
         }
     }
@@ -1046,7 +1554,7 @@ pub const SemaAnalyzer = struct {
         return null;
     }
 
-    fn lowerWhenVariantProng(self: *Self, prong: *const ast.WhenProng, subject: WhenSubject, unwrapped_ref: *ir.Value) Errors!LoweredProng {
+    fn lowerWhenVariantProng(self: *Self, prong: *const ast.WhenProng, subject: WhenSubject, unwrapped_ref: *ir.Value, result: ?*BranchResult) Errors!LoweredProng {
         const variant = prong.pattern.variant;
         const union_def = subject.base_kind.@"union";
         const variant_type_id = union_def.variants.get(variant.name).?;
@@ -1079,28 +1587,27 @@ pub const SemaAnalyzer = struct {
                     .type_id = variant_type_id,
                 }),
             } });
-            try self.scope.symbol_table.put(captured_symbol);
         }
 
-        defer if (!is_ignored) {
-            _ = self.scope.symbol_table.remove(captured_symbol.identifier);
-        };
+        try self.scope.enter(self.scope.return_type_id);
+        defer self.scope.exit(self.scope.return_type_id);
+        if (!is_ignored) try self.scope.symbol_table.put(captured_symbol);
 
-        try body.appendSlice(self.allocator, (try self.visitBlock(&prong.body)).instructions);
+        try body.appendSlice(self.allocator, (try self.visitBranchBlock(&prong.body, result)).instructions);
         return .{ .condition = condition, .body = try body.toOwnedSlice(self.allocator) };
     }
 
-    fn lowerWhenValuesProng(self: *Self, prong: *const ast.WhenProng, values: []const *ir.Value, unwrapped_ref: *ir.Value) Errors!LoweredProng {
+    fn lowerWhenValuesProng(self: *Self, prong: *const ast.WhenProng, values: []const *ir.Value, ranges: []const ?WhenRange, unwrapped_ref: *ir.Value, result: ?*BranchResult) Errors!LoweredProng {
         var condition: ?*ir.Value = null;
-        for (values) |value| {
-            const eq = try self.cmpEq(unwrapped_ref, value);
-            condition = if (condition) |c| try ir.Value.init(self.allocator, .{
-                .data = .{ .binary_op = .{ .kind = .b_or, .left = c, .right = eq } },
+        for (values, ranges) |value, range| {
+            const matches_pattern = if (range) |bounds| try self.lowerWhenRangeCondition(unwrapped_ref, bounds) else try self.cmpEq(unwrapped_ref, value);
+            condition = if (condition) |previous_condition| try ir.Value.init(self.allocator, .{
+                .data = .{ .binary_op = .{ .kind = .b_or, .left = previous_condition, .right = matches_pattern } },
                 .type_id = self.type_table.getPrimitive(.boolean),
-            }) else eq;
+            }) else matches_pattern;
         }
 
-        return .{ .condition = condition.?, .body = (try self.visitBlock(&prong.body)).instructions };
+        return .{ .condition = condition.?, .body = (try self.visitBranchBlock(&prong.body, result)).instructions };
     }
 
     fn unionTagIndex(union_def: tt.Union, variant_name: []const u8) usize {
@@ -1110,7 +1617,36 @@ pub const SemaAnalyzer = struct {
         unreachable;
     }
 
+    fn evalWhenErrorCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) Errors!*ir.Value {
+        const value = try self.evalExp(exp);
+        if (!self.type_table.isErrorSet(value.type_id) or self.type_table.getTypePtrById(value.type_id).is_nullable) {
+            return self.err_dispatcher.invalidType(
+                try self.type_table.name(expected_type, self.allocator),
+                try self.type_table.name(value.type_id, self.allocator),
+                exp.loc,
+            );
+        }
+        if (value.data != .i_int) {
+            return self.err_dispatcher.whenInvalidCase("error cases must be error names, like 'ParseError.Empty'", exp.loc);
+        }
+
+        const set = self.errorSetOf(expected_type);
+        if (!set.is_inferred and !set.has(value.data.i_int)) {
+            return self.err_dispatcher.errorNotInSet(
+                self.type_table.error_names.items[@intCast(value.data.i_int)],
+                try self.type_table.name(expected_type, self.allocator),
+                exp.loc,
+            );
+        }
+
+        return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected_type });
+    }
+
     fn evalWhenCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) Errors!*ir.Value {
+        if (self.type_table.isErrorSet(expected_type)) {
+            return self.evalWhenErrorCaseValue(exp, expected_type);
+        }
+
         if (self.type_table.getTypePtrById(expected_type).kind == .int) {
             const literal: ?i64 = switch (exp.data) {
                 .int_literal => |i| i,
@@ -1178,7 +1714,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notMutable(id, assign_stmt.target.loc);
                 }
 
-                if (!self.type_table.canCoerce(assignment_value_type, id_symbol.type_id)) {
+                if (!try self.canCoerce(assignment_value_type, id_symbol.type_id, assign_stmt.exp.loc)) {
                     return self.err_dispatcher.invalidType(
                         try self.type_table.name(id_symbol.type_id, self.allocator),
                         try self.type_table.name(assignment_value_type, self.allocator),
@@ -1217,8 +1753,7 @@ pub const SemaAnalyzer = struct {
                 const index_exp = assign_stmt.target.data.indexed;
                 const target = try self.evalExp(index_exp.target);
                 const target_type = target.type_id;
-                // the assigned member's type is only needed to give `@(...)` a type
-                const expected_type_id = if (isAnonymousInit(assign_stmt.exp))
+                const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal)
                     (try self.evalExp(assign_stmt.target)).type_id
                 else
                     null;
@@ -1234,7 +1769,10 @@ pub const SemaAnalyzer = struct {
                     return self.err_dispatcher.notDefined(target_root.data.identifier, target_root.loc);
                 };
 
-                if (target_symbol.kind == .variable and !target_symbol.kind.variable.is_mut and self.type_table.getTypePtrById(target_type).kind != .@"struct") {
+                const is_immutable_target = target_symbol.kind == .variable and
+                    (target_symbol.kind.variable.is_read_only or
+                        (!target_symbol.kind.variable.is_mut and self.type_table.getTypePtrById(target_type).kind != .@"struct"));
+                if (is_immutable_target) {
                     return self.err_dispatcher.notMutable(target_root.data.identifier, target_root.loc);
                 }
 
@@ -1243,7 +1781,7 @@ pub const SemaAnalyzer = struct {
                 switch (self.type_table.getTypePtrById(target_type).kind) {
                     .array => {
                         field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_symbol.type_id).kind.array;
-                        if (!self.type_table.canCoerce(assignment_value_type, field_maybe_nullable_type_id)) {
+                        if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(target_symbol.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -1264,7 +1802,7 @@ pub const SemaAnalyzer = struct {
 
                             field_maybe_nullable_type_id = field.type_id;
 
-                            if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                            if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
                                     try self.type_table.name(assignment_value_type, self.allocator),
@@ -1284,7 +1822,7 @@ pub const SemaAnalyzer = struct {
                                 return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                             }
 
-                            if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                            if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                                 return self.err_dispatcher.invalidType(
                                     try self.type_table.name(field.type_id, self.allocator),
                                     try self.type_table.name(assignment_value_type, self.allocator),
@@ -1307,7 +1845,7 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                         }
 
-                        if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                        if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(field.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -1333,7 +1871,7 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.notMutable(field.identifier, index_exp.index.loc);
                         }
 
-                        if (!self.type_table.canCoerce(assignment_value_type, field.type_id)) {
+                        if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
                                 try self.type_table.name(field.type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
@@ -1391,6 +1929,124 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
+    fn storeTemporaryValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value) Errors!*ir.Value {
+        const uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .store_var = .{ .uid = uid, .identifier = name, .type_id = value.type_id, .value = value } });
+        return ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = uid, .name = name } }, .type_id = value.type_id });
+    }
+
+    fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, loc: err.Loc) Errors!void {
+        if (std.mem.eql(u8, name, "_")) return;
+        if (self.scope.symbol_table.symbols.contains(name)) return self.err_dispatcher.alreadyDefined(name, loc);
+        const reference = try self.storeTemporaryValue(instructions, name, value);
+        try self.scope.symbol_table.put(.{
+            .uid = reference.data.identifier.uid,
+            .identifier = name,
+            .type_id = value.type_id,
+            .kind = .{ .variable = .{ .is_mut = false, .is_read_only = true } },
+        });
+    }
+
+    fn lowerCaptureLoopBody(self: *Self, capture: ast.ForCaptureStmt, item: *ir.Value, index: *ir.Value, loc: err.Loc) Errors![]const ir.Instruction {
+        var body: std.ArrayList(ir.Instruction) = .empty;
+        try self.scope.enter(self.scope.return_type_id);
+        defer self.scope.exit(self.scope.return_type_id);
+        try self.bindLoopCapture(&body, capture.item, item, loc);
+        if (capture.index) |name| try self.bindLoopCapture(&body, name, index, loc);
+        try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
+        return body.toOwnedSlice(self.allocator);
+    }
+
+    fn evalIntegerRangeBound(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
+        const value = try self.evalExp(exp);
+
+        if (!self.type_table.eql(value.type_id, self.type_table.getPrimitive(.int))) {
+            return self.err_dispatcher.invalidType("int", try self.type_table.name(value.type_id, self.allocator), exp.loc);
+        }
+
+        return value;
+    }
+
+    fn createLoopUpdate(reference: *ir.Value, value: *ir.Value) ir.Instruction {
+        return .{ .store_var = .{ .uid = reference.data.identifier.uid, .identifier = reference.data.identifier.name, .type_id = reference.type_id, .value = value } };
+    }
+
+    fn appendLoopIncrement(self: *Self, instructions: *std.ArrayList(ir.Instruction), reference: *ir.Value) Errors!void {
+        const one = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 1 }, .type_id = reference.type_id });
+        const next = try self.createBinaryValue(.i_add, reference, one, reference.type_id);
+        try instructions.append(self.allocator, createLoopUpdate(reference, next));
+    }
+
+    fn lowerRangeAdvancement(self: *Self, cursor: *ir.Value, end: *ir.Value, is_running: *ir.Value, index: ?*ir.Value) Errors![]const ir.Instruction {
+        const is_last_item = try self.cmpEq(cursor, end);
+        const stopped = try ir.Value.init(self.allocator, .{ .data = .{ .i_bool = false }, .type_id = is_running.type_id });
+        const stop_instructions = try self.allocator.alloc(ir.Instruction, 1);
+        stop_instructions[0] = createLoopUpdate(is_running, stopped);
+        var advancement: std.ArrayList(ir.Instruction) = .empty;
+        try self.appendLoopIncrement(&advancement, cursor);
+        if (index) |reference| try self.appendLoopIncrement(&advancement, reference);
+        return self.wrapBranch(is_last_item, stop_instructions, try advancement.toOwnedSlice(self.allocator));
+    }
+
+    fn visitForRangeStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        const capture = stmt.data.for_capture;
+        const range = capture.source.data.range;
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const start = try self.evalIntegerRangeBound(range.start);
+        const cursor = try self.storeTemporaryValue(&instructions, "range cursor", start);
+        const end = try self.evalIntegerRangeBound(range.end);
+        const end_reference = try self.storeTemporaryValue(&instructions, "range end", end);
+        const boolean_type = self.type_table.getPrimitive(.boolean);
+        const has_items = try self.createBinaryValue(.i_cmp_le, cursor, end_reference, boolean_type);
+        const is_running = try self.storeTemporaryValue(&instructions, "range is running", has_items);
+        const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = self.type_table.getPrimitive(.int) });
+        const needs_index = if (capture.index) |name| !std.mem.eql(u8, name, "_") else false;
+        const index = if (needs_index) try self.storeTemporaryValue(&instructions, "range index", zero) else zero;
+        const body = try self.lowerCaptureLoopBody(capture, cursor, index, stmt.loc);
+        const advancement = try self.lowerRangeAdvancement(cursor, end_reference, is_running, if (needs_index) index else null);
+        try instructions.append(self.allocator, .{ .loop = .{ .condition = is_running, .do_block = body, .advancement = advancement } });
+        return instructions.toOwnedSlice(self.allocator);
+    }
+
+    fn visitForCaptureStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
+        const capture = stmt.data.for_capture;
+        if (capture.source.data == .range) return self.visitForRangeStmt(stmt);
+        const source = try self.evalExp(capture.source);
+        const source_type = self.type_table.getTypePtrById(source.type_id);
+        const is_array_source = !source_type.is_nullable and source_type.kind == .array;
+        if (!is_array_source) return self.err_dispatcher.invalidType("array", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
+        const item_type = source_type.kind.array;
+        const integer_type = self.type_table.getPrimitive(.int);
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const source_reference = try self.storeTemporaryValue(&instructions, "loop source", source);
+        const length = try ir.Value.init(self.allocator, .{ .data = .{ .array_length = source_reference }, .type_id = integer_type });
+        const length_reference = try self.storeTemporaryValue(&instructions, "loop length", length);
+        const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = integer_type });
+        const cursor = try self.storeTemporaryValue(&instructions, "loop cursor", zero);
+        const condition = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = .i_cmp_lt, .left = cursor, .right = length_reference } },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        });
+        const item = try ir.Value.init(self.allocator, .{
+            .data = .{ .indexed = .{ .target = source_reference, .index = cursor } },
+            .type_id = item_type,
+        });
+        const body = try self.lowerCaptureLoopBody(capture, item, cursor, stmt.loc);
+        const one = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 1 }, .type_id = integer_type });
+        const next_cursor = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = .i_add, .left = cursor, .right = one } },
+            .type_id = integer_type,
+        });
+        const advancement = try self.allocator.alloc(ir.Instruction, 1);
+        advancement[0] = .{ .store_var = .{ .uid = cursor.data.identifier.uid, .identifier = "loop cursor", .type_id = integer_type, .value = next_cursor } };
+        try instructions.append(self.allocator, .{ .loop = .{
+            .condition = condition,
+            .do_block = body,
+            .advancement = advancement,
+        } });
+        return instructions.toOwnedSlice(self.allocator);
+    }
+
     fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.Struct) !tt.Struct {
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
@@ -1430,8 +2086,9 @@ pub const SemaAnalyzer = struct {
         var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (struct_def.fields) |field| {
-            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else default_value.?.type_id;
+            const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const field_type = annotated_type orelse default_value.?.type_id;
 
             try fields.append(
                 self.allocator,
@@ -1444,8 +2101,9 @@ pub const SemaAnalyzer = struct {
         }
 
         for (struct_def.static_fields) |field| {
-            const default_value: ?*ir.Value = if (field.default_value) |_value| try self.evalExp(_value) else null;
-            const field_type = if (field.type) |_type| try self.resolveTypeAnnotation(_type, blueprint_type_id) else default_value.?.type_id;
+            const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const field_type = annotated_type orelse default_value.?.type_id;
 
             try static_fields.append(
                 self.allocator,
@@ -1489,6 +2147,8 @@ pub const SemaAnalyzer = struct {
         const old_return_type = self.scope.return_type_id;
         try self.scope.enter(metadata.return_type_id);
         defer self.scope.exit(old_return_type);
+        self.fn_depth += 1;
+        defer self.fn_depth -= 1;
 
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
@@ -1517,8 +2177,10 @@ pub const SemaAnalyzer = struct {
         }
 
         const body = try self.visitBlock(&fn_def.body_block);
+        const is_failing_void = self.type_table.isErrorUnion(self.scope.return_type_id) and
+            self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union.payload == self.type_table.getPrimitive(.void);
 
-        if (!self.type_table.canCoerce(body.return_type, self.scope.return_type_id)) {
+        if (!is_failing_void and !self.type_table.canCoerce(body.return_type, self.scope.return_type_id)) {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.type_table.name(self.scope.return_type_id, self.allocator),
                 try self.type_table.name(body.return_type, self.allocator),
@@ -1538,11 +2200,15 @@ pub const SemaAnalyzer = struct {
     fn visitReturnStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const return_stmt = stmt.data.@"return";
 
+        if (self.type_table.isErrorUnion(self.scope.return_type_id)) {
+            return self.visitFailingReturnStmt(stmt);
+        }
+
         if (return_stmt.exp) |exp| {
             const exp_value = try self.evalExpExpecting(exp, self.scope.return_type_id);
             const exp_value_type = exp_value.type_id;
 
-            if (!self.type_table.canCoerce(exp_value_type, self.scope.return_type_id)) {
+            if (!try self.canCoerce(exp_value_type, self.scope.return_type_id, exp.loc)) {
                 return self.err_dispatcher.invalidFunctionReturnType(
                     try self.type_table.name(self.scope.return_type_id, self.allocator),
                     try self.type_table.name(exp_value_type, self.allocator),
@@ -1576,11 +2242,276 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
+    fn visitFailingReturnStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
+        const return_stmt = stmt.data.@"return";
+        const error_union = self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union;
+        const payload = error_union.payload;
+
+        const exp = return_stmt.exp orelse {
+            if (payload != self.type_table.getPrimitive(.void)) {
+                return self.err_dispatcher.invalidFunctionReturnType(
+                    try self.type_table.name(payload, self.allocator),
+                    "void",
+                    stmt.loc,
+                );
+            }
+            return ir.Instruction{ .return_stmt = .{ .value = null } };
+        };
+
+        const value = try self.evalExpExpecting(exp, payload);
+
+        if (self.type_table.isErrorSet(value.type_id) and !self.type_table.getTypePtrById(value.type_id).is_nullable) {
+            const target_set = self.errorSetOf(error_union.error_set);
+
+            if (value.data == .i_int) {
+                if (target_set.is_inferred) {
+                    try target_set.ids.put(self.allocator, value.data.i_int, {});
+                } else if (!target_set.has(value.data.i_int)) {
+                    return self.err_dispatcher.errorNotInSet(
+                        self.type_table.error_names.items[@intCast(value.data.i_int)],
+                        try self.type_table.name(error_union.error_set, self.allocator),
+                        exp.loc,
+                    );
+                }
+            } else {
+                try self.addErrorEdge(value.type_id, error_union.error_set, exp.loc);
+            }
+
+            return ir.Instruction{ .return_error = .{ .value = value } };
+        }
+
+        if (!try self.canCoerce(value.type_id, payload, exp.loc)) {
+            return self.err_dispatcher.invalidFunctionReturnType(
+                try self.type_table.name(self.scope.return_type_id, self.allocator),
+                try self.type_table.name(value.type_id, self.allocator),
+                exp.loc,
+            );
+        }
+
+        const boxed_value = if (self.needsNullBox(payload, value.type_id))
+            try ir.Value.init(self.allocator, .{
+                .data = .{ .null_box_init = .{ .value = value } },
+                .type_id = value.type_id,
+            })
+        else
+            value;
+
+        return ir.Instruction{ .return_stmt = .{ .value = boxed_value } };
+    }
+
+    fn isConditional(exp: *const ast.ExpNode) bool {
+        return switch (exp.data) {
+            .if_exp, .if_capture_exp, .when_exp, .orelse_exp => true,
+            else => false,
+        };
+    }
+
+    fn evalConditional(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, needs_value: bool) Errors!*ir.Value {
+        return self.evalConditionalWithContext(exp, expected_type_id, null, needs_value);
+    }
+
+    fn evalConditionalWithContext(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, context_type_id: ?tt.TypeId, needs_value: bool) Errors!*ir.Value {
+        if (exp.data == .orelse_exp) return self.evalOrelse(exp, expected_type_id, context_type_id);
+
+        const expected = if (expected_type_id == self.type_table.getPrimitive(.dynamic)) null else expected_type_id;
+        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .context_type_id = context_type_id, .loc = exp.loc };
+        const branch_result = if (needs_value) &result else null;
+        const statement = ast.StatementNode{
+            .data = switch (exp.data) {
+                .if_exp => |conditional| .{ .@"if" = conditional },
+                .if_capture_exp => |capture| .{ .if_capture = capture },
+                .when_exp => |when| .{ .when = when },
+                else => unreachable,
+            },
+            .loc = exp.loc,
+        };
+        const instructions = switch (exp.data) {
+            .if_exp => conditional: {
+                const instructions = try self.allocator.alloc(ir.Instruction, 1);
+                instructions[0] = try self.lowerIf(&statement, branch_result);
+                break :conditional instructions;
+            },
+            .if_capture_exp => try self.lowerIfCapture(&statement, branch_result),
+            .when_exp => try self.lowerWhen(&statement, branch_result),
+            else => unreachable,
+        };
+        return self.finishBranchResult(&result, instructions);
+    }
+
+    fn finishBranchResult(self: *Self, result: *BranchResult, instructions: []const ir.Instruction) Errors!*ir.Value {
+        var result_type = result.expected_type_id orelse self.type_table.getPrimitive(.void);
+
+        if (result.values.items.len > 0) {
+            if (result.expected_type_id == null) {
+                result_type = result.values.items[0].value.type_id;
+                for (result.values.items[1..]) |branch_value| {
+                    result_type = try self.mergeBranchTypes(result_type, branch_value.value.type_id, branch_value.loc);
+                }
+            }
+
+            for (result.values.items) |branch_value| {
+                const original = try ir.Value.init(self.allocator, branch_value.value.*);
+                branch_value.value.* = (try self.convertBranchValue(original, result_type, branch_value.loc)).*;
+            }
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .block_value = .{
+                .instructions = instructions,
+                .result_uid = result.uid,
+                .can_complete = !isBlockLeaving(instructions),
+            } },
+            .type_id = result_type,
+        });
+    }
+
+    fn orelseFallbackContext(self: *Self, payload_type: tt.TypeId, inherited_context: ?tt.TypeId) ?tt.TypeId {
+        if (inherited_context) |context| return context;
+        return switch (self.type_table.getTypePtrById(payload_type).kind) {
+            .@"struct", .@"union", .array => payload_type,
+            else => null,
+        };
+    }
+
+    fn evalOrelse(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) Errors!*ir.Value {
+        const coalescing = exp.data.orelse_exp;
+        const expected = if (expected_type == self.type_table.getPrimitive(.dynamic)) null else expected_type;
+        const operand = try self.evalExpWithContext(coalescing.operand, null, expected orelse context_type);
+        const null_type = self.type_table.getPrimitive(.null);
+        const is_null_operand = operand.type_id == null_type;
+        const is_nullable = self.type_table.getTypePtrById(operand.type_id).is_nullable;
+
+        if (!is_nullable and !is_null_operand) {
+            return self.err_dispatcher.invalidType("nullable or null", try self.type_table.name(operand.type_id, self.allocator), coalescing.operand.loc);
+        }
+
+        const payload_type = self.type_table.typeIdByNullableTypeId.get(operand.type_id) orelse null_type;
+        const fallback_context = self.orelseFallbackContext(payload_type, context_type);
+        const fallback = try self.evalExpWithContext(coalescing.fallback, expected, fallback_context);
+        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .loc = exp.loc };
+        const fallback_instruction = try self.storeBranchValue(fallback, &result, coalescing.fallback.loc);
+
+        if (is_null_operand) {
+            const instructions = try self.allocator.alloc(ir.Instruction, 2);
+            instructions[0] = .{ .expression_stmt = .{ .value = operand } };
+            instructions[1] = fallback_instruction;
+            return self.finishBranchResult(&result, instructions);
+        }
+
+        return self.lowerOrelseBranch(operand, payload_type, fallback_instruction, &result, coalescing.operand.loc);
+    }
+
+    fn unwrapOrelseValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), operand: *ir.Value, payload_type: tt.TypeId) Errors!*ir.Value {
+        if (!self.needsNullBox(operand.type_id, payload_type)) {
+            return ir.Value.init(self.allocator, .{ .data = operand.data, .type_id = payload_type });
+        }
+
+        const selected_uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .unwrap_null_box = .{
+            .unwrapped = .{ .uid = selected_uid, .identifier = "orelse selected", .type_id = payload_type },
+            .null_box = operand,
+        } });
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .identifier = .{ .uid = selected_uid, .name = "orelse selected" } },
+            .type_id = payload_type,
+        });
+    }
+
+    fn lowerOrelseBranch(self: *Self, operand: *ir.Value, payload_type: tt.TypeId, fallback: ir.Instruction, result: *BranchResult, loc: err.Loc) Errors!*ir.Value {
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const operand_reference = try self.storeTemporaryValue(&instructions, "orelse operand", operand);
+        var selected_instructions: std.ArrayList(ir.Instruction) = .empty;
+        const selected = try self.unwrapOrelseValue(&selected_instructions, operand_reference, payload_type);
+        const fallback_instructions = try self.allocator.alloc(ir.Instruction, 1);
+        fallback_instructions[0] = fallback;
+        try selected_instructions.append(self.allocator, try self.storeBranchValue(selected, result, loc));
+        const condition = try ir.Value.init(self.allocator, .{
+            .data = .{ .unary_op = .{ .kind = .box_not_null, .right = operand_reference } },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        });
+        try instructions.append(self.allocator, .{ .branch_if = .{
+            .condition = condition,
+            .then_block = try selected_instructions.toOwnedSlice(self.allocator),
+            .else_block = fallback_instructions,
+        } });
+        return self.finishBranchResult(result, try instructions.toOwnedSlice(self.allocator));
+    }
+
+    fn mergeBranchTypes(self: *Self, first: tt.TypeId, second: tt.TypeId, loc: err.Loc) Errors!tt.TypeId {
+        if (first == second) return first;
+        const null_type = self.type_table.getPrimitive(.null);
+        if (first == null_type) return self.type_table.getOrAddNullable(second);
+        if (second == null_type) return self.type_table.getOrAddNullable(first);
+        const first_base = self.type_table.typeIdByNullableTypeId.get(first) orelse first;
+        const second_base = self.type_table.typeIdByNullableTypeId.get(second) orelse second;
+        const int_type = self.type_table.getPrimitive(.int);
+        const float_type = self.type_table.getPrimitive(.float);
+        const are_numeric = (first_base == int_type or first_base == float_type) and (second_base == int_type or second_base == float_type);
+        const is_nullable = first != first_base or second != second_base;
+        if (are_numeric) {
+            const numeric_type = if (first_base == float_type or second_base == float_type) float_type else int_type;
+            return if (is_nullable) self.type_table.getOrAddNullable(numeric_type) else numeric_type;
+        }
+        if (first_base == second_base) return self.type_table.getOrAddNullable(first_base);
+        const first_kind = self.type_table.getTypePtrById(first_base).kind;
+        const second_kind = self.type_table.getTypePtrById(second_base).kind;
+        if (first_kind == .array and second_kind == .array) {
+            const dynamic_type = self.type_table.getPrimitive(.dynamic);
+            if (first_kind.array == dynamic_type or second_kind.array == dynamic_type) {
+                const array_type = if (first_kind.array == dynamic_type) second_base else first_base;
+                return if (is_nullable) self.type_table.getOrAddNullable(array_type) else array_type;
+            }
+            return self.err_dispatcher.invalidType(try self.type_table.name(first, self.allocator), try self.type_table.name(second, self.allocator), loc);
+        }
+        if (try self.canCoerce(first, second, loc)) return second;
+        if (try self.canCoerce(second, first, loc)) return first;
+        return self.err_dispatcher.invalidType(try self.type_table.name(first, self.allocator), try self.type_table.name(second, self.allocator), loc);
+    }
+
+    fn convertBranchValue(self: *Self, value: *ir.Value, result_type: tt.TypeId, loc: err.Loc) Errors!*ir.Value {
+        const value_base = self.type_table.typeIdByNullableTypeId.get(value.type_id) orelse value.type_id;
+        const result_base = self.type_table.typeIdByNullableTypeId.get(result_type) orelse result_type;
+        const needs_numeric_conversion = value_base == self.type_table.getPrimitive(.int) and result_base == self.type_table.getPrimitive(.float);
+        const value_kind = self.type_table.getTypePtrById(value_base).kind;
+        const result_kind = self.type_table.getTypePtrById(result_base).kind;
+        if (value.data == .i_array and value_kind == .array and result_kind == .array and value_kind.array == self.type_table.getPrimitive(.dynamic)) {
+            value.type_id = result_base;
+        }
+        var converted = value;
+        if (needs_numeric_conversion) {
+            if (value.type_id != value_base and result_type == result_base) {
+                return self.err_dispatcher.invalidType(try self.type_table.name(result_type, self.allocator), try self.type_table.name(value.type_id, self.allocator), loc);
+            }
+            converted = try ir.Value.init(self.allocator, .{
+                .data = .{ .int_to_float = value },
+                .type_id = if (value.type_id != value_base) result_type else result_base,
+            });
+        }
+        if (!try self.canCoerce(converted.type_id, result_type, loc)) {
+            return self.err_dispatcher.invalidType(try self.type_table.name(result_type, self.allocator), try self.type_table.name(converted.type_id, self.allocator), loc);
+        }
+        if (self.needsNullBox(result_type, converted.type_id)) {
+            return ir.Value.init(self.allocator, .{ .data = .{ .null_box_init = .{ .value = converted } }, .type_id = result_type });
+        }
+        if (converted.type_id == self.type_table.getPrimitive(.null)) {
+            return ir.Value.init(self.allocator, .{ .data = .i_null, .type_id = result_type });
+        }
+        return converted;
+    }
+
     fn isAnonymousInit(exp: *const ast.ExpNode) bool {
         return exp.data == .anonymous_init;
     }
 
+    fn evalExpWithContext(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) Errors!*ir.Value {
+        if (expected_type != null) return self.evalExpExpecting(exp, expected_type);
+        if (isConditional(exp)) return self.evalConditionalWithContext(exp, null, context_type, true);
+        const needs_context = isAnonymousInit(exp) or exp.data == .array_literal;
+        return self.evalExpExpecting(exp, if (needs_context) context_type else null);
+    }
+
     fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
+        if (isConditional(exp)) return self.evalConditional(exp, expected_type_id, true);
         if (expected_type_id) |expected| {
             const base_type_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
             const base_kind = self.type_table.getTypePtrById(base_type_id).kind;
@@ -1588,17 +2519,28 @@ pub const SemaAnalyzer = struct {
             if (isAnonymousInit(exp) and base_kind == .@"union") {
                 return self.evalUnionInit(exp, exp.data.anonymous_init.arguments, base_type_id);
             }
+            if (isAnonymousInit(exp) and base_kind == .@"struct") {
+                return self.evalExpectedStructInit(exp, base_type_id);
+            }
 
             if (exp.data == .array_literal and base_kind == .array) {
                 return self.evalArrayLiteral(exp, base_kind.array);
             }
         }
 
-        return self.evalExp(exp);
+        const value = try self.evalExp(exp);
+        if (expected_type_id) |expected| {
+            if (isValueLeaving(value)) {
+                return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected });
+            }
+        }
+        return value;
     }
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
+            .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null, true),
+            .range => return self.err_dispatcher.invalidExpression("range in a capture loop or when case", "range value", exp.loc),
             .float_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_float = exp.data.float_literal }, .type_id = self.type_table.getPrimitive(.float) });
             },
@@ -1621,7 +2563,17 @@ pub const SemaAnalyzer = struct {
                 return self.evalIdentifier(exp);
             },
             .fn_call => {
-                return self.evalFnCall(exp);
+                const call = try self.evalFnCall(exp);
+                if (self.type_table.isErrorUnion(call.type_id)) {
+                    return self.err_dispatcher.unhandledError(callName(exp), exp.loc);
+                }
+                return call;
+            },
+            .try_exp => {
+                return self.evalTry(exp);
+            },
+            .catch_exp => {
+                return self.evalCatch(exp, false);
             },
             .anonymous_init => {
                 return self.evalAnonymousStructInit(exp);
@@ -1862,7 +2814,7 @@ pub const SemaAnalyzer = struct {
                 const fn_call_arg_value = try self.evalExpExpecting(_exp, param.type_id);
                 const arg_type = fn_call_arg_value.type_id;
 
-                if (!self.type_table.canCoerce(arg_type, param.type_id)) {
+                if (!try self.canCoerce(arg_type, param.type_id, _exp.loc)) {
                     return self.err_dispatcher.invalidType(try self.type_table.name(param.type_id, self.allocator), try self.type_table.name(arg_type, self.allocator), _exp.loc);
                 }
 
@@ -1939,6 +2891,51 @@ pub const SemaAnalyzer = struct {
         );
     }
 
+    fn evalExpectedStructInit(self: *Self, exp: *const ast.ExpNode, type_id: tt.TypeId) Errors!*ir.Value {
+        const structure = self.type_table.getTypePtrById(type_id).kind.@"struct";
+        const initialization = exp.data.anonymous_init;
+        if (initialization.arguments.len > structure.fields_in_order.len) {
+            return self.err_dispatcher.invalidNumberOfArgs(structure.fields_in_order.len, initialization.arguments.len, exp.loc);
+        }
+        var arguments_by_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
+        defer arguments_by_name.deinit();
+        for (initialization.arguments) |argument| {
+            if (argument.identifier) |name| {
+                if (!structure.fields.contains(name)) return self.err_dispatcher.invalidStructField(structure.identifier, name, argument.exp.loc);
+                if (arguments_by_name.contains(name)) return self.err_dispatcher.alreadyDefined(name, argument.exp.loc);
+                try arguments_by_name.put(name, argument.exp);
+            }
+        }
+        const keys = try self.allocator.alloc([]const u8, structure.fields_in_order.len);
+        const values = try self.allocator.alloc(*ir.Value, structure.fields_in_order.len);
+        for (structure.fields_in_order, 0..) |field, index| {
+            keys[index] = field.identifier;
+            const argument = if (initialization.are_arguments_named)
+                arguments_by_name.get(field.identifier)
+            else if (index < initialization.arguments.len)
+                initialization.arguments[index].exp
+            else
+                null;
+            const value = if (argument) |operand|
+                try self.evalExpExpecting(operand, field.type_id)
+            else if (field.default_value) |default_value|
+                default_value
+            else if (self.type_table.getTypePtrById(field.type_id).is_nullable)
+                try ir.Value.init(self.allocator, .{ .data = .i_null, .type_id = field.type_id })
+            else
+                return self.err_dispatcher.missingArgument(field.identifier, exp.loc);
+            const loc = if (argument) |operand| operand.loc else exp.loc;
+            if (!try self.canCoerce(value.type_id, field.type_id, loc)) {
+                return self.err_dispatcher.invalidType(try self.type_table.name(field.type_id, self.allocator), try self.type_table.name(value.type_id, self.allocator), loc);
+            }
+            values[index] = if (self.needsNullBox(field.type_id, value.type_id))
+                try ir.Value.init(self.allocator, .{ .data = .{ .null_box_init = .{ .value = value } }, .type_id = field.type_id })
+            else
+                value;
+        }
+        return ir.Value.init(self.allocator, .{ .data = .{ .struct_init = .{ .keys = keys, .values = values } }, .type_id = type_id });
+    }
+
     fn evalAnonymousStructInit(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const anonymous_struct = try self.createAnonymousStruct(exp, false);
         const keys = try self.allocator.alloc([]const u8, anonymous_struct.fields_in_order.len);
@@ -1974,7 +2971,7 @@ pub const SemaAnalyzer = struct {
         };
 
         const raw_value = try self.evalExpExpecting(arg.exp, variant_type_id);
-        if (!self.type_table.canCoerce(raw_value.type_id, variant_type_id)) {
+        if (!try self.canCoerce(raw_value.type_id, variant_type_id, arg.exp.loc)) {
             return self.err_dispatcher.invalidType(
                 try self.type_table.name(variant_type_id, self.allocator),
                 try self.type_table.name(raw_value.type_id, self.allocator),
@@ -2206,7 +3203,7 @@ pub const SemaAnalyzer = struct {
     fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode, expected_item_type_id: ?tt.TypeId) !*ir.Value {
         var values: std.ArrayList(*ir.Value) = .empty;
         const array_literal = exp.data.array_literal;
-        var array_literal_type: tt.TypeId = self.type_table.getPrimitive(.dynamic);
+        var array_literal_type: tt.TypeId = expected_item_type_id orelse self.type_table.getPrimitive(.dynamic);
 
         for (array_literal.exps) |e| {
             // without a declared item type, later items follow the first one
@@ -2219,16 +3216,19 @@ pub const SemaAnalyzer = struct {
                 array_literal_type = exp_value_type;
             }
 
-            if (!self.type_table.canCoerce(exp_value_type, array_literal_type)) {
+            if (!try self.canCoerce(exp_value_type, array_literal_type, exp.loc)) {
                 return self.err_dispatcher.invalidType(try self.type_table.name(array_literal_type, self.allocator), try self.type_table.name(exp_value_type, self.allocator), exp.loc);
             }
 
-            try values.append(self.allocator, exp_value);
-        }
+            const item_value = if (self.needsNullBox(array_literal_type, exp_value_type))
+                try ir.Value.init(self.allocator, .{
+                    .data = .{ .null_box_init = .{ .value = exp_value } },
+                    .type_id = exp_value_type,
+                })
+            else
+                exp_value;
 
-        // an empty literal (`list = []`) takes the expected item type when there is one
-        if (array_literal.exps.len == 0) {
-            if (expected_item_type_id) |item_type_id| array_literal_type = item_type_id;
+            try values.append(self.allocator, item_value);
         }
 
         const array_type_id = try self.type_table.getOrAddArray(array_literal_type);
@@ -2249,6 +3249,7 @@ pub const SemaAnalyzer = struct {
     fn evalUnaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const unary_exp = exp.data.unary_exp;
         const exp_value = try self.evalExp(unary_exp.right);
+        if (isValueLeaving(exp_value)) return exp_value;
         const exp_type = exp_value.type_id;
 
         switch (unary_exp.op) {
@@ -2288,7 +3289,17 @@ pub const SemaAnalyzer = struct {
     fn evalBinaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const bin_exp = exp.data.binary_exp;
         const left_value = try self.evalExp(bin_exp.left);
+        if (isValueLeaving(left_value)) return left_value;
         const right_value = try self.evalExp(bin_exp.right);
+        if (isValueLeaving(right_value)) {
+            const instructions = try self.allocator.alloc(ir.Instruction, 2);
+            instructions[0] = .{ .expression_stmt = .{ .value = left_value } };
+            instructions[1] = .{ .expression_stmt = .{ .value = right_value } };
+            return ir.Value.init(self.allocator, .{
+                .data = .{ .block_value = .{ .instructions = instructions, .result_uid = self.scope.genUid(), .can_complete = false } },
+                .type_id = right_value.type_id,
+            });
+        }
         const left_type = left_value.type_id;
         const right_type = right_value.type_id;
 
@@ -2436,7 +3447,8 @@ pub const SemaAnalyzer = struct {
             },
             .array => {
                 const inner_type_id = try self.resolveTypeAnnotation(type_annotation.type.array, current_defined_type_type_id);
-                return try self.type_table.getOrAddArray(inner_type_id);
+                const array_type_id = try self.type_table.getOrAddArray(inner_type_id);
+                return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(array_type_id) else array_type_id;
             },
             .type_self => {
                 if (current_defined_type_type_id) |type_type_id| {
@@ -2512,6 +3524,12 @@ pub const SemaAnalyzer = struct {
             .not => .not,
         };
     }
+};
+
+const ErrorEdge = struct {
+    from: tt.TypeId,
+    to: tt.TypeId,
+    loc: err.Loc,
 };
 
 const Scope = struct {
@@ -2619,6 +3637,7 @@ pub const Symbol = struct {
     kind: union(enum) {
         variable: struct {
             is_mut: bool,
+            is_read_only: bool = false,
         },
         defined_type: struct {
             blueprint_type_id: tt.TypeId,
@@ -2635,8 +3654,23 @@ const WhenSubject = struct {
     base_kind: @FieldType(tt.Type, "kind"),
 };
 
+const PendingWhenCheck = struct {
+    when_stmt: ast.WhenStmt,
+    values: [][]*ir.Value,
+    set_type_id: tt.TypeId,
+    is_null_missing: bool,
+    when_loc: err.Loc,
+};
+
+const WhenRange = struct {
+    start: *ir.Value,
+    end: *ir.Value,
+};
+
 const WhenProngs = struct {
     values: [][]*ir.Value,
+    ranges: [][]?WhenRange,
+    seen_ranges: std.ArrayList(WhenRange) = .empty,
     seen_values: std.AutoHashMap(i64, void),
     seen_variants: std.StringHashMap(void),
     has_null_case: bool,
@@ -2650,4 +3684,17 @@ const WhenSubjectRefs = struct {
 const LoweredProng = struct {
     condition: *ir.Value,
     body: []const ir.Instruction,
+};
+
+const BranchResult = struct {
+    uid: usize,
+    expected_type_id: ?tt.TypeId,
+    context_type_id: ?tt.TypeId = null,
+    loc: err.Loc,
+    values: std.ArrayList(BranchValue) = .empty,
+};
+
+const BranchValue = struct {
+    value: *ir.Value,
+    loc: err.Loc,
 };

@@ -1,0 +1,3 @@
+for [[1]]: items do
+    items[0] = 2
+end

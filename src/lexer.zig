@@ -17,12 +17,14 @@ pub const Lexer = struct {
         .{ "struct", Tag.struct_kw },
         .{ "enum", Tag.enum_kw },
         .{ "union", Tag.union_kw },
+        .{ "error", Tag.error_kw },
         .{ "if", Tag.if_kw },
         .{ "else", Tag.else_kw },
         .{ "elif", Tag.elif_kw },
         .{ "when", Tag.when_kw },
         .{ "and", Tag.and_kw },
         .{ "or", Tag.or_kw },
+        .{ "orelse", Tag.orelse_kw },
         .{ "for", Tag.for_kw },
         .{ "continue", Tag.continue_kw },
         .{ "break", Tag.break_kw },
@@ -30,6 +32,8 @@ pub const Lexer = struct {
         .{ "false", Tag.false_literal },
         .{ "func", Tag.func_kw },
         .{ "return", Tag.return_kw },
+        .{ "try", Tag.try_kw },
+        .{ "catch", Tag.catch_kw },
         .{ "null", Tag.null_literal },
         .{ "then", Tag.then_kw },
         .{ "do", Tag.do_kw },
@@ -119,7 +123,7 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('.', Tag.question_mark_dot, Tag.question_mark);
                 },
                 '.' => {
-                    return Token.init(Tag.dot, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol('.', Tag.range, Tag.dot);
                 },
                 '*' => {
                     return Token.init(Tag.star, self.cur_index, self.cur_index);
@@ -175,8 +179,11 @@ pub const Lexer = struct {
 
         while (std.ascii.isDigit(next_char) or next_char == '.') {
             if (next_char == '.') {
+                const is_range_start = self.cur_index + 2 < self.src.len and self.src[self.cur_index + 2] == '.';
+                if (is_range_start or is_float) break;
                 is_float = true;
             }
+
             self.walk();
             next_char = self.peekNext();
         }
@@ -279,6 +286,7 @@ pub const Tag = enum {
     struct_kw,
     enum_kw,
     union_kw,
+    error_kw,
     if_kw,
     else_kw,
     elif_kw,
@@ -288,8 +296,11 @@ pub const Tag = enum {
     break_kw,
     and_kw,
     or_kw,
+    orelse_kw,
     func_kw,
     return_kw,
+    try_kw,
+    catch_kw,
     then_kw,
     do_kw,
     end_kw,
@@ -313,6 +324,7 @@ pub const Tag = enum {
     ge,
     at,
     dot,
+    range,
     question_mark,
     question_mark_dot,
     l_bracket,

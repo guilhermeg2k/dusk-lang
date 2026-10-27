@@ -14,3 +14,7 @@ benchmarks/.venv_bench/
 # claude code
 CLAUDE.md
 .claude/
+
+# codex
+AGENTS.md
+.tasks/

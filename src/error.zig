@@ -311,6 +311,64 @@ pub const ErrorDispatcher = struct {
         return error.WhenInvalidCase;
     }
 
+    pub fn unhandledError(self: *Self, function: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' can fail: handle the error with try or catch",
+                .{function},
+            ),
+            loc,
+        );
+        return error.UnhandledError;
+    }
+
+    pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) Errors {
+        self.log("try can only be used at the top level or in a function that can fail (-> E!T or -> !T)", loc);
+        return error.TryOutsideFailingFunction;
+    }
+
+    pub fn notAFailingCall(self: *Self, keyword: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "{s} needs a call to a function that can fail",
+                .{keyword},
+            ),
+            loc,
+        );
+        return error.NotAFailingCall;
+    }
+
+    pub fn errorNotInSet(self: *Self, error_name: []const u8, set_name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' is not in {s}",
+                .{ error_name, set_name },
+            ),
+            loc,
+        );
+        return error.ErrorNotInSet;
+    }
+
+    pub fn catchBlockMustLeave(self: *Self, loc: Loc) Errors {
+        self.log("catch block must return, break or continue when the value is used", loc);
+        return error.CatchBlockMustLeave;
+    }
+
+    pub fn notAnErrorSet(self: *Self, name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' is not an error set",
+                .{name},
+            ),
+            loc,
+        );
+        return error.NotAnErrorSet;
+    }
+
     pub fn invalidDefinition(self: *Self, loc: Loc) Errors {
         self.log("struct and enum definitions cannot be mutable", loc);
         return error.InvalidDefinition;
@@ -509,11 +567,18 @@ pub const Errors = error{
     WhenUselessElse,
     WhenDuplicateCase,
     WhenInvalidCase,
+    UnhandledError,
+    TryOutsideFailingFunction,
+    NotAFailingCall,
+    ErrorNotInSet,
+    CatchBlockMustLeave,
+    NotAnErrorSet,
 };
 
 pub const RunTimeError = error{
     OutOfMemory,
     ArrayOutOfBounds,
+    UnhandledError,
 };
 
 const std = @import("std");

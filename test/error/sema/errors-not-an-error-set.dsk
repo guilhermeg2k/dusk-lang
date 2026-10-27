@@ -1,0 +1,19 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+func parse(n: int) -> ParseError!int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return n
+end
+
+struct Point
+    x: int
+end
+
+func f() -> Point!int
+    return 1
+end

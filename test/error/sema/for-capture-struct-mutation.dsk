@@ -1,0 +1,7 @@
+struct Entry
+    number: int
+end
+
+for [Entry(1)]: entry do
+    entry.number = 2
+end

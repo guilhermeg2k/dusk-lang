@@ -2,6 +2,7 @@ const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const util = @import("util.zig");
+const RunTimeError = @import("error.zig").RunTimeError;
 
 pub const VM = struct {
     const Self = @This();
@@ -469,9 +470,29 @@ pub const VM = struct {
                     instructions = current_frame.function.kind.dusk.instructions;
                     stack_base = current_frame.stack_offset;
                 },
+
+                .RETURN_ERR => {
+                    self.frame_count -= 1;
+                    stack[stack_base - 1] = stack[stack_base + inst.a];
+                    current_frame = &self.frames[self.frame_count - 1];
+                    cur_instruction = current_frame.cur_inst + 1;
+                    instructions = current_frame.function.kind.dusk.instructions;
+                    stack_base = current_frame.stack_offset;
+                },
+
+                .PANIC_ERR => {
+                    return self.panicUnhandledError(stack[stack_base + inst.a]);
+                },
                 else => unreachable,
             }
         }
+    }
+
+    noinline fn panicUnhandledError(self: *Self, err_value: v.Value) RunTimeError {
+        @branchHint(.cold);
+        if (@import("builtin").is_test) return RunTimeError.UnhandledError;
+        std.debug.print("error: unhandled error {s}\n", .{self.program.error_names[@intCast(err_value.int64)]});
+        return RunTimeError.UnhandledError;
     }
 
     fn initStaticStore(self: *Self) !void {

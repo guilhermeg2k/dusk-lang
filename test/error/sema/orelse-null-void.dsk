@@ -1,0 +1,1 @@
+let selected = null orelse echo(1)

@@ -25,6 +25,7 @@ pub const BytecodeGen = struct {
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
+    continue_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
@@ -54,6 +55,7 @@ pub const BytecodeGen = struct {
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
+            .continue_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .static_store = StaticStoreTable.init(alloc),
@@ -86,6 +88,23 @@ pub const BytecodeGen = struct {
             }
         }
 
+        var next_fn_index: u16 = @intCast(funcs.items.len);
+        for (program.defined_types) |dt| {
+            const type_funcs = switch (dt.kind) {
+                .@"struct" => |s| s.funcs,
+                .@"enum" => |e| e.funcs,
+                .@"union" => |u| u.funcs,
+            };
+            for (type_funcs) |func| {
+                try self.fn_index_by_uid.put(func.uid, next_fn_index);
+                next_fn_index += 1;
+            }
+        }
+        for (program.functions) |func| {
+            try self.fn_index_by_uid.put(func.uid, next_fn_index);
+            next_fn_index += 1;
+        }
+
         for (program.defined_types) |dt| {
             switch (dt.kind) {
                 .@"struct" => |s| {
@@ -115,7 +134,16 @@ pub const BytecodeGen = struct {
             .static_heap_bitmap = try self.static_heap_bitmap.toOwnedSlice(self.allocator),
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
+            .error_names = try self.copyErrorNames(program.error_names),
         };
+    }
+
+    fn copyErrorNames(self: *Self, error_names: []const []const u8) ![]const []const u8 {
+        const names = try self.allocator.alloc([]const u8, error_names.len);
+        for (error_names, 0..) |name, i| {
+            names[i] = try self.allocator.dupe(u8, name);
+        }
+        return names;
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
@@ -246,6 +274,10 @@ pub const BytecodeGen = struct {
                 .return_stmt => |r_stmt| {
                     try self.genReturn(r_stmt);
                 },
+                .return_error => |r_err| {
+                    const reg = try self.genValue(r_err.value, self.consumeRegister());
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .RETURN_ERR, .a = reg });
+                },
                 .update_indexed => |stmt| {
                     _ = try self.genUpdateArrayValue(stmt);
                 },
@@ -312,7 +344,7 @@ pub const BytecodeGen = struct {
         const saved_next_free = self.next_free_register;
         const loop_begin_idx = self.chunk_instructions.items.len;
 
-        try self.pushLoopCtx(loop_begin_idx);
+        try self.pushLoopCtx();
 
         const condition_reg = if (loopStmt.condition) |cond|
             try self.genValue(cond, self.consumeRegister())
@@ -328,6 +360,14 @@ pub const BytecodeGen = struct {
         const jump_if_false_idx = self.chunk_instructions.items.len - 1;
 
         try self.genInstructionBlock(loopStmt.do_block);
+
+        const advancement_begin = self.chunk_instructions.items.len;
+        const context = self.loop_stack.items[self.loop_stack.items.len - 1];
+        for (self.continue_patches.items[context.first_continue_patch_index..]) |patch_index| {
+            self.chunk_instructions.items[patch_index].putAEx(@intCast(advancement_begin));
+        }
+        self.continue_patches.shrinkRetainingCapacity(context.first_continue_patch_index);
+        try self.genInstructionBlock(loopStmt.advancement);
 
         var jump_to_begin = Instruction{
             .op = .JUMP,
@@ -351,16 +391,14 @@ pub const BytecodeGen = struct {
     }
 
     fn genContinue(self: *Self) !void {
-        const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
-        var jump = Instruction{ .op = .JUMP };
-        jump.putAEx(@intCast(loop_ctx.loop_begin));
-        try self.chunk_instructions.append(self.allocator, jump);
+        try self.continue_patches.append(self.allocator, self.chunk_instructions.items.len);
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
     }
 
-    fn pushLoopCtx(self: *Self, loop_begin: usize) !void {
+    fn pushLoopCtx(self: *Self) !void {
         try self.loop_stack.append(self.allocator, LoopContext{
-            .loop_begin = loop_begin,
             .first_break_patch_idx = self.break_patches.items.len,
+            .first_continue_patch_index = self.continue_patches.items.len,
         });
     }
 
@@ -519,9 +557,107 @@ pub const BytecodeGen = struct {
             .fn_call => |fc| {
                 try self.genFnCall(fc, value, target_reg);
             },
+
+            .try_call => |tc| {
+                try self.genFailingCall(tc.call, value, target_reg, .{ .try_call = tc });
+            },
+
+            .catch_call => |cc| {
+                try self.genFailingCall(cc.call, value, target_reg, .{ .catch_call = cc });
+            },
+            .block_value => |block| {
+                const saved_variables = try self.var_register_id_by_uid.clone();
+                defer {
+                    self.var_register_id_by_uid.deinit();
+                    self.var_register_id_by_uid = saved_variables;
+                }
+                const saved_next_free = self.next_free_register;
+                const result_register = self.consumeRegister();
+                try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, result_register);
+                self.register_types[result_register] = value.type_id;
+                try self.var_register_id_by_uid.put(block.result_uid, result_register);
+                try self.genInstructionBlock(block.instructions);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_register });
+                self.register_types[target_reg] = value.type_id;
+                self.freeRegisterN(self.next_free_register - saved_next_free);
+            },
+            .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
+            .array_length => |array| {
+                const saved_next_free = self.next_free_register;
+                const array_register = try self.genValue(array, self.consumeRegister());
+                try self.chunk_instructions.append(self.allocator, .{ .op = .ARRAY_LEN, .a = target_reg, .b = array_register });
+                self.register_types[target_reg] = value.type_id;
+                self.freeRegisterN(self.next_free_register - saved_next_free);
+            },
         }
 
         return target_reg;
+    }
+
+    fn genIntToFloat(self: *Self, operand: *const ir.Value, result_type: tt.TypeId, target_register: u8) !void {
+        if (!self.type_table.getTypePtrById(operand.type_id).is_nullable) {
+            _ = try self.genValue(operand, target_register);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = target_register });
+            self.register_types[target_register] = result_type;
+            return;
+        }
+        const saved_next_free = self.next_free_register;
+        const operand_register = try self.genValue(operand, self.consumeRegister());
+        const condition_register = self.consumeRegister();
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_register);
+        self.register_types[target_register] = result_type;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_NNULL, .a = condition_register, .b = operand_register });
+        self.register_types[condition_register] = self.type_table.getPrimitive(.boolean);
+        const null_jump_index = self.chunk_instructions.items.len;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_register });
+        const number_register = self.consumeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_UNWRAP, .a = number_register, .b = operand_register });
+        try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = number_register });
+        self.register_types[number_register] = self.type_table.getPrimitive(.float);
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_register,
+            .b = @intFromEnum(v.ValueType.float64),
+            .c = number_register,
+        });
+        try self.recordHeapMap();
+        self.chunk_instructions.items[null_jump_index].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.freeRegisterN(self.next_free_register - saved_next_free);
+    }
+
+    fn genFailingCall(self: *Self, call: *const ir.Value, value: *const ir.Value, target_reg: u8, handler: FailingCallHandler) !void {
+        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
+        const call_reg = self.consumeRegister();
+        defer self.freeRegister();
+
+        try self.genFnCall(call.data.fn_call, call, call_reg);
+        self.register_types[call_reg] = error_union.error_set;
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+        const jump_ok_idx = self.chunk_instructions.items.len - 1;
+
+        switch (handler) {
+            .try_call => |tc| {
+                const op: OpCode = if (tc.is_top_level) .PANIC_ERR else .RETURN_ERR;
+                try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = call_reg });
+            },
+            .catch_call => |cc| switch (cc.fallback) {
+                .value => |fallback| {
+                    _ = try self.genValue(fallback, call_reg);
+                },
+                .block => |block| {
+                    const saved_next_free = self.next_free_register;
+                    try self.var_register_id_by_uid.put(block.capture_uid, call_reg);
+                    try self.genInstructionBlock(block.instructions);
+                    self.freeRegisterN(self.next_free_register - saved_next_free);
+                    _ = try self.genVoidValue(call_reg);
+                },
+            },
+        }
+
+        self.chunk_instructions.items[jump_ok_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+        self.register_types[target_reg] = value.type_id;
     }
 
     fn genIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
@@ -1237,6 +1373,7 @@ pub const Program = struct {
     static_heap_bitmap: []const u64,
     struct_descriptors: []const StructDescriptor,
     union_descriptors: []const UnionDescriptor,
+    error_names: []const []const u8,
 };
 
 pub const HostFn = struct {
@@ -1344,7 +1481,7 @@ pub const Chunk = struct {
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
-            .RETURN => std.debug.print("R[{d}]", .{inst.a}),
+            .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
             .ARRAY_LOAD,
@@ -1474,6 +1611,8 @@ pub const OpCode = enum(u8) {
 
     CALL,
     RETURN,
+    RETURN_ERR,
+    PANIC_ERR,
 
     JUMP,
     JUMP_IF_FALSE,
@@ -1542,9 +1681,14 @@ pub const OpCode = enum(u8) {
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable };
 
+const FailingCallHandler = union(enum) {
+    try_call: ir.TryCall,
+    catch_call: ir.CatchCall,
+};
+
 const LoopContext = struct {
-    loop_begin: usize,
     first_break_patch_idx: usize,
+    first_continue_patch_index: usize,
 };
 
 pub const StaticStoreTable = struct {

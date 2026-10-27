@@ -16,6 +16,7 @@ pub const Parser = struct {
     src: []const u8 = "",
     cur_index: usize = 0,
     loop_depth: usize = 0,
+    branch_depth: usize = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -99,30 +100,22 @@ pub const Parser = struct {
                     },
                 };
             },
-            .if_kw => {
-                if (self.isIfCapture()) {
-                    const if_capture = try self.parseIfCapture();
-                    const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                    return ast.StatementNode{
-                        .data = .{ .if_capture = if_capture },
-                        .loc = .{ .start = tk.loc.start, .end = end_pos },
-                    };
-                }
-                const if_stmt = try self.parseIfStmt();
-                const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                return ast.StatementNode{ .data = .{ .@"if" = if_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+            .error_kw => {
+                const error_set_stmt = try self.parseErrorSetStmt();
+                return ast.StatementNode{
+                    .data = .{ .error_set = error_set_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
             },
-            .when_kw => {
-                const when_stmt = try self.parseWhenStmt();
-                const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                return ast.StatementNode{ .data = .{ .when = when_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+            .if_kw, .when_kw => {
+                return self.parseIdentifierStmt();
             },
             .for_kw => {
                 const for_stmt = try self.parseForStmt();
                 const end_pos = self.tokens[self.cur_index - 1].loc.end;
-                return ast.StatementNode{ .data = .{ .@"for" = for_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+                return ast.StatementNode{ .data = for_stmt, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
-            .identifier => {
+            .identifier, .try_kw => {
                 return self.parseIdentifierStmt();
             },
             .break_kw => {
@@ -148,6 +141,7 @@ pub const Parser = struct {
                 return self.err_dispatcher.invalidSyntax("unexpected keyword", tk);
             },
             else => {
+                if (self.branch_depth > 0 and self.canStartExpression(tk.tag)) return self.parseIdentifierStmt();
                 return self.err_dispatcher.invalidSyntax("let, if, for, return ...", tk);
             },
         }
@@ -219,6 +213,33 @@ pub const Parser = struct {
         };
     }
 
+    fn parseErrorSetStmt(self: *Self) !ast.ErrorSetStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        var variants: std.ArrayList(ast.ErrorVariant) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    try variants.append(self.allocator, .{ .identifier = tk.value(self.src), .loc = tk.loc });
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
+                else => return self.err_dispatcher.invalidSyntax("identifier or 'end'", tk),
+            }
+        }
+
+        return ast.ErrorSetStmt{
+            .identifier = identifier_token.value(self.src),
+            .variants = try variants.toOwnedSlice(self.allocator),
+        };
+    }
+
     fn parseIdentifierStmt(self: *Self) !ast.StatementNode {
         const expr = try self.parseExp(0);
         const cur_tk = self.peekCurrent();
@@ -287,44 +308,30 @@ pub const Parser = struct {
         }
     }
 
-    fn parseIfCapture(self: *Self) !ast.IfCaptureStmt {
-        self.walk();
+    fn parseBranchBlock(self: *Self, stop_tags: []const Tag) Errors!ast.Block {
+        self.branch_depth += 1;
+        defer self.branch_depth -= 1;
+        return self.parseBlock(stop_tags);
+    }
 
-        const exp = try self.parseExp(0);
-        _ = try self.expect(.colon);
-
+    fn parseIfCapture(self: *Self, exp: *ast.ExpNode) Errors!ast.IfCaptureStmt {
         const is_mut = self.match(.mut_kw);
-        const identififer = try self.expect(.identifier);
-
+        const identifier = try self.expect(.identifier);
         _ = try self.expect(.then_kw);
-        const body = try self.parseBlock(&.{.else_kw});
-
-        const has_else = self.match(.else_kw);
-        var else_block: ?ast.Block = null;
-
-        if (has_else) {
-            else_block = try self.parseBlock(&.{});
-        }
-
+        const body = try self.parseBranchBlock(&.{.else_kw});
+        const else_block = if (self.match(.else_kw)) try self.parseBranchBlock(&.{}) else null;
         _ = try self.expect(.end_kw);
-
-        return ast.IfCaptureStmt{
+        return .{
             .exp = exp,
-            .identifier = .{
-                .name = identififer.value(self.src),
-                .is_mut = is_mut,
-            },
+            .identifier = .{ .name = identifier.value(self.src), .is_mut = is_mut },
             .body = body,
             .else_block = else_block,
         };
     }
 
-    fn parseIfStmt(self: *Self) Errors!ast.IfStmt {
-        self.walk();
-        const first_cond = try self.parseExp(0);
-
+    fn parseIfStmt(self: *Self, first_cond: *ast.ExpNode) Errors!ast.IfStmt {
         _ = try self.expect(.then_kw);
-        const then_block = try self.parseBlock(&.{ .else_kw, .elif_kw });
+        const then_block = try self.parseBranchBlock(&.{ .else_kw, .elif_kw });
 
         var elif_chain: std.ArrayList(ast.StatementNode) = .empty;
 
@@ -333,7 +340,7 @@ pub const Parser = struct {
 
             const cond = try self.parseExp(0);
             _ = try self.expect(.then_kw);
-            const body = try self.parseBlock(&.{ .else_kw, .elif_kw });
+            const body = try self.parseBranchBlock(&.{ .else_kw, .elif_kw });
 
             var elif_end = self.tokens[self.cur_index - 1].loc.end;
             if (body.statements.items.len > 0) {
@@ -342,7 +349,10 @@ pub const Parser = struct {
 
             try elif_chain.append(self.allocator, .{
                 .data = .{
-                    .@"if" = .{ .condition = cond, .then_block = body, .else_block = null },
+                    .expression = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .if_exp = .{ .condition = cond, .then_block = body, .else_block = null } },
+                        .loc = .{ .start = elif_start, .end = elif_end },
+                    }),
                 },
                 .loc = .{
                     .start = elif_start,
@@ -353,14 +363,14 @@ pub const Parser = struct {
 
         var else_block: ?ast.Block = null;
         if (self.match(.else_kw)) {
-            else_block = try self.parseBlock(&.{});
+            else_block = try self.parseBranchBlock(&.{});
         }
 
         _ = try self.expect(.end_kw);
 
         while (elif_chain.items.len > 0) {
             var stmt_node = elif_chain.pop().?;
-            stmt_node.data.@"if".else_block = else_block;
+            stmt_node.data.expression.data.if_exp.else_block = else_block;
             var stmts: std.ArrayList(ast.StatementNode) = .empty;
             try stmts.append(self.allocator, stmt_node);
             else_block = .{ .statements = stmts };
@@ -370,7 +380,6 @@ pub const Parser = struct {
     }
 
     fn parseWhenStmt(self: *Self) Errors!ast.WhenStmt {
-        self.walk();
         const subject = try self.parseExp(0);
 
         var prongs: std.ArrayList(ast.WhenProng) = .empty;
@@ -384,7 +393,7 @@ pub const Parser = struct {
             if (tk.tag == .else_kw) {
                 self.walk();
                 _ = try self.expect(.then_kw);
-                else_block = try self.parseBlock(&.{});
+                else_block = try self.parseBranchBlock(&.{});
                 _ = try self.expect(.end_kw);
                 else_loc = tk.loc;
                 break;
@@ -410,7 +419,7 @@ pub const Parser = struct {
 
             const pattern_end = self.tokens[self.cur_index - 1].loc.end;
             _ = try self.expect(.then_kw);
-            const body = try self.parseBlock(&.{.else_kw});
+            const body = try self.parseBranchBlock(&.{.else_kw});
             _ = try self.expect(.end_kw);
 
             try prongs.append(self.allocator, .{
@@ -430,18 +439,26 @@ pub const Parser = struct {
         };
     }
 
-    fn parseForStmt(self: *Self) Errors!ast.ForStmt {
+    fn parseForStmt(self: *Self) Errors!ast.Statement {
         self.walk();
 
         self.loop_depth += 1;
         defer self.loop_depth -= 1;
 
         const condition = try self.parseExp(0);
+        if (self.match(.colon)) {
+            const item = try self.expect(.identifier);
+            const index = if (self.match(.comma)) (try self.expect(.identifier)).value(self.src) else null;
+            _ = try self.expect(.do_kw);
+            const body = try self.parseBlock(&.{});
+            _ = try self.expect(.end_kw);
+            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .index = index, .do_block = body } };
+        }
         _ = try self.expect(.do_kw);
         const do_block = try self.parseBlock(&.{});
         _ = try self.expect(.end_kw);
 
-        return ast.ForStmt{ .condition = condition, .do_block = do_block };
+        return .{ .@"for" = .{ .condition = condition, .do_block = do_block } };
     }
 
     fn parseField(self: *Self, identifier: []const u8, has_type_annotation: bool) !ast.Field {
@@ -707,6 +724,7 @@ pub const Parser = struct {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         var body_block: ast.Block = undefined;
         var return_type: ?*ast.TypeAnnotation = null;
+        var error_set: ?ast.FnErrorSet = null;
 
         if (self.peekCurrent().tag != .r_paren) {
             arguments = try self.parseFnArgs();
@@ -726,7 +744,22 @@ pub const Parser = struct {
             try statements.append(self.allocator, return_stmt);
             body_block = .{ .statements = statements };
         } else {
+            if (tk.tag == .not) {
+                self.walk();
+                error_set = .{ .inferred = tk.loc };
+            }
+
             return_type = try self.parseTypeAnnotation(false);
+
+            if (error_set == null and self.peekCurrent().tag == .not) {
+                if (return_type.?.type != .@"struct" or return_type.?.is_nullable) {
+                    return self.err_dispatcher.invalidSyntax("error set name before '!'", self.peekCurrent());
+                }
+                error_set = .{ .named = .{ .identifier = return_type.?.type.@"struct", .loc = tk.loc } };
+                self.walk();
+                return_type = try self.parseTypeAnnotation(false);
+            }
+
             body_block = try self.parseBlock(&.{});
             _ = try self.expect(.end_kw);
         }
@@ -735,6 +768,7 @@ pub const Parser = struct {
             .params = try arguments.toOwnedSlice(self.allocator),
             .body_block = body_block,
             .return_type = return_type,
+            .error_set = error_set,
         };
     }
 
@@ -870,6 +904,9 @@ pub const Parser = struct {
             .not,
             .minus,
             .at,
+            .try_kw,
+            .if_kw,
+            .when_kw,
             => true,
             else => false,
         };
@@ -910,6 +947,43 @@ pub const Parser = struct {
         return right;
     }
 
+    fn parseCatch(self: *Self, operand: *ast.ExpNode) Errors!*ast.ExpNode {
+        self.walk();
+        const tk = self.peekCurrent();
+
+        if (tk.tag == .identifier and self.peekNext().tag == .then_kw) {
+            self.walk();
+            self.walk();
+            const body = try self.parseBlock(&.{});
+            const end_tk = try self.expect(.end_kw);
+            return ast.ExpNode.init(self.allocator, .{
+                .data = .{ .catch_exp = .{
+                    .operand = operand,
+                    .fallback = .{ .block = .{ .capture = tk.value(self.src), .body = body } },
+                } },
+                .loc = .{ .start = operand.loc.start, .end = end_tk.loc.end },
+            });
+        }
+
+        const value = try self.parseExp(self.getBindingPower(.catch_kw) - 1);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .catch_exp = .{
+                .operand = operand,
+                .fallback = .{ .value = value },
+            } },
+            .loc = .{ .start = operand.loc.start, .end = value.loc.end },
+        });
+    }
+
+    fn parseOrelse(self: *Self, operand: *ast.ExpNode) Errors!*ast.ExpNode {
+        self.walk();
+        const fallback = try self.parseExp(self.getBindingPower(.orelse_kw) - 1);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .orelse_exp = .{ .operand = operand, .fallback = fallback } },
+            .loc = .{ .start = operand.loc.start, .end = fallback.loc.end },
+        });
+    }
+
     fn parseExp(self: *Self, min_bp: u8) Errors!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
@@ -923,6 +997,27 @@ pub const Parser = struct {
 
             if (tk.tag == .pipe) {
                 exp = try self.parsePipeOperator(exp);
+                continue;
+            }
+
+            if (tk.tag == .catch_kw) {
+                exp = try self.parseCatch(exp);
+                continue;
+            }
+
+            if (tk.tag == .orelse_kw) {
+                exp = try self.parseOrelse(exp);
+                continue;
+            }
+
+            if (tk.tag == .range) {
+                if (exp.data == .range) return self.err_dispatcher.invalidSyntax("a single range", tk);
+                self.walk();
+                const end = try self.parseExp(op_bp);
+                exp = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .range = .{ .start = exp, .end = end } },
+                    .loc = .{ .start = exp.loc.start, .end = end.loc.end },
+                });
                 continue;
             }
 
@@ -953,6 +1048,24 @@ pub const Parser = struct {
         self.walk();
 
         return switch (tk.tag) {
+            .if_kw => {
+                const condition = try self.parseExp(0);
+                const data: ast.Exp = if (self.match(.colon))
+                    .{ .if_capture_exp = try self.parseIfCapture(condition) }
+                else
+                    .{ .if_exp = try self.parseIfStmt(condition) };
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = data,
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
+            .when_kw => {
+                const when = try self.parseWhenStmt();
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .when_exp = when },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
             .identifier => {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{ .identifier = tk.value(self.src) },
@@ -1002,6 +1115,10 @@ pub const Parser = struct {
                 _ = try self.expect(.r_paren);
                 return exp;
             },
+            .try_kw => {
+                const operand = try self.parseExp(100);
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .try_exp = .{ .operand = operand } }, .loc = .{ .start = tk.loc.start, .end = operand.loc.end } });
+            },
             .not, .minus => {
                 const op = try ast.UnaryOp.fromTag(tk.tag);
                 const right = try self.parseExp(100);
@@ -1030,27 +1147,6 @@ pub const Parser = struct {
                 return self.err_dispatcher.invalidSyntax("valid expression", tk);
             },
         };
-    }
-
-    fn isIfCapture(self: *Self) bool {
-        const start_id = self.cur_index;
-        const tokens_scan_limit = 500;
-        var tokens_scanned: usize = 0;
-        defer self.cur_index = start_id;
-
-        while (tokens_scanned < tokens_scan_limit) {
-            const tk = self.peekCurrent();
-            if (tk.tag == .colon) {
-                return true;
-            }
-            if (tk.tag == .then_kw) {
-                return false;
-            }
-            self.walk();
-            tokens_scanned += 1;
-        }
-
-        return false;
     }
 
     fn parsePostfix(self: *Self, left: *ast.ExpNode) Errors!*ast.ExpNode {
@@ -1127,10 +1223,12 @@ pub const Parser = struct {
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {
         return switch (tag) {
+            .catch_kw, .orelse_kw => 3,
             .pipe => 5,
             .or_kw => 10,
             .and_kw => 20,
             .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,
+            .range => 35,
             .plus, .minus => 40,
             .star, .slash, .double_slash, .percent => 50,
             .l_paren => 60,

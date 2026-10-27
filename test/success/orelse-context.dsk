@@ -1,0 +1,104 @@
+struct Point
+    x: int
+end
+
+union Choice
+    number: int
+    text: string
+end
+
+let point: ?Point = null
+let selected_point = point orelse @(x = 4)
+assert(selected_point.x == 4)
+let conditional_point = point orelse if true then
+    @(x = 5)
+else
+    @(x = 6)
+end
+
+assert(conditional_point.x == 5)
+let nullable_point = point orelse if true then
+    null
+else
+    @(x = 7)
+end
+
+assert(nullable_point == null)
+let chained_point = point orelse null orelse @(x = 8)
+assert(chained_point.x == 8)
+let choice: ?Choice = null
+let selected_choice = choice orelse @(number = 9)
+
+when selected_choice
+    number: number then
+        assert(number == 9)
+    end
+
+    text: _ then
+        assert(false)
+    end
+end
+
+let values: ?[]int = null
+let empty = values orelse []
+assert(len(empty) == 0)
+let conditional_values = values orelse if true then
+    []
+else
+    [1]
+end
+
+assert(len(conditional_values) == 0)
+let nullable_values = values orelse if true then
+    null
+else
+    []
+end
+
+assert(nullable_values == null)
+let typed: Point = null orelse @(x = 10)
+assert(typed.x == 10)
+
+func consume(point: Point) -> int
+    return point.x
+end
+
+assert(consume(point orelse @(x = 11)) == 11)
+
+func make() -> Point
+    let optional: ?Point = null
+    return optional orelse @(x = 12)
+end
+
+assert(make().x == 12)
+let mut stored = Point(0)
+stored = point orelse @(x = 13)
+assert(stored.x == 13)
+let nested: []Point = [point orelse @(x = 14)]
+assert(nested[0].x == 14)
+
+let contextual_operand: Point = (if true then
+    null
+else
+    @(x = 15)
+end) orelse @(x = 16)
+
+assert(contextual_operand.x == 16)
+let contextual_present: Point = (if false then
+    null
+else
+    @(x = 17)
+end) orelse @(x = 18)
+
+assert(contextual_present.x == 17)
+let conditional_nested = point orelse if true then
+    if false then
+        null
+    else
+        @(x = 19)
+    end
+else
+    null
+end
+
+assert((conditional_nested orelse Point(0)).x == 19)

@@ -1,0 +1,2 @@
+let optional: ?int = null
+let selected: string = optional orelse "wrong"

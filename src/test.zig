@@ -26,6 +26,18 @@ fn runCaseError(src_file: []const u8, expected: anytype) !void {
     try testing.expectError(expected, dusk.compile(src));
 }
 
+fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const cwd = std.Io.Dir.cwd();
+    const file_path = try std.fmt.allocPrint(arena.allocator(), "test/runtime/{s}", .{src_file});
+    const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
+
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    try testing.expectError(expected, dusk.compileAndRun(src));
+}
+
 test "echo-2" {
     try runCase("echo-2.dsk");
 }
@@ -463,7 +475,7 @@ test "sema error: when unsupported subject" {
 }
 
 test "sema error: when float subject" {
-    try runCaseError("sema/when-float-subject.dsk", error.InvalidType);
+    try runCaseError("sema/when-float-subject.dsk", error.WhenInvalidCase);
 }
 
 test "sema error: when union case without capture" {
@@ -501,7 +513,6 @@ test "syntax error: continue outside loop" {
 test "syntax error: invalid statement" {
     try runCaseError("parser/invalid-statement.dsk", error.ParserError);
 }
-
 
 test "syntax error: struct unexpected token" {
     try runCaseError("parser/struct-unexpected-token.dsk", error.ParserError);
@@ -603,3 +614,602 @@ test "gc: nullables in arrays and structs" {
     try runCase("gc-nullable.dsk");
 }
 
+test "errors: try" {
+    try runCase("errors-try.dsk");
+}
+
+test "errors: catch" {
+    try runCase("errors-catch.dsk");
+}
+
+test "errors: inferred sets" {
+    try runCase("errors-inferred.dsk");
+}
+
+test "errors: values" {
+    try runCase("errors-values.dsk");
+}
+
+test "gc: errors" {
+    try runCase("errors-gc.dsk");
+}
+
+test "sema error: unhandled call" {
+    try runCaseError("sema/errors-unhandled-call.dsk", error.UnhandledError);
+}
+
+test "sema error: unhandled call statement" {
+    try runCaseError("sema/errors-unhandled-call-stmt.dsk", error.UnhandledError);
+}
+
+test "sema error: unhandled call argument" {
+    try runCaseError("sema/errors-unhandled-call-arg.dsk", error.UnhandledError);
+}
+
+test "sema error: try in non-failing function" {
+    try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
+}
+
+test "sema error: try in inline return" {
+    try runCaseError("sema/errors-try-inline-return.dsk", error.TryOutsideFailingFunction);
+}
+
+test "sema error: try on non-failing call" {
+    try runCaseError("sema/errors-try-non-failing-call.dsk", error.NotAFailingCall);
+}
+
+test "sema error: catch on non-failing call" {
+    try runCaseError("sema/errors-catch-non-failing-call.dsk", error.NotAFailingCall);
+}
+
+test "sema error: try on non-call" {
+    try runCaseError("sema/errors-try-non-call.dsk", error.NotAFailingCall);
+}
+
+test "sema error: error not in set (return)" {
+    try runCaseError("sema/errors-not-in-set-return.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: error not in set (try)" {
+    try runCaseError("sema/errors-not-in-set-try.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: error not in set (inferred chain)" {
+    try runCaseError("sema/errors-not-in-set-inferred-chain.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: error not in set (captured)" {
+    try runCaseError("sema/errors-not-in-set-captured.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: catch block falls through" {
+    try runCaseError("sema/errors-catch-block-falls-through.dsk", error.CatchBlockMustLeave);
+}
+
+test "sema error: catch default type mismatch" {
+    try runCaseError("sema/errors-catch-default-type-mismatch.dsk", error.InvalidType);
+}
+
+test "sema error: duplicate error variant" {
+    try runCaseError("sema/errors-duplicate-variant.dsk", error.AlreadyDefined);
+}
+
+test "sema error: failing return wrong type" {
+    try runCaseError("sema/errors-return-wrong-type.dsk", error.InvalidReturnType);
+}
+
+test "sema error: not an error set" {
+    try runCaseError("sema/errors-not-an-error-set.dsk", error.NotAnErrorSet);
+}
+
+test "sema error: inferred error passed where it does not fit" {
+    try runCaseError("sema/errors-inferred-set-arg-not-in-set.dsk", error.ErrorNotInSet);
+}
+
+test "parser error: error set missing end" {
+    try runCaseError("parser/errors-set-missing-end.dsk", error.ParserError);
+}
+
+test "parser error: error variant with payload" {
+    try runCaseError("parser/errors-set-variant-payload.dsk", error.ParserError);
+}
+
+test "parser error: error union type in let" {
+    try runCaseError("parser/errors-union-type-in-let.dsk", error.ParserError);
+}
+
+test "parser error: catch block missing end" {
+    try runCaseError("parser/errors-catch-block-missing-end.dsk", error.ParserError);
+}
+
+test "runtime error: top-level try" {
+    try runCaseRuntimeError("errors-top-level-try.dsk", error.UnhandledError);
+}
+
+test "errors: when on caught errors" {
+    try runCase("errors-when.dsk");
+}
+
+test "sema error: when on error not exhaustive" {
+    try runCaseError("sema/errors-when-not-exhaustive.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when on inferred error not exhaustive" {
+    try runCaseError("sema/errors-when-not-exhaustive-inferred.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when error case not in set" {
+    try runCaseError("sema/errors-when-error-not-in-set.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: when error case not in inferred set" {
+    try runCaseError("sema/errors-when-error-not-in-set-inferred.dsk", error.ErrorNotInSet);
+}
+
+test "sema error: when on inferred error useless else" {
+    try runCaseError("sema/errors-when-useless-else-inferred.dsk", error.WhenUselessElse);
+}
+
+test "sema error: when on failing call" {
+    try runCaseError("sema/errors-when-failing-call-subject.dsk", error.UnhandledError);
+}
+
+test "sema error: when duplicate error case" {
+    try runCaseError("sema/errors-when-duplicate-case.dsk", error.WhenDuplicateCase);
+}
+
+test "nullable arrays" {
+    try runCase("nullable-arrays.dsk");
+}
+
+test "sema error: index into nullable array" {
+    try runCaseError("sema/nullable-array-index.dsk", error.NullableMustBeUnwrapped);
+}
+
+test "sema error: len of nullable array" {
+    try runCaseError("sema/nullable-array-len.dsk", error.InvalidType);
+}
+
+test "sema error: nullable array to array" {
+    try runCaseError("sema/nullable-array-to-array.dsk", error.InvalidType);
+}
+
+test "sema error: field default doesn't match declared type" {
+    try runCaseError("sema/field-default-declared-type-mismatch.dsk", error.InvalidType);
+}
+
+test "conditional-expressions" {
+    try runCase("conditional-expressions.dsk");
+}
+
+test "conditional-expression-types" {
+    try runCase("conditional-expression-types.dsk");
+}
+
+test "conditional-expression-captures" {
+    try runCase("conditional-expression-captures.dsk");
+}
+
+test "when-expressions" {
+    try runCase("when-expressions.dsk");
+}
+
+test "conditional-expression-flow" {
+    try runCase("conditional-expression-flow.dsk");
+}
+
+test "conditional-expression-heap" {
+    try runCase("conditional-expression-heap.dsk");
+}
+
+test "if-expression-missing-else" {
+    try runCaseError("sema/if-expression-missing-else.dsk", error.InvalidExpression);
+}
+
+test "if-expression-empty-branch" {
+    try runCaseError("sema/if-expression-empty-branch.dsk", error.InvalidExpression);
+}
+
+test "if-expression-declaration-tail" {
+    try runCaseError("sema/if-expression-declaration-tail.dsk", error.InvalidExpression);
+}
+
+test "if-expression-assignment-tail" {
+    try runCaseError("sema/if-expression-assignment-tail.dsk", error.InvalidExpression);
+}
+
+test "if-expression-void-tail" {
+    try runCaseError("sema/if-expression-void-tail.dsk", error.InvalidExpression);
+}
+
+test "if-expression-type-mismatch" {
+    try runCaseError("sema/if-expression-type-mismatch.dsk", error.InvalidType);
+}
+
+test "if-expression-context-mismatch" {
+    try runCaseError("sema/if-expression-context-mismatch.dsk", error.InvalidType);
+}
+
+test "if-expression-capture-missing-else" {
+    try runCaseError("sema/if-expression-capture-missing-else.dsk", error.InvalidExpression);
+}
+
+test "if-expression-capture-else-scope" {
+    try runCaseError("sema/if-expression-capture-else-scope.dsk", error.NotDefined);
+}
+
+test "if-expression-capture-leaks" {
+    try runCaseError("sema/if-expression-capture-leaks.dsk", error.NotDefined);
+}
+
+test "if-expression-local-leaks" {
+    try runCaseError("sema/if-expression-local-leaks.dsk", error.NotDefined);
+}
+
+test "when-expression-missing-value" {
+    try runCaseError("sema/when-expression-missing-value.dsk", error.InvalidExpression);
+}
+
+test "when-expression-type-mismatch" {
+    try runCaseError("sema/when-expression-type-mismatch.dsk", error.InvalidType);
+}
+
+test "when-expression-not-exhaustive" {
+    try runCaseError("sema/when-expression-not-exhaustive.dsk", error.WhenNotExhaustive);
+}
+
+test "when-expression-useless-else" {
+    try runCaseError("sema/when-expression-useless-else.dsk", error.WhenUselessElse);
+}
+
+test "when-expression-capture-leaks" {
+    try runCaseError("sema/when-expression-capture-leaks.dsk", error.NotDefined);
+}
+
+test "if-expression-condition-not-bool" {
+    try runCaseError("sema/if-expression-condition-not-bool.dsk", error.InvalidType);
+}
+
+test "if-expression-non-tail-value" {
+    try runCaseError("sema/if-expression-non-tail-value.dsk", error.InvalidType);
+}
+
+test "if-expression-nullable-to-plain" {
+    try runCaseError("sema/if-expression-nullable-to-plain.dsk", error.InvalidType);
+}
+
+test "conditional break is not a function return" {
+    try runCaseError("sema/conditional-break-is-not-return.dsk", error.InvalidReturnType);
+}
+
+test "for-capture" {
+    try runCase("for-capture.dsk");
+}
+
+test "for-capture-source" {
+    try runCase("for-capture-source.dsk");
+}
+
+test "for-capture-flow" {
+    try runCase("for-capture-flow.dsk");
+}
+
+test "for-capture-heap" {
+    try runCase("for-capture-heap.dsk");
+}
+
+test "for-capture-non-array" {
+    try runCaseError("sema/for-capture-non-array.dsk", error.InvalidType);
+}
+
+test "for-capture-nullable-array" {
+    try runCaseError("sema/for-capture-nullable-array.dsk", error.InvalidType);
+}
+
+test "for-capture-duplicate" {
+    try runCaseError("sema/for-capture-duplicate.dsk", error.AlreadyDefined);
+}
+
+test "for-capture-item-assignment" {
+    try runCaseError("sema/for-capture-item-assignment.dsk", error.NotMutable);
+}
+
+test "for-capture-index-assignment" {
+    try runCaseError("sema/for-capture-index-assignment.dsk", error.NotMutable);
+}
+
+test "for-capture-item-leaks" {
+    try runCaseError("sema/for-capture-item-leaks.dsk", error.NotDefined);
+}
+
+test "for-capture-index-leaks" {
+    try runCaseError("sema/for-capture-index-leaks.dsk", error.NotDefined);
+}
+
+test "for-capture-ignored-binding" {
+    try runCaseError("sema/for-capture-ignored-binding.dsk", error.NotDefined);
+}
+
+test "for-capture-struct-mutation" {
+    try runCaseError("sema/for-capture-struct-mutation.dsk", error.NotMutable);
+}
+
+test "for-capture-array-mutation" {
+    try runCaseError("sema/for-capture-array-mutation.dsk", error.NotMutable);
+}
+
+test "for-capture-missing-return" {
+    try runCaseError("sema/for-capture-missing-return.dsk", error.InvalidReturnType);
+}
+
+test "for-capture-missing-item" {
+    try runCaseError("parser/for-capture-missing-item.dsk", error.ParserError);
+}
+
+test "for-capture-missing-index" {
+    try runCaseError("parser/for-capture-missing-index.dsk", error.ParserError);
+}
+
+test "for-capture-extra-binding" {
+    try runCaseError("parser/for-capture-extra-binding.dsk", error.ParserError);
+}
+
+test "for-capture-mutable" {
+    try runCaseError("parser/for-capture-mutable.dsk", error.ParserError);
+}
+
+test "for-capture-missing-do" {
+    try runCaseError("parser/for-capture-missing-do.dsk", error.ParserError);
+}
+
+test "for-capture-mut-method" {
+    try runCaseError("sema/for-capture-mut-method.dsk", error.NotMutable);
+}
+
+test "for-capture-array-assignment" {
+    try runCaseError("sema/for-capture-array-assignment.dsk", error.NotMutable);
+}
+
+test "range-loops" {
+    try runCase("range-loops.dsk");
+}
+
+test "range-loop-flow" {
+    try runCase("range-loop-flow.dsk");
+}
+
+test "range-loop-bounds" {
+    try runCase("range-loop-bounds.dsk");
+}
+
+test "when-integer-ranges" {
+    try runCase("when-integer-ranges.dsk");
+}
+
+test "when-float-ranges" {
+    try runCase("when-float-ranges.dsk");
+}
+
+test "range-loop-float" {
+    try runCaseError("sema/range-loop-float.dsk", error.InvalidType);
+}
+
+test "range-loop-mixed-bounds" {
+    try runCaseError("sema/range-loop-mixed-bounds.dsk", error.InvalidType);
+}
+
+test "range-loop-nullable-bound" {
+    try runCaseError("sema/range-loop-nullable-bound.dsk", error.InvalidType);
+}
+
+test "range-loop-string-bound" {
+    try runCaseError("sema/range-loop-string-bound.dsk", error.InvalidType);
+}
+
+test "range-loop-duplicate-capture" {
+    try runCaseError("sema/range-loop-duplicate-capture.dsk", error.AlreadyDefined);
+}
+
+test "range-loop-immutable-value" {
+    try runCaseError("sema/range-loop-immutable-value.dsk", error.NotMutable);
+}
+
+test "range-loop-immutable-index" {
+    try runCaseError("sema/range-loop-immutable-index.dsk", error.NotMutable);
+}
+
+test "range-loop-capture-leaks" {
+    try runCaseError("sema/range-loop-capture-leaks.dsk", error.NotDefined);
+}
+
+test "range-stored-value" {
+    try runCaseError("sema/range-stored-value.dsk", error.InvalidExpression);
+}
+
+test "range-no-capture" {
+    try runCaseError("sema/range-no-capture.dsk", error.InvalidExpression);
+}
+
+test "when-range-reversed" {
+    try runCaseError("sema/when-range-reversed.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-overlap" {
+    try runCaseError("sema/when-range-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-touching" {
+    try runCaseError("sema/when-range-touching.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-literal-overlap" {
+    try runCaseError("sema/when-range-literal-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-literal-range-overlap" {
+    try runCaseError("sema/when-literal-range-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-list-overlap" {
+    try runCaseError("sema/when-range-list-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-range-runtime-bound" {
+    try runCaseError("sema/when-range-runtime-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-expression-bound" {
+    try runCaseError("sema/when-range-expression-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-float-on-int" {
+    try runCaseError("sema/when-range-float-on-int.dsk", error.InvalidType);
+}
+
+test "when-range-enum-subject" {
+    try runCaseError("sema/when-range-enum-subject.dsk", error.WhenInvalidCase);
+}
+
+test "when-range-needs-else" {
+    try runCaseError("sema/when-range-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "when-float-range-needs-else" {
+    try runCaseError("sema/when-float-range-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "when-float-range-overlap" {
+    try runCaseError("sema/when-float-range-overlap.dsk", error.WhenDuplicateCase);
+}
+
+test "when-float-range-touching" {
+    try runCaseError("sema/when-float-range-touching.dsk", error.WhenDuplicateCase);
+}
+
+test "when-float-range-reversed" {
+    try runCaseError("sema/when-float-range-reversed.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-range-runtime-bound" {
+    try runCaseError("sema/when-float-range-runtime-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-range-string-bound" {
+    try runCaseError("sema/when-float-range-string-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-scalar-in-list" {
+    try runCaseError("sema/when-float-scalar-in-list.dsk", error.WhenInvalidCase);
+}
+
+test "when-float-null-non-nullable" {
+    try runCaseError("sema/when-float-null-non-nullable.dsk", error.WhenInvalidCase);
+}
+
+test "range-missing-end" {
+    try runCaseError("parser/range-missing-end.dsk", error.ParserError);
+}
+
+test "range-chained" {
+    try runCaseError("parser/range-chained.dsk", error.ParserError);
+}
+
+test "range-missing-start" {
+    try runCaseError("parser/range-missing-start.dsk", error.ParserError);
+}
+
+test "range-three-dots" {
+    try runCaseError("parser/range-three-dots.dsk", error.ParserError);
+}
+
+test "when-float-range-infinite-bound" {
+    try runCaseError("sema/when-float-range-infinite-bound.dsk", error.WhenInvalidCase);
+}
+
+test "orelse-values" {
+    try runCase("orelse-values.dsk");
+}
+
+test "orelse-evaluation" {
+    try runCase("orelse-evaluation.dsk");
+}
+
+test "orelse-context" {
+    try runCase("orelse-context.dsk");
+}
+
+test "orelse-families" {
+    try runCase("orelse-families.dsk");
+}
+
+test "orelse-precedence" {
+    try runCase("orelse-precedence.dsk");
+}
+
+test "orelse-flow-heap" {
+    try runCase("orelse-flow-heap.dsk");
+}
+
+test "orelse-non-nullable" {
+    try runCaseError("sema/orelse-non-nullable.dsk", error.InvalidType);
+}
+
+test "orelse-incompatible" {
+    try runCaseError("sema/orelse-incompatible.dsk", error.InvalidType);
+}
+
+test "orelse-nullable-incompatible" {
+    try runCaseError("sema/orelse-nullable-incompatible.dsk", error.InvalidType);
+}
+
+test "orelse-void" {
+    try runCaseError("sema/orelse-void.dsk", error.InvalidExpression);
+}
+
+test "orelse-void-discarded" {
+    try runCaseError("sema/orelse-void-discarded.dsk", error.InvalidExpression);
+}
+
+test "orelse-null-void" {
+    try runCaseError("sema/orelse-null-void.dsk", error.InvalidExpression);
+}
+
+test "orelse-nullable-to-plain" {
+    try runCaseError("sema/orelse-nullable-to-plain.dsk", error.InvalidType);
+}
+
+test "orelse-context-mismatch" {
+    try runCaseError("sema/orelse-context-mismatch.dsk", error.InvalidType);
+}
+
+test "orelse-no-array-promotion" {
+    try runCaseError("sema/orelse-no-array-promotion.dsk", error.InvalidType);
+}
+
+test "orelse-unhandled-error" {
+    try runCaseError("sema/orelse-unhandled-error.dsk", error.UnhandledError);
+}
+
+test "orelse-missing-fallback" {
+    try runCaseError("parser/orelse-missing-fallback.dsk", error.ParserError);
+}
+
+test "orelse-missing-operand" {
+    try runCaseError("parser/orelse-missing-operand.dsk", error.ParserError);
+}
+
+test "orelse-keyword" {
+    try runCaseError("parser/orelse-keyword.dsk", error.ParserError);
+}
+
+test "orelse-direct-return" {
+    try runCaseError("parser/orelse-direct-return.dsk", error.ParserError);
+}
+
+test "orelse-direct-break" {
+    try runCaseError("parser/orelse-direct-break.dsk", error.ParserError);
+}
+
+test "orelse-direct-continue" {
+    try runCaseError("parser/orelse-direct-continue.dsk", error.ParserError);
+}

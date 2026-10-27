@@ -1,0 +1,104 @@
+let mut a: ?[]int = null
+echo(a)
+assert(a == null)
+a = [1, 2, 3]
+echo(a)
+if a: list then
+    assert(len(list) == 3)
+    assert(list[2] == 3)
+end
+assert(a != null)
+a = null
+if a: list then
+    assert(false)
+else
+    echo("none")
+end
+
+struct Bag
+    items: ?[]string
+    counts: ?[]int = null
+end
+
+let mut b = Bag(items = null)
+assert(b.items == null)
+assert(b.counts == null)
+b.items = ["x", "y"]
+if b.items: it then
+    echo(it)
+end
+let b2 = Bag(items = ["z"], counts = [4])
+if b2.counts: c then
+    assert(c[0] == 4)
+end
+
+func first(list: ?[]int) -> ?int
+    if list: l then
+        if len(l) > 0 then
+            return l[0]
+        end
+    end
+    return null
+end
+
+assert(first(null) == null)
+assert(first([]) == null)
+if first([9, 8]): f then
+    assert(f == 9)
+end
+
+func maybe_list(n: int) -> ?[]int
+    if n == 0 then
+        return null
+    end
+    return [n]
+end
+
+assert(maybe_list(0) == null)
+let ml = maybe_list(5)
+if ml: m then
+    assert(m[0] == 5)
+end
+
+let nested: []?[]int = [null, [1], null]
+assert(len(nested) == 3)
+assert(nested[0] == null)
+if nested[1]: n1 then
+    assert(n1[0] == 1)
+end
+
+struct Settings
+    retries: ?int = null
+    label: ?string = null
+end
+
+let mut settings = Settings()
+assert(settings.retries == null)
+settings.retries = 3
+if settings.retries: r then
+    assert(r == 3)
+end
+
+let mut i = 0
+let mut keep: ?[]int = [7, 7]
+let held = Bag(items = ["held"], counts = [1, 2])
+let mut many: []?[]int = []
+for i < 200000 do
+    let junk = [i, i, i]
+    if i % 20000 == 0 then
+        append(many, [i])
+        append(many, null)
+    end
+    i += 1
+end
+if keep: k then
+    assert(k[1] == 7)
+end
+if held.items: h then
+    echo(h)
+end
+assert(len(many) == 20)
+if many[2]: m2 then
+    assert(m2[0] == 20000)
+end
+assert(many[3] == null)
