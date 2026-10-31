@@ -24,6 +24,7 @@
 - A failing `try` at the top level stops the program with `unhandled error <Set.Error>`
 - `error`, `try` and `catch` are now keywords, so they can't be used as names (e.g. a union variant called `error`)
 - Fixed compiler crash when a function calls another function defined after it (mutual recursion)
+- Fixed `if f() catch fallback then` failing to parse: inside an `if`/`elif` condition, `catch name then` is a fallback value. A catch block still works there inside parentheses or call arguments
 - Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`
 - Fixed struct fields with both a type and a default (`retries: ?int = null`) taking the default's type instead of the declared one
 - Fixed array literals ignoring the declared item type (`let a: []?int = [null, 1]`)

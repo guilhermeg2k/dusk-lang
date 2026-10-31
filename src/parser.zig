@@ -17,6 +17,7 @@ pub const Parser = struct {
     cur_index: usize = 0,
     loop_depth: usize = 0,
     branch_depth: usize = 0,
+    is_parsing_condition: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -39,6 +40,8 @@ pub const Parser = struct {
     }
 
     pub fn parseBlock(self: *Self, extra_stop_tags: []const Tag) Errors!ast.Block {
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
         var statements: std.ArrayList(ast.StatementNode) = .empty;
 
         var current_tk = self.peekCurrent();
@@ -308,6 +311,19 @@ pub const Parser = struct {
         }
     }
 
+    fn parseCondition(self: *Self) Errors!*ast.ExpNode {
+        const was_parsing_condition = self.is_parsing_condition;
+        self.is_parsing_condition = true;
+        defer self.is_parsing_condition = was_parsing_condition;
+        return self.parseExp(0);
+    }
+
+    fn leaveCondition(self: *Self) bool {
+        const was_parsing_condition = self.is_parsing_condition;
+        self.is_parsing_condition = false;
+        return was_parsing_condition;
+    }
+
     fn parseBranchBlock(self: *Self, stop_tags: []const Tag) Errors!ast.Block {
         self.branch_depth += 1;
         defer self.branch_depth -= 1;
@@ -338,7 +354,7 @@ pub const Parser = struct {
         while (self.match(.elif_kw)) {
             const elif_start = self.tokens[self.cur_index - 1].loc.start;
 
-            const cond = try self.parseExp(0);
+            const cond = try self.parseCondition();
             _ = try self.expect(.then_kw);
             const body = try self.parseBranchBlock(&.{ .else_kw, .elif_kw });
 
@@ -823,6 +839,8 @@ pub const Parser = struct {
     }
 
     fn parseExpList(self: *Self) Errors![]const *ast.ExpNode {
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
         var exps: std.ArrayList(*ast.ExpNode) = .empty;
 
         while (true) {
@@ -841,6 +859,8 @@ pub const Parser = struct {
         if (self.peekCurrent().tag == .r_paren) {
             return &.{};
         }
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
 
         var are_arguments_named: ?bool = null;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
@@ -951,7 +971,7 @@ pub const Parser = struct {
         self.walk();
         const tk = self.peekCurrent();
 
-        if (tk.tag == .identifier and self.peekNext().tag == .then_kw) {
+        if (!self.is_parsing_condition and tk.tag == .identifier and self.peekNext().tag == .then_kw) {
             self.walk();
             self.walk();
             const body = try self.parseBlock(&.{});
@@ -1049,7 +1069,7 @@ pub const Parser = struct {
 
         return switch (tk.tag) {
             .if_kw => {
-                const condition = try self.parseExp(0);
+                const condition = try self.parseCondition();
                 const data: ast.Exp = if (self.match(.colon))
                     .{ .if_capture_exp = try self.parseIfCapture(condition) }
                 else
@@ -1111,6 +1131,8 @@ pub const Parser = struct {
                 );
             },
             .l_paren => {
+                const was_parsing_condition = self.leaveCondition();
+                defer self.is_parsing_condition = was_parsing_condition;
                 const exp = try self.parseExp(0);
                 _ = try self.expect(.r_paren);
                 return exp;
@@ -1180,6 +1202,8 @@ pub const Parser = struct {
                 .l_bracket => {
                     self.walk();
 
+                    const was_parsing_condition = self.leaveCondition();
+                    defer self.is_parsing_condition = was_parsing_condition;
                     const index = try self.parseExp(0);
                     const r_bracket = try self.expect(.r_bracket);
 
