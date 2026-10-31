@@ -990,8 +990,8 @@ test "errors-catch-condition" {
     try runCase("errors-catch-condition.dsk");
 }
 
-test "if-statement-many" {
-    try runCase("if-statement-many.dsk");
+test "statement-registers" {
+    try runCase("statement-registers.dsk");
 }
 
 test "when-float-ranges" {

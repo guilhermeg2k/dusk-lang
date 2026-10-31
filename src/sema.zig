@@ -713,25 +713,10 @@ pub const SemaAnalyzer = struct {
                 .@"break" => ir.Instruction{ .break_stmt = {} },
                 .@"continue" => ir.Instruction{ .continue_stmt = {} },
                 .@"return" => try self.visitReturnStmt(&stmt),
-                .if_capture, .when, .for_capture => null,
+                .if_capture => ir.Instruction{ .scope = try self.lowerIfCapture(&stmt, null) },
+                .when => ir.Instruction{ .scope = try self.lowerWhen(&stmt, null) },
+                .for_capture => ir.Instruction{ .scope = try self.visitForCaptureStmt(&stmt) },
             };
-
-            if (stmt.data == .for_capture) {
-                try instructions.appendSlice(self.allocator, try self.visitForCaptureStmt(&stmt));
-                continue;
-            }
-
-            if (stmt.data == .if_capture) {
-                const if_capture_insts = try self.visitIfCaptureStmt(&stmt);
-                try instructions.appendSlice(self.allocator, if_capture_insts);
-                continue;
-            }
-
-            if (stmt.data == .when) {
-                const when_insts = try self.visitWhenStmt(&stmt);
-                try instructions.appendSlice(self.allocator, when_insts);
-                continue;
-            }
 
             if (instruction) |i| {
                 try instructions.append(self.allocator, i);
@@ -805,6 +790,9 @@ pub const SemaAnalyzer = struct {
                     if (isValueReturning(branch.condition)) return true;
                     if (branch.else_block.len > 0 and areAllPathsReturning(branch.then_block) and areAllPathsReturning(branch.else_block)) return true;
                 },
+                .scope => |scoped| {
+                    if (areAllPathsReturning(scoped)) return true;
+                },
                 else => {},
             }
         }
@@ -871,6 +859,9 @@ pub const SemaAnalyzer = struct {
                 .branch_if => |branch| {
                     if (isValueLeaving(branch.condition)) return true;
                     if (branch.else_block.len > 0 and isBlockLeaving(branch.then_block) and isBlockLeaving(branch.else_block)) return true;
+                },
+                .scope => |scoped| {
+                    if (isBlockLeaving(scoped)) return true;
                 },
                 else => {},
             }
@@ -1209,10 +1200,6 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn visitIfCaptureStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
-        return self.lowerIfCapture(stmt, null);
-    }
-
     fn lowerIfCapture(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors![]ir.Instruction {
         const capture = stmt.data.if_capture;
         if (result != null and capture.else_block == null) {
@@ -1271,10 +1258,6 @@ pub const SemaAnalyzer = struct {
             .else_block = else_instructions,
         } });
         return instructions.toOwnedSlice(self.allocator);
-    }
-
-    fn visitWhenStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
-        return self.lowerWhen(stmt, null);
     }
 
     fn lowerWhen(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors![]ir.Instruction {

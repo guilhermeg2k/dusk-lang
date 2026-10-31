@@ -15,7 +15,7 @@
 - `if`, nullable-capture `if` and `when` now work as expressions. Branches produce their final expression, with statements allowed before it; value-producing `if` requires `else`
 - Conditional expressions infer compatible result types, promote mixed numeric results, support nullable results and propagate expected types into branch values, anonymous initializers and empty arrays
 - Expression branches can `return`, `break` or `continue` without supplying a value. Existing statement forms retain their behavior
-- `if` and `when` statements compile straight to branches again instead of going through the expression path, so a block with hundreds of `if` statements no longer runs out of registers and statements don't run extra instructions
+- `if` and `when` statements compile straight to branches again instead of going through the expression path, so statements don't run extra instructions
 - Nullable captures evaluate their subject once, unwrap only in the matching branch and keep captured names out of `else`; union captures also preserve outer variables with the same name
 
 - Error handling: error sets (`error ParseError ... end`), functions that can fail (`-> E!T`, or `-> !T` to infer the error set from the body), `try` to pass an error on, and `catch` with a fallback value (`f() catch 0`) or a block (`f() catch e then ... end`)
@@ -24,6 +24,7 @@
 - A failing `try` at the top level stops the program with `unhandled error <Set.Error>`
 - `error`, `try` and `catch` are now keywords, so they can't be used as names (e.g. a union variant called `error`)
 - Fixed compiler crash when a function calls another function defined after it (mutual recursion)
+- Fixed `Register limit exceeded` crash in blocks with a few hundred `if`, `when`, nullable-capture `if`, capture `for` or call statements: the hidden variables each statement uses are now freed when it ends
 - Fixed `if f() catch fallback then` failing to parse: inside an `if`/`elif` condition, `catch name then` is a fallback value. A catch block still works there inside parentheses or call arguments
 - Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`
 - Fixed struct fields with both a type and a default (`retries: ?int = null`) taking the default's type instead of the declared one

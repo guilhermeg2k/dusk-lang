@@ -1,0 +1,1810 @@
+let items = [1]
+let maybe: ?int = 1
+let mut x = 0
+if x == 0 then x += 1 end
+if x == 1 then x += 1 end
+if x == 2 then x += 1 end
+if x == 3 then x += 1 end
+if x == 4 then x += 1 end
+if x == 5 then x += 1 end
+if x == 6 then x += 1 end
+if x == 7 then x += 1 end
+if x == 8 then x += 1 end
+if x == 9 then x += 1 end
+if x == 10 then x += 1 end
+if x == 11 then x += 1 end
+if x == 12 then x += 1 end
+if x == 13 then x += 1 end
+if x == 14 then x += 1 end
+if x == 15 then x += 1 end
+if x == 16 then x += 1 end
+if x == 17 then x += 1 end
+if x == 18 then x += 1 end
+if x == 19 then x += 1 end
+if x == 20 then x += 1 end
+if x == 21 then x += 1 end
+if x == 22 then x += 1 end
+if x == 23 then x += 1 end
+if x == 24 then x += 1 end
+if x == 25 then x += 1 end
+if x == 26 then x += 1 end
+if x == 27 then x += 1 end
+if x == 28 then x += 1 end
+if x == 29 then x += 1 end
+if x == 30 then x += 1 end
+if x == 31 then x += 1 end
+if x == 32 then x += 1 end
+if x == 33 then x += 1 end
+if x == 34 then x += 1 end
+if x == 35 then x += 1 end
+if x == 36 then x += 1 end
+if x == 37 then x += 1 end
+if x == 38 then x += 1 end
+if x == 39 then x += 1 end
+if x == 40 then x += 1 end
+if x == 41 then x += 1 end
+if x == 42 then x += 1 end
+if x == 43 then x += 1 end
+if x == 44 then x += 1 end
+if x == 45 then x += 1 end
+if x == 46 then x += 1 end
+if x == 47 then x += 1 end
+if x == 48 then x += 1 end
+if x == 49 then x += 1 end
+if x == 50 then x += 1 end
+if x == 51 then x += 1 end
+if x == 52 then x += 1 end
+if x == 53 then x += 1 end
+if x == 54 then x += 1 end
+if x == 55 then x += 1 end
+if x == 56 then x += 1 end
+if x == 57 then x += 1 end
+if x == 58 then x += 1 end
+if x == 59 then x += 1 end
+if x == 60 then x += 1 end
+if x == 61 then x += 1 end
+if x == 62 then x += 1 end
+if x == 63 then x += 1 end
+if x == 64 then x += 1 end
+if x == 65 then x += 1 end
+if x == 66 then x += 1 end
+if x == 67 then x += 1 end
+if x == 68 then x += 1 end
+if x == 69 then x += 1 end
+if x == 70 then x += 1 end
+if x == 71 then x += 1 end
+if x == 72 then x += 1 end
+if x == 73 then x += 1 end
+if x == 74 then x += 1 end
+if x == 75 then x += 1 end
+if x == 76 then x += 1 end
+if x == 77 then x += 1 end
+if x == 78 then x += 1 end
+if x == 79 then x += 1 end
+if x == 80 then x += 1 end
+if x == 81 then x += 1 end
+if x == 82 then x += 1 end
+if x == 83 then x += 1 end
+if x == 84 then x += 1 end
+if x == 85 then x += 1 end
+if x == 86 then x += 1 end
+if x == 87 then x += 1 end
+if x == 88 then x += 1 end
+if x == 89 then x += 1 end
+if x == 90 then x += 1 end
+if x == 91 then x += 1 end
+if x == 92 then x += 1 end
+if x == 93 then x += 1 end
+if x == 94 then x += 1 end
+if x == 95 then x += 1 end
+if x == 96 then x += 1 end
+if x == 97 then x += 1 end
+if x == 98 then x += 1 end
+if x == 99 then x += 1 end
+if x == 100 then x += 1 end
+if x == 101 then x += 1 end
+if x == 102 then x += 1 end
+if x == 103 then x += 1 end
+if x == 104 then x += 1 end
+if x == 105 then x += 1 end
+if x == 106 then x += 1 end
+if x == 107 then x += 1 end
+if x == 108 then x += 1 end
+if x == 109 then x += 1 end
+if x == 110 then x += 1 end
+if x == 111 then x += 1 end
+if x == 112 then x += 1 end
+if x == 113 then x += 1 end
+if x == 114 then x += 1 end
+if x == 115 then x += 1 end
+if x == 116 then x += 1 end
+if x == 117 then x += 1 end
+if x == 118 then x += 1 end
+if x == 119 then x += 1 end
+if x == 120 then x += 1 end
+if x == 121 then x += 1 end
+if x == 122 then x += 1 end
+if x == 123 then x += 1 end
+if x == 124 then x += 1 end
+if x == 125 then x += 1 end
+if x == 126 then x += 1 end
+if x == 127 then x += 1 end
+if x == 128 then x += 1 end
+if x == 129 then x += 1 end
+if x == 130 then x += 1 end
+if x == 131 then x += 1 end
+if x == 132 then x += 1 end
+if x == 133 then x += 1 end
+if x == 134 then x += 1 end
+if x == 135 then x += 1 end
+if x == 136 then x += 1 end
+if x == 137 then x += 1 end
+if x == 138 then x += 1 end
+if x == 139 then x += 1 end
+if x == 140 then x += 1 end
+if x == 141 then x += 1 end
+if x == 142 then x += 1 end
+if x == 143 then x += 1 end
+if x == 144 then x += 1 end
+if x == 145 then x += 1 end
+if x == 146 then x += 1 end
+if x == 147 then x += 1 end
+if x == 148 then x += 1 end
+if x == 149 then x += 1 end
+if x == 150 then x += 1 end
+if x == 151 then x += 1 end
+if x == 152 then x += 1 end
+if x == 153 then x += 1 end
+if x == 154 then x += 1 end
+if x == 155 then x += 1 end
+if x == 156 then x += 1 end
+if x == 157 then x += 1 end
+if x == 158 then x += 1 end
+if x == 159 then x += 1 end
+if x == 160 then x += 1 end
+if x == 161 then x += 1 end
+if x == 162 then x += 1 end
+if x == 163 then x += 1 end
+if x == 164 then x += 1 end
+if x == 165 then x += 1 end
+if x == 166 then x += 1 end
+if x == 167 then x += 1 end
+if x == 168 then x += 1 end
+if x == 169 then x += 1 end
+if x == 170 then x += 1 end
+if x == 171 then x += 1 end
+if x == 172 then x += 1 end
+if x == 173 then x += 1 end
+if x == 174 then x += 1 end
+if x == 175 then x += 1 end
+if x == 176 then x += 1 end
+if x == 177 then x += 1 end
+if x == 178 then x += 1 end
+if x == 179 then x += 1 end
+if x == 180 then x += 1 end
+if x == 181 then x += 1 end
+if x == 182 then x += 1 end
+if x == 183 then x += 1 end
+if x == 184 then x += 1 end
+if x == 185 then x += 1 end
+if x == 186 then x += 1 end
+if x == 187 then x += 1 end
+if x == 188 then x += 1 end
+if x == 189 then x += 1 end
+if x == 190 then x += 1 end
+if x == 191 then x += 1 end
+if x == 192 then x += 1 end
+if x == 193 then x += 1 end
+if x == 194 then x += 1 end
+if x == 195 then x += 1 end
+if x == 196 then x += 1 end
+if x == 197 then x += 1 end
+if x == 198 then x += 1 end
+if x == 199 then x += 1 end
+if x == 200 then x += 1 end
+if x == 201 then x += 1 end
+if x == 202 then x += 1 end
+if x == 203 then x += 1 end
+if x == 204 then x += 1 end
+if x == 205 then x += 1 end
+if x == 206 then x += 1 end
+if x == 207 then x += 1 end
+if x == 208 then x += 1 end
+if x == 209 then x += 1 end
+if x == 210 then x += 1 end
+if x == 211 then x += 1 end
+if x == 212 then x += 1 end
+if x == 213 then x += 1 end
+if x == 214 then x += 1 end
+if x == 215 then x += 1 end
+if x == 216 then x += 1 end
+if x == 217 then x += 1 end
+if x == 218 then x += 1 end
+if x == 219 then x += 1 end
+if x == 220 then x += 1 end
+if x == 221 then x += 1 end
+if x == 222 then x += 1 end
+if x == 223 then x += 1 end
+if x == 224 then x += 1 end
+if x == 225 then x += 1 end
+if x == 226 then x += 1 end
+if x == 227 then x += 1 end
+if x == 228 then x += 1 end
+if x == 229 then x += 1 end
+if x == 230 then x += 1 end
+if x == 231 then x += 1 end
+if x == 232 then x += 1 end
+if x == 233 then x += 1 end
+if x == 234 then x += 1 end
+if x == 235 then x += 1 end
+if x == 236 then x += 1 end
+if x == 237 then x += 1 end
+if x == 238 then x += 1 end
+if x == 239 then x += 1 end
+if x == 240 then x += 1 end
+if x == 241 then x += 1 end
+if x == 242 then x += 1 end
+if x == 243 then x += 1 end
+if x == 244 then x += 1 end
+if x == 245 then x += 1 end
+if x == 246 then x += 1 end
+if x == 247 then x += 1 end
+if x == 248 then x += 1 end
+if x == 249 then x += 1 end
+if x == 250 then x += 1 end
+if x == 251 then x += 1 end
+if x == 252 then x += 1 end
+if x == 253 then x += 1 end
+if x == 254 then x += 1 end
+if x == 255 then x += 1 end
+if x == 256 then x += 1 end
+if x == 257 then x += 1 end
+if x == 258 then x += 1 end
+if x == 259 then x += 1 end
+if x == 260 then x += 1 end
+if x == 261 then x += 1 end
+if x == 262 then x += 1 end
+if x == 263 then x += 1 end
+if x == 264 then x += 1 end
+if x == 265 then x += 1 end
+if x == 266 then x += 1 end
+if x == 267 then x += 1 end
+if x == 268 then x += 1 end
+if x == 269 then x += 1 end
+if x == 270 then x += 1 end
+if x == 271 then x += 1 end
+if x == 272 then x += 1 end
+if x == 273 then x += 1 end
+if x == 274 then x += 1 end
+if x == 275 then x += 1 end
+if x == 276 then x += 1 end
+if x == 277 then x += 1 end
+if x == 278 then x += 1 end
+if x == 279 then x += 1 end
+if x == 280 then x += 1 end
+if x == 281 then x += 1 end
+if x == 282 then x += 1 end
+if x == 283 then x += 1 end
+if x == 284 then x += 1 end
+if x == 285 then x += 1 end
+if x == 286 then x += 1 end
+if x == 287 then x += 1 end
+if x == 288 then x += 1 end
+if x == 289 then x += 1 end
+if x == 290 then x += 1 end
+if x == 291 then x += 1 end
+if x == 292 then x += 1 end
+if x == 293 then x += 1 end
+if x == 294 then x += 1 end
+if x == 295 then x += 1 end
+if x == 296 then x += 1 end
+if x == 297 then x += 1 end
+if x == 298 then x += 1 end
+if x == 299 then x += 1 end
+assert(x == 300)
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+when x 300 then x += 0 end else then x = 0 end end
+assert(x == 300)
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+if maybe: v then x += v end
+assert(x == 600)
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+for items: item do x += item end
+assert(x == 900)
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+for 1..1: n do x += n end
+assert(x == 1200)
+let mut appended = [0]
+append(appended, 1)
+append(appended, 2)
+append(appended, 3)
+append(appended, 4)
+append(appended, 5)
+append(appended, 6)
+append(appended, 7)
+append(appended, 8)
+append(appended, 9)
+append(appended, 10)
+append(appended, 11)
+append(appended, 12)
+append(appended, 13)
+append(appended, 14)
+append(appended, 15)
+append(appended, 16)
+append(appended, 17)
+append(appended, 18)
+append(appended, 19)
+append(appended, 20)
+append(appended, 21)
+append(appended, 22)
+append(appended, 23)
+append(appended, 24)
+append(appended, 25)
+append(appended, 26)
+append(appended, 27)
+append(appended, 28)
+append(appended, 29)
+append(appended, 30)
+append(appended, 31)
+append(appended, 32)
+append(appended, 33)
+append(appended, 34)
+append(appended, 35)
+append(appended, 36)
+append(appended, 37)
+append(appended, 38)
+append(appended, 39)
+append(appended, 40)
+append(appended, 41)
+append(appended, 42)
+append(appended, 43)
+append(appended, 44)
+append(appended, 45)
+append(appended, 46)
+append(appended, 47)
+append(appended, 48)
+append(appended, 49)
+append(appended, 50)
+append(appended, 51)
+append(appended, 52)
+append(appended, 53)
+append(appended, 54)
+append(appended, 55)
+append(appended, 56)
+append(appended, 57)
+append(appended, 58)
+append(appended, 59)
+append(appended, 60)
+append(appended, 61)
+append(appended, 62)
+append(appended, 63)
+append(appended, 64)
+append(appended, 65)
+append(appended, 66)
+append(appended, 67)
+append(appended, 68)
+append(appended, 69)
+append(appended, 70)
+append(appended, 71)
+append(appended, 72)
+append(appended, 73)
+append(appended, 74)
+append(appended, 75)
+append(appended, 76)
+append(appended, 77)
+append(appended, 78)
+append(appended, 79)
+append(appended, 80)
+append(appended, 81)
+append(appended, 82)
+append(appended, 83)
+append(appended, 84)
+append(appended, 85)
+append(appended, 86)
+append(appended, 87)
+append(appended, 88)
+append(appended, 89)
+append(appended, 90)
+append(appended, 91)
+append(appended, 92)
+append(appended, 93)
+append(appended, 94)
+append(appended, 95)
+append(appended, 96)
+append(appended, 97)
+append(appended, 98)
+append(appended, 99)
+append(appended, 100)
+append(appended, 101)
+append(appended, 102)
+append(appended, 103)
+append(appended, 104)
+append(appended, 105)
+append(appended, 106)
+append(appended, 107)
+append(appended, 108)
+append(appended, 109)
+append(appended, 110)
+append(appended, 111)
+append(appended, 112)
+append(appended, 113)
+append(appended, 114)
+append(appended, 115)
+append(appended, 116)
+append(appended, 117)
+append(appended, 118)
+append(appended, 119)
+append(appended, 120)
+append(appended, 121)
+append(appended, 122)
+append(appended, 123)
+append(appended, 124)
+append(appended, 125)
+append(appended, 126)
+append(appended, 127)
+append(appended, 128)
+append(appended, 129)
+append(appended, 130)
+append(appended, 131)
+append(appended, 132)
+append(appended, 133)
+append(appended, 134)
+append(appended, 135)
+append(appended, 136)
+append(appended, 137)
+append(appended, 138)
+append(appended, 139)
+append(appended, 140)
+append(appended, 141)
+append(appended, 142)
+append(appended, 143)
+append(appended, 144)
+append(appended, 145)
+append(appended, 146)
+append(appended, 147)
+append(appended, 148)
+append(appended, 149)
+append(appended, 150)
+append(appended, 151)
+append(appended, 152)
+append(appended, 153)
+append(appended, 154)
+append(appended, 155)
+append(appended, 156)
+append(appended, 157)
+append(appended, 158)
+append(appended, 159)
+append(appended, 160)
+append(appended, 161)
+append(appended, 162)
+append(appended, 163)
+append(appended, 164)
+append(appended, 165)
+append(appended, 166)
+append(appended, 167)
+append(appended, 168)
+append(appended, 169)
+append(appended, 170)
+append(appended, 171)
+append(appended, 172)
+append(appended, 173)
+append(appended, 174)
+append(appended, 175)
+append(appended, 176)
+append(appended, 177)
+append(appended, 178)
+append(appended, 179)
+append(appended, 180)
+append(appended, 181)
+append(appended, 182)
+append(appended, 183)
+append(appended, 184)
+append(appended, 185)
+append(appended, 186)
+append(appended, 187)
+append(appended, 188)
+append(appended, 189)
+append(appended, 190)
+append(appended, 191)
+append(appended, 192)
+append(appended, 193)
+append(appended, 194)
+append(appended, 195)
+append(appended, 196)
+append(appended, 197)
+append(appended, 198)
+append(appended, 199)
+append(appended, 200)
+append(appended, 201)
+append(appended, 202)
+append(appended, 203)
+append(appended, 204)
+append(appended, 205)
+append(appended, 206)
+append(appended, 207)
+append(appended, 208)
+append(appended, 209)
+append(appended, 210)
+append(appended, 211)
+append(appended, 212)
+append(appended, 213)
+append(appended, 214)
+append(appended, 215)
+append(appended, 216)
+append(appended, 217)
+append(appended, 218)
+append(appended, 219)
+append(appended, 220)
+append(appended, 221)
+append(appended, 222)
+append(appended, 223)
+append(appended, 224)
+append(appended, 225)
+append(appended, 226)
+append(appended, 227)
+append(appended, 228)
+append(appended, 229)
+append(appended, 230)
+append(appended, 231)
+append(appended, 232)
+append(appended, 233)
+append(appended, 234)
+append(appended, 235)
+append(appended, 236)
+append(appended, 237)
+append(appended, 238)
+append(appended, 239)
+append(appended, 240)
+append(appended, 241)
+append(appended, 242)
+append(appended, 243)
+append(appended, 244)
+append(appended, 245)
+append(appended, 246)
+append(appended, 247)
+append(appended, 248)
+append(appended, 249)
+append(appended, 250)
+append(appended, 251)
+append(appended, 252)
+append(appended, 253)
+append(appended, 254)
+append(appended, 255)
+append(appended, 256)
+append(appended, 257)
+append(appended, 258)
+append(appended, 259)
+append(appended, 260)
+append(appended, 261)
+append(appended, 262)
+append(appended, 263)
+append(appended, 264)
+append(appended, 265)
+append(appended, 266)
+append(appended, 267)
+append(appended, 268)
+append(appended, 269)
+append(appended, 270)
+append(appended, 271)
+append(appended, 272)
+append(appended, 273)
+append(appended, 274)
+append(appended, 275)
+append(appended, 276)
+append(appended, 277)
+append(appended, 278)
+append(appended, 279)
+append(appended, 280)
+append(appended, 281)
+append(appended, 282)
+append(appended, 283)
+append(appended, 284)
+append(appended, 285)
+append(appended, 286)
+append(appended, 287)
+append(appended, 288)
+append(appended, 289)
+append(appended, 290)
+append(appended, 291)
+append(appended, 292)
+append(appended, 293)
+append(appended, 294)
+append(appended, 295)
+append(appended, 296)
+append(appended, 297)
+append(appended, 298)
+append(appended, 299)
+append(appended, 300)
+assert(len(appended) == 301)

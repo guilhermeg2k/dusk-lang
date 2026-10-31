@@ -262,11 +262,18 @@ pub const BytecodeGen = struct {
                     try self.genStoreVar(store_var);
                 },
                 .expression_stmt => |stmt| {
+                    const saved_next_free = self.next_free_register;
                     //note: consuming a register
                     _ = try self.genValue(stmt.value, self.consumeRegister());
+                    self.freeRegisterN(self.next_free_register - saved_next_free);
                 },
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
+                },
+                .scope => |instructions| {
+                    const saved_next_free = self.next_free_register;
+                    try self.genInstructionBlock(instructions);
+                    self.freeRegisterN(self.next_free_register - saved_next_free);
                 },
                 .loop => |stmt| {
                     try self.genLoop(stmt);
