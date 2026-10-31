@@ -90,6 +90,7 @@ Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing clo
 | :----- | :---- |
 | `\"` | Double quote |
 | `\\` | Backslash |
+| `\$` | Literal dollar sign |
 | `\n` | Line feed |
 | `\r` | Carriage return |
 | `\t` | Tab |
@@ -105,7 +106,28 @@ echo("Moon: \u{1F319}")
 echo("A literal backslash: \\")
 ```
 
-Actual line breaks inside double quotes are also preserved. Strings have no concatenation or interpolation yet. See [Known Limitations](#14-known-limitations).
+Actual line breaks inside double quotes are also preserved. String concatenation is not implemented yet.
+
+### String interpolation
+
+Use `$name` to insert a variable or `${expression}` to insert an expression:
+
+```nim
+let name = "Dusk"
+let age = 13
+echo("Hello, $name! You are $age years old.")
+let a = 2
+let b = 3
+echo("Sum: ${a + b}")
+echo("Nested: ${"Hello, $name"}")
+echo("A literal dollar: \$name")
+```
+
+`$name` consumes a complete identifier, including underscores and digits after its first character. Use braces to separate a name from following text (`"${name}_suffix"`), access a member (`"${item.field}"`), index an array or call a function. A dollar sign that starts neither an identifier nor `${` stays literal, as in `"$5"`.
+
+Expressions are evaluated and formatted exactly once, from left to right. Values use the current `echo` formatting, including arrays, structs, unions, nullable values and `null`, without adding a newline. An empty `${}`, an unknown name or a `void` result is a compile error. Failing calls require `try` or `catch`, as elsewhere. Expressions can contain nested strings, interpolations, conditionals and comments; error locations refer to the original source.
+
+Escaped dollars (`\$`) and dollars produced by Unicode escapes (`\u{24}`) remain literal and do not start interpolation.
 
 ### Arrays
 
@@ -905,7 +927,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Strings**: no concatenation or interpolation, and `==` compares identity (string operations are planned for v0.13).
+- **Strings**: no concatenation, and `==` compares identity (string operations are planned for v0.13).
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
 - **Union size**: a union can have at most 256 variants.

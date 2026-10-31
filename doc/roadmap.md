@@ -18,7 +18,7 @@
 - Multiline strings
 - Strings operations
 - `when` on strings
-- String interpolation
+- String interpolation (`$name` and `${expression}`; implemented)
 
 ## Version 0.14 - Simon
 

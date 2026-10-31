@@ -3,6 +3,73 @@ const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
 const Lexer = @import("lexer.zig").Lexer;
 
+fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    defer @import("built-in.zig").BuiltIn.setEchoWriter(null);
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "string interpolation" {
+    try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
+        "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
+        "Escaped: $name ${a + b} $name $ $5\n" ++
+        "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
+        "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
+        "true 1.5 null 7 1.5 true text null\n3 1 [1, 2] { 9 }\n<union>\n");
+}
+
+test "string interpolation GC" {
+    try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
+}
+
+test "string interpolation control flow" {
+    try runCaseOutput("string-interpolation-control-flow.dsk", "number=5\nfallback\ncaught=8\nearly\nbefore 4 after\n1\n3\n4\nother\n");
+}
+
+test "string interpolation ignores braces in comments" {
+    const sources = [_][]const u8{
+        "let value = \"${1 #= } #= nested =# =# + 2}\"",
+        "let value = \"${1 + 2 # ignored }\n}\"",
+    };
+    for (sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        try dusk.compileAndRun(source);
+    }
+}
+
+test "string interpolation empty" {
+    try runCaseError("parser/string-interpolation-empty.dsk", error.ParserError);
+}
+
+test "string interpolation extra expression" {
+    try runCaseError("parser/string-interpolation-extra-expression.dsk", error.ParserError);
+}
+
+test "string interpolation unclosed" {
+    try runCaseError("parser/string-interpolation-unclosed.dsk", error.LexerError);
+}
+
+test "string interpolation unknown name" {
+    try runCaseError("sema/string-interpolation-unknown-name.dsk", error.NotDefined);
+}
+
+test "string interpolation void" {
+    try runCaseError("sema/string-interpolation-void.dsk", error.InvalidExpression);
+}
+
+test "string interpolation unhandled error" {
+    try runCaseError("sema/string-interpolation-unhandled-error.dsk", error.UnhandledError);
+}
+
 test "multiline comments preserve tokens and locations" {
     const src = "#= header\n#= nested =#\n=#let#==#x = 1#= inline =#+2#= tail =#";
     var lexer = Lexer.init(testing.allocator, src);

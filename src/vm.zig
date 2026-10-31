@@ -34,6 +34,20 @@ pub const VM = struct {
         };
     }
 
+    fn appendStringValue(self: *Self, target: *v.Value, value: v.Value, kind: v.ValueType) !void {
+        var buffer: std.Io.Writer.Allocating = .init(self.allocator);
+        defer buffer.deinit();
+        const prefix = v.HeapValue.getParentPtr(v.String, target.heap_obj);
+        try buffer.writer.writeAll(prefix.slice());
+        @import("built-in.zig").BuiltIn.printValue(&buffer.writer, value, kind);
+        const bytes = buffer.written();
+        const size = v.String.calc_size(bytes.len);
+        try self.maybeCollectGarbage(size);
+        const string = try v.String.init(self.getCurrentHeapAllocator(), bytes);
+        self.increaseHeapAllocationCount(size);
+        target.* = .{ .heap_obj = &string.obj };
+    }
+
     pub noinline fn run(self: *Self) !void {
         try self.initStaticStore();
         self.initMainFrame();
@@ -64,6 +78,11 @@ pub const VM = struct {
                     var string_obj = try v.String.init(self.getCurrentHeapAllocator(), str_data);
                     self.increaseHeapAllocationCount(v.String.calc_size(str_data.len));
                     stack[stack_base + inst.a] = .{ .heap_obj = &string_obj.obj };
+                },
+
+                .STRING_APPEND => {
+                    current_frame.cur_inst = cur_instruction;
+                    try self.appendStringValue(&stack[stack_base + inst.a], stack[stack_base + inst.b], @enumFromInt(inst.c));
                 },
 
                 .LOAD => {

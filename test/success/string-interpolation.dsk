@@ -1,0 +1,57 @@
+let name = "Dusk"
+let age = 13
+let a = 2
+let b = 3
+echo("Hello, $name! You are $age years old.")
+echo("Sum: ${a + b}")
+echo("${name}${age}${a + b}")
+echo("$name.length ${[10, 20][1]} ${if true then "yes" else "no" end}")
+echo("Nested: ${"$name ${a + b}"}")
+echo("Escaped: \$name \${a + b} \u{24}name $ $5")
+echo("Backslash: \\$name; Unicode: 🌙 ${"\u{1F319}"}")
+echo("${"#= } =#"}")
+echo("Controls: ${"a\0b"}\n${"\t"}")
+let mut updated = "old"
+updated = "$updated!"
+echo(updated)
+let mut calls = 0
+func next() -> int
+    calls += 1
+    return calls
+end
+echo("${next()} ${next()} ${next()}")
+assert(calls == 3)
+let mut items = [1, 2]
+func change() -> int
+    items[0] = 9
+    return 7
+end
+echo("$items ${change()} $items")
+func greet(who: string = "${"World"}!") -> string
+    return "Hello, $who"
+end
+echo(greet())
+struct Box
+    value: string = "${"default"}"
+end
+echo("${Box().value}")
+enum Color
+    Red = 3
+end
+error Fault
+    Bad
+end
+let nullable_int: ?int = 7
+let nullable_float: ?float = 1.5
+let nullable_bool: ?bool = true
+let nullable_text: ?string = "text"
+let missing: ?int = null
+echo("${true} ${1.5} ${null} $nullable_int $nullable_float $nullable_bool $nullable_text $missing")
+struct Pair
+    value: int = 9
+end
+echo("${Color.Red} ${Fault.Bad} ${[1, 2]} ${Pair()}")
+union Choice
+    number: int
+end
+echo("${Choice(number = 4)}")

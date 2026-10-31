@@ -176,6 +176,7 @@ pub const Value = struct {
         i_int: i64,
         i_bool: bool,
         i_string: []const u8,
+        string_interpolation: []const *Value,
         i_void: void,
         i_null: void,
         i_array: Array,

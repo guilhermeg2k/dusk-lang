@@ -540,6 +540,26 @@ pub const BytecodeGen = struct {
                 self.register_types[target_reg] = value.type_id;
             },
 
+            .string_interpolation => |parts| {
+                const accumulator = try self.consumeRegister();
+                defer self.freeRegister();
+                try self.genLoadString("", accumulator);
+                self.register_types[accumulator] = self.type_table.getPrimitive(.string);
+                for (parts) |part| {
+                    const part_reg = try self.genValue(part, try self.consumeRegister());
+                    defer self.freeRegister();
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .STRING_APPEND,
+                        .a = accumulator,
+                        .b = part_reg,
+                        .c = @intFromEnum(v.ValueType.fromTypeId(self.type_table, part.type_id)),
+                    });
+                    try self.recordHeapMap();
+                }
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = accumulator });
+                self.register_types[target_reg] = value.type_id;
+            },
+
             .indexed => |idx| {
                 try self.genIndexedLoad(idx, value, target_reg);
             },
@@ -1561,6 +1581,7 @@ pub const Chunk = struct {
             .ARRAY_POP,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRING_APPEND => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1617,6 +1638,7 @@ pub const OpCode = enum(u8) {
     STORE_VAR,
 
     LOAD_STRING,
+    STRING_APPEND,
 
     ARRAY_INIT,
     ARRAY_LOAD,
@@ -1699,6 +1721,7 @@ pub const OpCode = enum(u8) {
             .NULL_BOX_INIT,
             .NULL_BOX_STORE,
             .LOAD_STRING,
+            .STRING_APPEND,
             .CALL,
             => true,
             else => false,

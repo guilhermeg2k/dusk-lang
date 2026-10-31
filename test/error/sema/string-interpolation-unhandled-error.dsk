@@ -1,0 +1,7 @@
+error Failure
+    Bad
+end
+func fail() -> Failure!int
+    return Failure.Bad
+end
+let text = "${fail()}"

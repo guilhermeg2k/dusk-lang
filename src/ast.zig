@@ -170,6 +170,7 @@ pub const Exp = union(enum) {
     float_literal: f64,
     int_literal: i64,
     string_literal: []const u8,
+    string_interpolation: []const *ExpNode,
     bool_literal: bool,
     identifier: []const u8,
     anonymous_init: AnonymousInit,

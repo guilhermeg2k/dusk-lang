@@ -1088,6 +1088,7 @@ pub const Parser = struct {
             const escaped: u8 = switch (raw[index]) {
                 '"' => '"',
                 '\\' => '\\',
+                '$' => '$',
                 'n' => '\n',
                 'r' => '\r',
                 't' => '\t',
@@ -1119,6 +1120,69 @@ pub const Parser = struct {
             index += 1;
         }
         return decoded.toOwnedSlice(self.allocator);
+    }
+
+    fn appendStringSegment(self: *Self, parts: *std.ArrayList(*ast.ExpNode), start: usize, end: usize) Errors!void {
+        if (start == end) return;
+        const token = Token.init(.string_literal, start - 1, end);
+        try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .string_literal = try self.decodeStringLiteral(token) },
+            .loc = .{ .start = start, .end = end - 1 },
+        }));
+    }
+
+    fn parseStringLiteral(self: *Self, tk: Token) Errors!*ast.ExpNode {
+        var parts: std.ArrayList(*ast.ExpNode) = .empty;
+        var segment_start = tk.loc.start + 1;
+        var index = segment_start;
+        while (index < tk.loc.end) {
+            if (self.src[index] == '\\') {
+                index += 2;
+                continue;
+            }
+            if (self.src[index] != '$' or index + 1 >= tk.loc.end) {
+                index += 1;
+                continue;
+            }
+            const next = self.src[index + 1];
+            const is_identifier = std.ascii.isAlphabetic(next) or next == '_';
+            if (next != '{' and !is_identifier) {
+                index += 1;
+                continue;
+            }
+            try self.appendStringSegment(&parts, segment_start, index);
+            if (is_identifier) {
+                const start = index + 1;
+                index = start + 1;
+                while (index < tk.loc.end and (std.ascii.isAlphanumeric(self.src[index]) or self.src[index] == '_')) : (index += 1) {}
+                try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = self.src[start..index] },
+                    .loc = .{ .start = start, .end = index - 1 },
+                }));
+            } else {
+                var expression_lexer = lexer.Lexer.init(self.allocator, self.src);
+                expression_lexer.cur_index = index;
+                expression_lexer.end_index = tk.loc.end;
+                const end = try expression_lexer.readInterpolation();
+                expression_lexer.cur_index = index + 2;
+                expression_lexer.end_index = end;
+                const tokens = try expression_lexer.list();
+                var expression_parser = Self.init(self.allocator, self.src, tokens.items);
+                expression_parser.loop_depth = self.loop_depth;
+                expression_parser.branch_depth = self.branch_depth;
+                const expression = try expression_parser.parseExp(0);
+                _ = try expression_parser.expect(.eof);
+                try parts.append(self.allocator, expression);
+                index = end + 1;
+            }
+            segment_start = index;
+        }
+        if (parts.items.len == 0) return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .string_literal = try self.decodeStringLiteral(tk) },
+            .loc = tk.loc,
+        });
+        try self.appendStringSegment(&parts, segment_start, tk.loc.end);
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_interpolation = try parts.toOwnedSlice(self.allocator) }, .loc = tk.loc });
     }
 
     fn parsePrefix(self: *Self) Errors!*ast.ExpNode {
@@ -1166,7 +1230,7 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .float_literal = value }, .loc = tk.loc });
             },
             .string_literal => {
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = try self.decodeStringLiteral(tk) }, .loc = tk.loc });
+                return self.parseStringLiteral(tk);
             },
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });

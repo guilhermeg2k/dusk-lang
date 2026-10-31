@@ -1,0 +1,35 @@
+error Failure
+    Bad
+end
+func number(n: int) -> Failure!int
+    if n < 0 then
+        return Failure.Bad
+    end
+    return n
+end
+func template(n: int) -> Failure!string
+    return "number=${try number(n)}"
+end
+echo(try template(5))
+echo(template(-1) catch "fallback")
+echo("caught=${number(-1) catch 8}")
+func early(should_return: bool) -> string
+    return "before ${if should_return then return "early" else 4 end} after"
+end
+echo(early(true))
+echo(early(false))
+func integer() -> int
+    return "${if true then return 9 else return 8 end}"
+end
+assert(integer() == 9)
+let mut visits = 0
+for 1..4: i do
+    let text = "${if i == 2 then continue else i end}"
+    visits += 1
+    echo(text)
+end
+assert(visits == 3)
+echo("${when 3
+    1 then "one" end
+    else then "other" end
+end}")

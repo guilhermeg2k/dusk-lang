@@ -44,11 +44,13 @@ pub const Lexer = struct {
     src: []const u8 = "",
     err_dispatcher: err.ErrorDispatcher,
     cur_index: usize = 0,
+    end_index: usize,
 
     pub fn init(allocator: std.mem.Allocator, src: []const u8) Self {
         return Self{
             .allocator = allocator,
             .src = src,
+            .end_index = src.len,
             .err_dispatcher = .{ .allocator = allocator, .src = src },
         };
     }
@@ -73,7 +75,7 @@ pub const Lexer = struct {
     fn next(self: *Self) LexerError!Token {
         while (true) {
             self.readWhiteSpaces();
-            const is_eof = self.cur_index >= self.src.len;
+            const is_eof = self.cur_index >= self.end_index;
             if (is_eof) {
                 return Token.init(Tag.eof, self.cur_index, self.cur_index);
             }
@@ -86,13 +88,15 @@ pub const Lexer = struct {
                         try self.readMultilineComment();
                         continue;
                     }
-                    while (self.cur_index < self.src.len and self.peekCurrent() != '\n') {
+                    while (self.cur_index < self.end_index and self.peekCurrent() != '\n') {
                         self.walk();
                     }
                 },
                 '\n' => {
                     continue;
                 },
+                '{' => return Token.init(Tag.l_brace, self.cur_index, self.cur_index),
+                '}' => return Token.init(Tag.r_brace, self.cur_index, self.cur_index),
                 '(' => {
                     return Token.init(Tag.l_paren, self.cur_index, self.cur_index);
                 },
@@ -181,7 +185,7 @@ pub const Lexer = struct {
         self.cur_index += 2;
         var depth: usize = 1;
 
-        while (self.cur_index < self.src.len) {
+        while (self.cur_index < self.end_index) {
             if (self.peekCurrent() == '#' and self.peekNext() == '=') {
                 depth += 1;
                 self.cur_index += 2;
@@ -210,7 +214,7 @@ pub const Lexer = struct {
 
         while (std.ascii.isDigit(next_char) or next_char == '.') {
             if (next_char == '.') {
-                const is_range_start = self.cur_index + 2 < self.src.len and self.src[self.cur_index + 2] == '.';
+                const is_range_start = self.cur_index + 2 < self.end_index and self.src[self.cur_index + 2] == '.';
                 if (is_range_start) break;
                 is_float = true;
             }
@@ -226,7 +230,7 @@ pub const Lexer = struct {
     fn readStringLiteral(self: *Self) LexerError!Token {
         const start = self.cur_index;
         self.walk();
-        while (self.cur_index < self.src.len) {
+        while (self.cur_index < self.end_index) {
             if (self.peekCurrent() == '"') {
                 const token = Token.init(Tag.string_literal, start, self.cur_index);
                 if (!std.unicode.utf8ValidateSlice(token.value(self.src))) {
@@ -235,15 +239,41 @@ pub const Lexer = struct {
                 }
                 return token;
             }
+            if (self.peekCurrent() == '$' and self.peekNext() == '{') {
+                _ = try self.readInterpolation();
+                continue;
+            }
             if (self.peekCurrent() == '\\') {
                 self.walk();
-                if (self.cur_index >= self.src.len) break;
+                if (self.cur_index >= self.end_index) break;
             }
             self.walk();
         }
 
         self.err_dispatcher.log("Unterminated string literal: expected closing quote", .{ .start = start, .end = start });
         return error.LexerError;
+    }
+
+    pub fn readInterpolation(self: *Self) LexerError!usize {
+        const start = self.cur_index;
+        self.cur_index += 2;
+        var depth: usize = 1;
+        while (true) {
+            const token = try self.next();
+            switch (token.tag) {
+                .l_brace => depth += 1,
+                .r_brace => {
+                    depth -= 1;
+                    if (depth == 0) return token.loc.start;
+                },
+                .eof => {
+                    self.err_dispatcher.log("Unterminated string interpolation: expected '}'", .{ .start = start, .end = start + 1 });
+                    return error.LexerError;
+                },
+                .err => return self.err_dispatcher.unexpectedToken(token),
+                else => {},
+            }
+        }
     }
 
     fn readWord(self: *Self) Token {
@@ -278,14 +308,14 @@ pub const Lexer = struct {
     }
 
     fn peekCurrent(self: *Self) u8 {
-        if (self.cur_index >= self.src.len) {
+        if (self.cur_index >= self.end_index) {
             return 0;
         }
         return self.src[self.cur_index];
     }
 
     fn peekNext(self: *Self) u8 {
-        if (self.cur_index + 1 >= self.src.len) {
+        if (self.cur_index + 1 >= self.end_index) {
             return 0;
         }
         return self.src[self.cur_index + 1];
@@ -372,6 +402,8 @@ pub const Tag = enum {
     question_mark_dot,
     l_bracket,
     r_bracket,
+    l_brace,
+    r_brace,
     l_paren,
     r_paren,
     arrow,

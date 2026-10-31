@@ -899,6 +899,7 @@ pub const SemaAnalyzer = struct {
             .fn_call => |call| doAnyValuesExit(call.args, needs_return),
             .struct_init => |initialization| doAnyValuesExit(initialization.values, needs_return),
             .i_array => |array| doAnyValuesExit(array.values, needs_return),
+            .string_interpolation => |parts| doAnyValuesExit(parts, needs_return),
             .union_init => |initialization| if (initialization.value) |operand| doesValueExit(operand, needs_return) else false,
             .indexed => |indexed| doesValueExit(indexed.target, needs_return) or doesValueExit(indexed.index, needs_return),
             .union_tag, .union_payload => |operand| doesValueExit(operand, needs_return),
@@ -2610,6 +2611,20 @@ pub const SemaAnalyzer = struct {
             },
             .string_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_string = exp.data.string_literal }, .type_id = self.type_table.getPrimitive(.string) });
+            },
+            .string_interpolation => |parts| {
+                var values: std.ArrayList(*ir.Value) = .empty;
+                for (parts) |part| {
+                    const value = try self.evalExp(part);
+                    if (self.type_table.getTypePtrById(value.type_id).kind == .void and !isValueLeaving(value)) {
+                        return self.err_dispatcher.invalidExpression("value in string interpolation", "void", part.loc);
+                    }
+                    try values.append(self.allocator, value);
+                }
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .string_interpolation = try values.toOwnedSlice(self.allocator) },
+                    .type_id = self.type_table.getPrimitive(.string),
+                });
             },
             .bool_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_bool = exp.data.bool_literal }, .type_id = self.type_table.getPrimitive(.boolean) });

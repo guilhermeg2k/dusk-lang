@@ -1,0 +1,11 @@
+func make(value: int) -> string
+    return "value=$value"
+end
+let mut result = ""
+let roots = ["first", "second"]
+let nullable: ?int = 42
+for 1..12000: i do
+    result = "${make(i)} / ${"nested ${make(i + 1)}"} / $roots / $nullable"
+end
+echo(result)
+echo("$roots $nullable")

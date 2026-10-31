@@ -182,11 +182,11 @@ pub const BuiltIn = struct {
         return funcs;
     }
 
-    pub fn setEchoWriter(writer: *std.Io.Writer) void {
+    pub fn setEchoWriter(writer: ?*std.Io.Writer) void {
         echo_writer = writer;
     }
 
-    fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void {
+    pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void {
         switch (ty) {
             .int64 => writer.print("{d}", .{value.int64}) catch @panic("failed to print int64"),
             .float64 => writer.print("{d}", .{value.float64}) catch @panic("failed to print float64"),
