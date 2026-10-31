@@ -986,6 +986,10 @@ test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
 }
 
+test "if-statement-many" {
+    try runCase("if-statement-many.dsk");
+}
+
 test "when-float-ranges" {
     try runCase("when-float-ranges.dsk");
 }

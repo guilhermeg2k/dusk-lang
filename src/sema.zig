@@ -692,12 +692,13 @@ pub const SemaAnalyzer = struct {
 
         var return_type: tt.TypeId = self.type_table.getPrimitive(.void);
 
-        for (block.statements.items, 0..) |stmt, statement_index| {
+        for (block.statements.items, 0..) |node, statement_index| {
             const is_value_tail = result != null and statement_index + 1 == block.statements.items.len;
-            if (is_value_tail and stmt.data == .expression) {
-                try instructions.append(self.allocator, try self.visitBranchTail(&stmt, result.?));
+            if (is_value_tail and node.data == .expression) {
+                try instructions.append(self.allocator, try self.visitBranchTail(&node, result.?));
                 break;
             }
+            const stmt = if (node.data == .expression) conditionalStatement(node.data.expression) orelse node else node;
             const instruction = switch (stmt.data) {
                 .let => try self.visitLetStmt(&stmt),
                 .func => try self.visitFuncStmt(&stmt),
@@ -881,7 +882,6 @@ pub const SemaAnalyzer = struct {
         const expression_stmt = stmt.data.expression;
 
         const value = switch (expression_stmt.data) {
-            .if_exp, .if_capture_exp, .when_exp => try self.evalConditional(expression_stmt, null, false),
             .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
             .try_exp => try self.evalTry(expression_stmt),
             .catch_exp => try self.evalCatch(expression_stmt, true),
@@ -2306,33 +2306,36 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn evalConditional(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, needs_value: bool) Errors!*ir.Value {
-        return self.evalConditionalWithContext(exp, expected_type_id, null, needs_value);
-    }
-
-    fn evalConditionalWithContext(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, context_type_id: ?tt.TypeId, needs_value: bool) Errors!*ir.Value {
-        if (exp.data == .orelse_exp) return self.evalOrelse(exp, expected_type_id, context_type_id);
-
-        const expected = if (expected_type_id == self.type_table.getPrimitive(.dynamic)) null else expected_type_id;
-        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .context_type_id = context_type_id, .loc = exp.loc };
-        const branch_result = if (needs_value) &result else null;
-        const statement = ast.StatementNode{
+    fn conditionalStatement(exp: *const ast.ExpNode) ?ast.StatementNode {
+        return ast.StatementNode{
             .data = switch (exp.data) {
                 .if_exp => |conditional| .{ .@"if" = conditional },
                 .if_capture_exp => |capture| .{ .if_capture = capture },
                 .when_exp => |when| .{ .when = when },
-                else => unreachable,
+                else => return null,
             },
             .loc = exp.loc,
         };
+    }
+
+    fn evalConditional(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
+        return self.evalConditionalWithContext(exp, expected_type_id, null);
+    }
+
+    fn evalConditionalWithContext(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, context_type_id: ?tt.TypeId) Errors!*ir.Value {
+        if (exp.data == .orelse_exp) return self.evalOrelse(exp, expected_type_id, context_type_id);
+
+        const expected = if (expected_type_id == self.type_table.getPrimitive(.dynamic)) null else expected_type_id;
+        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .context_type_id = context_type_id, .loc = exp.loc };
+        const statement = conditionalStatement(exp).?;
         const instructions = switch (exp.data) {
             .if_exp => conditional: {
                 const instructions = try self.allocator.alloc(ir.Instruction, 1);
-                instructions[0] = try self.lowerIf(&statement, branch_result);
+                instructions[0] = try self.lowerIf(&statement, &result);
                 break :conditional instructions;
             },
-            .if_capture_exp => try self.lowerIfCapture(&statement, branch_result),
-            .when_exp => try self.lowerWhen(&statement, branch_result),
+            .if_capture_exp => try self.lowerIfCapture(&statement, &result),
+            .when_exp => try self.lowerWhen(&statement, &result),
             else => unreachable,
         };
         return self.finishBranchResult(&result, instructions);
@@ -2505,13 +2508,13 @@ pub const SemaAnalyzer = struct {
 
     fn evalExpWithContext(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) Errors!*ir.Value {
         if (expected_type != null) return self.evalExpExpecting(exp, expected_type);
-        if (isConditional(exp)) return self.evalConditionalWithContext(exp, null, context_type, true);
+        if (isConditional(exp)) return self.evalConditionalWithContext(exp, null, context_type);
         const needs_context = isAnonymousInit(exp) or exp.data == .array_literal;
         return self.evalExpExpecting(exp, if (needs_context) context_type else null);
     }
 
     fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
-        if (isConditional(exp)) return self.evalConditional(exp, expected_type_id, true);
+        if (isConditional(exp)) return self.evalConditional(exp, expected_type_id);
         if (expected_type_id) |expected| {
             const base_type_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
             const base_kind = self.type_table.getTypePtrById(base_type_id).kind;
@@ -2539,7 +2542,7 @@ pub const SemaAnalyzer = struct {
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
-            .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null, true),
+            .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null),
             .range => return self.err_dispatcher.invalidExpression("range in a capture loop or when case", "range value", exp.loc),
             .float_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_float = exp.data.float_literal }, .type_id = self.type_table.getPrimitive(.float) });
