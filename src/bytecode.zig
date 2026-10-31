@@ -1127,8 +1127,10 @@ pub const BytecodeGen = struct {
     fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
         const result = try self.string_const_id_by_value.getOrPut(s);
         if (!result.found_existing) {
+            const owned = try self.allocator.dupe(u8, s);
+            result.key_ptr.* = owned;
             result.value_ptr.* = @intCast(self.chunk_string_constants.items.len);
-            try self.chunk_string_constants.append(self.allocator, s);
+            try self.chunk_string_constants.append(self.allocator, owned);
         }
 
         const string_id = result.value_ptr.*;

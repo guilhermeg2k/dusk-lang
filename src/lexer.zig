@@ -223,15 +223,27 @@ pub const Lexer = struct {
         return Token.init(token_type, start, self.cur_index);
     }
 
-    fn readStringLiteral(self: *Self) Token {
+    fn readStringLiteral(self: *Self) LexerError!Token {
         const start = self.cur_index;
-
-        while (self.peekNext() != '"') {
+        self.walk();
+        while (self.cur_index < self.src.len) {
+            if (self.peekCurrent() == '"') {
+                const token = Token.init(Tag.string_literal, start, self.cur_index);
+                if (!std.unicode.utf8ValidateSlice(token.value(self.src))) {
+                    self.err_dispatcher.log("String literal must contain valid UTF-8", token.loc);
+                    return error.LexerError;
+                }
+                return token;
+            }
+            if (self.peekCurrent() == '\\') {
+                self.walk();
+                if (self.cur_index >= self.src.len) break;
+            }
             self.walk();
         }
 
-        self.walk();
-        return Token.init(Tag.string_literal, start, self.cur_index);
+        self.err_dispatcher.log("Unterminated string literal: expected closing quote", .{ .start = start, .end = start });
+        return error.LexerError;
     }
 
     fn readWord(self: *Self) Token {

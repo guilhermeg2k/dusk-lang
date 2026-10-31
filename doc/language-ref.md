@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.12 - Kanade**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.13 - Garou (in development)**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -84,7 +84,28 @@ y = 20
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
-Strings have no escape sequences (`"a\nb"` prints `a\nb` as written) and no operations yet. See [Known Limitations](#14-known-limitations).
+Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing closing quotes are compile errors. The runtime stores the UTF-8 bytes with an explicit byte length, so embedded NUL characters are preserved.
+
+| Escape | Value |
+| :----- | :---- |
+| `\"` | Double quote |
+| `\\` | Backslash |
+| `\n` | Line feed |
+| `\r` | Carriage return |
+| `\t` | Tab |
+| `\0` | NUL |
+| `\u{...}` | Unicode scalar value written as one to six hexadecimal digits |
+
+Unicode escapes accept values from `0` through `10FFFF`, excluding surrogates (`D800` through `DFFF`), and encode them as UTF-8. Unknown escapes, malformed Unicode escapes and invalid scalar values are compile errors. Escapes are decoded once during compilation.
+
+```nim
+echo("Hello\nworld")
+echo("Say \"hello\"")
+echo("Moon: \u{1F319}")
+echo("A literal backslash: \\")
+```
+
+Actual line breaks inside double quotes are also preserved. Strings have no concatenation or interpolation yet. See [Known Limitations](#14-known-limitations).
 
 ### Arrays
 
@@ -446,7 +467,7 @@ An `int` mixed with a `float` is promoted to `float`.
 
 `==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
 
-`==` on strings compares identity, not text: `"dusk" == "dusk"` is `false`. Real string comparison is planned for v0.18.
+`==` on strings compares identity, not text: `"dusk" == "dusk"` is `false`. Real string comparison is planned for v0.13.
 
 ### Assignment
 
@@ -881,10 +902,10 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 ## 14. Known Limitations
 
-These are known gaps in v0.12. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Strings**: no escape sequences, concatenation or interpolation, and `==` compares identity (v0.18).
+- **Strings**: no concatenation or interpolation, and `==` compares identity (string operations are planned for v0.13).
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
 - **Union size**: a union can have at most 256 variants.

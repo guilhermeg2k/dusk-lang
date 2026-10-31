@@ -50,6 +50,79 @@ test "unterminated multiline comments" {
     }
 }
 
+test "string escapes decode into UTF-8 literals" {
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = "\"\"", .expected = "" },
+        .{ .source = "\"Olá 🌙\"", .expected = "Olá 🌙" },
+        .{ .source = "\"a\\nb\\rc\\td\\0e\"", .expected = "a\nb\rc\td\x00e" },
+        .{ .source = "\"say \\\"hi\\\"\\\\\"", .expected = "say \"hi\"\\" },
+        .{ .source = "\"\\\\n\"", .expected = "\\n" },
+        .{ .source = "\"\\u{0}\\u{7f}\\u{80}\\u{7ff}\\u{800}\"", .expected = "\x00\x7f\u{80}\u{7ff}\u{800}" },
+        .{ .source = "\"\\u{D7FF}\\u{e000}\\u{ffff}\\u{10000}\\u{10FFFF}\"", .expected = "\u{d7ff}\u{e000}\u{ffff}\u{10000}\u{10ffff}" },
+        .{ .source = "\"\\u{000041}\\u{1F319}\"", .expected = "A🌙" },
+        .{ .source = "\"first\nsecond\"", .expected = "first\nsecond" },
+        .{ .source = "\"\\u{22}#= text =#\\u{5c}\"", .expected = "\"#= text =#\\" },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
+        var lexer = Lexer.init(arena.allocator(), source);
+        const tokens = try lexer.list();
+        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        const root = try parser.parse();
+        const decoded = root.statements.items[0].data.let.value.data.string_literal;
+        try testing.expectEqualStrings(case.expected, decoded);
+        try testing.expect(std.unicode.utf8ValidateSlice(decoded));
+    }
+}
+
+test "string constants outlive compilation and source storage" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = try testing.allocator.dupe(u8, "let text = \"a\\n\\u{1F319}\\0\" let same = \"a\\n🌙\\0\" let plain = \"plain\"");
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = dusk.compile(source) catch |failure| {
+        testing.allocator.free(source);
+        return failure;
+    };
+    testing.allocator.free(source);
+    const constants = program.functions[program.main_func_index].kind.dusk.string_constants;
+    try testing.expectEqual(@as(usize, 2), constants.len);
+    try testing.expectEqualStrings("a\n🌙\x00", constants[0]);
+    try testing.expectEqualStrings("plain", constants[1]);
+    var vm = @import("vm.zig").VM.init(&program);
+    try vm.run();
+}
+
+test "invalid string escapes are rejected" {
+    const sources = [_][]const u8{
+        "\"\\q\"",       "\"\\x41\"",       "\"\\u\"",         "\"\\u0041\"",      "\"\\u{}\"",
+        "\"\\u{g}\"",    "\"\\u{-1}\"",     "\"\\u{ 41}\"",    "\"\\u{41\"",       "\"\\u{D800}\"",
+        "\"\\u{DFFF}\"", "\"\\u{110000}\"", "\"\\u{FFFFFF}\"", "\"\\u{0000000}\"", "\"\\\n\"",
+    };
+    for (sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        const program = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{source});
+        try testing.expectError(error.ParserError, dusk.compile(program));
+    }
+}
+
+test "invalid UTF-8 and unterminated strings are rejected" {
+    const sources = [_][]const u8{
+        "\"",       "\"missing",    "\"trailing\\",     "\"escaped\\\"",        "\"missing\n",
+        "\"\xff\"", "\"\xc0\x80\"", "\"\xed\xa0\x80\"", "\"\xf4\x90\x80\x80\"", "\"\xe2\x82\"",
+    };
+    for (sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        try testing.expectError(error.LexerError, dusk.compile(source));
+    }
+}
+
 fn runCase(src_file: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

@@ -1063,6 +1063,64 @@ pub const Parser = struct {
         return exp;
     }
 
+    fn invalidStringEscape(self: *Self, tk: Token, start: usize, end: usize, message: []const u8) Errors {
+        self.err_dispatcher.log(message, .{ .start = tk.loc.start + 1 + start, .end = tk.loc.start + 1 + end });
+        return error.ParserError;
+    }
+
+    fn decodeStringLiteral(self: *Self, tk: Token) Errors![]const u8 {
+        const raw = tk.value(self.src);
+        if (std.mem.indexOfScalar(u8, raw, '\\') == null) return raw;
+
+        var decoded: std.ArrayList(u8) = .empty;
+        errdefer decoded.deinit(self.allocator);
+        var index: usize = 0;
+        while (index < raw.len) {
+            if (raw[index] != '\\') {
+                try decoded.append(self.allocator, raw[index]);
+                index += 1;
+                continue;
+            }
+
+            const start = index;
+            index += 1;
+            if (index >= raw.len) return self.invalidStringEscape(tk, start, start, "Incomplete string escape");
+            const escaped: u8 = switch (raw[index]) {
+                '"' => '"',
+                '\\' => '\\',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '0' => 0,
+                'u' => {
+                    index += 1;
+                    if (index >= raw.len or raw[index] != '{') return self.invalidStringEscape(tk, start, index - 1, "Unicode escape requires '{' after '\\u'");
+                    index += 1;
+                    const digits_start = index;
+                    var codepoint: u21 = 0;
+                    while (index < raw.len and raw[index] != '}') : (index += 1) {
+                        if (index - digits_start >= 6) return self.invalidStringEscape(tk, start, index, "Unicode escape requires one to six hexadecimal digits");
+                        const digit = std.fmt.charToDigit(raw[index], 16) catch return self.invalidStringEscape(tk, start, index, "Invalid hexadecimal digit in Unicode escape");
+                        const next_codepoint = @as(u32, codepoint) * 16 + digit;
+                        if (next_codepoint > 0x10ffff) return self.invalidStringEscape(tk, start, index, "Unicode escape is outside the Unicode scalar range");
+                        codepoint = @intCast(next_codepoint);
+                    }
+                    if (index >= raw.len) return self.invalidStringEscape(tk, start, index - 1, "Unterminated Unicode escape: expected '}'");
+                    if (index == digits_start) return self.invalidStringEscape(tk, start, index, "Unicode escape requires one to six hexadecimal digits");
+                    var bytes: [4]u8 = undefined;
+                    const len = std.unicode.utf8Encode(codepoint, &bytes) catch return self.invalidStringEscape(tk, start, index, "Unicode escape must be a Unicode scalar value, excluding surrogates");
+                    try decoded.appendSlice(self.allocator, bytes[0..len]);
+                    index += 1;
+                    continue;
+                },
+                else => return self.invalidStringEscape(tk, start, index, "Unknown string escape"),
+            };
+            try decoded.append(self.allocator, escaped);
+            index += 1;
+        }
+        return decoded.toOwnedSlice(self.allocator);
+    }
+
     fn parsePrefix(self: *Self) Errors!*ast.ExpNode {
         const tk = self.peekCurrent();
         self.walk();
@@ -1108,7 +1166,7 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .float_literal = value }, .loc = tk.loc });
             },
             .string_literal => {
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = tk.value(self.src) }, .loc = tk.loc });
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = try self.decodeStringLiteral(tk) }, .loc = tk.loc });
             },
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });

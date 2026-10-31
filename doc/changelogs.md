@@ -2,6 +2,8 @@
 
 ## v0.13 - Garou (in development)
 
+- Strings now require valid UTF-8 and support `\"`, `\\`, `\n`, `\r`, `\t`, `\0` and `\u{...}` escapes, decoded at compile time. Invalid escapes and Unicode scalar values are compile errors; unterminated strings report an error instead of hanging
+- Bytecode owns its string constant bytes, preserving decoded literals after the compiler's temporary arena is freed
 - Added nested multiline comments with `#= ... =#` and a lexer diagnostic for unclosed comments. Fixed single-line comments without a final newline hanging the lexer and trailing spaces producing an unexpected token
 - Started v0.13 development: updated the CLI version to `0.13.0-devel` and recorded the implementation phases for comments and string features
 

@@ -14,6 +14,7 @@
 ## Version 0.13 - Garou
 
 - Multiline Comments (`#= ... =#`, nested; implemented)
+- UTF-8 strings and escape sequences (implemented)
 - Multiline strings
 - Strings operations
 - `when` on strings
