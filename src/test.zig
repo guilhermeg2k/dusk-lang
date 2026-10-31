@@ -1006,6 +1006,10 @@ test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
 }
 
+test "gc-nullable-starts-null" {
+    try runCase("gc-nullable-starts-null.dsk");
+}
+
 test "array-nested-assignment" {
     try runCase("array-nested-assignment.dsk");
 }

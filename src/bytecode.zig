@@ -304,8 +304,10 @@ pub const BytecodeGen = struct {
         const register_idx = self.var_register_id_by_uid.get(store_var.uid);
         if (register_idx) |idx| {
             _ = try self.genValue(store_var.value, idx);
+            self.register_types[idx] = store_var.type_id;
         } else {
             const reg_idx = try self.genValue(store_var.value, self.consumeRegister());
+            self.register_types[reg_idx] = store_var.type_id;
             try self.var_register_id_by_uid.put(store_var.uid, reg_idx);
         }
     }
