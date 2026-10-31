@@ -1753,8 +1753,9 @@ pub const SemaAnalyzer = struct {
                 const index_exp = assign_stmt.target.data.indexed;
                 const target = try self.evalExp(index_exp.target);
                 const target_type = target.type_id;
+                const indexed_target = try self.indexInto(assign_stmt.target, target);
                 const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal)
-                    (try self.evalExp(assign_stmt.target)).type_id
+                    indexed_target.type_id
                 else
                     null;
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, expected_type_id);
@@ -1780,10 +1781,10 @@ pub const SemaAnalyzer = struct {
 
                 switch (self.type_table.getTypePtrById(target_type).kind) {
                     .array => {
-                        field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_symbol.type_id).kind.array;
+                        field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_type).kind.array;
                         if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
                             return self.err_dispatcher.invalidType(
-                                try self.type_table.name(target_symbol.type_id, self.allocator),
+                                try self.type_table.name(field_maybe_nullable_type_id, self.allocator),
                                 try self.type_table.name(assignment_value_type, self.allocator),
                                 assign_stmt.exp.loc,
                             );
@@ -1892,7 +1893,7 @@ pub const SemaAnalyzer = struct {
 
                 return ir.Instruction{
                     .update_indexed = .{
-                        .target = try self.evalExp(assign_stmt.target),
+                        .target = indexed_target,
                         .value = boxed_value,
                     },
                 };
@@ -3000,10 +3001,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+        return self.indexInto(exp, try self.evalExp(exp.data.indexed.target));
+    }
+
+    fn indexInto(self: *Self, exp: *const ast.ExpNode, target: *ir.Value) !*ir.Value {
         const indexed_exp = exp.data.indexed;
         const is_nullable = indexed_exp.is_nullable;
-
-        const target = try self.evalExp(indexed_exp.target);
         const target_type = target.type_id;
 
         if (!is_nullable and self.type_table.getTypePtrById(target_type).is_nullable) {

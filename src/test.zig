@@ -290,6 +290,10 @@ test "sema error: assign type mismatch" {
     try runCaseError("sema/assign-type-mismatch.dsk", error.InvalidType);
 }
 
+test "sema error: nested array assign type mismatch" {
+    try runCaseError("sema/array-nested-assignment-type.dsk", error.InvalidType);
+}
+
 test "sema error: array assign type mismatch" {
     try runCaseError("sema/array-assign-type-mismatch.dsk", error.InvalidType);
 }
@@ -992,6 +996,10 @@ test "range-loop-bounds" {
 
 test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
+}
+
+test "array-nested-assignment" {
+    try runCase("array-nested-assignment.dsk");
 }
 
 test "nullable-equality" {
