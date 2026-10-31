@@ -164,6 +164,7 @@ pub const Lexer = struct {
                     return self.readNumberLiteral();
                 },
                 '"' => {
+                    if (self.peekNext() == '"' and self.peekAt(2) == '"') return self.readMultilineStringLiteral();
                     return self.readStringLiteral();
                 },
                 else => {
@@ -247,11 +248,72 @@ pub const Lexer = struct {
                 self.walk();
                 if (self.cur_index >= self.end_index) break;
             }
+            if (self.peekCurrent() == '\n') break;
             self.walk();
         }
 
-        self.err_dispatcher.log("Unterminated string literal: expected closing quote", .{ .start = start, .end = start });
+        self.err_dispatcher.log("Unterminated string literal: expected closing quote (use \"\"\" for multiline strings)", .{ .start = start, .end = start });
         return error.LexerError;
+    }
+
+    fn readMultilineStringLiteral(self: *Self) LexerError!Token {
+        const start = self.cur_index;
+        self.cur_index += 3;
+        while (self.peekCurrent() == ' ') self.walk();
+        if (self.peekCurrent() != '\n') {
+            self.err_dispatcher.log("Multiline string must start on a new line after '\"\"\"'", .{ .start = start, .end = start + 3 });
+            return error.LexerError;
+        }
+        self.walk();
+
+        var line_starts: std.ArrayList(usize) = .empty;
+        defer line_starts.deinit(self.allocator);
+        try line_starts.append(self.allocator, self.cur_index);
+
+        while (self.cur_index < self.end_index) {
+            const is_closing = self.peekCurrent() == '"' and self.peekNext() == '"' and self.peekAt(2) == '"';
+            if (is_closing) return self.finishMultilineStringLiteral(start, line_starts.items);
+            if (self.peekCurrent() == '$' and self.peekNext() == '{') {
+                _ = try self.readInterpolation();
+                continue;
+            }
+            if (self.peekCurrent() == '\\') {
+                self.walk();
+                if (self.cur_index >= self.end_index) break;
+            }
+            if (self.peekCurrent() == '\n') try line_starts.append(self.allocator, self.cur_index + 1);
+            self.walk();
+        }
+
+        self.err_dispatcher.log("Unterminated multiline string: expected closing '\"\"\"'", .{ .start = start, .end = start + 3 });
+        return error.LexerError;
+    }
+
+    fn finishMultilineStringLiteral(self: *Self, start: usize, line_starts: []const usize) LexerError!Token {
+        const closing = self.cur_index;
+        const closing_line_start = line_starts[line_starts.len - 1];
+        const indent = self.src[closing_line_start..closing];
+        if (std.mem.indexOfNone(u8, indent, " ") != null) {
+            self.err_dispatcher.log("Closing '\"\"\"' must be on its own line", .{ .start = closing, .end = closing + 3 });
+            return error.LexerError;
+        }
+
+        for (line_starts[0 .. line_starts.len - 1]) |line_start| {
+            const line_end = std.mem.indexOfScalarPos(u8, self.src, line_start, '\n') orelse closing;
+            const line = self.src[line_start..line_end];
+            const is_blank = std.mem.indexOfNone(u8, line, " ") == null;
+            if (is_blank or std.mem.startsWith(u8, line, indent)) continue;
+            self.err_dispatcher.log("Insufficient indentation in multiline string: lines must start with the closing '\"\"\"' indentation", .{ .start = line_start, .end = line_end });
+            return error.LexerError;
+        }
+
+        self.cur_index = closing + 2;
+        const token = Token.init(Tag.multiline_string_literal, start, self.cur_index);
+        if (!std.unicode.utf8ValidateSlice(self.src[start .. self.cur_index + 1])) {
+            self.err_dispatcher.log("String literal must contain valid UTF-8", token.loc);
+            return error.LexerError;
+        }
+        return token;
     }
 
     pub fn readInterpolation(self: *Self) LexerError!usize {
@@ -312,6 +374,13 @@ pub const Lexer = struct {
             return 0;
         }
         return self.src[self.cur_index];
+    }
+
+    fn peekAt(self: *Self, offset: usize) u8 {
+        if (self.cur_index + offset >= self.end_index) {
+            return 0;
+        }
+        return self.src[self.cur_index + offset];
     }
 
     fn peekNext(self: *Self) u8 {
@@ -378,6 +447,7 @@ pub const Tag = enum {
     do_kw,
     end_kw,
     string_literal,
+    multiline_string_literal,
     int_literal,
     float_literal,
     true_literal,

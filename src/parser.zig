@@ -916,6 +916,7 @@ pub const Parser = struct {
             .int_literal,
             .float_literal,
             .string_literal,
+            .multiline_string_literal,
             .true_literal,
             .false_literal,
             .null_literal,
@@ -1063,19 +1064,33 @@ pub const Parser = struct {
         return exp;
     }
 
-    fn invalidStringEscape(self: *Self, tk: Token, start: usize, end: usize, message: []const u8) Errors {
-        self.err_dispatcher.log(message, .{ .start = tk.loc.start + 1 + start, .end = tk.loc.start + 1 + end });
+    fn invalidStringEscape(self: *Self, base: usize, start: usize, end: usize, message: []const u8) Errors {
+        self.err_dispatcher.log(message, .{ .start = base + start, .end = base + end });
         return error.ParserError;
     }
 
-    fn decodeStringLiteral(self: *Self, tk: Token) Errors![]const u8 {
-        const raw = tk.value(self.src);
-        if (std.mem.indexOfScalar(u8, raw, '\\') == null) return raw;
+    fn skipStringIndent(self: *Self, index: usize, dedent: usize) usize {
+        const line_end = std.mem.indexOfScalarPos(u8, self.src, index, '\n') orelse self.src.len;
+        const is_blank = std.mem.indexOfNone(u8, self.src[index..line_end], " ") == null;
+        if (is_blank) return line_end;
+        return index + dedent;
+    }
+
+    fn decodeStringLiteral(self: *Self, start_index: usize, end_index: usize, dedent: ?usize) Errors![]const u8 {
+        const raw = self.src[start_index..end_index];
+        const has_escape = std.mem.indexOfScalar(u8, raw, '\\') != null;
+        const has_newline = dedent != null and std.mem.indexOfScalar(u8, raw, '\n') != null;
+        if (!has_escape and !has_newline) return raw;
 
         var decoded: std.ArrayList(u8) = .empty;
         errdefer decoded.deinit(self.allocator);
         var index: usize = 0;
         while (index < raw.len) {
+            if (raw[index] == '\n' and dedent != null) {
+                try decoded.append(self.allocator, '\n');
+                index = self.skipStringIndent(start_index + index + 1, dedent.?) - start_index;
+                continue;
+            }
             if (raw[index] != '\\') {
                 try decoded.append(self.allocator, raw[index]);
                 index += 1;
@@ -1084,7 +1099,7 @@ pub const Parser = struct {
 
             const start = index;
             index += 1;
-            if (index >= raw.len) return self.invalidStringEscape(tk, start, start, "Incomplete string escape");
+            if (index >= raw.len) return self.invalidStringEscape(start_index, start, start, "Incomplete string escape");
             const escaped: u8 = switch (raw[index]) {
                 '"' => '"',
                 '\\' => '\\',
@@ -1095,26 +1110,26 @@ pub const Parser = struct {
                 '0' => 0,
                 'u' => {
                     index += 1;
-                    if (index >= raw.len or raw[index] != '{') return self.invalidStringEscape(tk, start, index - 1, "Unicode escape requires '{' after '\\u'");
+                    if (index >= raw.len or raw[index] != '{') return self.invalidStringEscape(start_index, start, index - 1, "Unicode escape requires '{' after '\\u'");
                     index += 1;
                     const digits_start = index;
                     var codepoint: u21 = 0;
                     while (index < raw.len and raw[index] != '}') : (index += 1) {
-                        if (index - digits_start >= 6) return self.invalidStringEscape(tk, start, index, "Unicode escape requires one to six hexadecimal digits");
-                        const digit = std.fmt.charToDigit(raw[index], 16) catch return self.invalidStringEscape(tk, start, index, "Invalid hexadecimal digit in Unicode escape");
+                        if (index - digits_start >= 6) return self.invalidStringEscape(start_index, start, index, "Unicode escape requires one to six hexadecimal digits");
+                        const digit = std.fmt.charToDigit(raw[index], 16) catch return self.invalidStringEscape(start_index, start, index, "Invalid hexadecimal digit in Unicode escape");
                         const next_codepoint = @as(u32, codepoint) * 16 + digit;
-                        if (next_codepoint > 0x10ffff) return self.invalidStringEscape(tk, start, index, "Unicode escape is outside the Unicode scalar range");
+                        if (next_codepoint > 0x10ffff) return self.invalidStringEscape(start_index, start, index, "Unicode escape is outside the Unicode scalar range");
                         codepoint = @intCast(next_codepoint);
                     }
-                    if (index >= raw.len) return self.invalidStringEscape(tk, start, index - 1, "Unterminated Unicode escape: expected '}'");
-                    if (index == digits_start) return self.invalidStringEscape(tk, start, index, "Unicode escape requires one to six hexadecimal digits");
+                    if (index >= raw.len) return self.invalidStringEscape(start_index, start, index - 1, "Unterminated Unicode escape: expected '}'");
+                    if (index == digits_start) return self.invalidStringEscape(start_index, start, index, "Unicode escape requires one to six hexadecimal digits");
                     var bytes: [4]u8 = undefined;
-                    const len = std.unicode.utf8Encode(codepoint, &bytes) catch return self.invalidStringEscape(tk, start, index, "Unicode escape must be a Unicode scalar value, excluding surrogates");
+                    const len = std.unicode.utf8Encode(codepoint, &bytes) catch return self.invalidStringEscape(start_index, start, index, "Unicode escape must be a Unicode scalar value, excluding surrogates");
                     try decoded.appendSlice(self.allocator, bytes[0..len]);
                     index += 1;
                     continue;
                 },
-                else => return self.invalidStringEscape(tk, start, index, "Unknown string escape"),
+                else => return self.invalidStringEscape(start_index, start, index, "Unknown string escape"),
             };
             try decoded.append(self.allocator, escaped);
             index += 1;
@@ -1122,25 +1137,37 @@ pub const Parser = struct {
         return decoded.toOwnedSlice(self.allocator);
     }
 
-    fn appendStringSegment(self: *Self, parts: *std.ArrayList(*ast.ExpNode), start: usize, end: usize) Errors!void {
+    fn appendStringSegment(self: *Self, parts: *std.ArrayList(*ast.ExpNode), start: usize, end: usize, dedent: ?usize) Errors!void {
         if (start == end) return;
-        const token = Token.init(.string_literal, start - 1, end);
         try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
-            .data = .{ .string_literal = try self.decodeStringLiteral(token) },
+            .data = .{ .string_literal = try self.decodeStringLiteral(start, end, dedent) },
             .loc = .{ .start = start, .end = end - 1 },
         }));
     }
 
     fn parseStringLiteral(self: *Self, tk: Token) Errors!*ast.ExpNode {
+        return self.parseStringContent(tk.loc.start + 1, tk.loc.end, null, tk.loc);
+    }
+
+    fn parseMultilineStringLiteral(self: *Self, tk: Token) Errors!*ast.ExpNode {
+        const closing = tk.loc.end - 2;
+        const closing_line_start = std.mem.lastIndexOfScalar(u8, self.src[0..closing], '\n').? + 1;
+        const dedent = closing - closing_line_start;
+        const content_start = std.mem.indexOfScalarPos(u8, self.src, tk.loc.start, '\n').? + 1;
+        if (content_start == closing_line_start) return self.parseStringContent(content_start, content_start, dedent, tk.loc);
+        return self.parseStringContent(self.skipStringIndent(content_start, dedent), closing_line_start - 1, dedent, tk.loc);
+    }
+
+    fn parseStringContent(self: *Self, content_start: usize, content_end: usize, dedent: ?usize, loc: err.Loc) Errors!*ast.ExpNode {
         var parts: std.ArrayList(*ast.ExpNode) = .empty;
-        var segment_start = tk.loc.start + 1;
+        var segment_start = content_start;
         var index = segment_start;
-        while (index < tk.loc.end) {
+        while (index < content_end) {
             if (self.src[index] == '\\') {
                 index += 2;
                 continue;
             }
-            if (self.src[index] != '$' or index + 1 >= tk.loc.end) {
+            if (self.src[index] != '$' or index + 1 >= content_end) {
                 index += 1;
                 continue;
             }
@@ -1150,11 +1177,11 @@ pub const Parser = struct {
                 index += 1;
                 continue;
             }
-            try self.appendStringSegment(&parts, segment_start, index);
+            try self.appendStringSegment(&parts, segment_start, index, dedent);
             if (is_identifier) {
                 const start = index + 1;
                 index = start + 1;
-                while (index < tk.loc.end and (std.ascii.isAlphanumeric(self.src[index]) or self.src[index] == '_')) : (index += 1) {}
+                while (index < content_end and (std.ascii.isAlphanumeric(self.src[index]) or self.src[index] == '_')) : (index += 1) {}
                 try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
                     .data = .{ .identifier = self.src[start..index] },
                     .loc = .{ .start = start, .end = index - 1 },
@@ -1162,7 +1189,7 @@ pub const Parser = struct {
             } else {
                 var expression_lexer = lexer.Lexer.init(self.allocator, self.src);
                 expression_lexer.cur_index = index;
-                expression_lexer.end_index = tk.loc.end;
+                expression_lexer.end_index = content_end;
                 const end = try expression_lexer.readInterpolation();
                 expression_lexer.cur_index = index + 2;
                 expression_lexer.end_index = end;
@@ -1178,11 +1205,11 @@ pub const Parser = struct {
             segment_start = index;
         }
         if (parts.items.len == 0) return ast.ExpNode.init(self.allocator, .{
-            .data = .{ .string_literal = try self.decodeStringLiteral(tk) },
-            .loc = tk.loc,
+            .data = .{ .string_literal = try self.decodeStringLiteral(content_start, content_end, dedent) },
+            .loc = loc,
         });
-        try self.appendStringSegment(&parts, segment_start, tk.loc.end);
-        return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_interpolation = try parts.toOwnedSlice(self.allocator) }, .loc = tk.loc });
+        try self.appendStringSegment(&parts, segment_start, content_end, dedent);
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_interpolation = try parts.toOwnedSlice(self.allocator) }, .loc = loc });
     }
 
     fn parsePrefix(self: *Self) Errors!*ast.ExpNode {
@@ -1231,6 +1258,9 @@ pub const Parser = struct {
             },
             .string_literal => {
                 return self.parseStringLiteral(tk);
+            },
+            .multiline_string_literal => {
+                return self.parseMultilineStringLiteral(tk);
             },
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });

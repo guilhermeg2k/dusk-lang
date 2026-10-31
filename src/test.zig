@@ -127,7 +127,6 @@ test "string escapes decode into UTF-8 literals" {
         .{ .source = "\"\\u{0}\\u{7f}\\u{80}\\u{7ff}\\u{800}\"", .expected = "\x00\x7f\u{80}\u{7ff}\u{800}" },
         .{ .source = "\"\\u{D7FF}\\u{e000}\\u{ffff}\\u{10000}\\u{10FFFF}\"", .expected = "\u{d7ff}\u{e000}\u{ffff}\u{10000}\u{10ffff}" },
         .{ .source = "\"\\u{000041}\\u{1F319}\"", .expected = "A🌙" },
-        .{ .source = "\"first\nsecond\"", .expected = "first\nsecond" },
         .{ .source = "\"\\u{22}#= text =#\\u{5c}\"", .expected = "\"#= text =#\\" },
     };
     for (cases) |case| {
@@ -142,6 +141,36 @@ test "string escapes decode into UTF-8 literals" {
         try testing.expectEqualStrings(case.expected, decoded);
         try testing.expect(std.unicode.utf8ValidateSlice(decoded));
     }
+}
+
+test "multiline strings strip the closing indentation" {
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = "\"\"\"\n\"\"\"", .expected = "" },
+        .{ .source = "\"\"\"   \n  a\n  \"\"\"", .expected = "a" },
+        .{ .source = "\"\"\"\n    a\n      b\n    \"\"\"", .expected = "a\n  b" },
+        .{ .source = "\"\"\"\n        a\n        b\n    \"\"\"", .expected = "    a\n    b" },
+        .{ .source = "\"\"\"\n  a\n\n \n      \n  b\n  \"\"\"", .expected = "a\n\n\n\nb" },
+        .{ .source = "\"\"\"\n  a\n\n  \"\"\"", .expected = "a\n" },
+        .{ .source = "\"\"\"\n\n  a\n  \"\"\"", .expected = "\na" },
+        .{ .source = "\"\"\"\na\n\"\"\"", .expected = "a" },
+        .{ .source = "\"\"\"\n  \"a\" \"\"b\"\" \\\"\"\"\n  \"\"\"", .expected = "\"a\" \"\"b\"\" \"\"\"" },
+        .{ .source = "\"\"\"\n  \\t\\u{1F319} #= =# $\n  \"\"\"", .expected = "\t🌙 #= =# $" },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
+        var lexer = Lexer.init(arena.allocator(), source);
+        const tokens = try lexer.list();
+        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        const root = try parser.parse();
+        try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.data.string_literal);
+    }
+}
+
+test "multiline strings" {
+    try runCaseOutput("multiline-strings.dsk", "Usage: dusk <file>\n  -h  show 2 \"help\"\n\nquote: \"\"\" done\n" ++
+        "[]\n[a\n]\n[other tail]\n[    kept\n    indent]\n");
 }
 
 test "string constants outlive compilation and source storage" {
@@ -166,7 +195,7 @@ test "invalid string escapes are rejected" {
     const sources = [_][]const u8{
         "\"\\q\"",       "\"\\x41\"",       "\"\\u\"",         "\"\\u0041\"",      "\"\\u{}\"",
         "\"\\u{g}\"",    "\"\\u{-1}\"",     "\"\\u{ 41}\"",    "\"\\u{41\"",       "\"\\u{D800}\"",
-        "\"\\u{DFFF}\"", "\"\\u{110000}\"", "\"\\u{FFFFFF}\"", "\"\\u{0000000}\"", "\"\\\n\"",
+        "\"\\u{DFFF}\"", "\"\\u{110000}\"", "\"\\u{FFFFFF}\"", "\"\\u{0000000}\"", "\"\"\"\n\\q\n\"\"\"",
     };
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -179,8 +208,10 @@ test "invalid string escapes are rejected" {
 
 test "invalid UTF-8 and unterminated strings are rejected" {
     const sources = [_][]const u8{
-        "\"",       "\"missing",    "\"trailing\\",     "\"escaped\\\"",        "\"missing\n",
-        "\"\xff\"", "\"\xc0\x80\"", "\"\xed\xa0\x80\"", "\"\xf4\x90\x80\x80\"", "\"\xe2\x82\"",
+        "\"",                "\"missing",                      "\"trailing\\",            "\"escaped\\\"",        "\"missing\n",
+        "\"\xff\"",          "\"\xc0\x80\"",                   "\"\xed\xa0\x80\"",        "\"\xf4\x90\x80\x80\"", "\"\xe2\x82\"",
+        "\"first\nsecond\"", "\"a\\\nb\"",                     "\"\\\n\"",                "\"\"\" x\n\"\"\"",     "\"\"\"\n  x",
+        "\"\"\"\n  x\"\"\"", "\"\"\"\n    a\n  b\n    \"\"\"", "\"\"\"\n\t\ta\n  \"\"\"", "\"\"\"\n\xff\n\"\"\"",
     };
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);

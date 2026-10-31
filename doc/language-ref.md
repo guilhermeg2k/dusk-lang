@@ -106,7 +106,26 @@ echo("Moon: \u{1F319}")
 echo("A literal backslash: \\")
 ```
 
-Actual line breaks inside double quotes are also preserved. String concatenation is not implemented yet.
+A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. String concatenation is not implemented yet.
+
+### Multiline strings
+
+Triple quotes write text across several lines. The text starts on the line after the opening `"""`, and the closing `"""` goes on its own line. The closing line's indentation is removed from every line, so the text can follow the code's indentation:
+
+```nim
+func usage(name: string) -> string
+    return """
+        Usage: $name <file>
+          -h  show help
+        """
+end
+# "Usage: dusk <file>\n  -h  show help"
+```
+
+- The line break after the opening `"""` and the one before the closing `"""` are not part of the string. To end the string with a line break, leave an empty line before the closing `"""`.
+- Every line must start with the closing `"""` indentation; indentation beyond it is kept. A line indented less is a compile error. Lines that are empty or contain only spaces become empty lines.
+- Only spaces can be written on the opening `"""` line after the quotes, and on the closing line before them.
+- Escapes and interpolation work as in double-quoted strings. `"` and `""` need no escape; write `\"""` for three quotes.
 
 ### String interpolation
 

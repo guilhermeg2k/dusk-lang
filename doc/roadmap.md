@@ -15,7 +15,7 @@
 
 - Multiline Comments (`#= ... =#`, nested; implemented)
 - UTF-8 strings and escape sequences (implemented)
-- Multiline strings
+- Multiline strings (`"""` with closing-indentation stripping; implemented)
 - Strings operations
 - `when` on strings
 - String interpolation (`$name` and `${expression}`; implemented)

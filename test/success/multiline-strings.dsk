@@ -1,0 +1,29 @@
+func usage(name: string) -> string
+    return """
+        Usage: $name <file>
+          -h  show ${1 + 1} "help"
+      
+        quote: \""" done
+        """
+end
+echo(usage("dusk"))
+echo("[${"""
+"""}]")
+let x = """
+    a
+
+    """
+echo("[$x]")
+echo("[${"""
+    ${when 2
+        1 then "one" end
+        else then "other" end
+    end} tail
+    """}]")
+if true then
+    let kept = """
+            kept
+            indent
+        """
+    echo("[$kept]")
+end
