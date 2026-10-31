@@ -27,6 +27,7 @@
 - Fixed `Register limit exceeded` crash in blocks with a few hundred `if`, `when`, nullable-capture `if`, capture `for` or call statements: the hidden variables each statement uses are now freed when it ends
 - Fixed functions whose success type is an error set (`E!Kind`): `return Kind.A` now succeeds instead of being checked against `E`. Using `E` itself as the success type (`E!E`, `E!?E`) is a compile error
 - Fixed `==`/`!=` on nullable primitives, enums and error sets comparing the null box instead of the value: `?int == int` and `?int == ?int` were always false
+- Debug builds check that every call to a function that can fail is directly followed by its success jump, which `RETURN_ERR` relies on
 - Fixed `if f() catch fallback then` failing to parse: inside an `if`/`elif` condition, `catch name then` is a fallback value. A catch block still works there inside parentheses or call arguments
 - Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`
 - Fixed struct fields with both a type and a default (`retries: ?int = null`) taking the default's type instead of the declared one

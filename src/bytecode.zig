@@ -640,6 +640,7 @@ pub const BytecodeGen = struct {
         try self.genFnCall(call.data.fn_call, call, call_reg);
         self.register_types[call_reg] = error_union.error_set;
 
+        std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op == .CALL);
         try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
         const jump_ok_idx = self.chunk_instructions.items.len - 1;
 
