@@ -1,0 +1,5 @@
+let count: int = next()
+
+func next() -> int
+    return count + 1
+end

@@ -38,6 +38,9 @@ pub const BytecodeGen = struct {
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     static_heap_bitmap: std.ArrayList(u64) = .empty,
+    global_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    main_register_by_uid: std.AutoHashMapUnmanaged(usize, u8) = .empty,
+    is_generating_main: bool = false,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
@@ -105,6 +108,11 @@ pub const BytecodeGen = struct {
             next_fn_index += 1;
         }
 
+        for (program.global_uids) |uid| {
+            try self.global_uids.put(self.allocator, uid, {});
+        }
+        const main_func = try self.genMainFunc(program);
+
         for (program.defined_types) |dt| {
             switch (dt.kind) {
                 .@"struct" => |s| {
@@ -122,8 +130,6 @@ pub const BytecodeGen = struct {
         for (program.functions) |func| {
             try self.addFunction(&funcs, func);
         }
-
-        const main_func = try self.genMainFunc(program);
 
         try funcs.append(self.allocator, main_func);
 
@@ -147,6 +153,8 @@ pub const BytecodeGen = struct {
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
+        self.is_generating_main = true;
+        defer self.is_generating_main = false;
         self.next_free_register = 0;
         self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -305,11 +313,34 @@ pub const BytecodeGen = struct {
         if (register_idx) |idx| {
             _ = try self.genValue(store_var.value, idx);
             self.register_types[idx] = store_var.type_id;
-        } else {
-            const reg_idx = try self.genValue(store_var.value, self.consumeRegister());
-            self.register_types[reg_idx] = store_var.type_id;
-            try self.var_register_id_by_uid.put(store_var.uid, reg_idx);
+            return;
         }
+        if (self.main_register_by_uid.get(store_var.uid)) |main_reg| {
+            const value_reg = try self.genValue(store_var.value, self.consumeRegister());
+            defer self.freeRegister();
+            var store = Instruction{ .op = .GLOBAL_STORE, .a = value_reg };
+            store.putBEx(main_reg);
+            try self.chunk_instructions.append(self.allocator, store);
+            return;
+        }
+        const reg_idx = try self.genValue(store_var.value, self.consumeRegister());
+        self.register_types[reg_idx] = store_var.type_id;
+        try self.bindVariable(store_var.uid, reg_idx);
+    }
+
+    fn bindVariable(self: *Self, uid: usize, reg: u8) !void {
+        try self.var_register_id_by_uid.put(uid, reg);
+        if (self.is_generating_main and self.global_uids.contains(uid)) {
+            try self.main_register_by_uid.put(self.allocator, uid, reg);
+        }
+    }
+
+    fn genGlobalLoad(self: *Self, uid: usize, type_id: tt.TypeId, target_reg: u8) !void {
+        const main_reg = self.main_register_by_uid.get(uid) orelse return BytecodeError.UndefinedVariable;
+        var load = Instruction{ .op = .GLOBAL_LOAD, .a = target_reg };
+        load.putBEx(main_reg);
+        try self.chunk_instructions.append(self.allocator, load);
+        self.register_types[target_reg] = type_id;
     }
 
     fn genBranchIf(self: *Self, ifStmt: ir.BranchIf) !void {
@@ -512,8 +543,10 @@ pub const BytecodeGen = struct {
             },
 
             .identifier => |id| {
-                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse
-                    return BytecodeError.UndefinedVariable;
+                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse {
+                    try self.genGlobalLoad(id.uid, value.type_id, target_reg);
+                    return target_reg;
+                };
 
                 const inst = Instruction{
                     .op = .LOAD,
@@ -657,7 +690,7 @@ pub const BytecodeGen = struct {
                 },
                 .block => |block| {
                     const saved_next_free = self.next_free_register;
-                    try self.var_register_id_by_uid.put(block.capture_uid, call_reg);
+                    try self.bindVariable(block.capture_uid, call_reg);
                     try self.genInstructionBlock(block.instructions);
                     self.freeRegisterN(self.next_free_register - saved_next_free);
                     _ = try self.genVoidValue(call_reg);
@@ -1037,14 +1070,15 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, unwrap_isnt);
-        try self.var_register_id_by_uid.put(stmt.unwrapped.uid, target_reg);
+        try self.bindVariable(stmt.unwrapped.uid, target_reg);
         self.register_types[target_reg] = stmt.unwrapped.type_id;
 
         return target_reg;
     }
 
     fn genUpadateNullBox(self: *Self, stmt: ir.UpdateNullBox) !void {
-        const box_reg = self.var_register_id_by_uid.get(stmt.uid) orelse return BytecodeError.UndefinedVariable;
+        if (self.var_register_id_by_uid.get(stmt.uid) == null) return self.genGlobalNullBoxUpdate(stmt);
+        const box_reg = self.var_register_id_by_uid.get(stmt.uid).?;
 
         // b = 0 stores null, otherwise b = inner value kind + 1
         var store_inst = Instruction{
@@ -1062,6 +1096,18 @@ pub const BytecodeGen = struct {
 
         try self.chunk_instructions.append(self.allocator, store_inst);
         try self.recordHeapMap();
+    }
+
+    fn genGlobalNullBoxUpdate(self: *Self, stmt: ir.UpdateNullBox) !void {
+        const box_reg = self.consumeRegister();
+        defer self.freeRegister();
+        try self.genGlobalLoad(stmt.uid, stmt.type_id, box_reg);
+        try self.var_register_id_by_uid.put(stmt.uid, box_reg);
+        defer _ = self.var_register_id_by_uid.remove(stmt.uid);
+        try self.genUpadateNullBox(stmt);
+        var store = Instruction{ .op = .GLOBAL_STORE, .a = box_reg };
+        store.putBEx(self.main_register_by_uid.get(stmt.uid).?);
+        try self.chunk_instructions.append(self.allocator, store);
     }
 
     fn genVoidValue(self: *Self, target_reg: u8) !u8 {
@@ -1511,6 +1557,7 @@ pub const Chunk = struct {
             .UNION_TAG, .UNION_PAYLOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
+            .GLOBAL_LOAD, .GLOBAL_STORE => std.debug.print("R[{d}] G[{d}]", .{ inst.a, inst.bEx() }),
             .NULL_BOX_INIT,
             .NULL_BOX_STORE,
             => std.debug.print("R[{d}] B[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1577,6 +1624,8 @@ pub const OpCode = enum(u8) {
 
     STATIC_LOAD,
     STATIC_STORE,
+    GLOBAL_LOAD,
+    GLOBAL_STORE,
 
     NULL_BOX_INIT,
     NULL_BOX_STORE,

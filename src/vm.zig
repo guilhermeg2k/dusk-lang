@@ -157,6 +157,14 @@ pub const VM = struct {
                     self.static_store[inst.bEx()] = stack[stack_base + inst.a];
                 },
 
+                .GLOBAL_LOAD => {
+                    stack[stack_base + inst.a] = stack[inst.bEx()];
+                },
+
+                .GLOBAL_STORE => {
+                    stack[inst.bEx()] = stack[stack_base + inst.a];
+                },
+
                 .UNION_INIT => {
                     const desc_id = inst.bEx();
                     current_frame.cur_inst = cur_instruction;

@@ -25,6 +25,12 @@ pub const SemaAnalyzer = struct {
     fn_depth: usize = 0,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
+    fn_frames: std.ArrayList(FnFrame) = .empty,
+    globals: std.AutoArrayHashMapUnmanaged(usize, []const u8) = .empty,
+    global_uses: std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)) = .empty,
+    call_edges: std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)) = .empty,
+    top_level_calls: std.ArrayList(TopLevelCall) = .empty,
+    is_evaluating_default: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -54,12 +60,14 @@ pub const SemaAnalyzer = struct {
         const instructions = (try self.visitBlock(root)).instructions;
         try self.resolveErrorEdges();
         try self.checkPendingWhens();
+        try self.checkGlobalsDeclaredBeforeCalls();
 
         return .{
             .instructions = instructions,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
+            .global_uids = self.globals.keys(),
         };
     }
 
@@ -231,6 +239,67 @@ pub const SemaAnalyzer = struct {
                 loc,
             );
         }
+    }
+
+    fn appendToList(self: *Self, map: *std.AutoHashMapUnmanaged(usize, std.ArrayList(usize)), key: usize, value: usize) !void {
+        const entry = try map.getOrPut(self.allocator, key);
+        if (!entry.found_existing) entry.value_ptr.* = .empty;
+        try entry.value_ptr.append(self.allocator, value);
+    }
+
+    fn noteVariableUse(self: *Self, symbol: Symbol) Errors!void {
+        if (symbol.kind != .variable) return;
+        const frames = self.fn_frames.items;
+        if (frames.len == 0) return;
+        if (symbol.uid >= frames[0].first_local_uid) return;
+        try self.globals.put(self.allocator, symbol.uid, symbol.identifier);
+        try self.appendToList(&self.global_uses, frames[frames.len - 1].fn_uid, symbol.uid);
+    }
+
+    fn noteCall(self: *Self, callee_uid: usize, callee_name: []const u8, loc: err.Loc) Errors!void {
+        if (self.fn_frames.getLastOrNull()) |frame| {
+            if (!self.is_evaluating_default) return self.appendToList(&self.call_edges, frame.fn_uid, callee_uid);
+        }
+        try self.top_level_calls.append(self.allocator, .{
+            .callee_uid = callee_uid,
+            .callee_name = callee_name,
+            .first_undeclared_uid = if (self.is_evaluating_default) 0 else self.scope.next_uid,
+            .is_default_value = self.is_evaluating_default,
+            .loc = loc,
+        });
+    }
+
+    fn evalDefaultValue(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
+        const was_evaluating_default = self.is_evaluating_default;
+        self.is_evaluating_default = true;
+        defer self.is_evaluating_default = was_evaluating_default;
+        return self.evalExpExpecting(exp, expected_type_id);
+    }
+
+    fn checkGlobalsDeclaredBeforeCalls(self: *Self) Errors!void {
+        for (self.top_level_calls.items) |call| {
+            var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
+            defer visited.deinit(self.allocator);
+            const global_uid = try self.findUndeclaredGlobal(call.callee_uid, call.first_undeclared_uid, &visited) orelse continue;
+            const global_name = self.globals.get(global_uid).?;
+            if (call.is_default_value) return self.err_dispatcher.globalUsedByDefaultValue(call.callee_name, global_name, call.loc);
+            return self.err_dispatcher.globalUsedBeforeDeclared(call.callee_name, global_name, call.loc);
+        }
+    }
+
+    fn findUndeclaredGlobal(self: *Self, fn_uid: usize, first_undeclared_uid: usize, visited: *std.AutoHashMapUnmanaged(usize, void)) Errors!?usize {
+        if ((try visited.getOrPut(self.allocator, fn_uid)).found_existing) return null;
+        if (self.global_uses.get(fn_uid)) |uses| {
+            for (uses.items) |global_uid| {
+                if (global_uid >= first_undeclared_uid) return global_uid;
+            }
+        }
+        if (self.call_edges.get(fn_uid)) |callees| {
+            for (callees.items) |callee_uid| {
+                if (try self.findUndeclaredGlobal(callee_uid, first_undeclared_uid, visited)) |global_uid| return global_uid;
+            }
+        }
+        return null;
     }
 
     fn addErrorEdge(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !void {
@@ -584,7 +653,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (field.default_value) |initial_value| {
-            const value = try self.evalExpExpecting(initial_value, if (field.type != null) field_type_id else null);
+            const value = try self.evalDefaultValue(initial_value, if (field.type != null) field_type_id else null);
             const value_type_id = value.type_id;
             field_default_value = value;
 
@@ -630,7 +699,7 @@ pub const SemaAnalyzer = struct {
                 };
 
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExpExpecting(default_value, param_type_id);
+                    const value = try self.evalDefaultValue(default_value, param_type_id);
                     param_default_value = value;
                     const value_type_id = value.type_id;
                     if (!try self.canCoerce(value_type_id, param_type_id, param.default_value.?.loc)) {
@@ -643,7 +712,7 @@ pub const SemaAnalyzer = struct {
                 }
             } else {
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExp(default_value);
+                    const value = try self.evalDefaultValue(default_value, null);
                     param_default_value = value;
                     param_type_id = value.type_id;
                 } else {
@@ -1094,7 +1163,7 @@ pub const SemaAnalyzer = struct {
 
         for (enum_stmt.def.static_fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const raw_default: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const raw_default: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultValue(value, annotated_type) else null;
             const field_type = annotated_type orelse raw_default.?.type_id;
 
             const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
@@ -1148,7 +1217,7 @@ pub const SemaAnalyzer = struct {
 
         for (union_stmt.def.static_fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const raw_default: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const raw_default: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultValue(value, annotated_type) else null;
             const field_type = annotated_type orelse raw_default.?.type_id;
 
             const default_value: ?*ir.Value = if (raw_default) |dv| blk: {
@@ -1701,6 +1770,7 @@ pub const SemaAnalyzer = struct {
                 const id_symbol = self.scope.symbol_table.getOrError(id) catch {
                     return self.err_dispatcher.notDefined(id, assign_stmt.target.loc);
                 };
+                try self.noteVariableUse(id_symbol);
 
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
                 const assignment_value_type = assignment_value.type_id;
@@ -2083,7 +2153,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultValue(value, annotated_type) else null;
             const field_type = annotated_type orelse default_value.?.type_id;
 
             try fields.append(
@@ -2098,7 +2168,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.static_fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultValue(value, annotated_type) else null;
             const field_type = annotated_type orelse default_value.?.type_id;
 
             try static_fields.append(
@@ -2145,6 +2215,8 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(old_return_type);
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
+        try self.fn_frames.append(self.allocator, .{ .fn_uid = uid, .first_local_uid = self.scope.next_uid });
+        defer _ = self.fn_frames.pop();
 
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
@@ -2845,6 +2917,8 @@ pub const SemaAnalyzer = struct {
             }
         }
 
+        if (!is_struct_init) try self.noteCall(uid, fn_identifier, exp.loc);
+
         if (is_struct_init) {
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
@@ -3145,6 +3219,7 @@ pub const SemaAnalyzer = struct {
         const id_symbol = self.scope.symbol_table.get(id);
 
         if (id_symbol) |symbol| {
+            try self.noteVariableUse(symbol);
             const type_id = switch (symbol.kind) {
                 .defined_type => |dt| dt.blueprint_type_id,
                 else => symbol.type_id,
@@ -3674,6 +3749,19 @@ const SymbolTable = struct {
         if (self.get(id)) |s| return s;
         return Errors.SemaError;
     }
+};
+
+const FnFrame = struct {
+    fn_uid: usize,
+    first_local_uid: usize,
+};
+
+const TopLevelCall = struct {
+    callee_uid: usize,
+    callee_name: []const u8,
+    first_undeclared_uid: usize,
+    is_default_value: bool,
+    loc: err.Loc,
 };
 
 pub const Symbol = struct {

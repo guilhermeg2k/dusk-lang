@@ -1,0 +1,7 @@
+echo(total())
+
+let base = 1
+
+func total() -> int
+    return base + 1
+end

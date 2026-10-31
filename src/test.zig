@@ -678,6 +678,22 @@ test "sema error: try on non-call" {
     try runCaseError("sema/errors-try-non-call.dsk", error.NotAFailingCall);
 }
 
+test "sema error: global called before declared" {
+    try runCaseError("sema/global-called-before-declared.dsk", error.UsedBeforeDeclared);
+}
+
+test "sema error: global called before declared through another function" {
+    try runCaseError("sema/global-called-before-declared-indirect.dsk", error.UsedBeforeDeclared);
+}
+
+test "sema error: global used in its own initializer" {
+    try runCaseError("sema/global-used-in-own-initializer.dsk", error.UsedBeforeDeclared);
+}
+
+test "sema error: global used by static default" {
+    try runCaseError("sema/global-used-by-static-default.dsk", error.UsedBeforeDeclared);
+}
+
 test "sema error: success type is the error set" {
     try runCaseError("sema/errors-payload-same-set.dsk", error.PayloadSharesErrors);
 }
@@ -1004,6 +1020,10 @@ test "range-loop-bounds" {
 
 test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
+}
+
+test "globals" {
+    try runCase("globals.dsk");
 }
 
 test "gc-nullable-starts-null" {

@@ -714,7 +714,20 @@ assert(result == false)
 
 ### Scope
 
-A function can see its parameters, its own variables, other functions and types, and static fields. It **can't** see variables declared at the top level of the program (see [Known Limitations](#14-known-limitations)).
+A function can see its parameters, its own variables, other functions and types, static fields, and the top-level variables declared above it. It can read and assign them (`let mut` ones only):
+
+```nim
+let mut count = 0
+
+func bump() -> void
+    count += 1
+end
+
+bump()
+echo(count)   # 1
+```
+
+Functions can be called before they are declared, so a call must come after every top-level variable the function uses, directly or through the functions it calls. Calling `bump()` above `let mut count = 0` is a compile error. A default value (a static field, a field or a parameter default) can't call a function that uses top-level variables.
 
 ## 11. Error Handling
 
@@ -861,7 +874,6 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 These are known gaps in v0.12. Most are planned in the [roadmap](roadmap.md).
 
-- **Top-level variables inside functions**: reading a top-level `let` from a function fails with `UndefinedVariable`. Pass it as a parameter, or use a static field.
 - **Strings**: no escape sequences, concatenation or interpolation, and `==` compares identity (v0.18).
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.

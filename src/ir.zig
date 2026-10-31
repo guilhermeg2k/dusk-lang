@@ -6,6 +6,7 @@ pub const Program = struct {
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
+    global_uids: []const usize,
 };
 
 pub const Block = struct {

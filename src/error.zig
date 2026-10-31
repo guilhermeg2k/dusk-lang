@@ -340,6 +340,30 @@ pub const ErrorDispatcher = struct {
         return error.NotAFailingCall;
     }
 
+    pub fn globalUsedByDefaultValue(self: *Self, fn_name: []const u8, global_name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' uses top-level variable '{s}', which a default value can't depend on",
+                .{ fn_name, global_name },
+            ),
+            loc,
+        );
+        return error.UsedBeforeDeclared;
+    }
+
+    pub fn globalUsedBeforeDeclared(self: *Self, fn_name: []const u8, global_name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "calling '{s}' here uses top-level variable '{s}' before it is declared",
+                .{ fn_name, global_name },
+            ),
+            loc,
+        );
+        return error.UsedBeforeDeclared;
+    }
+
     pub fn payloadSharesErrors(self: *Self, payload_name: []const u8, set_name: []const u8, error_name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
@@ -584,6 +608,7 @@ pub const Errors = error{
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,
+    UsedBeforeDeclared,
     CatchBlockMustLeave,
     NotAnErrorSet,
 };
