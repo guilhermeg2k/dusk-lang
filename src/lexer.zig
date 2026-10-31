@@ -57,7 +57,7 @@ pub const Lexer = struct {
         var tokens: std.ArrayList(Token) = .empty;
 
         while (true) {
-            const tkn = self.next();
+            const tkn = try self.next();
 
             if (tkn.tag == Tag.err) {
                 return self.err_dispatcher.unexpectedToken(tkn);
@@ -70,19 +70,23 @@ pub const Lexer = struct {
         return tokens;
     }
 
-    fn next(self: *Self) Token {
+    fn next(self: *Self) LexerError!Token {
         while (true) {
+            self.readWhiteSpaces();
             const is_eof = self.cur_index >= self.src.len;
             if (is_eof) {
                 return Token.init(Tag.eof, self.cur_index, self.cur_index);
             }
 
             defer self.walk();
-            self.readWhiteSpaces();
             const cur_char = self.peekCurrent();
             switch (cur_char) {
                 '#' => {
-                    while (self.peekCurrent() != '\n') {
+                    if (self.peekNext() == '=') {
+                        try self.readMultilineComment();
+                        continue;
+                    }
+                    while (self.cur_index < self.src.len and self.peekCurrent() != '\n') {
                         self.walk();
                     }
                 },
@@ -170,6 +174,33 @@ pub const Lexer = struct {
         while (cur_char == ' ') : (cur_char = self.peekCurrent()) {
             self.walk();
         }
+    }
+
+    fn readMultilineComment(self: *Self) LexerError!void {
+        const start = self.cur_index;
+        self.cur_index += 2;
+        var depth: usize = 1;
+
+        while (self.cur_index < self.src.len) {
+            if (self.peekCurrent() == '#' and self.peekNext() == '=') {
+                depth += 1;
+                self.cur_index += 2;
+                continue;
+            }
+            if (self.peekCurrent() == '=' and self.peekNext() == '#') {
+                depth -= 1;
+                if (depth == 0) {
+                    self.walk();
+                    return;
+                }
+                self.cur_index += 2;
+                continue;
+            }
+            self.walk();
+        }
+
+        self.err_dispatcher.log("Unterminated multiline comment: expected '=#'", .{ .start = start, .end = start + 1 });
+        return error.LexerError;
     }
 
     fn readNumberLiteral(self: *Self) Token {

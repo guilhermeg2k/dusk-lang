@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Added nested multiline comments with `#= ... =#` and a lexer diagnostic for unclosed comments. Fixed single-line comments without a final newline hanging the lexer and trailing spaces producing an unexpected token
 - Started v0.13 development: updated the CLI version to `0.13.0-devel` and recorded the implementation phases for comments and string features
 
 ## v0.12 - Kanade

@@ -1,6 +1,54 @@
 const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
+const Lexer = @import("lexer.zig").Lexer;
+
+test "multiline comments preserve tokens and locations" {
+    const src = "#= header\n#= nested =#\n=#let#==#x = 1#= inline =#+2#= tail =#";
+    var lexer = Lexer.init(testing.allocator, src);
+    var tokens = try lexer.list();
+    defer tokens.deinit(testing.allocator);
+    const Tag = @import("lexer.zig").Tag;
+    const expected = [_]Tag{ .let_kw, .identifier, .eq, .int_literal, .plus, .int_literal, .eof };
+    try testing.expectEqual(expected.len, tokens.items.len);
+    for (expected, tokens.items) |tag, token| {
+        try testing.expectEqual(tag, token.tag);
+    }
+    try testing.expectEqualStrings("let", tokens.items[0].value(src));
+    try testing.expectEqual(std.mem.indexOf(u8, src, "let").?, tokens.items[0].loc.start);
+    try testing.expectEqual(src.len, tokens.items[6].loc.start);
+}
+
+test "comment delimiters inside strings and line comments" {
+    const src = "\"#= text =#\" # ignored #=\n42 # EOF";
+    var lexer = Lexer.init(testing.allocator, src);
+    var tokens = try lexer.list();
+    defer tokens.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), tokens.items.len);
+    try testing.expectEqualStrings("#= text =#", tokens.items[0].value(src));
+    try testing.expectEqualStrings("42", tokens.items[1].value(src));
+}
+
+test "comments and whitespace at EOF" {
+    const sources = [_][]const u8{ "# line comment", "#", "   ", "#==#", "#=\n=#", "#= #= nested =# =#   " };
+    for (sources) |src| {
+        var lexer = Lexer.init(testing.allocator, src);
+        var tokens = try lexer.list();
+        defer tokens.deinit(testing.allocator);
+        try testing.expectEqual(@as(usize, 1), tokens.items.len);
+        try testing.expectEqual(@import("lexer.zig").Tag.eof, tokens.items[0].tag);
+    }
+}
+
+test "unterminated multiline comments" {
+    const sources = [_][]const u8{ "#=", "#= text", "#= #= nested =#", "#= =", "#= #" };
+    for (sources) |src| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var lexer = Lexer.init(arena.allocator(), src);
+        try testing.expectError(error.LexerError, lexer.list());
+    }
+}
 
 fn runCase(src_file: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);

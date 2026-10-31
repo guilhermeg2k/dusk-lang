@@ -13,7 +13,7 @@
 
 ## Version 0.13 - Garou
 
-- Multiline Comments
+- Multiline Comments (`#= ... =#`, nested; implemented)
 - Multiline strings
 - Strings operations
 - `when` on strings

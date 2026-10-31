@@ -36,6 +36,15 @@ echo("Hello, Dusk")
 let x = 10 # an inline comment
 ```
 
+Since v0.13, multiline comments use `#= ... =#` and can nest. They can appear between tokens, including on the same line. An unclosed comment is a lexer error pointing at its opening delimiter.
+
+```nim
+#= A multiline comment
+   #= A nested comment =#
+=#
+let total = 1 #= explanation =# + 2
+```
+
 **Blocks** are delimited by keywords: `then ... end`, `do ... end`, and `end` for definitions. Indentation is only for readability.
 
 **Line breaks** aren't significant. A statement can span several lines, but two expressions on consecutive lines can also join into one: `when n` followed by `-1 then` on the next line is read as `when n - 1`.
