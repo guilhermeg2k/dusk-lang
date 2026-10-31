@@ -1,0 +1,7 @@
+error E
+    Bad
+end
+
+func pick(x: int) -> E!E
+    return E.Bad
+end

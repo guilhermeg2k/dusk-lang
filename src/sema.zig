@@ -217,6 +217,22 @@ pub const SemaAnalyzer = struct {
         return true;
     }
 
+    fn checkPayloadErrorOverlap(self: *Self, error_set_type_id: tt.TypeId, payload: tt.TypeId, loc: err.Loc) !void {
+        const payload_base = self.type_table.typeIdByNullableTypeId.get(payload) orelse payload;
+        if (!self.type_table.isErrorSet(payload_base)) return;
+        const error_set = self.errorSetOf(error_set_type_id);
+        if (error_set.is_inferred) return;
+        for (self.errorSetOf(payload_base).ids.keys()) |id| {
+            if (!error_set.has(id)) continue;
+            return self.err_dispatcher.payloadSharesErrors(
+                try self.type_table.name(payload, self.allocator),
+                try self.type_table.name(error_set_type_id, self.allocator),
+                self.type_table.error_names.items[@intCast(id)],
+                loc,
+            );
+        }
+    }
+
     fn addErrorEdge(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !void {
         try self.error_edges.append(self.allocator, .{ .from = from, .to = to, .loc = loc });
     }
@@ -668,6 +684,7 @@ pub const SemaAnalyzer = struct {
         if (fn_def.error_set) |fn_error_set| {
             const fn_name = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.identifier;
             const error_set_type_id = try self.resolveFnErrorSet(fn_error_set, fn_name);
+            try self.checkPayloadErrorOverlap(error_set_type_id, return_type_id, loc);
             return_type_id = try self.type_table.addType(.{
                 .kind = .{ .error_union = .{ .error_set = error_set_type_id, .payload = return_type_id } },
                 .is_nullable = false,
@@ -2242,8 +2259,11 @@ pub const SemaAnalyzer = struct {
         };
 
         const value = try self.evalExpExpecting(exp, payload);
+        const is_error = self.type_table.isErrorSet(value.type_id) and
+            !self.type_table.getTypePtrById(value.type_id).is_nullable and
+            !self.type_table.canCoerce(value.type_id, payload);
 
-        if (self.type_table.isErrorSet(value.type_id) and !self.type_table.getTypePtrById(value.type_id).is_nullable) {
+        if (is_error) {
             const target_set = self.errorSetOf(error_union.error_set);
 
             if (value.data == .i_int) {

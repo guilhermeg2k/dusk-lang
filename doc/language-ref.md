@@ -755,6 +755,8 @@ end
 
 `E!void` and `!void` are allowed: the function can end without a `return`.
 
+`T` can itself be an error set: in `E!Kind`, `return Kind.A` succeeds and `return E.Bad` fails. `T` can't be `E` itself (`E!E` or `E!?E` is a compile error), since `return` couldn't tell the two apart.
+
 `E!T` and `!T` only exist as return types. A call to a function that can fail must be handled right away with `try` or `catch`: `let x = parse_digit(1)` is a compile error.
 
 ### try

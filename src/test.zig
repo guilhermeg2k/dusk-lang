@@ -666,6 +666,14 @@ test "sema error: try on non-call" {
     try runCaseError("sema/errors-try-non-call.dsk", error.NotAFailingCall);
 }
 
+test "sema error: success type is the error set" {
+    try runCaseError("sema/errors-payload-same-set.dsk", error.PayloadSharesErrors);
+}
+
+test "sema error: nullable success type is the error set" {
+    try runCaseError("sema/errors-payload-nullable-same-set.dsk", error.PayloadSharesErrors);
+}
+
 test "sema error: error not in set (return)" {
     try runCaseError("sema/errors-not-in-set-return.dsk", error.ErrorNotInSet);
 }
@@ -984,6 +992,10 @@ test "range-loop-bounds" {
 
 test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
+}
+
+test "errors-error-set-payload" {
+    try runCase("errors-error-set-payload.dsk");
 }
 
 test "errors-catch-condition" {

@@ -340,6 +340,18 @@ pub const ErrorDispatcher = struct {
         return error.NotAFailingCall;
     }
 
+    pub fn payloadSharesErrors(self: *Self, payload_name: []const u8, set_name: []const u8, error_name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "success type {s} shares '{s}' with {s}",
+                .{ payload_name, error_name, set_name },
+            ),
+            loc,
+        );
+        return error.PayloadSharesErrors;
+    }
+
     pub fn errorNotInSet(self: *Self, error_name: []const u8, set_name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
@@ -571,6 +583,7 @@ pub const Errors = error{
     TryOutsideFailingFunction,
     NotAFailingCall,
     ErrorNotInSet,
+    PayloadSharesErrors,
     CatchBlockMustLeave,
     NotAnErrorSet,
 };
