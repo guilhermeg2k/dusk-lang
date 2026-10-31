@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Backlog: recorded readable enum, error and union formatting for both `echo` and string interpolation
 - Kotlin-style string interpolation: `$name` and `${expression}` insert values with the current `echo` formatting, evaluating and formatting each expression once from left to right. Nested strings, conditionals, `try`/`catch` and comments are supported; `\$` escapes a literal dollar sign
 - Interpolated strings participate in GC heap maps and preserve existing variables during self-assignment. Empty expressions, unknown names, void results and unhandled failing calls are compile errors
 - Strings now require valid UTF-8 and support `\"`, `\\`, `\n`, `\r`, `\t`, `\0` and `\u{...}` escapes, decoded at compile time. Invalid escapes and Unicode scalar values are compile errors; unterminated strings report an error instead of hanging
