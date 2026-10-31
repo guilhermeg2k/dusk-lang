@@ -15,7 +15,7 @@
 - `if`, nullable-capture `if` and `when` now work as expressions. Branches produce their final expression, with statements allowed before it; value-producing `if` requires `else`
 - Conditional expressions infer compatible result types, promote mixed numeric results, support nullable results and propagate expected types into branch values, anonymous initializers and empty arrays
 - Expression branches can `return`, `break` or `continue` without supplying a value. Existing statement forms retain their behavior
-- `if` and `when` statements compile straight to branches again instead of going through the expression path, so statements don't run extra instructions
+- `if` and `when` statements compile straight to branches again instead of going through the expression path, so statements don't run extra instructions. Statements and expressions now share one AST form and one lowering path
 - Nullable captures evaluate their subject once, unwrap only in the matching branch and keep captured names out of `else`; union captures also preserve outer variables with the same name
 
 - Error handling: error sets (`error ParseError ... end`), functions that can fail (`-> E!T`, or `-> !T` to infer the error set from the body), `try` to pass an error on, and `catch` with a fallback value (`f() catch 0`) or a block (`f() catch e then ... end`)

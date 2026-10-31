@@ -709,13 +709,12 @@ pub const SemaAnalyzer = struct {
 
         var return_type: tt.TypeId = self.type_table.getPrimitive(.void);
 
-        for (block.statements.items, 0..) |node, statement_index| {
+        for (block.statements.items, 0..) |stmt, statement_index| {
             const is_value_tail = result != null and statement_index + 1 == block.statements.items.len;
-            if (is_value_tail and node.data == .expression) {
-                try instructions.append(self.allocator, try self.visitBranchTail(&node, result.?));
+            if (is_value_tail and stmt.data == .expression) {
+                try instructions.append(self.allocator, try self.visitBranchTail(&stmt, result.?));
                 break;
             }
-            const stmt = if (node.data == .expression) conditionalStatement(node.data.expression) orelse node else node;
             const instruction = switch (stmt.data) {
                 .let => try self.visitLetStmt(&stmt),
                 .func => try self.visitFuncStmt(&stmt),
@@ -724,14 +723,11 @@ pub const SemaAnalyzer = struct {
                 .@"union" => try self.visitUnionStmt(&stmt),
                 .error_set => null,
                 .assign => try self.visitAssignStmt(&stmt),
-                .@"if" => try self.visitIfStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
                 .expression => try self.visitExpressionStmt(&stmt),
                 .@"break" => ir.Instruction{ .break_stmt = {} },
                 .@"continue" => ir.Instruction{ .continue_stmt = {} },
                 .@"return" => try self.visitReturnStmt(&stmt),
-                .if_capture => ir.Instruction{ .scope = try self.lowerIfCapture(&stmt, null) },
-                .when => ir.Instruction{ .scope = try self.lowerWhen(&stmt, null) },
                 .for_capture => ir.Instruction{ .scope = try self.visitForCaptureStmt(&stmt) },
             };
 
@@ -890,6 +886,9 @@ pub const SemaAnalyzer = struct {
         const expression_stmt = stmt.data.expression;
 
         const value = switch (expression_stmt.data) {
+            .if_exp => return self.lowerIf(expression_stmt, null),
+            .if_capture_exp => return ir.Instruction{ .scope = try self.lowerIfCapture(expression_stmt, null) },
+            .when_exp => return ir.Instruction{ .scope = try self.lowerWhen(expression_stmt, null) },
             .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
             .try_exp => try self.evalTry(expression_stmt),
             .catch_exp => try self.evalCatch(expression_stmt, true),
@@ -1193,14 +1192,10 @@ pub const SemaAnalyzer = struct {
         return null;
     }
 
-    fn visitIfStmt(self: *Self, stmt: *const ast.StatementNode) Errors!ir.Instruction {
-        return self.lowerIf(stmt, null);
-    }
-
-    fn lowerIf(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors!ir.Instruction {
-        const if_stmt = stmt.data.@"if";
+    fn lowerIf(self: *Self, exp: *const ast.ExpNode, result: ?*BranchResult) Errors!ir.Instruction {
+        const if_stmt = exp.data.if_exp;
         if (result != null and if_stmt.else_block == null) {
-            return self.err_dispatcher.invalidExpression("else in an if expression", "if without else", stmt.loc);
+            return self.err_dispatcher.invalidExpression("else in an if expression", "if without else", exp.loc);
         }
 
         const condition_value = try self.evalExp(if_stmt.condition);
@@ -1217,17 +1212,17 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn lowerIfCapture(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors![]ir.Instruction {
-        const capture = stmt.data.if_capture;
+    fn lowerIfCapture(self: *Self, exp: *const ast.ExpNode, result: ?*BranchResult) Errors![]ir.Instruction {
+        const capture = exp.data.if_capture_exp;
         if (result != null and capture.else_block == null) {
-            return self.err_dispatcher.invalidExpression("else in an if expression", "if without else", stmt.loc);
+            return self.err_dispatcher.invalidExpression("else in an if expression", "if without else", exp.loc);
         }
         const subject = try self.evalExp(capture.exp);
         if (!self.type_table.getTypePtrById(subject.type_id).is_nullable) {
             return self.err_dispatcher.invalidType("nullable", try self.type_table.name(subject.type_id, self.allocator), capture.exp.loc);
         }
         if (capture.identifier.is_mut and !self.isExpressionMutable(capture.exp)) {
-            return self.err_dispatcher.unwrappedValueCantBeMutable(capture.identifier.name, stmt.loc);
+            return self.err_dispatcher.unwrappedValueCantBeMutable(capture.identifier.name, exp.loc);
         }
 
         var instructions: std.ArrayList(ir.Instruction) = .empty;
@@ -1277,11 +1272,11 @@ pub const SemaAnalyzer = struct {
         return instructions.toOwnedSlice(self.allocator);
     }
 
-    fn lowerWhen(self: *Self, stmt: *const ast.StatementNode, result: ?*BranchResult) Errors![]ir.Instruction {
-        const when_stmt = stmt.data.when;
+    fn lowerWhen(self: *Self, exp: *const ast.ExpNode, result: ?*BranchResult) Errors![]ir.Instruction {
+        const when_stmt = exp.data.when_exp;
         const subject = try self.resolveWhenSubject(when_stmt.subject);
         const prongs = try self.checkWhenProngs(&when_stmt, subject);
-        try self.checkWhenExhaustive(stmt, subject, prongs);
+        try self.checkWhenExhaustive(exp, subject, prongs);
 
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const refs = try self.storeWhenSubject(&instructions, subject);
@@ -1478,13 +1473,13 @@ pub const SemaAnalyzer = struct {
         return self.createBinaryValue(.b_and, is_at_least_start, is_at_most_end, boolean_type);
     }
 
-    fn checkWhenExhaustive(self: *Self, stmt: *const ast.StatementNode, subject: WhenSubject, prongs: WhenProngs) Errors!void {
-        const when_stmt = stmt.data.when;
-        const when_loc: err.Loc = .{ .start = stmt.loc.start, .end = when_stmt.subject.loc.end };
+    fn checkWhenExhaustive(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject, prongs: WhenProngs) Errors!void {
+        const when_stmt = exp.data.when_exp;
+        const when_loc: err.Loc = .{ .start = exp.loc.start, .end = when_stmt.subject.loc.end };
 
         if (self.type_table.isErrorSet(subject.base_type) and self.errorSetOf(subject.base_type).is_inferred) {
             try self.pending_when_checks.append(self.allocator, .{
-                .when_stmt = stmt.data.when,
+                .when_stmt = when_stmt,
                 .values = prongs.values,
                 .set_type_id = subject.base_type,
                 .is_null_missing = subject.is_nullable and !prongs.has_null_case,
@@ -2310,18 +2305,6 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn conditionalStatement(exp: *const ast.ExpNode) ?ast.StatementNode {
-        return ast.StatementNode{
-            .data = switch (exp.data) {
-                .if_exp => |conditional| .{ .@"if" = conditional },
-                .if_capture_exp => |capture| .{ .if_capture = capture },
-                .when_exp => |when| .{ .when = when },
-                else => return null,
-            },
-            .loc = exp.loc,
-        };
-    }
-
     fn evalConditional(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
         return self.evalConditionalWithContext(exp, expected_type_id, null);
     }
@@ -2331,15 +2314,14 @@ pub const SemaAnalyzer = struct {
 
         const expected = if (expected_type_id == self.type_table.getPrimitive(.dynamic)) null else expected_type_id;
         var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .context_type_id = context_type_id, .loc = exp.loc };
-        const statement = conditionalStatement(exp).?;
         const instructions = switch (exp.data) {
             .if_exp => conditional: {
                 const instructions = try self.allocator.alloc(ir.Instruction, 1);
-                instructions[0] = try self.lowerIf(&statement, &result);
+                instructions[0] = try self.lowerIf(exp, &result);
                 break :conditional instructions;
             },
-            .if_capture_exp => try self.lowerIfCapture(&statement, &result),
-            .when_exp => try self.lowerWhen(&statement, &result),
+            .if_capture_exp => try self.lowerIfCapture(exp, &result),
+            .when_exp => try self.lowerWhen(exp, &result),
             else => unreachable,
         };
         return self.finishBranchResult(&result, instructions);
