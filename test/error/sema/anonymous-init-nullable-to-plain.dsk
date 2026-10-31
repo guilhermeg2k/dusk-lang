@@ -1,0 +1,7 @@
+struct Point
+    x: int
+end
+let c = false
+let a = if c then @(x = 1) else null end
+let p: Point = a
+echo(p.x)

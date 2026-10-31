@@ -70,6 +70,7 @@ pub const TypeTable = struct {
         const type_to = self.getTypePtrById(to);
 
         if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
+        if (type_from.is_nullable and !type_to.is_nullable) return false;
 
         if (!type_from.is_nullable and type_to.is_nullable) {
             if (type_from.kind == .null) return true;
@@ -82,12 +83,10 @@ pub const TypeTable = struct {
             const from_set = type_from.kind.@"enum".error_set.?;
             const to_set = type_to.kind.@"enum".error_set.?;
             if (from_set.is_inferred or to_set.is_inferred) return false;
-            if (type_from.is_nullable and !type_to.is_nullable) return false;
             return from_set.isSubsetOf(to_set);
         }
 
         if (type_from.kind == .array and type_to.kind == .array) {
-            if (type_from.is_nullable and !type_to.is_nullable) return false;
             return self.canCoerce(type_from.kind.array, type_to.kind.array);
         }
 

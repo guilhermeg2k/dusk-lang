@@ -290,6 +290,10 @@ test "sema error: assign type mismatch" {
     try runCaseError("sema/assign-type-mismatch.dsk", error.InvalidType);
 }
 
+test "sema error: nullable anonymous init to plain struct" {
+    try runCaseError("sema/anonymous-init-nullable-to-plain.dsk", error.InvalidType);
+}
+
 test "sema error: nested array assign type mismatch" {
     try runCaseError("sema/array-nested-assignment-type.dsk", error.InvalidType);
 }

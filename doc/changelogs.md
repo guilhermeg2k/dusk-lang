@@ -30,6 +30,7 @@
 - Debug builds check that every call to a function that can fail is directly followed by its success jump, which `RETURN_ERR` relies on
 - Fixed assigning into nested arrays: `grid[0][1] = 5` was rejected, `grid[0][1] = [7]` was accepted, and `bag.items[0] = 9` (an array inside a struct field) crashed the compiler. Assignment now checks against the element type of the array being indexed, and evaluates its target once
 - A number with two dots (`1.2.3`) is reported as an invalid float literal again, instead of a confusing member-access error
+- Fixed a nullable anonymous initializer (`if c then @(x = 1) else null end`) being accepted where a non-nullable struct is expected, which crashed at runtime. A nullable value never coerces to a non-nullable type, whatever its kind
 - Fixed `if f() catch fallback then` failing to parse: inside an `if`/`elif` condition, `catch name then` is a fallback value. A catch block still works there inside parentheses or call arguments
 - Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`
 - Fixed struct fields with both a type and a default (`retries: ?int = null`) taking the default's type instead of the declared one
