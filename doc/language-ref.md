@@ -874,6 +874,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 These are known gaps in v0.12. Most are planned in the [roadmap](roadmap.md).
 
+- **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Strings**: no escape sequences, concatenation or interpolation, and `==` compares identity (v0.18).
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.

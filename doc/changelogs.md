@@ -32,6 +32,7 @@
 - A number with two dots (`1.2.3`) is reported as an invalid float literal again, instead of a confusing member-access error
 - Fixed a nullable anonymous initializer (`if c then @(x = 1) else null end`) being accepted where a non-nullable struct is expected, which crashed at runtime. A nullable value never coerces to a non-nullable type, whatever its kind
 - Functions can read and assign top-level variables declared above them. A call that runs before a variable the function uses is declared (directly or through other functions) is a compile error, and so is a default value that calls such a function
+- Too many variables or temporaries alive at once in one function is now a compile error naming the function, instead of a `Register limit exceeded` panic
 - Fixed a GC crash when a nullable primitive variable started as `null` and was assigned later (`let mut n: ?int = null` then `n = 1` in an allocating loop)
 - Fixed `if f() catch fallback then` failing to parse: inside an `if`/`elif` condition, `catch name then` is a fallback value. A catch block still works there inside parentheses or call arguments
 - Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`

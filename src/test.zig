@@ -678,6 +678,10 @@ test "sema error: try on non-call" {
     try runCaseError("sema/errors-try-non-call.dsk", error.NotAFailingCall);
 }
 
+test "codegen error: too many variables in a function" {
+    try runCaseError("codegen/too-many-variables.dsk", error.TooManyRegisters);
+}
+
 test "sema error: global called before declared" {
     try runCaseError("sema/global-called-before-declared.dsk", error.UsedBeforeDeclared);
 }
