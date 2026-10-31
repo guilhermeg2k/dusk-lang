@@ -506,6 +506,10 @@ test "parser error: when case missing then" {
     try runCaseError("parser/when-case-missing-then.dsk", error.ParserError);
 }
 
+test "parser error: float literal with two dots" {
+    try runCaseError("parser/float-literal-two-dots.dsk", error.ParserError);
+}
+
 test "syntax error: break outside loop" {
     try runCaseError("parser/break-outside-loop.dsk", error.ParserError);
 }

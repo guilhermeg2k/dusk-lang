@@ -180,7 +180,7 @@ pub const Lexer = struct {
         while (std.ascii.isDigit(next_char) or next_char == '.') {
             if (next_char == '.') {
                 const is_range_start = self.cur_index + 2 < self.src.len and self.src[self.cur_index + 2] == '.';
-                if (is_range_start or is_float) break;
+                if (is_range_start) break;
                 is_float = true;
             }
 
