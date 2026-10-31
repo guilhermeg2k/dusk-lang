@@ -1,5 +1,9 @@
 # Changelogs
 
+## v0.13 - Garou (in development)
+
+- Started v0.13 development: updated the CLI version to `0.13.0-devel` and recorded the implementation phases for comments and string features
+
 ## v0.12 - Kanade
 
 - Nullable fallback: `value orelse fallback` evaluates its left operand once, unwraps it when non-null and evaluates the fallback only for null. Nullable fallbacks support chains; compatible result types use conditional-expression inference and numeric promotion
