@@ -338,6 +338,8 @@ count = null
 
 A nullable can't be used directly as its inner type. Unwrap it first.
 
+`==` and `!=` are the exception: a nullable compares by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value.
+
 ### Capture
 
 `if value: name then` runs the block only when the value isn't null, with `name` bound to the inner value. An `else` block is allowed.

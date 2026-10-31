@@ -994,6 +994,10 @@ test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
 }
 
+test "nullable-equality" {
+    try runCase("nullable-equality.dsk");
+}
+
 test "errors-error-set-payload" {
     try runCase("errors-error-set-payload.dsk");
 }

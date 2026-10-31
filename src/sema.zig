@@ -2407,18 +2407,18 @@ pub const SemaAnalyzer = struct {
         return self.lowerOrelseBranch(operand, payload_type, fallback_instruction, &result, coalescing.operand.loc);
     }
 
-    fn unwrapOrelseValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), operand: *ir.Value, payload_type: tt.TypeId) Errors!*ir.Value {
+    fn unwrapNullableValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), operand: *ir.Value, payload_type: tt.TypeId, name: []const u8) Errors!*ir.Value {
         if (!self.needsNullBox(operand.type_id, payload_type)) {
             return ir.Value.init(self.allocator, .{ .data = operand.data, .type_id = payload_type });
         }
 
         const selected_uid = self.scope.genUid();
         try instructions.append(self.allocator, .{ .unwrap_null_box = .{
-            .unwrapped = .{ .uid = selected_uid, .identifier = "orelse selected", .type_id = payload_type },
+            .unwrapped = .{ .uid = selected_uid, .identifier = name, .type_id = payload_type },
             .null_box = operand,
         } });
         return ir.Value.init(self.allocator, .{
-            .data = .{ .identifier = .{ .uid = selected_uid, .name = "orelse selected" } },
+            .data = .{ .identifier = .{ .uid = selected_uid, .name = name } },
             .type_id = payload_type,
         });
     }
@@ -2427,7 +2427,7 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const operand_reference = try self.storeTemporaryValue(&instructions, "orelse operand", operand);
         var selected_instructions: std.ArrayList(ir.Instruction) = .empty;
-        const selected = try self.unwrapOrelseValue(&selected_instructions, operand_reference, payload_type);
+        const selected = try self.unwrapNullableValue(&selected_instructions, operand_reference, payload_type, "orelse selected");
         const fallback_instructions = try self.allocator.alloc(ir.Instruction, 1);
         fallback_instructions[0] = fallback;
         try selected_instructions.append(self.allocator, try self.storeBranchValue(selected, result, loc));
@@ -3386,6 +3386,10 @@ pub const SemaAnalyzer = struct {
                     return nnull;
                 }
 
+                if (self.isBoxedNullable(left_type) or self.isBoxedNullable(right_type)) {
+                    return self.lowerNullableEquality(bin_exp.op, left_value, right_value, exp.loc);
+                }
+
                 op_type = self.type_table.getPrimitive(.boolean);
             },
         }
@@ -3400,6 +3404,60 @@ pub const SemaAnalyzer = struct {
             },
             .type_id = op_type,
         });
+    }
+
+    fn isBoxedNullable(self: *Self, type_id: tt.TypeId) bool {
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse return false;
+        return self.needsNullBox(type_id, base);
+    }
+
+    fn hasValue(self: *Self, reference: *ir.Value) Errors!*ir.Value {
+        const bool_type = self.type_table.getPrimitive(.boolean);
+        if (!self.type_table.getTypePtrById(reference.type_id).is_nullable) {
+            return ir.Value.init(self.allocator, .{ .data = .{ .i_bool = true }, .type_id = bool_type });
+        }
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .unary_op = .{ .kind = .box_not_null, .right = reference } },
+            .type_id = bool_type,
+        });
+    }
+
+    fn lowerNullableEquality(self: *Self, op: ast.BinaryOp, left: *ir.Value, right: *ir.Value, loc: err.Loc) Errors!*ir.Value {
+        const bool_type = self.type_table.getPrimitive(.boolean);
+        const left_base = self.type_table.typeIdByNullableTypeId.get(left.type_id) orelse left.type_id;
+        const right_base = self.type_table.typeIdByNullableTypeId.get(right.type_id) orelse right.type_id;
+        var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = bool_type, .loc = loc };
+
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const left_reference = try self.storeTemporaryValue(&instructions, "compared left", left);
+        const right_reference = try self.storeTemporaryValue(&instructions, "compared right", right);
+
+        var compare_instructions: std.ArrayList(ir.Instruction) = .empty;
+        const left_payload = try self.unwrapNullableValue(&compare_instructions, left_reference, left_base, "compared left value");
+        const right_payload = try self.unwrapNullableValue(&compare_instructions, right_reference, right_base, "compared right value");
+        const compared = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = self.astBinOpToIrBinOpKind(op, left_base, right_base), .left = left_payload, .right = right_payload } },
+            .type_id = bool_type,
+        });
+        try compare_instructions.append(self.allocator, try self.storeBranchValue(compared, &result, loc));
+
+        const null_compared = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = if (op == .eq) .b_cmp_eq else .b_cmp_neq, .left = try self.hasValue(left_reference), .right = try self.hasValue(right_reference) } },
+            .type_id = bool_type,
+        });
+        const null_instructions = try self.allocator.alloc(ir.Instruction, 1);
+        null_instructions[0] = try self.storeBranchValue(null_compared, &result, loc);
+
+        const both_have_values = try ir.Value.init(self.allocator, .{
+            .data = .{ .binary_op = .{ .kind = .b_and, .left = try self.hasValue(left_reference), .right = try self.hasValue(right_reference) } },
+            .type_id = bool_type,
+        });
+        try instructions.append(self.allocator, .{ .branch_if = .{
+            .condition = both_have_values,
+            .then_block = try compare_instructions.toOwnedSlice(self.allocator),
+            .else_block = null_instructions,
+        } });
+        return self.finishBranchResult(&result, try instructions.toOwnedSlice(self.allocator));
     }
 
     fn needsNullBox(self: *Self, target_type: tt.TypeId, value_type: tt.TypeId) bool {
