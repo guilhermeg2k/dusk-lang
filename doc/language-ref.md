@@ -120,7 +120,7 @@ for word: b, i do                # 4 bytes: "á" is two bytes in UTF-8
 end
 ```
 
-A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. String concatenation is not implemented yet.
+A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. There is no `+` for strings: join text with interpolation (`"$a$b"`), `str_concat(a, b)` or `str_join(parts)`.
 
 ### Bytes
 
@@ -729,7 +729,7 @@ end
 
 Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors; use a mutable source array and its index to update elements explicitly.
 
-The source can be any expression returning a non-nullable array. Unwrap nullable arrays first. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
+The source can be any expression returning a non-nullable array, buffer or string. Unwrap nullable values first. Buffers and strings are traversed byte by byte: the item is a `byte` and the index its byte offset. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
 
 A range keeps its lower and upper bounds separate. Ranges are supported directly in capture loops and `when` cases; they cannot be stored in variables, passed as arguments or returned as values yet.
 
@@ -1076,7 +1076,8 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Strings**: `==` compares identity (use `str_equal` for text). Positions are byte offsets; only `str_char_count` counts characters, and case changes cover ASCII and Latin-1 letters only.
+- **Strings**: `==` compares identity (use `str_equal` for text). Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
+- **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.

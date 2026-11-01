@@ -16,11 +16,14 @@
 - Multiline Comments (`#= ... =#`, nested; implemented)
 - UTF-8 strings and escape sequences (implemented)
 - Multiline strings (`"""` with closing-indentation stripping; implemented)
-- `byte` type and `'x'` byte literals
-- `buffer`: fixed-size mutable bytes, sharing one VM byte object with `string`
-- Strings operations (built on the shared byte object)
+- `byte` type and `'x'` byte literals (implemented)
+- `buffer`: fixed-size mutable bytes, sharing one VM byte object with `string` (implemented)
+- Compile-time string literal pool (implemented)
+- String operations: `str_*` builtins for search, transform, split/join, slicing, conversion, `StringError` / `ConversionError` (implemented)
+- String interpolation (`$name` and `${expression}`, one-allocation `STR_BUILD`; implemented)
+- String benchmarks across languages: `strings`, `concat`, `parse` (implemented)
+- Real immutability with frozen objects
 - `when` on strings
-- String interpolation (`$name` and `${expression}`; implemented)
 
 ## Version 0.14 - Simon
 
