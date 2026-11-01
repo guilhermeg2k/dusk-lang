@@ -11,8 +11,8 @@ assert(x == 'h')
 let copy = buffer_from("olá")
 echo(copy)
 echo(len(copy))
-echo(string_from(copy) orelse "invalid")
-echo(string_from(buf) orelse "invalid")
+echo(string_from(copy) catch "invalid")
+echo(string_from(buf) catch "invalid")
 let mut total = 0
 for copy: b, i do
     total += b
@@ -26,7 +26,7 @@ let bufs = [buffer(1), buffer(2)]
 echo(bufs)
 let empty = buffer(0)
 echo(empty)
-echo(string_from(empty) orelse "x")
+echo(string_from(empty) catch "x")
 struct Packet
     data: buffer
 end
@@ -34,3 +34,14 @@ let mut p = Packet(data = buffer(2))
 p.data[1] = 9
 echo(p.data)
 echo(len(p.data))
+func utf8_reason(data: buffer) -> string
+    let text = string_from(data) catch e then
+        return when e
+            StringError.InvalidUtf8 then "invalid utf-8" end
+            else then "other" end
+        end
+    end
+    return text
+end
+echo(utf8_reason(buf))
+echo(utf8_reason(buffer_from("fine")))

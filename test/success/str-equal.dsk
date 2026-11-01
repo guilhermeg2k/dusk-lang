@@ -7,7 +7,7 @@ assert(!str_equal(name, "Dus"))
 assert(!str_equal("", "a"))
 assert(str_equal("", "${""}"))
 assert(str_equal("olá 🌙", "ol\u{E1} \u{1F319}"))
-assert(str_equal(string_from(buffer_from("copy")) orelse "", "copy"))
+assert(str_equal(string_from(buffer_from("copy")) catch "", "copy"))
 assert(name |> str_equal("Dusk"))
 let mut matches = 0
 for 1..20000: i do

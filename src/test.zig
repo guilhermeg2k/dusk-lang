@@ -301,7 +301,7 @@ test "byte errors" {
 
 test "buffer" {
     try runCaseOutput("buffer.dsk", "[0, 0, 0, 0]\n4\n[104, 105, 0, 255]\n104\n[111, 108, 195, 161]\n4\nol\xc3\xa1\ninvalid\n575\n" ++
-        "buf=[104, 105, 0, 255]\nnull\n4\n[[0], [0, 0]]\n[]\n\n[0, 9]\n2\n");
+        "buf=[104, 105, 0, 255]\nnull\n4\n[[0], [0, 0]]\n[]\n\n[0, 9]\n2\ninvalid utf-8\nfine\n");
 }
 
 test "buffer annotations and parameters" {
@@ -319,6 +319,7 @@ test "buffer errors" {
     try runCaseError("sema/len-invalid-argument.dsk", error.InvalidType);
     try runCaseError("sema/buffer-size-string.dsk", error.InvalidType);
     try runCaseError("sema/string-from-string.dsk", error.InvalidType);
+    try runCaseError("sema/string-from-unhandled.dsk", error.UnhandledError);
     try runCaseError("sema/buffer-as-string.dsk", error.InvalidType);
     try runCaseError("sema/buffer-immutable-param.dsk", error.NotMutable);
     try runCaseError("sema/buffer-mut-param-immutable-arg.dsk", error.NotMutable);

@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- `string_from(b)` now returns `StringError!string` and fails with `StringError.InvalidUtf8` instead of returning `null`. `buffer_from` uses `BYTES_COPY`, which now only makes buffers
 - Revised string API: an empty pattern is no longer an error. `str_count(s, "")` is `0`, `str_split(s, "")` splits into characters (`"olá"` gives `["o", "l", "á"]`, `""` gives `[]`), and `str_replace(s, "", new)` returns `s` unchanged, so `str_count`, `str_split` and `str_replace` can't fail anymore. `StringError` is now `OutOfRange`, `NegativeCount` and `InvalidUtf8`
 - `str_equal(a, b, ignore_case = false)`: the new optional parameter compares ASCII and Latin-1 letters without case (`str_equal("José", "JOSÉ", true)`). `str_equal` now runs through `STR_OP`, and the unused `BYTES_EQ` opcode is gone
 - `str_slice(s, start, stop) -> StringError!string` copies the bytes from `start` up to (not including) `stop`. Negative or reversed bounds, `stop > len(s)` and a bound inside a multi-byte character fail with `StringError.OutOfRange`

@@ -1652,9 +1652,10 @@ pub const Chunk = struct {
             .ARRAY_POP,
             .BYTES_NEW,
             .BYTES_LEN,
+            .BYTES_COPY,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
-            .STRING_APPEND, .BYTES_COPY, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRING_APPEND, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1881,6 +1882,7 @@ pub const StringOp = enum(u8) {
     lower,
     repeat,
     slice,
+    from_buffer,
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };

@@ -5,7 +5,7 @@ for 1..20000: i do
     data[0] = byte(i % 256)
     data[63] = 7
     let copy = buffer_from("payload number $i")
-    assert(string_from(copy) != null)
+    assert(len(try string_from(copy)) == len(copy))
     total += len(copy)
     if i % 1000 == 0 then
         append(kept, data)

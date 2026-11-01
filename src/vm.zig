@@ -183,7 +183,7 @@ pub const VM = struct {
 
                 .BYTES_COPY => {
                     current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try self.copyBytes(&stack[stack_base + inst.b], @enumFromInt(inst.c));
+                    stack[stack_base + inst.a] = try self.copyToBuffer(&stack[stack_base + inst.b]);
                 },
 
                 .ARRAY_POP => {
@@ -578,13 +578,12 @@ pub const VM = struct {
         return .{ .heap_obj = &bytes.obj };
     }
 
-    noinline fn copyBytes(self: *Self, source: *const v.Value, kind: v.ValueType) !v.Value {
+    noinline fn copyToBuffer(self: *Self, source: *const v.Value) !v.Value {
         const source_len = v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).len;
-        if (kind == .string and !std.unicode.utf8ValidateSlice(v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).slice())) return v.NULL_VALUE;
         const size = v.Bytes.calc_size(source_len);
         try self.maybeCollectGarbage(size);
         const source_bytes = v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).slice();
-        const bytes = try v.Bytes.init(self.getCurrentHeapAllocator(), source_bytes, if (kind == .string) .string else .buffer);
+        const bytes = try v.Bytes.init(self.getCurrentHeapAllocator(), source_bytes, .buffer);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &bytes.obj };
     }
@@ -718,6 +717,12 @@ pub const VM = struct {
                 return succeeded(.{ .heap_obj = &result.obj });
             },
             .split => succeeded(try self.splitString(args)),
+            .from_buffer => {
+                if (!std.unicode.utf8ValidateSlice(text)) return stringFailure(BuiltIn.string_invalid_utf8_id);
+                const result = try self.allocString(text.len);
+                @memcpy(result.mutableSlice(), bytesArg(args, 0));
+                return succeeded(.{ .heap_obj = &result.obj });
+            },
         };
     }
 

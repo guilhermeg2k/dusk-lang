@@ -338,7 +338,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{ .uid = uid, .identifier = "string_from", .kind = .{ .function = {} }, .type_id = undefined };
         symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "data", .type_id = self.buffer_type_id, .is_mut = false, .default_value = null },
-        }, try self.type_table.getOrAddNullable(self.string_type_id));
+        }, try self.errorUnionTypeId(string_error_index, self.string_type_id));
         return BuiltInFn{ .symbol = symbol };
     }
 
@@ -524,13 +524,13 @@ pub const BuiltIn = struct {
 
     fn bufferFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.buffer) });
+        try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg });
         return try list.toOwnedSlice(alloc);
     }
 
     fn stringFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.string) });
+        try list.append(alloc, .{ .op = .STR_OP, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(bc.StringOp.from_buffer) });
         return try list.toOwnedSlice(alloc);
     }
 
