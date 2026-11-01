@@ -2,6 +2,8 @@
 
 ## v0.13 - Garou (in development)
 
+- `str_to_int(s)` and `str_to_float(s)` read numbers written like Dusk literals (an optional `-`, digits, and for floats an optional `.digits`; `"3"` gives `3.0`). They return `ConversionError!int` / `ConversionError!float`, a new builtin error set with `Invalid` and `Overflow`. Inline builtins can now fail: the opcode skips the following `JUMP` to run the `try`/`catch` handler, like `RETURN_ERR`
+- Error values printed with `echo` or interpolation (still their global id) shift by two, because `ConversionError` takes the first two ids
 - `str_concat(a, b)` returns a new string with `b` after `a`, and `str_join(parts, sep)` joins a `[]string` with a separator between items (allocating the result once). Both work with pipes: `"a" |> str_concat("b")`
 - `len(s)` returns a string's length in bytes (UTF-8), and `str_char_count(s)` returns its number of characters (Unicode code points): `len("olá")` is 4, `str_char_count("olá")` is 3
 - `str_equal(a, b)` compares two strings by content (`a |> str_equal(b)` works too). `==` on strings stays a reference comparison by design. String operations use `str_`-prefixed builtin functions

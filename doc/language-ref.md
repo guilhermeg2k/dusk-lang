@@ -982,6 +982,21 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `str_char_count` | `str_char_count(text: string) -> int` | Returns the number of characters (Unicode code points). |
 | `str_concat` | `str_concat(a: string, b: string) -> string` | Returns a new string with `b` after `a`. |
 | `str_join` | `str_join(parts: []string, sep: string) -> string` | Joins the parts with `sep` between them; `""` for an empty array. |
+| `str_to_int` | `str_to_int(text: string) -> ConversionError!int` | Reads an int written like a Dusk literal. |
+| `str_to_float` | `str_to_float(text: string) -> ConversionError!float` | Reads a float (or int) written like a Dusk literal. |
+
+`str_to_int` accepts an optional `-` followed by digits. `str_to_float` also accepts one `.` followed by digits (`"3"`, `"-0.5"`, `"10.25"`). Anything else, including spaces, `+`, `_`, exponents, hex, `inf` and `nan`, fails with `ConversionError.Invalid`. An int that doesn't fit in 64 bits, or a float too large to represent, fails with `ConversionError.Overflow`. `ConversionError` is a builtin error set, so its name can't be used for another error set.
+
+```nim
+let n = try str_to_int("42")
+let f = str_to_float("3") catch 0.0
+let age = str_to_int(input) catch e then
+    return when e
+        ConversionError.Invalid then "not a number" end
+        ConversionError.Overflow then "too big" end
+    end
+end
+```
 | `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer.   |
 | `string_from` | `string_from(data: buffer) -> ?string` | Copies a buffer into a new string, `null` if it isn't valid UTF-8. |
 | `str_equal` | `str_equal(a: string, b: string) -> bool` | `true` when both strings have the same bytes. |

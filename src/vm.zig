@@ -3,6 +3,7 @@ const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const util = @import("util.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
+const BuiltIn = @import("built-in.zig").BuiltIn;
 
 pub const VM = struct {
     const Self = @This();
@@ -171,6 +172,12 @@ pub const VM = struct {
                 .STR_JOIN => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.joinStrings(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
+                },
+
+                .STR_TO_NUMBER => {
+                    const result = convertText(stack[stack_base + inst.b], @enumFromInt(inst.c));
+                    stack[stack_base + inst.a] = result.value;
+                    if (result.has_failed) cur_instruction += 1;
                 },
 
                 .BYTES_COPY => {
@@ -626,6 +633,59 @@ pub const VM = struct {
         if (v.HeapValue.followRelocated(parts_value.heap_obj)) |relocated| parts_value.heap_obj = relocated;
         const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
         return array.getDataPtr()[0..array.len];
+    }
+
+    const Conversion = struct { value: v.Value, has_failed: bool };
+
+    noinline fn convertText(text_value: v.Value, kind: v.ValueType) Conversion {
+        const text = v.HeapValue.getParentPtr(v.Bytes, text_value.heap_obj).slice();
+        const value: v.Value = switch (kind) {
+            .int64 => .{ .int64 = parseIntText(text) catch |failure| return conversionFailure(failure) },
+            .float64 => .{ .float64 = parseFloatText(text) catch |failure| return conversionFailure(failure) },
+            else => unreachable,
+        };
+        return .{ .value = value, .has_failed = false };
+    }
+
+    fn conversionFailure(failure: ConversionError) Conversion {
+        const id = switch (failure) {
+            error.Invalid => BuiltIn.conversion_invalid_id,
+            error.Overflow => BuiltIn.conversion_overflow_id,
+        };
+        return .{ .value = .{ .int64 = id }, .has_failed = true };
+    }
+
+    const ConversionError = error{ Invalid, Overflow };
+
+    fn skipDigits(text: []const u8, start: usize) usize {
+        var index = start;
+        while (index < text.len and std.ascii.isDigit(text[index])) index += 1;
+        return index;
+    }
+
+    fn parseIntText(text: []const u8) ConversionError!i64 {
+        const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
+        const digits_end = skipDigits(text, digits_start);
+        if (digits_end == digits_start or digits_end != text.len) return error.Invalid;
+        return std.fmt.parseInt(i64, text, 10) catch |failure| switch (failure) {
+            error.Overflow => error.Overflow,
+            error.InvalidCharacter => error.Invalid,
+        };
+    }
+
+    fn parseFloatText(text: []const u8) ConversionError!f64 {
+        const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
+        var end = skipDigits(text, digits_start);
+        if (end == digits_start) return error.Invalid;
+        if (end < text.len and text[end] == '.') {
+            const fraction_end = skipDigits(text, end + 1);
+            if (fraction_end == end + 1) return error.Invalid;
+            end = fraction_end;
+        }
+        if (end != text.len) return error.Invalid;
+        const number = std.fmt.parseFloat(f64, text) catch return error.Invalid;
+        if (std.math.isInf(number)) return error.Overflow;
+        return number;
     }
 
     noinline fn indexOutOfBounds(index: i64, len: usize) RunTimeError {

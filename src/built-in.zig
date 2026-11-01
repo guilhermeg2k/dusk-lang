@@ -31,6 +31,8 @@ pub const BuiltIn = struct {
         strCharCountFactory,
         strConcatFactory,
         strJoinFactory,
+        strToIntFactory,
+        strToFloatFactory,
     };
 
     const builtin_bytecode_registry = [_]struct {
@@ -47,6 +49,8 @@ pub const BuiltIn = struct {
         .{ .name = "str_char_count", .kind = .{ .host = .{ .func = &strCharCountImpl, .num_args = 1 } } },
         .{ .name = "str_concat", .kind = .{ .@"inline" = .{ .gen = &strConcatCodeGen, .num_args = 2 } } },
         .{ .name = "str_join", .kind = .{ .@"inline" = .{ .gen = &strJoinCodeGen, .num_args = 2 } } },
+        .{ .name = "str_to_int", .kind = .{ .@"inline" = .{ .gen = &strToIntCodeGen, .num_args = 1 } } },
+        .{ .name = "str_to_float", .kind = .{ .@"inline" = .{ .gen = &strToFloatCodeGen, .num_args = 1 } } },
     };
 
     comptime {
@@ -56,6 +60,10 @@ pub const BuiltIn = struct {
     }
 
     var echo_writer: ?*std.Io.Writer = null;
+
+    pub const conversion_error_name = "ConversionError";
+    pub const conversion_invalid_id: i64 = 1;
+    pub const conversion_overflow_id: i64 = 2;
 
     alloc: std.mem.Allocator,
     type_table: *TypeTable,
@@ -68,10 +76,12 @@ pub const BuiltIn = struct {
     boolean_type_id: TypeId,
     dynamic_type_id: TypeId,
     dynamic_array_type_id: TypeId,
+    conversion_error_type_id: TypeId,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *TypeTable) !Self {
         const dynamic_type_id = type_table.primitives.get(.dynamic).?;
         return Self{
+            .conversion_error_type_id = try createConversionError(alloc, type_table),
             .alloc = alloc,
             .type_table = type_table,
             .void_type_id = type_table.primitives.get(.void).?,
@@ -82,6 +92,40 @@ pub const BuiltIn = struct {
             .boolean_type_id = type_table.primitives.get(.boolean).?,
             .dynamic_type_id = dynamic_type_id,
             .dynamic_array_type_id = try type_table.getOrAddArray(dynamic_type_id),
+        };
+    }
+
+    fn createConversionError(alloc: std.mem.Allocator, type_table: *TypeTable) !TypeId {
+        const error_set = try alloc.create(tt.ErrorSet);
+        error_set.* = .{ .is_inferred = false };
+        var variants: std.StringHashMap(i64) = .init(alloc);
+        const variants_in_order = try alloc.dupe([]const u8, &.{ "Invalid", "Overflow" });
+        for (variants_in_order) |variant| {
+            const id = try type_table.addErrorName(conversion_error_name, variant);
+            try variants.put(variant, id);
+            try error_set.ids.put(alloc, id, {});
+        }
+        std.debug.assert(variants.get("Invalid").? == conversion_invalid_id);
+        std.debug.assert(variants.get("Overflow").? == conversion_overflow_id);
+        return type_table.addType(.{
+            .kind = .{ .@"enum" = .{
+                .identifier = conversion_error_name,
+                .variants = variants,
+                .variants_in_order = variants_in_order,
+                .static_fields = .init(alloc),
+                .methods = .init(alloc),
+                .error_set = error_set,
+            } },
+            .is_nullable = false,
+        });
+    }
+
+    pub fn conversionErrorSymbol(self: *const Self, uid: usize) Symbol {
+        return .{
+            .uid = uid,
+            .identifier = conversion_error_name,
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = self.conversion_error_type_id } },
         };
     }
 
@@ -232,6 +276,26 @@ pub const BuiltIn = struct {
             .{ .identifier = "parts", .type_id = try self.type_table.getOrAddArray(self.string_type_id), .is_mut = false, .default_value = null },
             .{ .identifier = "sep", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
         }, self.string_type_id);
+        return BuiltInFn{ .symbol = symbol };
+    }
+
+    fn strToIntFactory(self: *const Self, uid: usize) !BuiltInFn {
+        return self.conversionFactory(uid, "str_to_int", self.int_type_id);
+    }
+
+    fn strToFloatFactory(self: *const Self, uid: usize) !BuiltInFn {
+        return self.conversionFactory(uid, "str_to_float", self.float_type_id);
+    }
+
+    fn conversionFactory(self: *const Self, uid: usize, identifier: []const u8, payload: TypeId) !BuiltInFn {
+        const return_type_id = try self.type_table.addType(.{
+            .kind = .{ .error_union = .{ .error_set = self.conversion_error_type_id, .payload = payload } },
+            .is_nullable = false,
+        });
+        var symbol = Symbol{ .uid = uid, .identifier = identifier, .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "text", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, return_type_id);
         return BuiltInFn{ .symbol = symbol };
     }
 
@@ -398,6 +462,18 @@ pub const BuiltIn = struct {
     fn strJoinCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
         try list.append(alloc, .{ .op = .STR_JOIN, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn strToIntCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .STR_TO_NUMBER, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.int64) });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn strToFloatCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .STR_TO_NUMBER, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.float64) });
         return try list.toOwnedSlice(alloc);
     }
 

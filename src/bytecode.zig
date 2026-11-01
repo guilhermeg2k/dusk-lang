@@ -706,7 +706,7 @@ pub const BytecodeGen = struct {
         try self.genFnCall(call.data.fn_call, call, call_reg);
         self.register_types[call_reg] = error_union.error_set;
 
-        std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op == .CALL);
+        std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op.canFail());
         try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
         const jump_ok_idx = self.chunk_instructions.items.len - 1;
 
@@ -1655,7 +1655,7 @@ pub const Chunk = struct {
             .BYTES_LEN,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
-            .STRING_APPEND, .BYTES_COPY => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRING_APPEND, .BYTES_COPY, .STR_TO_NUMBER => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1729,6 +1729,7 @@ pub const OpCode = enum(u8) {
     BYTES_EQ,
     BYTES_CONCAT,
     STR_JOIN,
+    STR_TO_NUMBER,
 
     STRUCT_INIT,
     STRUCT_LOAD,
@@ -1794,6 +1795,10 @@ pub const OpCode = enum(u8) {
 
     JUMP,
     JUMP_IF_FALSE,
+
+    pub fn canFail(self: Self) bool {
+        return self == .CALL or self == .STR_TO_NUMBER;
+    }
 
     pub fn canTriggerGc(self: Self) bool {
         return switch (self) {

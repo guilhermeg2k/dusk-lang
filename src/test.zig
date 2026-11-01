@@ -22,7 +22,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 1 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 3 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation GC" {
@@ -209,6 +209,17 @@ test "string concat and join" {
     try runCaseError("sema/str-concat-int.dsk", error.InvalidType);
     try runCaseError("sema/str-join-int-array.dsk", error.InvalidType);
     try runCaseError("sema/str-join-int-separator.dsk", error.InvalidType);
+}
+
+test "string conversion" {
+    try runCaseOutput("string-conversion.dsk", "42\n-9223372036854775808\n3\n-0.25\n-1\n" ++
+        "'1' -> ok 1\n'' -> invalid\n'-' -> invalid\n'+1' -> invalid\n' 1' -> invalid\n'1 ' -> invalid\n" ++
+        "'1_000' -> invalid\n'0x10' -> invalid\n'1.5' -> invalid\n'9223372036854775808' -> overflow\n" ++
+        "'1.' -> -1\n'.5' -> -1\n'1e3' -> -1\n'inf' -> -1\n'nan' -> -1\n'2.50' -> 2.5\n");
+    try runCaseRuntimeError("str-to-int-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/str-to-int-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/str-to-int-int.dsk", error.InvalidType);
+    try runCaseError("sema/conversion-error-redefined.dsk", error.AlreadyDefined);
 }
 
 test "string literal pool" {
