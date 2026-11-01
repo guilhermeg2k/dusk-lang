@@ -109,12 +109,13 @@ echo("Moon: \u{1F319}")
 echo("A literal backslash: \\")
 ```
 
-`s[i]` reads the byte at byte offset `i` (a `byte`, bounds-checked like arrays), and `for s: b, i do` loops over a string's bytes. Strings are immutable: `s[i] = x` is a compile error; use a buffer to change bytes.
+Strings can't be indexed with `s[i]`. Use `str_byte_at(s, i)` for the byte at a byte offset, or `str_char_at(s, i)` for the `i`-th character (see [String functions](#string-functions)). `for s: b, i do` loops over a string's bytes. Strings are immutable; use a buffer to change bytes.
 
 ```nim
 let word = "olá"
-echo(word[0])          # 111 ('o')
-for word: b, i do      # 5 bytes: "á" is two bytes in UTF-8
+echo(try str_byte_at(word, 0))   # 111 ('o')
+echo(try str_char_at(word, 2))   # á
+for word: b, i do                # 4 bytes: "á" is two bytes in UTF-8
     echo("$i: $b")
 end
 ```
@@ -162,12 +163,12 @@ for data: b, i do
 end
 
 let bytes = buffer_from("olá")    # [111, 108, 195, 161]
-let text = string_from(bytes) orelse "not UTF-8"
+let text = string_from(bytes) catch "not UTF-8"
 ```
 
 - The type is written `buffer`: `let mut data: buffer = buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
 - Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a `let mut` variable. An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
-- `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, or returns `null` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
+- `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
 - `==` on buffers compares identity, like strings today.
 
 ### Multiline strings
@@ -991,7 +992,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `len` | `len(text: string) -> int` | Returns the number of bytes in a string (UTF-8). |
 | `append` | `append(list: []T, item: T) -> void` | Adds an item to the end of a mutable array. |
 | `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer. |
-| `string_from` | `string_from(data: buffer) -> ?string` | Copies a buffer into a new string, `null` if it isn't valid UTF-8. |
+| `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
 
@@ -999,23 +1000,25 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 
 String functions are builtins starting with `str_`. They never change their argument: a function that produces text returns a new string. They work with pipes: `line |> str_trim()`.
 
-Positions are **byte offsets**, the same unit as `len(s)` and `s[i]`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` is the only function that counts characters.
+Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `str_equal(a, b, ignore_case = false)` | `bool` | `true` when both strings have the same text. With `ignore_case`, ASCII and Latin-1 letters match regardless of case. |
 | `str_char_count(text)` | `int` | Number of characters (Unicode code points). |
 | `str_concat(a, b)` | `string` | `b` after `a`. |
-| `str_join(parts, sep)` | `string` | The `[]string` parts with `sep` between them; `""` for an empty array. |
+| `str_join(parts, sep = "")` | `string` | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array. |
+| `str_byte_at(text, index)` | `StringError!byte` | The byte at byte offset `index`. |
+| `str_char_at(text, index)` | `StringError!string` | The `index`-th character, as a one-character string (`str_char_at("olá", 2)` is `"á"`). Scans from the start. |
 | `str_find(text, needle)` | `?int` | Byte offset of the first match, `null` if there is none. An empty `needle` is found at `0`. |
 | `str_contains(text, needle)` | `bool` | Whether `needle` appears in `text`. |
 | `str_starts_with(text, prefix)` | `bool` | Whether `text` starts with `prefix`. |
 | `str_ends_with(text, suffix)` | `bool` | Whether `text` ends with `suffix`. |
-| `str_count(text, needle)` | `StringError!int` | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2). |
+| `str_count(text, needle)` | `int` | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`. |
 | `str_trim(text)` | `string` | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends. |
 | `str_upper(text)` / `str_lower(text)` | `string` | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged. |
-| `str_split(text, separator)` | `StringError![]string` | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. |
-| `str_replace(text, old, new)` | `StringError!string` | Replaces every non-overlapping `old`, left to right. An empty `new` deletes. |
+| `str_split(text, separator)` | `[]string` | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
+| `str_replace(text, old, new)` | `string` | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged. |
 | `str_repeat(text, count)` | `StringError!string` | `text` repeated `count` times; `0` gives `""`. |
 | `str_slice(text, start, stop)` | `StringError!string` | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, len(s))` is all of `s`. |
 | `str_to_int(text)` | `ConversionError!int` | Reads an int written like a Dusk literal. |
@@ -1025,16 +1028,16 @@ Positions are **byte offsets**, the same unit as `len(s)` and `s[i]`, so a posit
 
 | Error | When |
 | :---- | :--- |
-| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > len(text)`, or a bound inside a multi-byte character. |
-| `StringError.EmptyPattern` | An empty `needle`, `separator` or `old` in `str_count`, `str_split` or `str_replace`. |
+| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > len(text)`, or a bound inside a multi-byte character; `str_byte_at` / `str_char_at` with an index outside the string. |
 | `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
+| `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
 | `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
 | `ConversionError.Overflow` | An int that doesn't fit in 64 bits, or a float too large to represent. |
 
 ```nim
 let line = "  name = Dusk, age = 13  "
-for try str_split(str_trim(line), ","): field do
-    let pair = try str_split(field, "=")
+for str_split(str_trim(line), ","): field do
+    let pair = str_split(field, "=")
     echo("${str_upper(str_trim(pair[0]))}: ${str_trim(pair[1])}")
 end
 
