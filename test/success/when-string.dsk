@@ -1,0 +1,69 @@
+func classify(command: string) -> int
+    when command
+        "start", "run" then return 1 end
+        "stop" then return 2 end
+        "" then return 3 end
+        else then return 0 end
+    end
+end
+
+assert(classify("start") == 1)
+assert(classify("run") == 2 - 1)
+assert(classify("stop") == 2)
+assert(classify("") == 3)
+assert(classify("Stop") == 0)
+assert(classify("starting") == 0)
+
+let built = str_concat("st", "op")
+assert(classify(built) == 2)
+let pieces = str_split("run,stop,olá", ",")
+assert(classify(pieces[0]) == 1)
+assert(classify(pieces[1]) == 2)
+
+let word = "olá"
+let size = when word
+    "olá" then 3 end
+    "ola" then 4 end
+    else then 0 end
+end
+assert(size == 3)
+
+let name = "dusk"
+let greeting = when name
+    "dusk" then "hi ${name}" end
+    else then "who?" end
+end
+assert(str_equal(greeting, "hi dusk"))
+
+func describe(value: ?string) -> string
+    return when value
+        null then "none" end
+        "a" then "letter a" end
+        else then "other" end
+    end
+end
+
+assert(str_equal(describe(null), "none"))
+assert(str_equal(describe("a"), "letter a"))
+assert(str_equal(describe("b"), "other"))
+
+func describeNoNullCase(value: ?string) -> int
+    return when value
+        "a" then 1 end
+        else then 2 end
+    end
+end
+
+assert(describeNoNullCase(null) == 2)
+assert(describeNoNullCase("a") == 1)
+
+let mut hits = 0
+for 0..1999: i do
+    let key = "k${i % 3}"
+    when key
+        "k0" then hits += 1 end
+        "k1", "k2" then hits += 0 end
+        else then assert(false) end
+    end
+end
+assert(hits == 667)

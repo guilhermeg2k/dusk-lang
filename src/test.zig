@@ -499,6 +499,10 @@ test "when" {
     try runCase("when.dsk");
 }
 
+test "when on strings" {
+    try runCase("when-string.dsk");
+}
+
 test "returns inside branches" {
     try runCase("return-flow.dsk");
 }
@@ -865,6 +869,30 @@ test "sema error: when case type mismatch" {
 
 test "sema error: when unsupported subject" {
     try runCaseError("sema/when-unsupported-subject.dsk", error.InvalidType);
+}
+
+test "sema error: when string needs else" {
+    try runCaseError("sema/when-string-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when string duplicate case" {
+    try runCaseError("sema/when-string-duplicate-case.dsk", error.WhenDuplicateCase);
+}
+
+test "sema error: when string non-literal case" {
+    try runCaseError("sema/when-string-non-literal-case.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when string interpolated case" {
+    try runCaseError("sema/when-string-interpolated-case.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when string range case" {
+    try runCaseError("sema/when-string-range-case.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when string case type mismatch" {
+    try runCaseError("sema/when-string-case-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: when float subject" {

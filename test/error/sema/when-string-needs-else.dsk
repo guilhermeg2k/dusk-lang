@@ -1,0 +1,5 @@
+let name = "dusk"
+when name
+    "dusk" then echo(1) end
+    "lang" then echo(2) end
+end

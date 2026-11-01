@@ -1397,8 +1397,8 @@ pub const SemaAnalyzer = struct {
         const base_kind = self.type_table.getTypePtrById(base_type).kind;
 
         switch (base_kind) {
-            .int, .byte, .float, .@"enum", .@"union" => {},
-            else => return self.err_dispatcher.invalidType("int, byte, float, enum or union", type_name, exp.loc),
+            .int, .byte, .float, .string, .@"enum", .@"union" => {},
+            else => return self.err_dispatcher.invalidType("int, byte, float, string, enum or union", type_name, exp.loc),
         }
 
         return .{
@@ -1415,6 +1415,7 @@ pub const SemaAnalyzer = struct {
             .values = try self.allocator.alloc([]*ir.Value, when_stmt.prongs.len),
             .ranges = try self.allocator.alloc([]?WhenRange, when_stmt.prongs.len),
             .seen_values = .init(self.allocator),
+            .seen_strings = .init(self.allocator),
             .seen_variants = .init(self.allocator),
             .has_null_case = false,
         };
@@ -1466,6 +1467,17 @@ pub const SemaAnalyzer = struct {
 
                         if (subject.base_kind == .float) return self.err_dispatcher.whenInvalidCase("float cases must be ranges, like '0.0..1.0'", exp.loc);
                         const value = try self.evalWhenCaseValue(exp, subject.base_type);
+                        values[i] = value;
+                        ranges[i] = null;
+
+                        if (subject.base_kind == .string) {
+                            if (prongs.seen_strings.contains(value.data.i_string)) {
+                                return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
+                            }
+                            try prongs.seen_strings.put(value.data.i_string, {});
+                            continue;
+                        }
+
                         const key = value.data.i_int;
 
                         if (prongs.seen_values.contains(key)) {
@@ -1474,8 +1486,6 @@ pub const SemaAnalyzer = struct {
 
                         if (subject.base_kind == .int or subject.base_kind == .byte) try self.checkWhenRangeOverlap(&prongs, .{ .start = value, .end = value }, exp.loc);
                         try prongs.seen_values.put(key, {});
-                        values[i] = value;
-                        ranges[i] = null;
                     }
 
                     prongs.values[prong_idx] = values;
@@ -1489,6 +1499,10 @@ pub const SemaAnalyzer = struct {
 
     fn isNumericWhenSubject(subject: WhenSubject) bool {
         return subject.base_kind == .int or subject.base_kind == .byte or subject.base_kind == .float;
+    }
+
+    fn needsElseWhenSubject(subject: WhenSubject) bool {
+        return isNumericWhenSubject(subject) or subject.base_kind == .string;
     }
 
     fn evalWhenRangeBound(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject) Errors!*ir.Value {
@@ -1571,9 +1585,9 @@ pub const SemaAnalyzer = struct {
         if (subject.is_nullable and !prongs.has_null_case) try appendMissing(self.allocator, &missing, "null");
 
         if (when_stmt.else_block == null) {
-            if (isNumericWhenSubject(subject)) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
+            if (needsElseWhenSubject(subject)) return self.err_dispatcher.whenNeedsElse(subject.type_name, when_loc);
             if (missing.items.len > 0) return self.err_dispatcher.whenNotExhaustive(missing.items, when_loc);
-        } else if (!isNumericWhenSubject(subject) and missing.items.len == 0) {
+        } else if (!needsElseWhenSubject(subject) and missing.items.len == 0) {
             return self.err_dispatcher.whenUselessElse(when_stmt.else_loc.?);
         }
     }
@@ -1599,13 +1613,13 @@ pub const SemaAnalyzer = struct {
             .type_id = subject.base_type,
         });
 
-        try instructions.append(self.allocator, if (subject.base_kind == .@"union")
-            .{ .store_var = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = subject.base_type, .value = subject_ref } }
-        else
+        try instructions.append(self.allocator, if (self.isBoxedNullable(subject.value.type_id))
             .{ .unwrap_null_box = .{
                 .unwrapped = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = subject.base_type },
                 .null_box = subject_ref,
-            } });
+            } }
+        else
+            .{ .store_var = .{ .uid = unwrapped_uid, .identifier = "when", .type_id = subject.base_type, .value = subject_ref } });
 
         return .{ .subject = subject_ref, .unwrapped = unwrapped_ref };
     }
@@ -1665,7 +1679,12 @@ pub const SemaAnalyzer = struct {
     fn lowerWhenValuesProng(self: *Self, prong: *const ast.WhenProng, values: []const *ir.Value, ranges: []const ?WhenRange, unwrapped_ref: *ir.Value, result: ?*BranchResult) Errors!LoweredProng {
         var condition: ?*ir.Value = null;
         for (values, ranges) |value, range| {
-            const matches_pattern = if (range) |bounds| try self.lowerWhenRangeCondition(unwrapped_ref, bounds) else try self.cmpEq(unwrapped_ref, value);
+            const matches_pattern = if (range) |bounds|
+                try self.lowerWhenRangeCondition(unwrapped_ref, bounds)
+            else if (value.data == .i_string)
+                try self.strEqual(unwrapped_ref, value)
+            else
+                try self.cmpEq(unwrapped_ref, value);
             condition = if (condition) |previous_condition| try ir.Value.init(self.allocator, .{
                 .data = .{ .binary_op = .{ .kind = .b_or, .left = previous_condition, .right = matches_pattern } },
                 .type_id = self.type_table.getPrimitive(.boolean),
@@ -1712,6 +1731,17 @@ pub const SemaAnalyzer = struct {
             return self.evalWhenErrorCaseValue(exp, expected_type);
         }
 
+        if (self.type_table.getTypePtrById(expected_type).kind == .string) {
+            if (exp.data != .string_literal) {
+                const value = try self.evalExp(exp);
+                if (!self.type_table.eql(value.type_id, expected_type)) {
+                    return self.err_dispatcher.invalidType("string", try self.type_table.name(value.type_id, self.allocator), exp.loc);
+                }
+                return self.err_dispatcher.whenInvalidCase("string cases must be string literals", exp.loc);
+            }
+            return ir.Value.init(self.allocator, .{ .data = .{ .i_string = exp.data.string_literal }, .type_id = expected_type });
+        }
+
         if (self.isIntegerType(expected_type)) {
             const literal = intConstant(exp);
             const type_name = try self.type_table.name(expected_type, self.allocator);
@@ -1742,6 +1772,22 @@ pub const SemaAnalyzer = struct {
             return self.err_dispatcher.whenInvalidCase("enum cases must be variants, like 'Color.Red'", exp.loc);
         }
         return value;
+    }
+
+    fn strEqual(self: *Self, left: *ir.Value, right: *ir.Value) !*ir.Value {
+        var root = self.scope.symbol_table;
+        while (root.parent) |parent| root = parent;
+        const symbol = root.symbols.get("str_equal").?;
+        const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        const boolean_type = self.type_table.getPrimitive(.boolean);
+        const args = try self.allocator.alloc(*ir.Value, 3);
+        args[0] = left;
+        args[1] = right;
+        args[2] = try ir.Value.init(self.allocator, .{ .data = .{ .i_bool = false }, .type_id = boolean_type });
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .fn_call = .{ .fn_uid = func.uid, .identifier = symbol.identifier, .args = args } },
+            .type_id = boolean_type,
+        });
     }
 
     fn cmpEq(self: *Self, left: *ir.Value, right: *ir.Value) !*ir.Value {
@@ -3919,6 +3965,7 @@ const WhenProngs = struct {
     ranges: [][]?WhenRange,
     seen_ranges: std.ArrayList(WhenRange) = .empty,
     seen_values: std.AutoHashMap(i64, void),
+    seen_strings: std.StringHashMap(void),
     seen_variants: std.StringHashMap(void),
     has_null_case: bool,
 };

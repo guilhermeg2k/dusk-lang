@@ -1,0 +1,6 @@
+let name = "dusk"
+let n = 1
+when name
+    "dusk$n" then echo(1) end
+    else then echo(0) end
+end

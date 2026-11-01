@@ -595,7 +595,7 @@ The condition must be a `bool`. For nullable capture (`if value: name then`), se
 
 ### When
 
-`when` runs the case that matches a value. It works on `int`, `float`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the whole `when` ends with `end`. Cases never fall through.
+`when` runs the case that matches a value. It works on `int`, `byte`, `float`, `string`, enums, unions, error sets and their nullable versions. Each case is `pattern then ... end`, and the whole `when` ends with `end`. Cases never fall through.
 
 ```nim
 when color
@@ -609,6 +609,12 @@ when code
     200 then echo("ok") end
     404, 410 then echo("gone") end
     else then echo("other") end
+end
+
+when command
+    "start", "run" then echo("go") end
+    "stop" then echo("halt") end
+    else then echo("unknown") end
 end
 ```
 
@@ -634,13 +640,13 @@ end
 Rules:
 
 - Enum and union cases must cover every variant, and `null` for a nullable subject, unless there's an `else`. An `else` that can never run is an error.
-- `int` and `float` subjects always need an `else`, even if ranges appear to cover every value.
+- `int`, `byte`, `float` and `string` subjects always need an `else`, even if ranges appear to cover every value.
 - Int cases can be literals (`1`, `-1`) or inclusive ranges (`1..5`). A case can combine them (`1..5, 8, 10..12 then ... end`). Range bounds must be int literals.
 - Float cases must be inclusive ranges (`0.0..1.0`), not individual values. Bounds must be finite numeric literals; int bounds are promoted to float. NaN and infinities reach `else`.
 - A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).
 - A value or variant can only appear in one case.
-- `string` subjects aren't supported yet.
+- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `str_equal`, not by reference like `==`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
 
 Range matching uses the same rules in statements and expressions:

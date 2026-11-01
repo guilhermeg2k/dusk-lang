@@ -23,7 +23,7 @@
 - String interpolation (`$name` and `${expression}`, one-allocation `STR_BUILD`; implemented)
 - String benchmarks across languages: `strings`, `concat`, `parse` (implemented)
 - Real immutability with frozen objects
-- `when` on strings
+- `when` on strings (implemented)
 
 ## Version 0.14 - Simon
 

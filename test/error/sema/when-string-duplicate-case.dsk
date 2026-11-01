@@ -1,0 +1,6 @@
+let name = "a"
+when name
+    "a" then echo(1) end
+    "b", "\u{61}" then echo(2) end
+    else then echo(0) end
+end

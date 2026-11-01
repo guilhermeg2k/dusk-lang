@@ -9,8 +9,8 @@ union Shape
     square: int
 end
 
-let name = "dusk"
-when name
-    "dusk" then echo(1) end
+let flag = true
+when flag
+    true then echo(1) end
     else then echo(0) end
 end
