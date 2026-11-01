@@ -38,9 +38,9 @@ pub const ErrorDispatcher = struct {
         return error.InvalidType;
     }
 
-    pub fn immutableString(self: *Self, loc: Loc) Errors {
-        self.log("Strings are immutable: can't assign to a byte of a string (use a buffer)", loc);
-        return error.NotMutable;
+    pub fn stringIndexing(self: *Self, loc: Loc) Errors {
+        self.log("Strings can't be indexed: use str_byte_at(s, i) or str_char_at(s, i)", loc);
+        return error.InvalidIndexing;
     }
 
     pub fn byteOutOfRange(self: *Self, value: i64, loc: Loc) Errors {

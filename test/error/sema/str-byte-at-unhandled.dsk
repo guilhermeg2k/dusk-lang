@@ -1,0 +1,1 @@
+let b = str_byte_at("abc", 0)

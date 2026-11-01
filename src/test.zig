@@ -223,9 +223,11 @@ test "string conversion" {
 }
 
 test "string indexing and loops" {
-    try runCaseOutput("string-index.dsk", "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
-    try runCaseError("sema/string-index-assign.dsk", error.NotMutable);
-    try runCaseRuntimeError("string-index-out-of-bounds.dsk", error.IndexOutOfBounds);
+    try runCaseOutput("string-index.dsk", "out of range\nout of range\n108\nout of range\nout of range\n\u{E1}\nout of range\n" ++
+        "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
+    try runCaseError("sema/string-index-read.dsk", error.InvalidIndexing);
+    try runCaseError("sema/string-index-assign.dsk", error.InvalidIndexing);
+    try runCaseError("sema/str-byte-at-unhandled.dsk", error.UnhandledError);
 }
 
 test "string search" {

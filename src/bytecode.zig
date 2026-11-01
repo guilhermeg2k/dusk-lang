@@ -1883,6 +1883,8 @@ pub const StringOp = enum(u8) {
     repeat,
     slice,
     from_buffer,
+    byte_at,
+    char_at,
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };

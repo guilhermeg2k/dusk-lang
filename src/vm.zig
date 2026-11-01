@@ -717,6 +717,25 @@ pub const VM = struct {
                 return succeeded(.{ .heap_obj = &result.obj });
             },
             .split => succeeded(try self.splitString(args)),
+            .byte_at => {
+                const index = args[1].int64;
+                if (index < 0 or index >= text.len) return stringFailure(BuiltIn.string_out_of_range_id);
+                return succeeded(.{ .int64 = text[@intCast(index)] });
+            },
+            .char_at => {
+                const wanted = args[1].int64;
+                if (wanted < 0) return stringFailure(BuiltIn.string_out_of_range_id);
+                var characters = Pieces{ .text = text, .separator = "" };
+                var position: i64 = 0;
+                while (characters.next()) |character| : (position += 1) {
+                    if (position != wanted) continue;
+                    const start = @intFromPtr(character.ptr) - @intFromPtr(text.ptr);
+                    const result = try self.allocString(character.len);
+                    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..character.len]);
+                    return succeeded(.{ .heap_obj = &result.obj });
+                }
+                return stringFailure(BuiltIn.string_out_of_range_id);
+            },
             .from_buffer => {
                 if (!std.unicode.utf8ValidateSlice(text)) return stringFailure(BuiltIn.string_invalid_utf8_id);
                 const result = try self.allocString(text.len);

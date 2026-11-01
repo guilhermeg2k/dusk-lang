@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Removed `s[i]` on strings (compile error pointing to the new functions). `str_byte_at(s, i) -> StringError!byte` reads the byte at a byte offset, and `str_char_at(s, i) -> StringError!string` returns the `i`-th character as a string; both fail with `OutOfRange`. `for s: b, i do` still loops over bytes
 - `str_join(parts, sep = "")`: the separator is optional, so `str_join(["a", "b"])` is `"ab"`
 - `string_from(b)` now returns `StringError!string` and fails with `StringError.InvalidUtf8` instead of returning `null`. `buffer_from` uses `BYTES_COPY`, which now only makes buffers
 - Revised string API: an empty pattern is no longer an error. `str_count(s, "")` is `0`, `str_split(s, "")` splits into characters (`"olá"` gives `["o", "l", "á"]`, `""` gives `[]`), and `str_replace(s, "", new)` returns `s` unchanged, so `str_count`, `str_split` and `str_replace` can't fail anymore. `StringError` is now `OutOfRange`, `NegativeCount` and `InvalidUtf8`

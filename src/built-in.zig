@@ -21,7 +21,7 @@ pub const BuiltIn = struct {
 
     const BuiltInFactory = *const fn (*const Self, usize) anyerror!BuiltInFn;
 
-    const StrType = enum { string, int, boolean, nullable_int, string_array };
+    const StrType = enum { string, int, byte, boolean, nullable_int, string_array };
 
     const StringOpSpec = struct {
         name: []const u8,
@@ -37,6 +37,8 @@ pub const BuiltIn = struct {
         .{ .name = "str_starts_with", .op = .starts_with, .params = &.{ .{ "text", .string }, .{ "prefix", .string } }, .result = .boolean },
         .{ .name = "str_ends_with", .op = .ends_with, .params = &.{ .{ "text", .string }, .{ "suffix", .string } }, .result = .boolean },
         .{ .name = "str_count", .op = .count, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .int },
+        .{ .name = "str_byte_at", .op = .byte_at, .params = &.{ .{ "text", .string }, .{ "index", .int } }, .result = .byte, .can_fail = true },
+        .{ .name = "str_char_at", .op = .char_at, .params = &.{ .{ "text", .string }, .{ "index", .int } }, .result = .string, .can_fail = true },
         .{ .name = "str_trim", .op = .trim, .params = &.{.{ "text", .string }}, .result = .string },
         .{ .name = "str_split", .op = .split, .params = &.{ .{ "text", .string }, .{ "separator", .string } }, .result = .string_array },
         .{ .name = "str_replace", .op = .replace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string },
@@ -125,6 +127,7 @@ pub const BuiltIn = struct {
         return switch (str_type) {
             .string => self.string_type_id,
             .int => self.int_type_id,
+            .byte => self.type_table.getPrimitive(.byte),
             .boolean => self.boolean_type_id,
             .nullable_int => try self.type_table.getOrAddNullable(self.int_type_id),
             .string_array => try self.type_table.getOrAddArray(self.string_type_id),
