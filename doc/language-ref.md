@@ -560,7 +560,7 @@ An `int` mixed with a `float` is promoted to `float`.
 
 `==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
 
-`==` on strings compares identity, not text: `"dusk" == "dusk"` is `false`. Real string comparison is planned for v0.13.
+`==` on strings compares identity, not text. Literals with the same text are the same string, so `"dusk" == "dusk"` is `true`, but a string built at run time (for example with interpolation) is never equal to a literal. Real string comparison is planned for v0.13.
 
 ### Assignment
 
@@ -1001,7 +1001,8 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Strings**: no concatenation, and `==` compares identity (string operations are planned for v0.13).
+- **Strings**: no concatenation, and `==` compares identity; only literals with the same text are equal (string operations are planned for v0.13).
+- **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
 - **Union size**: a union can have at most 256 variants.

@@ -19,8 +19,8 @@ pub const BytecodeGen = struct {
     chunk_constants_types: std.ArrayList(v.ValueType),
     const_id_by_value: std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80),
 
-    chunk_string_constants: std.ArrayList([]const u8),
-    string_const_id_by_value: std.StringHashMap(u16),
+    string_texts: std.ArrayList([]const u8),
+    string_id_by_text: std.StringHashMap(u16),
 
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
@@ -54,8 +54,8 @@ pub const BytecodeGen = struct {
             .chunk_constants = .empty,
             .chunk_constants_types = .empty,
             .const_id_by_value = std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80).init(alloc),
-            .chunk_string_constants = .empty,
-            .string_const_id_by_value = std.StringHashMap(u16).init(alloc),
+            .string_texts = .empty,
+            .string_id_by_text = std.StringHashMap(u16).init(alloc),
             .chunk_instructions = .empty,
             .loop_stack = .empty,
             .break_patches = .empty,
@@ -134,7 +134,12 @@ pub const BytecodeGen = struct {
 
         try funcs.append(self.allocator, main_func);
 
+        const string_pool = try v.StringPool.init(self.allocator, self.string_texts.items);
+        self.string_texts.clearAndFree(self.allocator);
+        self.string_id_by_text.clearAndFree();
+
         return Program{
+            .string_pool = string_pool,
             .main_func_index = funcs.items.len - 1,
             .functions = try funcs.toOwnedSlice(self.allocator),
             .static_count = self.static_store.count(),
@@ -237,10 +242,8 @@ pub const BytecodeGen = struct {
             self.chunk_instructions = .empty;
             self.chunk_constants = .empty;
             self.chunk_constants_types = .empty;
-            self.chunk_string_constants = .empty;
             self.chunk_heap_maps = .empty;
             self.const_id_by_value.clearRetainingCapacity();
-            self.string_const_id_by_value.clearRetainingCapacity();
         }
 
         try self.genInstructionBlock(func.body);
@@ -256,7 +259,6 @@ pub const BytecodeGen = struct {
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
-            .string_constants = try self.chunk_string_constants.toOwnedSlice(self.allocator),
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
         };
 
@@ -1166,12 +1168,14 @@ pub const BytecodeGen = struct {
     }
 
     fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
-        const result = try self.string_const_id_by_value.getOrPut(s);
+        const result = try self.string_id_by_text.getOrPut(s);
         if (!result.found_existing) {
-            const owned = try self.allocator.dupe(u8, s);
-            result.key_ptr.* = owned;
-            result.value_ptr.* = @intCast(self.chunk_string_constants.items.len);
-            try self.chunk_string_constants.append(self.allocator, owned);
+            if (self.string_texts.items.len > std.math.maxInt(u16)) {
+                _ = self.string_id_by_text.remove(s);
+                return self.tooManyStrings();
+            }
+            result.value_ptr.* = @intCast(self.string_texts.items.len);
+            try self.string_texts.append(self.allocator, s);
         }
 
         const string_id = result.value_ptr.*;
@@ -1183,7 +1187,13 @@ pub const BytecodeGen = struct {
 
         load_string.putBEx(string_id);
         try self.chunk_instructions.append(self.allocator, load_string);
-        try self.recordHeapMap();
+    }
+
+    fn tooManyStrings(self: *Self) BytecodeError {
+        _ = self;
+        if (@import("builtin").is_test) return BytecodeError.TooManyStrings;
+        std.debug.print("error: the program has more than 65536 different string literals\n", .{});
+        return BytecodeError.TooManyStrings;
     }
 
     fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
@@ -1483,6 +1493,7 @@ pub const HeapMap = struct {
 };
 
 pub const Program = struct {
+    string_pool: v.StringPool,
     main_func_index: usize,
     functions: []const Function,
     static_count: u16,
@@ -1521,7 +1532,6 @@ pub const Chunk = struct {
     instructions: []Instruction,
     constants: []v.Value,
     shadow_types: []v.ValueType,
-    string_constants: []const []const u8,
     heap_maps: []const HeapMap,
 
     pub fn disasamble(self: *const Self) void {
@@ -1541,13 +1551,6 @@ pub const Chunk = struct {
                 .string, .buffer => unreachable,
             }
             std.debug.print("\n", .{});
-        }
-
-        if (self.string_constants.len > 0) {
-            std.debug.print("\n== string constants ({d}) ==\n", .{self.string_constants.len});
-            for (self.string_constants, 0..) |s, i| {
-                std.debug.print("{d:0>4}  \"{s}\"\n", .{ i, s });
-            }
         }
 
         std.debug.print("\n== code ({d}) ==\n", .{self.instructions.len});
@@ -1758,7 +1761,6 @@ pub const OpCode = enum(u8) {
             .UNION_LOAD,
             .NULL_BOX_INIT,
             .NULL_BOX_STORE,
-            .LOAD_STRING,
             .STRING_APPEND,
             .BYTES_NEW,
             .BYTES_COPY,
@@ -1815,7 +1817,7 @@ pub const OpCode = enum(u8) {
     }
 };
 
-const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters };
+const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };
 
 const FailingCallHandler = union(enum) {
     try_call: ir.TryCall,

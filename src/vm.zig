@@ -72,12 +72,7 @@ pub const VM = struct {
                 },
 
                 .LOAD_STRING => {
-                    const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
-                    current_frame.cur_inst = cur_instruction;
-                    try self.maybeCollectGarbage(v.Bytes.calc_size(str_data.len));
-                    var string_obj = try v.Bytes.init(self.getCurrentHeapAllocator(), str_data, .string);
-                    self.increaseHeapAllocationCount(v.Bytes.calc_size(str_data.len));
-                    stack[stack_base + inst.a] = .{ .heap_obj = &string_obj.obj };
+                    stack[stack_base + inst.a] = self.program.string_pool.values[inst.bEx()];
                 },
 
                 .STRING_APPEND => {
@@ -747,6 +742,7 @@ pub const VM = struct {
     fn copyHeapValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value) !void {
         const raw: u64 = @bitCast(value.*);
         if (raw == 0) return;
+        if (self.program.string_pool.contains(value.heap_obj)) return;
         var current = value.heap_obj;
         while (current.relocated) |rel| {
             current = rel;

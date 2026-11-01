@@ -183,12 +183,31 @@ test "string constants outlive compilation and source storage" {
         return failure;
     };
     testing.allocator.free(source);
-    const constants = program.functions[program.main_func_index].kind.dusk.string_constants;
-    try testing.expectEqual(@as(usize, 2), constants.len);
-    try testing.expectEqualStrings("a\n🌙\x00", constants[0]);
-    try testing.expectEqualStrings("plain", constants[1]);
+    const pool = program.string_pool;
+    try testing.expectEqual(@as(usize, 2), pool.values.len);
+    try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
+    try testing.expectEqualStrings("plain", pool.textAt(1));
     var vm = @import("vm.zig").VM.init(&program);
     try vm.run();
+}
+
+test "string literal pool" {
+    try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
+}
+
+test "more than 65536 distinct string literals are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var source: std.ArrayList(u8) = .empty;
+    for (0..65536) |i| {
+        if (i % 1000 == 0) try source.print(arena.allocator(), "func f{d}() -> void\n", .{i});
+        try source.print(arena.allocator(), "echo(\"s{d}\")\n", .{i});
+        if (i % 1000 == 999 or i == 65535) try source.appendSlice(arena.allocator(), "end\n");
+    }
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    _ = try dusk.compile(source.items);
+    try source.print(arena.allocator(), "echo(\"one more\")\n", .{});
+    try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
 }
 
 test "invalid string escapes are rejected" {
