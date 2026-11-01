@@ -1,0 +1,2 @@
+let mut b = buffer(2)
+b[-1] = 1

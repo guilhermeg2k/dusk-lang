@@ -646,16 +646,23 @@ pub const BytecodeGen = struct {
                 self.freeRegisterN(self.next_free_register - saved_next_free);
             },
             .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
-            .array_length => |array| {
-                const saved_next_free = self.next_free_register;
-                const array_register = try self.genValue(array, try self.consumeRegister());
-                try self.chunk_instructions.append(self.allocator, .{ .op = .ARRAY_LEN, .a = target_reg, .b = array_register });
-                self.register_types[target_reg] = value.type_id;
-                self.freeRegisterN(self.next_free_register - saved_next_free);
+            .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
+            .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
+            .buffer_new => |size| {
+                try self.genUnaryOpcode(.BYTES_NEW, size, value.type_id, target_reg);
+                try self.recordHeapMap();
             },
         }
 
         return target_reg;
+    }
+
+    fn genUnaryOpcode(self: *Self, op: OpCode, operand: *const ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
+        const saved_next_free = self.next_free_register;
+        const operand_register = try self.genValue(operand, try self.consumeRegister());
+        try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = target_reg, .b = operand_register });
+        self.register_types[target_reg] = result_type;
+        self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn genIntToFloat(self: *Self, operand: *const ir.Value, result_type: tt.TypeId, target_register: u8) !void {
@@ -781,6 +788,13 @@ pub const BytecodeGen = struct {
                 const array_reg = try self.genValue(idx.target, try self.consumeRegister());
                 defer self.freeRegister();
                 try self.genArrayLoad(target_reg, array_reg, idx.index);
+                self.register_types[target_reg] = value.type_id;
+            },
+            .buffer => {
+                const buffer_reg = try self.genValue(idx.target, try self.consumeRegister());
+                const index_reg = try self.genValue(idx.index, try self.consumeRegister());
+                defer self.freeRegisterN(2);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .BYTES_GET, .a = target_reg, .b = buffer_reg, .c = index_reg });
                 self.register_types[target_reg] = value.type_id;
             },
             .@"union" => |@"union"| {
@@ -985,6 +999,13 @@ pub const BytecodeGen = struct {
                     .c = value_reg,
                 };
                 try self.chunk_instructions.append(self.allocator, store_inst);
+            },
+            .buffer => {
+                const buffer_reg = try self.genValue(indexed.target, try self.consumeRegister());
+                const index_reg = try self.genValue(indexed.index, try self.consumeRegister());
+                const value_reg = try self.genValue(stmt.value, try self.consumeRegister());
+                defer self.freeRegisterN(3);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .BYTES_SET, .a = buffer_reg, .b = index_reg, .c = value_reg });
             },
             else => unreachable,
         }
@@ -1517,7 +1538,7 @@ pub const Chunk = struct {
                 .@"struct" => std.debug.print("<struct>", .{}),
                 .@"union" => std.debug.print("<union>", .{}),
                 .nullable => std.debug.print("<nullable:", .{}),
-                .string => unreachable,
+                .string, .buffer => unreachable,
             }
             std.debug.print("\n", .{});
         }
@@ -1581,13 +1602,17 @@ pub const Chunk = struct {
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
             .ARRAY_LOAD,
             .ARRAY_STORE,
+            .BYTES_GET,
+            .BYTES_SET,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .ARRAY_APPEND,
             .ARRAY_LEN,
             .ARRAY_POP,
+            .BYTES_NEW,
+            .BYTES_LEN,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
-            .STRING_APPEND => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRING_APPEND, .BYTES_COPY => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1652,6 +1677,12 @@ pub const OpCode = enum(u8) {
     ARRAY_LEN,
     ARRAY_APPEND,
     ARRAY_POP,
+
+    BYTES_NEW,
+    BYTES_LEN,
+    BYTES_GET,
+    BYTES_SET,
+    BYTES_COPY,
 
     STRUCT_INIT,
     STRUCT_LOAD,
@@ -1729,6 +1760,8 @@ pub const OpCode = enum(u8) {
             .NULL_BOX_STORE,
             .LOAD_STRING,
             .STRING_APPEND,
+            .BYTES_NEW,
+            .BYTES_COPY,
             .CALL,
             => true,
             else => false,

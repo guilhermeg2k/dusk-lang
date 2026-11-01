@@ -37,13 +37,13 @@ pub const VM = struct {
     fn appendStringValue(self: *Self, target: *v.Value, value: v.Value, kind: v.ValueType) !void {
         var buffer: std.Io.Writer.Allocating = .init(self.allocator);
         defer buffer.deinit();
-        const prefix = v.HeapValue.getParentPtr(v.String, target.heap_obj);
+        const prefix = v.HeapValue.getParentPtr(v.Bytes, target.heap_obj);
         try buffer.writer.writeAll(prefix.slice());
         @import("built-in.zig").BuiltIn.printValue(&buffer.writer, value, kind);
         const bytes = buffer.written();
-        const size = v.String.calc_size(bytes.len);
+        const size = v.Bytes.calc_size(bytes.len);
         try self.maybeCollectGarbage(size);
-        const string = try v.String.init(self.getCurrentHeapAllocator(), bytes);
+        const string = try v.Bytes.init(self.getCurrentHeapAllocator(), bytes, .string);
         self.increaseHeapAllocationCount(size);
         target.* = .{ .heap_obj = &string.obj };
     }
@@ -74,9 +74,9 @@ pub const VM = struct {
                 .LOAD_STRING => {
                     const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
                     current_frame.cur_inst = cur_instruction;
-                    try self.maybeCollectGarbage(v.String.calc_size(str_data.len));
-                    var string_obj = try v.String.init(self.getCurrentHeapAllocator(), str_data);
-                    self.increaseHeapAllocationCount(v.String.calc_size(str_data.len));
+                    try self.maybeCollectGarbage(v.Bytes.calc_size(str_data.len));
+                    var string_obj = try v.Bytes.init(self.getCurrentHeapAllocator(), str_data, .string);
+                    self.increaseHeapAllocationCount(v.Bytes.calc_size(str_data.len));
                     stack[stack_base + inst.a] = .{ .heap_obj = &string_obj.obj };
                 },
 
@@ -136,6 +136,35 @@ pub const VM = struct {
                     const arr_ptr = stack[stack_base + inst.b].heap_obj;
                     const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
                     stack[stack_base + inst.a] = .{ .int64 = @intCast(array.len) };
+                },
+
+                .BYTES_NEW => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.newBuffer(stack[stack_base + inst.b].int64);
+                },
+
+                .BYTES_LEN => {
+                    const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
+                    stack[stack_base + inst.a] = .{ .int64 = @intCast(bytes.len) };
+                },
+
+                .BYTES_GET => {
+                    const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
+                    const index = stack[stack_base + inst.c].int64;
+                    if (index < 0 or index >= bytes.len) return indexOutOfBounds(index, bytes.len);
+                    stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
+                },
+
+                .BYTES_SET => {
+                    const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
+                    const index = stack[stack_base + inst.b].int64;
+                    if (index < 0 or index >= bytes.len) return indexOutOfBounds(index, bytes.len);
+                    bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
+                },
+
+                .BYTES_COPY => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.copyBytes(&stack[stack_base + inst.b], @enumFromInt(inst.c));
                 },
 
                 .ARRAY_POP => {
@@ -521,6 +550,40 @@ pub const VM = struct {
         }
     }
 
+    noinline fn newBuffer(self: *Self, len: i64) !v.Value {
+        if (len < 0) return negativeBufferSize(len);
+        const size = v.Bytes.calc_size(@intCast(len));
+        try self.maybeCollectGarbage(size);
+        const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &bytes.obj };
+    }
+
+    noinline fn copyBytes(self: *Self, source: *const v.Value, kind: v.ValueType) !v.Value {
+        const source_len = v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).len;
+        if (kind == .string and !std.unicode.utf8ValidateSlice(v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).slice())) return v.NULL_VALUE;
+        const size = v.Bytes.calc_size(source_len);
+        try self.maybeCollectGarbage(size);
+        const source_bytes = v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).slice();
+        const bytes = try v.Bytes.init(self.getCurrentHeapAllocator(), source_bytes, if (kind == .string) .string else .buffer);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &bytes.obj };
+    }
+
+    noinline fn indexOutOfBounds(index: i64, len: usize) RunTimeError {
+        @branchHint(.cold);
+        if (@import("builtin").is_test) return RunTimeError.IndexOutOfBounds;
+        std.debug.print("error: index {d} is out of bounds for length {d}\n", .{ index, len });
+        return RunTimeError.IndexOutOfBounds;
+    }
+
+    noinline fn negativeBufferSize(len: i64) RunTimeError {
+        @branchHint(.cold);
+        if (@import("builtin").is_test) return RunTimeError.NegativeBufferSize;
+        std.debug.print("error: buffer size can't be negative: {d}\n", .{len});
+        return RunTimeError.NegativeBufferSize;
+    }
+
     noinline fn byteOutOfRange(number: i64) RunTimeError {
         @branchHint(.cold);
         if (@import("builtin").is_test) return RunTimeError.ByteOutOfRange;
@@ -637,7 +700,7 @@ pub const VM = struct {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
                     switch (array.kind) {
-                        .string, .@"struct", .array, .@"union", .nullable => {
+                        .string, .buffer, .@"struct", .array, .@"union", .nullable => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
                                 try self.copyHeapValue(new_alloc, item);
@@ -695,7 +758,7 @@ pub const VM = struct {
             const new_ptr = try cloneHeapObj(new_alloc, current);
             current.gc_forward = new_ptr;
             value.heap_obj = new_ptr;
-            if (new_ptr.kind != .string) {
+            if (new_ptr.kind != .string and new_ptr.kind != .buffer) {
                 try self.heap.gc_queue.append(self.allocator, new_ptr);
             }
             self.heap.object_count += 1;
@@ -709,7 +772,7 @@ pub const VM = struct {
             .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
             .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
             .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
-            .string => &(try v.HeapValue.getParentPtr(v.String, obj_ptr).clone(allocator)).obj,
+            .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
         };
     }
 
@@ -719,7 +782,7 @@ pub const VM = struct {
             .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
             .@"union" => v.Union.calc_size(),
             .null_box => v.NullBox.calc_size(),
-            .string => v.String.calc_size(v.HeapValue.getParentPtr(v.String, ptr).len),
+            .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
         };
     }
 

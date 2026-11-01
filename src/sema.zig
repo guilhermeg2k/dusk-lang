@@ -892,7 +892,7 @@ pub const SemaAnalyzer = struct {
     fn doesValueExit(value: *const ir.Value, needs_return: bool) bool {
         return switch (value.data) {
             .block_value => |block| if (needs_return) areAllPathsReturning(block.instructions) else !block.can_complete,
-            .int_to_float, .array_length => |operand| doesValueExit(operand, needs_return),
+            .int_to_float, .array_length, .buffer_new, .bytes_length => |operand| doesValueExit(operand, needs_return),
             .binary_op => |binary| doesValueExit(binary.left, needs_return) or doesValueExit(binary.right, needs_return),
             .unary_op => |unary| doesValueExit(unary.right, needs_return),
             .null_box_init => |box| if (box.value) |operand| doesValueExit(operand, needs_return) else false,
@@ -1820,7 +1820,7 @@ pub const SemaAnalyzer = struct {
                 const target = try self.evalExp(index_exp.target);
                 const target_type = target.type_id;
                 const indexed_target = try self.indexInto(assign_stmt.target, target);
-                const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal)
+                const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal or indexed_target.type_id == self.type_table.getPrimitive(.byte))
                     indexed_target.type_id
                 else
                     null;
@@ -1846,6 +1846,12 @@ pub const SemaAnalyzer = struct {
                 var field_maybe_nullable_type_id: tt.TypeId = undefined;
 
                 switch (self.type_table.getTypePtrById(target_type).kind) {
+                    .buffer => {
+                        field_maybe_nullable_type_id = indexed_target.type_id;
+                        if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
+                            return self.err_dispatcher.invalidType("byte", try self.type_table.name(assignment_value_type, self.allocator), assign_stmt.exp.loc);
+                        }
+                    },
                     .array => {
                         field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_type).kind.array;
                         if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
@@ -2080,13 +2086,15 @@ pub const SemaAnalyzer = struct {
         if (capture.source.data == .range) return self.visitForRangeStmt(stmt);
         const source = try self.evalExp(capture.source);
         const source_type = self.type_table.getTypePtrById(source.type_id);
+        const is_buffer_source = !source_type.is_nullable and source_type.kind == .buffer;
         const is_array_source = !source_type.is_nullable and source_type.kind == .array;
-        if (!is_array_source) return self.err_dispatcher.invalidType("array", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
-        const item_type = source_type.kind.array;
+        if (!is_array_source and !is_buffer_source) return self.err_dispatcher.invalidType("array or buffer", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
+        const item_type = if (is_buffer_source) self.type_table.getPrimitive(.byte) else source_type.kind.array;
         const integer_type = self.type_table.getPrimitive(.int);
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const source_reference = try self.storeTemporaryValue(&instructions, "loop source", source);
-        const length = try ir.Value.init(self.allocator, .{ .data = .{ .array_length = source_reference }, .type_id = integer_type });
+        const length_data: @FieldType(ir.Value, "data") = if (is_buffer_source) .{ .bytes_length = source_reference } else .{ .array_length = source_reference };
+        const length = try ir.Value.init(self.allocator, .{ .data = length_data, .type_id = integer_type });
         const length_reference = try self.storeTemporaryValue(&instructions, "loop length", length);
         const zero = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = integer_type });
         const cursor = try self.storeTemporaryValue(&instructions, "loop cursor", zero);
@@ -2647,6 +2655,14 @@ pub const SemaAnalyzer = struct {
             .byte_cast => |operand| {
                 return self.evalByteCast(operand);
             },
+            .buffer_new => |size| {
+                const value = try self.evalExp(size);
+                if (isValueLeaving(value)) return value;
+                if (!self.isIntegerType(value.type_id)) {
+                    return self.err_dispatcher.invalidType("int", try self.type_table.name(value.type_id, self.allocator), size.loc);
+                }
+                return ir.Value.init(self.allocator, .{ .data = .{ .buffer_new = value }, .type_id = self.type_table.getPrimitive(.buffer) });
+            },
             .string_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_string = exp.data.string_literal }, .type_id = self.type_table.getPrimitive(.string) });
             },
@@ -2705,6 +2721,20 @@ pub const SemaAnalyzer = struct {
     }
 
     //note: too big needs refactor
+    fn evalLenCall(self: *Self, argument: *const ast.ExpNode) Errors!*ir.Value {
+        const value = try self.evalExp(argument);
+        if (isValueLeaving(value)) return value;
+        const value_type = self.type_table.getTypePtrById(value.type_id);
+        const data: @FieldType(ir.Value, "data") = if (value_type.is_nullable)
+            return self.err_dispatcher.invalidType("array or buffer", try self.type_table.name(value.type_id, self.allocator), argument.loc)
+        else switch (value_type.kind) {
+            .array => .{ .array_length = value },
+            .buffer => .{ .bytes_length = value },
+            else => return self.err_dispatcher.invalidType("array or buffer", try self.type_table.name(value.type_id, self.allocator), argument.loc),
+        };
+        return ir.Value.init(self.allocator, .{ .data = data, .type_id = self.type_table.getPrimitive(.int) });
+    }
+
     fn evalFnCall(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const fn_call = exp.data.fn_call;
         var fn_identifier: []const u8 = undefined;
@@ -2726,6 +2756,10 @@ pub const SemaAnalyzer = struct {
                 };
 
                 fn_identifier = symbol.identifier;
+
+                if (symbol.kind == .function and std.mem.eql(u8, id, "len") and fn_call.arguments.len == 1) {
+                    return self.evalLenCall(fn_call.arguments[0].exp);
+                }
 
                 switch (symbol.kind) {
                     .function => {
@@ -3141,6 +3175,17 @@ pub const SemaAnalyzer = struct {
                 return ir.Value.init(self.allocator, .{
                     .data = .{ .indexed = .{ .target = target, .index = index } },
                     .type_id = result_type,
+                });
+            },
+            .buffer => {
+                if (is_nullable) return self.err_dispatcher.invalidType("buffer", try self.type_table.name(target_type, self.allocator), exp.loc);
+                const index = try self.evalExp(indexed_exp.index);
+                if (!self.isIntegerType(index.type_id)) {
+                    return self.err_dispatcher.invalidIndexing("int", try self.type_table.name(index.type_id, self.allocator), exp.loc);
+                }
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .indexed = .{ .target = target, .index = index } },
+                    .type_id = self.type_table.getPrimitive(.byte),
                 });
             },
             .@"struct" => {
@@ -3607,6 +3652,7 @@ pub const SemaAnalyzer = struct {
                 if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
                 if (std.mem.eql(u8, primitive_name, "byte")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.byte)) else self.type_table.getPrimitive(.byte);
                 if (std.mem.eql(u8, primitive_name, "int")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.int)) else self.type_table.getPrimitive(.int);
+                if (std.mem.eql(u8, primitive_name, "buffer")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.buffer)) else self.type_table.getPrimitive(.buffer);
                 if (std.mem.eql(u8, primitive_name, "string")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.string)) else self.type_table.getPrimitive(.string);
                 if (std.mem.eql(u8, primitive_name, "bool")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.boolean)) else self.type_table.getPrimitive(.boolean);
                 if (std.mem.eql(u8, primitive_name, "void")) return self.type_table.getPrimitive(.void);

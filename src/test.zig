@@ -221,6 +221,28 @@ test "byte errors" {
     try runCaseRuntimeError("byte-cast-negative.dsk", error.ByteOutOfRange);
 }
 
+test "buffer" {
+    try runCaseOutput("buffer.dsk", "[0, 0, 0, 0]\n4\n[104, 105, 0, 255]\n104\n[111, 108, 195, 161]\n4\nol\xc3\xa1\ninvalid\n575\n" ++
+        "buf=[104, 105, 0, 255]\nnull\n4\n[[0], [0, 0]]\n[]\n\n[0, 9]\n2\n");
+}
+
+test "buffer GC" {
+    try runCaseOutput("buffer-gc.dsk", "388894\n");
+}
+
+test "buffer errors" {
+    try runCaseError("sema/buffer-store-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseError("sema/buffer-store-int-variable.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/len-invalid-argument.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-size-string.dsk", error.InvalidType);
+    try runCaseError("sema/string-from-string.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-as-string.dsk", error.InvalidType);
+    try runCaseRuntimeError("buffer-index-out-of-bounds.dsk", error.IndexOutOfBounds);
+    try runCaseRuntimeError("buffer-store-negative-index.dsk", error.IndexOutOfBounds);
+    try runCaseRuntimeError("buffer-negative-size.dsk", error.NegativeBufferSize);
+}
+
 test "invalid byte literals are rejected" {
     const parser_sources = [_][]const u8{ "''", "'ab'", "'\xc3\xa9'", "'\\q'", "'\\u{80}'", "'\\n\\n'" };
     for (parser_sources) |source| {

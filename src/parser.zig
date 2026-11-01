@@ -919,6 +919,7 @@ pub const Parser = struct {
             .multiline_string_literal,
             .byte_literal,
             .byte_kw,
+            .buffer_kw,
             .true_literal,
             .false_literal,
             .null_literal,
@@ -1281,13 +1282,14 @@ pub const Parser = struct {
             .byte_literal => {
                 return self.parseByteLiteral(tk);
             },
-            .byte_kw => {
+            .byte_kw, .buffer_kw => {
                 _ = try self.expect(.l_paren);
                 const was_parsing_condition = self.leaveCondition();
                 defer self.is_parsing_condition = was_parsing_condition;
                 const operand = try self.parseExp(0);
                 const r_paren = try self.expect(.r_paren);
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .byte_cast = operand }, .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end } });
+                const data: ast.Exp = if (tk.tag == .byte_kw) .{ .byte_cast = operand } else .{ .buffer_new = operand };
+                return ast.ExpNode.init(self.allocator, .{ .data = data, .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end } });
             },
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });
@@ -1450,7 +1452,7 @@ pub const Parser = struct {
         }
 
         return switch (tk.tag) {
-            .string_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+            .string_kw, .buffer_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .is_nullable = is_nullable,
             }),

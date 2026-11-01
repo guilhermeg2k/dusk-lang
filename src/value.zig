@@ -27,6 +27,7 @@ const HeapValueType = enum(u8) {
     array,
     @"struct",
     string,
+    buffer,
     @"union",
     null_box,
 };
@@ -289,30 +290,37 @@ pub const Array = extern struct {
     }
 };
 
-pub const String = extern struct {
+pub const Bytes = extern struct {
     const Self = @This();
 
     obj: HeapValue,
     len: usize,
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8) !*Self {
-        const total_bytes = Self.calc_size(source.len);
-        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
-        const string_ptr = @as(*Self, @ptrCast(raw_memory.ptr));
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, kind: HeapValueType) !*Self {
+        const bytes = try Self.initUndefined(allocator, source.len, kind);
+        @memcpy(bytes.getDataPtr()[0..source.len], source);
+        return bytes;
+    }
 
-        string_ptr.obj = .{
-            .kind = .string,
-        };
+    pub fn initZeroed(allocator: std.mem.Allocator, len: usize, kind: HeapValueType) !*Self {
+        const bytes = try Self.initUndefined(allocator, len, kind);
+        @memset(bytes.getDataPtr()[0..len], 0);
+        return bytes;
+    }
 
-        string_ptr.len = source.len;
-
-        const data = string_ptr.getDataPtr();
-        @memcpy(data[0..source.len], source);
-
-        return string_ptr;
+    fn initUndefined(allocator: std.mem.Allocator, len: usize, kind: HeapValueType) !*Self {
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(len));
+        const bytes = @as(*Self, @ptrCast(raw_memory.ptr));
+        bytes.obj = .{ .kind = kind };
+        bytes.len = len;
+        return bytes;
     }
 
     pub fn slice(self: *const Self) []const u8 {
+        return self.getDataPtr()[0..self.len];
+    }
+
+    pub fn mutableSlice(self: *Self) []u8 {
         return self.getDataPtr()[0..self.len];
     }
 
@@ -387,6 +395,7 @@ pub const ValueType = enum(u8) {
     null,
 
     string,
+    buffer,
     //note: maybe this needs to get the inner type?
     array,
     @"struct",
@@ -395,7 +404,7 @@ pub const ValueType = enum(u8) {
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .array, .@"struct", .@"union", .nullable => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable => true,
             else => false,
         };
     }
@@ -412,6 +421,7 @@ pub const ValueType = enum(u8) {
             .float => .float64,
             .boolean => .bool,
             .string => .string,
+            .buffer => .buffer,
             .array => .array,
             .@"struct" => .@"struct",
             .@"union" => .@"union",
@@ -437,7 +447,7 @@ pub const TypedValueHashContext = struct {
             .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
             .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
             .null => {},
-            .string => unreachable,
+            .string, .buffer => unreachable,
             .array => unreachable,
             .nullable => unreachable,
             .@"struct" => unreachable,
@@ -454,7 +464,7 @@ pub const TypedValueHashContext = struct {
             .bool => a.value.bool == b.value.bool,
             .null => true,
             .nullable => unreachable,
-            .string => unreachable,
+            .string, .buffer => unreachable,
             .array => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,

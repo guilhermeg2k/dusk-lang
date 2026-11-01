@@ -1,0 +1,3 @@
+let mut b = buffer(2)
+let n = 3
+b[0] = n

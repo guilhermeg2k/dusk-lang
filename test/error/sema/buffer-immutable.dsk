@@ -1,0 +1,2 @@
+let b = buffer(2)
+b[0] = 1

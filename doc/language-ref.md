@@ -51,7 +51,7 @@ let total = 1 #= explanation =# + 2
 
 **Hoisting**: functions, structs, enums, unions and error sets can be used before they're defined. Variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -82,6 +82,7 @@ y = 20
 | `byte`   | Unsigned 8-bit value (`0` to `255`)           | `'a'`, `'\n'`, `65` |
 | `float`  | 64-bit floating-point number                  | `3.14`, `-0.5`      |
 | `string` | Text in double quotes                         | `"Hello"`           |
+| `buffer` | Fixed-size block of mutable bytes             | `buffer(16)`        |
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
@@ -133,6 +134,30 @@ end
 - An int variable never converts to `byte` implicitly: use `byte(x)`. So `b += 1` on a `byte` variable is an error, because `b + 1` is an `int`.
 - Bytes work as `when` subjects with literal and range cases (an `else` is required), as array indexes and as range-loop bounds.
 - `?byte` works like `?int`. A `[]byte` is a regular array, using as much memory per item as `[]int`.
+
+### Buffers
+
+A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `buffer(n)` creates one with `n` zero bytes; its size never changes.
+
+```nim
+let mut data = buffer(4)
+data[0] = 'h'                     # writes take a byte
+data[1] = 105
+let first = data[0]               # reads give a byte
+echo(len(data))                   # 4
+echo(data)                        # [104, 105, 0, 0]
+
+for data: b, i do
+    echo("$i: $b")
+end
+
+let bytes = buffer_from("olá")    # [111, 108, 195, 161]
+let text = string_from(bytes) orelse "not UTF-8"
+```
+
+- Writing requires a `let mut` variable (or a mutable struct holding the buffer). An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
+- `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, or returns `null` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
+- `==` on buffers compares identity, like strings today.
 
 ### Multiline strings
 
@@ -940,7 +965,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds or a `byte(x)` outside `0..255` still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size or a `byte(x)` outside `0..255` still stops the program and can't be caught.
 
 ## 12. Built-in Functions
 
@@ -951,6 +976,9 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `echo`   | `echo(value: T) -> void`          | Prints a value and a newline.                        |
 | `assert` | `assert(cond: bool) -> void`      | Stops the program with an error if `cond` is false.  |
 | `len`    | `len(list: []T) -> int`           | Returns the number of items in an array.             |
+| `len`    | `len(data: buffer) -> int`        | Returns the number of bytes in a buffer.             |
+| `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer.   |
+| `string_from` | `string_from(data: buffer) -> ?string` | Copies a buffer into a new string, `null` if it isn't valid UTF-8. |
 | `append` | `append(list: []T, item: T) -> void` | Adds an item to the end of a mutable array.       |
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.

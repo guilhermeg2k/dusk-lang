@@ -630,6 +630,8 @@ pub const RunTimeError = error{
     OutOfMemory,
     ArrayOutOfBounds,
     ByteOutOfRange,
+    IndexOutOfBounds,
+    NegativeBufferSize,
     UnhandledError,
 };
 

@@ -1,0 +1,2 @@
+let b = buffer(1)
+let s: string = b

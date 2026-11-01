@@ -25,6 +25,8 @@ pub const BuiltIn = struct {
         appendFactory,
         lenFactory,
         assertFactory,
+        bufferFromFactory,
+        stringFromFactory,
     };
 
     const builtin_bytecode_registry = [_]struct {
@@ -35,6 +37,8 @@ pub const BuiltIn = struct {
         .{ .name = "append", .kind = .{ .@"inline" = .{ .gen = &appendCodeGen, .num_args = 2 } } },
         .{ .name = "len", .kind = .{ .@"inline" = .{ .gen = &lenCodeGen, .num_args = 1 } } },
         .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
+        .{ .name = "buffer_from", .kind = .{ .@"inline" = .{ .gen = &bufferFromCodeGen, .num_args = 1 } } },
+        .{ .name = "string_from", .kind = .{ .@"inline" = .{ .gen = &stringFromCodeGen, .num_args = 1 } } },
     };
 
     comptime {
@@ -52,6 +56,7 @@ pub const BuiltIn = struct {
     float_type_id: TypeId,
     int_type_id: TypeId,
     string_type_id: TypeId,
+    buffer_type_id: TypeId,
     boolean_type_id: TypeId,
     dynamic_type_id: TypeId,
     dynamic_array_type_id: TypeId,
@@ -65,6 +70,7 @@ pub const BuiltIn = struct {
             .float_type_id = type_table.primitives.get(.float).?,
             .int_type_id = type_table.primitives.get(.int).?,
             .string_type_id = type_table.primitives.get(.string).?,
+            .buffer_type_id = type_table.primitives.get(.buffer).?,
             .boolean_type_id = type_table.primitives.get(.boolean).?,
             .dynamic_type_id = dynamic_type_id,
             .dynamic_array_type_id = try type_table.getOrAddArray(dynamic_type_id),
@@ -170,6 +176,22 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &assertImpl, .num_args = 1 } };
     }
 
+    fn bufferFromFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "buffer_from", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "text", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, self.buffer_type_id);
+        return BuiltInFn{ .symbol = symbol };
+    }
+
+    fn stringFromFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "string_from", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "data", .type_id = self.buffer_type_id, .is_mut = false, .default_value = null },
+        }, try self.type_table.getOrAddNullable(self.string_type_id));
+        return BuiltInFn{ .symbol = symbol };
+    }
+
     pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
         var funcs: [builtin_bytecode_registry.len]bc.Function = undefined;
         for (&funcs, builtin_bytecode_registry, 0..) |*f, entry, i| {
@@ -196,9 +218,23 @@ pub const BuiltIn = struct {
                 if (raw == 0) {
                     writer.print("null", .{}) catch @panic("failed to print null");
                 } else {
-                    const str = v.HeapValue.getParentPtr(v.String, value.heap_obj);
+                    const str = v.HeapValue.getParentPtr(v.Bytes, value.heap_obj);
                     writer.print("{s}", .{str.slice()}) catch @panic("failed to print string");
                 }
+            },
+            .buffer => {
+                const raw: u64 = @bitCast(value);
+                if (raw == 0) {
+                    writer.print("null", .{}) catch @panic("failed to print null");
+                    return;
+                }
+                const bytes = v.HeapValue.getParentPtr(v.Bytes, value.heap_obj).slice();
+                writer.print("[", .{}) catch @panic("failed to print buffer bracket");
+                for (bytes, 0..) |byte, i| {
+                    if (i > 0) writer.print(", ", .{}) catch @panic("failed to print buffer separator");
+                    writer.print("{d}", .{byte}) catch @panic("failed to print buffer byte");
+                }
+                writer.print("]", .{}) catch @panic("failed to print buffer bracket");
             },
             .null => writer.print("null", .{}) catch @panic("failed to print null"),
             .array => {
@@ -229,6 +265,7 @@ pub const BuiltIn = struct {
                         printValue(writer, nullable.value, nullable.kind);
                     },
                     .string => printValue(writer, value, .string),
+                    .buffer => printValue(writer, value, .buffer),
                     .array => printValue(writer, value, .array),
                     .@"struct" => printValue(writer, value, .@"struct"),
                     .@"union" => printValue(writer, value, .@"union"),
@@ -279,6 +316,18 @@ pub const BuiltIn = struct {
     fn lenCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
         try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn bufferFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.buffer) });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn stringFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.string) });
         return try list.toOwnedSlice(alloc);
     }
 
