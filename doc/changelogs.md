@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- `str_join(parts, sep = "")`: the separator is optional, so `str_join(["a", "b"])` is `"ab"`
 - `string_from(b)` now returns `StringError!string` and fails with `StringError.InvalidUtf8` instead of returning `null`. `buffer_from` uses `BYTES_COPY`, which now only makes buffers
 - Revised string API: an empty pattern is no longer an error. `str_count(s, "")` is `0`, `str_split(s, "")` splits into characters (`"olá"` gives `["o", "l", "á"]`, `""` gives `[]`), and `str_replace(s, "", new)` returns `s` unchanged, so `str_count`, `str_split` and `str_replace` can't fail anymore. `StringError` is now `OutOfRange`, `NegativeCount` and `InvalidUtf8`
 - `str_equal(a, b, ignore_case = false)`: the new optional parameter compares ASCII and Latin-1 letters without case (`str_equal("José", "JOSÉ", true)`). `str_equal` now runs through `STR_OP`, and the unused `BYTES_EQ` opcode is gone

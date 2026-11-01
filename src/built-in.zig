@@ -373,7 +373,7 @@ pub const BuiltIn = struct {
         var symbol = Symbol{ .uid = uid, .identifier = "str_join", .kind = .{ .function = {} }, .type_id = undefined };
         symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "parts", .type_id = try self.type_table.getOrAddArray(self.string_type_id), .is_mut = false, .default_value = null },
-            .{ .identifier = "sep", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+            .{ .identifier = "sep", .type_id = self.string_type_id, .is_mut = false, .default_value = try ir.Value.init(self.alloc, .{ .data = .{ .i_string = "" }, .type_id = self.string_type_id }) },
         }, self.string_type_id);
         return BuiltInFn{ .symbol = symbol };
     }
