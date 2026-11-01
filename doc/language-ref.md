@@ -978,6 +978,8 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `assert` | `assert(cond: bool) -> void`      | Stops the program with an error if `cond` is false.  |
 | `len`    | `len(list: []T) -> int`           | Returns the number of items in an array.             |
 | `len`    | `len(data: buffer) -> int`        | Returns the number of bytes in a buffer.             |
+| `len`    | `len(text: string) -> int`        | Returns the number of bytes in a string (UTF-8).     |
+| `str_char_count` | `str_char_count(text: string) -> int` | Returns the number of characters (Unicode code points). |
 | `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer.   |
 | `string_from` | `string_from(data: buffer) -> ?string` | Copies a buffer into a new string, `null` if it isn't valid UTF-8. |
 | `str_equal` | `str_equal(a: string, b: string) -> bool` | `true` when both strings have the same bytes. |

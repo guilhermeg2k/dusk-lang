@@ -197,6 +197,12 @@ test "str_equal" {
     try runCaseError("sema/str-equal-int.dsk", error.InvalidType);
 }
 
+test "string length and char count" {
+    try runCaseOutput("string-length.dsk", "4\n3\n");
+    try runCaseError("sema/len-nullable-string.dsk", error.InvalidType);
+    try runCaseError("sema/str-char-count-int.dsk", error.InvalidType);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }

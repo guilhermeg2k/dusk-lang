@@ -1,0 +1,1 @@
+echo(str_char_count(1))

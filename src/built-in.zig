@@ -28,6 +28,7 @@ pub const BuiltIn = struct {
         bufferFromFactory,
         stringFromFactory,
         strEqualFactory,
+        strCharCountFactory,
     };
 
     const builtin_bytecode_registry = [_]struct {
@@ -41,6 +42,7 @@ pub const BuiltIn = struct {
         .{ .name = "buffer_from", .kind = .{ .@"inline" = .{ .gen = &bufferFromCodeGen, .num_args = 1 } } },
         .{ .name = "string_from", .kind = .{ .@"inline" = .{ .gen = &stringFromCodeGen, .num_args = 1 } } },
         .{ .name = "str_equal", .kind = .{ .@"inline" = .{ .gen = &strEqualCodeGen, .num_args = 2 } } },
+        .{ .name = "str_char_count", .kind = .{ .host = .{ .func = &strCharCountImpl, .num_args = 1 } } },
     };
 
     comptime {
@@ -203,6 +205,14 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol };
     }
 
+    fn strCharCountFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "str_char_count", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "text", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, self.int_type_id);
+        return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &strCharCountImpl, .num_args = 1 } };
+    }
+
     pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
         var funcs: [builtin_bytecode_registry.len]bc.Function = undefined;
         for (&funcs, builtin_bytecode_registry, 0..) |*f, entry, i| {
@@ -346,6 +356,15 @@ pub const BuiltIn = struct {
         var list: std.ArrayList(bc.Instruction) = .empty;
         try list.append(alloc, .{ .op = .BYTES_EQ, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
         return try list.toOwnedSlice(alloc);
+    }
+
+    fn strCharCountImpl(args: []v.Value) v.Value {
+        const text = v.HeapValue.getParentPtr(v.Bytes, args[0].heap_obj).slice();
+        var count: i64 = 0;
+        for (text) |byte| {
+            if (byte & 0xC0 != 0x80) count += 1;
+        }
+        return .{ .int64 = count };
     }
 
     fn assertImpl(args: []v.Value) v.Value {

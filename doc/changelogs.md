@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- `len(s)` returns a string's length in bytes (UTF-8), and `str_char_count(s)` returns its number of characters (Unicode code points): `len("olá")` is 4, `str_char_count("olá")` is 3
 - `str_equal(a, b)` compares two strings by content (`a |> str_equal(b)` works too). `==` on strings stays a reference comparison by design. String operations use `str_`-prefixed builtin functions
 - `byte` type: one value from `0` to `255`, written as `'a'`, `'\n'` or `'\u{41}'` (one ASCII character or escape). Int constants that fit convert to `byte`, `byte(x)` converts an int and is checked at run time (out of range stops the program), and a byte converts to `int` automatically. Arithmetic on bytes gives an `int`. Bytes work in `when` (literal and range cases), as array indexes, as range-loop bounds and as `?byte`, and print as numbers. At run time a byte is stored like an `int`
 - Strings accept the `\'` escape

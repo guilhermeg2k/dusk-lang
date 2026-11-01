@@ -2727,11 +2727,11 @@ pub const SemaAnalyzer = struct {
         if (isValueLeaving(value)) return value;
         const value_type = self.type_table.getTypePtrById(value.type_id);
         const data: @FieldType(ir.Value, "data") = if (value_type.is_nullable)
-            return self.err_dispatcher.invalidType("array or buffer", try self.type_table.name(value.type_id, self.allocator), argument.loc)
+            return self.err_dispatcher.invalidType("array, buffer or string", try self.type_table.name(value.type_id, self.allocator), argument.loc)
         else switch (value_type.kind) {
             .array => .{ .array_length = value },
-            .buffer => .{ .bytes_length = value },
-            else => return self.err_dispatcher.invalidType("array or buffer", try self.type_table.name(value.type_id, self.allocator), argument.loc),
+            .buffer, .string => .{ .bytes_length = value },
+            else => return self.err_dispatcher.invalidType("array, buffer or string", try self.type_table.name(value.type_id, self.allocator), argument.loc),
         };
         return ir.Value.init(self.allocator, .{ .data = data, .type_id = self.type_table.getPrimitive(.int) });
     }

@@ -53,3 +53,4 @@
 - Files generation + caching (Each compilation step)
 - Improve int -> float promotion
 - Verify places where @panic should be used instead of unrecheable
+- Add more number notations
