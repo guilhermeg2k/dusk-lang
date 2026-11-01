@@ -982,37 +982,79 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 
 `T` means any type.
 
-| Function | Signature                         | Description                                          |
-| :------- | :-------------------------------- | :--------------------------------------------------- |
-| `echo`   | `echo(value: T) -> void`          | Prints a value and a newline.                        |
-| `assert` | `assert(cond: bool) -> void`      | Stops the program with an error if `cond` is false.  |
-| `len`    | `len(list: []T) -> int`           | Returns the number of items in an array.             |
-| `len`    | `len(data: buffer) -> int`        | Returns the number of bytes in a buffer.             |
-| `len`    | `len(text: string) -> int`        | Returns the number of bytes in a string (UTF-8).     |
-| `str_char_count` | `str_char_count(text: string) -> int` | Returns the number of characters (Unicode code points). |
-| `str_concat` | `str_concat(a: string, b: string) -> string` | Returns a new string with `b` after `a`. |
-| `str_join` | `str_join(parts: []string, sep: string) -> string` | Joins the parts with `sep` between them; `""` for an empty array. |
-| `str_to_int` | `str_to_int(text: string) -> ConversionError!int` | Reads an int written like a Dusk literal. |
-| `str_to_float` | `str_to_float(text: string) -> ConversionError!float` | Reads a float (or int) written like a Dusk literal. |
-
-`str_to_int` accepts an optional `-` followed by digits. `str_to_float` also accepts one `.` followed by digits (`"3"`, `"-0.5"`, `"10.25"`). Anything else, including spaces, `+`, `_`, exponents, hex, `inf` and `nan`, fails with `ConversionError.Invalid`. An int that doesn't fit in 64 bits, or a float too large to represent, fails with `ConversionError.Overflow`. `ConversionError` is a builtin error set, so its name can't be used for another error set.
-
-```nim
-let n = try str_to_int("42")
-let f = str_to_float("3") catch 0.0
-let age = str_to_int(input) catch e then
-    return when e
-        ConversionError.Invalid then "not a number" end
-        ConversionError.Overflow then "too big" end
-    end
-end
-```
-| `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer.   |
+| Function | Signature | Description |
+| :------- | :-------- | :---------- |
+| `echo` | `echo(value: T) -> void` | Prints a value and a newline. |
+| `assert` | `assert(cond: bool) -> void` | Stops the program with an error if `cond` is false. |
+| `len` | `len(list: []T) -> int` | Returns the number of items in an array. |
+| `len` | `len(data: buffer) -> int` | Returns the number of bytes in a buffer. |
+| `len` | `len(text: string) -> int` | Returns the number of bytes in a string (UTF-8). |
+| `append` | `append(list: []T, item: T) -> void` | Adds an item to the end of a mutable array. |
+| `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer. |
 | `string_from` | `string_from(data: buffer) -> ?string` | Copies a buffer into a new string, `null` if it isn't valid UTF-8. |
-| `str_equal` | `str_equal(a: string, b: string) -> bool` | `true` when both strings have the same bytes. |
-| `append` | `append(list: []T, item: T) -> void` | Adds an item to the end of a mutable array.       |
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
+
+### String functions
+
+String functions are builtins starting with `str_`. They never change their argument: a function that produces text returns a new string. They work with pipes: `line |> str_trim()`.
+
+Positions are **byte offsets**, the same unit as `len(s)` and `s[i]`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` is the only function that counts characters.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `str_equal(a, b, ignore_case = false)` | `bool` | `true` when both strings have the same text. With `ignore_case`, ASCII and Latin-1 letters match regardless of case. |
+| `str_char_count(text)` | `int` | Number of characters (Unicode code points). |
+| `str_concat(a, b)` | `string` | `b` after `a`. |
+| `str_join(parts, sep)` | `string` | The `[]string` parts with `sep` between them; `""` for an empty array. |
+| `str_find(text, needle)` | `?int` | Byte offset of the first match, `null` if there is none. An empty `needle` is found at `0`. |
+| `str_contains(text, needle)` | `bool` | Whether `needle` appears in `text`. |
+| `str_starts_with(text, prefix)` | `bool` | Whether `text` starts with `prefix`. |
+| `str_ends_with(text, suffix)` | `bool` | Whether `text` ends with `suffix`. |
+| `str_count(text, needle)` | `StringError!int` | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2). |
+| `str_trim(text)` | `string` | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends. |
+| `str_upper(text)` / `str_lower(text)` | `string` | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged. |
+| `str_split(text, separator)` | `StringError![]string` | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. |
+| `str_replace(text, old, new)` | `StringError!string` | Replaces every non-overlapping `old`, left to right. An empty `new` deletes. |
+| `str_repeat(text, count)` | `StringError!string` | `text` repeated `count` times; `0` gives `""`. |
+| `str_slice(text, start, stop)` | `StringError!string` | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, len(s))` is all of `s`. |
+| `str_to_int(text)` | `ConversionError!int` | Reads an int written like a Dusk literal. |
+| `str_to_float(text)` | `ConversionError!float` | Reads a float (or int) written like a Dusk literal. |
+
+**Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Two builtin error sets exist, and their names can't be used for other error sets:
+
+| Error | When |
+| :---- | :--- |
+| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > len(text)`, or a bound inside a multi-byte character. |
+| `StringError.EmptyPattern` | An empty `needle`, `separator` or `old` in `str_count`, `str_split` or `str_replace`. |
+| `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
+| `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
+| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, or a float too large to represent. |
+
+```nim
+let line = "  name = Dusk, age = 13  "
+for try str_split(str_trim(line), ","): field do
+    let pair = try str_split(field, "=")
+    echo("${str_upper(str_trim(pair[0]))}: ${str_trim(pair[1])}")
+end
+
+let at = str_find(line, "=") orelse 0
+let name = str_slice(line, 0, at) catch ""
+
+func describe_age(text: string) -> string
+    let age = str_to_int(text) catch e then
+        return when e
+            ConversionError.Invalid then "not a number" end
+            ConversionError.Overflow then "too big" end
+        end
+    end
+    return "age $age"
+end
+echo(describe_age("13"))     # age 13
+echo(describe_age("abc"))    # not a number
+```
+
+Optional parameters follow the usual call rule: a call is all positional or all named, so write `str_equal(a, b, true)` or `str_equal(a = x, b = y, ignore_case = true)`.
 
 ## 13. Errors
 
@@ -1031,7 +1073,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Strings**: no concatenation, and `==` compares identity (use `str_equal` for text). Other string operations are planned for v0.13.
+- **Strings**: `==` compares identity (use `str_equal` for text). Positions are byte offsets; only `str_char_count` counts characters, and case changes cover ASCII and Latin-1 letters only.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
