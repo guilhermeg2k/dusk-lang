@@ -1881,6 +1881,7 @@ pub const StringOp = enum(u8) {
     upper,
     lower,
     repeat,
+    slice,
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };

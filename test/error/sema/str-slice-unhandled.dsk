@@ -1,0 +1,1 @@
+let s = str_slice("abc", 0, 1)

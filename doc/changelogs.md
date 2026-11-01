@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- `str_slice(s, start, stop) -> StringError!string` copies the bytes from `start` up to (not including) `stop`. Negative or reversed bounds, `stop > len(s)` and a bound inside a multi-byte character fail with `StringError.OutOfRange`
 - String transforms: `str_trim` (ASCII whitespace), `str_upper` / `str_lower` (ASCII and Latin-1 letters: `"ação"` ↔ `"AÇÃO"`), and the failing `str_split(s, sep) -> StringError![]string`, `str_replace(s, old, new) -> StringError!string` (empty `sep` / `old` fail with `EmptyPattern`) and `str_repeat(s, n) -> StringError!string` (negative `n` fails with `NegativeCount`). Allocating string functions size their result first, collect at most once, then reread their arguments
 - String search: `str_find(s, x) -> ?int` (byte offset of the first match, `null` if none), `str_contains`, `str_starts_with`, `str_ends_with`, and `str_count(s, x) -> StringError!int` (non-overlapping matches). New builtin error set `StringError` with `OutOfRange`, `EmptyPattern` and `NegativeCount`; `str_count` with an empty pattern fails with `EmptyPattern`. User error ids (printed raw) shift by three more
 - String functions that take string arguments share one `STR_OP` opcode, generated from a spec table in `built-in.zig`

@@ -41,6 +41,7 @@ pub const BuiltIn = struct {
         .{ .name = "str_replace", .op = .replace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string, .can_fail = true },
         .{ .name = "str_upper", .op = .upper, .params = &.{.{ "text", .string }}, .result = .string },
         .{ .name = "str_lower", .op = .lower, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_slice", .op = .slice, .params = &.{ .{ "text", .string }, .{ "start", .int }, .{ "stop", .int } }, .result = .string, .can_fail = true },
         .{ .name = "str_repeat", .op = .repeat, .params = &.{ .{ "text", .string }, .{ "count", .int } }, .result = .string, .can_fail = true },
     };
 

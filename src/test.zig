@@ -245,6 +245,13 @@ test "string transforms" {
     try runCaseRuntimeError("str-repeat-unhandled.dsk", error.UnhandledError);
 }
 
+test "string slice" {
+    try runCaseOutput("string-slice.dsk", "ol\nol\u{E1}\nmundo\n[]\n[]\nol\u{E1}\n" ++
+        "out of range\nout of range\nout of range\nout of range\nout of range\n\u{E1}\n");
+    try runCaseError("sema/str-slice-unhandled.dsk", error.UnhandledError);
+    try runCaseRuntimeError("str-slice-unhandled.dsk", error.UnhandledError);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }

@@ -705,12 +705,29 @@ pub const VM = struct {
                 _ = std.mem.replace(u8, bytesArg(args, 0), bytesArg(args, 1), bytesArg(args, 2), result.mutableSlice());
                 return succeeded(.{ .heap_obj = &result.obj });
             },
+            .slice => {
+                const start = args[1].int64;
+                const end = args[2].int64;
+                const is_in_range = start >= 0 and start <= end and end <= text.len;
+                if (!is_in_range) return stringFailure(BuiltIn.string_out_of_range_id);
+                const start_index: usize = @intCast(start);
+                const end_index: usize = @intCast(end);
+                if (!isCharBoundary(text, start_index) or !isCharBoundary(text, end_index)) return stringFailure(BuiltIn.string_out_of_range_id);
+                const result = try self.allocString(end_index - start_index);
+                @memcpy(result.mutableSlice(), bytesArg(args, 0)[start_index..end_index]);
+                return succeeded(.{ .heap_obj = &result.obj });
+            },
             .split => {
                 const separator = bytesArg(args, 1);
                 if (separator.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
                 return succeeded(try self.splitString(args));
             },
         };
+    }
+
+    fn isCharBoundary(text: []const u8, index: usize) bool {
+        if (index == text.len) return true;
+        return text[index] & 0xC0 != 0x80;
     }
 
     const ascii_whitespace = " \t\n\r\x0b\x0c";
