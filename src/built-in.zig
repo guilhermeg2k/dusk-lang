@@ -27,6 +27,7 @@ pub const BuiltIn = struct {
         assertFactory,
         bufferFromFactory,
         stringFromFactory,
+        strEqualFactory,
     };
 
     const builtin_bytecode_registry = [_]struct {
@@ -39,6 +40,7 @@ pub const BuiltIn = struct {
         .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
         .{ .name = "buffer_from", .kind = .{ .@"inline" = .{ .gen = &bufferFromCodeGen, .num_args = 1 } } },
         .{ .name = "string_from", .kind = .{ .@"inline" = .{ .gen = &stringFromCodeGen, .num_args = 1 } } },
+        .{ .name = "str_equal", .kind = .{ .@"inline" = .{ .gen = &strEqualCodeGen, .num_args = 2 } } },
     };
 
     comptime {
@@ -192,6 +194,15 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol };
     }
 
+    fn strEqualFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "str_equal", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "a", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+            .{ .identifier = "b", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, self.boolean_type_id);
+        return BuiltInFn{ .symbol = symbol };
+    }
+
     pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
         var funcs: [builtin_bytecode_registry.len]bc.Function = undefined;
         for (&funcs, builtin_bytecode_registry, 0..) |*f, entry, i| {
@@ -328,6 +339,12 @@ pub const BuiltIn = struct {
     fn stringFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
         try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.string) });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn strEqualCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .BYTES_EQ, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
         return try list.toOwnedSlice(alloc);
     }
 

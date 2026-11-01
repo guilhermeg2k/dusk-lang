@@ -324,6 +324,12 @@ pub const Bytes = extern struct {
         return self.getDataPtr()[0..self.len];
     }
 
+    pub fn eql(self: *const Self, other: *const Self) bool {
+        if (self == other) return true;
+        if (self.len != other.len) return false;
+        return std.mem.eql(u8, self.slice(), other.slice());
+    }
+
     pub fn getDataPtr(self: *const Self) [*]u8 {
         const data_pointer = @as([*]Self, @ptrCast(@constCast(self))) + 1;
         return @ptrCast(data_pointer);

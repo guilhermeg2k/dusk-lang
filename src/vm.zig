@@ -157,6 +157,12 @@ pub const VM = struct {
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
                 },
 
+                .BYTES_EQ => {
+                    const left = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
+                    const right = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.c].heap_obj);
+                    stack[stack_base + inst.a] = .{ .bool = left.eql(right) };
+                },
+
                 .BYTES_COPY => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.copyBytes(&stack[stack_base + inst.b], @enumFromInt(inst.c));

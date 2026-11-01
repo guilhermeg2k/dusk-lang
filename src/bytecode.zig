@@ -1644,6 +1644,7 @@ pub const Chunk = struct {
             .ARRAY_STORE,
             .BYTES_GET,
             .BYTES_SET,
+            .BYTES_EQ,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .ARRAY_APPEND,
             .ARRAY_LEN,
@@ -1723,6 +1724,7 @@ pub const OpCode = enum(u8) {
     BYTES_GET,
     BYTES_SET,
     BYTES_COPY,
+    BYTES_EQ,
 
     STRUCT_INIT,
     STRUCT_LOAD,

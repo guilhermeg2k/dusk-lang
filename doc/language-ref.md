@@ -560,7 +560,7 @@ An `int` mixed with a `float` is promoted to `float`.
 
 `==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
 
-`==` on strings compares identity, not text. Literals with the same text are the same string, so `"dusk" == "dusk"` is `true`, but a string built at run time (for example with interpolation) is never equal to a literal. Real string comparison is planned for v0.13.
+`==` on strings compares identity, not text. Literals with the same text are the same string, so `"dusk" == "dusk"` is `true`, but a string built at run time (for example with interpolation) is never equal to a literal. Use `str_equal(a, b)` to compare text.
 
 ### Assignment
 
@@ -980,6 +980,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `len`    | `len(data: buffer) -> int`        | Returns the number of bytes in a buffer.             |
 | `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer.   |
 | `string_from` | `string_from(data: buffer) -> ?string` | Copies a buffer into a new string, `null` if it isn't valid UTF-8. |
+| `str_equal` | `str_equal(a: string, b: string) -> bool` | `true` when both strings have the same bytes. |
 | `append` | `append(list: []T, item: T) -> void` | Adds an item to the end of a mutable array.       |
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
@@ -1001,7 +1002,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Strings**: no concatenation, and `==` compares identity; only literals with the same text are equal (string operations are planned for v0.13).
+- **Strings**: no concatenation, and `==` compares identity (use `str_equal` for text). Other string operations are planned for v0.13.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.

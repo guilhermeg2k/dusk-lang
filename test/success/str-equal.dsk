@@ -1,0 +1,21 @@
+let name = "Dusk"
+let built = "${name}"
+assert(str_equal(built, name))
+assert(str_equal(name, "Dusk"))
+assert(!str_equal(name, "dusk"))
+assert(!str_equal(name, "Dus"))
+assert(!str_equal("", "a"))
+assert(str_equal("", "${""}"))
+assert(str_equal("olá 🌙", "ol\u{E1} \u{1F319}"))
+assert(str_equal(string_from(buffer_from("copy")) orelse "", "copy"))
+assert(name |> str_equal("Dusk"))
+let mut matches = 0
+for 1..20000: i do
+    let text = "item $i"
+    if str_equal(text, "item 19999") then
+        matches += 1
+    end
+end
+assert(matches == 1)
+echo(str_equal("a", "a"))
+echo(str_equal("a", "b"))

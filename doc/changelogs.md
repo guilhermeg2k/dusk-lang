@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- `str_equal(a, b)` compares two strings by content (`a |> str_equal(b)` works too). `==` on strings stays a reference comparison by design. String operations use `str_`-prefixed builtin functions
 - `byte` type: one value from `0` to `255`, written as `'a'`, `'\n'` or `'\u{41}'` (one ASCII character or escape). Int constants that fit convert to `byte`, `byte(x)` converts an int and is checked at run time (out of range stops the program), and a byte converts to `int` automatically. Arithmetic on bytes gives an `int`. Bytes work in `when` (literal and range cases), as array indexes, as range-loop bounds and as `?byte`, and print as numbers. At run time a byte is stored like an `int`
 - Strings accept the `\'` escape
 - `buffer` type: a fixed number of mutable bytes stored packed. `buffer(n)` creates `n` zero bytes, `b[i]` reads a `byte`, `b[i] = x` writes one (bounds-checked, needs `let mut`), `len(b)` gives the size and `for b: byte, index do` loops over it. `buffer_from(s)` copies a string into a buffer, and `string_from(b)` copies a buffer into a `?string` (`null` if it isn't valid UTF-8). `echo` prints a buffer like an array of numbers. The type annotation is `buffer`, and functions can take `mut b: buffer` parameters (the caller must pass a mutable variable), like arrays

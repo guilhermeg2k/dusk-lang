@@ -191,6 +191,12 @@ test "string constants outlive compilation and source storage" {
     try vm.run();
 }
 
+test "str_equal" {
+    try runCaseOutput("str-equal.dsk", "true\nfalse\n");
+    try runCaseError("sema/str-equal-nullable.dsk", error.InvalidType);
+    try runCaseError("sema/str-equal-int.dsk", error.InvalidType);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }

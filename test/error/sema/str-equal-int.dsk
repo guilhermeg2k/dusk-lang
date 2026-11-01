@@ -1,0 +1,1 @@
+echo(str_equal("a", 1))
