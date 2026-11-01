@@ -16,7 +16,9 @@
 - Multiline Comments (`#= ... =#`, nested; implemented)
 - UTF-8 strings and escape sequences (implemented)
 - Multiline strings (`"""` with closing-indentation stripping; implemented)
-- Strings operations
+- `byte` type and `'x'` byte literals
+- `buffer`: fixed-size mutable bytes, sharing one VM byte object with `string`
+- Strings operations (built on the shared byte object)
 - `when` on strings
 - String interpolation (`$name` and `${expression}`; implemented)
 
