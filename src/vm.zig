@@ -677,12 +677,23 @@ pub const VM = struct {
                 return succeeded(.{ .bool = isEqualIgnoringCase(left.slice(), right.slice()) });
             },
             .find => {
-                const index = std.mem.indexOf(u8, text, bytesArg(args, 1)) orelse return succeeded(v.NULL_VALUE);
+                const needle = bytesArg(args, 1);
+                if (needle.len == 0) return succeeded(v.NULL_VALUE);
+                const index = std.mem.indexOf(u8, text, needle) orelse return succeeded(v.NULL_VALUE);
                 return succeeded(try self.boxInt(@intCast(index)));
             },
-            .contains => succeeded(.{ .bool = std.mem.indexOf(u8, text, bytesArg(args, 1)) != null }),
-            .starts_with => succeeded(.{ .bool = std.mem.startsWith(u8, text, bytesArg(args, 1)) }),
-            .ends_with => succeeded(.{ .bool = std.mem.endsWith(u8, text, bytesArg(args, 1)) }),
+            .contains => {
+                const needle = bytesArg(args, 1);
+                return succeeded(.{ .bool = needle.len > 0 and std.mem.indexOf(u8, text, needle) != null });
+            },
+            .starts_with => {
+                const prefix = bytesArg(args, 1);
+                return succeeded(.{ .bool = prefix.len > 0 and std.mem.startsWith(u8, text, prefix) });
+            },
+            .ends_with => {
+                const suffix = bytesArg(args, 1);
+                return succeeded(.{ .bool = suffix.len > 0 and std.mem.endsWith(u8, text, suffix) });
+            },
             .count => {
                 const needle = bytesArg(args, 1);
                 if (needle.len == 0) return succeeded(.{ .int64 = 0 });

@@ -983,15 +983,15 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 
 `T` means any type.
 
-| Function | Signature | Description |
-| :------- | :-------- | :---------- |
-| `echo` | `echo(value: T) -> void` | Prints a value and a newline. |
-| `assert` | `assert(cond: bool) -> void` | Stops the program with an error if `cond` is false. |
-| `len` | `len(list: []T) -> int` | Returns the number of items in an array. |
-| `len` | `len(data: buffer) -> int` | Returns the number of bytes in a buffer. |
-| `len` | `len(text: string) -> int` | Returns the number of bytes in a string (UTF-8). |
-| `append` | `append(list: []T, item: T) -> void` | Adds an item to the end of a mutable array. |
-| `buffer_from` | `buffer_from(text: string) -> buffer` | Copies a string's bytes into a new buffer. |
+| Function      | Signature                                         | Description                                                                          |
+| :------------ | :------------------------------------------------ | :----------------------------------------------------------------------------------- |
+| `echo`        | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
+| `assert`      | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
+| `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
+| `len`         | `len(data: buffer) -> int`                        | Returns the number of bytes in a buffer.                                             |
+| `len`         | `len(text: string) -> int`                        | Returns the number of bytes in a string (UTF-8).                                     |
+| `append`      | `append(list: []T, item: T) -> void`              | Adds an item to the end of a mutable array.                                          |
+| `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
@@ -1002,27 +1002,27 @@ String functions are builtins starting with `str_`. They never change their argu
 
 Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
 
-| Function | Returns | Description |
-| :------- | :------ | :---------- |
-| `str_equal(a, b, ignore_case = false)` | `bool` | `true` when both strings have the same text. With `ignore_case`, ASCII and Latin-1 letters match regardless of case. |
-| `str_char_count(text)` | `int` | Number of characters (Unicode code points). |
-| `str_concat(a, b)` | `string` | `b` after `a`. |
-| `str_join(parts, sep = "")` | `string` | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array. |
-| `str_byte_at(text, index)` | `StringError!byte` | The byte at byte offset `index`. |
-| `str_char_at(text, index)` | `StringError!string` | The `index`-th character, as a one-character string (`str_char_at("olá", 2)` is `"á"`). Scans from the start. |
-| `str_find(text, needle)` | `?int` | Byte offset of the first match, `null` if there is none. An empty `needle` is found at `0`. |
-| `str_contains(text, needle)` | `bool` | Whether `needle` appears in `text`. |
-| `str_starts_with(text, prefix)` | `bool` | Whether `text` starts with `prefix`. |
-| `str_ends_with(text, suffix)` | `bool` | Whether `text` ends with `suffix`. |
-| `str_count(text, needle)` | `int` | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`. |
-| `str_trim(text)` | `string` | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends. |
-| `str_upper(text)` / `str_lower(text)` | `string` | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged. |
-| `str_split(text, separator)` | `[]string` | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
-| `str_replace(text, old, new)` | `string` | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged. |
-| `str_repeat(text, count)` | `StringError!string` | `text` repeated `count` times; `0` gives `""`. |
-| `str_slice(text, start, stop)` | `StringError!string` | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, len(s))` is all of `s`. |
-| `str_to_int(text)` | `ConversionError!int` | Reads an int written like a Dusk literal. |
-| `str_to_float(text)` | `ConversionError!float` | Reads a float (or int) written like a Dusk literal. |
+| Function                               | Returns                 | Description                                                                                                                                                       |
+| :------------------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `str_equal(a, b, ignore_case = false)` | `bool`                  | `true` when both strings have the same text. With `ignore_case`, ASCII and Latin-1 letters match regardless of case.                                              |
+| `str_char_count(text)`                 | `int`                   | Number of characters (Unicode code points).                                                                                                                       |
+| `str_concat(a, b)`                     | `string`                | `b` after `a`.                                                                                                                                                    |
+| `str_join(parts, sep = "")`            | `string`                | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array.                                                                       |
+| `str_byte_at(text, index)`             | `StringError!byte`      | The byte at byte offset `index`.                                                                                                                                  |
+| `str_char_at(text, index)`             | `StringError!string`    | The `index`-th character, as a one-character string (`str_char_at("olá", 2)` is `"á"`). Scans from the start.                                                     |
+| `str_find(text, needle)`               | `?int`                  | Byte offset of the first match, `null` if there is none or `needle` is empty.                                                                                     |
+| `str_contains(text, needle)`           | `bool`                  | Whether `needle` appears in `text`; `false` for an empty `needle`.                                                                                                |
+| `str_starts_with(text, prefix)`        | `bool`                  | Whether `text` starts with `prefix`; `false` for an empty `prefix`.                                                                                               |
+| `str_ends_with(text, suffix)`          | `bool`                  | Whether `text` ends with `suffix`; `false` for an empty `suffix`.                                                                                                 |
+| `str_count(text, needle)`              | `int`                   | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`.                                                                             |
+| `str_trim(text)`                       | `string`                | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends.                                                                               |
+| `str_upper(text)` / `str_lower(text)`  | `string`                | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged.                                                              |
+| `str_split(text, separator)`           | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
+| `str_replace(text, old, new)`          | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
+| `str_repeat(text, count)`              | `StringError!string`    | `text` repeated `count` times; `0` gives `""`.                                                                                                                    |
+| `str_slice(text, start, stop)`         | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, len(s))` is all of `s`.                                                                     |
+| `str_to_int(text)`                     | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
+| `str_to_float(text)`                   | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 
 **Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Two builtin error sets exist, and their names can't be used for other error sets:
 

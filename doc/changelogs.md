@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- An empty pattern never matches in string search: `str_find(s, "")` returns `null`, and `str_contains`, `str_starts_with` and `str_ends_with` return `false` (like `str_count` giving `0` and `str_replace` leaving the text unchanged). `str_split(s, "")` still splits into characters
 - Benchmarks: new string benchmarks in every language: `strings` (1,000,000 interpolations, splits and joins), `concat` (200,000 plain concatenations) and `parse` (build and parse 500,000 CSV rows)
 - Faster string interpolation: each interpolated string is built by one `STR_BUILD` instruction (Lua `CONCAT` style: parts in consecutive registers, a per-chunk recipe of formatting kinds, built in batches of up to 32 parts), formatted into a reused VM scratch buffer and allocated once. Before, every part copied the whole string built so far, allocated a new heap string and a temporary page-allocator buffer (O(n²)). Arrays, structs, unions, buffers and nullable values are formatted right after they're evaluated (`TO_STRING`), so later `${}` side effects can't change them, as before
 - `str_equal(a, b, ignore_case = false)`: the new optional parameter compares ASCII and Latin-1 letters without case (`str_equal("José", "JOSÉ", true)`). `str_equal` now runs through `STR_OP`, and the unused `BYTES_EQ` opcode is gone
