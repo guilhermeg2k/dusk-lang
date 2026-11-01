@@ -441,6 +441,12 @@ pub const VM = struct {
                     };
                 },
 
+                .I_TO_BYTE => {
+                    const number = stack[stack_base + inst.b].int64;
+                    if (number < 0 or number > 255) return byteOutOfRange(number);
+                    stack[stack_base + inst.a] = .{ .int64 = number };
+                },
+
                 .I_TO_F => {
                     stack[stack_base + inst.a] = .{
                         .float64 = @floatFromInt(stack[stack_base + inst.a].int64),
@@ -513,6 +519,13 @@ pub const VM = struct {
                 else => unreachable,
             }
         }
+    }
+
+    noinline fn byteOutOfRange(number: i64) RunTimeError {
+        @branchHint(.cold);
+        if (@import("builtin").is_test) return RunTimeError.ByteOutOfRange;
+        std.debug.print("error: value {d} doesn't fit in byte (0..255)\n", .{number});
+        return RunTimeError.ByteOutOfRange;
     }
 
     noinline fn panicUnhandledError(self: *Self, err_value: v.Value) RunTimeError {

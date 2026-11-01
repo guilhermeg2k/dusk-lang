@@ -26,6 +26,7 @@ pub const TypeTable = struct {
                 .kind = switch (primitive_type) {
                     .float => .{ .float = {} },
                     .int => .{ .int = {} },
+                    .byte => .{ .byte = {} },
                     .string => .{ .string = {} },
                     .boolean => .{ .boolean = {} },
                     .void => .{ .void = {} },
@@ -71,6 +72,7 @@ pub const TypeTable = struct {
 
         if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
         if (type_from.is_nullable and !type_to.is_nullable) return false;
+        if (type_from.kind == .byte and type_to.kind == .int and type_from.is_nullable == type_to.is_nullable) return true;
 
         if (!type_from.is_nullable and type_to.is_nullable) {
             if (type_from.kind == .null) return true;
@@ -117,6 +119,7 @@ pub const TypeTable = struct {
         return switch (t.kind) {
             .float => if (t.is_nullable) "nullable float" else "float",
             .int => if (t.is_nullable) "nullable int" else "int",
+            .byte => if (t.is_nullable) "nullable byte" else "byte",
             .string => if (t.is_nullable) "nullable string" else "string",
             .boolean => if (t.is_nullable) "nullable boolean" else "boolean",
             .void => if (t.is_nullable) "nullable void" else "void",
@@ -268,6 +271,7 @@ pub const TypeTable = struct {
 pub const PrimitiveType = enum {
     float,
     int,
+    byte,
     string,
     boolean,
     void,
@@ -354,6 +358,7 @@ pub const Type = struct {
     kind: union(enum) {
         float,
         int,
+        byte,
         string,
         boolean,
         void,

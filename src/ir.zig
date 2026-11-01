@@ -254,6 +254,7 @@ pub const UnaryOpKind = enum {
     i_neg,
     f_neg,
     not,
+    to_byte,
 };
 
 pub const BinaryOpKind = enum {

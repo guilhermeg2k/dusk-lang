@@ -408,7 +408,7 @@ pub const ValueType = enum(u8) {
         }
 
         return switch (ty.kind) {
-            .int => .int64,
+            .int, .byte => .int64,
             .float => .float64,
             .boolean => .bool,
             .string => .string,

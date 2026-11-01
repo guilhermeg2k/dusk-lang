@@ -169,6 +169,8 @@ pub const Exp = union(enum) {
 
     float_literal: f64,
     int_literal: i64,
+    byte_literal: u8,
+    byte_cast: *ExpNode,
     string_literal: []const u8,
     string_interpolation: []const *ExpNode,
     bool_literal: bool,

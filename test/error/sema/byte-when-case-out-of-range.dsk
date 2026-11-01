@@ -1,0 +1,4 @@
+when 'a'
+    300 then echo(1) end
+    else then echo(2) end
+end

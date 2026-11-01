@@ -1,0 +1,2 @@
+let mut b: byte = 'a'
+b += 1

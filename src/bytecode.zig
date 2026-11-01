@@ -1172,8 +1172,8 @@ pub const BytecodeGen = struct {
 
         const op = OpCode.fromIrBinaryOp(bo.kind);
 
-        const left_is_int = self.type_table.getTypePtrById(bo.left.type_id).kind == .int;
-        const right_is_int = self.type_table.getTypePtrById(bo.right.type_id).kind == .int;
+        const left_is_int = self.isIntegerType(bo.left.type_id);
+        const right_is_int = self.isIntegerType(bo.right.type_id);
 
         switch (bo.kind) {
             .f_add,
@@ -1241,6 +1241,11 @@ pub const BytecodeGen = struct {
         };
     }
 
+    fn isIntegerType(self: *Self, type_id: tt.TypeId) bool {
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        return kind == .int or kind == .byte;
+    }
+
     fn genUnaryOp(self: *Self, uo: ir.UnaryOp, target_reg: u8) !void {
         const aux_reg = try self.genValue(uo.right, try self.consumeRegister());
         defer self.freeRegister();
@@ -1259,6 +1264,7 @@ pub const BytecodeGen = struct {
             .box_not_null => self.type_table.getPrimitive(.boolean),
             .i_neg => self.type_table.getPrimitive(.int),
             .f_neg => self.type_table.getPrimitive(.float),
+            .to_byte => self.type_table.getPrimitive(.byte),
         };
     }
 
@@ -1568,7 +1574,7 @@ pub const Chunk = struct {
             .I_TO_F,
             .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
-            .B_NOT, .I_NEG, .F_NEG => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
+            .B_NOT, .I_NEG, .F_NEG, .I_TO_BYTE => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
@@ -1683,6 +1689,7 @@ pub const OpCode = enum(u8) {
     TRUNC_DIV,
     I_TO_F,
     F_TO_I,
+    I_TO_BYTE,
 
     F_ADD,
     F_SUB,
@@ -1734,6 +1741,7 @@ pub const OpCode = enum(u8) {
             .not => Self.B_NOT,
             .i_neg => Self.I_NEG,
             .f_neg => Self.F_NEG,
+            .to_byte => Self.I_TO_BYTE,
         };
     }
 

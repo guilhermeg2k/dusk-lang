@@ -2,6 +2,9 @@
 
 ## v0.13 - Garou (in development)
 
+- `byte` type: one value from `0` to `255`, written as `'a'`, `'\n'` or `'\u{41}'` (one ASCII character or escape). Int constants that fit convert to `byte`, `byte(x)` converts an int and is checked at run time (out of range stops the program), and a byte converts to `int` automatically. Arithmetic on bytes gives an `int`. Bytes work in `when` (literal and range cases), as array indexes, as range-loop bounds and as `?byte`, and print as numbers. At run time a byte is stored like an `int`
+- Strings accept the `\'` escape
+- Planned the rest of v0.13 strings: `byte`, then a fixed-size `buffer` sharing one VM byte object with `string`, then a compile-time string literal pool, then string operations
 - Multiline strings with `"""`: the text starts on the line after the opening quotes, and the closing `"""` indentation is removed from every line. Under-indented lines, text on the opening or closing line and unclosed strings are compile errors. Escapes and interpolation work as in double-quoted strings
 - Breaking: a raw line break inside a double-quoted string is now a compile error (use `\n` or `"""`). Line breaks inside `${ ... }` are still allowed
 - Backlog: recorded readable enum, error and union formatting for both `echo` and string interpolation

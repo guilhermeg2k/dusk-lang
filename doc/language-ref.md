@@ -51,7 +51,7 @@ let total = 1 #= explanation =# + 2
 
 **Hoisting**: functions, structs, enums, unions and error sets can be used before they're defined. Variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `float`, `string`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -79,6 +79,7 @@ y = 20
 | Type     | Description                                   | Examples            |
 | :------- | :-------------------------------------------- | :------------------ |
 | `int`    | 64-bit signed integer                         | `42`, `-10`         |
+| `byte`   | Unsigned 8-bit value (`0` to `255`)           | `'a'`, `'\n'`, `65` |
 | `float`  | 64-bit floating-point number                  | `3.14`, `-0.5`      |
 | `string` | Text in double quotes                         | `"Hello"`           |
 | `bool`   | Boolean                                       | `true`, `false`     |
@@ -89,6 +90,7 @@ Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing clo
 | Escape | Value |
 | :----- | :---- |
 | `\"` | Double quote |
+| `\'` | Single quote |
 | `\\` | Backslash |
 | `\$` | Literal dollar sign |
 | `\n` | Line feed |
@@ -107,6 +109,30 @@ echo("A literal backslash: \\")
 ```
 
 A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. String concatenation is not implemented yet.
+
+### Bytes
+
+A `byte` holds one value from `0` to `255`. A byte literal is one ASCII character or one escape in single quotes: `'a'`, `'\n'`, `'\''`, `'\u{41}'`. Empty literals, more than one character and non-ASCII characters (`'é'` is two bytes in UTF-8) are compile errors. Bytes print as numbers.
+
+```nim
+let comma = ','
+let a: byte = 65           # an int constant that fits converts to byte
+let n = 200
+let b = byte(n)            # converting an int variable is checked at run time
+let digit = '7' - '0'      # arithmetic on bytes gives an int: 7
+let code: int = comma      # a byte converts to int automatically
+
+when comma
+    'a'..'z' then echo("lower") end
+    ',' then echo("comma") end
+    else then echo("other") end
+end
+```
+
+- An int constant outside `0..255` (`let b: byte = 300`, `byte(-1)`) is a compile error. `byte(x)` with an int variable outside that range stops the program with a runtime error.
+- An int variable never converts to `byte` implicitly: use `byte(x)`. So `b += 1` on a `byte` variable is an error, because `b + 1` is an `int`.
+- Bytes work as `when` subjects with literal and range cases (an `else` is required), as array indexes and as range-loop bounds.
+- `?byte` works like `?int`. A `[]byte` is a regular array, using as much memory per item as `[]int`.
 
 ### Multiline strings
 
@@ -914,7 +940,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert` or an index out of bounds still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds or a `byte(x)` outside `0..255` still stops the program and can't be caught.
 
 ## 12. Built-in Functions
 
@@ -939,7 +965,7 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
 
 ## 14. Known Limitations
 

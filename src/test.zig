@@ -206,6 +206,39 @@ test "invalid string escapes are rejected" {
     }
 }
 
+test "byte" {
+    try runCaseOutput("byte.dsk", "119\nc=119 newline=10\nlower\ndigit\nnewline\nother\n[97, 98, 39, 92, 34, 65, 0, 9, 13, 36]\n");
+}
+
+test "byte errors" {
+    try runCaseError("sema/byte-constant-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseError("sema/byte-negative-constant.dsk", error.ByteOutOfRange);
+    try runCaseError("sema/byte-from-int-variable.dsk", error.InvalidType);
+    try runCaseError("sema/byte-cast-string.dsk", error.InvalidType);
+    try runCaseError("sema/byte-arithmetic-assign.dsk", error.InvalidType);
+    try runCaseError("sema/byte-when-case-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseRuntimeError("byte-cast-negative.dsk", error.ByteOutOfRange);
+}
+
+test "invalid byte literals are rejected" {
+    const parser_sources = [_][]const u8{ "''", "'ab'", "'\xc3\xa9'", "'\\q'", "'\\u{80}'", "'\\n\\n'" };
+    for (parser_sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        const program = try std.fmt.allocPrint(arena.allocator(), "let b = {s}", .{source});
+        try testing.expectError(error.ParserError, dusk.compile(program));
+    }
+    const lexer_sources = [_][]const u8{ "'", "'a", "'\\'", "'a\nb'", "'\\" };
+    for (lexer_sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        try testing.expectError(error.LexerError, dusk.compile(source));
+    }
+}
+
 test "invalid UTF-8 and unterminated strings are rejected" {
     const sources = [_][]const u8{
         "\"",                "\"missing",                      "\"trailing\\",            "\"escaped\\\"",        "\"missing\n",

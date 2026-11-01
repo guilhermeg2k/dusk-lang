@@ -10,6 +10,7 @@ pub const Lexer = struct {
         .{ "let", Tag.let_kw },
         .{ "mut", Tag.mut_kw },
         .{ "int", Tag.int_kw },
+        .{ "byte", Tag.byte_kw },
         .{ "float", Tag.float_kw },
         .{ "string", Tag.string_kw },
         .{ "bool", Tag.bool_kw },
@@ -167,6 +168,9 @@ pub const Lexer = struct {
                     if (self.peekNext() == '"' and self.peekAt(2) == '"') return self.readMultilineStringLiteral();
                     return self.readStringLiteral();
                 },
+                '\'' => {
+                    return self.readByteLiteral();
+                },
                 else => {
                     return Token.init(Tag.err, self.cur_index, self.cur_index);
                 },
@@ -253,6 +257,23 @@ pub const Lexer = struct {
         }
 
         self.err_dispatcher.log("Unterminated string literal: expected closing quote (use \"\"\" for multiline strings)", .{ .start = start, .end = start });
+        return error.LexerError;
+    }
+
+    fn readByteLiteral(self: *Self) LexerError!Token {
+        const start = self.cur_index;
+        self.walk();
+        while (self.cur_index < self.end_index) {
+            if (self.peekCurrent() == '\'') return Token.init(Tag.byte_literal, start, self.cur_index);
+            if (self.peekCurrent() == '\n') break;
+            if (self.peekCurrent() == '\\') {
+                self.walk();
+                if (self.cur_index >= self.end_index or self.peekCurrent() == '\n') break;
+            }
+            self.walk();
+        }
+
+        self.err_dispatcher.log("Unterminated byte literal: expected closing \"'\"", .{ .start = start, .end = start });
         return error.LexerError;
     }
 
@@ -423,6 +444,7 @@ pub const Tag = enum {
     string_kw,
     float_kw,
     int_kw,
+    byte_kw,
     void_kw,
     bool_kw,
     struct_kw,
@@ -448,6 +470,7 @@ pub const Tag = enum {
     end_kw,
     string_literal,
     multiline_string_literal,
+    byte_literal,
     int_literal,
     float_literal,
     true_literal,

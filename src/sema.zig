@@ -1397,8 +1397,8 @@ pub const SemaAnalyzer = struct {
         const base_kind = self.type_table.getTypePtrById(base_type).kind;
 
         switch (base_kind) {
-            .int, .float, .@"enum", .@"union" => {},
-            else => return self.err_dispatcher.invalidType("int, float, enum or union", type_name, exp.loc),
+            .int, .byte, .float, .@"enum", .@"union" => {},
+            else => return self.err_dispatcher.invalidType("int, byte, float, enum or union", type_name, exp.loc),
         }
 
         return .{
@@ -1472,7 +1472,7 @@ pub const SemaAnalyzer = struct {
                             return self.err_dispatcher.whenDuplicateCase(self.err_dispatcher.src[exp.loc.start .. exp.loc.end + 1], exp.loc);
                         }
 
-                        if (subject.base_kind == .int) try self.checkWhenRangeOverlap(&prongs, .{ .start = value, .end = value }, exp.loc);
+                        if (subject.base_kind == .int or subject.base_kind == .byte) try self.checkWhenRangeOverlap(&prongs, .{ .start = value, .end = value }, exp.loc);
                         try prongs.seen_values.put(key, {});
                         values[i] = value;
                         ranges[i] = null;
@@ -1488,11 +1488,11 @@ pub const SemaAnalyzer = struct {
     }
 
     fn isNumericWhenSubject(subject: WhenSubject) bool {
-        return subject.base_kind == .int or subject.base_kind == .float;
+        return subject.base_kind == .int or subject.base_kind == .byte or subject.base_kind == .float;
     }
 
     fn evalWhenRangeBound(self: *Self, exp: *const ast.ExpNode, subject: WhenSubject) Errors!*ir.Value {
-        if (subject.base_kind == .int) return self.evalWhenCaseValue(exp, subject.base_type);
+        if (subject.base_kind == .int or subject.base_kind == .byte) return self.evalWhenCaseValue(exp, subject.base_type);
         const literal: ?f64 = switch (exp.data) {
             .float_literal => |number| number,
             .int_literal => |number| @floatFromInt(number),
@@ -1513,7 +1513,7 @@ pub const SemaAnalyzer = struct {
         if (!isNumericWhenSubject(subject)) return self.err_dispatcher.whenInvalidCase("range cases require an int or float subject", exp.loc);
         const start = try self.evalWhenRangeBound(exp.data.range.start, subject);
         const end = try self.evalWhenRangeBound(exp.data.range.end, subject);
-        const are_bounds_ordered = if (subject.base_kind == .int) start.data.i_int <= end.data.i_int else start.data.i_float <= end.data.i_float;
+        const are_bounds_ordered = if (subject.base_kind != .float) start.data.i_int <= end.data.i_int else start.data.i_float <= end.data.i_float;
         if (!are_bounds_ordered) return self.err_dispatcher.whenInvalidCase("range start must not exceed its end", exp.loc);
         return .{ .start = start, .end = end };
     }
@@ -1712,20 +1712,20 @@ pub const SemaAnalyzer = struct {
             return self.evalWhenErrorCaseValue(exp, expected_type);
         }
 
-        if (self.type_table.getTypePtrById(expected_type).kind == .int) {
-            const literal: ?i64 = switch (exp.data) {
-                .int_literal => |i| i,
-                .unary_exp => |un| if (un.op == .neg and un.right.data == .int_literal) -un.right.data.int_literal else null,
-                else => null,
-            };
+        if (self.isIntegerType(expected_type)) {
+            const literal = intConstant(exp);
+            const type_name = try self.type_table.name(expected_type, self.allocator);
 
             if (literal == null) {
                 const value = try self.evalExp(exp);
-                if (!self.type_table.eql(value.type_id, expected_type)) {
-                    return self.err_dispatcher.invalidType("int", try self.type_table.name(value.type_id, self.allocator), exp.loc);
+                if (!self.type_table.canCoerce(value.type_id, expected_type)) {
+                    return self.err_dispatcher.invalidType(type_name, try self.type_table.name(value.type_id, self.allocator), exp.loc);
                 }
-                return self.err_dispatcher.whenInvalidCase("int cases must be int literals", exp.loc);
+                return self.err_dispatcher.whenInvalidCase(try std.fmt.allocPrint(self.allocator, "{s} cases must be {s} literals", .{ type_name, type_name }), exp.loc);
             }
+
+            const is_byte = self.type_table.getTypePtrById(expected_type).kind == .byte;
+            if (is_byte and (literal.? < 0 or literal.? > 255)) return self.err_dispatcher.byteOutOfRange(literal.?, exp.loc);
 
             return ir.Value.init(self.allocator, .{ .data = .{ .i_int = literal.? }, .type_id = expected_type });
         }
@@ -2027,7 +2027,7 @@ pub const SemaAnalyzer = struct {
     fn evalIntegerRangeBound(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         const value = try self.evalExp(exp);
 
-        if (!self.type_table.eql(value.type_id, self.type_table.getPrimitive(.int))) {
+        if (!self.isIntegerType(value.type_id)) {
             return self.err_dispatcher.invalidType("int", try self.type_table.name(value.type_id, self.allocator), exp.loc);
         }
 
@@ -2588,6 +2588,9 @@ pub const SemaAnalyzer = struct {
             if (exp.data == .array_literal and base_kind == .array) {
                 return self.evalArrayLiteral(exp, base_kind.array);
             }
+            if (base_kind == .byte) {
+                if (intConstant(exp)) |number| return self.evalByteConstant(number, exp.loc);
+            }
         }
 
         const value = try self.evalExp(exp);
@@ -2599,6 +2602,35 @@ pub const SemaAnalyzer = struct {
         return value;
     }
 
+    fn intConstant(exp: *const ast.ExpNode) ?i64 {
+        return switch (exp.data) {
+            .int_literal => |number| number,
+            .byte_literal => |byte| byte,
+            .unary_exp => |unary| if (unary.op == .neg and unary.right.data == .int_literal) -unary.right.data.int_literal else null,
+            else => null,
+        };
+    }
+
+    fn evalByteConstant(self: *Self, number: i64, loc: err.Loc) Errors!*ir.Value {
+        if (number < 0 or number > 255) return self.err_dispatcher.byteOutOfRange(number, loc);
+        return ir.Value.init(self.allocator, .{ .data = .{ .i_int = number }, .type_id = self.type_table.getPrimitive(.byte) });
+    }
+
+    fn evalByteCast(self: *Self, operand: *const ast.ExpNode) Errors!*ir.Value {
+        if (intConstant(operand)) |number| return self.evalByteConstant(number, operand.loc);
+        const value = try self.evalExp(operand);
+        if (isValueLeaving(value)) return value;
+        if (!self.isIntegerType(value.type_id)) {
+            return self.err_dispatcher.invalidType("int or byte", try self.type_table.name(value.type_id, self.allocator), operand.loc);
+        }
+        const byte_type = self.type_table.getPrimitive(.byte);
+        if (value.type_id == byte_type) return value;
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .unary_op = .{ .kind = .to_byte, .right = value } },
+            .type_id = byte_type,
+        });
+    }
+
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
             .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null),
@@ -2608,6 +2640,12 @@ pub const SemaAnalyzer = struct {
             },
             .int_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_int = exp.data.int_literal }, .type_id = self.type_table.getPrimitive(.int) });
+            },
+            .byte_literal => |byte| {
+                return ir.Value.init(self.allocator, .{ .data = .{ .i_int = byte }, .type_id = self.type_table.getPrimitive(.byte) });
+            },
+            .byte_cast => |operand| {
+                return self.evalByteCast(operand);
             },
             .string_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_string = exp.data.string_literal }, .type_id = self.type_table.getPrimitive(.string) });
@@ -3093,7 +3131,7 @@ pub const SemaAnalyzer = struct {
                 const index = try self.evalExp(indexed_exp.index);
                 const index_type = index.type_id;
 
-                if (!self.type_table.eql(index_type, self.type_table.getPrimitive(.int))) {
+                if (!self.isIntegerType(index_type)) {
                     return self.err_dispatcher.invalidIndexing("int", try self.type_table.name(index_type, self.allocator), exp.loc);
                 }
 
@@ -3335,7 +3373,7 @@ pub const SemaAnalyzer = struct {
 
         switch (unary_exp.op) {
             .neg => {
-                if (!self.type_table.eql(exp_type, self.type_table.getPrimitive(.float)) and !self.type_table.eql(exp_type, self.type_table.getPrimitive(.int))) {
+                if (!self.isTypeNumber(exp_type)) {
                     return self.err_dispatcher.invalidType(
                         "int or float",
                         try self.type_table.name(exp_type, self.allocator),
@@ -3359,12 +3397,16 @@ pub const SemaAnalyzer = struct {
                 .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op, exp_type),
                 .right = exp_value,
             } },
-            .type_id = exp_type,
+            .type_id = if (exp_type == self.type_table.getPrimitive(.byte)) self.type_table.getPrimitive(.int) else exp_type,
         });
     }
 
     fn isTypeNumber(self: *Self, t: tt.TypeId) bool {
-        return self.type_table.eql(t, self.type_table.getPrimitive(.float)) or self.type_table.eql(t, self.type_table.getPrimitive(.int));
+        return self.type_table.eql(t, self.type_table.getPrimitive(.float)) or self.isIntegerType(t);
+    }
+
+    fn isIntegerType(self: *Self, t: tt.TypeId) bool {
+        return self.type_table.eql(t, self.type_table.getPrimitive(.int)) or self.type_table.eql(t, self.type_table.getPrimitive(.byte));
     }
 
     fn evalBinaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -3543,7 +3585,7 @@ pub const SemaAnalyzer = struct {
         const base_id = self.type_table.typeIdByNullableTypeId.get(target_type).?;
         const base = self.type_table.getTypePtrById(base_id);
         return switch (base.kind) {
-            .int, .float, .boolean, .@"enum" => true,
+            .int, .byte, .float, .boolean, .@"enum" => true,
             else => false,
         };
     }
@@ -3563,6 +3605,7 @@ pub const SemaAnalyzer = struct {
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
                 if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
+                if (std.mem.eql(u8, primitive_name, "byte")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.byte)) else self.type_table.getPrimitive(.byte);
                 if (std.mem.eql(u8, primitive_name, "int")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.int)) else self.type_table.getPrimitive(.int);
                 if (std.mem.eql(u8, primitive_name, "string")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.string)) else self.type_table.getPrimitive(.string);
                 if (std.mem.eql(u8, primitive_name, "bool")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.boolean)) else self.type_table.getPrimitive(.boolean);

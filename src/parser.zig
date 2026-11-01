@@ -917,6 +917,8 @@ pub const Parser = struct {
             .float_literal,
             .string_literal,
             .multiline_string_literal,
+            .byte_literal,
+            .byte_kw,
             .true_literal,
             .false_literal,
             .null_literal,
@@ -1102,6 +1104,7 @@ pub const Parser = struct {
             if (index >= raw.len) return self.invalidStringEscape(start_index, start, start, "Incomplete string escape");
             const escaped: u8 = switch (raw[index]) {
                 '"' => '"',
+                '\'' => '\'',
                 '\\' => '\\',
                 '$' => '$',
                 'n' => '\n',
@@ -1147,6 +1150,19 @@ pub const Parser = struct {
 
     fn parseStringLiteral(self: *Self, tk: Token) Errors!*ast.ExpNode {
         return self.parseStringContent(tk.loc.start + 1, tk.loc.end, null, tk.loc);
+    }
+
+    fn parseByteLiteral(self: *Self, tk: Token) Errors!*ast.ExpNode {
+        const decoded = try self.decodeStringLiteral(tk.loc.start + 1, tk.loc.end, null);
+        if (decoded.len == 0) {
+            self.err_dispatcher.log("Empty byte literal: expected one character", tk.loc);
+            return error.ParserError;
+        }
+        if (decoded.len > 1 or decoded[0] >= 0x80) {
+            self.err_dispatcher.log("Byte literal must be a single ASCII character or escape", tk.loc);
+            return error.ParserError;
+        }
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .byte_literal = decoded[0] }, .loc = tk.loc });
     }
 
     fn parseMultilineStringLiteral(self: *Self, tk: Token) Errors!*ast.ExpNode {
@@ -1261,6 +1277,17 @@ pub const Parser = struct {
             },
             .multiline_string_literal => {
                 return self.parseMultilineStringLiteral(tk);
+            },
+            .byte_literal => {
+                return self.parseByteLiteral(tk);
+            },
+            .byte_kw => {
+                _ = try self.expect(.l_paren);
+                const was_parsing_condition = self.leaveCondition();
+                defer self.is_parsing_condition = was_parsing_condition;
+                const operand = try self.parseExp(0);
+                const r_paren = try self.expect(.r_paren);
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .byte_cast = operand }, .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end } });
             },
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });
@@ -1423,7 +1450,7 @@ pub const Parser = struct {
         }
 
         return switch (tk.tag) {
-            .string_kw, .int_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+            .string_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .is_nullable = is_nullable,
             }),

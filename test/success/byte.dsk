@@ -1,0 +1,46 @@
+let a: byte = 119
+let c = 'w'
+assert(a == c)
+let n = 200
+let d = byte(n)
+assert(d == 200)
+let e: int = c
+assert(e == 119)
+let f = c + 1
+assert(f == 120)
+assert('7' - '0' == 7)
+assert(c / 2 == 59.5)
+assert(c < 200.5)
+assert(-c == -119)
+assert(byte(c) == c)
+echo(c)
+echo("c=$c newline=${'\n'}")
+func kind(x: byte) -> string
+    return when x
+        'a'..'z' then "lower" end
+        '0'..'9' then "digit" end
+        '\n' then "newline" end
+        else then "other" end
+    end
+end
+echo(kind('q'))
+echo(kind('5'))
+echo(kind('\n'))
+echo(kind(65))
+let mut maybe: ?byte = null
+assert((maybe orelse 'x') == 'x')
+maybe = 'y'
+assert(maybe == 'y')
+let items: []byte = ['a', 98, '\'', '\\', '"', '\u{41}', '\0', '\t', '\r', '$']
+echo(items)
+let numbers = [10, 20, 30]
+assert(numbers[byte(1)] == 20)
+let mut total = 0
+for 'a'..'c': i do
+    total += i
+end
+assert(total == 294)
+func next(x: byte) -> int
+    return x + 1
+end
+assert(next(255) == 256)

@@ -38,6 +38,18 @@ pub const ErrorDispatcher = struct {
         return error.InvalidType;
     }
 
+    pub fn byteOutOfRange(self: *Self, value: i64, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Value {d} doesn't fit in byte (0..255)",
+                .{value},
+            ),
+            loc,
+        );
+        return error.ByteOutOfRange;
+    }
+
     pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
@@ -573,6 +585,7 @@ pub const Errors = error{
     ParserError,
     SemaError,
     InvalidType,
+    ByteOutOfRange,
     InvalidReturnType,
     InvalidExpression,
     InvalidIndexing,
@@ -616,6 +629,7 @@ pub const Errors = error{
 pub const RunTimeError = error{
     OutOfMemory,
     ArrayOutOfBounds,
+    ByteOutOfRange,
     UnhandledError,
 };
 
