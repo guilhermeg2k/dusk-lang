@@ -25,6 +25,30 @@ test "string interpolation" {
         "true 1.5 null 7 1.5 true text null\n3 6 [1, 2] { 9 }\n<union>\n");
 }
 
+test "string interpolation in batches" {
+    try runCaseOutput("string-interpolation-large.dsk", "0=0 1=1 2=2 3=3 4=4 5=5 6=6 7=7 8=8 9=9 10=10 11=11 12=12 13=13 14=14 15=15 16=16 17=17 18=18 19=19 20=20 21=21 22=22 23=23 24=24 25=25 26=26 27=27 28=28 29=29 30=30 31=31 32=32 33=33 34=34 35=35 36=36 37=37 38=38 39=39\ntrue 1.5 [1, 2] 5 null done\n");
+    try runCaseOutput("string-interpolation-build-gc.dsk", "[item 5000: [5000, 5001] 5000 nested 5000 1.5 true, item 10000: [10000, 10001] 10000 nested 10000 1.5 true, " ++
+        "item 15000: [15000, 15001] 15000 nested 15000 1.5 true, item 20000: [20000, 20001] 20000 nested 20000 1.5 true]\n1034474\n");
+}
+
+test "string interpolation compiles to one STR_BUILD" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compile("let a = 1 let b = [2] let s = \"a=$a b=$b\"");
+    const chunk = program.functions[program.main_func_index].kind.dusk;
+    var builds: usize = 0;
+    var snapshots: usize = 0;
+    for (chunk.instructions) |inst| {
+        if (inst.op == .STR_BUILD) builds += 1;
+        if (inst.op == .TO_STRING) snapshots += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), builds);
+    try testing.expectEqual(@as(usize, 1), snapshots);
+    try testing.expectEqual(@as(usize, 1), chunk.build_recipes.len);
+    try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
+}
+
 test "string interpolation GC" {
     try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
 }

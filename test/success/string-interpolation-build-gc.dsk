@@ -1,0 +1,18 @@
+struct Point
+    x: int
+    y: int
+end
+let mut kept: []string = []
+let mut total = 0
+for 1..20000: i do
+    let items = [i, i + 1]
+    let point = Point(x = i, y = -i)
+    let label = "item"
+    let text = "$label $i: $items ${point.x} ${"nested $i"} ${1.5} ${i % 2 == 0}"
+    total += len(text)
+    if i % 5000 == 0 then
+        append(kept, text)
+    end
+end
+echo(kept)
+echo(total)

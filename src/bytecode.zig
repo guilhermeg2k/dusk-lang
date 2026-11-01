@@ -20,6 +20,7 @@ pub const BytecodeGen = struct {
     const_id_by_value: std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80),
 
     string_texts: std.ArrayList([]const u8),
+    chunk_build_recipes: std.ArrayList([]const v.ValueType) = .empty,
     string_id_by_text: std.StringHashMap(u16),
 
     chunk_instructions: std.ArrayList(Instruction),
@@ -243,6 +244,7 @@ pub const BytecodeGen = struct {
             self.chunk_constants = .empty;
             self.chunk_constants_types = .empty;
             self.chunk_heap_maps = .empty;
+            self.chunk_build_recipes = .empty;
             self.const_id_by_value.clearRetainingCapacity();
         }
 
@@ -260,6 +262,7 @@ pub const BytecodeGen = struct {
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
+            .build_recipes = try self.chunk_build_recipes.toOwnedSlice(self.allocator),
         };
 
         // chunk.disasamble();
@@ -542,25 +545,7 @@ pub const BytecodeGen = struct {
                 self.register_types[target_reg] = value.type_id;
             },
 
-            .string_interpolation => |parts| {
-                const accumulator = try self.consumeRegister();
-                defer self.freeRegister();
-                try self.genLoadString("", accumulator);
-                self.register_types[accumulator] = self.type_table.getPrimitive(.string);
-                for (parts) |part| {
-                    const part_reg = try self.genValue(part, try self.consumeRegister());
-                    defer self.freeRegister();
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .STRING_APPEND,
-                        .a = accumulator,
-                        .b = part_reg,
-                        .c = @intFromEnum(v.ValueType.fromTypeId(self.type_table, part.type_id)),
-                    });
-                    try self.recordHeapMap();
-                }
-                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = accumulator });
-                self.register_types[target_reg] = value.type_id;
-            },
+            .string_interpolation => |parts| try self.genStringBuild(parts, value.type_id, target_reg),
 
             .indexed => |idx| {
                 try self.genIndexedLoad(idx, value, target_reg);
@@ -657,6 +642,56 @@ pub const BytecodeGen = struct {
         }
 
         return target_reg;
+    }
+
+    const max_build_parts = 32;
+
+    fn isFormattedLate(kind: v.ValueType) bool {
+        return switch (kind) {
+            .int64, .float64, .bool, .null, .string => true,
+            else => false,
+        };
+    }
+
+    fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
+        const build_reg = try self.consumeRegister();
+        defer self.freeRegister();
+        var kinds: std.ArrayList(v.ValueType) = .empty;
+        defer kinds.deinit(self.allocator);
+        var index: usize = 0;
+        var has_previous = false;
+        while (index < parts.len) {
+            const saved_next_free = self.next_free_register;
+            kinds.clearRetainingCapacity();
+            if (has_previous) {
+                const previous_reg = try self.consumeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = previous_reg, .b = build_reg });
+                self.register_types[previous_reg] = result_type;
+                try kinds.append(self.allocator, .string);
+            }
+            while (index < parts.len and kinds.items.len < max_build_parts) : (index += 1) {
+                const part_reg = try self.genValue(parts[index], try self.consumeRegister());
+                const kind = v.ValueType.fromTypeId(self.type_table, parts[index].type_id);
+                if (!isFormattedLate(kind)) {
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .TO_STRING, .a = part_reg, .b = part_reg, .c = @intFromEnum(kind) });
+                    try self.recordHeapMap();
+                    self.register_types[part_reg] = result_type;
+                    try kinds.append(self.allocator, .string);
+                    continue;
+                }
+                try kinds.append(self.allocator, kind);
+            }
+            var build = Instruction{ .op = .STR_BUILD, .a = build_reg };
+            build.putBEx(@intCast(self.chunk_build_recipes.items.len));
+            try self.chunk_build_recipes.append(self.allocator, try self.allocator.dupe(v.ValueType, kinds.items));
+            try self.chunk_instructions.append(self.allocator, build);
+            try self.recordHeapMap();
+            self.register_types[build_reg] = result_type;
+            self.freeRegisterN(self.next_free_register - saved_next_free);
+            has_previous = true;
+        }
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = build_reg });
+        self.register_types[target_reg] = result_type;
     }
 
     fn genUnaryOpcode(self: *Self, op: OpCode, operand: *const ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
@@ -1570,6 +1605,7 @@ pub const Chunk = struct {
     constants: []v.Value,
     shadow_types: []v.ValueType,
     heap_maps: []const HeapMap,
+    build_recipes: []const []const v.ValueType,
 
     pub fn disasamble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
@@ -1655,7 +1691,8 @@ pub const Chunk = struct {
             .BYTES_COPY,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
-            .STRING_APPEND, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STR_BUILD => std.debug.print("R[{d}] RECIPE[{d}]", .{ inst.a, inst.bEx() }),
+            .TO_STRING, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1712,7 +1749,8 @@ pub const OpCode = enum(u8) {
     STORE_VAR,
 
     LOAD_STRING,
-    STRING_APPEND,
+    STR_BUILD,
+    TO_STRING,
 
     ARRAY_INIT,
     ARRAY_LOAD,
@@ -1809,7 +1847,8 @@ pub const OpCode = enum(u8) {
             .UNION_LOAD,
             .NULL_BOX_INIT,
             .NULL_BOX_STORE,
-            .STRING_APPEND,
+            .STR_BUILD,
+            .TO_STRING,
             .BYTES_NEW,
             .BYTES_COPY,
             .BYTES_CONCAT,

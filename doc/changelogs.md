@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Faster string interpolation: each interpolated string is built by one `STR_BUILD` instruction (Lua `CONCAT` style: parts in consecutive registers, a per-chunk recipe of formatting kinds, built in batches of up to 32 parts), formatted into a reused VM scratch buffer and allocated once. Before, every part copied the whole string built so far, allocated a new heap string and a temporary page-allocator buffer (O(n²)). Arrays, structs, unions, buffers and nullable values are formatted right after they're evaluated (`TO_STRING`), so later `${}` side effects can't change them, as before
 - `str_equal(a, b, ignore_case = false)`: the new optional parameter compares ASCII and Latin-1 letters without case (`str_equal("José", "JOSÉ", true)`). `str_equal` now runs through `STR_OP`, and the unused `BYTES_EQ` opcode is gone
 - `str_slice(s, start, stop) -> StringError!string` copies the bytes from `start` up to (not including) `stop`. Negative or reversed bounds, `stop > len(s)` and a bound inside a multi-byte character fail with `StringError.OutOfRange`
 - String transforms: `str_trim` (ASCII whitespace), `str_upper` / `str_lower` (ASCII and Latin-1 letters: `"ação"` ↔ `"AÇÃO"`), `str_split(s, sep) -> []string` (keeps empty pieces; an empty `sep` splits into characters), `str_replace(s, old, new)` (an empty `old` returns `s` unchanged) and `str_repeat(s, n) -> StringError!string` (negative `n` fails with `NegativeCount`). Allocating string functions size their result first, collect at most once, then reread their arguments

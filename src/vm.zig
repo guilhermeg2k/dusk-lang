@@ -16,6 +16,7 @@ pub const VM = struct {
     stack: [16383]v.Value,
     heap: Heap,
     static_store: []v.Value,
+    scratch: std.Io.Writer.Allocating,
 
     pub fn init(program: *const bc.Program) VM {
         return .{
@@ -32,21 +33,32 @@ pub const VM = struct {
                 .threshold = MIN_GC_THRESHOLD,
             },
             .static_store = &.{},
+            .scratch = .init(std.heap.page_allocator),
         };
     }
 
-    fn appendStringValue(self: *Self, target: *v.Value, value: v.Value, kind: v.ValueType) !void {
-        var buffer: std.Io.Writer.Allocating = .init(self.allocator);
-        defer buffer.deinit();
-        const prefix = v.HeapValue.getParentPtr(v.Bytes, target.heap_obj);
-        try buffer.writer.writeAll(prefix.slice());
-        @import("built-in.zig").BuiltIn.printValue(&buffer.writer, value, kind);
-        const bytes = buffer.written();
-        const size = v.Bytes.calc_size(bytes.len);
-        try self.maybeCollectGarbage(size);
-        const string = try v.Bytes.init(self.getCurrentHeapAllocator(), bytes, .string);
-        self.increaseHeapAllocationCount(size);
-        target.* = .{ .heap_obj = &string.obj };
+    noinline fn formatValue(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
+        self.scratch.clearRetainingCapacity();
+        BuiltIn.printValue(&self.scratch.writer, value, kind);
+        const bytes = self.scratch.written();
+        const result = try self.allocString(bytes.len);
+        @memcpy(result.mutableSlice(), bytes);
+        return .{ .heap_obj = &result.obj };
+    }
+
+    noinline fn buildString(self: *Self, parts: []const v.Value, kinds: []const v.ValueType) !v.Value {
+        self.scratch.clearRetainingCapacity();
+        for (parts, kinds) |part, kind| {
+            if (kind == .string) {
+                try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
+                continue;
+            }
+            BuiltIn.printValue(&self.scratch.writer, part, kind);
+        }
+        const bytes = self.scratch.written();
+        const result = try self.allocString(bytes.len);
+        @memcpy(result.mutableSlice(), bytes);
+        return .{ .heap_obj = &result.obj };
     }
 
     pub noinline fn run(self: *Self) !void {
@@ -76,9 +88,15 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = self.program.string_pool.values[inst.bEx()];
                 },
 
-                .STRING_APPEND => {
+                .TO_STRING => {
                     current_frame.cur_inst = cur_instruction;
-                    try self.appendStringValue(&stack[stack_base + inst.a], stack[stack_base + inst.b], @enumFromInt(inst.c));
+                    stack[stack_base + inst.a] = try self.formatValue(stack[stack_base + inst.b], @enumFromInt(inst.c));
+                },
+
+                .STR_BUILD => {
+                    current_frame.cur_inst = cur_instruction;
+                    const kinds = current_frame.function.kind.dusk.build_recipes[inst.bEx()];
+                    stack[stack_base + inst.a] = try self.buildString(stack[stack_base + inst.a + 1 ..][0..kinds.len], kinds);
                 },
 
                 .LOAD => {
