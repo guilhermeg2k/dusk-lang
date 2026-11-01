@@ -2,6 +2,8 @@
 
 ## v0.13 - Garou (in development)
 
+- String search: `str_find(s, x) -> ?int` (byte offset of the first match, `null` if none), `str_contains`, `str_starts_with`, `str_ends_with`, and `str_count(s, x) -> StringError!int` (non-overlapping matches). New builtin error set `StringError` with `OutOfRange`, `EmptyPattern` and `NegativeCount`; `str_count` with an empty pattern fails with `EmptyPattern`. User error ids (printed raw) shift by three more
+- String functions that take string arguments share one `STR_OP` opcode, generated from a spec table in `built-in.zig`
 - `s[i]` reads the byte at byte offset `i` of a string (bounds-checked), and `for s: b, i do` loops over a string's bytes, like buffers. Assigning `s[i] = x` is a compile error: strings are immutable
 - `str_to_int(s)` and `str_to_float(s)` read numbers written like Dusk literals (an optional `-`, digits, and for floats an optional `.digits`; `"3"` gives `3.0`). They return `ConversionError!int` / `ConversionError!float`, a new builtin error set with `Invalid` and `Overflow`. Inline builtins can now fail: the opcode skips the following `JUMP` to run the `try`/`catch` handler, like `RETURN_ERR`
 - Error values printed with `echo` or interpolation (still their global id) shift by two, because `ConversionError` takes the first two ids

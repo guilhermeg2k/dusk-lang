@@ -3782,13 +3782,15 @@ const Scope = struct {
         for (generated) |func| {
             try symbols.put(func.symbol.identifier, func.symbol);
         }
-        try symbols.put(buildin.BuiltIn.conversion_error_name, builtins.conversionErrorSymbol(generated.len));
+        for (buildin.BuiltIn.error_sets, 0..) |error_set, i| {
+            try symbols.put(error_set.name, builtins.errorSetSymbol(i, generated.len + i));
+        }
 
         return Self{
             .allocator = alloc,
             .symbol_table = try SymbolTable.init(alloc, null, symbols),
             .return_type_id = return_type_id,
-            .next_uid = generated.len + 1,
+            .next_uid = generated.len + buildin.BuiltIn.error_sets.len,
             .next_fn_uid = generated.len,
         };
     }

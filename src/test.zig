@@ -22,7 +22,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 3 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 6 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation GC" {
@@ -226,6 +226,12 @@ test "string indexing and loops" {
     try runCaseOutput("string-index.dsk", "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
     try runCaseError("sema/string-index-assign.dsk", error.NotMutable);
     try runCaseRuntimeError("string-index-out-of-bounds.dsk", error.IndexOutOfBounds);
+}
+
+test "string search" {
+    try runCaseOutput("string-search.dsk", "2\nempty pattern\n6\nnull\n");
+    try runCaseError("sema/str-count-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/string-error-redefined.dsk", error.AlreadyDefined);
 }
 
 test "string literal pool" {

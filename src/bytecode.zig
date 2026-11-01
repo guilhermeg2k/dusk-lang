@@ -1655,7 +1655,7 @@ pub const Chunk = struct {
             .BYTES_LEN,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
-            .STRING_APPEND, .BYTES_COPY, .STR_TO_NUMBER => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .STRING_APPEND, .BYTES_COPY, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1730,6 +1730,7 @@ pub const OpCode = enum(u8) {
     BYTES_CONCAT,
     STR_JOIN,
     STR_TO_NUMBER,
+    STR_OP,
 
     STRUCT_INIT,
     STRUCT_LOAD,
@@ -1797,7 +1798,7 @@ pub const OpCode = enum(u8) {
     JUMP_IF_FALSE,
 
     pub fn canFail(self: Self) bool {
-        return self == .CALL or self == .STR_TO_NUMBER;
+        return self == .CALL or self == .STR_TO_NUMBER or self == .STR_OP;
     }
 
     pub fn canTriggerGc(self: Self) bool {
@@ -1814,6 +1815,7 @@ pub const OpCode = enum(u8) {
             .BYTES_COPY,
             .BYTES_CONCAT,
             .STR_JOIN,
+            .STR_OP,
             .CALL,
             => true,
             else => false,
@@ -1865,6 +1867,14 @@ pub const OpCode = enum(u8) {
             .b_cmp_neq => Self.B_NEQ,
         };
     }
+};
+
+pub const StringOp = enum(u8) {
+    find,
+    contains,
+    starts_with,
+    ends_with,
+    count,
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };

@@ -180,6 +180,13 @@ pub const VM = struct {
                     if (result.has_failed) cur_instruction += 1;
                 },
 
+                .STR_OP => {
+                    current_frame.cur_inst = cur_instruction;
+                    const result = try self.runStringOp(@enumFromInt(inst.c), stack[stack_base + inst.b ..]);
+                    stack[stack_base + inst.a] = result.value;
+                    if (result.has_failed) cur_instruction += 1;
+                },
+
                 .BYTES_COPY => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.copyBytes(&stack[stack_base + inst.b], @enumFromInt(inst.c));
@@ -635,9 +642,47 @@ pub const VM = struct {
         return array.getDataPtr()[0..array.len];
     }
 
-    const Conversion = struct { value: v.Value, has_failed: bool };
+    const OpResult = struct { value: v.Value, has_failed: bool };
 
-    noinline fn convertText(text_value: v.Value, kind: v.ValueType) Conversion {
+    fn bytesArg(args: []const v.Value, index: usize) []const u8 {
+        return v.HeapValue.getParentPtr(v.Bytes, args[index].heap_obj).slice();
+    }
+
+    fn stringFailure(id: i64) OpResult {
+        return .{ .value = .{ .int64 = id }, .has_failed = true };
+    }
+
+    fn succeeded(value: v.Value) OpResult {
+        return .{ .value = value, .has_failed = false };
+    }
+
+    noinline fn runStringOp(self: *Self, op: bc.StringOp, args: []v.Value) !OpResult {
+        const text = bytesArg(args, 0);
+        return switch (op) {
+            .find => {
+                const index = std.mem.indexOf(u8, text, bytesArg(args, 1)) orelse return succeeded(v.NULL_VALUE);
+                return succeeded(try self.boxInt(@intCast(index)));
+            },
+            .contains => succeeded(.{ .bool = std.mem.indexOf(u8, text, bytesArg(args, 1)) != null }),
+            .starts_with => succeeded(.{ .bool = std.mem.startsWith(u8, text, bytesArg(args, 1)) }),
+            .ends_with => succeeded(.{ .bool = std.mem.endsWith(u8, text, bytesArg(args, 1)) }),
+            .count => {
+                const needle = bytesArg(args, 1);
+                if (needle.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
+                return succeeded(.{ .int64 = @intCast(std.mem.count(u8, text, needle)) });
+            },
+        };
+    }
+
+    fn boxInt(self: *Self, number: i64) !v.Value {
+        const size = v.NullBox.calc_size();
+        try self.maybeCollectGarbage(size);
+        const box = try v.NullBox.init(self.getCurrentHeapAllocator(), .{ .int64 = number }, .int64);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &box.obj };
+    }
+
+    noinline fn convertText(text_value: v.Value, kind: v.ValueType) OpResult {
         const text = v.HeapValue.getParentPtr(v.Bytes, text_value.heap_obj).slice();
         const value: v.Value = switch (kind) {
             .int64 => .{ .int64 = parseIntText(text) catch |failure| return conversionFailure(failure) },
@@ -647,7 +692,7 @@ pub const VM = struct {
         return .{ .value = value, .has_failed = false };
     }
 
-    fn conversionFailure(failure: ConversionError) Conversion {
+    fn conversionFailure(failure: ConversionError) OpResult {
         const id = switch (failure) {
             error.Invalid => BuiltIn.conversion_invalid_id,
             error.Overflow => BuiltIn.conversion_overflow_id,
