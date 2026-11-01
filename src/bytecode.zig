@@ -2,6 +2,7 @@ const std = @import("std");
 const ir = @import("ir.zig");
 const v = @import("value.zig");
 const tt = @import("type_table.zig");
+const StringPool = @import("string_pool.zig").StringPool;
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -134,7 +135,7 @@ pub const BytecodeGen = struct {
 
         try funcs.append(self.allocator, main_func);
 
-        const string_pool = try v.StringPool.init(self.allocator, self.string_texts.items);
+        const string_pool = try StringPool.init(self.allocator, self.string_texts.items);
         self.string_texts.clearAndFree(self.allocator);
         self.string_id_by_text.clearAndFree();
 
@@ -1493,7 +1494,7 @@ pub const HeapMap = struct {
 };
 
 pub const Program = struct {
-    string_pool: v.StringPool,
+    string_pool: StringPool,
     main_func_index: usize,
     functions: []const Function,
     static_count: u16,
