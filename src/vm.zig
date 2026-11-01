@@ -158,12 +158,6 @@ pub const VM = struct {
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
                 },
 
-                .BYTES_EQ => {
-                    const left = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
-                    const right = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.c].heap_obj);
-                    stack[stack_base + inst.a] = .{ .bool = left.eql(right) };
-                },
-
                 .BYTES_CONCAT => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.concatBytes(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
@@ -659,6 +653,12 @@ pub const VM = struct {
     noinline fn runStringOp(self: *Self, op: bc.StringOp, args: []v.Value) !OpResult {
         const text = bytesArg(args, 0);
         return switch (op) {
+            .equal => {
+                const left = v.HeapValue.getParentPtr(v.Bytes, args[0].heap_obj);
+                const right = v.HeapValue.getParentPtr(v.Bytes, args[1].heap_obj);
+                if (!args[2].bool) return succeeded(.{ .bool = left.eql(right) });
+                return succeeded(.{ .bool = isEqualIgnoringCase(left.slice(), right.slice()) });
+            },
             .find => {
                 const index = std.mem.indexOf(u8, text, bytesArg(args, 1)) orelse return succeeded(v.NULL_VALUE);
                 return succeeded(try self.boxInt(@intCast(index)));
@@ -731,6 +731,26 @@ pub const VM = struct {
     }
 
     const ascii_whitespace = " \t\n\r\x0b\x0c";
+
+    fn isEqualIgnoringCase(left: []const u8, right: []const u8) bool {
+        if (left.len != right.len) return false;
+        var index: usize = 0;
+        while (index < left.len) : (index += 1) {
+            const is_latin_pair = left[index] == 0xC3 and right[index] == 0xC3 and index + 1 < left.len;
+            if (is_latin_pair) {
+                index += 1;
+                if (lowerLatinByte(left[index]) != lowerLatinByte(right[index])) return false;
+                continue;
+            }
+            if (std.ascii.toLower(left[index]) != std.ascii.toLower(right[index])) return false;
+        }
+        return true;
+    }
+
+    fn lowerLatinByte(second: u8) u8 {
+        const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
+        return if (is_upper_latin) second + 0x20 else second;
+    }
 
     fn changeCase(data: []u8, is_upper: bool) void {
         var index: usize = 0;

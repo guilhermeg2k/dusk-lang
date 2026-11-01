@@ -3,6 +3,7 @@ const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const sema = @import("sema.zig");
 const tt = @import("type_table.zig");
+const ir = @import("ir.zig");
 
 const Symbol = sema.Symbol;
 const TypeId = tt.TypeId;
@@ -72,7 +73,7 @@ pub const BuiltIn = struct {
         .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
         .{ .name = "buffer_from", .kind = .{ .@"inline" = .{ .gen = &bufferFromCodeGen, .num_args = 1 } } },
         .{ .name = "string_from", .kind = .{ .@"inline" = .{ .gen = &stringFromCodeGen, .num_args = 1 } } },
-        .{ .name = "str_equal", .kind = .{ .@"inline" = .{ .gen = &strEqualCodeGen, .num_args = 2 } } },
+        .{ .name = "str_equal", .kind = .{ .@"inline" = .{ .gen = &strEqualCodeGen, .num_args = 3 } } },
         .{ .name = "str_char_count", .kind = .{ .host = .{ .func = &strCharCountImpl, .num_args = 1 } } },
         .{ .name = "str_concat", .kind = .{ .@"inline" = .{ .gen = &strConcatCodeGen, .num_args = 2 } } },
         .{ .name = "str_join", .kind = .{ .@"inline" = .{ .gen = &strJoinCodeGen, .num_args = 2 } } },
@@ -346,6 +347,7 @@ pub const BuiltIn = struct {
         symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "a", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
             .{ .identifier = "b", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+            .{ .identifier = "ignore_case", .type_id = self.boolean_type_id, .is_mut = false, .default_value = try ir.Value.init(self.alloc, .{ .data = .{ .i_bool = false }, .type_id = self.boolean_type_id }) },
         }, self.boolean_type_id);
         return BuiltInFn{ .symbol = symbol };
     }
@@ -534,7 +536,7 @@ pub const BuiltIn = struct {
 
     fn strEqualCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .BYTES_EQ, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
+        try list.append(alloc, .{ .op = .STR_OP, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(bc.StringOp.equal) });
         return try list.toOwnedSlice(alloc);
     }
 

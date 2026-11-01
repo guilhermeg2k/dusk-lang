@@ -1644,7 +1644,6 @@ pub const Chunk = struct {
             .ARRAY_STORE,
             .BYTES_GET,
             .BYTES_SET,
-            .BYTES_EQ,
             .BYTES_CONCAT,
             .STR_JOIN,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1726,7 +1725,6 @@ pub const OpCode = enum(u8) {
     BYTES_GET,
     BYTES_SET,
     BYTES_COPY,
-    BYTES_EQ,
     BYTES_CONCAT,
     STR_JOIN,
     STR_TO_NUMBER,
@@ -1870,6 +1868,7 @@ pub const OpCode = enum(u8) {
 };
 
 pub const StringOp = enum(u8) {
+    equal,
     find,
     contains,
     starts_with,
