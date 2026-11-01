@@ -226,6 +226,10 @@ test "buffer" {
         "buf=[104, 105, 0, 255]\nnull\n4\n[[0], [0, 0]]\n[]\n\n[0, 9]\n2\n");
 }
 
+test "buffer annotations and parameters" {
+    try runCaseOutput("buffer-params.dsk", "[[120, 120, 120, 120]]\n");
+}
+
 test "buffer GC" {
     try runCaseOutput("buffer-gc.dsk", "388894\n");
 }
@@ -238,6 +242,8 @@ test "buffer errors" {
     try runCaseError("sema/buffer-size-string.dsk", error.InvalidType);
     try runCaseError("sema/string-from-string.dsk", error.InvalidType);
     try runCaseError("sema/buffer-as-string.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-immutable-param.dsk", error.NotMutable);
+    try runCaseError("sema/buffer-mut-param-immutable-arg.dsk", error.NotMutable);
     try runCaseRuntimeError("buffer-index-out-of-bounds.dsk", error.IndexOutOfBounds);
     try runCaseRuntimeError("buffer-store-negative-index.dsk", error.IndexOutOfBounds);
     try runCaseRuntimeError("buffer-negative-size.dsk", error.NegativeBufferSize);

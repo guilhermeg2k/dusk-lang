@@ -1,0 +1,16 @@
+let mut data: buffer = buffer(4)
+func fill(mut b: buffer, value: byte) -> void
+    for 0..len(b) - 1: i do
+        b[i] = value
+    end
+end
+func first(b: buffer) -> byte
+    return b[0]
+end
+fill(data, 'x')
+assert(first(data) == 'x')
+assert(data[3] == 'x')
+let maybe: ?buffer = null
+assert(maybe == null)
+let list: []buffer = [data]
+echo(list)

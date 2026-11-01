@@ -2234,7 +2234,8 @@ pub const SemaAnalyzer = struct {
                 return self.err_dispatcher.unionParamsCantBeMutable(param.identifier, loc);
             }
 
-            if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind != .array and self.type_table.getTypePtrById(param.type_id).kind != .@"struct") {
+            const param_kind = self.type_table.getTypePtrById(param.type_id).kind;
+            if (param.is_mut and param_kind != .array and param_kind != .@"struct" and param_kind != .buffer) {
                 return self.err_dispatcher.primitiveParamsCantBeMutable(loc);
             }
 
@@ -2978,7 +2979,8 @@ pub const SemaAnalyzer = struct {
                     }
                 }
 
-                if (self.type_table.getTypePtrById(param.type_id).kind == .array and param.is_mut and _exp.data != .array_literal) {
+                const param_kind = self.type_table.getTypePtrById(param.type_id).kind;
+                if ((param_kind == .array or param_kind == .buffer) and param.is_mut and _exp.data != .array_literal) {
                     if (fn_call_arg_value.data == .identifier) {
                         const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.name);
                         if (!symbol.kind.variable.is_mut) {

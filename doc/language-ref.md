@@ -155,7 +155,8 @@ let bytes = buffer_from("olá")    # [111, 108, 195, 161]
 let text = string_from(bytes) orelse "not UTF-8"
 ```
 
-- Writing requires a `let mut` variable (or a mutable struct holding the buffer). An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
+- The type is written `buffer`: `let mut data: buffer = buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
+- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a `let mut` variable. An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
 - `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, or returns `null` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
 - `==` on buffers compares identity, like strings today.
 
