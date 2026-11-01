@@ -668,7 +668,7 @@ pub const VM = struct {
             .ends_with => succeeded(.{ .bool = std.mem.endsWith(u8, text, bytesArg(args, 1)) }),
             .count => {
                 const needle = bytesArg(args, 1);
-                if (needle.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
+                if (needle.len == 0) return succeeded(.{ .int64 = 0 });
                 return succeeded(.{ .int64 = @intCast(std.mem.count(u8, text, needle)) });
             },
             .trim => {
@@ -698,7 +698,7 @@ pub const VM = struct {
             },
             .replace => {
                 const old = bytesArg(args, 1);
-                if (old.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
+                if (old.len == 0) return succeeded(args[0]);
                 const matches = std.mem.count(u8, text, old);
                 const total = text.len - matches * old.len + matches * bytesArg(args, 2).len;
                 const result = try self.allocString(total);
@@ -717,11 +717,7 @@ pub const VM = struct {
                 @memcpy(result.mutableSlice(), bytesArg(args, 0)[start_index..end_index]);
                 return succeeded(.{ .heap_obj = &result.obj });
             },
-            .split => {
-                const separator = bytesArg(args, 1);
-                if (separator.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
-                return succeeded(try self.splitString(args));
-            },
+            .split => succeeded(try self.splitString(args)),
         };
     }
 
@@ -778,19 +774,48 @@ pub const VM = struct {
         return result;
     }
 
+    const Pieces = struct {
+        text: []const u8,
+        separator: []const u8,
+        index: ?usize = 0,
+
+        fn next(self: *Pieces) ?[]const u8 {
+            const start = self.index orelse return null;
+            if (self.separator.len == 0) {
+                if (start >= self.text.len) {
+                    self.index = null;
+                    return null;
+                }
+                var end = start + 1;
+                while (!isCharBoundary(self.text, end)) end += 1;
+                self.index = end;
+                return self.text[start..end];
+            }
+            if (std.mem.indexOfPos(u8, self.text, start, self.separator)) |position| {
+                self.index = position + self.separator.len;
+                return self.text[start..position];
+            }
+            self.index = null;
+            return self.text[start..];
+        }
+    };
+
     fn splitString(self: *Self, args: []v.Value) !v.Value {
-        const text = bytesArg(args, 0);
-        const separator = bytesArg(args, 1);
-        const piece_count = std.mem.count(u8, text, separator) + 1;
-        var total = v.Array.calc_size(piece_count);
-        var pieces = std.mem.splitSequence(u8, text, separator);
-        while (pieces.next()) |piece| total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
+        var piece_count: usize = 0;
+        var total: usize = 0;
+        var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+        while (pieces.next()) |piece| {
+            piece_count += 1;
+            total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
+        }
+        const capacity = @max(piece_count, 1);
+        total += v.Array.calc_size(capacity);
         try self.maybeCollectGarbage(total);
 
         const allocator = self.getCurrentHeapAllocator();
-        const array = try v.Array.init(allocator, .string, piece_count);
-        self.increaseHeapAllocationCount(v.Array.calc_size(piece_count));
-        pieces = std.mem.splitSequence(u8, bytesArg(args, 0), bytesArg(args, 1));
+        const array = try v.Array.init(allocator, .string, capacity);
+        self.increaseHeapAllocationCount(v.Array.calc_size(capacity));
+        pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
         while (pieces.next()) |piece| {
             const bytes = try v.Bytes.init(allocator, piece, .string);
             self.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));

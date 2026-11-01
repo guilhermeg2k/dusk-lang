@@ -2,10 +2,10 @@ let mut kept: []string = []
 let mut total = 0
 for 1..20000: i do
     let line = "  key$i = value$i , extra  "
-    let parts = try str_split(str_trim(line), ",")
-    let pair = try str_split(parts[0], "=")
+    let parts = str_split(str_trim(line), ",")
+    let pair = str_split(parts[0], "=")
     let key = str_upper(str_trim(pair[0]))
-    let value = try str_replace(str_trim(pair[1]), "value", "v")
+    let value = str_replace(str_trim(pair[1]), "value", "v")
     let padded = try str_repeat("-", 3)
     total += len(key) + len(value) + len(padded)
     if i % 5000 == 0 then

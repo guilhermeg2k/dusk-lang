@@ -16,20 +16,13 @@ assert(str_starts_with(text, ""))
 assert(str_ends_with(text, "olá"))
 assert(!str_ends_with(text, "ol"))
 assert(str_ends_with("", ""))
-assert((try str_count(text, "olá")) == 2)
-assert((try str_count("aaaa", "aa")) == 2)
-assert((try str_count("abc", "z")) == 0)
+assert((str_count(text, "olá")) == 2)
+assert((str_count("aaaa", "aa")) == 2)
+assert((str_count("abc", "z")) == 0)
 assert((text |> str_contains("mundo")))
-func count_or_reason(text: string, needle: string) -> string
-    let n = str_count(text, needle) catch e then
-        return when e
-            StringError.EmptyPattern then "empty pattern" end
-            else then "other" end
-        end
-    end
-    return "$n"
-end
-echo(count_or_reason(text, "olá"))
-echo(count_or_reason(text, ""))
+assert(str_count(text, "") == 0)
+assert(str_count("", "") == 0)
+echo(str_count(text, "olá"))
+echo(str_count(text, ""))
 echo(str_find(text, "mundo"))
 echo(str_find(text, "?"))

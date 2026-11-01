@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Revised string API: an empty pattern is no longer an error. `str_count(s, "")` is `0`, `str_split(s, "")` splits into characters (`"olá"` gives `["o", "l", "á"]`, `""` gives `[]`), and `str_replace(s, "", new)` returns `s` unchanged, so `str_count`, `str_split` and `str_replace` can't fail anymore. `StringError` is now `OutOfRange`, `NegativeCount` and `InvalidUtf8`
 - `str_equal(a, b, ignore_case = false)`: the new optional parameter compares ASCII and Latin-1 letters without case (`str_equal("José", "JOSÉ", true)`). `str_equal` now runs through `STR_OP`, and the unused `BYTES_EQ` opcode is gone
 - `str_slice(s, start, stop) -> StringError!string` copies the bytes from `start` up to (not including) `stop`. Negative or reversed bounds, `stop > len(s)` and a bound inside a multi-byte character fail with `StringError.OutOfRange`
 - String transforms: `str_trim` (ASCII whitespace), `str_upper` / `str_lower` (ASCII and Latin-1 letters: `"ação"` ↔ `"AÇÃO"`), and the failing `str_split(s, sep) -> StringError![]string`, `str_replace(s, old, new) -> StringError!string` (empty `sep` / `old` fail with `EmptyPattern`) and `str_repeat(s, n) -> StringError!string` (negative `n` fails with `NegativeCount`). Allocating string functions size their result first, collect at most once, then reread their arguments

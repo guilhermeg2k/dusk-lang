@@ -229,19 +229,17 @@ test "string indexing and loops" {
 }
 
 test "string search" {
-    try runCaseOutput("string-search.dsk", "2\nempty pattern\n6\nnull\n");
-    try runCaseError("sema/str-count-unhandled.dsk", error.UnhandledError);
+    try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
     try runCaseError("sema/string-error-redefined.dsk", error.AlreadyDefined);
 }
 
 test "string transforms" {
     try runCaseOutput("string-transform.dsk", "[hello world]\n[]\n[none]\n[x]\n[\u{A0}x\u{A0}]\n[a, b, , c]\n[abc]\n1\n[a, b, c]\n[ol\u{E1}, mundo]\n" ++
         "a+b+c\nbbbbbb\nheo\nabc\nHELLO, A\u{C7}\u{C3}O! \u{DF} \u{FF} \u{D7} \u{F7} \u{3B1}\nhello, a\u{E7}\u{E3}o! \u{17D} \u{3A9}\n" ++
-        "ababab\n[]\n[]\n2 parts\nempty pattern\nempty pattern\nnegative count\nabab\n[a,  b , c]\n");
+        "ababab\n[]\n[]\n[o, l, \u{E1}]\n0\n[a, b]\nabc\nnegative count\nabab\n[a,  b , c]\n");
     try runCaseOutput("string-transform-gc.dsk", "[KEY5000v5000,  extra, KEY10000v10000,  extra, KEY15000v15000,  extra, KEY20000v20000,  extra]\n317788\n");
     try runCaseError("sema/str-trim-int.dsk", error.InvalidType);
     try runCaseError("sema/str-repeat-string-count.dsk", error.InvalidType);
-    try runCaseError("sema/str-split-unhandled.dsk", error.UnhandledError);
     try runCaseRuntimeError("str-repeat-unhandled.dsk", error.UnhandledError);
 }
 

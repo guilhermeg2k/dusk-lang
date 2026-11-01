@@ -36,10 +36,10 @@ pub const BuiltIn = struct {
         .{ .name = "str_contains", .op = .contains, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .boolean },
         .{ .name = "str_starts_with", .op = .starts_with, .params = &.{ .{ "text", .string }, .{ "prefix", .string } }, .result = .boolean },
         .{ .name = "str_ends_with", .op = .ends_with, .params = &.{ .{ "text", .string }, .{ "suffix", .string } }, .result = .boolean },
-        .{ .name = "str_count", .op = .count, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .int, .can_fail = true },
+        .{ .name = "str_count", .op = .count, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .int },
         .{ .name = "str_trim", .op = .trim, .params = &.{.{ "text", .string }}, .result = .string },
-        .{ .name = "str_split", .op = .split, .params = &.{ .{ "text", .string }, .{ "separator", .string } }, .result = .string_array, .can_fail = true },
-        .{ .name = "str_replace", .op = .replace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string, .can_fail = true },
+        .{ .name = "str_split", .op = .split, .params = &.{ .{ "text", .string }, .{ "separator", .string } }, .result = .string_array },
+        .{ .name = "str_replace", .op = .replace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string },
         .{ .name = "str_upper", .op = .upper, .params = &.{.{ "text", .string }}, .result = .string },
         .{ .name = "str_lower", .op = .lower, .params = &.{.{ "text", .string }}, .result = .string },
         .{ .name = "str_slice", .op = .slice, .params = &.{ .{ "text", .string }, .{ "start", .int }, .{ "stop", .int } }, .result = .string, .can_fail = true },
@@ -143,7 +143,7 @@ pub const BuiltIn = struct {
 
     pub const error_sets = [_]ErrorSetSpec{
         .{ .name = "ConversionError", .variants = &.{ "Invalid", "Overflow" } },
-        .{ .name = "StringError", .variants = &.{ "OutOfRange", "EmptyPattern", "NegativeCount" } },
+        .{ .name = "StringError", .variants = &.{ "OutOfRange", "NegativeCount", "InvalidUtf8" } },
     };
     const conversion_error_index = 0;
     const string_error_index = 1;
@@ -151,8 +151,8 @@ pub const BuiltIn = struct {
     pub const conversion_invalid_id: i64 = 1;
     pub const conversion_overflow_id: i64 = 2;
     pub const string_out_of_range_id: i64 = 3;
-    pub const string_empty_pattern_id: i64 = 4;
-    pub const string_negative_count_id: i64 = 5;
+    pub const string_negative_count_id: i64 = 4;
+    pub const string_invalid_utf8_id: i64 = 5;
 
     alloc: std.mem.Allocator,
     type_table: *TypeTable,
@@ -207,7 +207,7 @@ pub const BuiltIn = struct {
                 .is_nullable = false,
             });
         }
-        std.debug.assert(type_table.error_names.items.len == string_negative_count_id + 1);
+        std.debug.assert(type_table.error_names.items.len == string_invalid_utf8_id + 1);
         return type_ids;
     }
 
