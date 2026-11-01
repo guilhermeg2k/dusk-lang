@@ -36,6 +36,12 @@ pub const BuiltIn = struct {
         .{ .name = "str_starts_with", .op = .starts_with, .params = &.{ .{ "text", .string }, .{ "prefix", .string } }, .result = .boolean },
         .{ .name = "str_ends_with", .op = .ends_with, .params = &.{ .{ "text", .string }, .{ "suffix", .string } }, .result = .boolean },
         .{ .name = "str_count", .op = .count, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .int, .can_fail = true },
+        .{ .name = "str_trim", .op = .trim, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_split", .op = .split, .params = &.{ .{ "text", .string }, .{ "separator", .string } }, .result = .string_array, .can_fail = true },
+        .{ .name = "str_replace", .op = .replace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string, .can_fail = true },
+        .{ .name = "str_upper", .op = .upper, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_lower", .op = .lower, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_repeat", .op = .repeat, .params = &.{ .{ "text", .string }, .{ "count", .int } }, .result = .string, .can_fail = true },
     };
 
     const builtin_factories = [_]BuiltInFactory{

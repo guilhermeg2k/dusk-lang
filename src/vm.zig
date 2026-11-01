@@ -671,7 +671,95 @@ pub const VM = struct {
                 if (needle.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
                 return succeeded(.{ .int64 = @intCast(std.mem.count(u8, text, needle)) });
             },
+            .trim => {
+                const trimmed = std.mem.trim(u8, text, ascii_whitespace);
+                const start = @intFromPtr(trimmed.ptr) - @intFromPtr(text.ptr);
+                const result = try self.allocString(trimmed.len);
+                @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..trimmed.len]);
+                return succeeded(.{ .heap_obj = &result.obj });
+            },
+            .upper, .lower => {
+                const result = try self.allocString(text.len);
+                const data = result.mutableSlice();
+                @memcpy(data, bytesArg(args, 0));
+                changeCase(data, op == .upper);
+                return succeeded(.{ .heap_obj = &result.obj });
+            },
+            .repeat => {
+                const count = args[1].int64;
+                if (count < 0) return stringFailure(BuiltIn.string_negative_count_id);
+                const total = std.math.mul(usize, text.len, @intCast(count)) catch return error.OutOfMemory;
+                const result = try self.allocString(total);
+                const data = result.mutableSlice();
+                const source = bytesArg(args, 0);
+                var offset: usize = 0;
+                while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
+                return succeeded(.{ .heap_obj = &result.obj });
+            },
+            .replace => {
+                const old = bytesArg(args, 1);
+                if (old.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
+                const matches = std.mem.count(u8, text, old);
+                const total = text.len - matches * old.len + matches * bytesArg(args, 2).len;
+                const result = try self.allocString(total);
+                _ = std.mem.replace(u8, bytesArg(args, 0), bytesArg(args, 1), bytesArg(args, 2), result.mutableSlice());
+                return succeeded(.{ .heap_obj = &result.obj });
+            },
+            .split => {
+                const separator = bytesArg(args, 1);
+                if (separator.len == 0) return stringFailure(BuiltIn.string_empty_pattern_id);
+                return succeeded(try self.splitString(args));
+            },
         };
+    }
+
+    const ascii_whitespace = " \t\n\r\x0b\x0c";
+
+    fn changeCase(data: []u8, is_upper: bool) void {
+        var index: usize = 0;
+        while (index < data.len) : (index += 1) {
+            const byte = data[index];
+            if (byte == 0xC3 and index + 1 < data.len) {
+                index += 1;
+                const second = data[index];
+                const is_lower_latin = second >= 0xA0 and second <= 0xBE and second != 0xB7;
+                const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
+                if (is_upper and is_lower_latin) data[index] = second - 0x20;
+                if (!is_upper and is_upper_latin) data[index] = second + 0x20;
+                continue;
+            }
+            if (is_upper and std.ascii.isLower(byte)) data[index] = std.ascii.toUpper(byte);
+            if (!is_upper and std.ascii.isUpper(byte)) data[index] = std.ascii.toLower(byte);
+        }
+    }
+
+    fn allocString(self: *Self, len: usize) !*v.Bytes {
+        const size = v.Bytes.calc_size(len);
+        try self.maybeCollectGarbage(size);
+        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
+        self.increaseHeapAllocationCount(size);
+        return result;
+    }
+
+    fn splitString(self: *Self, args: []v.Value) !v.Value {
+        const text = bytesArg(args, 0);
+        const separator = bytesArg(args, 1);
+        const piece_count = std.mem.count(u8, text, separator) + 1;
+        var total = v.Array.calc_size(piece_count);
+        var pieces = std.mem.splitSequence(u8, text, separator);
+        while (pieces.next()) |piece| total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
+        try self.maybeCollectGarbage(total);
+
+        const allocator = self.getCurrentHeapAllocator();
+        const array = try v.Array.init(allocator, .string, piece_count);
+        self.increaseHeapAllocationCount(v.Array.calc_size(piece_count));
+        pieces = std.mem.splitSequence(u8, bytesArg(args, 0), bytesArg(args, 1));
+        while (pieces.next()) |piece| {
+            const bytes = try v.Bytes.init(allocator, piece, .string);
+            self.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));
+            try array.append(.{ .heap_obj = &bytes.obj });
+        }
+        return .{ .heap_obj = &array.obj };
     }
 
     fn boxInt(self: *Self, number: i64) !v.Value {

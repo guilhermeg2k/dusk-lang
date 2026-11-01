@@ -1875,6 +1875,12 @@ pub const StringOp = enum(u8) {
     starts_with,
     ends_with,
     count,
+    trim,
+    split,
+    replace,
+    upper,
+    lower,
+    repeat,
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };

@@ -1,0 +1,1 @@
+let x = try str_repeat("a", -1)

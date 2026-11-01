@@ -1,0 +1,50 @@
+echo("[${str_trim("  \t hello world \n\r")}]")
+echo("[${str_trim("   ")}]")
+echo("[${str_trim("none")}]")
+echo("[${str_trim("\u{0B}\u{0C}x\u{0C}")}]")
+echo("[${str_trim("\u{A0}x\u{A0}")}]")
+echo(try str_split("a,b,,c", ","))
+echo(try str_split("abc", ","))
+echo(len(try str_split("", ",")))
+echo(try str_split("a::b::c", "::"))
+echo(try str_split("olá mundo", " "))
+echo(try str_replace("a-b-c", "-", "+"))
+echo(try str_replace("aaa", "a", "bb"))
+echo(try str_replace("hello", "l", ""))
+echo(try str_replace("abc", "z", "y"))
+echo(str_upper("hello, ação! ß ÿ × ÷ α"))
+echo(str_lower("HELLO, AÇÃO! Ž Ω"))
+echo(try str_repeat("ab", 3))
+echo("[${try str_repeat("ab", 0)}]")
+echo("[${try str_repeat("", 5)}]")
+func reason(e: StringError) -> string
+    return when e
+        StringError.OutOfRange then "out of range" end
+        StringError.EmptyPattern then "empty pattern" end
+        StringError.NegativeCount then "negative count" end
+    end
+end
+func split_reason(text: string, separator: string) -> string
+    let parts = str_split(text, separator) catch e then
+        return reason(e)
+    end
+    return "${len(parts)} parts"
+end
+func replace_reason(text: string, old: string) -> string
+    let replaced = str_replace(text, old, "x") catch e then
+        return reason(e)
+    end
+    return replaced
+end
+func repeat_reason(count: int) -> string
+    let repeated = str_repeat("ab", count) catch e then
+        return reason(e)
+    end
+    return repeated
+end
+echo(split_reason("a,b", ","))
+echo(split_reason("abc", ""))
+echo(replace_reason("abc", ""))
+echo(repeat_reason(-1))
+echo(repeat_reason(2))
+echo(try ("  a, b ,c  " |> str_trim() |> str_split(",")))

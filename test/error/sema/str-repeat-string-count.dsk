@@ -1,0 +1,1 @@
+echo(str_repeat("a", "b") catch "")
