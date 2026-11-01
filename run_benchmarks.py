@@ -74,7 +74,7 @@ LANGUAGES = [
 # Java uses PascalCase file names; everything else uses the benchmark key.
 JAVA_CLASS = {"fib": "Fib", "particles": "Particles",
               "primes": "Primes", "quicksort": "Quicksort",
-              "mandelbrot": "Mandelbrot"}
+              "mandelbrot": "Mandelbrot", "strings": "Strings"}
 
 BENCHMARKS = [
     {
@@ -114,6 +114,15 @@ BENCHMARKS = [
                 "IEEE-754 double math everywhere); print the sum of all "
                 "iteration counts as a checksum.",
         "expected": "141554306",
+        "numeric": False,
+    },
+    {
+        "key": "strings",
+        "title": "Strings",
+        "desc": "1,000,000 iterations of: build \"item {i}: value={i*3} tag={name}\" "
+                "by interpolation, split it on spaces, join the pieces with commas; "
+                "print the sum of the line, piece-count and joined lengths.",
+        "expected": "73037032",
         "numeric": False,
     },
 ]
