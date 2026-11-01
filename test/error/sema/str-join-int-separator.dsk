@@ -1,0 +1,1 @@
+echo(str_join(["a"], 1))

@@ -163,6 +163,16 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = .{ .bool = left.eql(right) };
                 },
 
+                .BYTES_CONCAT => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.concatBytes(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
+                },
+
+                .STR_JOIN => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.joinStrings(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
+                },
+
                 .BYTES_COPY => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.copyBytes(&stack[stack_base + inst.b], @enumFromInt(inst.c));
@@ -569,6 +579,53 @@ pub const VM = struct {
         const bytes = try v.Bytes.init(self.getCurrentHeapAllocator(), source_bytes, if (kind == .string) .string else .buffer);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &bytes.obj };
+    }
+
+    noinline fn concatBytes(self: *Self, left: *const v.Value, right: *const v.Value) !v.Value {
+        const left_len = v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).len;
+        const right_len = v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).len;
+        const size = v.Bytes.calc_size(left_len + right_len);
+        try self.maybeCollectGarbage(size);
+        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), left_len + right_len, .string);
+        const data = result.mutableSlice();
+        @memcpy(data[0..left_len], v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).slice());
+        @memcpy(data[left_len..], v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).slice());
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &result.obj };
+    }
+
+    noinline fn joinStrings(self: *Self, parts_value: *v.Value, separator: *const v.Value) !v.Value {
+        var parts = joinParts(parts_value);
+        const separator_len = v.HeapValue.getParentPtr(v.Bytes, separator.heap_obj).len;
+        var total: usize = 0;
+        for (parts, 0..) |part, i| {
+            if (i > 0) total += separator_len;
+            total += v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).len;
+        }
+        const size = v.Bytes.calc_size(total);
+        try self.maybeCollectGarbage(size);
+        parts = joinParts(parts_value);
+        const separator_bytes = v.HeapValue.getParentPtr(v.Bytes, separator.heap_obj).slice();
+        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), total, .string);
+        const data = result.mutableSlice();
+        var offset: usize = 0;
+        for (parts, 0..) |part, i| {
+            if (i > 0) {
+                @memcpy(data[offset..][0..separator_bytes.len], separator_bytes);
+                offset += separator_bytes.len;
+            }
+            const part_bytes = v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice();
+            @memcpy(data[offset..][0..part_bytes.len], part_bytes);
+            offset += part_bytes.len;
+        }
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &result.obj };
+    }
+
+    fn joinParts(parts_value: *v.Value) []const v.Value {
+        if (v.HeapValue.followRelocated(parts_value.heap_obj)) |relocated| parts_value.heap_obj = relocated;
+        const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
+        return array.getDataPtr()[0..array.len];
     }
 
     noinline fn indexOutOfBounds(index: i64, len: usize) RunTimeError {

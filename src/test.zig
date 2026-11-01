@@ -203,6 +203,14 @@ test "string length and char count" {
     try runCaseError("sema/str-char-count-int.dsk", error.InvalidType);
 }
 
+test "string concat and join" {
+    try runCaseOutput("string-concat-join.dsk", "Hello, Dusk\na, b, c\nonly\n[]\n--\nxy\ngrow the array\n");
+    try runCaseOutput("string-concat-join-gc.dsk", "item-5000-end! | item-10000-end! | item-15000-end! | item-20000-end!\n288894\n");
+    try runCaseError("sema/str-concat-int.dsk", error.InvalidType);
+    try runCaseError("sema/str-join-int-array.dsk", error.InvalidType);
+    try runCaseError("sema/str-join-int-separator.dsk", error.InvalidType);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }

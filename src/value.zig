@@ -308,7 +308,7 @@ pub const Bytes = extern struct {
         return bytes;
     }
 
-    fn initUndefined(allocator: std.mem.Allocator, len: usize, kind: HeapValueType) !*Self {
+    pub fn initUndefined(allocator: std.mem.Allocator, len: usize, kind: HeapValueType) !*Self {
         const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(len));
         const bytes = @as(*Self, @ptrCast(raw_memory.ptr));
         bytes.obj = .{ .kind = kind };

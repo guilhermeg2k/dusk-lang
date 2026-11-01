@@ -29,6 +29,8 @@ pub const BuiltIn = struct {
         stringFromFactory,
         strEqualFactory,
         strCharCountFactory,
+        strConcatFactory,
+        strJoinFactory,
     };
 
     const builtin_bytecode_registry = [_]struct {
@@ -43,6 +45,8 @@ pub const BuiltIn = struct {
         .{ .name = "string_from", .kind = .{ .@"inline" = .{ .gen = &stringFromCodeGen, .num_args = 1 } } },
         .{ .name = "str_equal", .kind = .{ .@"inline" = .{ .gen = &strEqualCodeGen, .num_args = 2 } } },
         .{ .name = "str_char_count", .kind = .{ .host = .{ .func = &strCharCountImpl, .num_args = 1 } } },
+        .{ .name = "str_concat", .kind = .{ .@"inline" = .{ .gen = &strConcatCodeGen, .num_args = 2 } } },
+        .{ .name = "str_join", .kind = .{ .@"inline" = .{ .gen = &strJoinCodeGen, .num_args = 2 } } },
     };
 
     comptime {
@@ -213,6 +217,24 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &strCharCountImpl, .num_args = 1 } };
     }
 
+    fn strConcatFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "str_concat", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "a", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+            .{ .identifier = "b", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, self.string_type_id);
+        return BuiltInFn{ .symbol = symbol };
+    }
+
+    fn strJoinFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "str_join", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "parts", .type_id = try self.type_table.getOrAddArray(self.string_type_id), .is_mut = false, .default_value = null },
+            .{ .identifier = "sep", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
+        }, self.string_type_id);
+        return BuiltInFn{ .symbol = symbol };
+    }
+
     pub fn getBytecodeFunctions() [builtin_bytecode_registry.len]bc.Function {
         var funcs: [builtin_bytecode_registry.len]bc.Function = undefined;
         for (&funcs, builtin_bytecode_registry, 0..) |*f, entry, i| {
@@ -365,6 +387,18 @@ pub const BuiltIn = struct {
             if (byte & 0xC0 != 0x80) count += 1;
         }
         return .{ .int64 = count };
+    }
+
+    fn strConcatCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .BYTES_CONCAT, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn strJoinCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .STR_JOIN, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
+        return try list.toOwnedSlice(alloc);
     }
 
     fn assertImpl(args: []v.Value) v.Value {

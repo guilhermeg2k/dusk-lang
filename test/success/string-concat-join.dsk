@@ -1,0 +1,20 @@
+let name = "Dusk"
+let greeting = str_concat("Hello, ", name)
+echo(greeting)
+assert(str_equal(greeting, "Hello, Dusk"))
+assert(str_equal(str_concat("", ""), ""))
+assert(str_equal(str_concat("a", ""), "a"))
+assert(str_equal(str_concat("", "b"), "b"))
+assert(str_equal("ol" |> str_concat("á") |> str_concat(" 🌙"), "olá 🌙"))
+assert(len(str_concat("ab", "cd")) == 4)
+echo(str_join(["a", "b", "c"], ", "))
+echo(str_join(["only"], ", "))
+let empty: []string = []
+echo("[${str_join(empty, ", ")}]")
+echo(str_join(["", "", ""], "-"))
+echo(str_join(["x", "y"], ""))
+let mut words: []string = []
+append(words, "grow")
+append(words, "the")
+append(words, "array")
+echo(words |> str_join(" "))
