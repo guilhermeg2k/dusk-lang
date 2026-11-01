@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- `s[i]` reads the byte at byte offset `i` of a string (bounds-checked), and `for s: b, i do` loops over a string's bytes, like buffers. Assigning `s[i] = x` is a compile error: strings are immutable
 - `str_to_int(s)` and `str_to_float(s)` read numbers written like Dusk literals (an optional `-`, digits, and for floats an optional `.digits`; `"3"` gives `3.0`). They return `ConversionError!int` / `ConversionError!float`, a new builtin error set with `Invalid` and `Overflow`. Inline builtins can now fail: the opcode skips the following `JUMP` to run the `try`/`catch` handler, like `RETURN_ERR`
 - Error values printed with `echo` or interpolation (still their global id) shift by two, because `ConversionError` takes the first two ids
 - `str_concat(a, b)` returns a new string with `b` after `a`, and `str_join(parts, sep)` joins a `[]string` with a separator between items (allocating the result once). Both work with pipes: `"a" |> str_concat("b")`

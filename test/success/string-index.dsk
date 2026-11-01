@@ -1,0 +1,19 @@
+let word = "olá!"
+assert(word[0] == 'o')
+assert(word[1] == 'l')
+assert(word[2] == 195)
+assert(word[3] == 161)
+assert(word[4] == '!')
+let mut digits = 0
+for "a1b22": b do
+    if b >= '0' and b <= '9' then
+        digits += 1
+    end
+end
+assert(digits == 3)
+for word: b, i do
+    echo("$i: $b")
+end
+for "": b do
+    assert(false)
+end

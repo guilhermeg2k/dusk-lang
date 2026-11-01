@@ -1846,6 +1846,7 @@ pub const SemaAnalyzer = struct {
                 var field_maybe_nullable_type_id: tt.TypeId = undefined;
 
                 switch (self.type_table.getTypePtrById(target_type).kind) {
+                    .string => return self.err_dispatcher.immutableString(assign_stmt.target.loc),
                     .buffer => {
                         field_maybe_nullable_type_id = indexed_target.type_id;
                         if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
@@ -2086,9 +2087,9 @@ pub const SemaAnalyzer = struct {
         if (capture.source.data == .range) return self.visitForRangeStmt(stmt);
         const source = try self.evalExp(capture.source);
         const source_type = self.type_table.getTypePtrById(source.type_id);
-        const is_buffer_source = !source_type.is_nullable and source_type.kind == .buffer;
+        const is_buffer_source = !source_type.is_nullable and (source_type.kind == .buffer or source_type.kind == .string);
         const is_array_source = !source_type.is_nullable and source_type.kind == .array;
-        if (!is_array_source and !is_buffer_source) return self.err_dispatcher.invalidType("array or buffer", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
+        if (!is_array_source and !is_buffer_source) return self.err_dispatcher.invalidType("array, buffer or string", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
         const item_type = if (is_buffer_source) self.type_table.getPrimitive(.byte) else source_type.kind.array;
         const integer_type = self.type_table.getPrimitive(.int);
         var instructions: std.ArrayList(ir.Instruction) = .empty;
@@ -3179,8 +3180,8 @@ pub const SemaAnalyzer = struct {
                     .type_id = result_type,
                 });
             },
-            .buffer => {
-                if (is_nullable) return self.err_dispatcher.invalidType("buffer", try self.type_table.name(target_type, self.allocator), exp.loc);
+            .buffer, .string => {
+                if (is_nullable) return self.err_dispatcher.invalidType("buffer or string", try self.type_table.name(target_type, self.allocator), exp.loc);
                 const index = try self.evalExp(indexed_exp.index);
                 if (!self.isIntegerType(index.type_id)) {
                     return self.err_dispatcher.invalidIndexing("int", try self.type_table.name(index.type_id, self.allocator), exp.loc);

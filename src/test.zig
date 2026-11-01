@@ -222,6 +222,12 @@ test "string conversion" {
     try runCaseError("sema/conversion-error-redefined.dsk", error.AlreadyDefined);
 }
 
+test "string indexing and loops" {
+    try runCaseOutput("string-index.dsk", "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
+    try runCaseError("sema/string-index-assign.dsk", error.NotMutable);
+    try runCaseRuntimeError("string-index-out-of-bounds.dsk", error.IndexOutOfBounds);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }

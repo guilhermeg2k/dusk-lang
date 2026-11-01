@@ -38,6 +38,11 @@ pub const ErrorDispatcher = struct {
         return error.InvalidType;
     }
 
+    pub fn immutableString(self: *Self, loc: Loc) Errors {
+        self.log("Strings are immutable: can't assign to a byte of a string (use a buffer)", loc);
+        return error.NotMutable;
+    }
+
     pub fn byteOutOfRange(self: *Self, value: i64, loc: Loc) Errors {
         self.log(
             try allocPrint(

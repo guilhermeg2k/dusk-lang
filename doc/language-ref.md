@@ -109,6 +109,16 @@ echo("Moon: \u{1F319}")
 echo("A literal backslash: \\")
 ```
 
+`s[i]` reads the byte at byte offset `i` (a `byte`, bounds-checked like arrays), and `for s: b, i do` loops over a string's bytes. Strings are immutable: `s[i] = x` is a compile error; use a buffer to change bytes.
+
+```nim
+let word = "olá"
+echo(word[0])          # 111 ('o')
+for word: b, i do      # 5 bytes: "á" is two bytes in UTF-8
+    echo("$i: $b")
+end
+```
+
 A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. String concatenation is not implemented yet.
 
 ### Bytes

@@ -792,7 +792,7 @@ pub const BytecodeGen = struct {
                 try self.genArrayLoad(target_reg, array_reg, idx.index);
                 self.register_types[target_reg] = value.type_id;
             },
-            .buffer => {
+            .buffer, .string => {
                 const buffer_reg = try self.genValue(idx.target, try self.consumeRegister());
                 const index_reg = try self.genValue(idx.index, try self.consumeRegister());
                 defer self.freeRegisterN(2);
