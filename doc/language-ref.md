@@ -1043,10 +1043,13 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `len`         | `len(data: buffer) -> int`                        | Returns the number of bytes in a buffer.                                             |
 | `len`         | `len(text: string) -> int`                        | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(list: []T, item: T) -> void`              | Adds an item to the end of a mutable array.                                          |
+| `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
+
+`copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
 ### String functions
 

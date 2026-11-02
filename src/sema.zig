@@ -2761,6 +2761,25 @@ pub const SemaAnalyzer = struct {
         return ir.Value.init(self.allocator, .{ .data = data, .type_id = self.type_table.getPrimitive(.int) });
     }
 
+    fn evalCopyCall(self: *Self, symbol: Symbol, argument: *const ast.ExpNode) Errors!*ir.Value {
+        const value = try self.evalExp(argument);
+        if (isValueLeaving(value)) return value;
+        if (!self.isChangeableType(value.type_id)) return value;
+        const args = try self.allocator.alloc(*ir.Value, 1);
+        args[0] = value;
+        const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .fn_call = .{ .fn_uid = func.uid, .identifier = symbol.identifier, .args = args } },
+            .type_id = value.type_id,
+        });
+    }
+
+    fn isChangeableType(self: *Self, type_id: tt.TypeId) bool {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        if (base_id == self.type_table.getPrimitive(.null)) return false;
+        return self.canBeChangedThrough(base_id);
+    }
+
     fn evalFnCall(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const fn_call = exp.data.fn_call;
         var fn_identifier: []const u8 = undefined;
@@ -2785,6 +2804,9 @@ pub const SemaAnalyzer = struct {
 
                 if (symbol.kind == .function and std.mem.eql(u8, id, "len") and fn_call.arguments.len == 1) {
                     return self.evalLenCall(fn_call.arguments[0].exp);
+                }
+                if (symbol.kind == .function and std.mem.eql(u8, id, "copy") and fn_call.arguments.len == 1) {
+                    return self.evalCopyCall(symbol, fn_call.arguments[0].exp);
                 }
 
                 switch (symbol.kind) {

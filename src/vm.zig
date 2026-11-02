@@ -201,6 +201,11 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = try self.copyToBuffer(&stack[stack_base + inst.b]);
                 },
 
+                .DEEP_COPY => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.deepCopy(stack_base + inst.b);
+                },
+
                 .ARRAY_POP => {
                     const arr_ptr = stack[stack_base + inst.b].heap_obj;
                     var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
@@ -563,6 +568,67 @@ pub const VM = struct {
         const bytes = try v.Bytes.init(self.getCurrentHeapAllocator(), source_bytes, .buffer);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &bytes.obj };
+    }
+
+    noinline fn deepCopy(self: *Self, source_index: usize) !v.Value {
+        if (@as(u64, @bitCast(self.stack[source_index])) == 0) return self.stack[source_index];
+        try self.maybeCollectGarbage(heapObjectSize(self.stack[source_index].heap_obj));
+
+        var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
+        defer copies.deinit(self.allocator);
+        var pending: std.ArrayList(*v.HeapValue) = .empty;
+        defer pending.deinit(self.allocator);
+
+        var result = self.stack[source_index];
+        try self.deepCopySlot(&result, &copies, &pending);
+        while (pending.pop()) |copy| {
+            switch (copy.kind) {
+                .array => {
+                    const array = v.HeapValue.getParentPtr(v.Array, copy);
+                    switch (array.kind) {
+                        .buffer, .@"struct", .array, .@"union", .nullable => {
+                            for (array.getDataPtr()[0..array.len]) |*item| try self.deepCopySlot(item, &copies, &pending);
+                        },
+                        else => {},
+                    }
+                },
+                .@"struct" => {
+                    const s = v.HeapValue.getParentPtr(v.Struct, copy);
+                    const desc = self.program.struct_descriptors[s.descriptor_id];
+                    const fields = s.getDataPtr()[0..s.field_count];
+                    for (0..s.field_count) |i| {
+                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(i)) != 0) try self.deepCopySlot(&fields[i], &copies, &pending);
+                    }
+                },
+                .@"union" => {
+                    const u = v.HeapValue.getParentPtr(v.Union, copy);
+                    if (u.active_tag == v.Union.NO_TAG) continue;
+                    const desc = self.program.union_descriptors[u.descriptor_id];
+                    if (desc.heap_bitmap & (@as(u256, 1) << @intCast(u.active_tag)) != 0) try self.deepCopySlot(&u.getDataPtr()[0], &copies, &pending);
+                },
+                else => {},
+            }
+        }
+        return result;
+    }
+
+    fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
+        if (@as(u64, @bitCast(slot.*)) == 0) return;
+        var current = slot.heap_obj;
+        while (current.relocated) |relocated| current = relocated;
+        if (current.kind == .string or current.kind == .null_box) {
+            slot.heap_obj = current;
+            return;
+        }
+        if (copies.get(current)) |copy| {
+            slot.heap_obj = copy;
+            return;
+        }
+        const copy = try cloneHeapObj(self.getCurrentHeapAllocator(), current);
+        self.increaseHeapAllocationCount(heapObjectSize(copy));
+        try copies.put(self.allocator, current, copy);
+        if (copy.kind != .buffer) try pending.append(self.allocator, copy);
+        slot.heap_obj = copy;
     }
 
     noinline fn concatBytes(self: *Self, left: *const v.Value, right: *const v.Value) !v.Value {

@@ -61,6 +61,7 @@ pub const BuiltIn = struct {
         strJoinFactory,
         strToIntFactory,
         strToFloatFactory,
+        copyFactory,
     } ++ stringOpFactories();
 
     const RegistryEntry = struct {
@@ -81,6 +82,7 @@ pub const BuiltIn = struct {
         .{ .name = "str_join", .kind = .{ .@"inline" = .{ .gen = &strJoinCodeGen, .num_args = 2 } } },
         .{ .name = "str_to_int", .kind = .{ .@"inline" = .{ .gen = &strToIntCodeGen, .num_args = 1 } } },
         .{ .name = "str_to_float", .kind = .{ .@"inline" = .{ .gen = &strToFloatCodeGen, .num_args = 1 } } },
+        .{ .name = "copy", .kind = .{ .@"inline" = .{ .gen = &copyCodeGen, .num_args = 1 } } },
     } ++ stringOpRegistry();
 
     fn stringOpFactories() [string_ops.len]BuiltInFactory {
@@ -316,6 +318,14 @@ pub const BuiltIn = struct {
         return BuiltInFn{ .symbol = symbol };
     }
 
+    fn copyFactory(self: *const Self, uid: usize) !BuiltInFn {
+        var symbol = Symbol{ .uid = uid, .identifier = "copy", .kind = .{ .function = {} }, .type_id = undefined };
+        symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
+            .{ .identifier = "value", .type_id = self.dynamic_type_id, .is_mut = false, .default_value = null },
+        }, self.dynamic_type_id);
+        return BuiltInFn{ .symbol = symbol };
+    }
+
     fn assertFactory(self: *const Self, uid: usize) !BuiltInFn {
         var symbol = Symbol{
             .uid = uid,
@@ -522,6 +532,12 @@ pub const BuiltIn = struct {
     fn lenCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
         try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
+        return try list.toOwnedSlice(alloc);
+    }
+
+    fn copyCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+        var list: std.ArrayList(bc.Instruction) = .empty;
+        try list.append(alloc, .{ .op = .DEEP_COPY, .a = target_reg, .b = arg_start_reg });
         return try list.toOwnedSlice(alloc);
     }
 

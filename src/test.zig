@@ -1523,6 +1523,10 @@ test "mut captures" {
     try runCase("mut-captures.dsk");
 }
 
+test "copy" {
+    try runCase("copy.dsk");
+}
+
 test "for-capture-missing-do" {
     try runCaseError("parser/for-capture-missing-do.dsk", error.ParserError);
 }

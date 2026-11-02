@@ -1517,6 +1517,7 @@ pub const Chunk = struct {
             .BYTES_NEW,
             .BYTES_LEN,
             .BYTES_COPY,
+            .DEEP_COPY,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
             .STR_BUILD => std.debug.print("R[{d}] RECIPE[{d}]", .{ inst.a, inst.bEx() }),
@@ -1590,6 +1591,7 @@ pub const OpCode = enum(u8) {
     BYTES_CONCAT,
     STR_JOIN,
     STR_TO_NUMBER,
+    DEEP_COPY,
     STR_OP,
 
     STRUCT_INIT,
@@ -1671,6 +1673,7 @@ pub const OpCode = enum(u8) {
             .BYTES_CONCAT,
             .STR_JOIN,
             .STR_OP,
+            .DEEP_COPY,
             .CALL,
             => true,
             else => false,
