@@ -450,7 +450,7 @@ status = Response(success = "done")
 status = @(failure = "timeout")
 ```
 
-Writing to a single variant (`status.success = "x"`) is an error. Union parameters, including `self`, can't be `mut` either, so a function that changes a union returns the new one:
+Writing to a single variant (`status.success = "x"`) is an error, and a `mut` parameter can't be reassigned (see [Mutable parameters](#mutable-parameters)), so a function that switches a union to another variant returns the new one:
 
 ```nim
 func resolve(r: Response) -> Response
@@ -459,6 +459,8 @@ end
 
 status = resolve(status)
 ```
+
+A payload that is an array, buffer, struct or union can still be changed in place, through a `mut` capture of a mutable union (`if shape.poly: mut points then ... end`, or a `when` case like `poly: mut points then`). A union parameter can be `mut` for that, including `mut self`.
 
 ### Methods and static fields
 
@@ -514,7 +516,7 @@ else
 end
 ```
 
-`if value: mut name` makes the captured variable mutable. For structs, this changes the original value. For primitives (`int`, `float`, `bool`, `string`), it only changes the local copy.
+`if value: mut name` captures the value so it can be changed through `name`: setting a field, an item or appending changes the original. It needs a mutable subject (a `let mut` variable or a path from one), and only works for arrays, buffers, structs and unions: a `mut` capture of a primitive, string or enum is an error. The capture itself can't be reassigned (`name = other` is an error), since that would only change the local name.
 
 ### Nullable fallback
 
@@ -655,6 +657,15 @@ when shape
 end
 ```
 
+`variant: mut name` captures a payload so it can be changed in place, with the same rules as `if value: mut name`: the subject must be mutable, the payload must be an array, buffer, struct or union, and the capture can't be reassigned:
+
+```nim
+when shape
+    poly: mut points then append(points, Point(x = 0, y = 0)) end
+    circle: _ then end
+end
+```
+
 A nullable subject can have a `null` case. In the other cases the value is already unwrapped:
 
 ```nim
@@ -761,7 +772,7 @@ for items: item do
 end
 ```
 
-Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors; use a mutable source array and its index to update elements explicitly.
+Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors. `for items: mut item do` makes the item capture mutable, so changes through it (fields, items, `append`) change the array's element. It needs a mutable source and items that are arrays, buffers, structs or unions, and the capture can't be reassigned. To replace elements, or to change items of other types, use a mutable source array and its index.
 
 The source can be any expression returning a non-nullable array, buffer or string. Unwrap nullable values first. Buffers and strings are traversed byte by byte: the item is a `byte` and the index its byte offset. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
 
@@ -854,7 +865,9 @@ echo(scale(factor = 5, x = 1))   # 5
 
 ### Mutable parameters
 
-Parameters are immutable. Arrays, buffers and structs can be taken as `mut` to change the caller's value. The argument must then be mutable: a `let mut` variable or a field or item of one (`grow(config.items)`), or a new value such as `[1, 2]`. Primitive and union parameters can't be `mut`.
+Parameters are immutable. Arrays, buffers, structs and unions can be taken as `mut` to change the caller's value through them: items, fields, `append`, and union payloads through `mut` captures. The argument must then be mutable: a `let mut` variable or a field or item of one (`grow(config.items)`), or a new value such as `[1, 2]`. Primitive, string and enum parameters can't be `mut`.
+
+A `mut` parameter can't be reassigned (`list = []` is an error): the new value would only change the local name, not the caller's variable. To replace a value, return the new one and assign it at the call site, or change it through a `mut self` method on a struct that holds it.
 
 ```nim
 func push_one(mut list: []int) -> void

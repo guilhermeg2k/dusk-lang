@@ -875,8 +875,8 @@ test "sema error: union with too many variants" {
     try runCaseError("sema/union-too-many-variants.dsk", error.TooManyUnionVariants);
 }
 
-test "sema error: mutable union param" {
-    try runCaseError("sema/union-mut-param.dsk", error.UnionParamsCantBeMutable);
+test "sema error: mut union param reassign" {
+    try runCaseError("sema/union-mut-param-reassign.dsk", error.MutBorrowCantBeReassigned);
 }
 
 test "sema error: anonymous union unknown variant" {
@@ -1483,8 +1483,44 @@ test "for-capture-extra-binding" {
     try runCaseError("parser/for-capture-extra-binding.dsk", error.ParserError);
 }
 
-test "for-capture-mutable" {
-    try runCaseError("parser/for-capture-mutable.dsk", error.ParserError);
+test "sema error: for capture mut primitive" {
+    try runCaseError("sema/for-capture-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "sema error: for capture mut immutable source" {
+    try runCaseError("sema/for-capture-mut-immutable-source.dsk", error.UnwrappedCantBeMutable);
+}
+
+test "sema error: if capture mut primitive" {
+    try runCaseError("sema/if-capture-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "sema error: when capture mut primitive" {
+    try runCaseError("sema/when-capture-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "sema error: when capture mut immutable subject" {
+    try runCaseError("sema/when-capture-mut-immutable-subject.dsk", error.UnwrappedCantBeMutable);
+}
+
+test "sema error: if capture mut reassign" {
+    try runCaseError("sema/if-capture-mut-reassign.dsk", error.MutBorrowCantBeReassigned);
+}
+
+test "sema error: mut param reassign" {
+    try runCaseError("sema/mut-param-reassign.dsk", error.MutBorrowCantBeReassigned);
+}
+
+test "sema error: for capture mut reassign" {
+    try runCaseError("sema/for-capture-mut-reassign.dsk", error.MutBorrowCantBeReassigned);
+}
+
+test "sema error: range capture mut" {
+    try runCaseError("sema/range-capture-mut.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "mut captures" {
+    try runCase("mut-captures.dsk");
 }
 
 test "for-capture-missing-do" {

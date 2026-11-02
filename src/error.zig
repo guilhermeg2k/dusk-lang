@@ -275,18 +275,6 @@ pub const ErrorDispatcher = struct {
         return error.TooManyUnionVariants;
     }
 
-    pub fn unionParamsCantBeMutable(self: *Self, param_name: []const u8, loc: Loc) Errors {
-        self.log(
-            try allocPrint(
-                self.allocator,
-                "Union param '{s}' can't be mutable: union variants can't be changed in place, return a new union instead",
-                .{param_name},
-            ),
-            loc,
-        );
-        return error.UnionParamsCantBeMutable;
-    }
-
     pub fn whenNotExhaustive(self: *Self, missing: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
@@ -459,10 +447,34 @@ pub const ErrorDispatcher = struct {
 
     pub fn primitiveParamsCantBeMutable(self: *Self, loc: Loc) Errors {
         self.log(
-            "Primitive params can't be mutable",
+            "Primitive params can't be mutable: only arrays, buffers, structs and unions can be changed through a mut param",
             loc,
         );
         return error.PrimitiveParamsCantBeMutable;
+    }
+
+    pub fn primitiveCaptureCantBeMutable(self: *Self, name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Capture '{s}' can't be mut: only arrays, buffers, structs and unions can be changed through a mut capture",
+                .{name},
+            ),
+            loc,
+        );
+        return error.PrimitiveCaptureCantBeMutable;
+    }
+
+    pub fn mutBorrowCantBeReassigned(self: *Self, name: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' is a mut param or capture: it can't be reassigned, only changed through it (items, fields, append)",
+                .{name},
+            ),
+            loc,
+        );
+        return error.MutBorrowCantBeReassigned;
     }
 
     pub fn cantInferArrayLiteralType(self: *Self, loc: Loc) Errors {
@@ -638,7 +650,8 @@ pub const Errors = error{
     InvalidUnionVariant,
     InvalidUnionMember,
     InvalidUnionFunction,
-    UnionParamsCantBeMutable,
+    PrimitiveCaptureCantBeMutable,
+    MutBorrowCantBeReassigned,
     TooManyUnionVariants,
     WhenNotExhaustive,
     WhenUselessElse,

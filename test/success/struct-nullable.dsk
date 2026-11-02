@@ -70,12 +70,6 @@ if user.info?.phone: phone then
 end
 
 
-# NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
-if user.info?.address?.state: mut state_name then
-    state_name = "SP"
-end
-
-
 # should still be DF
 echo(user.info?.address?.state)
 

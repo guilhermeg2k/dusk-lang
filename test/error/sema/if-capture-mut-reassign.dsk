@@ -1,0 +1,9 @@
+struct P
+    x: int
+end
+
+let mut maybe: ?P = P(x = 1)
+
+if maybe: mut p then
+    p = P(x = 9)
+end

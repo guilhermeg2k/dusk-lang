@@ -15,14 +15,20 @@ assert(counter.calls == 1)
 
 let mut nullable_number: ?int = 4
 
-let mutable_capture = if nullable_number: mut number then
-    number += 1
-    number
+struct Box
+    value: int
+end
+
+let mut boxed: ?Box = Box(value = 4)
+let mutable_capture = if boxed: mut b then
+    b.value += 1
+    b.value
 else
     0
 end
 
 assert(mutable_capture == 5)
+if boxed: b then assert(b.value == 5) else assert(false) end
 
 if nullable_number: number then assert(number == 4) else assert(false) end
 let number = 20

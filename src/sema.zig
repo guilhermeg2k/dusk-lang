@@ -1315,11 +1315,14 @@ pub const SemaAnalyzer = struct {
             .type_id = subject.type_id,
         });
         const captured_type_id = self.type_table.typeIdByNullableTypeId.get(subject.type_id).?;
+        if (capture.identifier.is_mut and !self.canBeChangedThrough(captured_type_id)) {
+            return self.err_dispatcher.primitiveCaptureCantBeMutable(capture.identifier.name, exp.loc);
+        }
         const captured_symbol = Symbol{
             .uid = self.scope.genUid(),
             .identifier = capture.identifier.name,
             .type_id = captured_type_id,
-            .kind = .{ .variable = .{ .is_mut = capture.identifier.is_mut } },
+            .kind = .{ .variable = .{ .is_mut = capture.identifier.is_mut, .is_borrowed = true } },
         };
         var then_instructions: std.ArrayList(ir.Instruction) = .empty;
         const captured_needs_unwrap = self.needsNullBox(subject.type_id, captured_type_id);
@@ -1414,6 +1417,7 @@ pub const SemaAnalyzer = struct {
             .is_nullable = is_nullable,
             .base_type = base_type,
             .base_kind = base_kind,
+            .is_mutable = self.findImmutablePlace(exp) == null,
         };
     }
 
@@ -1656,11 +1660,15 @@ pub const SemaAnalyzer = struct {
 
         var body: std.ArrayList(ir.Instruction) = .empty;
         const is_ignored = std.mem.eql(u8, variant.capture, "_");
+        if (variant.is_mut) {
+            if (!self.canBeChangedThrough(variant_type_id)) return self.err_dispatcher.primitiveCaptureCantBeMutable(variant.capture, prong.loc);
+            if (!subject.is_mutable) return self.err_dispatcher.unwrappedValueCantBeMutable(variant.capture, prong.loc);
+        }
         const captured_symbol = Symbol{
             .uid = self.scope.genUid(),
             .identifier = variant.capture,
             .type_id = variant_type_id,
-            .kind = .{ .variable = .{ .is_mut = false } },
+            .kind = .{ .variable = .{ .is_mut = variant.is_mut, .is_borrowed = true } },
         };
 
         if (!is_ignored) {
@@ -1832,6 +1840,9 @@ pub const SemaAnalyzer = struct {
 
                 if (!id_symbol.kind.variable.is_mut) {
                     return self.err_dispatcher.notMutable(id, assign_stmt.target.loc);
+                }
+                if (id_symbol.kind.variable.is_borrowed) {
+                    return self.err_dispatcher.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
                 }
 
                 if (!try self.canCoerce(assignment_value_type, id_symbol.type_id, assign_stmt.exp.loc)) {
@@ -2039,7 +2050,7 @@ pub const SemaAnalyzer = struct {
         return ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = uid, .name = name } }, .type_id = value.type_id });
     }
 
-    fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, loc: err.Loc) Errors!void {
+    fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, is_mut: bool, loc: err.Loc) Errors!void {
         if (std.mem.eql(u8, name, "_")) return;
         if (self.scope.symbol_table.symbols.contains(name)) return self.err_dispatcher.alreadyDefined(name, loc);
         const reference = try self.storeTemporaryValue(instructions, name, value);
@@ -2047,7 +2058,7 @@ pub const SemaAnalyzer = struct {
             .uid = reference.data.identifier.uid,
             .identifier = name,
             .type_id = value.type_id,
-            .kind = .{ .variable = .{ .is_mut = false } },
+            .kind = .{ .variable = .{ .is_mut = is_mut, .is_borrowed = true } },
         });
     }
 
@@ -2055,8 +2066,8 @@ pub const SemaAnalyzer = struct {
         var body: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type_id);
         defer self.scope.exit(self.scope.return_type_id);
-        try self.bindLoopCapture(&body, capture.item, item, loc);
-        if (capture.index) |name| try self.bindLoopCapture(&body, name, index, loc);
+        try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc);
+        if (capture.index) |name| try self.bindLoopCapture(&body, name, index, false, loc);
         try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
         return body.toOwnedSlice(self.allocator);
     }
@@ -2094,6 +2105,7 @@ pub const SemaAnalyzer = struct {
 
     fn visitForRangeStmt(self: *Self, stmt: *const ast.StatementNode) Errors![]ir.Instruction {
         const capture = stmt.data.for_capture;
+        if (capture.is_item_mut) return self.err_dispatcher.primitiveCaptureCantBeMutable(capture.item, stmt.loc);
         const range = capture.source.data.range;
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const start = try self.evalIntegerRangeBound(range.start);
@@ -2121,6 +2133,10 @@ pub const SemaAnalyzer = struct {
         const is_array_source = !source_type.is_nullable and source_type.kind == .array;
         if (!is_array_source and !is_buffer_source) return self.err_dispatcher.invalidType("array, buffer or string", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
         const item_type = if (is_buffer_source) self.type_table.getPrimitive(.byte) else source_type.kind.array;
+        if (capture.is_item_mut) {
+            if (!self.canBeChangedThrough(item_type)) return self.err_dispatcher.primitiveCaptureCantBeMutable(capture.item, stmt.loc);
+            if (self.findImmutablePlace(capture.source) != null) return self.err_dispatcher.unwrappedValueCantBeMutable(capture.item, stmt.loc);
+        }
         const integer_type = self.type_table.getPrimitive(.int);
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const source_reference = try self.storeTemporaryValue(&instructions, "loop source", source);
@@ -2244,12 +2260,7 @@ pub const SemaAnalyzer = struct {
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
-            if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind == .@"union") {
-                return self.err_dispatcher.unionParamsCantBeMutable(param.identifier, loc);
-            }
-
-            const param_kind = self.type_table.getTypePtrById(param.type_id).kind;
-            if (param.is_mut and param_kind != .array and param_kind != .@"struct" and param_kind != .buffer) {
+            if (param.is_mut and !self.canBeChangedThrough(param.type_id)) {
                 return self.err_dispatcher.primitiveParamsCantBeMutable(loc);
             }
 
@@ -2257,7 +2268,7 @@ pub const SemaAnalyzer = struct {
                 .uid = arg_uid,
                 .identifier = param.identifier,
                 .type_id = param.type_id,
-                .kind = .{ .variable = .{ .is_mut = param.is_mut } },
+                .kind = .{ .variable = .{ .is_mut = param.is_mut, .is_borrowed = true } },
             });
 
             try params.append(self.allocator, .{
@@ -3321,6 +3332,13 @@ pub const SemaAnalyzer = struct {
         return self.notDefinedOrNotVisible(id, exp.loc);
     }
 
+    fn canBeChangedThrough(self: *Self, type_id: tt.TypeId) bool {
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .array, .buffer, .@"struct", .@"union" => true,
+            else => false,
+        };
+    }
+
     fn definedTypeOf(self: *Self, exp: *const ast.ExpNode) ?tt.TypeId {
         if (exp.data != .identifier) return null;
         const sym = self.scope.symbol_table.get(exp.data.identifier) orelse return null;
@@ -3880,6 +3898,7 @@ pub const Symbol = struct {
     kind: union(enum) {
         variable: struct {
             is_mut: bool,
+            is_borrowed: bool = false,
         },
         defined_type: struct {
             blueprint_type_id: tt.TypeId,
@@ -3900,6 +3919,7 @@ const WhenSubject = struct {
     is_nullable: bool,
     base_type: tt.TypeId,
     base_kind: @FieldType(tt.Type, "kind"),
+    is_mutable: bool,
 };
 
 const PendingWhenCheck = struct {

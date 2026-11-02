@@ -1,0 +1,80 @@
+struct Point
+    x: int
+    y: int
+end
+
+union Shape
+    poly: []Point
+    circle: int
+
+    func add(mut self: @, p: Point) -> void
+        if self.poly: mut pts then
+            append(pts, p)
+        end
+    end
+
+    func count(self: @) -> int
+        when self
+            poly: pts then return len(pts) end
+            circle: _ then return 0 end
+        end
+    end
+end
+
+func add_point(mut s: Shape, p: Point) -> void
+    when s
+        poly: mut pts then append(pts, p) end
+        circle: _ then end
+    end
+end
+
+func shift(mut s: Shape, dx: int) -> void
+    if s.poly: mut pts then
+        for pts: mut p do
+            p.x += dx
+        end
+    end
+end
+
+let mut shape = Shape(poly = [Point(x = 0, y = 0)])
+add_point(shape, Point(x = 1, y = 1))
+shape.add(Point(x = 2, y = 2))
+assert(shape.count() == 3)
+shift(shape, 10)
+if shape.poly: pts then
+    assert(pts[0].x == 10)
+    assert(pts[2].x == 12)
+else
+    assert(false)
+end
+
+let mut circle = Shape(circle = 5)
+add_point(circle, Point(x = 1, y = 1))
+assert(circle.count() == 0)
+
+let mut points = [Point(x = 1, y = 1), Point(x = 2, y = 2)]
+for points: mut p, i do
+    p.y = i * 100
+end
+assert(points[0].y == 0)
+assert(points[1].y == 100)
+
+let mut grid = [[1, 2], [3, 4]]
+for grid: mut row do
+    append(row, 0)
+    row[0] = 9
+end
+assert(len(grid[0]) == 3)
+assert(grid[1][0] == 9)
+
+let mut maybe: ?Point = Point(x = 1, y = 1)
+if maybe: mut p then
+    p.x = 5
+end
+if maybe: p then assert(p.x == 5) else assert(false) end
+
+let mut data = [buffer(2)]
+for data: mut b do
+    b[0] = 'z'
+end
+assert(data[0][0] == 'z')

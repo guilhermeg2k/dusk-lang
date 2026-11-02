@@ -1,0 +1,5 @@
+let mut xs = [1, 2]
+
+for xs: mut x do
+    echo(x)
+end

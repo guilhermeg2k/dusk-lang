@@ -1,0 +1,11 @@
+union U
+    n: int
+    s: string
+end
+
+let mut u = U(n = 1)
+
+when u
+    n: mut k then echo(k) end
+    s: v then echo(v) end
+end

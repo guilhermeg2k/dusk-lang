@@ -86,7 +86,7 @@ pub const WhenStmt = struct {
 pub const WhenProng = struct {
     pattern: union(enum) {
         values: []const *ExpNode,
-        variant: struct { name: []const u8, capture: []const u8 },
+        variant: struct { name: []const u8, capture: []const u8, is_mut: bool },
         null_case: void,
     },
     body: Block,
@@ -101,6 +101,7 @@ pub const ForStmt = struct {
 pub const ForCaptureStmt = struct {
     source: *ExpNode,
     item: []const u8,
+    is_item_mut: bool,
     index: ?[]const u8,
     do_block: Block,
 };

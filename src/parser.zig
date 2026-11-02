@@ -421,8 +421,9 @@ pub const Parser = struct {
                 if (tk.tag == .identifier and self.peekNext().tag == .colon) {
                     self.walk();
                     self.walk();
+                    const is_mut = self.match(.mut_kw);
                     const capture = try self.expect(.identifier);
-                    break :blk .{ .variant = .{ .name = tk.value(self.src), .capture = capture.value(self.src) } };
+                    break :blk .{ .variant = .{ .name = tk.value(self.src), .capture = capture.value(self.src), .is_mut = is_mut } };
                 }
 
                 var values: std.ArrayList(*ast.ExpNode) = .empty;
@@ -463,12 +464,13 @@ pub const Parser = struct {
 
         const condition = try self.parseExp(0);
         if (self.match(.colon)) {
+            const is_item_mut = self.match(.mut_kw);
             const item = try self.expect(.identifier);
             const index = if (self.match(.comma)) (try self.expect(.identifier)).value(self.src) else null;
             _ = try self.expect(.do_kw);
             const body = try self.parseBlock(&.{});
             _ = try self.expect(.end_kw);
-            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .index = index, .do_block = body } };
+            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .is_item_mut = is_item_mut, .index = index, .do_block = body } };
         }
         _ = try self.expect(.do_kw);
         const do_block = try self.parseBlock(&.{});

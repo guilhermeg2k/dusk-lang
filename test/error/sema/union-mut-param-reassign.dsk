@@ -3,6 +3,6 @@ union U
     b: string
 
     func set_b(mut self: @, s: string) -> void
-        echo(s)
+        self = U(b = s)
     end
 end

@@ -1,0 +1,3 @@
+for 0..3: mut i do
+    echo(i)
+end
