@@ -2,6 +2,9 @@
 
 ## v0.13 - Garou (in development)
 
+- Tail calls: `return f(x)` reuses the current call frame (new `TAIL_CALL` opcode), so tail-recursive and mutually recursive functions run in constant stack space (also `return f(x)` in a `void` function). Calls whose result is an error union aren't tail calls yet
+- Fixed recursion deeper than 256 calls crashing the VM (out-of-bounds frame write). The limit is now 100,000 nested calls (frames and registers are allocated when the program starts, and only touched as they're used), and going over stops with a `CallDepthExceeded` runtime error
+- Fixed assigning a struct, array, union or `if`/`when` value that reads the variable being assigned: `head = Node(value = i, next = head)` built the new value in `head`'s register first, so `next` pointed to the new node itself (a cycle)
 - Breaking: mutable and immutable values can't share data anymore, so a `let` value is never changed by anything. Storing a mutable value into a `let` (or the other way around) needs `copy(x)`, unless the source is a local that doesn't share its value and isn't used again, in which case it moves for free (also for fields and items of such a local). Functions can only return values that don't share data with their parameters, and can only store into a `mut` parameter values that don't come from their other parameters, so methods that keep an argument copy it (`append(self.items, copy(item))`). Mutable values can still share with each other. New `NeedsCopy` error, whose message names the reason and the fix
 - Captures without `mut` read their value: while one is in use, the variable it came from can't change (assignment, `append`, `mut` arguments, `mut self` calls, `mut` captures). New `ChangedWhileRead` error
 - Registered ten test files that were never run (`min`, `gc-stress-struct-field-mutation`, `deep-recursion`, `elif` and others); two of them were fixed for the new mutability rules

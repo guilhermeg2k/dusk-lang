@@ -1531,6 +1531,18 @@ test "sharing rules" {
     try runCase("sharing-rules.dsk");
 }
 
+test "tail calls" {
+    try runCase("tail-calls.dsk");
+}
+
+test "assignment reads its own target" {
+    try runCase("assign-reads-target.dsk");
+}
+
+test "runtime error: call depth exceeded" {
+    try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
+}
+
 test "sema error: let from mut used again" {
     try runCaseError("sema/let-from-mut-used-again.dsk", error.NeedsCopy);
 }

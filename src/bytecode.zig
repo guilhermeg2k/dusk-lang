@@ -39,6 +39,7 @@ pub const BytecodeGen = struct {
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     is_generating_main: bool = false,
     current_function_name: []const u8 = "",
+    builtin_count: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
@@ -70,6 +71,7 @@ pub const BytecodeGen = struct {
 
     pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
         var funcs: std.ArrayList(Function) = .empty;
+        self.builtin_count = builtins.len;
 
         for (builtins) |bf| {
             switch (bf.kind) {
@@ -206,6 +208,7 @@ pub const BytecodeGen = struct {
 
         const chunk = Chunk{
             .num_registers = self.peak_register,
+            .num_params = @intCast(func.params.len),
             .instructions = try self.chunk_instructions.toOwnedSlice(self.allocator),
             .constants = try self.chunk_constants.toOwnedSlice(self.allocator),
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
@@ -263,6 +266,13 @@ pub const BytecodeGen = struct {
     fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
         const register_idx = self.var_register_id_by_uid.get(store_var.uid);
         if (register_idx) |idx| {
+            if (isBuiltInSteps(store_var.value) and readsVariable(store_var.value, store_var.uid)) {
+                const temp_reg = try self.genValue(store_var.value, try self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = idx, .b = temp_reg });
+                self.register_types[idx] = store_var.type_id;
+                return;
+            }
             _ = try self.genValue(store_var.value, idx);
             self.register_types[idx] = store_var.type_id;
             return;
@@ -270,6 +280,39 @@ pub const BytecodeGen = struct {
         const reg_idx = try self.genValue(store_var.value, try self.consumeRegister());
         self.register_types[reg_idx] = store_var.type_id;
         try self.bindVariable(store_var.uid, reg_idx);
+    }
+
+    fn isBuiltInSteps(value: *const ir.Value) bool {
+        return switch (value.data) {
+            .struct_init, .i_array, .union_init, .block_value, .try_call, .catch_call => true,
+            else => false,
+        };
+    }
+
+    fn readsVariable(value: *const ir.Value, uid: usize) bool {
+        return switch (value.data) {
+            .identifier => |id| id.uid == uid,
+            .indexed => |indexed| readsVariable(indexed.target, uid) or readsVariable(indexed.index, uid),
+            .binary_op => |op| readsVariable(op.left, uid) or readsVariable(op.right, uid),
+            .unary_op => |op| readsVariable(op.right, uid),
+            .fn_call => |call| for (call.args) |arg| {
+                if (readsVariable(arg, uid)) break true;
+            } else false,
+            .struct_init => |struct_init| for (struct_init.values) |field| {
+                if (readsVariable(field, uid)) break true;
+            } else false,
+            .i_array => |array| for (array.values) |item| {
+                if (readsVariable(item, uid)) break true;
+            } else false,
+            .string_interpolation => |parts| for (parts) |part| {
+                if (readsVariable(part, uid)) break true;
+            } else false,
+            .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
+            .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,
+            .union_tag, .union_payload, .int_to_float, .array_length, .buffer_new, .bytes_length => |inner| readsVariable(inner, uid),
+            .try_call, .catch_call, .block_value => true,
+            .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null => false,
+        };
     }
 
     fn bindVariable(self: *Self, uid: usize, reg: u8) !void {
@@ -446,6 +489,9 @@ pub const BytecodeGen = struct {
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
+        if (return_stmt.value) |value| {
+            if (self.tailCallIndex(value)) |fn_index| return self.genTailCall(value.data.fn_call, fn_index);
+        }
         const return_value_register = if (return_stmt.value) |val|
             try self.genValue(val, try self.consumeRegister())
         else
@@ -457,6 +503,26 @@ pub const BytecodeGen = struct {
         };
 
         try self.chunk_instructions.append(self.allocator, inst);
+    }
+
+    fn tailCallIndex(self: *Self, value: *const ir.Value) ?u16 {
+        if (self.is_generating_main) return null;
+        if (value.data != .fn_call) return null;
+        if (self.type_table.isErrorUnion(value.type_id)) return null;
+        const fn_index = self.fn_index_by_uid.get(value.data.fn_call.fn_uid) orelse return null;
+        if (fn_index < self.builtin_count) return null;
+        return fn_index;
+    }
+
+    fn genTailCall(self: *Self, fc: ir.FnCall, fn_index: u16) !void {
+        const call_reg = try self.consumeRegister();
+        for (fc.args) |arg| {
+            _ = try self.genValue(arg, try self.consumeRegister());
+        }
+        var tail_call = Instruction{ .op = .TAIL_CALL, .a = call_reg };
+        tail_call.putBEx(fn_index);
+        try self.chunk_instructions.append(self.allocator, tail_call);
+        self.freeRegisterN(fc.args.len + 1);
     }
 
     fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) anyerror!u8 {
@@ -1429,6 +1495,7 @@ pub const Chunk = struct {
     const Self = @This();
 
     num_registers: u8,
+    num_params: u8,
     instructions: []Instruction,
     constants: []v.Value,
     shadow_types: []v.ValueType,
@@ -1500,7 +1567,7 @@ pub const Chunk = struct {
             .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG, .I_TO_BYTE => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
+            .CALL, .TAIL_CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
@@ -1647,6 +1714,7 @@ pub const OpCode = enum(u8) {
     B_NOT,
 
     CALL,
+    TAIL_CALL,
     RETURN,
     RETURN_ERR,
     PANIC_ERR,

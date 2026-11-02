@@ -8,22 +8,25 @@ const BuiltIn = @import("built-in.zig").BuiltIn;
 pub const VM = struct {
     const Self = @This();
     const MIN_GC_THRESHOLD = 1000000; //1MB
+    const MAX_CALL_DEPTH = 100_000;
+    const STACK_SLOTS = 4_000_000;
+    const MAX_FRAME_REGISTERS = 256;
 
     allocator: std.mem.Allocator,
     program: *const bc.Program,
-    frames: [256]CallFrame,
+    frames: []CallFrame,
     frame_count: usize,
-    stack: [16383]v.Value,
+    stack: []v.Value,
     heap: Heap,
     scratch: std.Io.Writer.Allocating,
 
     pub fn init(program: *const bc.Program) VM {
         return .{
             .allocator = std.heap.page_allocator,
-            .frames = undefined,
+            .frames = &.{},
             .frame_count = 0,
             .program = program,
-            .stack = undefined,
+            .stack = &.{},
             .heap = .{
                 .arenas = .{
                     std.heap.ArenaAllocator.init(std.heap.page_allocator),
@@ -60,6 +63,10 @@ pub const VM = struct {
     }
 
     pub noinline fn run(self: *Self) !void {
+        self.frames = try self.allocUntouched(CallFrame, MAX_CALL_DEPTH);
+        defer self.freeUntouched(CallFrame, self.frames);
+        self.stack = try self.allocUntouched(v.Value, STACK_SLOTS);
+        defer self.freeUntouched(v.Value, self.stack);
         self.initMainFrame();
 
         const stack = self.stack[0..];
@@ -495,6 +502,7 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
+                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return self.callDepthExceeded();
                             self.frames[self.frame_count] = .{
                                 .function = func,
                                 .cur_inst = 0,
@@ -512,6 +520,16 @@ pub const VM = struct {
                         },
                         .@"inline" => unreachable,
                     }
+                },
+
+                .TAIL_CALL => {
+                    const func = &self.program.functions[inst.bEx()];
+                    const chunk = &func.kind.dusk;
+                    const args_start = stack_base + inst.a + 1;
+                    std.mem.copyForwards(v.Value, stack[stack_base..][0..chunk.num_params], stack[args_start..][0..chunk.num_params]);
+                    current_frame.function = func;
+                    cur_instruction = 0;
+                    instructions = chunk.instructions;
                 },
 
                 .JUMP => {
@@ -980,6 +998,25 @@ pub const VM = struct {
         if (@import("builtin").is_test) return RunTimeError.ByteOutOfRange;
         std.debug.print("error: value {d} doesn't fit in byte (0..255)\n", .{number});
         return RunTimeError.ByteOutOfRange;
+    }
+
+    fn allocUntouched(self: *Self, comptime T: type, count: usize) ![]T {
+        const bytes = self.allocator.rawAlloc(@sizeOf(T) * count, .of(T), @returnAddress()) orelse return error.OutOfMemory;
+        const items: [*]T = @ptrCast(@alignCast(bytes));
+        return items[0..count];
+    }
+
+    fn freeUntouched(self: *Self, comptime T: type, items: []T) void {
+        const bytes: [*]u8 = @ptrCast(items.ptr);
+        self.allocator.rawFree(bytes[0 .. @sizeOf(T) * items.len], .of(T), @returnAddress());
+    }
+
+    noinline fn callDepthExceeded(self: *Self) RunTimeError {
+        @branchHint(.cold);
+        _ = self;
+        if (@import("builtin").is_test) return RunTimeError.CallDepthExceeded;
+        std.debug.print("error: call depth exceeded: more than {d} nested calls\n", .{MAX_CALL_DEPTH});
+        return RunTimeError.CallDepthExceeded;
     }
 
     noinline fn panicUnhandledError(self: *Self, err_value: v.Value) RunTimeError {

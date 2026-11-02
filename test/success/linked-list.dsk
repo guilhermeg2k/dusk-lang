@@ -114,7 +114,7 @@ end
 func print_from(node: ?Node) -> void
     if node: current then
         echo(current.value)
-        print_from(current.next)
+        return print_from(current.next)
     end
 end
 

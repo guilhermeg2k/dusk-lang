@@ -696,6 +696,7 @@ pub const RunTimeError = error{
     IndexOutOfBounds,
     NegativeBufferSize,
     UnhandledError,
+    CallDepthExceeded,
 };
 
 const std = @import("std");
