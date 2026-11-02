@@ -858,11 +858,6 @@ pub const SemaAnalyzer = struct {
                 .update_indexed => |update| {
                     if (isValueReturning(update.target) or isValueReturning(update.value)) return true;
                 },
-                .update_null_box => |update| {
-                    if (update.value) |value| {
-                        if (isValueReturning(value)) return true;
-                    }
-                },
                 .loop => |loop| {
                     if (loop.condition) |condition| {
                         if (isValueReturning(condition)) return true;
@@ -928,11 +923,6 @@ pub const SemaAnalyzer = struct {
                 },
                 .update_indexed => |update| {
                     if (isValueLeaving(update.target) or isValueLeaving(update.value)) return true;
-                },
-                .update_null_box => |update| {
-                    if (update.value) |value| {
-                        if (isValueLeaving(value)) return true;
-                    }
                 },
                 .loop => |loop| {
                     if (loop.condition) |condition| {
@@ -1834,30 +1824,18 @@ pub const SemaAnalyzer = struct {
                     );
                 }
 
-                const id_symbol_type_ptr = self.type_table.getTypePtrById(id_symbol.type_id);
-
-                if (id_symbol_type_ptr.is_nullable) {
-                    if (self.needsNullBox(id_symbol.type_id, assignment_value.type_id)) {
-                        return ir.Instruction{ .update_null_box = .{
-                            .identifier = id_symbol.identifier,
-                            .uid = id_symbol.uid,
-                            .value = assignment_value,
-                            .type_id = id_symbol.type_id,
-                        } };
-                    }
-
-                    return ir.Instruction{ .store_var = .{
-                        .identifier = id_symbol.identifier,
-                        .uid = id_symbol.uid,
-                        .value = assignment_value,
-                        .type_id = id_symbol.type_id,
-                    } };
-                }
+                const boxed_value = if (self.needsNullBox(id_symbol.type_id, assignment_value.type_id))
+                    try ir.Value.init(self.allocator, .{
+                        .data = .{ .null_box_init = .{ .value = assignment_value } },
+                        .type_id = assignment_value.type_id,
+                    })
+                else
+                    assignment_value;
 
                 return ir.Instruction{ .store_var = .{
                     .identifier = id_symbol.identifier,
                     .uid = id_symbol.uid,
-                    .value = assignment_value,
+                    .value = boxed_value,
                     .type_id = id_symbol.type_id,
                 } };
             },

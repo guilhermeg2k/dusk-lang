@@ -803,6 +803,10 @@ test "mutable paths" {
     try runCase("mutable-paths.dsk");
 }
 
+test "nullable box values" {
+    try runCase("nullable-box-values.dsk");
+}
+
 test "sema error: assign undefined" {
     try runCaseError("sema/assign-undefined.dsk", error.NotDefined);
 }

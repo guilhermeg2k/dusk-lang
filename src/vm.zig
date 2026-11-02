@@ -293,28 +293,6 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
                 },
 
-                .NULL_BOX_STORE => {
-                    const is_null = inst.b == 0;
-                    if (is_null) {
-                        stack[stack_base + inst.a] = v.NULL_VALUE;
-                        continue;
-                    }
-
-                    const new_value = stack[stack_base + inst.c];
-                    const current_raw: u64 = @bitCast(stack[stack_base + inst.a]);
-                    if (current_raw == 0) {
-                        const size = v.NullBox.calc_size();
-                        current_frame.cur_inst = cur_instruction;
-                        try self.maybeCollectGarbage(size);
-                        var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), new_value, @enumFromInt(inst.b - 1));
-                        self.increaseHeapAllocationCount(size);
-                        stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
-                    } else {
-                        const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, stack[stack_base + inst.a].heap_obj);
-                        nullable_vl.value = new_value;
-                    }
-                },
-
                 .NULL_BOX_UNWRAP => {
                     const raw: u64 = @bitCast(stack[stack_base + inst.b]);
                     if (raw == 0) {

@@ -24,7 +24,6 @@ pub const Instruction = union(enum) {
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
-    update_null_box: UpdateNullBox,
     break_stmt: void,
     continue_stmt: void,
 };
@@ -226,13 +225,6 @@ pub const NullBoxNNullOp = struct {
 pub const UnwrapNullBox = struct {
     unwrapped: struct { uid: usize, identifier: []const u8, type_id: TypeId },
     null_box: *Value,
-};
-
-pub const UpdateNullBox = struct {
-    uid: usize,
-    type_id: TypeId,
-    identifier: []const u8,
-    value: ?*Value,
 };
 
 pub const IndexedValue = struct {

@@ -306,9 +306,6 @@ pub const BytecodeGen = struct {
                 .unwrap_null_box => |stmt| {
                     _ = try self.genUnwrapNullBox(stmt, try self.consumeRegister());
                 },
-                .update_null_box => |stmt| {
-                    try self.genUpadateNullBox(stmt);
-                },
                 .break_stmt => try self.genBreak(),
                 .continue_stmt => try self.genContinue(),
             }
@@ -1156,40 +1153,6 @@ pub const BytecodeGen = struct {
         return target_reg;
     }
 
-    fn genUpadateNullBox(self: *Self, stmt: ir.UpdateNullBox) !void {
-        if (self.var_register_id_by_uid.get(stmt.uid) == null) return self.genGlobalNullBoxUpdate(stmt);
-        const box_reg = self.var_register_id_by_uid.get(stmt.uid).?;
-
-        // b = 0 stores null, otherwise b = inner value kind + 1
-        var store_inst = Instruction{
-            .op = .NULL_BOX_STORE,
-            .a = box_reg,
-            .b = 0,
-        };
-
-        if (stmt.value) |value| {
-            const value_reg = try self.genValue(value, try self.consumeRegister());
-            defer self.freeRegister();
-            store_inst.b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, value.type_id)) + 1;
-            store_inst.c = value_reg;
-        }
-
-        try self.chunk_instructions.append(self.allocator, store_inst);
-        try self.recordHeapMap();
-    }
-
-    fn genGlobalNullBoxUpdate(self: *Self, stmt: ir.UpdateNullBox) !void {
-        const box_reg = try self.consumeRegister();
-        defer self.freeRegister();
-        try self.genGlobalLoad(stmt.uid, stmt.type_id, box_reg);
-        try self.var_register_id_by_uid.put(stmt.uid, box_reg);
-        defer _ = self.var_register_id_by_uid.remove(stmt.uid);
-        try self.genUpadateNullBox(stmt);
-        var store = Instruction{ .op = .GLOBAL_STORE, .a = box_reg };
-        store.putBEx(self.main_register_by_uid.get(stmt.uid).?);
-        try self.chunk_instructions.append(self.allocator, store);
-    }
-
     fn genVoidValue(self: *Self, target_reg: u8) !u8 {
         try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
         self.register_types[target_reg] = self.type_table.getPrimitive(.void);
@@ -1703,9 +1666,7 @@ pub const Chunk = struct {
             .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
             .GLOBAL_LOAD, .GLOBAL_STORE => std.debug.print("R[{d}] G[{d}]", .{ inst.a, inst.bEx() }),
-            .NULL_BOX_INIT,
-            .NULL_BOX_STORE,
-            => std.debug.print("R[{d}] B[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .NULL_BOX_INIT => std.debug.print("R[{d}] B[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .NULL_BOX_UNWRAP,
             .NULL_BOX_NNULL,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
@@ -1785,7 +1746,6 @@ pub const OpCode = enum(u8) {
     GLOBAL_STORE,
 
     NULL_BOX_INIT,
-    NULL_BOX_STORE,
     NULL_BOX_UNWRAP,
 
     NULL_BOX_NNULL,
@@ -1846,7 +1806,6 @@ pub const OpCode = enum(u8) {
             .UNION_INIT,
             .UNION_LOAD,
             .NULL_BOX_INIT,
-            .NULL_BOX_STORE,
             .STR_BUILD,
             .TO_STRING,
             .BYTES_NEW,

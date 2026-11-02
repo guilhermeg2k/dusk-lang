@@ -1,0 +1,59 @@
+enum Color
+    Red
+    Blue
+end
+
+let a: ?int = 5
+let mut b = a
+b = 6
+assert(a == 5)
+assert(b == 6)
+
+func change(x: ?int) -> void
+    let mut y = x
+    y = 9
+    assert(y == 9)
+end
+
+let c: ?int = 5
+change(c)
+assert(c == 5)
+
+let f: ?float = 1.5
+let mut g = f
+g = 2.5
+assert(f == 1.5)
+
+let t: ?bool = true
+let mut u = t
+u = false
+assert(t == true)
+
+let by: ?byte = 'a'
+let mut bz = by
+bz = 'b'
+assert(by == 'a')
+
+let red: ?Color = Color.Red
+let mut other = red
+other = Color.Blue
+assert(red == Color.Red)
+
+let mut shared: ?int = 1
+let mut copies: []?int = []
+for 0..200: i do
+    shared = i
+    append(copies, shared)
+    let keep = shared
+    shared = null
+    shared = i + 1
+    assert(keep == i)
+end
+assert(copies[0] == 0)
+assert(copies[200] == 200)
+
+let mut total: ?int = null
+let first = total
+total = 3
+assert(first == null)
+assert(total == 3)
