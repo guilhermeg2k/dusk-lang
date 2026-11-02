@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Language reference review: fixed two loop examples that called `echo` with two arguments and the sharing example (a `mut` value that isn't used again moves instead of failing); constants are hoisted; only nullable primitives and enums compare by value; `==` on arrays, structs, unions and buffers compares identity; member order isn't checked yet; `mut` arguments can be fields or new values; `when` captures follow the capture rules; the call depth runtime error; new known limitations for sharing values
 - Tail calls: `return f(x)` reuses the current call frame (new `TAIL_CALL` opcode), so tail-recursive and mutually recursive functions run in constant stack space (also `return f(x)` in a `void` function). Calls whose result is an error union aren't tail calls yet
 - Fixed recursion deeper than 256 calls crashing the VM (out-of-bounds frame write). The limit is now 100,000 nested calls (frames and registers are allocated when the program starts, and only touched as they're used), and going over stops with a `CallDepthExceeded` runtime error
 - Fixed assigning a struct, array, union or `if`/`when` value that reads the variable being assigned: `head = Node(value = i, next = head)` built the new value in `head`'s register first, so `next` pointed to the new node itself (a cycle)

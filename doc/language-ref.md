@@ -49,7 +49,7 @@ let total = 1 #= explanation =# + 2
 
 **Line breaks** aren't significant. A statement can span several lines, but two expressions on consecutive lines can also join into one: `when n` followed by `-1 then` on the next line is read as `when n - 1`.
 
-**Hoisting**: functions, structs, enums, unions and error sets can be used before they're defined. Variables must be defined before use.
+**Hoisting**: functions, structs, enums, unions, error sets and [constants](#constants) can be used before they're defined. Other variables must be defined before use.
 
 **Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
 
@@ -72,7 +72,7 @@ let mut y = 10
 y = 20
 ```
 
-A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and loop and `if` captures. A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
+A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and `for`, `if` and `when` captures. A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
 
 ```nim
 let p = Point(x = 1, y = 2)
@@ -90,8 +90,12 @@ Arrays, buffers, structs and unions (and their nullables) are shared when assign
 
 ```nim
 let mut list = [1, 2]
-let frozen = list          # error: 'list' is mutable, so a let can't share it: use copy(list)
-let frozen = copy(list)    # fine: copy(x) returns a deep copy
+let frozen = list          # error: 'list' is mutable, so a let can't share it ('list' is used again below)
+append(list, 3)
+
+let mut items = [1, 2]
+let snapshot = copy(items) # fine: copy(x) returns a deep copy
+append(items, 3)
 ```
 
 This applies to every place a value is stored: `let`, assignment, `append`, constructor arguments, array items, and values coming out of `if`, `when`, `orelse` and `catch`. Strings and primitives are always safe to share.
@@ -260,7 +264,7 @@ let text = string_from(bytes) catch "not UTF-8"
 ```
 
 - The type is written `buffer`: `let mut data: buffer = buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
-- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a `let mut` variable. An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
+- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
 - `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
 - `==` on buffers compares identity, like strings today.
 
@@ -376,7 +380,7 @@ end
 echo(Api.host)
 ```
 
-Members must be written in this order: static fields, then instance fields, then methods. The same order applies to enums and unions.
+Members should be written in this order: static fields, then instance fields, then methods. The same order applies to enums and unions. The compiler doesn't check the order yet.
 
 ### Nested structs
 
@@ -566,7 +570,7 @@ count = null
 
 A nullable can't be used directly as its inner type. Unwrap it first.
 
-`==` and `!=` are the exception: a nullable compares by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value.
+`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?string`, `?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`.
 
 ### Capture
 
@@ -664,6 +668,8 @@ An `int` mixed with a `float` is promoted to `float`.
 ### Comparison and logic
 
 `==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
+
+On arrays, structs, unions and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet.
 
 `==` on strings compares identity, not text. Literals with the same text are the same string, so `"dusk" == "dusk"` is `true`, but a string built at run time (for example with interpolation) is never equal to a literal. Use `str_equal(a, b)` to compare text.
 
@@ -828,7 +834,7 @@ Arrays can be traversed with a capture loop. The first capture is the item; the 
 ```nim
 let items = [10, 20, 30]
 for items: item, index do
-    echo(item, index)
+    echo("$index: $item")
 end
 
 for items: item do
@@ -846,7 +852,7 @@ Integer ranges use the same capture syntax, without allocating an array:
 
 ```nim
 for 1..5: value, index do
-    echo(value, index)
+    echo("$index: $value")
 end
 ```
 
@@ -1093,7 +1099,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size or a `byte(x)` outside `0..255` still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size, a `byte(x)` outside `0..255` or more than 100,000 nested calls still stops the program and can't be caught.
 
 ## 12. Built-in Functions
 
@@ -1188,7 +1194,7 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
 
 ## 14. Known Limitations
 
@@ -1201,4 +1207,5 @@ These are known gaps in v0.13 development. Most are planned in the [roadmap](roa
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
+- **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.
