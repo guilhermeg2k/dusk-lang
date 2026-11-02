@@ -2,5 +2,5 @@ struct S
     x: int
 end
 
-let s = S(x = 1)
+let mut s = S(x = 1)
 s.x = "hello"

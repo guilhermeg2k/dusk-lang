@@ -1,0 +1,11 @@
+struct P
+    x: int
+    func set(mut self: @, v: int) -> void
+        self.x = v
+    end
+end
+
+let mut maybe: ?P = P(x = 1)
+if maybe: q then
+    q.x = 4
+end

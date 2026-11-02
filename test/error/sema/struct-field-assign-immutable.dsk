@@ -1,0 +1,9 @@
+struct P
+    x: int
+    func set(mut self: @, v: int) -> void
+        self.x = v
+    end
+end
+
+let p = P(x = 1)
+p.x = 2

@@ -72,6 +72,18 @@ let mut y = 10
 y = 20
 ```
 
+A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included), loop and `if` captures, and static fields (`S.items[0] = 1` needs `let mut items`). A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
+
+```nim
+let p = Point(x = 1, y = 2)
+p.x = 5          # error: p is not mutable
+
+let mut q = Point(x = 1, y = 2)
+q.x = 5
+```
+
+This only stops changes made through `p`. Another variable that holds the same struct or array can still change it.
+
 ## 3. Types
 
 ### Primitives
@@ -826,7 +838,7 @@ echo(scale(factor = 5, x = 1))   # 5
 
 ### Mutable parameters
 
-Parameters are immutable. Arrays and structs can be taken as `mut` to change the caller's value, and the argument must then be a mutable variable. Primitive and union parameters can't be `mut`.
+Parameters are immutable. Arrays, buffers and structs can be taken as `mut` to change the caller's value. The argument must then be mutable: a `let mut` variable or a field or item of one (`grow(config.items)`), or a new value such as `[1, 2]`. Primitive and union parameters can't be `mut`.
 
 ```nim
 func push_one(mut list: []int) -> void

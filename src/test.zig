@@ -747,6 +747,62 @@ test "sema error: self binding not mut" {
     try runCaseError("sema/self-binding-not-mut.dsk", error.NotMutable);
 }
 
+test "sema error: struct field assign immutable" {
+    try runCaseError("sema/struct-field-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: nested struct field assign immutable" {
+    try runCaseError("sema/nested-struct-field-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: array item field assign immutable" {
+    try runCaseError("sema/array-item-field-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: struct param field assign" {
+    try runCaseError("sema/struct-param-field-assign.dsk", error.NotMutable);
+}
+
+test "sema error: self field assign not mut" {
+    try runCaseError("sema/self-field-assign-not-mut.dsk", error.NotMutable);
+}
+
+test "sema error: capture struct field assign" {
+    try runCaseError("sema/capture-struct-field-assign.dsk", error.NotMutable);
+}
+
+test "sema error: mut array arg field path" {
+    try runCaseError("sema/mut-array-arg-field-path.dsk", error.NotMutable);
+}
+
+test "sema error: mut struct arg field path" {
+    try runCaseError("sema/mut-struct-arg-field-path.dsk", error.NotMutable);
+}
+
+test "sema error: append field path immutable" {
+    try runCaseError("sema/append-field-path-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: static field index assign immutable" {
+    try runCaseError("sema/static-field-index-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: enum static field append immutable" {
+    try runCaseError("sema/enum-static-field-append-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: temporary field assign" {
+    try runCaseError("sema/temporary-field-assign.dsk", error.TemporaryNotMutable);
+}
+
+test "sema error: temporary mut method call" {
+    try runCaseError("sema/temporary-mut-method-call.dsk", error.TemporaryNotMutable);
+}
+
+test "mutable paths" {
+    try runCase("mutable-paths.dsk");
+}
+
 test "sema error: assign undefined" {
     try runCaseError("sema/assign-undefined.dsk", error.NotDefined);
 }

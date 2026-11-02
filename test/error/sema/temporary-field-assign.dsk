@@ -1,0 +1,12 @@
+struct P
+    x: int
+    func set(mut self: @, v: int) -> void
+        self.x = v
+    end
+end
+
+func mk() -> P
+    return P(x = 1)
+end
+
+mk().x = 2

@@ -1,0 +1,5 @@
+struct S
+    let items = [1, 2]
+end
+
+S.items[0] = 5

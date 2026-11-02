@@ -150,6 +150,11 @@ pub const ErrorDispatcher = struct {
         return error.NotMutable;
     }
 
+    pub fn temporaryNotMutable(self: *Self, loc: Loc) Errors {
+        self.log("A temporary value can't be changed; store it in a 'let mut' variable first", loc);
+        return error.TemporaryNotMutable;
+    }
+
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
         return error.UnwrappedCantBeMutable;
@@ -601,6 +606,7 @@ pub const Errors = error{
     AlreadyDefined,
     NotDefined,
     NotMutable,
+    TemporaryNotMutable,
     UnwrappedCantBeMutable,
     SelfOutsideStruct,
     InvalidStructField,

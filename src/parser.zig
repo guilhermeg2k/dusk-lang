@@ -491,7 +491,7 @@ pub const Parser = struct {
 
         return .{
             .identifier = identifier,
-            .is_mut = true,
+            .is_mut = false,
             .type = type_annotation,
             .default_value = value,
         };

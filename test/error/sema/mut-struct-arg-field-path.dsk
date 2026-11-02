@@ -1,0 +1,17 @@
+struct P
+    x: int
+    func set(mut self: @, v: int) -> void
+        self.x = v
+    end
+end
+struct Box
+    items: []int
+    p: P
+end
+
+func g(mut p: P) -> void
+    p.x = 10
+end
+
+let bx = Box(items = [1], p = P(x = 1))
+g(bx.p)

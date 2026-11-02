@@ -1,0 +1,7 @@
+enum E
+    let list = [1]
+
+    a
+end
+
+append(E.list, 3)

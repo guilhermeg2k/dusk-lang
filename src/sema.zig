@@ -1291,7 +1291,7 @@ pub const SemaAnalyzer = struct {
         if (!self.type_table.getTypePtrById(subject.type_id).is_nullable) {
             return self.err_dispatcher.invalidType("nullable", try self.type_table.name(subject.type_id, self.allocator), capture.exp.loc);
         }
-        if (capture.identifier.is_mut and !self.isExpressionMutable(capture.exp)) {
+        if (capture.identifier.is_mut and self.findImmutablePlace(capture.exp) != null) {
             return self.err_dispatcher.unwrappedValueCantBeMutable(capture.identifier.name, exp.loc);
         }
 
@@ -1873,20 +1873,9 @@ pub const SemaAnalyzer = struct {
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, expected_type_id);
                 const assignment_value_type = assignment_value.type_id;
 
-                var target_root = index_exp.target;
-                while (target_root.data == .indexed) {
-                    target_root = target_root.data.indexed.target;
-                }
-
-                const target_symbol = self.scope.symbol_table.getOrError(target_root.data.identifier) catch {
-                    return self.err_dispatcher.notDefined(target_root.data.identifier, target_root.loc);
-                };
-
-                const is_immutable_target = target_symbol.kind == .variable and
-                    (target_symbol.kind.variable.is_read_only or
-                        (!target_symbol.kind.variable.is_mut and self.type_table.getTypePtrById(target_type).kind != .@"struct"));
-                if (is_immutable_target) {
-                    return self.err_dispatcher.notMutable(target_root.data.identifier, target_root.loc);
+                const is_static_target = self.definedTypeOf(index_exp.target) != null;
+                if (!is_static_target) {
+                    try self.ensureMutable(index_exp.target);
                 }
 
                 var field_maybe_nullable_type_id: tt.TypeId = undefined;
@@ -1912,7 +1901,7 @@ pub const SemaAnalyzer = struct {
                         const struct_type_ptr = self.type_table.getTypePtrById(target_type);
                         const struct_def = &struct_type_ptr.kind.@"struct";
 
-                        if (target_symbol.kind == .variable) {
+                        if (!is_static_target) {
                             const field = struct_def.fields.get(index_exp.index.data.identifier) orelse return self.err_dispatcher.invalidStructField(
                                 struct_def.identifier,
                                 index_exp.index.data.identifier,
@@ -2062,7 +2051,7 @@ pub const SemaAnalyzer = struct {
             .uid = reference.data.identifier.uid,
             .identifier = name,
             .type_id = value.type_id,
-            .kind = .{ .variable = .{ .is_mut = false, .is_read_only = true } },
+            .kind = .{ .variable = .{ .is_mut = false } },
         });
     }
 
@@ -2890,10 +2879,7 @@ pub const SemaAnalyzer = struct {
 
                         if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
                             if (self.shouldAutoBindSelf(target)) {
-                                const is_mutable = self.isFieldMut(target, s.static_fields);
-                                if (fn_metadata.params[0].is_mut and !is_mutable) {
-                                    return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
-                                }
+                                if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
                                 try fn_call_arguments_values.append(self.allocator, target);
                             }
                         }
@@ -2916,10 +2902,7 @@ pub const SemaAnalyzer = struct {
 
                         if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
                             if (self.shouldAutoBindSelf(target)) {
-                                const is_mutable = self.isFieldMut(target, e.static_fields);
-                                if (fn_metadata.params[0].is_mut and !is_mutable) {
-                                    return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
-                                }
+                                if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
                                 try fn_call_arguments_values.append(self.allocator, target);
                             }
                         }
@@ -2942,10 +2925,7 @@ pub const SemaAnalyzer = struct {
 
                         if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
                             if (self.shouldAutoBindSelf(target)) {
-                                const is_mutable = self.isFieldMut(target, u.static_fields);
-                                if (fn_metadata.params[0].is_mut and !is_mutable) {
-                                    return self.err_dispatcher.notMutable(fn_name, indexed.target.loc);
-                                }
+                                if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
                                 try fn_call_arguments_values.append(self.allocator, target);
                             }
                         }
@@ -3018,21 +2998,8 @@ pub const SemaAnalyzer = struct {
                     fn_call_arg_value.type_id = param.type_id;
                 }
 
-                if (self.type_table.getTypePtrById(param.type_id).kind == .@"struct" and param.is_mut and fn_call_arg_value.data == .identifier) {
-                    const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.name);
-                    if (!symbol.kind.variable.is_mut) {
-                        return self.err_dispatcher.notMutable(symbol.identifier, _exp.loc);
-                    }
-                }
-
-                const param_kind = self.type_table.getTypePtrById(param.type_id).kind;
-                if ((param_kind == .array or param_kind == .buffer) and param.is_mut and _exp.data != .array_literal) {
-                    if (fn_call_arg_value.data == .identifier) {
-                        const symbol = try self.scope.symbol_table.getOrError(fn_call_arg_value.data.identifier.name);
-                        if (!symbol.kind.variable.is_mut) {
-                            return self.err_dispatcher.notMutable(fn_call_arg_value.data.identifier.name, _exp.loc);
-                        }
-                    }
+                if (param.is_mut and (_exp.data == .identifier or _exp.data == .indexed)) {
+                    try self.ensureMutable(_exp);
                 }
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
             } else if (param.default_value) |value| {
@@ -3383,24 +3350,49 @@ pub const SemaAnalyzer = struct {
         return self.err_dispatcher.notDefined(id, exp.loc);
     }
 
-    fn isFieldMut(self: *Self, target: *ir.Value, static_fields: std.StringHashMap(tt.TypedIdentifier)) bool {
-        var current = target;
-        while (true) {
-            switch (current.data) {
-                .identifier => {
-                    const sym = self.scope.symbol_table.get(current.data.identifier.name) orelse return false;
-                    return sym.kind.variable.is_mut;
-                },
-                .indexed => |idx| {
-                    // array indexes aren't field names, mutability comes from the root
-                    if (idx.index.data == .i_string) {
-                        if (static_fields.get(idx.index.data.i_string)) |sf| return sf.is_mut;
-                    }
-                    current = idx.target;
-                },
-                else => return false,
-            }
+    fn definedTypeOf(self: *Self, exp: *const ast.ExpNode) ?tt.TypeId {
+        if (exp.data != .identifier) return null;
+        const sym = self.scope.symbol_table.get(exp.data.identifier) orelse return null;
+        if (sym.kind != .defined_type) return null;
+        return sym.kind.defined_type.blueprint_type_id;
+    }
+
+    fn staticFieldOf(self: *Self, indexed: ast.IndexedExp) ?tt.TypedIdentifier {
+        const type_id = self.definedTypeOf(indexed.target) orelse return null;
+        if (indexed.index.data != .identifier) return null;
+        const static_fields = switch (self.type_table.getTypePtrById(type_id).kind) {
+            .@"struct" => |s| s.static_fields,
+            .@"enum" => |e| e.static_fields,
+            .@"union" => |u| u.static_fields,
+            else => return null,
+        };
+        return static_fields.get(indexed.index.data.identifier);
+    }
+
+    fn findImmutablePlace(self: *Self, exp: *const ast.ExpNode) ?ImmutablePlace {
+        switch (exp.data) {
+            .identifier => |name| {
+                const sym = self.scope.symbol_table.get(name) orelse return null;
+                if (sym.kind == .variable and sym.kind.variable.is_mut) return null;
+                return .{ .binding = name };
+            },
+            .indexed => |indexed| {
+                if (self.staticFieldOf(indexed)) |field| {
+                    if (field.is_mut) return null;
+                    return .{ .binding = field.identifier };
+                }
+                return self.findImmutablePlace(indexed.target);
+            },
+            else => return .temporary,
         }
+    }
+
+    fn ensureMutable(self: *Self, exp: *const ast.ExpNode) Errors!void {
+        const place = self.findImmutablePlace(exp) orelse return;
+        return switch (place) {
+            .binding => |name| self.err_dispatcher.notMutable(name, exp.loc),
+            .temporary => self.err_dispatcher.temporaryNotMutable(exp.loc),
+        };
     }
 
     fn shouldAutoBindSelf(self: *Self, target: *ir.Value) bool {
@@ -3684,17 +3676,6 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn isExpressionMutable(self: *Self, exp: *ast.ExpNode) bool {
-        return switch (exp.data) {
-            .identifier => |name| {
-                const sym = self.scope.symbol_table.get(name) orelse return false;
-                return sym.kind.variable.is_mut;
-            },
-            .indexed => |indexed| self.isExpressionMutable(indexed.target),
-            else => false,
-        };
-    }
-
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) !tt.TypeId {
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
@@ -3930,13 +3911,17 @@ pub const Symbol = struct {
     kind: union(enum) {
         variable: struct {
             is_mut: bool,
-            is_read_only: bool = false,
         },
         defined_type: struct {
             blueprint_type_id: tt.TypeId,
         },
         function: void,
     },
+};
+
+const ImmutablePlace = union(enum) {
+    binding: []const u8,
+    temporary,
 };
 
 const WhenSubject = struct {
