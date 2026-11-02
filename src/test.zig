@@ -1527,6 +1527,114 @@ test "copy" {
     try runCase("copy.dsk");
 }
 
+test "sharing rules" {
+    try runCase("sharing-rules.dsk");
+}
+
+test "sema error: let from mut used again" {
+    try runCaseError("sema/let-from-mut-used-again.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut from let used again" {
+    try runCaseError("sema/mut-from-let-used-again.dsk", error.NeedsCopy);
+}
+
+test "sema error: let from mut path used again" {
+    try runCaseError("sema/let-from-mut-path-used-again.dsk", error.NeedsCopy);
+}
+
+test "sema error: let from shared mut" {
+    try runCaseError("sema/let-from-shared-mut.dsk", error.NeedsCopy);
+}
+
+test "sema error: move inside loop" {
+    try runCaseError("sema/move-inside-loop.dsk", error.NeedsCopy);
+}
+
+test "sema error: return param" {
+    try runCaseError("sema/return-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: return param field" {
+    try runCaseError("sema/return-param-field.dsk", error.NeedsCopy);
+}
+
+test "sema error: return shared with param" {
+    try runCaseError("sema/return-shared-with-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut param from immutable param" {
+    try runCaseError("sema/mut-param-from-immutable-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut param from other mut param" {
+    try runCaseError("sema/mut-param-from-other-mut-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut from immutable capture" {
+    try runCaseError("sema/mut-from-immutable-capture.dsk", error.NeedsCopy);
+}
+
+test "sema error: changed while read for" {
+    try runCaseError("sema/changed-while-read-for.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read if" {
+    try runCaseError("sema/changed-while-read-if.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read when" {
+    try runCaseError("sema/changed-while-read-when.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read mut arg" {
+    try runCaseError("sema/changed-while-read-mut-arg.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read mut capture" {
+    try runCaseError("sema/changed-while-read-mut-capture.dsk", error.ChangedWhileRead);
+}
+
+test "min" {
+    try runCase("min.dsk");
+}
+
+test "gc stress struct field mutation" {
+    try runCase("gc-stress-struct-field-mutation.dsk");
+}
+
+test "deep recursion" {
+    try runCase("deep-recursion.dsk");
+}
+
+test "elif" {
+    try runCase("elif.dsk");
+}
+
+test "gc stress array of structs" {
+    try runCase("gc-stress-array-of-structs.dsk");
+}
+
+test "gc stress fn return struct" {
+    try runCase("gc-stress-fn-return-struct.dsk");
+}
+
+test "gc stress struct field append" {
+    try runCase("gc-stress-struct-field-append.dsk");
+}
+
+test "gc struct with array in loop" {
+    try runCase("gc-struct-with-array-in-loop.dsk");
+}
+
+test "register stress" {
+    try runCase("register-stress.dsk");
+}
+
+test "test" {
+    try runCase("test.dsk");
+}
+
 test "for-capture-missing-do" {
     try runCaseError("parser/for-capture-missing-do.dsk", error.ParserError);
 }

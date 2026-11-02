@@ -72,7 +72,7 @@ end
 
 assert(make().x == 12)
 let mut stored = Point(0)
-stored = point orelse @(x = 13)
+stored = copy(point) orelse @(x = 13)
 assert(stored.x == 13)
 let nested: []Point = [point orelse @(x = 14)]
 assert(nested[0].x == 14)

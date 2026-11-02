@@ -9,7 +9,7 @@ struct LinkedList
     len: int = 0
 
     func add(mut self: @, value: int) -> void
-        let new_node: Node = @(value = value, next = null)
+        let mut new_node: Node = @(value = value, next = null)
 
         if self.tail: mut tail then
             tail.next = new_node
@@ -23,7 +23,7 @@ struct LinkedList
     end
 
     func add_head(mut self: @, value: int) -> void
-        let new_node = @(value = value, next = self.root)
+        let mut new_node = @(value = value, next = self.root)
         self.root = new_node
 
         if self.tail == null then
@@ -93,28 +93,28 @@ struct LinkedList
     end
 
     func contains(self: @, value: int) -> bool
-        let mut cur_node = self.root
-        for cur_node != null do
-            if cur_node: c_node then
-                if c_node.value == value then
-                    return true
-                end
-
-                cur_node = c_node.next
-            end
-        end
-
-        return false
+        return contains_from(self.root, value)
     end
 
     func print(self: @) -> void
-        let mut cur_node = self.root
-        for cur_node != null do
-            if cur_node: c_node then
-                echo(c_node.value)
-                cur_node = c_node.next
-            end
+        print_from(self.root)
+    end
+end
+
+func contains_from(node: ?Node, value: int) -> bool
+    if node: current then
+        if current.value == value then
+            return true
         end
+        return contains_from(current.next, value)
+    end
+    return false
+end
+
+func print_from(node: ?Node) -> void
+    if node: current then
+        echo(current.value)
+        print_from(current.next)
     end
 end
 

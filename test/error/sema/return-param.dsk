@@ -1,0 +1,3 @@
+func same(xs: []int) -> []int
+    return xs
+end

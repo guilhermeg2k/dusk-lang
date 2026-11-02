@@ -1,0 +1,8 @@
+func grow(mut rows: [][]int) -> void
+    append(rows, [0])
+end
+
+let mut rows = [[1]]
+for rows: row do
+    grow(rows)
+end

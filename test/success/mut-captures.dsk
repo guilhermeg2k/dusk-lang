@@ -9,7 +9,7 @@ union Shape
 
     func add(mut self: @, p: Point) -> void
         if self.poly: mut pts then
-            append(pts, p)
+            append(pts, copy(p))
         end
     end
 
@@ -23,7 +23,7 @@ end
 
 func add_point(mut s: Shape, p: Point) -> void
     when s
-        poly: mut pts then append(pts, p) end
+        poly: mut pts then append(pts, copy(p)) end
         circle: _ then end
     end
 end

@@ -1,6 +1,6 @@
 # GC stress: struct field mutation under GC + trash structs with array fields
 # tests that freshly allocated structs survive GC during field initialization
-let canary = @(id = 999, extra = [99, 99, 99])
+let mut canary = @(id = 999, extra = [99, 99, 99])
 
 let mut i: int = 0
 for i < 50000 do

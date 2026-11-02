@@ -4,8 +4,8 @@ struct Node
     value: int
 
     func add(mut self: @, left: ?Node, right: ?Node) -> void
-        self.left = left
-        self.right = right
+        self.left = copy(left)
+        self.right = copy(right)
     end
 end
 

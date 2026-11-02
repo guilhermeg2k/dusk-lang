@@ -5,7 +5,7 @@ struct P
     end
 end
 
-let mut maybe: ?P = P(x = 1)
+let maybe: ?P = P(x = 1)
 if maybe: q then
     q.x = 4
 end

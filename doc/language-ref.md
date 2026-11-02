@@ -82,7 +82,71 @@ let mut q = Point(x = 1, y = 2)
 q.x = 5
 ```
 
-This only stops changes made through `p`. Another variable that holds the same struct or array can still change it.
+A `let` value is never changed by anything: see [Sharing values](#sharing-values) for how the compiler keeps mutable variables from reaching it.
+
+### Sharing values
+
+Arrays, buffers, structs and unions (and their nullables) are shared when assigned: `let mut b = a` makes `b` and `a` the same array. Mutable values can share freely, like in Python. Values that can't change (`let` variables, parameters without `mut`, captures without `mut`) can share with each other too. What the compiler doesn't allow is a mutable variable and an immutable one sharing a value, since a change through one would show through the other:
+
+```nim
+let mut list = [1, 2]
+let frozen = list          # error: 'list' is mutable, so a let can't share it: use copy(list)
+let frozen = copy(list)    # fine: copy(x) returns a deep copy
+```
+
+This applies to every place a value is stored: `let`, assignment, `append`, constructor arguments, array items, and values coming out of `if`, `when`, `orelse` and `catch`. Strings and primitives are always safe to share.
+
+**Moves.** A local variable that doesn't share its value with anything else and isn't used again moves for free, so building a value and then keeping it as a `let` needs no copy:
+
+```nim
+let mut squares: []int = []
+for 0..9: i do append(squares, i * i) end
+let result = squares       # fine: 'squares' isn't used again, so its value moves
+
+let template = [0, 0, 0]
+let mut board = template   # fine the other way too
+```
+
+The value needs `copy` when the variable is used again later, when it may share data with another variable, or when the move is inside a loop and the variable is declared outside it. Fields and items of a local can move under the same conditions (`let first = rows[0]` when `rows` isn't used again). The error names the reason.
+
+**Functions.** A function can only return values that don't share data with its parameters, and can only store into a `mut` parameter values that don't come from its other parameters. New values, locals built inside the function and copies are fine:
+
+```nim
+func build(n: int) -> [][]int
+    let mut out: [][]int = []
+    for 0..n: i do append(out, [i]) end
+    return out                  # fine: built here
+end
+
+func first(rows: [][]int) -> []int
+    return rows[0]              # error: 'rows[0]' belongs to the caller: return copy(rows[0])
+end
+
+struct Bag
+    items: [][]int
+
+    func add(mut self: @, item: []int) -> void
+        append(self.items, copy(item))   # 'item' belongs to the caller, so it's copied
+    end
+end
+```
+
+A `mut` parameter can share data with the function's own locals, so a method can link the same new value in two places (a list's `tail` and the previous node's `next`).
+
+**Captures.** A capture without `mut` reads its value. While it's in use (inside its block), the variable it came from can't change: assignments, `append`, passing it as a `mut` argument, `mut self` calls and `mut` captures of it are errors. Use a `mut` capture to change things inside the block, or change them after it:
+
+```nim
+let mut players = [Player(hp = 10)]
+for players: p do
+    echo(p.hp)                 # fine: reading
+    players[0].hp = 0          # error: 'players' can't change while capture 'p' reads from it
+end
+for players: mut p do
+    p.hp = 0                   # fine
+end
+```
+
+Changes made through a different mutable variable that shares the same value aren't caught by this check.
 
 ### Constants
 

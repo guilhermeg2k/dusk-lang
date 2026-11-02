@@ -4,9 +4,9 @@ struct Node
 
     func append(mut self: @, new_node: Node) -> void
         if self.next: mut tail then
-            tail.next = new_node
+            tail.next = copy(new_node)
         else
-            self.next = new_node
+            self.next = copy(new_node)
         end
     end
 end

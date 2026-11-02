@@ -1,0 +1,5 @@
+func collect(mut rows: [][]int) -> [][]int
+    let mut out: [][]int = []
+    append(out, rows[0])
+    return out
+end

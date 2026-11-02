@@ -29,6 +29,9 @@ pub const SemaAnalyzer = struct {
     constants: std.ArrayList(Constant) = .empty,
     constant_by_exp: std.AutoHashMapUnmanaged(*const ast.ExpNode, usize) = .empty,
     top_level_variable_names: std.StringHashMapUnmanaged(void) = .empty,
+    exp_types: std.AutoHashMapUnmanaged(*const ast.ExpNode, tt.TypeId) = .empty,
+    exp_symbols: std.AutoHashMapUnmanaged(*const ast.ExpNode, Symbol) = .empty,
+    flow_frames: std.ArrayList(FlowFrame) = .empty,
     default_first_local_uid: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
@@ -56,7 +59,10 @@ pub const SemaAnalyzer = struct {
 
         try self.hoistDeclarations(root);
 
+        try self.flow_frames.append(self.allocator, .{});
         const instructions = (try self.visitBlock(root)).instructions;
+        try self.resolveFlow();
+        _ = self.flow_frames.pop();
         try self.resolveErrorEdges();
         try self.checkPendingWhens();
 
@@ -242,6 +248,322 @@ pub const SemaAnalyzer = struct {
         const is_outside_top_level = self.fn_frames.items.len > 0 or self.default_first_local_uid != null;
         if (is_outside_top_level and self.top_level_variable_names.contains(name)) return self.err_dispatcher.topLevelVariableNotVisible(name, loc);
         return self.err_dispatcher.notDefined(name, loc);
+    }
+
+    fn enterFlowLoop(self: *Self) void {
+        if (self.currentFlow()) |frame| frame.loop_depth += 1;
+    }
+
+    fn exitFlowLoop(self: *Self) void {
+        if (self.currentFlow()) |frame| frame.loop_depth -= 1;
+    }
+
+    fn currentFlow(self: *Self) ?*FlowFrame {
+        if (self.flow_frames.items.len == 0) return null;
+        return &self.flow_frames.items[self.flow_frames.items.len - 1];
+    }
+
+    fn noteMention(self: *Self, uid: usize, loc: err.Loc) void {
+        const frame = self.currentFlow() orelse return;
+        const local = frame.locals.getPtr(uid) orelse return;
+        local.last_mention = @max(local.last_mention, loc.start);
+    }
+
+    fn trackLocal(self: *Self, uid: usize, type_id: tt.TypeId) Errors!void {
+        if (!self.isChangeableType(type_id)) return;
+        const frame = self.currentFlow() orelse return;
+        try frame.locals.put(self.allocator, uid, .{ .loop_depth = frame.loop_depth });
+    }
+
+    fn trackParam(self: *Self, uid: usize, name: []const u8) Errors!void {
+        const frame = self.currentFlow() orelse return;
+        try frame.params.put(self.allocator, uid, name);
+    }
+
+    fn trackCapture(self: *Self, capture_uid: usize, name: []const u8, is_mut: bool, type_id: tt.TypeId, subject: *const ast.ExpNode, loc: err.Loc) Errors!bool {
+        if (!self.isChangeableType(type_id)) return false;
+        const frame = self.currentFlow() orelse return false;
+        const place = self.flowPlaceOf(subject);
+        const root: ?usize = if (place) |found| (if (found.kind == .other) null else found.uid) else null;
+        try frame.capture_roots.put(self.allocator, capture_uid, root);
+        if (is_mut or place == null or self.findImmutablePlace(subject) != null) return false;
+        try frame.read_locks.append(self.allocator, .{ .root = place.?.uid, .capture_name = name, .loc = loc });
+        return true;
+    }
+
+    fn releaseReadLock(self: *Self) void {
+        const frame = self.currentFlow() orelse return;
+        _ = frame.read_locks.pop();
+    }
+
+    fn ensureNotReadLocked(self: *Self, exp: *const ast.ExpNode) Errors!void {
+        const place = self.flowPlaceOf(exp) orelse return;
+        return self.ensureRootNotReadLocked(place.uid, place.root_name, exp.loc);
+    }
+
+    fn ensureRootNotReadLocked(self: *Self, uid: usize, name: []const u8, loc: err.Loc) Errors!void {
+        const frame = self.currentFlow() orelse return;
+        const root = if (frame.capture_roots.get(uid)) |subject_root| subject_root orelse uid else uid;
+        for (frame.read_locks.items) |lock| {
+            if (lock.root != root) continue;
+            return self.err_dispatcher.changedWhileRead(name, lock.capture_name, self.lineOf(lock.loc.start), loc);
+        }
+    }
+
+    fn markShared(self: *Self, uid: usize, loc: err.Loc) void {
+        const frame = self.currentFlow() orelse return;
+        const local = frame.locals.getPtr(uid) orelse return;
+        if (local.shared_at == null) local.shared_at = loc;
+    }
+
+    fn isChangeableExp(self: *Self, exp: *const ast.ExpNode) bool {
+        const type_id = self.exp_types.get(exp) orelse return false;
+        return self.isChangeableType(type_id);
+    }
+
+    fn flowPlaceOf(self: *Self, exp: *const ast.ExpNode) ?FlowPlace {
+        var root = exp;
+        var is_whole = true;
+        while (root.data == .indexed) {
+            root = root.data.indexed.target;
+            is_whole = false;
+        }
+        if (root.data != .identifier) return null;
+        const symbol = self.exp_symbols.get(root) orelse return null;
+        if (symbol.kind != .variable) return null;
+        const frame = self.currentFlow() orelse return null;
+        var uid = symbol.uid;
+        var kind: FlowRootKind = .other;
+        var is_capture = false;
+        if (frame.capture_roots.get(uid)) |subject_root| {
+            is_whole = false;
+            is_capture = true;
+            if (subject_root) |subject_uid| uid = subject_uid;
+        }
+        if (frame.locals.contains(uid)) kind = .local else if (frame.params.contains(uid)) kind = .param;
+        return .{
+            .root_name = symbol.identifier,
+            .text = self.src[exp.loc.start..@min(exp.loc.end + 1, self.src.len)],
+            .uid = uid,
+            .kind = kind,
+            .side = if (symbol.kind.variable.is_mut) .mutable else .immutable,
+            .is_whole = is_whole,
+            .is_capture = is_capture,
+            .pos = root.loc.start,
+            .loc = exp.loc,
+        };
+    }
+
+    fn isConstructorCall(self: *Self, call: ast.FnCall) bool {
+        if (call.target.data != .identifier) return false;
+        const symbol = self.scope.symbol_table.get(call.target.data.identifier) orelse return false;
+        return symbol.kind == .defined_type;
+    }
+
+    fn collectPlaces(self: *Self, exp: *const ast.ExpNode, out: *std.ArrayList(FlowPlace)) Errors!void {
+        switch (exp.data) {
+            .identifier, .indexed => {
+                if (!self.isChangeableExp(exp)) return;
+                if (self.flowPlaceOf(exp)) |place| try out.append(self.allocator, place);
+            },
+            .array_literal => |literal| for (literal.exps) |item| try self.collectPlaces(item, out),
+            .anonymous_init => |anonymous| for (anonymous.arguments) |arg| try self.collectPlaces(arg.exp, out),
+            .fn_call => |call| {
+                if (!self.isConstructorCall(call)) return;
+                for (call.arguments) |arg| try self.collectPlaces(arg.exp, out);
+            },
+            .try_exp => |try_exp| try self.collectPlaces(try_exp.operand, out),
+            .orelse_exp => |orelse_exp| {
+                try self.collectPlaces(orelse_exp.operand, out);
+                try self.collectPlaces(orelse_exp.fallback, out);
+            },
+            .catch_exp => |catch_exp| {
+                try self.collectPlaces(catch_exp.operand, out);
+                switch (catch_exp.fallback) {
+                    .value => |value| try self.collectPlaces(value, out),
+                    .block => |block| try self.collectBlockTail(&block.body, out),
+                }
+            },
+            .if_exp => |if_exp| {
+                try self.collectBlockTail(&if_exp.then_block, out);
+                if (if_exp.else_block) |*block| try self.collectBlockTail(block, out);
+            },
+            .if_capture_exp => |capture| {
+                try self.collectBlockTail(&capture.body, out);
+                if (capture.else_block) |*block| try self.collectBlockTail(block, out);
+            },
+            .when_exp => |when_exp| {
+                for (when_exp.prongs) |*prong| try self.collectBlockTail(&prong.body, out);
+                if (when_exp.else_block) |*block| try self.collectBlockTail(block, out);
+            },
+            else => {},
+        }
+    }
+
+    fn collectBlockTail(self: *Self, block: *const ast.Block, out: *std.ArrayList(FlowPlace)) Errors!void {
+        const statements = block.statements.items;
+        if (statements.len == 0) return;
+        const last = statements[statements.len - 1];
+        if (last.data != .expression) return;
+        try self.collectPlaces(last.data.expression, out);
+    }
+
+    fn storeTargetOf(self: *Self, target_exp: *const ast.ExpNode) FlowTarget {
+        const place = self.flowPlaceOf(target_exp) orelse return .{ .side = .mutable, .local = null, .kind = .mut_value };
+        return switch (place.kind) {
+            .local => .{ .side = .mutable, .local = place.uid, .kind = .mut_value },
+            .param => .{ .side = .mutable, .local = null, .kind = .mut_param, .param = place.uid, .name = self.currentFlow().?.params.get(place.uid).? },
+            .other => .{ .side = .mutable, .local = null, .kind = .mut_value },
+        };
+    }
+
+    fn checkStore(self: *Self, source: *const ast.ExpNode, target: FlowTarget) Errors!void {
+        if (self.currentFlow() == null) return;
+        var places: std.ArrayList(FlowPlace) = .empty;
+        try self.collectPlaces(source, &places);
+        const frame = self.currentFlow().?;
+        for (places.items) |place| {
+            if (target.kind == .returned) {
+                if (place.kind == .param) return self.storeNeedsCopy(place, target);
+                if (place.kind == .local) try frame.exits.append(self.allocator, .{ .source = place.uid, .source_name = place.root_name, .param = null, .param_name = "", .loc = place.loc });
+                continue;
+            }
+            if (place.kind == .param and target.param != null and place.uid != target.param.?) return self.storeNeedsCopy(place, target);
+            const is_same_side = place.side == target.side;
+            if (place.kind == .local and place.is_capture) {
+                if (!is_same_side) return self.storeNeedsCopy(place, target);
+                if (target.local) |local| try frame.links.append(self.allocator, .{ place.uid, local });
+                if (target.param) |param| try frame.links.append(self.allocator, .{ place.uid, param });
+                if (target.local) |local| self.markShared(local, place.loc);
+                self.markShared(place.uid, place.loc);
+                continue;
+            }
+            if (place.kind == .local) {
+                try frame.edges.append(self.allocator, .{
+                    .source = place.uid,
+                    .source_name = place.root_name,
+                    .source_text = place.text,
+                    .target = target.local,
+                    .pos = place.pos,
+                    .loop_depth = frame.loop_depth,
+                    .loc = place.loc,
+                    .must_move = !is_same_side,
+                    .target_kind = target.kind,
+                    .target_name = target.name,
+                });
+                if (target.local) |local| try frame.links.append(self.allocator, .{ place.uid, local });
+                if (target.param) |param| {
+                    try frame.links.append(self.allocator, .{ place.uid, param });
+                    try frame.exits.append(self.allocator, .{ .source = place.uid, .source_name = place.root_name, .param = param, .param_name = target.name, .loc = place.loc });
+                }
+                continue;
+            }
+            if (!is_same_side) return self.storeNeedsCopy(place, target);
+            if (target.local) |local| {
+                self.markShared(local, place.loc);
+                if (place.kind == .param) try frame.links.append(self.allocator, .{ place.uid, local });
+            }
+        }
+    }
+
+    fn storeNeedsCopy(self: *Self, place: FlowPlace, target: FlowTarget) Errors {
+        const message = switch (target.kind) {
+            .returned => if (place.kind == .param)
+                try std.fmt.allocPrint(self.allocator, "'{s}' belongs to the caller, so it can't be returned as is: return copy({s}) instead", .{ place.text, place.text })
+            else
+                try std.fmt.allocPrint(self.allocator, "'{s}' is part of '{s}', so it can't be returned as is: return copy({s}) instead", .{ place.text, place.root_name, place.text }),
+            .mut_param => if (place.kind == .param)
+                try std.fmt.allocPrint(self.allocator, "'{s}' belongs to another parameter, so mut parameter '{s}' can't share it: use copy({s})", .{ place.text, target.name, place.text })
+            else
+                try std.fmt.allocPrint(self.allocator, "'{s}' can't change, so mut parameter '{s}' can't share it: use copy({s})", .{ place.text, target.name, place.text }),
+            .let_value => try std.fmt.allocPrint(self.allocator, "'{s}' is mutable, so a let can't share it: use copy({s}), or make the variable mut", .{ place.text, place.text }),
+            .mut_value => try std.fmt.allocPrint(self.allocator, "'{s}' can't change, so a mutable value can't share it: use copy({s})", .{ place.text, place.text }),
+        };
+        return self.err_dispatcher.needsCopy(message, place.loc);
+    }
+
+    fn resolveFlow(self: *Self) Errors!void {
+        const frame = self.currentFlow() orelse return;
+        for (frame.edges.items, 0..) |edge, i| {
+            if (!edge.must_move) continue;
+            if (self.isValidMove(frame, i, 0)) continue;
+            return self.moveNeedsCopy(frame, edge);
+        }
+
+        var groups: std.AutoHashMapUnmanaged(usize, usize) = .empty;
+        defer groups.deinit(self.allocator);
+        for (frame.links.items) |link| {
+            const left = flowGroupOf(&groups, link[0]);
+            const right = flowGroupOf(&groups, link[1]);
+            if (left != right) try groups.put(self.allocator, left, right);
+        }
+        for (frame.exits.items) |exit| {
+            const group = flowGroupOf(&groups, exit.source);
+            var params = frame.params.iterator();
+            while (params.next()) |param| {
+                if (exit.param != null and param.key_ptr.* == exit.param.?) continue;
+                if (flowGroupOf(&groups, param.key_ptr.*) != group) continue;
+                const message = if (exit.param == null)
+                    try std.fmt.allocPrint(self.allocator, "'{s}' can't be returned as is: it may share data with parameter '{s}'. Return copy({s}) instead", .{ exit.source_name, param.value_ptr.*, exit.source_name })
+                else
+                    try std.fmt.allocPrint(self.allocator, "'{s}' can't be stored in mut parameter '{s}' as is: it may share data with parameter '{s}'. Use copy({s})", .{ exit.source_name, exit.param_name, param.value_ptr.*, exit.source_name });
+                return self.err_dispatcher.needsCopy(message, exit.loc);
+            }
+        }
+    }
+
+    fn flowGroupOf(groups: *std.AutoHashMapUnmanaged(usize, usize), uid: usize) usize {
+        var current = uid;
+        while (groups.get(current)) |parent| {
+            if (parent == current) break;
+            current = parent;
+        }
+        return current;
+    }
+
+    fn isValidMove(self: *Self, frame: *FlowFrame, edge_index: usize, depth: usize) bool {
+        if (depth > 64) return false;
+        const edge = frame.edges.items[edge_index];
+        const local = frame.locals.get(edge.source) orelse return false;
+        if (local.last_mention > edge.pos) return false;
+        if (local.loop_depth != edge.loop_depth) return false;
+        return self.isFreshLocal(frame, edge.source, edge_index, depth + 1);
+    }
+
+    fn isFreshLocal(self: *Self, frame: *FlowFrame, uid: usize, moving_edge: usize, depth: usize) bool {
+        const local = frame.locals.get(uid) orelse return false;
+        if (local.shared_at != null) return false;
+        for (frame.edges.items, 0..) |edge, i| {
+            if (i == moving_edge) continue;
+            if (edge.source == uid) return false;
+            if (edge.target == uid and edge.source != uid and !self.isValidMove(frame, i, depth)) return false;
+        }
+        return true;
+    }
+
+    fn lineOf(self: *Self, pos: usize) usize {
+        return std.mem.count(u8, self.src[0..@min(pos, self.src.len)], "\n") + 1;
+    }
+
+    fn moveNeedsCopy(self: *Self, frame: *FlowFrame, edge: FlowEdge) Errors {
+        const local = frame.locals.get(edge.source).?;
+        const name = edge.source_name;
+        const reason = if (local.last_mention > edge.pos)
+            try std.fmt.allocPrint(self.allocator, "'{s}' is used again at line {d}", .{ name, self.lineOf(local.last_mention) })
+        else if (local.loop_depth != edge.loop_depth)
+            try std.fmt.allocPrint(self.allocator, "'{s}' is declared outside this loop", .{name})
+        else if (local.shared_at) |shared|
+            try std.fmt.allocPrint(self.allocator, "'{s}' may share data with another value (line {d})", .{ name, self.lineOf(shared.start) })
+        else
+            try std.fmt.allocPrint(self.allocator, "'{s}' may share data with another value", .{name});
+        const text = edge.source_text;
+        const message = switch (edge.target_kind) {
+            .returned => try std.fmt.allocPrint(self.allocator, "'{s}' can't be returned as is: {s}. Return copy({s}) instead", .{ text, reason, text }),
+            .mut_param => try std.fmt.allocPrint(self.allocator, "'{s}' can't be stored in mut parameter '{s}' as is: {s}. Use copy({s})", .{ text, edge.target_name, reason, text }),
+            .let_value => try std.fmt.allocPrint(self.allocator, "'{s}' is mutable, so a let can't share it: {s}. Use copy({s})", .{ text, reason, text }),
+            .mut_value => try std.fmt.allocPrint(self.allocator, "'{s}' can't change, so a mutable value can't share it: {s}. Use copy({s})", .{ text, reason, text }),
+        };
+        return self.err_dispatcher.needsCopy(message, edge.loc);
     }
 
     fn ensureVisible(self: *Self, symbol: Symbol, loc: err.Loc) Errors!void {
@@ -1174,6 +1496,14 @@ pub const SemaAnalyzer = struct {
         }) catch {
             return self.err_dispatcher.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
+        try self.trackLocal(uid, var_type_id);
+        if (self.isChangeableType(var_type_id)) {
+            try self.checkStore(let_stmt.value, .{
+                .side = if (let_stmt.is_mut) .mutable else .immutable,
+                .local = uid,
+                .kind = if (let_stmt.is_mut) .mut_value else .let_value,
+            });
+        }
 
         const boxed_value = if (self.needsNullBox(var_type_id, expression_value.type_id))
             try ir.Value.init(self.allocator, .{
@@ -1324,6 +1654,8 @@ pub const SemaAnalyzer = struct {
             .type_id = captured_type_id,
             .kind = .{ .variable = .{ .is_mut = capture.identifier.is_mut, .is_borrowed = true } },
         };
+        if (capture.identifier.is_mut) try self.ensureNotReadLocked(capture.exp);
+        const is_read_locked = try self.trackCapture(captured_symbol.uid, capture.identifier.name, capture.identifier.is_mut, captured_type_id, capture.exp, exp.loc);
         var then_instructions: std.ArrayList(ir.Instruction) = .empty;
         const captured_needs_unwrap = self.needsNullBox(subject.type_id, captured_type_id);
         try then_instructions.append(self.allocator, if (captured_needs_unwrap)
@@ -1339,6 +1671,7 @@ pub const SemaAnalyzer = struct {
             try self.scope.symbol_table.put(captured_symbol);
             try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).instructions);
         }
+        if (is_read_locked) self.releaseReadLock();
         const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).instructions else &.{};
         const condition = try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
@@ -1418,6 +1751,7 @@ pub const SemaAnalyzer = struct {
             .base_type = base_type,
             .base_kind = base_kind,
             .is_mutable = self.findImmutablePlace(exp) == null,
+            .exp = exp,
         };
     }
 
@@ -1670,6 +2004,9 @@ pub const SemaAnalyzer = struct {
             .type_id = variant_type_id,
             .kind = .{ .variable = .{ .is_mut = variant.is_mut, .is_borrowed = true } },
         };
+        if (variant.is_mut) try self.ensureNotReadLocked(subject.exp);
+        const is_read_locked = !is_ignored and try self.trackCapture(captured_symbol.uid, variant.capture, variant.is_mut, variant_type_id, subject.exp, prong.loc);
+        defer if (is_read_locked) self.releaseReadLock();
 
         if (!is_ignored) {
             try body.append(self.allocator, .{ .store_var = .{
@@ -1844,6 +2181,9 @@ pub const SemaAnalyzer = struct {
                 if (id_symbol.kind.variable.is_borrowed) {
                     return self.err_dispatcher.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
                 }
+                self.noteMention(id_symbol.uid, assign_stmt.target.loc);
+                try self.ensureRootNotReadLocked(id_symbol.uid, id, assign_stmt.target.loc);
+                try self.checkStore(assign_stmt.exp, .{ .side = .mutable, .local = id_symbol.uid, .kind = .mut_value });
 
                 if (!try self.canCoerce(assignment_value_type, id_symbol.type_id, assign_stmt.exp.loc)) {
                     return self.err_dispatcher.invalidType(
@@ -1883,6 +2223,7 @@ pub const SemaAnalyzer = struct {
                 const is_static_target = self.definedTypeOf(index_exp.target) != null;
                 if (!is_static_target) {
                     try self.ensureMutable(index_exp.target);
+                    try self.checkStore(assign_stmt.exp, self.storeTargetOf(index_exp.target));
                 }
 
                 var field_maybe_nullable_type_id: tt.TypeId = undefined;
@@ -2036,6 +2377,8 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        self.enterFlowLoop();
+        defer self.exitFlowLoop();
         const block = try self.visitBlock(&for_stmt.do_block);
 
         return ir.Instruction{ .loop = .{
@@ -2050,8 +2393,8 @@ pub const SemaAnalyzer = struct {
         return ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = uid, .name = name } }, .type_id = value.type_id });
     }
 
-    fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, is_mut: bool, loc: err.Loc) Errors!void {
-        if (std.mem.eql(u8, name, "_")) return;
+    fn bindLoopCapture(self: *Self, instructions: *std.ArrayList(ir.Instruction), name: []const u8, value: *ir.Value, is_mut: bool, loc: err.Loc) Errors!?usize {
+        if (std.mem.eql(u8, name, "_")) return null;
         if (self.scope.symbol_table.symbols.contains(name)) return self.err_dispatcher.alreadyDefined(name, loc);
         const reference = try self.storeTemporaryValue(instructions, name, value);
         try self.scope.symbol_table.put(.{
@@ -2060,14 +2403,22 @@ pub const SemaAnalyzer = struct {
             .type_id = value.type_id,
             .kind = .{ .variable = .{ .is_mut = is_mut, .is_borrowed = true } },
         });
+        return reference.data.identifier.uid;
     }
 
     fn lowerCaptureLoopBody(self: *Self, capture: ast.ForCaptureStmt, item: *ir.Value, index: *ir.Value, loc: err.Loc) Errors![]const ir.Instruction {
+        self.enterFlowLoop();
+        defer self.exitFlowLoop();
         var body: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type_id);
         defer self.scope.exit(self.scope.return_type_id);
-        try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc);
-        if (capture.index) |name| try self.bindLoopCapture(&body, name, index, false, loc);
+        if (capture.is_item_mut) try self.ensureNotReadLocked(capture.source);
+        var is_read_locked = false;
+        if (try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc)) |item_uid| {
+            is_read_locked = try self.trackCapture(item_uid, capture.item, capture.is_item_mut, item.type_id, capture.source, loc);
+        }
+        defer if (is_read_locked) self.releaseReadLock();
+        if (capture.index) |name| _ = try self.bindLoopCapture(&body, name, index, false, loc);
         try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
         return body.toOwnedSlice(self.allocator);
     }
@@ -2256,6 +2607,8 @@ pub const SemaAnalyzer = struct {
         defer self.fn_depth -= 1;
         try self.fn_frames.append(self.allocator, .{ .first_local_uid = self.scope.next_uid });
         defer _ = self.fn_frames.pop();
+        try self.flow_frames.append(self.allocator, .{});
+        defer _ = self.flow_frames.pop();
 
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
@@ -2270,6 +2623,7 @@ pub const SemaAnalyzer = struct {
                 .type_id = param.type_id,
                 .kind = .{ .variable = .{ .is_mut = param.is_mut, .is_borrowed = true } },
             });
+            try self.trackParam(arg_uid, param.identifier);
 
             try params.append(self.allocator, .{
                 .uid = arg_uid,
@@ -2280,6 +2634,7 @@ pub const SemaAnalyzer = struct {
         }
 
         const body = try self.visitBlock(&fn_def.body_block);
+        try self.resolveFlow();
         const is_failing_void = self.type_table.isErrorUnion(self.scope.return_type_id) and
             self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union.payload == self.type_table.getPrimitive(.void);
 
@@ -2310,6 +2665,7 @@ pub const SemaAnalyzer = struct {
         if (return_stmt.exp) |exp| {
             const exp_value = try self.evalExpExpecting(exp, self.scope.return_type_id);
             const exp_value_type = exp_value.type_id;
+            if (self.isChangeableType(exp_value_type)) try self.checkStore(exp, .{ .side = .mutable, .local = null, .kind = .returned });
 
             if (!try self.canCoerce(exp_value_type, self.scope.return_type_id, exp.loc)) {
                 return self.err_dispatcher.invalidFunctionReturnType(
@@ -2362,6 +2718,7 @@ pub const SemaAnalyzer = struct {
         };
 
         const value = try self.evalExpExpecting(exp, payload);
+        if (self.isChangeableType(value.type_id)) try self.checkStore(exp, .{ .side = .mutable, .local = null, .kind = .returned });
         const is_error = self.type_table.isErrorSet(value.type_id) and
             !self.type_table.getTypePtrById(value.type_id).is_nullable and
             !self.type_table.canCoerce(value.type_id, payload);
@@ -2607,6 +2964,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
+        const value = try self.evalExpExpectingUnrecorded(exp, expected_type_id);
+        try self.exp_types.put(self.allocator, exp, value.type_id);
+        return value;
+    }
+
+    fn evalExpExpectingUnrecorded(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
         if (isConditional(exp)) return self.evalConditional(exp, expected_type_id);
         if (expected_type_id) |expected| {
             const base_type_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
@@ -2666,6 +3029,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
+        const value = try self.evalExpUnrecorded(exp);
+        try self.exp_types.put(self.allocator, exp, value.type_id);
+        return value;
+    }
+
+    fn evalExpUnrecorded(self: *Self, exp: *const ast.ExpNode) Errors!*ir.Value {
         switch (exp.*.data) {
             .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null),
             .range => return self.err_dispatcher.invalidExpression("range in a capture loop or when case", "range value", exp.loc),
@@ -3026,6 +3395,9 @@ pub const SemaAnalyzer = struct {
             }
         }
 
+        const is_append = fn_call.target.data == .identifier and std.mem.eql(u8, fn_call.target.data.identifier, "append") and fn_call.arguments.len == 2;
+        if (is_append) try self.checkStore(fn_call.arguments[1].exp, self.storeTargetOf(fn_call.arguments[0].exp));
+
         for (params, fn_call_arguments_values.items, 0..) |param, _, i| {
             if (self.needsNullBox(param.type_id, fn_call_arguments_values.items[i].type_id)) {
                 const current = fn_call_arguments_values.items[i];
@@ -3338,6 +3710,8 @@ pub const SemaAnalyzer = struct {
         if (id_symbol) |symbol| {
             try self.ensureVisible(symbol, exp.loc);
             if (symbol.kind == .constant) return self.resolveConstant(symbol.kind.constant);
+            try self.exp_symbols.put(self.allocator, exp, symbol);
+            self.noteMention(symbol.uid, exp.loc);
             const type_id = switch (symbol.kind) {
                 .defined_type => |dt| dt.blueprint_type_id,
                 else => symbol.type_id,
@@ -3399,7 +3773,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn ensureMutable(self: *Self, exp: *const ast.ExpNode) Errors!void {
-        const place = self.findImmutablePlace(exp) orelse return;
+        const place = self.findImmutablePlace(exp) orelse return self.ensureNotReadLocked(exp);
         return switch (place) {
             .binding => |name| self.err_dispatcher.notMutable(name, exp.loc),
             .temporary => self.err_dispatcher.temporaryNotMutable(exp.loc),
@@ -3903,6 +4277,76 @@ const FnFrame = struct {
     first_local_uid: usize,
 };
 
+const Side = enum { mutable, immutable };
+
+const FlowRootKind = enum { local, param, other };
+
+const FlowPlace = struct {
+    root_name: []const u8,
+    text: []const u8,
+    uid: usize,
+    kind: FlowRootKind,
+    side: Side,
+    is_whole: bool,
+    is_capture: bool,
+    pos: usize,
+    loc: err.Loc,
+};
+
+const FlowLocal = struct {
+    loop_depth: usize,
+    last_mention: usize = 0,
+    shared_at: ?err.Loc = null,
+};
+
+const FlowTargetKind = enum { let_value, mut_value, returned, mut_param };
+
+const FlowTarget = struct {
+    side: Side,
+    local: ?usize,
+    kind: FlowTargetKind,
+    param: ?usize = null,
+    name: []const u8 = "",
+};
+
+const FlowExit = struct {
+    source: usize,
+    source_name: []const u8,
+    param: ?usize,
+    param_name: []const u8,
+    loc: err.Loc,
+};
+
+const FlowEdge = struct {
+    source: usize,
+    source_name: []const u8,
+    source_text: []const u8,
+    target: ?usize,
+    pos: usize,
+    loop_depth: usize,
+    loc: err.Loc,
+    must_move: bool,
+    target_kind: FlowTargetKind,
+    target_name: []const u8,
+};
+
+const FlowFrame = struct {
+    locals: std.AutoHashMapUnmanaged(usize, FlowLocal) = .empty,
+    params: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
+    capture_roots: std.AutoHashMapUnmanaged(usize, ?usize) = .empty,
+    edges: std.ArrayList(FlowEdge) = .empty,
+    links: std.ArrayList([2]usize) = .empty,
+    exits: std.ArrayList(FlowExit) = .empty,
+    read_locks: std.ArrayList(ReadLock) = .empty,
+    loop_depth: usize = 0,
+};
+
+const ReadLock = struct {
+    root: usize,
+    capture_name: []const u8,
+    loc: err.Loc,
+};
+
 const Constant = struct {
     let_stmt: ast.LetStmt,
     loc: err.Loc,
@@ -3942,6 +4386,7 @@ const WhenSubject = struct {
     base_type: tt.TypeId,
     base_kind: @FieldType(tt.Type, "kind"),
     is_mutable: bool,
+    exp: *const ast.ExpNode,
 };
 
 const PendingWhenCheck = struct {
