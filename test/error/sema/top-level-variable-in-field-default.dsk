@@ -1,0 +1,5 @@
+let mut items = [1]
+
+struct Box
+    xs: []int = items
+end

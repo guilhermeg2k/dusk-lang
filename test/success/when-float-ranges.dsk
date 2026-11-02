@@ -67,17 +67,19 @@ assert(optional_else(null) == 2)
 assert(optional_else(0.5) == 1)
 
 struct Calls
-    let mut count = 0
+    count = 0
 end
 
-func next_value() -> float
-    Calls.count += 1
+let mut calls = Calls()
+
+func next_value(mut calls: Calls) -> float
+    calls.count += 1
     return 0.5
 end
 
-when next_value()
+when next_value(calls)
     0.0..1.0 then
-        assert(Calls.count == 1)
+        assert(calls.count == 1)
     end
 
     else then
@@ -85,4 +87,4 @@ when next_value()
     end
 end
 
-assert(Calls.count == 1)
+assert(calls.count == 1)

@@ -1,0 +1,10 @@
+let mut total = 0
+
+struct Counter
+    step: int
+
+    func advance(self: @) -> int
+        total += self.step
+        return total
+    end
+end

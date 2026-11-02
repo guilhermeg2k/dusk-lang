@@ -1,0 +1,5 @@
+let names = ["a", "b"]
+
+func first() -> string
+    return names[0]
+end

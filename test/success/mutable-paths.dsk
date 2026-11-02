@@ -14,14 +14,6 @@ struct Box
         self.p.set(4)
     end
 end
-struct S
-    let mut items = [1, 2]
-    let mut cfg = P(x = 1)
-end
-enum E
-    let mut list = [1]
-    a
-end
 func mutate(mut a: []int) -> void
     append(a, 9)
 end
@@ -35,14 +27,6 @@ mutate(bx.items)
 g(bx.p)
 assert(bx.p.x == 10)
 assert(len(bx.items) == 3)
-S.items[0] = 5
-S.cfg.x = 6
-S.cfg.set(7)
-mutate(S.items)
-assert(S.cfg.x == 7)
-assert(S.items[0] == 5)
-E.list[0] = 2
-append(E.list, 3)
 let mut ps = [P(x = 1)]
 ps[0].x = 2
 ps[0].set(3)

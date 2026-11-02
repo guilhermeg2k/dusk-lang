@@ -22,7 +22,7 @@
 - String operations: `str_*` builtins for search, transform, split/join, slicing, conversion, `StringError` / `ConversionError` (implemented)
 - String interpolation (`$name` and `${expression}`, one-allocation `STR_BUILD`; implemented)
 - String benchmarks across languages: `strings`, `concat`, `parse` (implemented)
-- Real immutability with frozen objects
+- Real immutability, checked at compile time: mutability from the root of every path (implemented), compile-time constants instead of globals and mutable statics (implemented), consistent `mut` params and captures, `copy` and auto-move between `mut` and `let` values
 - `when` on strings (implemented)
 
 ## Version 0.14 - Simon

@@ -69,17 +69,15 @@ assert(describe(0) == 1)
 assert(describe(-5) == 2)
 assert(describe(4) == 400)
 
-struct Log
-    let mut errors = 0
-end
+let mut log_errors = 0
 
 open(0) catch e then
-    Log.errors += 1
+    log_errors += 1
 end
 open(7) catch e then
-    Log.errors += 1
+    log_errors += 1
 end
-assert(Log.errors == 1)
+assert(log_errors == 1)
 
 func open_or(id: int, fallback: int) -> int
     return open(id) catch fallback

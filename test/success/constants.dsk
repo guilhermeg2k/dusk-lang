@@ -1,0 +1,108 @@
+enum Mode
+    Fast
+    Slow
+end
+
+assert(area() == 4800)
+
+let WIDTH = 80
+let HEIGHT = WIDTH - 20
+let RATIO = 1.5
+let IS_DEBUG = false
+let NAME = "dusk"
+let NEWLINE: byte = 10
+let LETTER = 'a'
+let OFFSET = -3
+let DEFAULT_MODE = Mode.Slow
+let DOUBLE_WIDTH = WIDTH * 2
+
+func area() -> int
+    return WIDTH * HEIGHT
+end
+
+func scaled(x: float) -> float
+    return x * RATIO
+end
+
+func describe(mode: Mode = DEFAULT_MODE, label: string = NAME) -> string
+    if mode == Mode.Fast then
+        return "$label fast"
+    end
+    return "$label slow"
+end
+
+func shadow() -> int
+    let WIDTH = 5
+    return WIDTH
+end
+
+struct Screen
+    let COLUMNS = WIDTH / 2 + 0.5
+    let TITLE = NAME
+
+    width: int = WIDTH
+    debug: bool = IS_DEBUG
+
+    func columns(self: @) -> float
+        return Screen.COLUMNS
+    end
+
+    func title(self: @) -> string
+        return "${Screen.TITLE}:${self.width}"
+    end
+end
+
+union Shape
+    let SIDES = 4
+
+    square: int
+    circle: int
+
+    func perimeter(self: @) -> int
+        if self.square: side then return side * Shape.SIDES end
+        return 0
+    end
+end
+
+enum Level
+    let TOP = Level.High
+
+    Low
+    High
+end
+
+assert(WIDTH == 80)
+assert(HEIGHT == 60)
+assert(DOUBLE_WIDTH == 160)
+assert(scaled(2.0) == 3.0)
+assert(str_equal(describe(), "dusk slow"))
+assert(str_equal(describe(Mode.Fast, "x"), "x fast"))
+assert(shadow() == 5)
+assert(NEWLINE == 10)
+assert(LETTER == 'a')
+assert(OFFSET == -3)
+assert(!IS_DEBUG)
+
+let screen = Screen()
+assert(screen.width == 80)
+assert(screen.debug == false)
+assert(screen.columns() == 40.5)
+assert(str_equal(screen.title(), "dusk:80"))
+assert(Shape(square = 3).perimeter() == 12)
+assert(Level.TOP == Level.High)
+
+let mut total = 0
+for 0..2: i do
+    total += WIDTH
+end
+assert(total == 240)
+
+let mut width = WIDTH
+width += 1
+assert(width == 81)
+assert(WIDTH == 80)
+
+if true then
+    let local = 7
+    assert(local + WIDTH == 87)
+end

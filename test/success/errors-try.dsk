@@ -55,27 +55,29 @@ assert(try calc.halve() == 5)
 assert((Calculator.divide(calc, 0) catch -2) == -2)
 
 struct Counter
-    let mut count = 0
+    count = 0
 end
 
-func check(n: int) -> ParseError!void
+let mut counter = Counter()
+
+func check(mut counter: Counter, n: int) -> ParseError!void
     if n == 0 then
         return ParseError.Empty
     end
-    Counter.count += 1
+    counter.count += 1
 end
 
-func check_all(n: int) -> ParseError!void
-    try check(n)
-    try check(n)
+func check_all(mut counter: Counter, n: int) -> ParseError!void
+    try check(counter, n)
+    try check(counter, n)
 end
 
-try check_all(1)
-assert(Counter.count == 2)
-check_all(0) catch e then
+try check_all(counter, 1)
+assert(counter.count == 2)
+check_all(counter, 0) catch e then
     assert(e == ParseError.Empty)
 end
-assert(Counter.count == 2)
+assert(counter.count == 2)
 
 func label(n: int) -> ParseError!string
     if n == 0 then

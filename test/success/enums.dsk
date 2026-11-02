@@ -18,7 +18,7 @@ echo(HttpStatus.ServerError)
 
 enum Direction
     let DEFAULT = Direction.North
-    let mut counter = 0
+    let LIMIT = 40 + 2
 
     North
     South
@@ -27,8 +27,8 @@ enum Direction
 end
 
 echo(Direction.DEFAULT)
-Direction.counter = 42
-echo(Direction.counter)
+assert(Direction.LIMIT == 42)
+assert(Direction.DEFAULT == Direction.North)
 
 enum Config
     let name: string = "test_config"

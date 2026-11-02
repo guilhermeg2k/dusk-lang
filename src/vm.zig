@@ -15,7 +15,6 @@ pub const VM = struct {
     frame_count: usize,
     stack: [16383]v.Value,
     heap: Heap,
-    static_store: []v.Value,
     scratch: std.Io.Writer.Allocating,
 
     pub fn init(program: *const bc.Program) VM {
@@ -32,7 +31,6 @@ pub const VM = struct {
                 },
                 .threshold = MIN_GC_THRESHOLD,
             },
-            .static_store = &.{},
             .scratch = .init(std.heap.page_allocator),
         };
     }
@@ -62,7 +60,6 @@ pub const VM = struct {
     }
 
     pub noinline fn run(self: *Self) !void {
-        try self.initStaticStore();
         self.initMainFrame();
 
         const stack = self.stack[0..];
@@ -232,22 +229,6 @@ pub const VM = struct {
                     const struct_vl = v.HeapValue.getParentPtr(v.Struct, struct_ptr);
                     const vl = stack[stack_base + inst.c];
                     struct_vl.set(inst.b, vl);
-                },
-
-                .STATIC_LOAD => {
-                    stack[stack_base + inst.a] = self.static_store[inst.bEx()];
-                },
-
-                .STATIC_STORE => {
-                    self.static_store[inst.bEx()] = stack[stack_base + inst.a];
-                },
-
-                .GLOBAL_LOAD => {
-                    stack[stack_base + inst.a] = stack[inst.bEx()];
-                },
-
-                .GLOBAL_STORE => {
-                    stack[inst.bEx()] = stack[stack_base + inst.a];
                 },
 
                 .UNION_INIT => {
@@ -942,13 +923,6 @@ pub const VM = struct {
         return RunTimeError.UnhandledError;
     }
 
-    fn initStaticStore(self: *Self) !void {
-        if (self.program.static_count > 0) {
-            self.static_store = try self.allocator.alloc(v.Value, self.program.static_count);
-            @memset(self.static_store, v.NULL_VALUE);
-        }
-    }
-
     fn initMainFrame(self: *Self) void {
         self.frames[0] = CallFrame{
             .function = &self.program.functions[self.program.main_func_index],
@@ -1025,16 +999,6 @@ pub const VM = struct {
                 if (is_heap_value) {
                     try self.copyHeapValue(new_alloc, &self.stack[base + i]);
                 }
-            }
-        }
-
-        for (0..self.program.static_count) |i| {
-            const word_idx = i >> 6;
-            const bit_idx = i & 63;
-            if (word_idx < self.program.static_heap_bitmap.len and
-                self.program.static_heap_bitmap[word_idx] & (@as(u64, 1) << @intCast(bit_idx)) != 0)
-            {
-                try self.copyHeapValue(new_alloc, &self.static_store[i]);
             }
         }
 

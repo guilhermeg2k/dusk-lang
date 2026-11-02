@@ -1,9 +1,7 @@
 union U
     let count = 1
-    let mut hits = 0
+    let hits: int = "text"
 
     a: int
     b: string
 end
-
-U.hits = "text"

@@ -1,0 +1,5 @@
+let WIDTH = 80
+
+func widen() -> void
+    WIDTH = 90
+end

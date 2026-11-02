@@ -14,19 +14,22 @@ echo("Controls: ${"a\0b"}\n${"\t"}")
 let mut updated = "old"
 updated = "$updated!"
 echo(updated)
-let mut calls = 0
-func next() -> int
-    calls += 1
-    return calls
+struct Calls
+    count = 0
 end
-echo("${next()} ${next()} ${next()}")
-assert(calls == 3)
+let mut calls = Calls()
+func next(mut calls: Calls) -> int
+    calls.count += 1
+    return calls.count
+end
+echo("${next(calls)} ${next(calls)} ${next(calls)}")
+assert(calls.count == 3)
 let mut items = [1, 2]
-func change() -> int
+func change(mut items: []int) -> int
     items[0] = 9
     return 7
 end
-echo("$items ${change()} $items")
+echo("$items ${change(items)} $items")
 func greet(who: string = "${"World"}!") -> string
     return "Hello, $who"
 end

@@ -30,7 +30,6 @@ pub const BytecodeGen = struct {
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
-    static_store: StaticStoreTable,
 
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
@@ -38,9 +37,6 @@ pub const BytecodeGen = struct {
     union_descriptors: std.ArrayList(UnionDescriptor),
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
-    static_heap_bitmap: std.ArrayList(u64) = .empty,
-    global_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
-    main_register_by_uid: std.AutoHashMapUnmanaged(usize, u8) = .empty,
     is_generating_main: bool = false,
     current_function_name: []const u8 = "",
 
@@ -63,7 +59,6 @@ pub const BytecodeGen = struct {
             .continue_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
-            .static_store = StaticStoreTable.init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
             .type_id_to_struct_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
@@ -85,14 +80,6 @@ pub const BytecodeGen = struct {
             try funcs.append(self.allocator, bf);
         }
 
-        for (program.defined_types) |dt| {
-            switch (dt.kind) {
-                .@"struct" => |s| try self.registerStaticFields(s.type_id, s.static_fields),
-                .@"enum" => |e| try self.registerStaticFields(e.type_id, e.static_fields),
-                .@"union" => |u| try self.registerStaticFields(u.type_id, u.static_fields),
-            }
-        }
-
         var next_fn_index: u16 = @intCast(funcs.items.len);
         for (program.defined_types) |dt| {
             const type_funcs = switch (dt.kind) {
@@ -110,9 +97,6 @@ pub const BytecodeGen = struct {
             next_fn_index += 1;
         }
 
-        for (program.global_uids) |uid| {
-            try self.global_uids.put(self.allocator, uid, {});
-        }
         const main_func = try self.genMainFunc(program);
 
         for (program.defined_types) |dt| {
@@ -143,8 +127,6 @@ pub const BytecodeGen = struct {
             .string_pool = string_pool,
             .main_func_index = funcs.items.len - 1,
             .functions = try funcs.toOwnedSlice(self.allocator),
-            .static_count = self.static_store.count(),
-            .static_heap_bitmap = try self.static_heap_bitmap.toOwnedSlice(self.allocator),
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
             .error_names = try self.copyErrorNames(program.error_names),
@@ -167,14 +149,6 @@ pub const BytecodeGen = struct {
         self.var_register_id_by_uid.clearRetainingCapacity();
         @memset(&self.register_types, self.type_table.getPrimitive(.void));
 
-        for (program.defined_types) |dt| {
-            switch (dt.kind) {
-                .@"struct" => |s| try self.emitStaticInit(s.type_id, s.static_fields),
-                .@"enum" => |e| try self.emitStaticInit(e.type_id, e.static_fields),
-                .@"union" => |u| try self.emitStaticInit(u.type_id, u.static_fields),
-            }
-        }
-
         return Function{
             .uid = 0,
             .name = "$main",
@@ -191,32 +165,6 @@ pub const BytecodeGen = struct {
     fn addFunction(self: *Self, funcs: *std.ArrayList(Function), func: ir.Func) !void {
         try self.fn_index_by_uid.put(func.uid, @intCast(funcs.items.len));
         try funcs.append(self.allocator, try self.genFunction(func));
-    }
-
-    fn registerStaticFields(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
-        try self.static_store.registerFields(type_id, static_fields);
-
-        for (static_fields) |field| {
-            const slot_id = try self.static_store.getSlot(type_id, field.identifier);
-            const vt = v.ValueType.fromTypeId(self.type_table, field.type_id);
-            if (vt.isHeapType()) {
-                try self.setStaticHeapBit(slot_id);
-            }
-        }
-    }
-
-    fn emitStaticInit(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
-        for (static_fields) |field| {
-            if (field.default_value) |default| {
-                const slot_id = try self.static_store.getSlot(type_id, field.identifier);
-                const reg = try self.genValue(default, try self.consumeRegister());
-                defer self.freeRegister();
-
-                var store = Instruction{ .op = .STATIC_STORE, .a = reg };
-                store.putBEx(slot_id);
-                try self.chunk_instructions.append(self.allocator, store);
-            }
-        }
     }
 
     fn genFunction(self: *Self, func: ir.Func) !Function {
@@ -319,14 +267,6 @@ pub const BytecodeGen = struct {
             self.register_types[idx] = store_var.type_id;
             return;
         }
-        if (self.main_register_by_uid.get(store_var.uid)) |main_reg| {
-            const value_reg = try self.genValue(store_var.value, try self.consumeRegister());
-            defer self.freeRegister();
-            var store = Instruction{ .op = .GLOBAL_STORE, .a = value_reg };
-            store.putBEx(main_reg);
-            try self.chunk_instructions.append(self.allocator, store);
-            return;
-        }
         const reg_idx = try self.genValue(store_var.value, try self.consumeRegister());
         self.register_types[reg_idx] = store_var.type_id;
         try self.bindVariable(store_var.uid, reg_idx);
@@ -334,17 +274,6 @@ pub const BytecodeGen = struct {
 
     fn bindVariable(self: *Self, uid: usize, reg: u8) !void {
         try self.var_register_id_by_uid.put(uid, reg);
-        if (self.is_generating_main and self.global_uids.contains(uid)) {
-            try self.main_register_by_uid.put(self.allocator, uid, reg);
-        }
-    }
-
-    fn genGlobalLoad(self: *Self, uid: usize, type_id: tt.TypeId, target_reg: u8) !void {
-        const main_reg = self.main_register_by_uid.get(uid) orelse return BytecodeError.UndefinedVariable;
-        var load = Instruction{ .op = .GLOBAL_LOAD, .a = target_reg };
-        load.putBEx(main_reg);
-        try self.chunk_instructions.append(self.allocator, load);
-        self.register_types[target_reg] = type_id;
     }
 
     fn genBranchIf(self: *Self, ifStmt: ir.BranchIf) !void {
@@ -549,10 +478,7 @@ pub const BytecodeGen = struct {
             },
 
             .identifier => |id| {
-                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse {
-                    try self.genGlobalLoad(id.uid, value.type_id, target_reg);
-                    return target_reg;
-                };
+                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse return BytecodeError.UndefinedVariable;
 
                 const inst = Instruction{
                     .op = .LOAD,
@@ -792,32 +718,9 @@ pub const BytecodeGen = struct {
                     self.register_types[target_reg] = value.type_id;
                     return;
                 }
-
-                var load_static = Instruction{
-                    .op = .STATIC_LOAD,
-                    .a = target_reg,
-                };
-
-                const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
-                load_static.putBEx(slot_id);
-
-                try self.chunk_instructions.append(self.allocator, load_static);
-                self.register_types[target_reg] = value.type_id;
+                return BytecodeError.UndefinedVariable;
             },
-            .@"enum" => {
-                const field_name = idx.index.data.i_string;
-
-                var load_static = Instruction{
-                    .op = .STATIC_LOAD,
-                    .a = target_reg,
-                };
-
-                const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
-                load_static.putBEx(slot_id);
-
-                try self.chunk_instructions.append(self.allocator, load_static);
-                self.register_types[target_reg] = value.type_id;
-            },
+            .@"enum" => return BytecodeError.UndefinedVariable,
             .array => {
                 const array_reg = try self.genValue(idx.target, try self.consumeRegister());
                 defer self.freeRegister();
@@ -834,19 +737,7 @@ pub const BytecodeGen = struct {
             .@"union" => |@"union"| {
                 const field_name = idx.index.data.i_string;
 
-                if (!@"union".variants.contains(field_name)) {
-                    var load_static = Instruction{
-                        .op = .STATIC_LOAD,
-                        .a = target_reg,
-                    };
-
-                    const slot_id = try self.static_store.getSlot(idx.target.type_id, field_name);
-                    load_static.putBEx(slot_id);
-
-                    try self.chunk_instructions.append(self.allocator, load_static);
-                    self.register_types[target_reg] = value.type_id;
-                    return;
-                }
+                if (!@"union".variants.contains(field_name)) return BytecodeError.UndefinedVariable;
 
                 const union_reg = try self.genValue(idx.target, try self.consumeRegister());
                 defer self.freeRegister();
@@ -1002,24 +893,9 @@ pub const BytecodeGen = struct {
                     try self.chunk_instructions.append(self.allocator, store_inst);
                     return;
                 }
-
-                const value_reg = try self.genValue(stmt.value, try self.consumeRegister());
-                defer self.freeRegister();
-                var store = Instruction{ .op = .STATIC_STORE, .a = value_reg };
-                const slot_id = try self.static_store.getSlot(indexed.target.type_id, field_name);
-                store.putBEx(slot_id);
-                try self.chunk_instructions.append(self.allocator, store);
+                return BytecodeError.UndefinedVariable;
             },
-            .@"enum", .@"union" => {
-                const field_name = indexed.index.data.i_string;
-
-                const value_reg = try self.genValue(stmt.value, try self.consumeRegister());
-                defer self.freeRegister();
-                var store = Instruction{ .op = .STATIC_STORE, .a = value_reg };
-                const slot_id = try self.static_store.getSlot(indexed.target.type_id, field_name);
-                store.putBEx(slot_id);
-                try self.chunk_instructions.append(self.allocator, store);
-            },
+            .@"enum", .@"union" => return BytecodeError.UndefinedVariable,
             .array => {
                 const array_reg = try self.genValue(indexed.target, try self.consumeRegister());
                 const index_reg = try self.genValue(indexed.index, try self.consumeRegister());
@@ -1350,15 +1226,6 @@ pub const BytecodeGen = struct {
         });
     }
 
-    fn setStaticHeapBit(self: *Self, slot_id: u16) !void {
-        const word_idx = slot_id >> 6;
-        const bit_idx = slot_id & 63;
-        while (self.static_heap_bitmap.items.len <= word_idx) {
-            try self.static_heap_bitmap.append(self.allocator, 0);
-        }
-        self.static_heap_bitmap.items[word_idx] |= @as(u64, 1) << @intCast(bit_idx);
-    }
-
     fn getOrCreateStructDescriptor(self: *Self, value: *const ir.Value) !u16 {
         if (self.type_id_to_struct_descriptor_idx.get(value.type_id)) |id| return id;
 
@@ -1531,8 +1398,6 @@ pub const Program = struct {
     string_pool: StringPool,
     main_func_index: usize,
     functions: []const Function,
-    static_count: u16,
-    static_heap_bitmap: []const u64,
     struct_descriptors: []const StructDescriptor,
     union_descriptors: []const UnionDescriptor,
     error_names: []const []const u8,
@@ -1663,9 +1528,6 @@ pub const Chunk = struct {
             .UNION_LOAD => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .UNION_STORE => std.debug.print("R[{d}] T[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .UNION_TAG, .UNION_PAYLOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .STATIC_LOAD => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
-            .STATIC_STORE => std.debug.print("R[{d}] S[{d}]", .{ inst.a, inst.bEx() }),
-            .GLOBAL_LOAD, .GLOBAL_STORE => std.debug.print("R[{d}] G[{d}]", .{ inst.a, inst.bEx() }),
             .NULL_BOX_INIT => std.debug.print("R[{d}] B[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .NULL_BOX_UNWRAP,
             .NULL_BOX_NNULL,
@@ -1740,10 +1602,6 @@ pub const OpCode = enum(u8) {
     UNION_TAG,
     UNION_PAYLOAD,
 
-    STATIC_LOAD,
-    STATIC_STORE,
-    GLOBAL_LOAD,
-    GLOBAL_STORE,
 
     NULL_BOX_INIT,
     NULL_BOX_UNWRAP,
@@ -1895,42 +1753,4 @@ const FailingCallHandler = union(enum) {
 const LoopContext = struct {
     first_break_patch_idx: usize,
     first_continue_patch_index: usize,
-};
-
-pub const StaticStoreTable = struct {
-    const Self = @This();
-
-    allocator: std.mem.Allocator,
-    next_slot: u16 = 0,
-    slots_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
-
-    pub fn init(alloc: std.mem.Allocator) Self {
-        return Self{
-            .allocator = alloc,
-            .slots_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
-        };
-    }
-
-    pub fn registerFields(self: *Self, type_id: tt.TypeId, static_fields: []const ir.Field) !void {
-        if (static_fields.len == 0) return;
-
-        const slot = try self.slots_by_type_id.getOrPut(type_id);
-        if (!slot.found_existing) {
-            slot.value_ptr.* = std.StringHashMap(u16).init(self.allocator);
-        }
-
-        for (static_fields) |field| {
-            try slot.value_ptr.put(field.identifier, self.next_slot);
-            self.next_slot += 1;
-        }
-    }
-
-    pub fn getSlot(self: *const Self, type_id: tt.TypeId, field_name: []const u8) !u16 {
-        const type_slots = self.slots_by_type_id.get(type_id) orelse return error.UnableToFindSlot;
-        return type_slots.get(field_name) orelse return error.UnableToFindSlot;
-    }
-
-    pub fn count(self: *const Self) u16 {
-        return self.next_slot;
-    }
 };

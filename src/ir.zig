@@ -6,7 +6,6 @@ pub const Program = struct {
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
-    global_uids: []const usize,
 };
 
 pub const Block = struct {
@@ -41,7 +40,6 @@ pub const Struct = struct {
     type_id: TypeId,
     identifier: []const u8,
     fields: []const Field,
-    static_fields: []const Field,
     funcs: []const Func,
 };
 
@@ -51,7 +49,6 @@ pub const Enum = struct {
     identifier: []const u8,
 
     variants: std.StringHashMap(i64),
-    static_fields: []const Field,
     funcs: []const Func,
 };
 
@@ -61,7 +58,6 @@ pub const Union = struct {
     identifier: []const u8,
 
     variants: std.StringHashMap(TypeId),
-    static_fields: []const Field,
     funcs: []const Func,
 };
 

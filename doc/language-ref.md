@@ -72,7 +72,7 @@ let mut y = 10
 y = 20
 ```
 
-A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included), loop and `if` captures, and static fields (`S.items[0] = 1` needs `let mut items`). A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
+A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and loop and `if` captures. A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
 
 ```nim
 let p = Point(x = 1, y = 2)
@@ -83,6 +83,23 @@ q.x = 5
 ```
 
 This only stops changes made through `p`. Another variable that holds the same struct or array can still change it.
+
+### Constants
+
+A top-level `let` whose value is known at compile time is a constant: an `int`, `float`, `bool`, `byte`, string or enum value built from literals, other constants, enum variants, static fields and operators. Constants are the only top-level names functions can see (see [Scope](#scope)), and they can be used anywhere in the program, even above their declaration.
+
+```nim
+let WIDTH = 80
+let HEIGHT = WIDTH - 20
+let TITLE = "dusk"
+let MODE = Mode.Fast
+
+func area() -> int
+    return WIDTH * HEIGHT
+end
+```
+
+Every other top-level variable (a `let mut`, an array, a struct, a value computed by a call) is only visible to top-level code.
 
 ## 3. Types
 
@@ -278,21 +295,20 @@ Methods can also be called through the type, passing the instance first: `User.d
 
 ### Static fields
 
-Fields declared with `let` belong to the type, not to an instance. Use `let mut` to make them assignable.
+Fields declared with `let` belong to the type, not to an instance. They are constants, with the same rules as top-level [constants](#constants): an `int`, `float`, `bool`, `byte`, string or enum value known at compile time. They can't be `mut` and can't be assigned.
 
 ```nim
 struct Api
     let host = "127.0.0.1"
-    let mut port = "8080"
+    let port = 8080
 
     endpoint: string = ""
 
     func url(self: @) -> string
-        return self.endpoint
+        return "${Api.host}:${Api.port}${self.endpoint}"
     end
 end
 
-Api.port = "9090"
 echo(Api.host)
 ```
 
@@ -450,7 +466,7 @@ These work like they do for structs:
 
 ```nim
 union Shape
-    let mut created = 0
+    let sides_of_square = 4
 
     circle: int
     square: int
@@ -866,20 +882,25 @@ assert(result == false)
 
 ### Scope
 
-A function can see its parameters, its own variables, other functions and types, static fields, and the top-level variables declared above it. It can read and assign them (`let mut` ones only):
+A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). It can't see any other top-level variable: state a function reads or changes must be passed to it, with `mut` to change it. Default values (field and parameter defaults) follow the same rule.
 
 ```nim
-let mut count = 0
+let LIMIT = 3          # a constant: visible everywhere
 
-func bump() -> void
-    count += 1
+struct Stats
+    count = 0
 end
 
-bump()
-echo(count)   # 1
+func bump(mut stats: Stats) -> void
+    if stats.count < LIMIT then stats.count += 1 end
+end
+
+let mut stats = Stats()
+bump(stats)
+echo(stats.count)      # 1
 ```
 
-Functions can be called before they are declared, so a call must come after every top-level variable the function uses, directly or through the functions it calls. Calling `bump()` above `let mut count = 0` is a compile error. A default value (a static field, a field or a parameter default) can't call a function that uses top-level variables.
+Functions can be called before they are declared.
 
 ## 11. Error Handling
 

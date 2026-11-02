@@ -1,24 +1,26 @@
 struct Counter
-    let mut calls = 0
+    calls = 0
 end
 
-func tick(value: int) -> int
-    Counter.calls += 1
+let mut counter = Counter()
+
+func tick(mut counter: Counter, value: int) -> int
+    counter.calls += 1
     return value
 end
 
-let selected = if tick(1) == 1 then tick(2) elif tick(3) == 3 then tick(4) else tick(5) end
+let selected = if tick(counter, 1) == 1 then tick(counter, 2) elif tick(counter, 3) == 3 then tick(counter, 4) else tick(counter, 5) end
 assert(selected == 2)
-assert(Counter.calls == 2)
+assert(counter.calls == 2)
 
-let matched = when tick(2)
-    1 then tick(8) end
-    2 then tick(9) end
-    else then tick(10) end
+let matched = when tick(counter, 2)
+    1 then tick(counter, 8) end
+    2 then tick(counter, 9) end
+    else then tick(counter, 10) end
 end
 
 assert(matched == 9)
-assert(Counter.calls == 4)
+assert(counter.calls == 4)
 
 func early_exit(is_early: bool) -> int
     let value = if is_early then return 7 else 3 end

@@ -1,15 +1,17 @@
 struct Counter
-    let mut calls = 0
+    calls = 0
 end
 
-func next_value() -> ?int
-    Counter.calls += 1
-    return Counter.calls
+let mut counter = Counter()
+
+func next_value(mut counter: Counter) -> ?int
+    counter.calls += 1
+    return counter.calls
 end
 
-let captured = if next_value(): number then number + 2 else 0 end
+let captured = if next_value(counter): number then number + 2 else 0 end
 assert(captured == 3)
-assert(Counter.calls == 1)
+assert(counter.calls == 1)
 
 let mut nullable_number: ?int = 4
 

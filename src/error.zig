@@ -362,28 +362,45 @@ pub const ErrorDispatcher = struct {
         return error.NotAFailingCall;
     }
 
-    pub fn globalUsedByDefaultValue(self: *Self, fn_name: []const u8, global_name: []const u8, loc: Loc) Errors {
+    pub fn topLevelVariableNotVisible(self: *Self, name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
-                "'{s}' uses top-level variable '{s}', which a default value can't depend on",
-                .{ fn_name, global_name },
+                "'{s}' is a top-level variable: functions and default values can only use top-level constants (a 'let' with an int, float, bool, byte, string or enum value known at compile time). Pass it as a parameter",
+                .{name},
             ),
             loc,
         );
-        return error.UsedBeforeDeclared;
+        return error.TopLevelVariableNotVisible;
     }
 
-    pub fn globalUsedBeforeDeclared(self: *Self, fn_name: []const u8, global_name: []const u8, loc: Loc) Errors {
+    pub fn staticFieldCantBeMutable(self: *Self, name: []const u8, loc: Loc) Errors {
+        self.log(try allocPrint(self.allocator, "Static field '{s}' can't be mut: static fields are constants", .{name}), loc);
+        return error.StaticFieldCantBeMutable;
+    }
+
+    pub fn staticFieldNotConstant(self: *Self, name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
-                "calling '{s}' here uses top-level variable '{s}' before it is declared",
-                .{ fn_name, global_name },
+                "Static field '{s}' must be a constant: an int, float, bool, byte, string or enum value known at compile time",
+                .{name},
             ),
             loc,
         );
-        return error.UsedBeforeDeclared;
+        return error.StaticFieldNotConstant;
+    }
+
+    pub fn invalidConstantType(self: *Self, name: []const u8, found: []const u8, loc: Loc) Errors {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Constant '{s}' must be an int, float, bool, byte, string or enum, found '{s}'",
+                .{ name, found },
+            ),
+            loc,
+        );
+        return error.InvalidConstantType;
     }
 
     pub fn payloadSharesErrors(self: *Self, payload_name: []const u8, set_name: []const u8, error_name: []const u8, loc: Loc) Errors {
@@ -632,7 +649,10 @@ pub const Errors = error{
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,
-    UsedBeforeDeclared,
+    TopLevelVariableNotVisible,
+    StaticFieldCantBeMutable,
+    StaticFieldNotConstant,
+    InvalidConstantType,
     CatchBlockMustLeave,
     NotAnErrorSet,
 };

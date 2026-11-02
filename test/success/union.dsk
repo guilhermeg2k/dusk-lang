@@ -150,7 +150,7 @@ assert(is_success(current))
 # Methods and static fields
 union Shape
     let sides_of_square = 4
-    let mut created = 0
+    let label = "shape"
 
     circle: int
     square: int
@@ -166,8 +166,7 @@ union Shape
     end
 
     func new_square(side: int) -> Shape
-        Shape.created += 1
-        return Shape(square = side)
+        return Shape(square = side + Shape.sides_of_square - 4)
     end
 end
 
@@ -180,9 +179,8 @@ assert(square.area() == 9)
 assert(Shape.new_square(2).area() == 4)
 
 assert(Shape.sides_of_square == 4)
-assert(Shape.created == 2)
-Shape.created = 10
-assert(Shape.created == 10)
+assert(str_equal(Shape.label, "shape"))
+assert(str_equal(square.label, "shape"))
 
 # Arrays of unions
 let shapes = [Shape(circle = 1), Shape(square = 2), Shape(square = 3)]

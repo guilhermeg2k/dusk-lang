@@ -50,20 +50,22 @@ assert(describe(-1) == 300)
 assert(describe(42) == 400)
 
 struct Counter
-    let mut calls = 0
+    calls = 0
 end
 
-func next_value() -> int
-    Counter.calls += 1
-    return Counter.calls
+let mut counter = Counter()
+
+func next_value(mut counter: Counter) -> int
+    counter.calls += 1
+    return counter.calls
 end
 
-when next_value()
+when next_value(counter)
     5 then assert(false) end
     6 then assert(false) end
-    else then assert(Counter.calls == 1) end
+    else then assert(counter.calls == 1) end
 end
-assert(Counter.calls == 1)
+assert(counter.calls == 1)
 
 struct Point
     x: int

@@ -3,5 +3,3 @@ enum E
 
     a
 end
-
-append(E.list, 3)

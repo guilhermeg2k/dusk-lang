@@ -1,7 +1,5 @@
-let base = 1
-
 func read() -> int
-    return base
+    return 1
 end
 
 struct Config

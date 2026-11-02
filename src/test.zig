@@ -200,7 +200,7 @@ test "multiline strings" {
 test "string constants outlive compilation and source storage" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const source = try testing.allocator.dupe(u8, "let text = \"a\\n\\u{1F319}\\0\" let same = \"a\\n🌙\\0\" let plain = \"plain\"");
+    const source = try testing.allocator.dupe(u8, "let mut text = \"a\\n\\u{1F319}\\0\" let mut same = \"a\\n🌙\\0\" let mut plain = \"plain\"");
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     const program = dusk.compile(source) catch |failure| {
         testing.allocator.free(source);
@@ -695,8 +695,8 @@ test "sema error: struct field assign type mismatch" {
     try runCaseError("sema/struct-field-assign-type-mismatch.dsk", error.InvalidType);
 }
 
-test "sema error: static field assign type mismatch" {
-    try runCaseError("sema/static-field-assign-type-mismatch.dsk", error.InvalidType);
+test "sema error: static field can't be mut" {
+    try runCaseError("sema/static-field-cant-be-mut.dsk", error.StaticFieldCantBeMutable);
 }
 
 test "sema error: call non function" {
@@ -781,14 +781,6 @@ test "sema error: mut struct arg field path" {
 
 test "sema error: append field path immutable" {
     try runCaseError("sema/append-field-path-immutable.dsk", error.NotMutable);
-}
-
-test "sema error: static field index assign immutable" {
-    try runCaseError("sema/static-field-index-assign-immutable.dsk", error.NotMutable);
-}
-
-test "sema error: enum static field append immutable" {
-    try runCaseError("sema/enum-static-field-append-immutable.dsk", error.NotMutable);
 }
 
 test "sema error: temporary field assign" {
@@ -1155,20 +1147,44 @@ test "codegen error: too many variables in a function" {
     try runCaseError("codegen/too-many-variables.dsk", error.TooManyRegisters);
 }
 
-test "sema error: global called before declared" {
-    try runCaseError("sema/global-called-before-declared.dsk", error.UsedBeforeDeclared);
+test "sema error: function uses top-level variable" {
+    try runCaseError("sema/function-uses-top-level-variable.dsk", error.TopLevelVariableNotVisible);
 }
 
-test "sema error: global called before declared through another function" {
-    try runCaseError("sema/global-called-before-declared-indirect.dsk", error.UsedBeforeDeclared);
+test "sema error: top-level variable in method" {
+    try runCaseError("sema/top-level-variable-in-method.dsk", error.TopLevelVariableNotVisible);
 }
 
-test "sema error: global used in its own initializer" {
-    try runCaseError("sema/global-used-in-own-initializer.dsk", error.UsedBeforeDeclared);
+test "sema error: top-level variable declared after function" {
+    try runCaseError("sema/top-level-variable-declared-after-function.dsk", error.TopLevelVariableNotVisible);
 }
 
-test "sema error: global used by static default" {
-    try runCaseError("sema/global-used-by-static-default.dsk", error.UsedBeforeDeclared);
+test "sema error: top-level variable in field default" {
+    try runCaseError("sema/top-level-variable-in-field-default.dsk", error.TopLevelVariableNotVisible);
+}
+
+test "sema error: top-level variable in param default" {
+    try runCaseError("sema/top-level-variable-in-param-default.dsk", error.TopLevelVariableNotVisible);
+}
+
+test "sema error: top-level array in function" {
+    try runCaseError("sema/top-level-array-in-function.dsk", error.TopLevelVariableNotVisible);
+}
+
+test "sema error: constant assign" {
+    try runCaseError("sema/constant-assign.dsk", error.NotMutable);
+}
+
+test "sema error: constant invalid type" {
+    try runCaseError("sema/constant-invalid-type.dsk", error.InvalidConstantType);
+}
+
+test "sema error: static field not constant" {
+    try runCaseError("sema/static-field-not-constant.dsk", error.StaticFieldNotConstant);
+}
+
+test "sema error: static field array not constant" {
+    try runCaseError("sema/static-field-array-not-constant.dsk", error.StaticFieldNotConstant);
 }
 
 test "sema error: success type is the error set" {
@@ -1499,8 +1515,8 @@ test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
 }
 
-test "globals" {
-    try runCase("globals.dsk");
+test "constants" {
+    try runCase("constants.dsk");
 }
 
 test "gc-nullable-starts-null" {
