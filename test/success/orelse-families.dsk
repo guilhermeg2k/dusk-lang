@@ -1,0 +1,61 @@
+enum Color
+    Red
+    Blue
+end
+
+error Failure
+    Missing
+    Invalid
+end
+
+union Choice
+    number: int
+    text: string
+end
+
+struct Point
+    x: int
+end
+
+let color: ?Color = Color.Red
+let no_color: ?Color = null
+assert((color orelse Color.Blue) == Color.Red)
+assert((no_color orelse Color.Blue) == Color.Blue)
+let failure: ?Failure = Failure.Missing
+let no_failure: ?Failure = null
+assert((failure orelse Failure.Invalid) == Failure.Missing)
+assert((no_failure orelse Failure.Invalid) == Failure.Invalid)
+let text = "hello"
+let optional_text: ?string = text
+let no_text: ?string = null
+assert((optional_text orelse "other") == text)
+assert((no_text orelse text) == text)
+let original = Point(1)
+let point: ?Point = original
+let no_point: ?Point = null
+assert((point orelse Point(2)) == original)
+assert((no_point orelse Point(2)).x == 2)
+let original_choice = Choice(number = 3)
+let choice: ?Choice = original_choice
+let no_choice: ?Choice = null
+assert((choice orelse Choice(text = "other")) == original_choice)
+let selected_choice = no_choice orelse Choice(number = 4)
+
+when selected_choice
+    number: number then
+        assert(number == 4)
+    end
+
+    text: _ then
+        assert(false)
+    end
+end
+
+let values = [5]
+let optional_values: ?[]int = values
+let no_values: ?[]int = null
+assert((optional_values orelse [6])[0] == 5)
+assert((no_values orelse [6])[0] == 6)
+let optional_point: ?Point = Point(7)
+assert((optional_point?.x orelse 0) == 7)
+assert((no_point?.x orelse 8) == 8)

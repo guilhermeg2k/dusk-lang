@@ -1,0 +1,85 @@
+enum Color
+    Red
+    Blue
+end
+
+error Kind
+    A
+    B
+end
+
+func some_int(value: int) -> ?int
+    return value
+end
+
+func no_int() -> ?int
+    return null
+end
+
+let one = some_int(1)
+let other_one = some_int(1)
+let two = some_int(2)
+let missing = no_int()
+let also_missing = no_int()
+
+assert(one == 1)
+assert(1 == one)
+assert(one != 2)
+assert(2 != one)
+assert(!(one == 2))
+assert(!(one != 1))
+assert(missing != 1)
+assert(1 != missing)
+assert(!(missing == 1))
+
+assert(one == other_one)
+assert(!(one != other_one))
+assert(one != two)
+assert(missing == also_missing)
+assert(!(missing != also_missing))
+assert(one != missing)
+assert(missing != one)
+assert(!(one == missing))
+
+assert(one == 1.0)
+assert(1.0 == one)
+let half: ?float = 0.5
+assert(half == 0.5)
+assert(half != 1)
+let maybe_float: ?float = 1.0
+assert(maybe_float == one)
+
+let yes: ?bool = true
+assert(yes == true)
+assert(yes != false)
+let no_bool: ?bool = null
+assert(no_bool != false)
+
+let red: ?Color = Color.Red
+assert(red == Color.Red)
+assert(red != Color.Blue)
+let no_color: ?Color = null
+assert(no_color != Color.Red)
+
+let kind: ?Kind = Kind.A
+assert(kind == Kind.A)
+assert(kind != Kind.B)
+
+func counted(mut log: []int, value: ?int) -> ?int
+    append(log, 1)
+    return value
+end
+let mut log = [0]
+assert(counted(log, 1) == 1)
+assert(counted(log, null) != counted(log, 1))
+assert(len(log) == 4)
+
+let mut matches = 0
+for 1..2000: i do
+    let boxed: ?int = i
+    let copy: ?int = i
+    if boxed == copy and boxed == i and boxed != i + 1 then
+        matches += 1
+    end
+end
+assert(matches == 2000)

@@ -1,0 +1,3 @@
+let number: ?int = 1
+
+let value = if number: captured then captured else captured end

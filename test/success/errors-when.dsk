@@ -1,0 +1,128 @@
+error ParseError
+    Empty
+    BadDigit
+    TooLong
+end
+
+error IoError
+    NotFound
+end
+
+func parse(n: int) -> ParseError!int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    if n < 0 then
+        return ParseError.BadDigit
+    end
+    if n > 99 then
+        return ParseError.TooLong
+    end
+    return n
+end
+
+func code(n: int) -> int
+    let value = parse(n) catch e then
+        when e
+            ParseError.Empty then return -1 end
+            ParseError.BadDigit, ParseError.TooLong then return -2 end
+        end
+    end
+    return value
+end
+
+assert(code(5) == 5)
+assert(code(0) == -1)
+assert(code(-3) == -2)
+assert(code(100) == -2)
+
+func is_empty(n: int) -> bool
+    let mut result = false
+    parse(n) catch e then
+        when e
+            ParseError.Empty then result = true end
+            else then result = false end
+        end
+    end
+    return result
+end
+
+assert(is_empty(0))
+assert(!is_empty(-1))
+assert(!is_empty(4))
+
+func load(n: int) -> !int
+    if n == 1 then
+        return IoError.NotFound
+    end
+    return try parse(n)
+end
+
+func load_code(n: int) -> int
+    let value = load(n) catch e then
+        when e
+            IoError.NotFound then return 10 end
+            ParseError.Empty then return 20 end
+            ParseError.BadDigit then return 30 end
+            ParseError.TooLong then return 40 end
+        end
+    end
+    return value
+end
+
+assert(load_code(1) == 10)
+assert(load_code(0) == 20)
+assert(load_code(-1) == 30)
+assert(load_code(500) == 40)
+assert(load_code(7) == 7)
+
+func load_or_zero(n: int) -> int
+    let value = load(n) catch e then
+        when e
+            IoError.NotFound then return 0 end
+            else then return -1 end
+        end
+    end
+    return value
+end
+
+assert(load_or_zero(1) == 0)
+assert(load_or_zero(0) == -1)
+
+func count(list: []int) -> int
+    let mut i = 0
+    let mut empties = 0
+    for i < len(list) do
+        let value = parse(list[i]) catch e then
+            i += 1
+            when e
+                ParseError.Empty then
+                    empties += 1
+                    continue
+                end
+                else then break end
+            end
+        end
+        i += 1
+    end
+    return empties
+end
+
+assert(count([0, 1, 0, -1, 0]) == 2)
+
+let mut last: ?ParseError = null
+let mut seen = 0
+when last
+    null then seen = 1 end
+    ParseError.Empty then seen = 2 end
+    else then seen = 3 end
+end
+assert(seen == 1)
+
+last = ParseError.TooLong
+when last
+    null then seen = 1 end
+    ParseError.TooLong then seen = 4 end
+    else then seen = 3 end
+end
+assert(seen == 4)

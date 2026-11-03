@@ -1,0 +1,4 @@
+func value(optional: ?int) -> int
+    let selected = optional orelse return 0
+    return selected
+end

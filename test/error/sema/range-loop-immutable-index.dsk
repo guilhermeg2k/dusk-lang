@@ -1,0 +1,3 @@
+for 1..2: value, index do
+    index = 3
+end

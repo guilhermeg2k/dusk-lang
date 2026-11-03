@@ -1,0 +1,58 @@
+struct Counter
+    let mut calls = 0
+end
+
+func next_value() -> ?int
+    Counter.calls += 1
+    return Counter.calls
+end
+
+let captured = if next_value(): number then number + 2 else 0 end
+assert(captured == 3)
+assert(Counter.calls == 1)
+
+let mut nullable_number: ?int = 4
+
+let mutable_capture = if nullable_number: mut number then
+    number += 1
+    number
+else
+    0
+end
+
+assert(mutable_capture == 5)
+
+if nullable_number: number then assert(number == 4) else assert(false) end
+let number = 20
+
+let shadowed = if nullable_number: number then number else number end
+assert(shadowed == 4)
+assert(number == 20)
+
+let missing: ?int = null
+
+let fallback = if missing: number then number else number end
+assert(fallback == 20)
+
+let nested_header = if (if true then nullable_number else missing end): number then number else 0 end
+assert(nested_header == 4)
+
+let nested_condition = if (if missing: captured then false else true end) then 1 else 2 end
+assert(nested_condition == 1)
+
+struct Point
+    x: int
+end
+
+let mut nullable_point: ?Point = Point(3)
+
+let changed = if nullable_point: mut point then
+    point.x = 7
+    point.x
+else
+    0
+end
+
+assert(changed == 7)
+
+if nullable_point: point then assert(point.x == 7) else assert(false) end

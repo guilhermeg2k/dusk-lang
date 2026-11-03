@@ -1,0 +1,3 @@
+for [1]: item do
+    item = 2
+end

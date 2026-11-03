@@ -1,0 +1,93 @@
+func choose(is_present: bool) -> int
+    let optional: ?int = if is_present then
+        4
+    else
+        null
+    end
+
+    let value = optional orelse if true then
+        return 9
+    else
+        return 10
+    end
+
+    return value
+end
+
+assert(choose(true) == 4)
+assert(choose(false) == 9)
+let mut total = 0
+
+for 1..4: index do
+    let optional: ?int = if index == 2 then
+        null
+    else
+        index
+    end
+
+    let value = optional orelse if true then
+        continue
+    else
+        0
+    end
+
+    total += value
+end
+
+assert(total == 8)
+
+for 1..4: index do
+    let optional: ?int = null
+    let value = optional orelse if index == 2 then
+        break
+    else
+        index
+    end
+
+    total += value
+end
+
+assert(total == 9)
+
+struct Point
+    x: int
+end
+
+for 0..2999: index do
+    let optional: ?[]Point = if index % 2 == 0 then
+        [Point(index)]
+    else
+        null
+    end
+
+    let values = optional orelse [Point(index + 1)]
+    let pressure = [[Point(index + 2)], [Point(index + 3)]]
+    assert(values[0].x == index + index % 2)
+    assert(pressure[1][0].x == index + 3)
+    let optional_number: ?int = if index % 2 == 0 then
+        index
+    else
+        null
+    end
+
+    let optional_fallback: ?float = if index % 3 == 0 then
+        null
+    else
+        0.5
+    end
+
+    let selected = optional_number orelse optional_fallback
+    let more_pressure = [[index], [index + 1]]
+
+    if selected: number then
+        assert(number == if index % 2 == 0 then
+            index
+        else
+            0.5
+        end)
+    else
+        assert(index % 2 != 0 and index % 3 == 0)
+    end
+
+    assert(len(more_pressure) == 2)
+end

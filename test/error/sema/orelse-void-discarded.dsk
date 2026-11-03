@@ -1,0 +1,2 @@
+let optional: ?int = null
+optional orelse echo(1)

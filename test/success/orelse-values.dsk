@@ -1,0 +1,41 @@
+let present: ?int = 7
+let absent: ?int = null
+assert((present orelse 9) == 7)
+assert((absent orelse 9) == 9)
+assert((null orelse 8) == 8)
+assert((null orelse null) == null)
+let zero: ?int = 0
+let flag: ?bool = false
+let empty: ?[]int = []
+assert((zero orelse 99) == 0)
+assert((flag orelse true) == false)
+assert(len(empty orelse [99]) == 0)
+let secondary: ?int = 3
+assert((absent orelse secondary orelse 10) == 3)
+assert((absent orelse absent orelse 10) == 10)
+let nullable = present orelse absent
+assert((nullable orelse 0) == 7)
+let still_absent = absent orelse absent
+assert(still_absent == null)
+let optional_again = present orelse null
+assert((optional_again orelse 0) == 7)
+let promoted = present orelse 1.5
+assert(promoted == 7.0)
+let promoted_fallback = absent orelse 1.5
+assert(promoted_fallback == 1.5)
+let optional_float: ?float = 2.5
+let mixed = present orelse optional_float
+assert((mixed orelse 0.0) == 7.0)
+let nullable_float: ?float = null
+assert((absent orelse nullable_float orelse 2) == 2.0)
+let expected: float = present orelse 2
+assert(expected == 7.0)
+let nullable_expected: ?float = absent orelse 2
+assert((nullable_expected orelse 0.0) == 2.0)
+let selected = absent orelse if true then
+    2.5
+else
+    3.5
+end
+
+assert(selected == 2.5)

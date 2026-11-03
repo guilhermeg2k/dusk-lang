@@ -1,0 +1,27 @@
+union Item
+    text: string
+    values: []int
+end
+
+func make_item(number: int) -> Item
+    return if number % 2 == 0 then @(text = "dusk") else @(values = [number, number + 1]) end
+end
+
+let mut index = 0
+let mut total = 0
+
+for index < 3000 do
+    let item = make_item(index)
+
+    let values = when item
+        text: text then [len([text]), 2] end
+        values: values then values end
+    end
+
+    let pressure = [[index], [index + 1], [index + 2]]
+    total += values[0]
+    assert(len(pressure) == 3)
+    index += 1
+end
+
+assert(total == 2251500)

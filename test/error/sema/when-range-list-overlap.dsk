@@ -1,0 +1,7 @@
+when 3
+    1..5, 3..8 then
+    end
+
+    else then
+    end
+end

@@ -1,0 +1,5 @@
+func missing() -> int
+    for [1]: item do
+        return item
+    end
+end

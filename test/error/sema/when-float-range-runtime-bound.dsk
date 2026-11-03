@@ -1,0 +1,9 @@
+let lower = 0.0
+
+when 0.5
+    lower..1.0 then
+    end
+
+    else then
+    end
+end

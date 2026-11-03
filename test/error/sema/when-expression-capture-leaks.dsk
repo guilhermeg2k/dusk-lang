@@ -1,0 +1,6 @@
+union Item number: int end
+let value = when Item(number = 1)
+number: captured then captured end
+end
+
+echo(captured)

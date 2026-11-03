@@ -1,0 +1,25 @@
+error ParseError
+    Empty
+end
+
+error IoError
+    NotFound
+end
+
+func load(n: int) -> !int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    if n < 0 then
+        return IoError.NotFound
+    end
+    return n
+end
+
+func handle_error(e: ParseError) -> void
+    echo(e)
+end
+
+load(0) catch e then
+    handle_error(e)
+end

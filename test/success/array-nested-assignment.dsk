@@ -1,0 +1,39 @@
+struct Point
+    x: int
+end
+
+struct Bag
+    items: []int
+    points: []Point
+    maybe: []?int
+end
+
+let mut grid = [[1, 2], [3, 4]]
+grid[0][1] = 5
+grid[1][0] += 10
+assert(grid[0][1] == 5)
+assert(grid[1][0] == 13)
+
+let mut cube = [[[1]]]
+cube[0][0][0] = 7
+assert(cube[0][0][0] == 7)
+
+grid[1] = [8, 9]
+assert(grid[1][1] == 9)
+
+let mut bag = Bag(items = [1, 2], points = [Point(x = 1)], maybe = [null])
+bag.items[0] = 9
+bag.points[0].x = 4
+bag.maybe[0] = 6
+assert(bag.items[0] == 9)
+assert(bag.points[0].x == 4)
+assert(bag.maybe[0] == 6)
+
+let mut bags = [bag]
+bags[0].items[1] = 20
+assert(bag.items[1] == 20)
+
+let mut picked = [[0, 0]]
+let is_first = true
+picked[0][if is_first then 0 else 1 end] = if is_first then 3 else 4 end
+assert(picked[0][0] == 3)

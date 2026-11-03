@@ -1,0 +1,3 @@
+let first: ?int = null
+let second: ?string = null
+let selected = first orelse second

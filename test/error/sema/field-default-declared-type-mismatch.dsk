@@ -1,0 +1,3 @@
+struct S
+    n: ?[]int = "x"
+end

@@ -1,5 +1,46 @@
 # Changelogs
 
+## v0.12 - Kanade
+
+- `dusk --version` reports `0.12.0` (it still said `0.11.0-devel`); the language reference now points string features to v0.13
+- Nullable fallback: `value orelse fallback` evaluates its left operand once, unwraps it when non-null and evaluates the fallback only for null. Nullable fallbacks support chains; compatible result types use conditional-expression inference and numeric promotion
+- `orelse` is now a reserved keyword. It groups right-to-left at the same precedence as `catch`, and supports contextual anonymous initializers and empty arrays
+
+- Inclusive integer range loops: `for start..stop: value, index do ... end`, with optional indexes and ignored captures. Bounds are evaluated once, iteration allocates no array, and reversed bounds produce no items
+- Integer `when` cases accept literal ranges and mixtures of ranges and individual literals. Float and nullable-float subjects are supported with range cases only; bounds are finite numeric literals
+- Numeric `when` subjects require `else`; overlapping cases, shared endpoints and reversed case ranges are compile errors. Range loops stop safely at the largest integer
+
+- Array capture loops: `for items: item, index do ... end`, with an optional zero-based index and `_` to ignore captures. Captures are immutable and scoped to the body
+- Capture loops evaluate their array and length once, read each item as they reach it, and exclude appended items. `continue` advances to the next item
+
+- `if`, nullable-capture `if` and `when` now work as expressions. Branches produce their final expression, with statements allowed before it; value-producing `if` requires `else`
+- Conditional expressions infer compatible result types, promote mixed numeric results, support nullable results and propagate expected types into branch values, anonymous initializers and empty arrays
+- Expression branches can `return`, `break` or `continue` without supplying a value. Existing statement forms retain their behavior
+- `if` and `when` statements compile straight to branches again instead of going through the expression path, so statements don't run extra instructions. Statements and expressions now share one AST form and one lowering path
+- Nullable captures evaluate their subject once, unwrap only in the matching branch and keep captured names out of `else`; union captures also preserve outer variables with the same name
+
+- Error handling: error sets (`error ParseError ... end`), functions that can fail (`-> E!T`, or `-> !T` to infer the error set from the body), `try` to pass an error on, and `catch` with a fallback value (`f() catch 0`) or a block (`f() catch e then ... end`)
+- A call to a function that can fail must be handled with `try` or `catch`. Sema checks that every error a function can return is in its declared set, also through chains of inferred sets and recursion
+- Error values can be stored, passed to functions, compared with `==`/`!=` and matched with `when` (exhaustive, also for inferred sets). An error from an inferred set can go wherever a declared set is expected, as long as every error it can hold is in that set
+- A failing `try` at the top level stops the program with `unhandled error <Set.Error>`
+- `error`, `try` and `catch` are now keywords, so they can't be used as names (e.g. a union variant called `error`)
+- Fixed compiler crash when a function calls another function defined after it (mutual recursion)
+- Fixed `Register limit exceeded` crash in blocks with a few hundred `if`, `when`, nullable-capture `if`, capture `for` or call statements: the hidden variables each statement uses are now freed when it ends
+- Fixed functions whose success type is an error set (`E!Kind`): `return Kind.A` now succeeds instead of being checked against `E`. Using `E` itself as the success type (`E!E`, `E!?E`) is a compile error
+- Fixed `==`/`!=` on nullable primitives, enums and error sets comparing the null box instead of the value: `?int == int` and `?int == ?int` were always false
+- Debug builds check that every call to a function that can fail is directly followed by its success jump, which `RETURN_ERR` relies on
+- Fixed assigning into nested arrays: `grid[0][1] = 5` was rejected, `grid[0][1] = [7]` was accepted, and `bag.items[0] = 9` (an array inside a struct field) crashed the compiler. Assignment now checks against the element type of the array being indexed, and evaluates its target once
+- A number with two dots (`1.2.3`) is reported as an invalid float literal again, instead of a confusing member-access error
+- Fixed a nullable anonymous initializer (`if c then @(x = 1) else null end`) being accepted where a non-nullable struct is expected, which crashed at runtime. A nullable value never coerces to a non-nullable type, whatever its kind
+- Functions can read and assign top-level variables declared above them. A call that runs before a variable the function uses is declared (directly or through other functions) is a compile error, and so is a default value that calls such a function
+- Too many variables or temporaries alive at once in one function is now a compile error naming the function, instead of a `Register limit exceeded` panic
+- Fixed a GC crash when a nullable primitive variable started as `null` and was assigned later (`let mut n: ?int = null` then `n = 1` in an allocating loop)
+- Fixed `if f() catch fallback then` failing to parse: inside an `if`/`elif` condition, `catch name then` is a fallback value. A catch block still works there inside parentheses or call arguments
+- Fixed nullable arrays: `?[]int` variables, params, returns and struct fields can now hold `null`, and a nullable array must be unwrapped before indexing, `len` or `append`
+- Fixed struct fields with both a type and a default (`retries: ?int = null`) taking the default's type instead of the declared one
+- Fixed array literals ignoring the declared item type (`let a: []?int = [null, 1]`)
+- Language reference: new Error Handling section
+
 ## v0.11 - Power
 
 - First version developed with AI assistance (see [AI Usage](ai-disclaimer.md))

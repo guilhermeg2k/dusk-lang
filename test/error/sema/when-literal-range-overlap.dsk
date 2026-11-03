@@ -1,0 +1,10 @@
+when 3
+    3 then
+    end
+
+    1..5 then
+    end
+
+    else then
+    end
+end

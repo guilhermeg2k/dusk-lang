@@ -1,0 +1,63 @@
+struct Entry
+    number: int
+end
+
+union Choice
+    number: int
+    text: string
+end
+
+let mut iteration = 0
+
+for iteration < 3000 do
+    for [Entry(3), Entry(4)]: entry, index do
+        let pressure = [[iteration], [iteration + 1]]
+        assert(entry.number == index + 3)
+        assert(len(pressure) == 2)
+    end
+
+    for [[5], [6]]: values, index do
+        let pressure = [Entry(iteration)]
+        assert(values[0] == index + 5)
+        assert(pressure[0].number == iteration)
+    end
+
+    let choices = [Choice(number = 7), Choice(text = "hello")]
+
+    for choices: choice, index do
+        let pressure = [[iteration]]
+
+        when choice
+            number: number then
+                assert(number == 7)
+            end
+
+            text: text then
+                assert(len([text]) == 1)
+            end
+        end
+
+        assert(len(pressure) == 1)
+    end
+
+    let optional: []?int = [null, 9]
+
+    for optional: item, index do
+        if item: number then
+            assert(number == 9)
+            assert(index == 1)
+        else
+            assert(index == 0)
+        end
+    end
+
+    for [1.5, 2.5]: number, index do
+        assert(number == index + 1.5)
+    end
+
+    for [true, false]: flag, index do
+        assert(flag == (index == 0))
+    end
+
+    iteration += 1
+end

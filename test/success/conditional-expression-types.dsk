@@ -1,0 +1,61 @@
+let first = if true then 2 else 3.5 end
+
+let second = if false then 3.5 else 2 end
+assert(first + 0.5 == 2.5)
+assert(second + 0.5 == 2.5)
+
+let annotated: float = if true then 3 else 4.5 end
+assert(annotated == 3.0)
+
+let maybe_first = if true then 2 else null end
+
+let maybe_second = if false then null else 3 end
+
+if maybe_first: number then assert(number == 2) else assert(false) end
+
+if maybe_second: number then assert(number == 3) else assert(false) end
+
+let absent = if true then null else 2 end
+
+if absent: number then assert(false) end
+let nullable_number: ?int = 6
+
+let promoted = if true then nullable_number else 2.5 end
+
+if promoted: number then assert(number == 6.0) else assert(false) end
+let nullable_absent: ?int = null
+
+let promoted_absent = if true then nullable_absent else 2.5 end
+
+if promoted_absent: number then assert(false) end
+
+let maybe_float: ?float = if false then null else 4 end
+
+if maybe_float: number then assert(number == 4.0) else assert(false) end
+
+func maybe_value(is_present: bool) -> ?int
+    return if is_present then 9 else null end
+end
+
+if maybe_value(true): number then assert(number == 9) else assert(false) end
+
+if maybe_value(false): number then assert(false) end
+let nullable_items: []?int = [if true then 1 else null end]
+
+if nullable_items[0]: number then assert(number == 1) else assert(false) end
+
+let mixed = when 1
+    0 then null end
+    1 then 3 end
+    else then 4.5 end
+end
+
+if mixed: number then assert(number == 3.0) else assert(false) end
+
+let reversed = when 1
+    0 then 4.5 end
+    1 then 3 end
+    else then null end
+end
+
+if reversed: number then assert(number == 3.0) else assert(false) end

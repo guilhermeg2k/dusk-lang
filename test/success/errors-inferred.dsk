@@ -1,0 +1,120 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+error RangeError
+    TooBig
+end
+
+func is_even_steps(n: int) -> !int
+    if n < 0 then
+        return RangeError.TooBig
+    end
+    if n == 0 then
+        return 0
+    end
+    return try is_odd_steps(n - 1) + 1
+end
+
+func is_odd_steps(n: int) -> !int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return try is_even_steps(n - 1) + 1
+end
+
+assert(try is_even_steps(4) == 4)
+func run_odd() -> int
+    let odd = is_even_steps(3) catch e then
+        assert(e == ParseError.Empty)
+        return -1
+    end
+    return odd
+end
+assert(run_odd() == -1)
+assert((is_even_steps(-1) catch 7) == 7)
+
+func digit(n: int) -> !int
+    if n > 9 then
+        return ParseError.BadDigit
+    end
+    return n
+end
+
+func sum_digits(a: int, b: int) -> ParseError!int
+    return try digit(a) + try digit(b)
+end
+
+assert((sum_digits(1, 2) catch 0) == 3)
+assert((sum_digits(1, 20) catch 0) == 0)
+
+func forward(n: int) -> !int
+    let value = digit(n) catch e then
+        return e
+    end
+    return value
+end
+
+func checked(n: int) -> ParseError!int
+    return try forward(n)
+end
+
+assert((checked(3) catch 0) == 3)
+assert((checked(30) catch -1) == -1)
+
+func any_error(n: int) -> !void
+    if n == 1 then
+        return ParseError.Empty
+    end
+    if n == 2 then
+        return RangeError.TooBig
+    end
+end
+
+any_error(1) catch e then
+    assert(e == ParseError.Empty)
+end
+any_error(2) catch e then
+    assert(e == RangeError.TooBig)
+    assert(e != ParseError.Empty)
+end
+try any_error(3)
+
+func parse_only(n: int) -> !int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return try digit(n)
+end
+
+func handle_error(e: ParseError) -> int
+    when e
+        ParseError.Empty then return 1 end
+        ParseError.BadDigit then return 2 end
+    end
+end
+
+struct Failure
+    code: ParseError
+    cause: ?ParseError
+end
+
+func handled(n: int) -> int
+    let value = parse_only(n) catch e then
+        let saved: ParseError = e
+        let mut maybe: ?ParseError = null
+        maybe = e
+        let failure = Failure(code = e, cause = e)
+        assert(failure.code == saved)
+        if maybe: m then
+            assert(m == e)
+        end
+        return handle_error(e)
+    end
+    return value
+end
+
+assert(handled(0) == 1)
+assert(handled(50) == 2)
+assert(handled(4) == 4)

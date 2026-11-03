@@ -1,0 +1,9 @@
+let base = 1
+
+func read() -> int
+    return base
+end
+
+struct Config
+    let limit = read()
+end

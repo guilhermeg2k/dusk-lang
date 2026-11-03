@@ -1,0 +1,91 @@
+let mut total = 0
+
+for 1..5: value do
+    if value == 2 then
+        continue
+    end
+
+    if value == 4 then
+        break
+    end
+
+    total += value
+end
+
+assert(total == 4)
+let mut visits = 0
+
+for 1..3: outer do
+    if outer == 1 then
+        continue
+    end
+
+    for [1, 2, 3]: inner do
+        if inner == 2 then
+            continue
+        end
+
+        visits += 1
+    end
+end
+
+assert(visits == 4)
+
+for [1, 2]: outer do
+    for 1..3: inner do
+        let value = if inner == 2 then
+            continue
+        else
+            inner
+        end
+
+        total += outer * value
+    end
+end
+
+assert(total == 16)
+
+for 1..3: value do
+    let selected = when value
+        1..2 then
+            continue
+        end
+
+        else then
+            value
+        end
+    end
+
+    total += selected
+end
+
+assert(total == 19)
+
+func find() -> int
+    for 1..5: value do
+        if value == 3 then
+            return value
+        end
+    end
+
+    return 0
+end
+
+assert(find() == 3)
+
+for 9223372036854775806..9223372036854775807: value, index do
+    assert(value == 9223372036854775806 + index)
+    continue
+end
+
+for 9223372036854775807..9223372036854775807: value do
+    assert(value == 9223372036854775807)
+end
+
+for -9223372036854775807..(-9223372036854775806): value, index do
+    assert(value == -9223372036854775807 + index)
+end
+
+for (-9223372036854775807 - 1)..(-9223372036854775807): value, index do
+    assert(value == (-9223372036854775807 - 1) + index)
+end

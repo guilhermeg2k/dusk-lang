@@ -1,0 +1,10 @@
+error Failure
+    Missing
+end
+
+func failing() -> Failure!int
+    return Failure.Missing
+end
+
+let optional: ?int = null
+let selected = optional orelse failing()

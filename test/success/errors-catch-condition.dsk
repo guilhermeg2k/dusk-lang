@@ -1,0 +1,67 @@
+error CheckError
+    Failed
+end
+
+func check(ok: bool) -> CheckError!bool
+    if ok then
+        return true
+    end
+    return CheckError.Failed
+end
+
+func identity(value: bool) -> bool
+    return value
+end
+
+let fallback = true
+let no_fallback = false
+
+let mut hits = 0
+if check(false) catch fallback then
+    hits += 1
+end
+assert(hits == 1)
+
+if check(false) catch no_fallback then
+    hits += 10
+elif check(false) catch fallback then
+    hits += 100
+end
+assert(hits == 101)
+
+let picked = if check(false) catch fallback then 1 else 2 end
+assert(picked == 1)
+
+func grouped(ok: bool) -> int
+    if (check(ok) catch e then
+        return -1
+    end) then
+        return 1
+    end
+    return 0
+end
+assert(grouped(true) == 1)
+assert(grouped(false) == -1)
+
+func argument(ok: bool) -> int
+    if identity(check(ok) catch e then
+        return -2
+    end) then
+        return 2
+    end
+    return 0
+end
+assert(argument(true) == 2)
+assert(argument(false) == -2)
+
+func nested(ok: bool) -> int
+    if check(true) catch ok then
+        let value = check(ok) catch e then
+            return -3
+        end
+        assert(value)
+    end
+    return 3
+end
+assert(nested(true) == 3)
+assert(nested(false) == -3)

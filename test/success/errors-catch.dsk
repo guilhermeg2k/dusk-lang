@@ -1,0 +1,100 @@
+error IoError
+    NotFound
+    Denied
+end
+
+func open(id: int) -> IoError!int
+    if id == 0 then
+        return IoError.NotFound
+    end
+    if id < 0 then
+        return IoError.Denied
+    end
+    return id * 100
+end
+
+let a = open(1) catch 0
+assert(a == 100)
+let b = open(0) catch 0
+assert(b == 0)
+let c = open(-1) catch open(2) catch 5
+assert(c == 200)
+
+func first_open(ids: []int) -> int
+    let mut i = 0
+    for i < len(ids) do
+        let handle = open(ids[i]) catch e then
+            i += 1
+            continue
+        end
+        return handle
+    end
+    return -1
+end
+
+assert(first_open([0, -1, 3]) == 300)
+assert(first_open([0, -1]) == -1)
+
+func count_until_denied(ids: []int) -> int
+    let mut i = 0
+    let mut opened = 0
+    for i < len(ids) do
+        let handle = open(ids[i]) catch e then
+            if e == IoError.Denied then
+                break
+            end
+            i += 1
+            continue
+        end
+        opened += 1
+        i += 1
+    end
+    return opened
+end
+
+assert(count_until_denied([1, 0, 2, -1, 3]) == 2)
+
+func describe(id: int) -> int
+    let handle = open(id) catch e then
+        if e == IoError.NotFound then
+            return 1
+        else
+            return 2
+        end
+    end
+    return handle
+end
+
+assert(describe(0) == 1)
+assert(describe(-5) == 2)
+assert(describe(4) == 400)
+
+struct Log
+    let mut errors = 0
+end
+
+open(0) catch e then
+    Log.errors += 1
+end
+open(7) catch e then
+    Log.errors += 1
+end
+assert(Log.errors == 1)
+
+func open_or(id: int, fallback: int) -> int
+    return open(id) catch fallback
+end
+
+assert(open_or(0, 9) == 9)
+assert(open_or(1, 9) == 100)
+
+let mut saved: ?IoError = null
+open(-3) catch e then
+    saved = e
+end
+if saved: s then
+    assert(s == IoError.Denied)
+    assert(s != IoError.NotFound)
+else
+    assert(false)
+end

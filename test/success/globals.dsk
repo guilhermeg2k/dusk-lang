@@ -1,0 +1,97 @@
+struct Point
+    x: int
+end
+
+let mut count = 0
+let limit = 3
+let mut points = [Point(x = 0)]
+let mut last = Point(x = -1)
+let mut maybe: ?int = null
+let mut label: ?string = null
+
+func bump() -> void
+    count += 1
+end
+
+func bump_twice() -> void
+    bump()
+    bump()
+end
+
+func is_below_limit(n: int) -> bool
+    return n < limit
+end
+
+func remember(x: int) -> void
+    let point = Point(x = x)
+    append(points, point)
+    last = point
+    maybe = x
+    label = "seen"
+end
+
+func read_maybe() -> int
+    if maybe: value then
+        return value
+    end
+    return -1
+end
+
+func forget() -> void
+    maybe = null
+    points = [Point(x = 0)]
+end
+
+struct Counter
+    step: int
+
+    func advance(self: @) -> int
+        count += self.step
+        return count
+    end
+end
+
+bump()
+bump_twice()
+assert(count == 3)
+assert(is_below_limit(2))
+assert(!is_below_limit(limit))
+
+assert(read_maybe() == -1)
+for 1..20000: i do
+    let garbage = [i, i + 1, i + 2]
+    remember(i)
+end
+assert(len(points) == 20001)
+assert(points[20000].x == 20000)
+assert(last.x == 20000)
+assert(read_maybe() == 20000)
+assert(maybe == 20000)
+assert(label != null)
+
+maybe = 5
+assert(read_maybe() == 5)
+forget()
+assert(read_maybe() == -1)
+assert(len(points) == 1)
+
+let counter = Counter(step = 10)
+assert(counter.advance() == 13)
+assert(count == 13)
+
+func base() -> int
+    return limit * 2
+end
+
+func ping(n: int) -> int
+    if n == 0 then
+        return base()
+    end
+    return pong(n - 1)
+end
+
+func pong(n: int) -> int
+    return ping(n)
+end
+
+assert(ping(3) == 6)

@@ -1,0 +1,16 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+func parse(n: int) -> ParseError!int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return n
+end
+
+func g() -> int
+    return 1
+end
+let x = try g()

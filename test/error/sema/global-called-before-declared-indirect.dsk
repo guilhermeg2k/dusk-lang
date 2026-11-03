@@ -1,0 +1,11 @@
+echo(outer())
+
+let base = 1
+
+func inner() -> int
+    return base
+end
+
+func outer() -> int
+    return inner() + 1
+end

@@ -1,0 +1,44 @@
+struct Bounds
+    let mut calls = 0
+    let mut upper = 3
+end
+
+func start() -> int
+    Bounds.calls += 1
+    assert(Bounds.calls == 1)
+    return 1
+end
+
+func stop() -> int
+    Bounds.calls += 1
+    assert(Bounds.calls == 2)
+    return Bounds.upper
+end
+
+let mut total = 0
+
+for start()..stop(): value do
+    Bounds.upper = 100
+    total += value
+end
+
+assert(total == 6)
+assert(Bounds.calls == 2)
+let mut upper = 4
+let mut lower = 2
+
+for lower..upper: value, index do
+    lower = 99
+    upper = 99
+    assert(value == index + 2)
+end
+
+let mut visits = 0
+
+for 0..999: value do
+    let pressure = [[value], [value + 1]]
+    assert(pressure[0][0] == value)
+    visits += 1
+end
+
+assert(visits == 1000)

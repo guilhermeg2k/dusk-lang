@@ -1,0 +1,23 @@
+error ParseError
+    Empty
+    BadDigit
+end
+
+func parse(n: int) -> ParseError!int
+    if n == 0 then
+        return ParseError.Empty
+    end
+    return n
+end
+
+error IoError
+    NotFound
+end
+
+func outer() -> IoError!int
+    return try middle()
+end
+
+func middle() -> !int
+    return try parse(0)
+end

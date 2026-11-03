@@ -1,0 +1,61 @@
+func classify(value: int) -> int
+    return when value
+        1..5, 8, 10..12 then
+            1
+        end
+
+        (-5)..(-1) then
+            2
+        end
+
+        20..20 then
+            3
+        end
+
+        else then
+            0
+        end
+    end
+end
+
+assert(classify(0) == 0)
+assert(classify(1) == 1)
+assert(classify(5) == 1)
+assert(classify(6) == 0)
+assert(classify(8) == 1)
+assert(classify(10) == 1)
+assert(classify(12) == 1)
+assert(classify(-5) == 2)
+assert(classify(-1) == 2)
+assert(classify(-6) == 0)
+assert(classify(20) == 3)
+
+func optional(value: ?int) -> int
+    return when value
+        null then
+            0
+        end
+
+        1..3 then
+            1
+        end
+
+        else then
+            2
+        end
+    end
+end
+
+assert(optional(null) == 0)
+assert(optional(2) == 1)
+assert(optional(9) == 2)
+
+when 9223372036854775807
+    1..9223372036854775807 then
+        assert(true)
+    end
+
+    else then
+        assert(false)
+    end
+end
