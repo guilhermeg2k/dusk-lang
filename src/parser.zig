@@ -921,6 +921,7 @@ pub const Parser = struct {
             .multiline_string_literal,
             .byte_literal,
             .byte_kw,
+            .float_kw,
             .buffer_kw,
             .true_literal,
             .false_literal,
@@ -1284,13 +1285,17 @@ pub const Parser = struct {
             .byte_literal => {
                 return self.parseByteLiteral(tk);
             },
-            .byte_kw, .buffer_kw => {
+            .byte_kw, .float_kw, .buffer_kw => {
                 _ = try self.expect(.l_paren);
                 const was_parsing_condition = self.leaveCondition();
                 defer self.is_parsing_condition = was_parsing_condition;
                 const operand = try self.parseExp(0);
                 const r_paren = try self.expect(.r_paren);
-                const data: ast.Exp = if (tk.tag == .byte_kw) .{ .byte_cast = operand } else .{ .buffer_new = operand };
+                const data: ast.Exp = switch (tk.tag) {
+                    .byte_kw => .{ .byte_cast = operand },
+                    .float_kw => .{ .float_cast = operand },
+                    else => .{ .buffer_new = operand },
+                };
                 return ast.ExpNode.init(self.allocator, .{ .data = data, .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end } });
             },
             .true_literal => {

@@ -1,0 +1,4 @@
+func main() -> void
+    let maybe: ?int = 3
+    let number: float = maybe
+end

@@ -2216,7 +2216,9 @@ pub const SemaAnalyzer = struct {
                 const target = try self.evalExp(index_exp.target);
                 const target_type = target.type_id;
                 const indexed_target = try self.indexInto(assign_stmt.target, target);
-                const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal or indexed_target.type_id == self.type_table.getPrimitive(.byte))
+                const target_base = self.type_table.typeIdByNullableTypeId.get(indexed_target.type_id) orelse indexed_target.type_id;
+                const is_float_target = target_base == self.type_table.getPrimitive(.float);
+                const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal or indexed_target.type_id == self.type_table.getPrimitive(.byte) or is_float_target)
                     indexed_target.type_id
                 else
                     null;
@@ -2926,22 +2928,12 @@ pub const SemaAnalyzer = struct {
     fn convertBranchValue(self: *Self, value: *ir.Value, result_type: tt.TypeId, loc: err.Loc) Errors!*ir.Value {
         const value_base = self.type_table.typeIdByNullableTypeId.get(value.type_id) orelse value.type_id;
         const result_base = self.type_table.typeIdByNullableTypeId.get(result_type) orelse result_type;
-        const needs_numeric_conversion = value_base == self.type_table.getPrimitive(.int) and result_base == self.type_table.getPrimitive(.float);
         const value_kind = self.type_table.getTypePtrById(value_base).kind;
         const result_kind = self.type_table.getTypePtrById(result_base).kind;
         if (value.data == .i_array and value_kind == .array and result_kind == .array and value_kind.array == self.type_table.getPrimitive(.dynamic)) {
             value.type_id = result_base;
         }
-        var converted = value;
-        if (needs_numeric_conversion) {
-            if (value.type_id != value_base and result_type == result_base) {
-                return self.err_dispatcher.invalidType(try self.type_table.name(result_type, self.allocator), try self.type_table.name(value.type_id, self.allocator), loc);
-            }
-            converted = try ir.Value.init(self.allocator, .{
-                .data = .{ .int_to_float = value },
-                .type_id = if (value.type_id != value_base) result_type else result_base,
-            });
-        }
+        const converted = try self.promoteToFloat(value, result_type);
         if (!try self.canCoerce(converted.type_id, result_type, loc)) {
             return self.err_dispatcher.invalidType(try self.type_table.name(result_type, self.allocator), try self.type_table.name(converted.type_id, self.allocator), loc);
         }
@@ -2993,12 +2985,27 @@ pub const SemaAnalyzer = struct {
         }
 
         const value = try self.evalExp(exp);
-        if (expected_type_id) |expected| {
-            if (isValueLeaving(value)) {
-                return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected });
-            }
+        const expected = expected_type_id orelse return value;
+        if (isValueLeaving(value)) {
+            return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected });
         }
-        return value;
+        return self.promoteToFloat(value, expected);
+    }
+
+    fn promoteToFloat(self: *Self, value: *ir.Value, expected: tt.TypeId) Errors!*ir.Value {
+        const float_type = self.type_table.getPrimitive(.float);
+        const value_base = self.type_table.typeIdByNullableTypeId.get(value.type_id) orelse value.type_id;
+        const expected_base = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
+        if (value_base != self.type_table.getPrimitive(.int) or expected_base != float_type) return value;
+        const value_is_nullable = value_base != value.type_id;
+        if (value_is_nullable and expected == expected_base) return value;
+        if (value.data == .i_int) {
+            return ir.Value.init(self.allocator, .{ .data = .{ .i_float = @floatFromInt(value.data.i_int) }, .type_id = float_type });
+        }
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .int_to_float = value },
+            .type_id = if (value_is_nullable) expected else float_type,
+        });
     }
 
     fn intConstant(exp: *const ast.ExpNode) ?i64 {
@@ -3013,6 +3020,20 @@ pub const SemaAnalyzer = struct {
     fn evalByteConstant(self: *Self, number: i64, loc: err.Loc) Errors!*ir.Value {
         if (number < 0 or number > 255) return self.err_dispatcher.byteOutOfRange(number, loc);
         return ir.Value.init(self.allocator, .{ .data = .{ .i_int = number }, .type_id = self.type_table.getPrimitive(.byte) });
+    }
+
+    fn evalFloatCast(self: *Self, operand: *const ast.ExpNode) Errors!*ir.Value {
+        const value = try self.evalExp(operand);
+        if (isValueLeaving(value)) return value;
+        const float_type = self.type_table.getPrimitive(.float);
+        if (value.type_id == float_type) return value;
+        if (!self.isIntegerType(value.type_id)) {
+            return self.err_dispatcher.invalidType("int, byte or float", try self.type_table.name(value.type_id, self.allocator), operand.loc);
+        }
+        if (value.data == .i_int) {
+            return ir.Value.init(self.allocator, .{ .data = .{ .i_float = @floatFromInt(value.data.i_int) }, .type_id = float_type });
+        }
+        return ir.Value.init(self.allocator, .{ .data = .{ .int_to_float = value }, .type_id = float_type });
     }
 
     fn evalByteCast(self: *Self, operand: *const ast.ExpNode) Errors!*ir.Value {
@@ -3048,6 +3069,9 @@ pub const SemaAnalyzer = struct {
             },
             .byte_literal => |byte| {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_int = byte }, .type_id = self.type_table.getPrimitive(.byte) });
+            },
+            .float_cast => |operand| {
+                return self.evalFloatCast(operand);
             },
             .byte_cast => |operand| {
                 return self.evalByteCast(operand);
@@ -3805,6 +3829,12 @@ pub const SemaAnalyzer = struct {
 
             if (array_literal_type == self.type_table.getPrimitive(.dynamic)) {
                 array_literal_type = exp_value_type;
+            }
+
+            const float_type = self.type_table.getPrimitive(.float);
+            if (array_literal_type == self.type_table.getPrimitive(.int) and exp_value_type == float_type) {
+                array_literal_type = float_type;
+                for (values.items) |*previous| previous.* = try self.promoteToFloat(previous.*, float_type);
             }
 
             if (!try self.canCoerce(exp_value_type, array_literal_type, exp.loc)) {

@@ -1949,3 +1949,27 @@ test "orelse-direct-break" {
 test "orelse-direct-continue" {
     try runCaseError("parser/orelse-direct-continue.dsk", error.ParserError);
 }
+
+test "int to float promotion" {
+    try runCase("int-to-float-promotion.dsk");
+}
+
+test "sema error: int array to float array" {
+    try runCaseError("sema/int-array-to-float-array.dsk", error.InvalidType);
+}
+
+test "sema error: nullable int to float" {
+    try runCaseError("sema/nullable-int-to-float.dsk", error.InvalidType);
+}
+
+test "sema error: missing main in an empty file" {
+    try runCaseError("sema/missing-main-empty-file.dsk", error.MissingMain);
+}
+
+test "float cast" {
+    try runCase("float-cast.dsk");
+}
+
+test "sema error: float cast of a string" {
+    try runCaseError("sema/float-cast-string.dsk", error.InvalidType);
+}

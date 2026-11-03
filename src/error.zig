@@ -595,13 +595,13 @@ pub const ErrorDispatcher = struct {
         }
 
         std.log.err(
-            "{s} at line {d} col {d}\n--> {d}: {s} {s}",
+            "{s} at line {d} col {d}\n--> {d}: {s}\n {s}",
             .{
                 msg,
                 exactLoc.line.count,
                 exactLoc.col,
                 exactLoc.line.count,
-                self.src[exactLoc.line.start .. exactLoc.line.end + 1],
+                std.mem.trimEnd(u8, self.src[@min(exactLoc.line.start, self.src.len)..@min(exactLoc.line.end + 1, self.src.len)], "\r\n"),
                 error_loc_marker[0..error_loc_marker_len],
             },
         );

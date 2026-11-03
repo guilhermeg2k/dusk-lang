@@ -189,6 +189,10 @@ Any other value (a `let mut`, an array, a struct, a value computed by a call) is
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
+Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `float(x)` converts an `int` or `byte` explicitly (`echo(float(count))`).
+
+A `float` never converts to `int` (use `//`), a `byte` only converts to `float` with `float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
+
 Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing closing quotes are compile errors. The runtime stores the UTF-8 bytes with an explicit byte length, so embedded NUL characters are preserved.
 
 | Escape | Value |
@@ -669,7 +673,7 @@ Use parentheses to change the order.
 | `/`      | Always `float`, even for two `int`s (`3 / 2` is `1.5`)        |
 | `//`     | Always `int`: divides, then truncates (`7 // 2` is `3`)       |
 
-An `int` mixed with a `float` is promoted to `float`.
+An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitives) for the other places an `int` becomes a `float`).
 
 ### Comparison and logic
 
@@ -1215,5 +1219,6 @@ These are known gaps in v0.13 development. Most are planned in the [roadmap](roa
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
+- **`append`**: the item isn't checked against the array's item type yet, so a value of the wrong type (including an `int` into a `[]float`) is stored as is. Make sure the item has the array's item type.
 - **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.
