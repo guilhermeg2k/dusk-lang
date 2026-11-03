@@ -55,6 +55,7 @@
 
 ## v0.12 - Kanade
 
+- `dusk --version` reports `0.12.0` (it still said `0.11.0-devel`); the language reference now points string features to v0.13
 - Nullable fallback: `value orelse fallback` evaluates its left operand once, unwraps it when non-null and evaluates the fallback only for null. Nullable fallbacks support chains; compatible result types use conditional-expression inference and numeric promotion
 - `orelse` is now a reserved keyword. It groups right-to-left at the same precedence as `catch`, and supports contextual anonymous initializers and empty arrays
 
