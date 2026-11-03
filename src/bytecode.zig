@@ -410,7 +410,7 @@ pub const BytecodeGen = struct {
 
     fn pushLoopCtx(self: *Self) !void {
         try self.loop_stack.append(self.allocator, LoopContext{
-            .first_break_patch_idx = self.break_patches.items.len,
+            .first_break_patch_index = self.break_patches.items.len,
             .first_continue_patch_index = self.continue_patches.items.len,
         });
     }
@@ -418,10 +418,10 @@ pub const BytecodeGen = struct {
     fn popLoopCtx(self: *Self) !void {
         const ctx = self.loop_stack.pop() orelse unreachable;
         const loop_end = self.chunk_instructions.items.len;
-        for (self.break_patches.items[ctx.first_break_patch_idx..]) |patch_idx| {
-            self.chunk_instructions.items[patch_idx].putAEx(@intCast(loop_end));
+        for (self.break_patches.items[ctx.first_break_patch_index..]) |patch_index| {
+            self.chunk_instructions.items[patch_index].putAEx(@intCast(loop_end));
         }
-        self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_idx);
+        self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_index);
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
@@ -1814,6 +1814,6 @@ const FailingCallHandler = union(enum) {
 };
 
 const LoopContext = struct {
-    first_break_patch_idx: usize,
+    first_break_patch_index: usize,
     first_continue_patch_index: usize,
 };
