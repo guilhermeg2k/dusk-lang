@@ -1,3 +1,5 @@
-let first: ?int = null
-let second: ?string = null
-let selected = first orelse second
+func main() -> void
+    let first: ?int = null
+    let second: ?string = null
+    let selected = first orelse second
+end

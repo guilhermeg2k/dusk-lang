@@ -1,1 +1,3 @@
-let selected = 1 orelse 2
+func main() -> void
+    let selected = 1 orelse 2
+end

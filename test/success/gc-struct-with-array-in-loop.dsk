@@ -8,5 +8,6 @@ func run() -> void
     assert(canary.value == 42)
 end
 
-run()
-
+func main() -> void
+    run()
+end

@@ -1,15 +1,18 @@
-# an empty literal takes the expected item type
-
-let mut list: []string = ["a"]
-list = []
-append(list, "b")
-assert(len(list) == 1)
 
 func size(items: []int) -> int
     return len(items)
 end
 
-assert(size([]) == 0)
+func main() -> void
+    # an empty literal takes the expected item type
 
-let empty: []int = []
-assert(len(empty) == 0)
+    let mut list: []string = ["a"]
+    list = []
+    append(list, "b")
+    assert(len(list) == 1)
+
+    assert(size([]) == 0)
+
+    let empty: []int = []
+    assert(len(empty) == 0)
+end

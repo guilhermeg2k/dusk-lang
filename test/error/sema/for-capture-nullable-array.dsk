@@ -1,4 +1,6 @@
-let items: ?[]int = [1]
+func main() -> void
+    let items: ?[]int = [1]
 
-for items: item do
+    for items: item do
+    end
 end

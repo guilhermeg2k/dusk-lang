@@ -25,14 +25,11 @@ pub const SemaAnalyzer = struct {
     fn_depth: usize = 0,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
-    fn_frames: std.ArrayList(FnFrame) = .empty,
     constants: std.ArrayList(Constant) = .empty,
     constant_by_exp: std.AutoHashMapUnmanaged(*const ast.ExpNode, usize) = .empty,
-    top_level_variable_names: std.StringHashMapUnmanaged(void) = .empty,
     exp_types: std.AutoHashMapUnmanaged(*const ast.ExpNode, tt.TypeId) = .empty,
     exp_symbols: std.AutoHashMapUnmanaged(*const ast.ExpNode, Symbol) = .empty,
     flow_frames: std.ArrayList(FlowFrame) = .empty,
-    default_first_local_uid: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -58,13 +55,17 @@ pub const SemaAnalyzer = struct {
         self.err_dispatcher.src = src;
 
         try self.hoistDeclarations(root);
+        try self.checkTopLevelStatements(root);
 
         try self.flow_frames.append(self.allocator, .{});
-        const instructions = (try self.visitBlock(root)).instructions;
+        _ = try self.visitBlock(root);
         try self.resolveFlow();
         _ = self.flow_frames.pop();
         try self.resolveErrorEdges();
         try self.checkPendingWhens();
+
+        const instructions = try self.allocator.alloc(ir.Instruction, 1);
+        instructions[0] = .{ .expression_stmt = .{ .value = try self.mainCall(root) } };
 
         return .{
             .instructions = instructions,
@@ -72,6 +73,47 @@ pub const SemaAnalyzer = struct {
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
         };
+    }
+
+    fn isDeclaration(stmt: ast.Statement) bool {
+        return switch (stmt) {
+            .func, .@"struct", .@"enum", .@"union", .error_set => true,
+            else => false,
+        };
+    }
+
+    fn checkTopLevelStatements(self: *Self, root: *const ast.Root) !void {
+        for (root.statements.items) |stmt| {
+            if (isDeclaration(stmt.data)) continue;
+            if (stmt.data != .let) return self.err_dispatcher.statementOutsideMain(stmt.loc);
+            const let_stmt = stmt.data.let;
+            if (self.constant_by_exp.contains(let_stmt.value)) continue;
+            return self.err_dispatcher.topLevelLetNotConstant(let_stmt.identifier, stmt.loc);
+        }
+    }
+
+    fn mainCall(self: *Self, root: *const ast.Root) !*ir.Value {
+        const main_stmt = for (root.statements.items) |stmt| {
+            if (stmt.data == .func and std.mem.eql(u8, stmt.data.func.identifier, "main")) break stmt;
+        } else return self.err_dispatcher.missingMain();
+
+        const symbol = try self.scope.symbol_table.getOrError("main");
+        const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        const void_type = self.type_table.getPrimitive(.void);
+        const return_type = self.type_table.getTypePtrById(func.return_type_id);
+        const is_failing = return_type.kind == .error_union;
+        const payload = if (is_failing) return_type.kind.error_union.payload else func.return_type_id;
+        if (func.params.len > 0 or payload != void_type) return self.err_dispatcher.invalidMainSignature(main_stmt.loc);
+
+        const call = try ir.Value.init(self.allocator, .{
+            .data = .{ .fn_call = .{ .fn_uid = func.uid, .identifier = symbol.identifier, .args = &.{} } },
+            .type_id = func.return_type_id,
+        });
+        if (!is_failing) return call;
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .try_call = .{ .call = call, .is_top_level = true } },
+            .type_id = void_type,
+        });
     }
 
     fn resolveErrorEdges(self: *Self) !void {
@@ -242,12 +284,6 @@ pub const SemaAnalyzer = struct {
                 loc,
             );
         }
-    }
-
-    fn notDefinedOrNotVisible(self: *Self, name: []const u8, loc: err.Loc) Errors {
-        const is_outside_top_level = self.fn_frames.items.len > 0 or self.default_first_local_uid != null;
-        if (is_outside_top_level and self.top_level_variable_names.contains(name)) return self.err_dispatcher.topLevelVariableNotVisible(name, loc);
-        return self.err_dispatcher.notDefined(name, loc);
     }
 
     fn enterFlowLoop(self: *Self) void {
@@ -566,25 +602,6 @@ pub const SemaAnalyzer = struct {
         return self.err_dispatcher.needsCopy(message, edge.loc);
     }
 
-    fn ensureVisible(self: *Self, symbol: Symbol, loc: err.Loc) Errors!void {
-        if (symbol.kind != .variable) return;
-        if (self.default_first_local_uid) |first_local_uid| {
-            if (symbol.uid >= first_local_uid) return;
-            return self.err_dispatcher.topLevelVariableNotVisible(symbol.identifier, loc);
-        }
-        const frames = self.fn_frames.items;
-        if (frames.len == 0) return;
-        if (symbol.uid >= frames[0].first_local_uid) return;
-        return self.err_dispatcher.topLevelVariableNotVisible(symbol.identifier, loc);
-    }
-
-    fn evalDefaultValue(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) Errors!*ir.Value {
-        const saved_first_local_uid = self.default_first_local_uid;
-        self.default_first_local_uid = self.scope.next_uid;
-        defer self.default_first_local_uid = saved_first_local_uid;
-        return self.evalExpExpecting(exp, expected_type_id);
-    }
-
     fn addErrorEdge(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !void {
         try self.error_edges.append(self.allocator, .{ .from = from, .to = to, .loc = loc });
     }
@@ -619,10 +636,7 @@ pub const SemaAnalyzer = struct {
         for (root.statements.items) |stmt| {
             if (stmt.data != .let) continue;
             const let_stmt = stmt.data.let;
-            if (!self.isConstantCandidate(let_stmt)) {
-                try self.top_level_variable_names.put(self.allocator, let_stmt.identifier, {});
-                continue;
-            }
+            if (!self.isConstantCandidate(let_stmt)) continue;
             const index = self.constants.items.len;
             try self.constants.append(self.allocator, .{ .let_stmt = let_stmt, .loc = stmt.loc });
             try self.constant_by_exp.put(self.allocator, let_stmt.value, index);
@@ -699,13 +713,8 @@ pub const SemaAnalyzer = struct {
         var root = self.scope.symbol_table;
         while (root.parent) |parent| root = parent;
         const saved_table = self.scope.symbol_table;
-        const saved_first_local_uid = self.default_first_local_uid;
         self.scope.symbol_table = root;
-        self.default_first_local_uid = null;
-        defer {
-            self.scope.symbol_table = saved_table;
-            self.default_first_local_uid = saved_first_local_uid;
-        }
+        defer self.scope.symbol_table = saved_table;
 
         const annotated_type_id = if (constant.let_stmt.type_annotation) |annotation| try self.resolveTypeAnnotation(annotation, null) else null;
         var value = try self.evalExpExpecting(constant.let_stmt.value, annotated_type_id);
@@ -1035,7 +1044,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (field.default_value) |initial_value| {
-            const value = try self.evalDefaultValue(initial_value, if (field.type != null) field_type_id else null);
+            const value = try self.evalExpExpecting(initial_value, if (field.type != null) field_type_id else null);
             const value_type_id = value.type_id;
             field_default_value = value;
 
@@ -1081,7 +1090,7 @@ pub const SemaAnalyzer = struct {
                 };
 
                 if (param.default_value) |default_value| {
-                    const value = try self.evalDefaultValue(default_value, param_type_id);
+                    const value = try self.evalExpExpecting(default_value, param_type_id);
                     param_default_value = value;
                     const value_type_id = value.type_id;
                     if (!try self.canCoerce(value_type_id, param_type_id, param.default_value.?.loc)) {
@@ -1094,7 +1103,7 @@ pub const SemaAnalyzer = struct {
                 }
             } else {
                 if (param.default_value) |default_value| {
-                    const value = try self.evalDefaultValue(default_value, null);
+                    const value = try self.evalExpExpecting(default_value, null);
                     param_default_value = value;
                     param_type_id = value.type_id;
                 } else {
@@ -1166,6 +1175,7 @@ pub const SemaAnalyzer = struct {
                 try instructions.append(self.allocator, try self.visitBranchTail(&stmt, result.?));
                 break;
             }
+            if (self.fn_depth > 0 and isDeclaration(stmt.data)) return self.err_dispatcher.declarationInsideFunction(stmt.loc);
             const instruction = switch (stmt.data) {
                 .let => try self.visitLetStmt(&stmt),
                 .func => try self.visitFuncStmt(&stmt),
@@ -2167,9 +2177,8 @@ pub const SemaAnalyzer = struct {
             .identifier => {
                 const id = assign_stmt.target.data.identifier;
                 const id_symbol = self.scope.symbol_table.getOrError(id) catch {
-                    return self.notDefinedOrNotVisible(id, assign_stmt.target.loc);
+                    return self.err_dispatcher.notDefined(id, assign_stmt.target.loc);
                 };
-                try self.ensureVisible(id_symbol, assign_stmt.target.loc);
                 if (id_symbol.kind != .variable) return self.err_dispatcher.notMutable(id, assign_stmt.target.loc);
 
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
@@ -2559,7 +2568,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultValue(value, annotated_type) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
             const field_type = annotated_type orelse default_value.?.type_id;
 
             try fields.append(
@@ -2605,8 +2614,6 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(old_return_type);
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
-        try self.fn_frames.append(self.allocator, .{ .first_local_uid = self.scope.next_uid });
-        defer _ = self.fn_frames.pop();
         try self.flow_frames.append(self.allocator, .{});
         defer _ = self.flow_frames.pop();
 
@@ -3708,7 +3715,6 @@ pub const SemaAnalyzer = struct {
         const id_symbol = self.scope.symbol_table.get(id);
 
         if (id_symbol) |symbol| {
-            try self.ensureVisible(symbol, exp.loc);
             if (symbol.kind == .constant) return self.resolveConstant(symbol.kind.constant);
             try self.exp_symbols.put(self.allocator, exp, symbol);
             self.noteMention(symbol.uid, exp.loc);
@@ -3725,7 +3731,7 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        return self.notDefinedOrNotVisible(id, exp.loc);
+        return self.err_dispatcher.notDefined(id, exp.loc);
     }
 
     fn canBeChangedThrough(self: *Self, type_id: tt.TypeId) bool {
@@ -4271,10 +4277,6 @@ const SymbolTable = struct {
         if (self.get(id)) |s| return s;
         return Errors.SemaError;
     }
-};
-
-const FnFrame = struct {
-    first_local_uid: usize,
 };
 
 const Side = enum { mutable, immutable };

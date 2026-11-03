@@ -11,17 +11,18 @@ struct User
     )
 end
 
-let user = User(
-    id="1",
-    username="Rogerinho",
-    auth_provider="G",
-    address = @(
-        country = "Brasil",
-        state = "DF",
-        city = "Brasília",
-        street = "Eixão Sul"
+func main() -> void
+    let user = User(
+        id="1",
+        username="Rogerinho",
+        auth_provider="G",
+        address = @(
+            country = "Brasil",
+            state = "DF",
+            city = "Brasília",
+            street = "Eixão Sul"
+        )
     )
-)
 
-echo(user)
-
+    echo(user)
+end

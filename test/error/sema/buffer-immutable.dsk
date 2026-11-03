@@ -1,2 +1,4 @@
-let b = buffer(2)
-b[0] = 1
+func main() -> void
+    let b = buffer(2)
+    b[0] = 1
+end

@@ -1,2 +1,5 @@
 let x = 1
-x()
+
+func main() -> void
+    x()
+end

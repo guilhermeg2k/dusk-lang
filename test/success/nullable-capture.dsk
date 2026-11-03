@@ -1,11 +1,13 @@
-let mut username: ?string = null
+func main() -> void
+    let mut username: ?string = null
 
-if username: name then
-    echo(name)
-end
+    if username: name then
+        echo(name)
+    end
 
-username = "Geromel Dr."
+    username = "Geromel Dr."
 
-if username: name then
-    echo(name)
+    if username: name then
+        echo(name)
+    end
 end

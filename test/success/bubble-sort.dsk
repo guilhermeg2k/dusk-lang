@@ -19,8 +19,10 @@ func bubble_sort(mut arr: []int) -> void
     end
 end
 
-let mut v: []int = [1,2,51,22, 100, 500, 321, 21312, 21312]
+func main() -> void
+    let mut v: []int = [1,2,51,22, 100, 500, 321, 21312, 21312]
 
-bubble_sort(v)
+    bubble_sort(v)
 
-echo(v)
+    echo(v)
+end

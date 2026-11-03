@@ -5,4 +5,6 @@ union U
     b: string
 end
 
-U.count = 2
+func main() -> void
+    U.count = 2
+end

@@ -1,0 +1,4 @@
+func main() -> void
+end
+
+echo("outside")

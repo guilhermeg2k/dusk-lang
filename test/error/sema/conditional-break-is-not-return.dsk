@@ -3,3 +3,6 @@ func missing_return() -> int
         let value = 1 + if true then break else continue end
     end
 end
+
+func main() -> void
+end

@@ -15,22 +15,11 @@ func color_code(c: Color) -> int
     return code
 end
 
-assert(color_code(Color.Red) == 1)
-assert(color_code(Color.Green) == 2)
-assert(color_code(Color.Blue) == 2)
-
 enum HttpStatus
     Ok = 200
     NotFound = 404
     ServerError = 500
 end
-
-let mut handled = 0
-when HttpStatus.NotFound
-    HttpStatus.Ok then handled = 1 end
-    else then handled = 2 end
-end
-assert(handled == 2)
 
 func describe(n: int) -> int
     let mut result = 0
@@ -43,29 +32,14 @@ func describe(n: int) -> int
     return result
 end
 
-assert(describe(0) == 100)
-assert(describe(2) == 200)
-assert(describe(3) == 200)
-assert(describe(-1) == 300)
-assert(describe(42) == 400)
-
 struct Counter
     calls = 0
 end
-
-let mut counter = Counter()
 
 func next_value(mut counter: Counter) -> int
     counter.calls += 1
     return counter.calls
 end
-
-when next_value(counter)
-    5 then assert(false) end
-    6 then assert(false) end
-    else then assert(counter.calls == 1) end
-end
-assert(counter.calls == 1)
 
 struct Point
     x: int
@@ -110,17 +84,6 @@ func check(v: Value) -> int
     return out
 end
 
-assert(check(Value(i = 42)) == 42)
-assert(check(Value(i = 0)) == 0)
-assert(check(Value(f = 1.5)) == 2)
-assert(check(Value(b = true)) == 3)
-assert(check(Value(s = "hello")) == 4)
-assert(check(Value(c = Color.Blue)) == 5)
-assert(check(Value(p = Point(x = 3, y = 4))) == 7)
-assert(check(Value(list = [1, 2, 3])) == 3)
-assert(check(Value(maybe = 9)) == 9)
-assert(check(Value(maybe = null)) == -1)
-
 union Shape
     circle: int
     square: int
@@ -137,10 +100,6 @@ func area(s: Shape) -> int
     return result
 end
 
-assert(area(Shape(circle = 2)) == 12)
-assert(area(Shape(square = 3)) == 9)
-assert(area(@(triangle = 3)) == -1)
-
 func is_circle(s: Shape) -> bool
     when s
         circle: _ then return true end
@@ -148,9 +107,6 @@ func is_circle(s: Shape) -> bool
     end
     return false
 end
-
-assert(is_circle(Shape(circle = 1)))
-assert(!is_circle(Shape(square = 1)))
 
 func maybe_color(c: ?Color) -> int
     let mut out = 0
@@ -163,9 +119,6 @@ func maybe_color(c: ?Color) -> int
     return out
 end
 
-assert(maybe_color(null) == -1)
-assert(maybe_color(Color.Green) == 2)
-
 func maybe_shape(s: ?Shape) -> int
     let mut out = 0
     when s
@@ -174,10 +127,6 @@ func maybe_shape(s: ?Shape) -> int
     end
     return out
 end
-
-assert(maybe_shape(null) == -1)
-assert(maybe_shape(Shape(circle = 7)) == 7)
-assert(maybe_shape(Shape(square = 7)) == -1)
 
 func maybe_int(n: ?int) -> int
     let mut out = 0
@@ -189,51 +138,104 @@ func maybe_int(n: ?int) -> int
     return out
 end
 
-assert(maybe_int(null) == -1)
-assert(maybe_int(10) == 1)
-assert(maybe_int(11) == 2)
-
-let mut i = 0
-let mut sum = 0
-for true do
-    i += 1
-    when i
-        3 then continue end
-        6 then break end
-        else then sum += i end
-    end
-end
-assert(sum == 1 + 2 + 4 + 5)
-
 union Node
     text: string
     items: []string
 end
-
-let mut total = 0
-let mut k = 0
-for k < 2000 do
-    let node = if_even(k)
-    when node
-        text: t then
-            let copy = [t, t, t]
-            total += len(copy)
-        end
-        items: list then
-            let mut bigger: []string = []
-            append(bigger, list[0])
-            append(bigger, list[1])
-            append(bigger, "x")
-            total += len(bigger)
-        end
-    end
-    k += 1
-end
-assert(total == 1000 * 3 + 1000 * 3)
 
 func if_even(n: int) -> Node
     if n % 2 == 0 then
         return Node(text = "even")
     end
     return Node(items = ["a", "b"])
+end
+
+func main() -> void
+    assert(color_code(Color.Red) == 1)
+    assert(color_code(Color.Green) == 2)
+    assert(color_code(Color.Blue) == 2)
+
+    let mut handled = 0
+    when HttpStatus.NotFound
+        HttpStatus.Ok then handled = 1 end
+        else then handled = 2 end
+    end
+    assert(handled == 2)
+
+    assert(describe(0) == 100)
+    assert(describe(2) == 200)
+    assert(describe(3) == 200)
+    assert(describe(-1) == 300)
+    assert(describe(42) == 400)
+
+    let mut counter = Counter()
+
+    when next_value(counter)
+        5 then assert(false) end
+        6 then assert(false) end
+        else then assert(counter.calls == 1) end
+    end
+    assert(counter.calls == 1)
+
+    assert(check(Value(i = 42)) == 42)
+    assert(check(Value(i = 0)) == 0)
+    assert(check(Value(f = 1.5)) == 2)
+    assert(check(Value(b = true)) == 3)
+    assert(check(Value(s = "hello")) == 4)
+    assert(check(Value(c = Color.Blue)) == 5)
+    assert(check(Value(p = Point(x = 3, y = 4))) == 7)
+    assert(check(Value(list = [1, 2, 3])) == 3)
+    assert(check(Value(maybe = 9)) == 9)
+    assert(check(Value(maybe = null)) == -1)
+
+    assert(area(Shape(circle = 2)) == 12)
+    assert(area(Shape(square = 3)) == 9)
+    assert(area(@(triangle = 3)) == -1)
+
+    assert(is_circle(Shape(circle = 1)))
+    assert(!is_circle(Shape(square = 1)))
+
+    assert(maybe_color(null) == -1)
+    assert(maybe_color(Color.Green) == 2)
+
+    assert(maybe_shape(null) == -1)
+    assert(maybe_shape(Shape(circle = 7)) == 7)
+    assert(maybe_shape(Shape(square = 7)) == -1)
+
+    assert(maybe_int(null) == -1)
+    assert(maybe_int(10) == 1)
+    assert(maybe_int(11) == 2)
+
+    let mut i = 0
+    let mut sum = 0
+    for true do
+        i += 1
+        when i
+            3 then continue end
+            6 then break end
+            else then sum += i end
+        end
+    end
+    assert(sum == 1 + 2 + 4 + 5)
+
+    let mut total = 0
+    let mut k = 0
+    for k < 2000 do
+        let node = if_even(k)
+        when node
+            text: t then
+                let copy = [t, t, t]
+                total += len(copy)
+            end
+            items: list then
+                let mut bigger: []string = []
+                append(bigger, list[0])
+                append(bigger, list[1])
+                append(bigger, "x")
+                total += len(bigger)
+            end
+        end
+        k += 1
+    end
+    assert(total == 1000 * 3 + 1000 * 3)
 end

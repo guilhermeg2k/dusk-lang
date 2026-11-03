@@ -32,12 +32,14 @@ func quicksort(mut arr: []int, lo: int, hi: int) -> void
     quicksort(arr, i, hi)
 end
 
-let mut data: []int = []
-let mut n: int = 10000
-for n > 0 do
-    append(data, n)
-    n -= 1
-end
+func main() -> void
+    let mut data: []int = []
+    let mut n: int = 10000
+    for n > 0 do
+        append(data, n)
+        n -= 1
+    end
 
-quicksort(data, 0, len(data) - 1)
-echo(data[5000])
+    quicksort(data, 0, len(data) - 1)
+    echo(data[5000])
+end

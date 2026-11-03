@@ -1,3 +1,5 @@
-let number: ?int = 1
+func main() -> void
+    let number: ?int = 1
 
-let value = if number: captured then captured end
+    let value = if number: captured then captured end
+end

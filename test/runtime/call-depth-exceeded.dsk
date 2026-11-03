@@ -3,4 +3,6 @@ func down(n: int) -> int
     return down(n - 1) + 1
 end
 
-echo(down(200000))
+func main() -> void
+    echo(down(200000))
+end

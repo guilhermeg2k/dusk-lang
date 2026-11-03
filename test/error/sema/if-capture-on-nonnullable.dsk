@@ -1,4 +1,7 @@
 let x = 1
-if x: y then
-    echo(y)
+
+func main() -> void
+    if x: y then
+        echo(y)
+    end
 end

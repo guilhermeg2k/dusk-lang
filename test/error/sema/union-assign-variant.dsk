@@ -5,5 +5,7 @@ union U
     b: string
 end
 
-let mut u = U(a = 1)
-u.a = 2
+func main() -> void
+    let mut u = U(a = 1)
+    u.a = 2
+end

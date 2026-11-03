@@ -1,5 +1,0 @@
-func read() -> int
-    return limit
-end
-
-let limit = read()

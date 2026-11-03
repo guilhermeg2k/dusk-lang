@@ -5,4 +5,6 @@ end
 
 let x: S = 42
 
-echo(x)
+func main() -> void
+    echo(x)
+end

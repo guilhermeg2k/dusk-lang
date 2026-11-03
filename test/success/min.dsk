@@ -11,10 +11,12 @@ struct Node
     end
 end
 
-let mut node1 = Node(value = 1, next = null)
-let node2 = Node(value = 2, next = null)
-node1.append(node2)
+func main() -> void
+    let mut node1 = Node(value = 1, next = null)
+    let node2 = Node(value = 2, next = null)
+    node1.append(node2)
 
-if node1.next: node then
-    echo(node.value)
+    if node1.next: node then
+        echo(node.value)
+    end
 end

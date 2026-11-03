@@ -1,10 +1,12 @@
-when 3
-    1..5 then
-    end
+func main() -> void
+    when 3
+        1..5 then
+        end
 
-    4..8 then
-    end
+        4..8 then
+        end
 
-    else then
+        else then
+        end
     end
 end

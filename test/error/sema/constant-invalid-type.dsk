@@ -7,3 +7,6 @@ struct P
 end
 
 let MAKER = P.make
+
+func main() -> void
+end

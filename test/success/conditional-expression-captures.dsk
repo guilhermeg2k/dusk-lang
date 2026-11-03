@@ -2,65 +2,68 @@ struct Counter
     calls = 0
 end
 
-let mut counter = Counter()
-
 func next_value(mut counter: Counter) -> ?int
     counter.calls += 1
     return counter.calls
 end
 
-let captured = if next_value(counter): number then number + 2 else 0 end
-assert(captured == 3)
-assert(counter.calls == 1)
-
-let mut nullable_number: ?int = 4
-
 struct Box
     value: int
 end
 
-let mut boxed: ?Box = Box(value = 4)
-let mutable_capture = if boxed: mut b then
-    b.value += 1
-    b.value
-else
-    0
-end
-
-assert(mutable_capture == 5)
-if boxed: b then assert(b.value == 5) else assert(false) end
-
-if nullable_number: number then assert(number == 4) else assert(false) end
 let number = 20
-
-let shadowed = if nullable_number: number then number else number end
-assert(shadowed == 4)
-assert(number == 20)
-
-let missing: ?int = null
-
-let fallback = if missing: number then number else number end
-assert(fallback == 20)
-
-let nested_header = if (if true then nullable_number else missing end): number then number else 0 end
-assert(nested_header == 4)
-
-let nested_condition = if (if missing: captured then false else true end) then 1 else 2 end
-assert(nested_condition == 1)
 
 struct Point
     x: int
 end
 
-let mut nullable_point: ?Point = Point(3)
+func main() -> void
+    let mut counter = Counter()
 
-let changed = if nullable_point: mut point then
-    point.x = 7
-    point.x
-else
-    0
+    let captured = if next_value(counter): number then number + 2 else 0 end
+    assert(captured == 3)
+    assert(counter.calls == 1)
+
+    let mut nullable_number: ?int = 4
+
+    let mut boxed: ?Box = Box(value = 4)
+    let mutable_capture = if boxed: mut b then
+        b.value += 1
+        b.value
+    else
+        0
+    end
+
+    assert(mutable_capture == 5)
+    if boxed: b then assert(b.value == 5) else assert(false) end
+
+    if nullable_number: number then assert(number == 4) else assert(false) end
+
+    let shadowed = if nullable_number: number then number else number end
+    assert(shadowed == 4)
+    assert(number == 20)
+
+    let missing: ?int = null
+
+    let fallback = if missing: number then number else number end
+    assert(fallback == 20)
+
+    let nested_header = if (if true then nullable_number else missing end): number then number else 0 end
+    assert(nested_header == 4)
+
+    let nested_condition = if (if missing: captured then false else true end) then 1 else 2 end
+    assert(nested_condition == 1)
+
+    let mut nullable_point: ?Point = Point(3)
+
+    let changed = if nullable_point: mut point then
+        point.x = 7
+        point.x
+    else
+        0
+    end
+
+    assert(changed == 7)
+
+    if nullable_point: point then assert(point.x == 7) else assert(false) end
 end
-
-assert(changed == 7)
-
-if nullable_point: point then assert(point.x == 7) else assert(false) end

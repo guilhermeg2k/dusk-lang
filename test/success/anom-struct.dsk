@@ -6,12 +6,15 @@ end
 func print_point(point: Point2D) -> void
     echo(point)
 end
-let point = Point2D(x = 10, y = 10)
-let point2: Point2D = @(x = 20, y = 20)
-let point3 = @(x = 30, y = 30)
 
-print_point(point)
-print_point(point2)
-print_point(point3)
-print_point(Point2D(x = 50, y = 50))
-print_point(@(x=40,y=40))
+func main() -> void
+    let point = Point2D(x = 10, y = 10)
+    let point2: Point2D = @(x = 20, y = 20)
+    let point3 = @(x = 30, y = 30)
+
+    print_point(point)
+    print_point(point2)
+    print_point(point3)
+    print_point(Point2D(x = 50, y = 50))
+    print_point(@(x=40,y=40))
+end

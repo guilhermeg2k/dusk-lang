@@ -1,1 +1,3 @@
-let selected = null orelse echo(1)
+func main() -> void
+    let selected = null orelse echo(1)
+end

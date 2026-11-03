@@ -3,4 +3,6 @@ enum S
     B
 end
 
-S.A = 42
+func main() -> void
+    S.A = 42
+end

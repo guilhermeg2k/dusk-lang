@@ -35,8 +35,10 @@ test "string interpolation compiles to one STR_BUILD" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
-    const program = try dusk.compile("let a = 1 let b = [2] let s = \"a=$a b=$b\"");
-    const chunk = program.functions[program.main_func_index].kind.dusk;
+    const program = try dusk.compile("func main() -> void let a = 1 let b = [2] let s = \"a=$a b=$b\" end");
+    const chunk = for (program.functions) |func| {
+        if (std.mem.eql(u8, func.name, "main")) break func.kind.dusk;
+    } else return error.MainNotFound;
     var builds: usize = 0;
     var snapshots: usize = 0;
     for (chunk.instructions) |inst| {
@@ -59,8 +61,8 @@ test "string interpolation control flow" {
 
 test "string interpolation ignores braces in comments" {
     const sources = [_][]const u8{
-        "let value = \"${1 #= } #= nested =# =# + 2}\"",
-        "let value = \"${1 + 2 # ignored }\n}\"",
+        "func main() -> void\nlet value = \"${1 #= } #= nested =# =# + 2}\"\nend",
+        "func main() -> void\nlet value = \"${1 + 2 # ignored }\n}\"\nend",
     };
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -200,7 +202,7 @@ test "multiline strings" {
 test "string constants outlive compilation and source storage" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const source = try testing.allocator.dupe(u8, "let mut text = \"a\\n\\u{1F319}\\0\" let mut same = \"a\\n🌙\\0\" let mut plain = \"plain\"");
+    const source = try testing.allocator.dupe(u8, "func main() -> void let mut text = \"a\\n\\u{1F319}\\0\" let mut same = \"a\\n🌙\\0\" let mut plain = \"plain\" end");
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     const program = dusk.compile(source) catch |failure| {
         testing.allocator.free(source);
@@ -284,6 +286,7 @@ test "more than 65536 distinct string literals are rejected" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(arena.allocator(), "func main() -> void\nend\n");
     for (0..65536) |i| {
         if (i % 1000 == 0) try source.print(arena.allocator(), "func f{d}() -> void\n", .{i});
         try source.print(arena.allocator(), "echo(\"s{d}\")\n", .{i});
@@ -291,7 +294,7 @@ test "more than 65536 distinct string literals are rejected" {
     }
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     _ = try dusk.compile(source.items);
-    try source.print(arena.allocator(), "echo(\"one more\")\n", .{});
+    try source.print(arena.allocator(), "func g() -> void\necho(\"one more\")\nend\n", .{});
     try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
 }
 
@@ -1147,28 +1150,40 @@ test "codegen error: too many variables in a function" {
     try runCaseError("codegen/too-many-variables.dsk", error.TooManyRegisters);
 }
 
-test "sema error: function uses top-level variable" {
-    try runCaseError("sema/function-uses-top-level-variable.dsk", error.TopLevelVariableNotVisible);
+test "sema error: top-level let mut" {
+    try runCaseError("sema/top-level-let-mut.dsk", error.TopLevelLetNotConstant);
 }
 
-test "sema error: top-level variable in method" {
-    try runCaseError("sema/top-level-variable-in-method.dsk", error.TopLevelVariableNotVisible);
+test "sema error: top-level let not constant" {
+    try runCaseError("sema/top-level-let-not-constant.dsk", error.TopLevelLetNotConstant);
 }
 
-test "sema error: top-level variable declared after function" {
-    try runCaseError("sema/top-level-variable-declared-after-function.dsk", error.TopLevelVariableNotVisible);
+test "sema error: statement outside main" {
+    try runCaseError("sema/statement-outside-main.dsk", error.StatementOutsideMain);
 }
 
-test "sema error: top-level variable in field default" {
-    try runCaseError("sema/top-level-variable-in-field-default.dsk", error.TopLevelVariableNotVisible);
+test "sema error: missing main" {
+    try runCaseError("sema/missing-main.dsk", error.MissingMain);
 }
 
-test "sema error: top-level variable in param default" {
-    try runCaseError("sema/top-level-variable-in-param-default.dsk", error.TopLevelVariableNotVisible);
+test "sema error: main with params" {
+    try runCaseError("sema/main-with-params.dsk", error.InvalidMainSignature);
 }
 
-test "sema error: top-level array in function" {
-    try runCaseError("sema/top-level-array-in-function.dsk", error.TopLevelVariableNotVisible);
+test "sema error: main returns value" {
+    try runCaseError("sema/main-returns-value.dsk", error.InvalidMainSignature);
+}
+
+test "sema error: function uses main variable" {
+    try runCaseError("sema/function-uses-main-variable.dsk", error.NotDefined);
+}
+
+test "sema error: function inside function" {
+    try runCaseError("sema/function-inside-function.dsk", error.DeclarationInsideFunction);
+}
+
+test "sema error: struct inside function" {
+    try runCaseError("sema/struct-inside-function.dsk", error.DeclarationInsideFunction);
 }
 
 test "sema error: constant assign" {
@@ -1251,8 +1266,12 @@ test "parser error: catch block missing end" {
     try runCaseError("parser/errors-catch-block-missing-end.dsk", error.ParserError);
 }
 
-test "runtime error: top-level try" {
-    try runCaseRuntimeError("errors-top-level-try.dsk", error.UnhandledError);
+test "runtime error: unhandled error from main" {
+    try runCaseRuntimeError("errors-main-try.dsk", error.UnhandledError);
+}
+
+test "main returns error union" {
+    try runCase("main-returns-error-union.dsk");
 }
 
 test "errors: when on caught errors" {

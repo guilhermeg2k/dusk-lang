@@ -1,0 +1,5 @@
+let names = ["a", "b"]
+
+func main() -> void
+    echo(names)
+end

@@ -1,2 +1,4 @@
-let mut x: int = 1
-x = "hello"
+func main() -> void
+    let mut x: int = 1
+    x = "hello"
+end

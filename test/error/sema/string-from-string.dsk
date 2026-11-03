@@ -1,1 +1,3 @@
-echo(string_from("x"))
+func main() -> void
+    echo(string_from("x"))
+end

@@ -1,2 +1,4 @@
-let s: ?string = "a"
-echo(len(s))
+func main() -> void
+    let s: ?string = "a"
+    echo(len(s))
+end

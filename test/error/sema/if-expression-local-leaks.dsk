@@ -1,2 +1,4 @@
-let value = if true then let local = 1 local else 0 end
-echo(local)
+func main() -> void
+    let value = if true then let local = 1 local else 0 end
+    echo(local)
+end

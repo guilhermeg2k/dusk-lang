@@ -11,9 +11,6 @@ func test_break() -> int
     return i
 end
 
-
-assert(test_break() == 4)
-
 func test_continue() -> int
     let mut i: int = 0
     let mut sum: int = 0
@@ -29,9 +26,6 @@ func test_continue() -> int
     return sum
 end
 
-
-assert(test_continue() == 25)
-
 func test_break_if() -> int
     let mut i: int = 0
     for i < 100 do
@@ -44,9 +38,6 @@ func test_break_if() -> int
     
     return i
 end
-
-
-assert(test_break_if() == 11)
 
 func test_continue_if() -> int
     let mut i: int = 0
@@ -63,9 +54,6 @@ func test_continue_if() -> int
     
     return sum
 end
-
-
-assert(test_continue_if() == 35)
 
 func test_nested_break() -> int
     let mut i: int = 0
@@ -87,9 +75,6 @@ func test_nested_break() -> int
     return acc
 end
 
-
-assert(test_nested_break() == 15)
-
 func test_nested_continue() -> int
     let mut i: int = 0
     let mut acc: int = 0
@@ -110,9 +95,6 @@ func test_nested_continue() -> int
     return acc
 end
 
-
-assert(test_nested_continue() == 9)
-
 func test_if_else_fallthrough(a: int) -> int
     if a < 10 then
         return a
@@ -120,10 +102,6 @@ func test_if_else_fallthrough(a: int) -> int
     
     return a * 2
 end
-
-
-assert(test_if_else_fallthrough(5) == 5)
-assert(test_if_else_fallthrough(15) == 30)
 
 func test_infinite_break() -> int
     let mut i: int = 0
@@ -137,9 +115,6 @@ func test_infinite_break() -> int
     
     return i
 end
-
-
-assert(test_infinite_break() == 7)
 
 func test_break_nested_if() -> int
     let mut i: int = 0
@@ -158,9 +133,6 @@ func test_break_nested_if() -> int
     return i
 end
 
-
-assert(test_break_nested_if() == 8)
-
 func test_else_if(a: int) -> int
     if a < 0 then
         return -1
@@ -173,7 +145,36 @@ func test_else_if(a: int) -> int
     return 1
 end
 
+func main() -> void
+    assert(test_break() == 4)
 
-assert(test_else_if(-5) == -1)
-assert(test_else_if(0) == 0)
-assert(test_else_if(5) == 1)
+
+    assert(test_continue() == 25)
+
+
+    assert(test_break_if() == 11)
+
+
+    assert(test_continue_if() == 35)
+
+
+    assert(test_nested_break() == 15)
+
+
+    assert(test_nested_continue() == 9)
+
+
+    assert(test_if_else_fallthrough(5) == 5)
+    assert(test_if_else_fallthrough(15) == 30)
+
+
+    assert(test_infinite_break() == 7)
+
+
+    assert(test_break_nested_if() == 8)
+
+
+    assert(test_else_if(-5) == -1)
+    assert(test_else_if(0) == 0)
+    assert(test_else_if(5) == 1)
+end

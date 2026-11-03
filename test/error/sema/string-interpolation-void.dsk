@@ -1,1 +1,3 @@
-let text = "${echo(1)}"
+func main() -> void
+    let text = "${echo(1)}"
+end

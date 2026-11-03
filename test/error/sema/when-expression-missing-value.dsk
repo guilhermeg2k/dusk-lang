@@ -1,4 +1,6 @@
-let value = when 1
-1 then let local = 1 end
-else then 2 end
+func main() -> void
+    let value = when 1
+    1 then let local = 1 end
+    else then 2 end
+    end
 end

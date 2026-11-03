@@ -4,6 +4,7 @@ struct P
         self.x = v
     end
 end
+
 struct Box
     items: []int
     p: P
@@ -14,29 +15,34 @@ struct Box
         self.p.set(4)
     end
 end
+
 func mutate(mut a: []int) -> void
     append(a, 9)
 end
+
 func g(mut p: P) -> void
     p.x = 10
 end
-let mut bx = Box(items = [1], p = P(x = 1))
-bx.grow()
-bx.p.x = 5
-mutate(bx.items)
-g(bx.p)
-assert(bx.p.x == 10)
-assert(len(bx.items) == 3)
-let mut ps = [P(x = 1)]
-ps[0].x = 2
-ps[0].set(3)
-mutate([1])
-let mut maybe: ?P = P(x = 1)
-if maybe: mut q then
-    q.x = 4
+
+func main() -> void
+    let mut bx = Box(items = [1], p = P(x = 1))
+    bx.grow()
+    bx.p.x = 5
+    mutate(bx.items)
+    g(bx.p)
+    assert(bx.p.x == 10)
+    assert(len(bx.items) == 3)
+    let mut ps = [P(x = 1)]
+    ps[0].x = 2
+    ps[0].set(3)
+    mutate([1])
+    let mut maybe: ?P = P(x = 1)
+    if maybe: mut q then
+        q.x = 4
+    end
+    let numbers = [1, 2]
+    let point = P(x = 1)
+    let built = Box(items = numbers, p = point)
+    assert(built.p.x == 1)
+    assert(len(built.items) == 2)
 end
-let numbers = [1, 2]
-let point = P(x = 1)
-let built = Box(items = numbers, p = point)
-assert(built.p.x == 1)
-assert(len(built.items) == 2)

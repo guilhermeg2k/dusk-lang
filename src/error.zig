@@ -350,16 +350,36 @@ pub const ErrorDispatcher = struct {
         return error.NotAFailingCall;
     }
 
-    pub fn topLevelVariableNotVisible(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn topLevelLetNotConstant(self: *Self, name: []const u8, loc: Loc) Errors {
         self.log(
             try allocPrint(
                 self.allocator,
-                "'{s}' is a top-level variable: functions and default values can only use top-level constants (a 'let' with an int, float, bool, byte, string or enum value known at compile time). Pass it as a parameter",
+                "Top-level 'let {s}' must be a constant: a 'let' (not 'mut') with an int, float, bool, byte, string or enum value known at compile time. Declare variables inside 'main'",
                 .{name},
             ),
             loc,
         );
-        return error.TopLevelVariableNotVisible;
+        return error.TopLevelLetNotConstant;
+    }
+
+    pub fn statementOutsideMain(self: *Self, loc: Loc) Errors {
+        self.log(try allocPrint(self.allocator, "Statements must be inside a function: the top level only holds declarations and constants. Move this into 'main'", .{}), loc);
+        return error.StatementOutsideMain;
+    }
+
+    pub fn declarationInsideFunction(self: *Self, loc: Loc) Errors {
+        self.log(try allocPrint(self.allocator, "Functions, types and error sets must be declared at the top level, not inside a function", .{}), loc);
+        return error.DeclarationInsideFunction;
+    }
+
+    pub fn missingMain(self: *Self) Errors {
+        self.log(try allocPrint(self.allocator, "Missing 'main': declare 'func main() -> void' (or '-> !void')", .{}), .{ .start = 0, .end = 0 });
+        return error.MissingMain;
+    }
+
+    pub fn invalidMainSignature(self: *Self, loc: Loc) Errors {
+        self.log(try allocPrint(self.allocator, "'main' must take no parameters and return 'void' or an error union of 'void' ('-> !void')", .{}), loc);
+        return error.InvalidMainSignature;
     }
 
     pub fn staticFieldCantBeMutable(self: *Self, name: []const u8, loc: Loc) Errors {
@@ -681,7 +701,11 @@ pub const Errors = error{
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,
-    TopLevelVariableNotVisible,
+    TopLevelLetNotConstant,
+    StatementOutsideMain,
+    MissingMain,
+    DeclarationInsideFunction,
+    InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,
     InvalidConstantType,

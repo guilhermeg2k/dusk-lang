@@ -18,4 +18,6 @@ func bin_search(arr: []int, target: int) -> int
     return -1
 end
 
-echo(bin_search([1,2,3,4,10,20,24,50,90,203,404], 203))
+func main() -> void
+    echo(bin_search([1,2,3,4,10,20,24,50,90,203,404], 203))
+end

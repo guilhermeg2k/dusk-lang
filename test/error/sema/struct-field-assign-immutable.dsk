@@ -5,5 +5,7 @@ struct P
     end
 end
 
-let p = P(x = 1)
-p.x = 2
+func main() -> void
+    let p = P(x = 1)
+    p.x = 2
+end

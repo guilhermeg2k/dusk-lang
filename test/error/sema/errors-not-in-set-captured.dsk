@@ -20,3 +20,6 @@ func f() -> IoError!int
     end
     return x
 end
+
+func main() -> void
+end

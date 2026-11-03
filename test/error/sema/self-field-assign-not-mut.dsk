@@ -5,3 +5,6 @@ struct P
         self.x = 1
     end
 end
+
+func main() -> void
+end

@@ -37,7 +37,6 @@ pub const BytecodeGen = struct {
     union_descriptors: std.ArrayList(UnionDescriptor),
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
-    is_generating_main: bool = false,
     current_function_name: []const u8 = "",
     builtin_count: usize = 0,
 
@@ -144,8 +143,6 @@ pub const BytecodeGen = struct {
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
-        self.is_generating_main = true;
-        defer self.is_generating_main = false;
         self.next_free_register = 0;
         self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -506,7 +503,6 @@ pub const BytecodeGen = struct {
     }
 
     fn tailCallIndex(self: *Self, value: *const ir.Value) ?u16 {
-        if (self.is_generating_main) return null;
         if (value.data != .fn_call) return null;
         if (self.type_table.isErrorUnion(value.type_id)) return null;
         const fn_index = self.fn_index_by_uid.get(value.data.fn_call.fn_uid) orelse return null;
@@ -1242,11 +1238,7 @@ pub const BytecodeGen = struct {
     fn tooManyRegisters(self: *Self) BytecodeError {
         if (@import("builtin").is_test) return BytecodeError.TooManyRegisters;
         const hint = "uses more than 255 registers at once (variables and temporaries); split it into smaller functions";
-        if (self.is_generating_main) {
-            std.debug.print("error: the top-level code {s}\n", .{hint});
-        } else {
-            std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
-        }
+        std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
         return BytecodeError.TooManyRegisters;
     }
 

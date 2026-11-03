@@ -3,8 +3,10 @@ union U
     n: int
 end
 
-let mut u = U(list = [1])
-when u
-    list: values then u = U(n = 1) end
-    n: _ then end
+func main() -> void
+    let mut u = U(list = [1])
+    when u
+        list: values then u = U(n = 1) end
+        n: _ then end
+    end
 end

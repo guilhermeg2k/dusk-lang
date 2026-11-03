@@ -1,16 +1,19 @@
 let name = "olá"
-assert(len(name) == 4)
-assert(str_char_count(name) == 3)
-assert(len("") == 0)
-assert(str_char_count("") == 0)
-assert(len("🌙") == 4)
-assert(str_char_count("🌙") == 1)
-assert(str_char_count("a🌙é\n") == 4)
-assert(len("x${name}y") == 6)
-assert((name |> str_char_count()) == 3)
-let maybe: ?string = "abc"
-if maybe: text then
-    assert(len(text) == 3)
+
+func main() -> void
+    assert(len(name) == 4)
+    assert(str_char_count(name) == 3)
+    assert(len("") == 0)
+    assert(str_char_count("") == 0)
+    assert(len("🌙") == 4)
+    assert(str_char_count("🌙") == 1)
+    assert(str_char_count("a🌙é\n") == 4)
+    assert(len("x${name}y") == 6)
+    assert((name |> str_char_count()) == 3)
+    let maybe: ?string = "abc"
+    if maybe: text then
+        assert(len(text) == 3)
+    end
+    echo(len(name))
+    echo(str_char_count(name))
 end
-echo(len(name))
-echo(str_char_count(name))

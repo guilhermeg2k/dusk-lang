@@ -6,3 +6,6 @@ union U
         self = U(b = s)
     end
 end
+
+func main() -> void
+end

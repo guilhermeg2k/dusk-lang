@@ -1,2 +1,5 @@
 let x = 1
-x = 2
+
+func main() -> void
+    x = 2
+end

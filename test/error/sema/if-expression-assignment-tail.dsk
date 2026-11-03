@@ -1,3 +1,5 @@
-let mut number = 0
+func main() -> void
+    let mut number = 0
 
-let value = if true then number = 1 else 2 end
+    let value = if true then number = 1 else 2 end
+end

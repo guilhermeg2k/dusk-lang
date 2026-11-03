@@ -1,1 +1,3 @@
-echo(1 + true)
+func main() -> void
+    echo(1 + true)
+end

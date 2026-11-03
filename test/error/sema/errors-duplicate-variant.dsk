@@ -14,3 +14,6 @@ error IoError
     NotFound
     NotFound
 end
+
+func main() -> void
+end

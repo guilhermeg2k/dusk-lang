@@ -1,4 +1,7 @@
 enum Color Red Blue end
-let value = when Color.Red
-Color.Red then 1 end
+
+func main() -> void
+    let value = when Color.Red
+    Color.Red then 1 end
+    end
 end

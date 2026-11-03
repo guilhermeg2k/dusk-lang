@@ -1,4 +1,6 @@
-let start: ?int = 1
+func main() -> void
+    let start: ?int = 1
 
-for start..2: value do
+    for start..2: value do
+    end
 end

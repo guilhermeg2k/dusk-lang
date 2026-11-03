@@ -3,3 +3,6 @@ enum E
 
     a
 end
+
+func main() -> void
+end

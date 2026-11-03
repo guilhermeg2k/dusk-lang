@@ -1,2 +1,4 @@
-let mut b = buffer(2)
-b[0] = 300
+func main() -> void
+    let mut b = buffer(2)
+    b[0] = 300
+end

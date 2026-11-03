@@ -2,4 +2,6 @@ struct S
     x: int = "hello"
 end
 
-let s = S()
+func main() -> void
+    let s = S()
+end

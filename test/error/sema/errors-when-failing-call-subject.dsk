@@ -18,7 +18,9 @@ func load(n: int) -> !int
     return try parse(n)
 end
 
-when parse(0)
-    ParseError.Empty then echo(1) end
-    else then echo(2) end
+func main() -> void
+    when parse(0)
+        ParseError.Empty then echo(1) end
+        else then echo(2) end
+    end
 end

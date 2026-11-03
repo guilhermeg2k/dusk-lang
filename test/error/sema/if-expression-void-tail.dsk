@@ -1,1 +1,3 @@
-let value = if true then echo(1) else 2 end
+func main() -> void
+    let value = if true then echo(1) else 2 end
+end

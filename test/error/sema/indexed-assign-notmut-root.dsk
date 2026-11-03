@@ -1,2 +1,4 @@
-let arr = [1, 2, 3]
-arr[0] = 2
+func main() -> void
+    let arr = [1, 2, 3]
+    arr[0] = 2
+end

@@ -9,68 +9,70 @@ union Shape
     circle: int
 end
 
-let mut grid = [[1, 2], [3]]
-let mut grid_copy = copy(grid)
-grid_copy[0][0] = 9
-append(grid_copy[1], 4)
-assert(grid[0][0] == 1)
-assert(len(grid[1]) == 1)
-assert(grid_copy[0][0] == 9)
-assert(len(grid_copy[1]) == 2)
+func main() -> void
+    let mut grid = [[1, 2], [3]]
+    let mut grid_copy = copy(grid)
+    grid_copy[0][0] = 9
+    append(grid_copy[1], 4)
+    assert(grid[0][0] == 1)
+    assert(len(grid[1]) == 1)
+    assert(grid_copy[0][0] == 9)
+    assert(len(grid_copy[1]) == 2)
 
-let mut first = Node(value = 1, next = null, tags = ["a"])
-let mut second = Node(value = 2, next = first, tags = ["b"])
-first.next = second
-let mut ring = copy(second)
-ring.value = 20
-append(ring.tags, "c")
-if ring.next: mut inner then
-    inner.value = 10
-    if inner.next: back then
-        assert(back.value == 20)
+    let mut first = Node(value = 1, next = null, tags = ["a"])
+    let mut second = Node(value = 2, next = first, tags = ["b"])
+    first.next = second
+    let mut ring = copy(second)
+    ring.value = 20
+    append(ring.tags, "c")
+    if ring.next: mut inner then
+        inner.value = 10
+        if inner.next: back then
+            assert(back.value == 20)
+        else
+            assert(false)
+        end
     else
         assert(false)
     end
-else
-    assert(false)
+    assert(first.value == 1)
+    assert(second.value == 2)
+    assert(len(second.tags) == 1)
+
+    let mut shape = Shape(poly = [1, 2])
+    let mut shape_copy = copy(shape)
+    if shape_copy.poly: mut points then points[0] = 7 end
+    if shape.poly: points then assert(points[0] == 1) else assert(false) end
+
+    let mut bytes = buffer(2)
+    let mut bytes_copy = copy(bytes)
+    bytes_copy[0] = 'z'
+    assert(bytes[0] == 0)
+    assert(bytes_copy[0] == 'z')
+
+    let mut maybe: ?[]int = [1]
+    let mut maybe_copy = copy(maybe)
+    if maybe_copy: mut items then items[0] = 5 end
+    if maybe: items then assert(items[0] == 1) else assert(false) end
+    let none: ?[]int = null
+    assert(copy(none) == null)
+
+    let mut boxed: []?int = [1, null, 3]
+    let boxed_copy = copy(boxed)
+    boxed[0] = 100
+    assert(boxed_copy[0] == 1)
+    assert(boxed_copy[1] == null)
+
+    assert(copy(5) == 5)
+    assert(str_equal(copy("text"), "text"))
+
+    let mut big: [][]int = []
+    for 0..20000: i do
+        append(big, [i, i + 1])
+    end
+    let mut big_copy = copy(big)
+    big_copy[20000][0] = -1
+    assert(big[20000][0] == 20000)
+    assert(big_copy[20000][0] == -1)
+    assert(big_copy[19999][1] == 20000)
 end
-assert(first.value == 1)
-assert(second.value == 2)
-assert(len(second.tags) == 1)
-
-let mut shape = Shape(poly = [1, 2])
-let mut shape_copy = copy(shape)
-if shape_copy.poly: mut points then points[0] = 7 end
-if shape.poly: points then assert(points[0] == 1) else assert(false) end
-
-let mut bytes = buffer(2)
-let mut bytes_copy = copy(bytes)
-bytes_copy[0] = 'z'
-assert(bytes[0] == 0)
-assert(bytes_copy[0] == 'z')
-
-let mut maybe: ?[]int = [1]
-let mut maybe_copy = copy(maybe)
-if maybe_copy: mut items then items[0] = 5 end
-if maybe: items then assert(items[0] == 1) else assert(false) end
-let none: ?[]int = null
-assert(copy(none) == null)
-
-let mut boxed: []?int = [1, null, 3]
-let boxed_copy = copy(boxed)
-boxed[0] = 100
-assert(boxed_copy[0] == 1)
-assert(boxed_copy[1] == null)
-
-assert(copy(5) == 5)
-assert(str_equal(copy("text"), "text"))
-
-let mut big: [][]int = []
-for 0..20000: i do
-    append(big, [i, i + 1])
-end
-let mut big_copy = copy(big)
-big_copy[20000][0] = -1
-assert(big[20000][0] == 20000)
-assert(big_copy[20000][0] == -1)
-assert(big_copy[19999][1] == 20000)

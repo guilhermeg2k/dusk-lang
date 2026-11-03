@@ -13,4 +13,7 @@ end
 func g() -> int
     return 1
 end
-let x = g() catch 0
+
+func main() -> void
+    let x = g() catch 0
+end

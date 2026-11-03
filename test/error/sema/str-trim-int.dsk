@@ -1,1 +1,3 @@
-echo(str_trim(1))
+func main() -> void
+    echo(str_trim(1))
+end

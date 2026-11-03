@@ -9,20 +9,21 @@ struct Node
     end
 end
 
-let mut root = Node(value = 50, left = null, right = null)
-
-let left_node = @(value = 0, left = null, right = null)
-
-root.add(
-    left = @(value = 0, left = null, right = null),
-    right = @(value = 100, left = null, right = null)
-)
-
 func print_node(node: Node) -> void
     echo(node.value)
 end
 
-print_node(root)
-print_node(left_node)
-print_node(@(value = 888, left = null, right = null))
+func main() -> void
+    let mut root = Node(value = 50, left = null, right = null)
 
+    let left_node = @(value = 0, left = null, right = null)
+
+    root.add(
+        left = @(value = 0, left = null, right = null),
+        right = @(value = 100, left = null, right = null)
+    )
+
+    print_node(root)
+    print_node(left_node)
+    print_node(@(value = 888, left = null, right = null))
+end

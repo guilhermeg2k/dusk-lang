@@ -20,6 +20,8 @@ func handle_error(e: ParseError) -> void
     echo(e)
 end
 
-load(0) catch e then
-    handle_error(e)
+func main() -> void
+    load(0) catch e then
+        handle_error(e)
+    end
 end

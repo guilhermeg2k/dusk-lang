@@ -1,2 +1,4 @@
-let optional: ?int = null
-let selected: string = optional orelse "wrong"
+func main() -> void
+    let optional: ?int = null
+    let selected: string = optional orelse "wrong"
+end

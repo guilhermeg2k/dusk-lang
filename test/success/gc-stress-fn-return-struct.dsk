@@ -9,17 +9,18 @@ func make_wrapper(n: int) -> Wrapper
     return Wrapper(value = n, items = [n, n + 1, n + 2])
 end
 
-let canary = make_wrapper(42)
+func main() -> void
+    let canary = make_wrapper(42)
 
-let mut i: int = 0
-for i < 50000 do
-    let trash = make_wrapper(i)
-    i += 1
+    let mut i: int = 0
+    for i < 50000 do
+        let trash = make_wrapper(i)
+        i += 1
+    end
+
+    assert(canary.value == 42)
+    assert(len(canary.items) == 3)
+    assert(canary.items[0] == 42)
+    assert(canary.items[1] == 43)
+    assert(canary.items[2] == 44)
 end
-
-assert(canary.value == 42)
-assert(len(canary.items) == 3)
-assert(canary.items[0] == 42)
-assert(canary.items[1] == 43)
-assert(canary.items[2] == 44)
-
