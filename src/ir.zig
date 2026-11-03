@@ -2,21 +2,18 @@ const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
 
 pub const Program = struct {
-    instructions: []const Instruction,
+    instructions: Block,
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
 };
 
-pub const Block = struct {
-    return_type: TypeId,
-    instructions: []const Instruction,
-};
+pub const Block = []const Instruction;
 
 pub const Instruction = union(enum) {
     store_var: StoreVar,
     branch_if: BranchIf,
-    scope: []const Instruction,
+    block: Block,
     loop: Loop,
     return_stmt: ReturnStmt,
     return_error: ReturnError,
@@ -71,7 +68,7 @@ pub const Func = struct {
     uid: usize,
     identifier: []const u8,
     params: []const FuncParam,
-    body: []const Instruction,
+    body: Block,
     return_type: TypeId,
 };
 
@@ -116,14 +113,14 @@ pub const UpdateVar = struct {
 
 pub const BranchIf = struct {
     condition: *Value,
-    then_block: []const Instruction,
-    else_block: []const Instruction,
+    then_block: Block,
+    else_block: Block,
 };
 
 pub const Loop = struct {
-    advancement: []const Instruction = &.{},
+    advancement: Block = &.{},
     condition: ?*Value,
-    do_block: []const Instruction,
+    do_block: Block,
 };
 
 pub const ReturnStmt = struct {
@@ -151,11 +148,11 @@ pub const CatchBlock = struct {
     capture_uid: usize,
     capture_identifier: []const u8,
     capture_type_id: TypeId,
-    instructions: []const Instruction,
+    instructions: Block,
 };
 
 pub const BlockValue = struct {
-    instructions: []const Instruction,
+    instructions: Block,
     result_uid: usize,
     can_complete: bool,
 };

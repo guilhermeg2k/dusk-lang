@@ -218,7 +218,7 @@ pub const BytecodeGen = struct {
         return chunk;
     }
 
-    fn genInstructionBlock(self: *Self, block: []const ir.Instruction) anyerror!void {
+    fn genInstructionBlock(self: *Self, block: ir.Block) anyerror!void {
         for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
@@ -233,7 +233,7 @@ pub const BytecodeGen = struct {
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
                 },
-                .scope => |instructions| {
+                .block => |instructions| {
                     const saved_next_free = self.next_free_register;
                     try self.genInstructionBlock(instructions);
                     self.freeRegisterN(self.next_free_register - saved_next_free);

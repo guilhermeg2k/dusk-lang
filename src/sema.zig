@@ -1158,16 +1158,14 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.params = try params_metadata.toOwnedSlice(self.allocator);
     }
 
-    pub fn visitBlock(self: *Self, block: *const ast.Block) Errors!ir.Block {
+    pub fn visitBlock(self: *Self, block: *const ast.Block) Errors!VisitedBlock {
         return self.visitBranchBlock(block, null);
     }
 
-    fn visitBranchBlock(self: *Self, block: *const ast.Block, result: ?*BranchResult) Errors!ir.Block {
+    fn visitBranchBlock(self: *Self, block: *const ast.Block, result: ?*BranchResult) Errors!VisitedBlock {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type_id);
         defer self.scope.exit(self.scope.return_type_id);
-
-        var return_type: tt.TypeId = self.type_table.getPrimitive(.void);
 
         for (block.statements.items, 0..) |stmt, statement_index| {
             const is_value_tail = result != null and statement_index + 1 == block.statements.items.len;
@@ -1189,7 +1187,7 @@ pub const SemaAnalyzer = struct {
                 .@"break" => ir.Instruction{ .break_stmt = {} },
                 .@"continue" => ir.Instruction{ .continue_stmt = {} },
                 .@"return" => try self.visitReturnStmt(&stmt),
-                .for_capture => ir.Instruction{ .scope = try self.visitForCaptureStmt(&stmt) },
+                .for_capture => ir.Instruction{ .block = try self.visitForCaptureStmt(&stmt) },
             };
 
             if (instruction) |i| {
@@ -1206,13 +1204,9 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        if (areAllPathsReturning(instructions.items)) {
-            return_type = self.scope.return_type_id;
-        }
-
-        return ir.Block{
-            .return_type = return_type,
-            .instructions = try instructions.toOwnedSlice(self.allocator),
+        return .{
+            .is_returning = areAllPathsReturning(instructions.items),
+            .block = try instructions.toOwnedSlice(self.allocator),
         };
     }
 
@@ -1237,7 +1231,7 @@ pub const SemaAnalyzer = struct {
         } };
     }
 
-    fn areAllPathsReturning(instructions: []const ir.Instruction) bool {
+    fn areAllPathsReturning(instructions: ir.Block) bool {
         for (instructions) |inst| {
             switch (inst) {
                 .return_stmt, .return_error => return true,
@@ -1259,7 +1253,7 @@ pub const SemaAnalyzer = struct {
                     if (isValueReturning(branch.condition)) return true;
                     if (branch.else_block.len > 0 and areAllPathsReturning(branch.then_block) and areAllPathsReturning(branch.else_block)) return true;
                 },
-                .scope => |scoped| {
+                .block => |scoped| {
                     if (areAllPathsReturning(scoped)) return true;
                 },
                 else => {},
@@ -1303,7 +1297,7 @@ pub const SemaAnalyzer = struct {
         return false;
     }
 
-    fn isBlockLeaving(instructions: []const ir.Instruction) bool {
+    fn isBlockLeaving(instructions: ir.Block) bool {
         for (instructions) |inst| {
             switch (inst) {
                 .return_stmt, .return_error, .break_stmt, .continue_stmt => return true,
@@ -1325,7 +1319,7 @@ pub const SemaAnalyzer = struct {
                     if (isValueLeaving(branch.condition)) return true;
                     if (branch.else_block.len > 0 and isBlockLeaving(branch.then_block) and isBlockLeaving(branch.else_block)) return true;
                 },
-                .scope => |scoped| {
+                .block => |scoped| {
                     if (isBlockLeaving(scoped)) return true;
                 },
                 else => {},
@@ -1339,8 +1333,8 @@ pub const SemaAnalyzer = struct {
 
         const value = switch (expression_stmt.data) {
             .if_exp => return self.lowerIf(expression_stmt, null),
-            .if_capture_exp => return ir.Instruction{ .scope = try self.lowerIfCapture(expression_stmt, null) },
-            .when_exp => return ir.Instruction{ .scope = try self.lowerWhen(expression_stmt, null) },
+            .if_capture_exp => return ir.Instruction{ .block = try self.lowerIfCapture(expression_stmt, null) },
+            .when_exp => return ir.Instruction{ .block = try self.lowerWhen(expression_stmt, null) },
             .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
             .try_exp => try self.evalTry(expression_stmt),
             .catch_exp => try self.evalCatch(expression_stmt, true),
@@ -1428,7 +1422,7 @@ pub const SemaAnalyzer = struct {
 
                 const body = try self.visitBlock(&block.body);
                 const is_value_used = !is_statement and payload != self.type_table.getPrimitive(.void);
-                if (is_value_used and !isBlockLeaving(body.instructions)) {
+                if (is_value_used and !isBlockLeaving(body.block)) {
                     return self.err_dispatcher.catchBlockMustLeave(exp.loc);
                 }
 
@@ -1439,7 +1433,7 @@ pub const SemaAnalyzer = struct {
                             .capture_uid = captured_symbol.uid,
                             .capture_identifier = captured_symbol.identifier,
                             .capture_type_id = captured_symbol.type_id,
-                            .instructions = body.instructions,
+                            .instructions = body.block,
                         } },
                     } },
                     .type_id = payload,
@@ -1624,8 +1618,8 @@ pub const SemaAnalyzer = struct {
 
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
-            .then_block = (try self.visitBranchBlock(&if_stmt.then_block, result)).instructions,
-            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).instructions else &.{},
+            .then_block = (try self.visitBranchBlock(&if_stmt.then_block, result)).block,
+            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{},
         } };
     }
 
@@ -1679,10 +1673,10 @@ pub const SemaAnalyzer = struct {
             try self.scope.enter(self.scope.return_type_id);
             defer self.scope.exit(self.scope.return_type_id);
             try self.scope.symbol_table.put(captured_symbol);
-            try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).instructions);
+            try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).block);
         }
         if (is_read_locked) self.releaseReadLock();
-        const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).instructions else &.{};
+        const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).block else &.{};
         const condition = try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
             .type_id = self.type_table.getPrimitive(.boolean),
@@ -1704,11 +1698,11 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const refs = try self.storeWhenSubject(&instructions, subject);
 
-        var chain: []const ir.Instruction = if (when_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).instructions else &.{};
+        var chain: ir.Block = if (when_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{};
 
-        var null_insts: []const ir.Instruction = &.{};
+        var null_insts: ir.Block = &.{};
         if (subject.is_nullable and !prongs.has_null_case) {
-            null_insts = (try self.visitBranchBlock(&when_stmt.else_block.?, result)).instructions;
+            null_insts = (try self.visitBranchBlock(&when_stmt.else_block.?, result)).block;
         }
 
         const unconditional_prong_idx = if (when_stmt.else_block == null) findUnconditionalProng(when_stmt.prongs) else null;
@@ -1720,7 +1714,7 @@ pub const SemaAnalyzer = struct {
 
             const lowered = switch (prong.pattern) {
                 .null_case => {
-                    null_insts = (try self.visitBranchBlock(&prong.body, result)).instructions;
+                    null_insts = (try self.visitBranchBlock(&prong.body, result)).block;
                     continue;
                 },
                 .variant => try self.lowerWhenVariantProng(&prong, subject, refs.unwrapped, result),
@@ -2034,7 +2028,7 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(self.scope.return_type_id);
         if (!is_ignored) try self.scope.symbol_table.put(captured_symbol);
 
-        try body.appendSlice(self.allocator, (try self.visitBranchBlock(&prong.body, result)).instructions);
+        try body.appendSlice(self.allocator, (try self.visitBranchBlock(&prong.body, result)).block);
         return .{ .condition = condition, .body = try body.toOwnedSlice(self.allocator) };
     }
 
@@ -2053,7 +2047,7 @@ pub const SemaAnalyzer = struct {
             }) else matches_pattern;
         }
 
-        return .{ .condition = condition.?, .body = (try self.visitBranchBlock(&prong.body, result)).instructions };
+        return .{ .condition = condition.?, .body = (try self.visitBranchBlock(&prong.body, result)).block };
     }
 
     fn unionTagIndex(union_def: tt.Union, variant_name: []const u8) usize {
@@ -2159,7 +2153,7 @@ pub const SemaAnalyzer = struct {
         });
     }
 
-    fn wrapBranch(self: *Self, condition: *ir.Value, then_block: []const ir.Instruction, else_block: []const ir.Instruction) ![]const ir.Instruction {
+    fn wrapBranch(self: *Self, condition: *ir.Value, then_block: ir.Block, else_block: ir.Block) !ir.Block {
         const branch = try self.allocator.alloc(ir.Instruction, 1);
         branch[0] = .{ .branch_if = .{ .condition = condition, .then_block = then_block, .else_block = else_block } };
         return branch;
@@ -2392,7 +2386,7 @@ pub const SemaAnalyzer = struct {
 
         return ir.Instruction{ .loop = .{
             .condition = condition_value,
-            .do_block = block.instructions,
+            .do_block = block.block,
         } };
     }
 
@@ -2415,7 +2409,7 @@ pub const SemaAnalyzer = struct {
         return reference.data.identifier.uid;
     }
 
-    fn lowerCaptureLoopBody(self: *Self, capture: ast.ForCaptureStmt, item: *ir.Value, index: *ir.Value, loc: err.Loc) Errors![]const ir.Instruction {
+    fn lowerCaptureLoopBody(self: *Self, capture: ast.ForCaptureStmt, item: *ir.Value, index: *ir.Value, loc: err.Loc) Errors!ir.Block {
         self.enterFlowLoop();
         defer self.exitFlowLoop();
         var body: std.ArrayList(ir.Instruction) = .empty;
@@ -2428,7 +2422,7 @@ pub const SemaAnalyzer = struct {
         }
         defer if (is_read_locked) self.releaseReadLock();
         if (capture.index) |name| _ = try self.bindLoopCapture(&body, name, index, false, loc);
-        try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).instructions);
+        try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).block);
         return body.toOwnedSlice(self.allocator);
     }
 
@@ -2452,7 +2446,7 @@ pub const SemaAnalyzer = struct {
         try instructions.append(self.allocator, createLoopUpdate(reference, next));
     }
 
-    fn lowerRangeAdvancement(self: *Self, cursor: *ir.Value, end: *ir.Value, is_running: *ir.Value, index: ?*ir.Value) Errors![]const ir.Instruction {
+    fn lowerRangeAdvancement(self: *Self, cursor: *ir.Value, end: *ir.Value, is_running: *ir.Value, index: ?*ir.Value) Errors!ir.Block {
         const is_last_item = try self.cmpEq(cursor, end);
         const stopped = try ir.Value.init(self.allocator, .{ .data = .{ .i_bool = false }, .type_id = is_running.type_id });
         const stop_instructions = try self.allocator.alloc(ir.Instruction, 1);
@@ -2645,10 +2639,11 @@ pub const SemaAnalyzer = struct {
         const is_failing_void = self.type_table.isErrorUnion(self.scope.return_type_id) and
             self.type_table.getTypePtrById(self.scope.return_type_id).kind.error_union.payload == self.type_table.getPrimitive(.void);
 
-        if (!is_failing_void and !self.type_table.canCoerce(body.return_type, self.scope.return_type_id)) {
+        const body_return_type = if (body.is_returning) self.scope.return_type_id else self.type_table.getPrimitive(.void);
+        if (!is_failing_void and !self.type_table.canCoerce(body_return_type, self.scope.return_type_id)) {
             return self.err_dispatcher.invalidFunctionReturnType(
                 try self.type_table.name(self.scope.return_type_id, self.allocator),
-                try self.type_table.name(body.return_type, self.allocator),
+                try self.type_table.name(body_return_type, self.allocator),
                 loc,
             );
         }
@@ -2658,7 +2653,7 @@ pub const SemaAnalyzer = struct {
             .identifier = if (override_name) |name| name else metadata.identifier,
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = metadata.return_type_id,
-            .body = body.instructions,
+            .body = body.block,
         };
     }
 
@@ -2798,7 +2793,7 @@ pub const SemaAnalyzer = struct {
         return self.finishBranchResult(&result, instructions);
     }
 
-    fn finishBranchResult(self: *Self, result: *BranchResult, instructions: []const ir.Instruction) Errors!*ir.Value {
+    fn finishBranchResult(self: *Self, result: *BranchResult, instructions: ir.Block) Errors!*ir.Value {
         var result_type = result.expected_type_id orelse self.type_table.getPrimitive(.void);
 
         if (result.values.items.len > 0) {
@@ -4279,6 +4274,11 @@ const SymbolTable = struct {
     }
 };
 
+const VisitedBlock = struct {
+    block: ir.Block,
+    is_returning: bool,
+};
+
 const Side = enum { mutable, immutable };
 
 const FlowRootKind = enum { local, param, other };
@@ -4421,7 +4421,7 @@ const WhenSubjectRefs = struct {
 
 const LoweredProng = struct {
     condition: *ir.Value,
-    body: []const ir.Instruction,
+    body: ir.Block,
 };
 
 const BranchResult = struct {
