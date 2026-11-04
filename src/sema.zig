@@ -1,5 +1,4 @@
 const util = @import("util.zig");
-const buildin = @import("built-in.zig");
 const err = @import("error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
@@ -15,6 +14,7 @@ pub const SemaAnalyzer = struct {
     allocator: std.mem.Allocator,
     src: []const u8 = "",
 
+    externs: std.ArrayList(ir.Extern) = .empty,
     functions: std.ArrayList(ir.Func),
     defined_types: std.ArrayList(ir.DefinedType),
 
@@ -23,6 +23,7 @@ pub const SemaAnalyzer = struct {
     err_dispatcher: err.ErrorDispatcher,
 
     fn_depth: usize = 0,
+    is_in_prelude: bool = false,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
     constants: std.ArrayList(Constant) = .empty,
@@ -45,12 +46,14 @@ pub const SemaAnalyzer = struct {
             .defined_types = .empty,
         };
 
-        self.scope = try Scope.init(allocator, void_type_id, &self.type_table);
+        self.scope = try Scope.init(allocator, void_type_id);
 
         return self;
     }
 
-    pub fn analyze(self: *Self, root: *const ast.Root, src: []const u8) !ir.Program {
+    pub fn analyze(self: *Self, prelude: *const ast.Root, prelude_src: []const u8, root: *const ast.Root, src: []const u8) !ir.Program {
+        try self.loadPrelude(prelude, prelude_src);
+
         self.src = src;
         self.err_dispatcher.src = src;
 
@@ -69,10 +72,27 @@ pub const SemaAnalyzer = struct {
 
         return .{
             .instructions = instructions,
+            .externs = try self.externs.toOwnedSlice(self.allocator),
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
         };
+    }
+
+    fn loadPrelude(self: *Self, prelude: *const ast.Root, src: []const u8) !void {
+        self.src = src;
+        self.err_dispatcher.src = src;
+        self.is_in_prelude = true;
+        defer self.is_in_prelude = false;
+
+        try self.hoistDeclarations(prelude);
+
+        for (prelude.statements.items) |stmt| {
+            if (stmt.data != .func) continue;
+            const symbol = try self.scope.symbol_table.getOrError(stmt.data.func.identifier);
+            const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+            try self.externs.append(self.allocator, .{ .uid = func.uid, .identifier = func.identifier, .params = func.params });
+        }
     }
 
     fn isDeclaration(stmt: ast.Statement) bool {
@@ -614,6 +634,7 @@ pub const SemaAnalyzer = struct {
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .func => |fs| {
+                    if (fs.is_extern and !self.is_in_prelude) return self.err_dispatcher.externOutsidePrelude(fs.identifier, stmt.loc);
                     const symbol = try self.createEmptyFuncSymbol(fs.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_dispatcher.alreadyDefined(fs.identifier, stmt.loc);
                 },
@@ -4107,6 +4128,7 @@ pub const SemaAnalyzer = struct {
                 return Errors.SemaError;
             },
             .@"struct" => |struct_name| {
+                if (self.is_in_prelude and std.mem.eql(u8, struct_name, "dynamic")) return self.type_table.getPrimitive(.dynamic);
                 const symbol = try self.scope.symbol_table.getOrError(struct_name);
                 const blueprint_type_id = switch (symbol.kind) {
                     .defined_type => |dt| dt.blueprint_type_id,
@@ -4215,26 +4237,13 @@ const Scope = struct {
     next_uid: usize,
     next_fn_uid: usize,
 
-    pub fn init(alloc: std.mem.Allocator, return_type_id: tt.TypeId, type_table: *tt.TypeTable) !Self {
-        const builtins = try buildin.BuiltIn.init(alloc, type_table);
-        const generated = try builtins.generate();
-        defer alloc.free(generated);
-
-        var symbols = std.StringHashMap(Symbol).init(alloc);
-
-        for (generated) |func| {
-            try symbols.put(func.symbol.identifier, func.symbol);
-        }
-        for (buildin.BuiltIn.error_sets, 0..) |error_set, i| {
-            try symbols.put(error_set.name, builtins.errorSetSymbol(i, generated.len + i));
-        }
-
+    pub fn init(alloc: std.mem.Allocator, return_type_id: tt.TypeId) !Self {
         return Self{
             .allocator = alloc,
-            .symbol_table = try SymbolTable.init(alloc, null, symbols),
+            .symbol_table = try SymbolTable.init(alloc, null, std.StringHashMap(Symbol).init(alloc)),
             .return_type_id = return_type_id,
-            .next_uid = generated.len + buildin.BuiltIn.error_sets.len,
-            .next_fn_uid = generated.len,
+            .next_uid = 0,
+            .next_fn_uid = 0,
         };
     }
 

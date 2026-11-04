@@ -1973,3 +1973,39 @@ test "float cast" {
 test "sema error: float cast of a string" {
     try runCaseError("sema/float-cast-string.dsk", error.InvalidType);
 }
+
+test "extern: only the prelude can declare extern functions" {
+    try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsidePrelude);
+    try runCaseError("sema/builtin-redefined.dsk", error.AlreadyDefined);
+    try runCaseError("parser/extern-missing-return-type.dsk", error.ParserError);
+    try runCaseError("parser/extern-missing-func.dsk", error.ParserError);
+}
+
+test "prelude: every extern has a binding and every binding has an extern" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const dusk = @import("dusk.zig");
+    const bindings = @import("natives.zig").bindings;
+    const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
+    var extern_count: usize = 0;
+    for (prelude.statements.items) |stmt| {
+        if (stmt.data != .func) continue;
+        try testing.expect(stmt.data.func.is_extern);
+        try testing.expect(bindings.has(stmt.data.func.identifier));
+        extern_count += 1;
+    }
+    try testing.expectEqual(bindings.keys().len, extern_count);
+}
+
+test "prelude: builtin error ids match the natives constants" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const natives = @import("natives.zig");
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compile("func main() -> void\nend\n");
+    try testing.expectEqualStrings("ConversionError.Invalid", program.error_names[natives.conversion_invalid_id]);
+    try testing.expectEqualStrings("ConversionError.Overflow", program.error_names[natives.conversion_overflow_id]);
+    try testing.expectEqualStrings("StringError.OutOfRange", program.error_names[natives.string_out_of_range_id]);
+    try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
+    try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
+}

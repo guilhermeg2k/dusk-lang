@@ -1,0 +1,6 @@
+func str_trim(text: string) -> string
+    return text
+end
+
+func main() -> void
+end

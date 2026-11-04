@@ -79,6 +79,13 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
+            .extern_kw => {
+                const func_stmt_value = try self.parseExternFuncStmt();
+                return ast.StatementNode{
+                    .data = .{ .func = func_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
             .struct_kw => {
                 const struct_stmt_value = try self.parseStructStmt();
                 return ast.StatementNode{
@@ -738,17 +745,7 @@ pub const Parser = struct {
     }
 
     fn parseFnDef(self: *Self) Errors!ast.FnDef {
-        _ = try self.expect(.l_paren);
-        var arguments: std.ArrayList(ast.FnParam) = .empty;
-        var body_block: ast.Block = undefined;
-        var return_type: ?*ast.TypeAnnotation = null;
-        var error_set: ?ast.FnErrorSet = null;
-
-        if (self.peekCurrent().tag != .r_paren) {
-            arguments = try self.parseFnArgs();
-        }
-
-        _ = try self.expect(.r_paren);
+        const params = try self.parseFnParams();
         _ = try self.expect(.arrow);
 
         const tk = self.peekCurrent();
@@ -760,34 +757,80 @@ pub const Parser = struct {
                 .loc = .{ .start = tk.loc.start, .end = if (ret_stmt.exp) |exp| exp.loc.end else tk.loc.end },
             };
             try statements.append(self.allocator, return_stmt);
-            body_block = .{ .statements = statements };
-        } else {
-            if (tk.tag == .not) {
-                self.walk();
-                error_set = .{ .inferred = tk.loc };
-            }
-
-            return_type = try self.parseTypeAnnotation(false);
-
-            if (error_set == null and self.peekCurrent().tag == .not) {
-                if (return_type.?.type != .@"struct" or return_type.?.is_nullable) {
-                    return self.err_dispatcher.invalidSyntax("error set name before '!'", self.peekCurrent());
-                }
-                error_set = .{ .named = .{ .identifier = return_type.?.type.@"struct", .loc = tk.loc } };
-                self.walk();
-                return_type = try self.parseTypeAnnotation(false);
-            }
-
-            body_block = try self.parseBlock(&.{});
-            _ = try self.expect(.end_kw);
+            return ast.FnDef{
+                .params = params,
+                .body_block = .{ .statements = statements },
+                .return_type = null,
+            };
         }
 
+        const result = try self.parseFnResult();
+        const body_block = try self.parseBlock(&.{});
+        _ = try self.expect(.end_kw);
+
         return ast.FnDef{
-            .params = try arguments.toOwnedSlice(self.allocator),
+            .params = params,
             .body_block = body_block,
-            .return_type = return_type,
-            .error_set = error_set,
+            .return_type = result.return_type,
+            .error_set = result.error_set,
         };
+    }
+
+    fn parseExternFuncStmt(self: *Self) Errors!ast.FuncStmt {
+        self.walk();
+        _ = try self.expect(.func_kw);
+        const identifier_token = try self.expect(.identifier);
+        const params = try self.parseFnParams();
+        _ = try self.expect(.arrow);
+        const result = try self.parseFnResult();
+
+        return ast.FuncStmt{
+            .identifier = identifier_token.value(self.src),
+            .is_extern = true,
+            .def = .{
+                .params = params,
+                .body_block = .{ .statements = .empty },
+                .return_type = result.return_type,
+                .error_set = result.error_set,
+            },
+        };
+    }
+
+    fn parseFnParams(self: *Self) Errors![]const ast.FnParam {
+        _ = try self.expect(.l_paren);
+        var arguments: std.ArrayList(ast.FnParam) = .empty;
+        if (self.peekCurrent().tag != .r_paren) {
+            arguments = try self.parseFnArgs();
+        }
+        _ = try self.expect(.r_paren);
+        return arguments.toOwnedSlice(self.allocator);
+    }
+
+    const FnResult = struct {
+        return_type: *ast.TypeAnnotation,
+        error_set: ?ast.FnErrorSet,
+    };
+
+    fn parseFnResult(self: *Self) Errors!FnResult {
+        const tk = self.peekCurrent();
+        var error_set: ?ast.FnErrorSet = null;
+        if (tk.tag == .not) {
+            self.walk();
+            error_set = .{ .inferred = tk.loc };
+        }
+
+        var return_type = try self.parseTypeAnnotation(false);
+
+        if (error_set == null and self.peekCurrent().tag == .not) {
+            if (return_type.type != .@"struct" or return_type.is_nullable) {
+                return self.err_dispatcher.invalidSyntax("error set name before '!'", self.peekCurrent());
+            }
+            error_set = .{ .named = .{ .identifier = return_type.type.@"struct", .loc = tk.loc } };
+            self.walk();
+            return_type = try self.parseTypeAnnotation(false);
+        }
+
+        return .{ .return_type = return_type, .error_set = error_set };
     }
 
     fn parseFnArgs(self: *Self) Errors!std.ArrayList(ast.FnParam) {

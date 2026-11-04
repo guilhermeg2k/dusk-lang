@@ -3,6 +3,7 @@ const ir = @import("ir.zig");
 const v = @import("value.zig");
 const tt = @import("type_table.zig");
 const VM = @import("vm.zig").VM;
+const natives = @import("natives.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -29,6 +30,7 @@ pub const BytecodeGen = struct {
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
+    native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
 
@@ -39,7 +41,7 @@ pub const BytecodeGen = struct {
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     current_function_name: []const u8 = "",
-    builtin_count: usize = 0,
+    extern_count: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
@@ -59,6 +61,7 @@ pub const BytecodeGen = struct {
             .break_patches = .empty,
             .continue_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
@@ -69,17 +72,13 @@ pub const BytecodeGen = struct {
         };
     }
 
-    pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
+    pub fn generate(self: *Self, program: *const ir.Program) !Program {
         var funcs: std.ArrayList(Function) = .empty;
-        self.builtin_count = builtins.len;
+        self.extern_count = program.externs.len;
 
-        for (builtins) |bf| {
-            switch (bf.kind) {
-                .@"inline" => |inl| try self.inline_functions_by_uid.put(bf.uid, inl),
-                else => {},
-            }
-            try self.fn_index_by_uid.put(bf.uid, @intCast(funcs.items.len));
-            try funcs.append(self.allocator, bf);
+        for (program.externs) |ext| {
+            try self.fn_index_by_uid.put(ext.uid, @intCast(funcs.items.len));
+            try funcs.append(self.allocator, try self.bindExtern(ext));
         }
 
         var next_fn_index: u16 = @intCast(funcs.items.len);
@@ -425,6 +424,57 @@ pub const BytecodeGen = struct {
         self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_index);
     }
 
+    fn bindExtern(self: *Self, ext: ir.Extern) !Function {
+        const binding = natives.bindings.get(ext.identifier) orelse @panic("extern without binding");
+        const num_args: u8 = @intCast(ext.params.len);
+        const kind: FunctionKind = switch (binding) {
+            .native => |func| blk: {
+                try self.native_params_by_uid.put(ext.uid, ext.params);
+                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
+            },
+            .@"inline" => |gen| blk: {
+                const inl = InlineFn{ .gen = gen, .num_args = num_args };
+                try self.inline_functions_by_uid.put(ext.uid, inl);
+                break :blk .{ .@"inline" = inl };
+            },
+            .sema => .{ .@"inline" = .{ .gen = &unreachableGen, .num_args = num_args } },
+        };
+        return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
+    }
+
+    fn unreachableGen(_: u8, _: u8, _: std.mem.Allocator) ![]const Instruction {
+        unreachable;
+    }
+
+    fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {
+        return param.type_id == self.type_table.getPrimitive(.dynamic);
+    }
+
+    fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
+        var count: u8 = 0;
+        for (params) |param| {
+            if (self.isDynamicParam(param)) count += 1;
+        }
+        return count;
+    }
+
+    fn genArgKinds(self: *Self, fc: ir.FnCall) !usize {
+        const params = self.native_params_by_uid.get(fc.fn_uid) orelse return 0;
+        var count: usize = 0;
+        for (params, fc.args) |param, arg| {
+            if (!self.isDynamicParam(param)) continue;
+            const kind_reg = try self.consumeRegister();
+            const kind_value = ir.Value{
+                .type_id = self.type_table.getPrimitive(.int),
+                .data = .{ .i_int = @intFromEnum(v.ValueType.fromTypeId(self.type_table, arg.type_id)) },
+            };
+            try self.genLoadConst(v.TypedValue.from_ir_value(&kind_value), kind_reg);
+            self.register_types[kind_reg] = self.type_table.getPrimitive(.int);
+            count += 1;
+        }
+        return count;
+    }
+
     fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
         if (target_reg + 1 != self.next_free_register) {
             const call_reg = try self.consumeRegister();
@@ -444,18 +494,7 @@ pub const BytecodeGen = struct {
             return;
         }
 
-        //note: temp hacky for echo
-        if (fc.fn_uid == 0) {
-            const arg_type_id = fc.args[0].type_id;
-            const arg_value_type = v.ValueType.fromTypeId(self.type_table, arg_type_id);
-            const type_reg = try self.consumeRegister();
-            const type_value = ir.Value{
-                .type_id = self.type_table.getPrimitive(.int),
-                .data = .{ .i_int = @intFromEnum(arg_value_type) },
-            };
-            try self.genLoadConst(v.TypedValue.from_ir_value(&type_value), type_reg);
-            self.register_types[type_reg] = self.type_table.getPrimitive(.int);
-        }
+        const kind_count = try self.genArgKinds(fc);
 
         var fn_call = Instruction{
             .op = .CALL,
@@ -467,8 +506,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
 
-        const num_args = fc.args.len + if (fc.fn_uid == 0) @as(usize, 1) else @as(usize, 0);
-        self.freeRegisterN(num_args);
+        self.freeRegisterN(fc.args.len + kind_count);
         self.register_types[target_reg] = value.type_id;
     }
 
@@ -507,7 +545,7 @@ pub const BytecodeGen = struct {
         if (value.data != .fn_call) return null;
         if (self.type_table.isErrorUnion(value.type_id)) return null;
         const fn_index = self.fn_index_by_uid.get(value.data.fn_call.fn_uid) orelse return null;
-        if (fn_index < self.builtin_count) return null;
+        if (fn_index < self.extern_count) return null;
         return fn_index;
     }
 

@@ -4,12 +4,20 @@ const parser = @import("parser.zig");
 const sema = @import("sema.zig");
 const bc = @import("bytecode.zig");
 const vm = @import("vm.zig");
-const builtin = @import("built-in.zig");
 
 const Lexer = lexer.Lexer;
 const Parser = parser.Parser;
 const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
+
+pub const prelude_src = @embedFile("prelude.dsk");
+
+pub fn parse(allocator: std.mem.Allocator, src: []const u8) !@import("ast.zig").Root {
+    var dusk_lexer = Lexer.init(allocator, src);
+    const tokens = try dusk_lexer.list();
+    var dusk_parser = Parser.init(allocator, src, tokens.items);
+    return dusk_parser.parse();
+}
 
 pub const Dusk = struct {
     const Self = @This();
@@ -31,18 +39,15 @@ pub const Dusk = struct {
 
         const allocator = compilation_pipeline_arena.allocator();
 
-        var dusk_lexer = Lexer.init(allocator, src);
-        const tokens = try dusk_lexer.list();
-
-        var dusk_parser = Parser.init(allocator, src, tokens.items);
-        const ast = try dusk_parser.parse();
+        const prelude_ast = try parse(allocator, prelude_src);
+        const ast = try parse(allocator, src);
 
         var sema_analyzer = try SemaAnalyzer.init(allocator);
-        const ir = try sema_analyzer.analyze(&ast, src);
+        const ir = try sema_analyzer.analyze(&prelude_ast, prelude_src, &ast, src);
 
         var Bytecodegen = bc.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
 
-        return try Bytecodegen.generate(&ir, &builtin.BuiltIn.getBytecodeFunctions());
+        return try Bytecodegen.generate(&ir);
     }
 
     pub fn compileAndRun(self: *Self, src: []const u8) !void {

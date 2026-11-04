@@ -29,6 +29,7 @@ pub const Statement = union(enum) {
 pub const FuncStmt = struct {
     identifier: []const u8,
     def: FnDef,
+    is_extern: bool = false,
 };
 
 pub const StructStmt = struct {

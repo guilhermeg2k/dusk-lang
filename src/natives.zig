@@ -374,3 +374,51 @@ const Pieces = struct {
         return self.text[start..];
     }
 };
+
+pub const Binding = union(enum) {
+    native: bc.NativeFnPtr,
+    @"inline": @FieldType(bc.InlineFn, "gen"),
+    sema: void,
+};
+
+pub const bindings = std.StaticStringMap(Binding).initComptime(.{
+    .{ "echo", Binding{ .native = &echo } },
+    .{ "assert", Binding{ .native = &assert } },
+    .{ "len", Binding{ .sema = {} } },
+    .{ "append", Binding{ .@"inline" = &appendGen } },
+    .{ "copy", Binding{ .@"inline" = &copyGen } },
+    .{ "buffer_from", Binding{ .native = &bufferFrom } },
+    .{ "string_from", Binding{ .native = &stringFrom } },
+    .{ "str_equal", Binding{ .native = &strEqual } },
+    .{ "str_char_count", Binding{ .native = &strCharCount } },
+    .{ "str_concat", Binding{ .native = &strConcat } },
+    .{ "str_join", Binding{ .native = &strJoin } },
+    .{ "str_to_int", Binding{ .native = &strToInt } },
+    .{ "str_to_float", Binding{ .native = &strToFloat } },
+    .{ "str_find", Binding{ .native = &strFind } },
+    .{ "str_contains", Binding{ .native = &strContains } },
+    .{ "str_starts_with", Binding{ .native = &strStartsWith } },
+    .{ "str_ends_with", Binding{ .native = &strEndsWith } },
+    .{ "str_count", Binding{ .native = &strCount } },
+    .{ "str_byte_at", Binding{ .native = &strByteAt } },
+    .{ "str_char_at", Binding{ .native = &strCharAt } },
+    .{ "str_trim", Binding{ .native = &strTrim } },
+    .{ "str_split", Binding{ .native = &strSplit } },
+    .{ "str_replace", Binding{ .native = &strReplace } },
+    .{ "str_upper", Binding{ .native = &strUpper } },
+    .{ "str_lower", Binding{ .native = &strLower } },
+    .{ "str_slice", Binding{ .native = &strSlice } },
+    .{ "str_repeat", Binding{ .native = &strRepeat } },
+});
+
+fn appendGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn copyGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .DEEP_COPY, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}

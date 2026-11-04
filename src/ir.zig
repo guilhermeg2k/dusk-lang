@@ -1,8 +1,10 @@
 const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
+const TypedIdentifier = @import("type_table.zig").TypedIdentifier;
 
 pub const Program = struct {
     instructions: Block,
+    externs: []const Extern,
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
@@ -62,6 +64,12 @@ pub const Field = struct {
     identifier: []const u8,
     type_id: TypeId,
     default_value: ?*Value,
+};
+
+pub const Extern = struct {
+    uid: usize,
+    identifier: []const u8,
+    params: []const TypedIdentifier,
 };
 
 pub const Func = struct {

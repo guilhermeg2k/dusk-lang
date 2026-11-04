@@ -372,6 +372,11 @@ pub const ErrorDispatcher = struct {
         return error.DeclarationInsideFunction;
     }
 
+    pub fn externOutsidePrelude(self: *Self, identifier: []const u8, loc: Loc) Errors {
+        self.log(try allocPrint(self.allocator, "'extern func {s}' is only allowed in the prelude", .{identifier}), loc);
+        return error.ExternOutsidePrelude;
+    }
+
     pub fn missingMain(self: *Self) Errors {
         self.log(try allocPrint(self.allocator, "Missing 'main': declare 'func main() -> void' (or '-> !void')", .{}), .{ .start = 0, .end = 0 });
         return error.MissingMain;
@@ -705,6 +710,7 @@ pub const Errors = error{
     StatementOutsideMain,
     MissingMain,
     DeclarationInsideFunction,
+    ExternOutsidePrelude,
     InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,
