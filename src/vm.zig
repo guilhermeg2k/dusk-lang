@@ -4,6 +4,7 @@ const v = @import("value.zig");
 const util = @import("util.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
 const BuiltIn = @import("built-in.zig").BuiltIn;
+const format = @import("format.zig");
 
 pub const VM = struct {
     const Self = @This();
@@ -45,7 +46,7 @@ pub const VM = struct {
 
     noinline fn formatValue(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
         self.scratch.clearRetainingCapacity();
-        BuiltIn.printValue(&self.scratch.writer, value, kind);
+        format.printValue(&self.scratch.writer, value, kind);
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
         @memcpy(result.mutableSlice(), bytes);
@@ -59,7 +60,7 @@ pub const VM = struct {
                 try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
                 continue;
             }
-            BuiltIn.printValue(&self.scratch.writer, part, kind);
+            format.printValue(&self.scratch.writer, part, kind);
         }
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);

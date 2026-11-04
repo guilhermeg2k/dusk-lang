@@ -4,6 +4,7 @@ const v = @import("value.zig");
 const sema = @import("sema.zig");
 const tt = @import("type_table.zig");
 const ir = @import("ir.zig");
+const format = @import("format.zig");
 
 const Symbol = sema.Symbol;
 const TypeId = tt.TypeId;
@@ -16,7 +17,6 @@ pub const BuiltIn = struct {
 
     const BuiltInFn = struct {
         symbol: Symbol,
-        bc_fn: ?bc.HostFn = null,
     };
 
     const BuiltInFactory = *const fn (*const Self, usize) anyerror!BuiltInFn;
@@ -94,7 +94,12 @@ pub const BuiltIn = struct {
     fn stringOpRegistry() [string_ops.len]RegistryEntry {
         var entries: [string_ops.len]RegistryEntry = undefined;
         for (string_ops, 0..) |spec, i| {
-            entries[i] = .{ .name = spec.name, .kind = .{ .@"inline" = .{ .gen = stringOpCodeGen(spec.op), .num_args = @intCast(spec.params.len) } } };
+            entries[i] = .{
+                .name = spec.name,
+                .kind = .{
+                    .@"inline" = .{ .gen = stringOpCodeGen(spec.op), .num_args = @intCast(spec.params.len) },
+                },
+            };
         }
         return entries;
     }
@@ -276,7 +281,7 @@ pub const BuiltIn = struct {
             self.void_type_id,
         );
 
-        return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &echoImpl, .num_args = 1 } };
+        return BuiltInFn{ .symbol = symbol };
     }
 
     fn appendFactory(self: *const Self, uid: usize) !BuiltInFn {
@@ -336,7 +341,7 @@ pub const BuiltIn = struct {
         symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "cond", .type_id = self.boolean_type_id, .is_mut = false, .default_value = null },
         }, self.void_type_id);
-        return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &assertImpl, .num_args = 1 } };
+        return BuiltInFn{ .symbol = symbol };
     }
 
     fn bufferFromFactory(self: *const Self, uid: usize) !BuiltInFn {
@@ -370,7 +375,7 @@ pub const BuiltIn = struct {
         symbol.type_id = try self.createFuncTypeId(symbol.uid, symbol.identifier, &.{
             .{ .identifier = "text", .type_id = self.string_type_id, .is_mut = false, .default_value = null },
         }, self.int_type_id);
-        return BuiltInFn{ .symbol = symbol, .bc_fn = .{ .func = &strCharCountImpl, .num_args = 1 } };
+        return BuiltInFn{ .symbol = symbol };
     }
 
     fn strConcatFactory(self: *const Self, uid: usize) !BuiltInFn {
@@ -424,98 +429,10 @@ pub const BuiltIn = struct {
         echo_writer = writer;
     }
 
-    pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void {
-        switch (ty) {
-            .int64 => writer.print("{d}", .{value.int64}) catch @panic("failed to print int64"),
-            .float64 => writer.print("{d}", .{value.float64}) catch @panic("failed to print float64"),
-            .bool => writer.print("{}", .{value.bool}) catch @panic("failed to print bool"),
-            .string => {
-                const raw: u64 = @bitCast(value);
-                if (raw == 0) {
-                    writer.print("null", .{}) catch @panic("failed to print null");
-                } else {
-                    const str = v.HeapValue.getParentPtr(v.Bytes, value.heap_obj);
-                    writer.print("{s}", .{str.slice()}) catch @panic("failed to print string");
-                }
-            },
-            .buffer => {
-                const raw: u64 = @bitCast(value);
-                if (raw == 0) {
-                    writer.print("null", .{}) catch @panic("failed to print null");
-                    return;
-                }
-                const bytes = v.HeapValue.getParentPtr(v.Bytes, value.heap_obj).slice();
-                writer.print("[", .{}) catch @panic("failed to print buffer bracket");
-                for (bytes, 0..) |byte, i| {
-                    if (i > 0) writer.print(", ", .{}) catch @panic("failed to print buffer separator");
-                    writer.print("{d}", .{byte}) catch @panic("failed to print buffer byte");
-                }
-                writer.print("]", .{}) catch @panic("failed to print buffer bracket");
-            },
-            .null => writer.print("null", .{}) catch @panic("failed to print null"),
-            .array => {
-                const raw: u64 = @bitCast(value);
-                if (raw == 0) {
-                    writer.print("null", .{}) catch @panic("failed to print null");
-                    return;
-                }
-                const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj);
-                const data = array.getDataPtr();
-                writer.print("[", .{}) catch @panic("failed to print array bracket");
-                for (0..array.len) |i| {
-                    if (i > 0) writer.print(", ", .{}) catch @panic("failed to print array separator");
-                    printValue(writer, data[i], array.kind);
-                }
-                writer.print("]", .{}) catch @panic("failed to print array bracket");
-            },
-            .nullable => {
-                const raw: u64 = @bitCast(value);
-                if (raw == 0) {
-                    writer.print("null", .{}) catch @panic("failed to print null");
-                    return;
-                }
-                // only primitives are boxed, nullable heap values are the object itself
-                switch (value.heap_obj.kind) {
-                    .null_box => {
-                        const nullable = v.HeapValue.getParentPtr(v.NullBox, value.heap_obj);
-                        printValue(writer, nullable.value, nullable.kind);
-                    },
-                    .string => printValue(writer, value, .string),
-                    .buffer => printValue(writer, value, .buffer),
-                    .array => printValue(writer, value, .array),
-                    .@"struct" => printValue(writer, value, .@"struct"),
-                    .@"union" => printValue(writer, value, .@"union"),
-                }
-            },
-            .@"struct" => {
-                const raw: u64 = @bitCast(value);
-                if (raw == 0) {
-                    writer.print("null", .{}) catch @panic("failed to print null");
-                } else {
-                    const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
-                    writer.print("{{ ", .{}) catch @panic("failed to print struct brace");
-                    for (0..s.field_count) |i| {
-                        if (i > 0) writer.print(", ", .{}) catch @panic("failed to print struct separator");
-                        writer.print("{d}", .{s.get(i).int64}) catch @panic("failed to print struct field");
-                    }
-                    writer.print(" }}", .{}) catch @panic("failed to print struct brace");
-                }
-            },
-            .@"union" => {
-                const raw: u64 = @bitCast(value);
-                if (raw == 0) {
-                    writer.print("null", .{}) catch @panic("failed to print null");
-                } else {
-                    writer.print("<union>", .{}) catch @panic("failed to print union");
-                }
-            },
-        }
-    }
-
     fn echoImpl(args: []v.Value) v.Value {
         if (echo_writer) |writer| {
             const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
-            printValue(writer, args[0], ty);
+            format.printValue(writer, args[0], ty);
             writer.print("\n", .{}) catch {};
             //todo: not treating error
             writer.flush() catch {};
