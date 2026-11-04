@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Internal: `VM.deinit` frees the scratch buffer and both GC heap arenas when a program ends, including when it stops with a runtime error
 - Internal: loop patch fields use the same spelling (`first_break_patch_index`, `first_continue_patch_index`)
 - An `int` converts to `float` wherever a `float` is expected: typed `let`s, assignments, arguments, return values, struct fields, union payloads, array items, default values, constants and `catch` fallbacks (before, only arithmetic, `if`/`when` results and `orelse` did). `int` and `?int` also convert to `?float`. `[]int` still doesn't convert to `[]float`, and `float` never converts to `int`. Int literals are converted at compile time
 - `float(x)` converts an `int` or `byte` to `float`

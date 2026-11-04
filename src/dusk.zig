@@ -52,6 +52,7 @@ pub const Dusk = struct {
         }
 
         var v = VM.init(&program);
+        defer v.deinit();
         try v.run();
     }
 

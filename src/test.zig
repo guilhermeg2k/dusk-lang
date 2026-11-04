@@ -214,6 +214,7 @@ test "string constants outlive compilation and source storage" {
     try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
     try testing.expectEqualStrings("plain", pool.textAt(1));
     var vm = @import("vm.zig").VM.init(&program);
+    defer vm.deinit();
     try vm.run();
 }
 

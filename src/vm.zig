@@ -38,6 +38,11 @@ pub const VM = struct {
         };
     }
 
+    pub fn deinit(self: *Self) void {
+        self.scratch.deinit();
+        for (&self.heap.arenas) |*arena| arena.deinit();
+    }
+
     noinline fn formatValue(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
         self.scratch.clearRetainingCapacity();
         BuiltIn.printValue(&self.scratch.writer, value, kind);
