@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Internal: builtins implemented in Zig are natives (`natives.zig`, `fn (vm: *VM, args) anyerror!NativeResult`) called through `CALL`, so they can allocate and fail with an error id. Removed the `STR_OP`, `STR_JOIN`, `STR_TO_NUMBER`, `BYTES_CONCAT` and `BYTES_COPY` opcodes and the `StringOp` enum; `CALL` is the only opcode that can fail. The `echo` writer is a VM field instead of a global
 - Internal: value formatting (`printValue`, used by `echo`, interpolation and `TO_STRING`) moved from `built-in.zig` to `format.zig`; removed the unused `BuiltInFn.bc_fn`
 - Internal: `VM.deinit` frees the scratch buffer and both GC heap arenas when a program ends, including when it stops with a runtime error
 - Internal: loop patch fields use the same spelling (`first_break_patch_index`, `first_continue_patch_index`)

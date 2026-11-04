@@ -4,7 +4,7 @@ const v = @import("value.zig");
 const sema = @import("sema.zig");
 const tt = @import("type_table.zig");
 const ir = @import("ir.zig");
-const format = @import("format.zig");
+const natives = @import("natives.zig");
 
 const Symbol = sema.Symbol;
 const TypeId = tt.TypeId;
@@ -25,27 +25,27 @@ pub const BuiltIn = struct {
 
     const StringOpSpec = struct {
         name: []const u8,
-        op: bc.StringOp,
+        func: bc.NativeFnPtr,
         params: []const struct { []const u8, StrType },
         result: StrType,
         can_fail: bool = false,
     };
 
     const string_ops = [_]StringOpSpec{
-        .{ .name = "str_find", .op = .find, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .nullable_int },
-        .{ .name = "str_contains", .op = .contains, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .boolean },
-        .{ .name = "str_starts_with", .op = .starts_with, .params = &.{ .{ "text", .string }, .{ "prefix", .string } }, .result = .boolean },
-        .{ .name = "str_ends_with", .op = .ends_with, .params = &.{ .{ "text", .string }, .{ "suffix", .string } }, .result = .boolean },
-        .{ .name = "str_count", .op = .count, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .int },
-        .{ .name = "str_byte_at", .op = .byte_at, .params = &.{ .{ "text", .string }, .{ "index", .int } }, .result = .byte, .can_fail = true },
-        .{ .name = "str_char_at", .op = .char_at, .params = &.{ .{ "text", .string }, .{ "index", .int } }, .result = .string, .can_fail = true },
-        .{ .name = "str_trim", .op = .trim, .params = &.{.{ "text", .string }}, .result = .string },
-        .{ .name = "str_split", .op = .split, .params = &.{ .{ "text", .string }, .{ "separator", .string } }, .result = .string_array },
-        .{ .name = "str_replace", .op = .replace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string },
-        .{ .name = "str_upper", .op = .upper, .params = &.{.{ "text", .string }}, .result = .string },
-        .{ .name = "str_lower", .op = .lower, .params = &.{.{ "text", .string }}, .result = .string },
-        .{ .name = "str_slice", .op = .slice, .params = &.{ .{ "text", .string }, .{ "start", .int }, .{ "stop", .int } }, .result = .string, .can_fail = true },
-        .{ .name = "str_repeat", .op = .repeat, .params = &.{ .{ "text", .string }, .{ "count", .int } }, .result = .string, .can_fail = true },
+        .{ .name = "str_find", .func = &natives.strFind, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .nullable_int },
+        .{ .name = "str_contains", .func = &natives.strContains, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .boolean },
+        .{ .name = "str_starts_with", .func = &natives.strStartsWith, .params = &.{ .{ "text", .string }, .{ "prefix", .string } }, .result = .boolean },
+        .{ .name = "str_ends_with", .func = &natives.strEndsWith, .params = &.{ .{ "text", .string }, .{ "suffix", .string } }, .result = .boolean },
+        .{ .name = "str_count", .func = &natives.strCount, .params = &.{ .{ "text", .string }, .{ "needle", .string } }, .result = .int },
+        .{ .name = "str_byte_at", .func = &natives.strByteAt, .params = &.{ .{ "text", .string }, .{ "index", .int } }, .result = .byte, .can_fail = true },
+        .{ .name = "str_char_at", .func = &natives.strCharAt, .params = &.{ .{ "text", .string }, .{ "index", .int } }, .result = .string, .can_fail = true },
+        .{ .name = "str_trim", .func = &natives.strTrim, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_split", .func = &natives.strSplit, .params = &.{ .{ "text", .string }, .{ "separator", .string } }, .result = .string_array },
+        .{ .name = "str_replace", .func = &natives.strReplace, .params = &.{ .{ "text", .string }, .{ "old", .string }, .{ "new", .string } }, .result = .string },
+        .{ .name = "str_upper", .func = &natives.strUpper, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_lower", .func = &natives.strLower, .params = &.{.{ "text", .string }}, .result = .string },
+        .{ .name = "str_slice", .func = &natives.strSlice, .params = &.{ .{ "text", .string }, .{ "start", .int }, .{ "stop", .int } }, .result = .string, .can_fail = true },
+        .{ .name = "str_repeat", .func = &natives.strRepeat, .params = &.{ .{ "text", .string }, .{ "count", .int } }, .result = .string, .can_fail = true },
     };
 
     const builtin_factories = [_]BuiltInFactory{
@@ -70,20 +70,24 @@ pub const BuiltIn = struct {
     };
 
     const builtin_bytecode_registry = [_]RegistryEntry{
-        .{ .name = "echo", .kind = .{ .host = .{ .func = &echoImpl, .num_args = 2 } } },
+        .{ .name = "echo", .kind = native(&natives.echo, 2) },
         .{ .name = "append", .kind = .{ .@"inline" = .{ .gen = &appendCodeGen, .num_args = 2 } } },
         .{ .name = "len", .kind = .{ .@"inline" = .{ .gen = &lenCodeGen, .num_args = 1 } } },
-        .{ .name = "assert", .kind = .{ .host = .{ .func = &assertImpl, .num_args = 1 } } },
-        .{ .name = "buffer_from", .kind = .{ .@"inline" = .{ .gen = &bufferFromCodeGen, .num_args = 1 } } },
-        .{ .name = "string_from", .kind = .{ .@"inline" = .{ .gen = &stringFromCodeGen, .num_args = 1 } } },
-        .{ .name = "str_equal", .kind = .{ .@"inline" = .{ .gen = &strEqualCodeGen, .num_args = 3 } } },
-        .{ .name = "str_char_count", .kind = .{ .host = .{ .func = &strCharCountImpl, .num_args = 1 } } },
-        .{ .name = "str_concat", .kind = .{ .@"inline" = .{ .gen = &strConcatCodeGen, .num_args = 2 } } },
-        .{ .name = "str_join", .kind = .{ .@"inline" = .{ .gen = &strJoinCodeGen, .num_args = 2 } } },
-        .{ .name = "str_to_int", .kind = .{ .@"inline" = .{ .gen = &strToIntCodeGen, .num_args = 1 } } },
-        .{ .name = "str_to_float", .kind = .{ .@"inline" = .{ .gen = &strToFloatCodeGen, .num_args = 1 } } },
+        .{ .name = "assert", .kind = native(&natives.assert, 1) },
+        .{ .name = "buffer_from", .kind = native(&natives.bufferFrom, 1) },
+        .{ .name = "string_from", .kind = native(&natives.stringFrom, 1) },
+        .{ .name = "str_equal", .kind = native(&natives.strEqual, 3) },
+        .{ .name = "str_char_count", .kind = native(&natives.strCharCount, 1) },
+        .{ .name = "str_concat", .kind = native(&natives.strConcat, 2) },
+        .{ .name = "str_join", .kind = native(&natives.strJoin, 2) },
+        .{ .name = "str_to_int", .kind = native(&natives.strToInt, 1) },
+        .{ .name = "str_to_float", .kind = native(&natives.strToFloat, 1) },
         .{ .name = "copy", .kind = .{ .@"inline" = .{ .gen = &copyCodeGen, .num_args = 1 } } },
     } ++ stringOpRegistry();
+
+    fn native(func: bc.NativeFnPtr, num_args: u8) bc.FunctionKind {
+        return .{ .native = .{ .func = func, .num_args = num_args } };
+    }
 
     fn stringOpFactories() [string_ops.len]BuiltInFactory {
         var factories: [string_ops.len]BuiltInFactory = undefined;
@@ -96,9 +100,7 @@ pub const BuiltIn = struct {
         for (string_ops, 0..) |spec, i| {
             entries[i] = .{
                 .name = spec.name,
-                .kind = .{
-                    .@"inline" = .{ .gen = stringOpCodeGen(spec.op), .num_args = @intCast(spec.params.len) },
-                },
+                .kind = native(spec.func, @intCast(spec.params.len)),
             };
         }
         return entries;
@@ -120,16 +122,6 @@ pub const BuiltIn = struct {
         }.factory;
     }
 
-    fn stringOpCodeGen(comptime op: bc.StringOp) *const fn (u8, u8, std.mem.Allocator) anyerror![]const bc.Instruction {
-        return struct {
-            fn gen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-                var list: std.ArrayList(bc.Instruction) = .empty;
-                try list.append(alloc, .{ .op = .STR_OP, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(op) });
-                return try list.toOwnedSlice(alloc);
-            }
-        }.gen;
-    }
-
     fn strTypeId(self: *const Self, str_type: StrType) !TypeId {
         return switch (str_type) {
             .string => self.string_type_id,
@@ -147,8 +139,6 @@ pub const BuiltIn = struct {
         }
     }
 
-    var echo_writer: ?*std.Io.Writer = null;
-
     const ErrorSetSpec = struct { name: []const u8, variants: []const []const u8 };
 
     pub const error_sets = [_]ErrorSetSpec{
@@ -158,11 +148,6 @@ pub const BuiltIn = struct {
     const conversion_error_index = 0;
     const string_error_index = 1;
 
-    pub const conversion_invalid_id: i64 = 1;
-    pub const conversion_overflow_id: i64 = 2;
-    pub const string_out_of_range_id: i64 = 3;
-    pub const string_negative_count_id: i64 = 4;
-    pub const string_invalid_utf8_id: i64 = 5;
 
     alloc: std.mem.Allocator,
     type_table: *TypeTable,
@@ -217,7 +202,7 @@ pub const BuiltIn = struct {
                 .is_nullable = false,
             });
         }
-        std.debug.assert(type_table.error_names.items.len == string_invalid_utf8_id + 1);
+        std.debug.assert(type_table.error_names.items.len == natives.string_invalid_utf8_id + 1);
         return type_ids;
     }
 
@@ -425,21 +410,6 @@ pub const BuiltIn = struct {
         return funcs;
     }
 
-    pub fn setEchoWriter(writer: ?*std.Io.Writer) void {
-        echo_writer = writer;
-    }
-
-    fn echoImpl(args: []v.Value) v.Value {
-        if (echo_writer) |writer| {
-            const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
-            format.printValue(writer, args[0], ty);
-            writer.print("\n", .{}) catch {};
-            //todo: not treating error
-            writer.flush() catch {};
-        }
-        return .{ .null = {} };
-    }
-
     fn appendCodeGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
         var list: std.ArrayList(bc.Instruction) = .empty;
         try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
@@ -458,61 +428,4 @@ pub const BuiltIn = struct {
         return try list.toOwnedSlice(alloc);
     }
 
-    fn bufferFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .BYTES_COPY, .a = target_reg, .b = arg_start_reg });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn stringFromCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .STR_OP, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(bc.StringOp.from_buffer) });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn strEqualCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .STR_OP, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(bc.StringOp.equal) });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn strCharCountImpl(args: []v.Value) v.Value {
-        const text = v.HeapValue.getParentPtr(v.Bytes, args[0].heap_obj).slice();
-        var count: i64 = 0;
-        for (text) |byte| {
-            if (byte & 0xC0 != 0x80) count += 1;
-        }
-        return .{ .int64 = count };
-    }
-
-    fn strConcatCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .BYTES_CONCAT, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn strJoinCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .STR_JOIN, .a = target_reg, .b = arg_start_reg, .c = arg_start_reg + 1 });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn strToIntCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .STR_TO_NUMBER, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.int64) });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn strToFloatCodeGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-        var list: std.ArrayList(bc.Instruction) = .empty;
-        try list.append(alloc, .{ .op = .STR_TO_NUMBER, .a = target_reg, .b = arg_start_reg, .c = @intFromEnum(v.ValueType.float64) });
-        return try list.toOwnedSlice(alloc);
-    }
-
-    fn assertImpl(args: []v.Value) v.Value {
-        if (!args[0].bool) {
-            @panic("ASSERTION_FAILED");
-        }
-        return .{ .null = {} };
-    }
 };

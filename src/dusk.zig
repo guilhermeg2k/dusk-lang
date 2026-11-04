@@ -47,11 +47,7 @@ pub const Dusk = struct {
 
     pub fn compileAndRun(self: *Self, src: []const u8) !void {
         const program = try self.compile(src);
-        if (self.stdout_writer) |writer| {
-            builtin.BuiltIn.setEchoWriter(writer);
-        }
-
-        var v = VM.init(&program);
+        var v = VM.init(&program, self.stdout_writer);
         defer v.deinit();
         try v.run();
     }

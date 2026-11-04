@@ -8,7 +8,6 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     defer arena.deinit();
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    defer @import("built-in.zig").BuiltIn.setEchoWriter(null);
     const path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
     const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
@@ -213,7 +212,7 @@ test "string constants outlive compilation and source storage" {
     try testing.expectEqual(@as(usize, 2), pool.values.len);
     try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
     try testing.expectEqualStrings("plain", pool.textAt(1));
-    var vm = @import("vm.zig").VM.init(&program);
+    var vm = @import("vm.zig").VM.init(&program, null);
     defer vm.deinit();
     try vm.run();
 }

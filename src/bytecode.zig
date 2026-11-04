@@ -2,6 +2,7 @@ const std = @import("std");
 const ir = @import("ir.zig");
 const v = @import("value.zig");
 const tt = @import("type_table.zig");
+const VM = @import("vm.zig").VM;
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -1461,8 +1462,12 @@ pub const Program = struct {
     error_names: []const []const u8,
 };
 
-pub const HostFn = struct {
-    func: *const fn (args: []v.Value) v.Value,
+pub const NativeResult = struct { value: v.Value, has_failed: bool = false };
+
+pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
+
+pub const NativeFn = struct {
+    func: NativeFnPtr,
     num_args: u8,
 };
 
@@ -1473,7 +1478,7 @@ pub const InlineFn = struct {
 
 pub const FunctionKind = union(enum) {
     dusk: Chunk,
-    host: HostFn,
+    native: NativeFn,
     @"inline": InlineFn,
 };
 
@@ -1567,20 +1572,17 @@ pub const Chunk = struct {
             .ARRAY_STORE,
             .BYTES_GET,
             .BYTES_SET,
-            .BYTES_CONCAT,
-            .STR_JOIN,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .ARRAY_APPEND,
             .ARRAY_LEN,
             .ARRAY_POP,
             .BYTES_NEW,
             .BYTES_LEN,
-            .BYTES_COPY,
             .DEEP_COPY,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
             .STR_BUILD => std.debug.print("R[{d}] RECIPE[{d}]", .{ inst.a, inst.bEx() }),
-            .TO_STRING, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .TO_STRING => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1646,12 +1648,7 @@ pub const OpCode = enum(u8) {
     BYTES_LEN,
     BYTES_GET,
     BYTES_SET,
-    BYTES_COPY,
-    BYTES_CONCAT,
-    STR_JOIN,
-    STR_TO_NUMBER,
     DEEP_COPY,
-    STR_OP,
 
     STRUCT_INIT,
     STRUCT_LOAD,
@@ -1715,7 +1712,7 @@ pub const OpCode = enum(u8) {
     JUMP_IF_FALSE,
 
     pub fn canFail(self: Self) bool {
-        return self == .CALL or self == .STR_TO_NUMBER or self == .STR_OP;
+        return self == .CALL;
     }
 
     pub fn canTriggerGc(self: Self) bool {
@@ -1729,10 +1726,6 @@ pub const OpCode = enum(u8) {
             .STR_BUILD,
             .TO_STRING,
             .BYTES_NEW,
-            .BYTES_COPY,
-            .BYTES_CONCAT,
-            .STR_JOIN,
-            .STR_OP,
             .DEEP_COPY,
             .CALL,
             => true,
@@ -1785,25 +1778,6 @@ pub const OpCode = enum(u8) {
             .b_cmp_neq => Self.B_NEQ,
         };
     }
-};
-
-pub const StringOp = enum(u8) {
-    equal,
-    find,
-    contains,
-    starts_with,
-    ends_with,
-    count,
-    trim,
-    split,
-    replace,
-    upper,
-    lower,
-    repeat,
-    slice,
-    from_buffer,
-    byte_at,
-    char_at,
 };
 
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };
