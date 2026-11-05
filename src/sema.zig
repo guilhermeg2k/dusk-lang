@@ -3162,21 +3162,6 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    //note: too big needs refactor
-    fn evalLenCall(self: *Self, argument: *const ast.ExpNode) Errors!*ir.Value {
-        const value = try self.evalExp(argument);
-        if (isValueLeaving(value)) return value;
-        const value_type = self.type_table.getTypePtrById(value.type_id);
-        const data: @FieldType(ir.Value, "data") = if (value_type.is_nullable)
-            return self.err_dispatcher.invalidType("array, buffer or string", try self.type_table.name(value.type_id, self.allocator), argument.loc)
-        else switch (value_type.kind) {
-            .array => .{ .array_length = value },
-            .buffer, .string => .{ .bytes_length = value },
-            else => return self.err_dispatcher.invalidType("array, buffer or string", try self.type_table.name(value.type_id, self.allocator), argument.loc),
-        };
-        return ir.Value.init(self.allocator, .{ .data = data, .type_id = self.type_table.getPrimitive(.int) });
-    }
-
     fn evalCopyCall(self: *Self, symbol: Symbol, argument: *const ast.ExpNode) Errors!*ir.Value {
         const value = try self.evalExp(argument);
         if (isValueLeaving(value)) return value;
@@ -3218,9 +3203,6 @@ pub const SemaAnalyzer = struct {
 
                 fn_identifier = symbol.identifier;
 
-                if (symbol.kind == .function and std.mem.eql(u8, id, "len") and fn_call.arguments.len == 1) {
-                    return self.evalLenCall(fn_call.arguments[0].exp);
-                }
                 if (symbol.kind == .function and std.mem.eql(u8, id, "copy") and fn_call.arguments.len == 1) {
                     return self.evalCopyCall(symbol, fn_call.arguments[0].exp);
                 }

@@ -12,6 +12,8 @@ end
 extern func echo(msgs: dynamic) -> void
 extern func append(mut array: []dynamic, value: dynamic) -> void
 extern func len(array: []dynamic) -> int
+extern func str_len(text: string) -> int
+extern func buffer_len(data: buffer) -> int
 extern func assert(cond: bool) -> void
 extern func buffer_from(text: string) -> buffer
 extern func string_from(data: buffer) -> StringError!string

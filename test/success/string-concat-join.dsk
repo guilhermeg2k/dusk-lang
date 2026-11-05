@@ -8,7 +8,7 @@ func main() -> void
     assert(str_equal(str_concat("a", ""), "a"))
     assert(str_equal(str_concat("", "b"), "b"))
     assert(str_equal("ol" |> str_concat("á") |> str_concat(" 🌙"), "olá 🌙"))
-    assert(len(str_concat("ab", "cd")) == 4)
+    assert(str_len(str_concat("ab", "cd")) == 4)
     echo(str_join(["a", "b", "c"], ", "))
     echo(str_join(["only"], ", "))
     let empty: []string = []

@@ -262,7 +262,7 @@ let mut data = buffer(4)
 data[0] = 'h'                     # writes take a byte
 data[1] = 105
 let first = data[0]               # reads give a byte
-echo(len(data))                   # 4
+echo(buffer_len(data))            # 4
 echo(data)                        # [104, 105, 0, 0]
 
 for data: b, i do
@@ -1122,8 +1122,8 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `echo`        | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
 | `assert`      | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
 | `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
-| `len`         | `len(data: buffer) -> int`                        | Returns the number of bytes in a buffer.                                             |
-| `len`         | `len(text: string) -> int`                        | Returns the number of bytes in a string (UTF-8).                                     |
+| `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
+| `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(list: []T, item: T) -> void`              | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
@@ -1137,7 +1137,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 
 String functions are builtins starting with `str_`. They never change their argument: a function that produces text returns a new string. They work with pipes: `line |> str_trim()`.
 
-Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
+Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
 
 | Function                               | Returns                 | Description                                                                                                                                                       |
 | :------------------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1157,7 +1157,7 @@ Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so 
 | `str_split(text, separator)`           | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
 | `str_replace(text, old, new)`          | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
 | `str_repeat(text, count)`              | `StringError!string`    | `text` repeated `count` times; `0` gives `""`.                                                                                                                    |
-| `str_slice(text, start, stop)`         | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, len(s))` is all of `s`.                                                                     |
+| `str_slice(text, start, stop)`         | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, str_len(s))` is all of `s`.                                                                 |
 | `str_to_int(text)`                     | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `str_to_float(text)`                   | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 
@@ -1165,7 +1165,7 @@ Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so 
 
 | Error | When |
 | :---- | :--- |
-| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > len(text)`, or a bound inside a multi-byte character; `str_byte_at` / `str_char_at` with an index outside the string. |
+| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > str_len(text)`, or a bound inside a multi-byte character; `str_byte_at` / `str_char_at` with an index outside the string. |
 | `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
 | `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |

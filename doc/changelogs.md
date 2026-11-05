@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Breaking: `len` only takes arrays. Use `str_len(s)` for the byte count of a string and `buffer_len(b)` for a buffer. All three are ordinary prelude builtins that compile to one `ARRAY_LEN` / `BYTES_LEN` instruction, so sema no longer special-cases `len` and the `.sema` binding kind is gone
 - Internal: builtins are declared in Dusk in `src/prelude.dsk` (`extern func` signatures plus the `ConversionError` and `StringError` sets), compiled before the user's file. `natives.zig` binds each name to a native, an inline codegen (`append`, `copy`) or sema's own lowering (`len`). `built-in.zig` is gone, and so are the index-aligned factory and registry lists and the `fn_uid == 0` echo hack: a native's `dynamic` params get a hidden kind argument. `extern` outside the prelude is a new `ExternOutsidePrelude` error, and `dynamic` only resolves inside the prelude
 - Internal: builtins implemented in Zig are natives (`natives.zig`, `fn (vm: *VM, args) anyerror!NativeResult`) called through `CALL`, so they can allocate and fail with an error id. Removed the `STR_OP`, `STR_JOIN`, `STR_TO_NUMBER`, `BYTES_CONCAT` and `BYTES_COPY` opcodes and the `StringOp` enum; `CALL` is the only opcode that can fail. The `echo` writer is a VM field instead of a global
 - Internal: value formatting (`printValue`, used by `echo`, interpolation and `TO_STRING`) moved from `built-in.zig` to `format.zig`; removed the unused `BuiltInFn.bc_fn`

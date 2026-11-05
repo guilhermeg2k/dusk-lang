@@ -378,13 +378,14 @@ const Pieces = struct {
 pub const Binding = union(enum) {
     native: bc.NativeFnPtr,
     @"inline": @FieldType(bc.InlineFn, "gen"),
-    sema: void,
 };
 
 pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
-    .{ "len", Binding{ .sema = {} } },
+    .{ "len", Binding{ .@"inline" = &arrayLenGen } },
+    .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
+    .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "append", Binding{ .@"inline" = &appendGen } },
     .{ "copy", Binding{ .@"inline" = &copyGen } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
@@ -414,6 +415,18 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
 fn appendGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
     var list: std.ArrayList(bc.Instruction) = .empty;
     try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn arrayLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn bytesLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .BYTES_LEN, .a = target_reg, .b = arg_start_reg });
     return try list.toOwnedSlice(alloc);
 }
 

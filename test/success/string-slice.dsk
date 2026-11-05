@@ -12,7 +12,7 @@ end
 func main() -> !void
     echo(try str_slice(text, 0, 2))
     echo(try str_slice(text, 0, 4))
-    echo(try str_slice(text, 6, len(text)))
+    echo(try str_slice(text, 6, str_len(text)))
     echo("[${try str_slice(text, 4, 4)}]")
     echo("[${try str_slice("", 0, 0)}]")
     let comma = str_find(text, ",") orelse 0

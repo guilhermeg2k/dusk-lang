@@ -3,5 +3,5 @@ func main() -> void
     for 0..199999: i do
         text = str_concat(text, "ab")
     end
-    echo(len(text))
+    echo(str_len(text))
 end

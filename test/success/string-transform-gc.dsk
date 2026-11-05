@@ -8,7 +8,7 @@ func main() -> !void
         let key = str_upper(str_trim(pair[0]))
         let value = str_replace(str_trim(pair[1]), "value", "v")
         let padded = try str_repeat("-", 3)
-        total += len(key) + len(value) + len(padded)
+        total += str_len(key) + str_len(value) + str_len(padded)
         if i % 5000 == 0 then
             append(kept, str_concat(key, value))
             append(kept, str_lower(parts[1]))

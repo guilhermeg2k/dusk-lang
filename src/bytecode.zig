@@ -437,13 +437,8 @@ pub const BytecodeGen = struct {
                 try self.inline_functions_by_uid.put(ext.uid, inl);
                 break :blk .{ .@"inline" = inl };
             },
-            .sema => .{ .@"inline" = .{ .gen = &unreachableGen, .num_args = num_args } },
         };
         return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
-    }
-
-    fn unreachableGen(_: u8, _: u8, _: std.mem.Allocator) ![]const Instruction {
-        unreachable;
     }
 
     fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {

@@ -226,6 +226,8 @@ test "str_equal" {
 test "string length and char count" {
     try runCaseOutput("string-length.dsk", "4\n3\n");
     try runCaseError("sema/len-nullable-string.dsk", error.InvalidType);
+    try runCaseError("sema/len-string.dsk", error.InvalidType);
+    try runCaseError("sema/len-buffer.dsk", error.InvalidType);
     try runCaseError("sema/str-char-count-int.dsk", error.InvalidType);
 }
 
