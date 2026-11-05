@@ -729,6 +729,44 @@ pub const RunTimeError = error{
     CallDepthExceeded,
 };
 
+pub const runtime = struct {
+    pub noinline fn arrayOutOfBounds(index: i64, len: usize) RunTimeError {
+        @branchHint(.cold);
+        return report(RunTimeError.ArrayOutOfBounds, "index {d} is out of bounds for array of length {d}", .{ index, len });
+    }
+
+    pub noinline fn indexOutOfBounds(index: i64, len: usize) RunTimeError {
+        @branchHint(.cold);
+        return report(RunTimeError.IndexOutOfBounds, "index {d} is out of bounds for length {d}", .{ index, len });
+    }
+
+    pub noinline fn negativeBufferSize(len: i64) RunTimeError {
+        @branchHint(.cold);
+        return report(RunTimeError.NegativeBufferSize, "buffer size can't be negative: {d}", .{len});
+    }
+
+    pub noinline fn byteOutOfRange(number: i64) RunTimeError {
+        @branchHint(.cold);
+        return report(RunTimeError.ByteOutOfRange, "value {d} doesn't fit in byte (0..255)", .{number});
+    }
+
+    pub noinline fn callDepthExceeded(max_depth: usize) RunTimeError {
+        @branchHint(.cold);
+        return report(RunTimeError.CallDepthExceeded, "call depth exceeded: more than {d} nested calls", .{max_depth});
+    }
+
+    pub noinline fn unhandledError(error_name: []const u8) RunTimeError {
+        @branchHint(.cold);
+        return report(RunTimeError.UnhandledError, "unhandled error {s}", .{error_name});
+    }
+
+    fn report(err: RunTimeError, comptime fmt: []const u8, args: anytype) RunTimeError {
+        if (@import("builtin").is_test) return err;
+        std.debug.print("error: " ++ fmt ++ "\n", args);
+        return err;
+    }
+};
+
 const std = @import("std");
 const allocPrint = std.fmt.allocPrint;
 const Token = @import("lexer.zig").Token;

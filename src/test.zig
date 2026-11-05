@@ -2011,3 +2011,9 @@ test "prelude: builtin error ids match the natives constants" {
     try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
     try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
 }
+
+test "array index out of bounds is a runtime error" {
+    try runCaseRuntimeError("array-index-out-of-bounds.dsk", error.ArrayOutOfBounds);
+    try runCaseRuntimeError("array-negative-index.dsk", error.ArrayOutOfBounds);
+    try runCaseRuntimeError("array-store-negative-index.dsk", error.ArrayOutOfBounds);
+}

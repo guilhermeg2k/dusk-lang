@@ -3,6 +3,7 @@ const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const util = @import("util.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
+const runtime_error = @import("error.zig").runtime;
 const format = @import("format.zig");
 
 pub const VM = struct {
@@ -126,7 +127,7 @@ pub const VM = struct {
                     const arr_ptr = stack[stack_base + inst.b].heap_obj;
                     const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
                     const idx = stack[stack_base + inst.c];
-                    const value = try array.get(@intCast(idx.int64));
+                    const value = try array.get(idx.int64);
                     stack[stack_base + inst.a] = value;
                 },
 
@@ -154,7 +155,7 @@ pub const VM = struct {
                     var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
                     const idx = stack[stack_base + inst.b];
                     const value = stack[stack_base + inst.c];
-                    try array.set(@intCast(idx.int64), value);
+                    try array.set(idx.int64, value);
                 },
 
                 .ARRAY_LEN => {
@@ -176,14 +177,14 @@ pub const VM = struct {
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
-                    if (index < 0 or index >= bytes.len) return indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) return runtime_error.indexOutOfBounds(index, bytes.len);
                     stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
                 },
 
                 .BYTES_SET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
                     const index = stack[stack_base + inst.b].int64;
-                    if (index < 0 or index >= bytes.len) return indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) return runtime_error.indexOutOfBounds(index, bytes.len);
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
                 },
 
@@ -459,7 +460,7 @@ pub const VM = struct {
 
                 .I_TO_BYTE => {
                     const number = stack[stack_base + inst.b].int64;
-                    if (number < 0 or number > 255) return byteOutOfRange(number);
+                    if (number < 0 or number > 255) return runtime_error.byteOutOfRange(number);
                     stack[stack_base + inst.a] = .{ .int64 = number };
                 },
 
@@ -481,7 +482,7 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
-                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return self.callDepthExceeded();
+                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return runtime_error.callDepthExceeded(MAX_CALL_DEPTH);
                             self.frames[self.frame_count] = .{
                                 .function = func,
                                 .cur_inst = 0,
@@ -544,7 +545,7 @@ pub const VM = struct {
                 },
 
                 .PANIC_ERR => {
-                    return self.panicUnhandledError(stack[stack_base + inst.a]);
+                    return runtime_error.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
                 },
                 else => unreachable,
             }
@@ -552,7 +553,7 @@ pub const VM = struct {
     }
 
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
-        if (len < 0) return negativeBufferSize(len);
+        if (len < 0) return runtime_error.negativeBufferSize(len);
         const size = v.Bytes.calc_size(@intCast(len));
         try self.maybeCollectGarbage(size);
         const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
@@ -637,27 +638,6 @@ pub const VM = struct {
         return .{ .heap_obj = &box.obj };
     }
 
-    noinline fn indexOutOfBounds(index: i64, len: usize) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.IndexOutOfBounds;
-        std.debug.print("error: index {d} is out of bounds for length {d}\n", .{ index, len });
-        return RunTimeError.IndexOutOfBounds;
-    }
-
-    noinline fn negativeBufferSize(len: i64) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.NegativeBufferSize;
-        std.debug.print("error: buffer size can't be negative: {d}\n", .{len});
-        return RunTimeError.NegativeBufferSize;
-    }
-
-    noinline fn byteOutOfRange(number: i64) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.ByteOutOfRange;
-        std.debug.print("error: value {d} doesn't fit in byte (0..255)\n", .{number});
-        return RunTimeError.ByteOutOfRange;
-    }
-
     fn allocUntouched(self: *Self, comptime T: type, count: usize) ![]T {
         const bytes = self.allocator.rawAlloc(@sizeOf(T) * count, .of(T), @returnAddress()) orelse return error.OutOfMemory;
         const items: [*]T = @ptrCast(@alignCast(bytes));
@@ -667,21 +647,6 @@ pub const VM = struct {
     fn freeUntouched(self: *Self, comptime T: type, items: []T) void {
         const bytes: [*]u8 = @ptrCast(items.ptr);
         self.allocator.rawFree(bytes[0 .. @sizeOf(T) * items.len], .of(T), @returnAddress());
-    }
-
-    noinline fn callDepthExceeded(self: *Self) RunTimeError {
-        @branchHint(.cold);
-        _ = self;
-        if (@import("builtin").is_test) return RunTimeError.CallDepthExceeded;
-        std.debug.print("error: call depth exceeded: more than {d} nested calls\n", .{MAX_CALL_DEPTH});
-        return RunTimeError.CallDepthExceeded;
-    }
-
-    noinline fn panicUnhandledError(self: *Self, err_value: v.Value) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.UnhandledError;
-        std.debug.print("error: unhandled error {s}\n", .{self.program.error_names[@intCast(err_value.int64)]});
-        return RunTimeError.UnhandledError;
     }
 
     fn initMainFrame(self: *Self) void {

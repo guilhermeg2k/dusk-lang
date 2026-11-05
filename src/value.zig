@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
 const RunTimeError = @import("error.zig").RunTimeError;
+const runtime_error = @import("error.zig").runtime;
 const tt = @import("type_table.zig");
 
 pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
@@ -201,22 +202,18 @@ pub const Array = extern struct {
         return array;
     }
 
-    pub fn get(self: *const Self, i: usize) !Value {
-        if (i >= self.len) {
-            return RunTimeError.ArrayOutOfBounds;
-        }
+    pub fn get(self: *const Self, i: i64) !Value {
+        if (i < 0 or i >= self.len) return runtime_error.arrayOutOfBounds(i, self.len);
 
         const items = self.getDataPtr();
-        return items[i];
+        return items[@intCast(i)];
     }
 
-    pub fn set(self: *Self, i: usize, value: Value) !void {
-        if (i >= self.len) {
-            return RunTimeError.ArrayOutOfBounds;
-        }
+    pub fn set(self: *Self, i: i64, value: Value) !void {
+        if (i < 0 or i >= self.len) return runtime_error.arrayOutOfBounds(i, self.len);
 
         const items = self.getDataPtr();
-        items[i] = value;
+        items[@intCast(i)] = value;
     }
 
     pub fn pop(self: *Self) !Value {
@@ -227,7 +224,7 @@ pub const Array = extern struct {
 
         self.len -= 1;
 
-        return try self.get(self.len);
+        return self.getDataPtr()[self.len];
     }
 
     pub fn needsResize(self: *Self) bool {
