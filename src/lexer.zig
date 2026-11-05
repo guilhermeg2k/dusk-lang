@@ -1,7 +1,7 @@
 const std = @import("std");
 const err = @import("error.zig");
 
-const LexerError = err.Errors;
+const LexerError = err.CompileError;
 
 pub const Lexer = struct {
     const Self = @This();
@@ -45,7 +45,7 @@ pub const Lexer = struct {
 
     allocator: std.mem.Allocator,
     src: []const u8 = "",
-    err_dispatcher: err.ErrorDispatcher,
+    err_reporter: err.CompileErrorReporter,
     cur_index: usize = 0,
     end_index: usize,
 
@@ -54,18 +54,18 @@ pub const Lexer = struct {
             .allocator = allocator,
             .src = src,
             .end_index = src.len,
-            .err_dispatcher = .{ .allocator = allocator, .src = src },
+            .err_reporter = .{ .allocator = allocator, .src = src },
         };
     }
 
-    pub fn list(self: *Self) err.Errors!std.ArrayList(Token) {
+    pub fn list(self: *Self) err.CompileError!std.ArrayList(Token) {
         var tokens: std.ArrayList(Token) = .empty;
 
         while (true) {
             const tkn = try self.next();
 
             if (tkn.tag == Tag.err) {
-                return self.err_dispatcher.unexpectedToken(tkn);
+                return self.err_reporter.unexpectedToken(tkn);
             }
 
             try tokens.append(self.allocator, tkn);
@@ -210,7 +210,7 @@ pub const Lexer = struct {
             self.walk();
         }
 
-        self.err_dispatcher.log("Unterminated multiline comment: expected '=#'", .{ .start = start, .end = start + 1 });
+        self.err_reporter.log("Unterminated multiline comment: expected '=#'", .{ .start = start, .end = start + 1 });
         return error.LexerError;
     }
 
@@ -241,7 +241,7 @@ pub const Lexer = struct {
             if (self.peekCurrent() == '"') {
                 const token = Token.init(Tag.string_literal, start, self.cur_index);
                 if (!std.unicode.utf8ValidateSlice(token.value(self.src))) {
-                    self.err_dispatcher.log("String literal must contain valid UTF-8", token.loc);
+                    self.err_reporter.log("String literal must contain valid UTF-8", token.loc);
                     return error.LexerError;
                 }
                 return token;
@@ -258,7 +258,7 @@ pub const Lexer = struct {
             self.walk();
         }
 
-        self.err_dispatcher.log("Unterminated string literal: expected closing quote (use \"\"\" for multiline strings)", .{ .start = start, .end = start });
+        self.err_reporter.log("Unterminated string literal: expected closing quote (use \"\"\" for multiline strings)", .{ .start = start, .end = start });
         return error.LexerError;
     }
 
@@ -275,7 +275,7 @@ pub const Lexer = struct {
             self.walk();
         }
 
-        self.err_dispatcher.log("Unterminated byte literal: expected closing \"'\"", .{ .start = start, .end = start });
+        self.err_reporter.log("Unterminated byte literal: expected closing \"'\"", .{ .start = start, .end = start });
         return error.LexerError;
     }
 
@@ -284,7 +284,7 @@ pub const Lexer = struct {
         self.cur_index += 3;
         while (self.peekCurrent() == ' ') self.walk();
         if (self.peekCurrent() != '\n') {
-            self.err_dispatcher.log("Multiline string must start on a new line after '\"\"\"'", .{ .start = start, .end = start + 3 });
+            self.err_reporter.log("Multiline string must start on a new line after '\"\"\"'", .{ .start = start, .end = start + 3 });
             return error.LexerError;
         }
         self.walk();
@@ -308,7 +308,7 @@ pub const Lexer = struct {
             self.walk();
         }
 
-        self.err_dispatcher.log("Unterminated multiline string: expected closing '\"\"\"'", .{ .start = start, .end = start + 3 });
+        self.err_reporter.log("Unterminated multiline string: expected closing '\"\"\"'", .{ .start = start, .end = start + 3 });
         return error.LexerError;
     }
 
@@ -317,7 +317,7 @@ pub const Lexer = struct {
         const closing_line_start = line_starts[line_starts.len - 1];
         const indent = self.src[closing_line_start..closing];
         if (std.mem.indexOfNone(u8, indent, " ") != null) {
-            self.err_dispatcher.log("Closing '\"\"\"' must be on its own line", .{ .start = closing, .end = closing + 3 });
+            self.err_reporter.log("Closing '\"\"\"' must be on its own line", .{ .start = closing, .end = closing + 3 });
             return error.LexerError;
         }
 
@@ -326,14 +326,14 @@ pub const Lexer = struct {
             const line = self.src[line_start..line_end];
             const is_blank = std.mem.indexOfNone(u8, line, " ") == null;
             if (is_blank or std.mem.startsWith(u8, line, indent)) continue;
-            self.err_dispatcher.log("Insufficient indentation in multiline string: lines must start with the closing '\"\"\"' indentation", .{ .start = line_start, .end = line_end });
+            self.err_reporter.log("Insufficient indentation in multiline string: lines must start with the closing '\"\"\"' indentation", .{ .start = line_start, .end = line_end });
             return error.LexerError;
         }
 
         self.cur_index = closing + 2;
         const token = Token.init(Tag.multiline_string_literal, start, self.cur_index);
         if (!std.unicode.utf8ValidateSlice(self.src[start .. self.cur_index + 1])) {
-            self.err_dispatcher.log("String literal must contain valid UTF-8", token.loc);
+            self.err_reporter.log("String literal must contain valid UTF-8", token.loc);
             return error.LexerError;
         }
         return token;
@@ -352,10 +352,10 @@ pub const Lexer = struct {
                     if (depth == 0) return token.loc.start;
                 },
                 .eof => {
-                    self.err_dispatcher.log("Unterminated string interpolation: expected '}'", .{ .start = start, .end = start + 1 });
+                    self.err_reporter.log("Unterminated string interpolation: expected '}'", .{ .start = start, .end = start + 1 });
                     return error.LexerError;
                 },
-                .err => return self.err_dispatcher.unexpectedToken(token),
+                .err => return self.err_reporter.unexpectedToken(token),
                 else => {},
             }
         }

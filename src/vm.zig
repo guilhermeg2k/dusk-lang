@@ -2,8 +2,8 @@ const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const util = @import("util.zig");
-const RunTimeError = @import("error.zig").RunTimeError;
-const runtime_error = @import("error.zig").runtime;
+const RuntimeError = @import("error.zig").RuntimeError;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
 
 pub const VM = struct {
@@ -177,14 +177,14 @@ pub const VM = struct {
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
-                    if (index < 0 or index >= bytes.len) return runtime_error.indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
                     stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
                 },
 
                 .BYTES_SET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
                     const index = stack[stack_base + inst.b].int64;
-                    if (index < 0 or index >= bytes.len) return runtime_error.indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
                 },
 
@@ -460,7 +460,7 @@ pub const VM = struct {
 
                 .I_TO_BYTE => {
                     const number = stack[stack_base + inst.b].int64;
-                    if (number < 0 or number > 255) return runtime_error.byteOutOfRange(number);
+                    if (number < 0 or number > 255) return RuntimeErrorReporter.byteOutOfRange(number);
                     stack[stack_base + inst.a] = .{ .int64 = number };
                 },
 
@@ -482,7 +482,7 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
-                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return runtime_error.callDepthExceeded(MAX_CALL_DEPTH);
+                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
                             self.frames[self.frame_count] = .{
                                 .function = func,
                                 .cur_inst = 0,
@@ -545,7 +545,7 @@ pub const VM = struct {
                 },
 
                 .PANIC_ERR => {
-                    return runtime_error.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
+                    return RuntimeErrorReporter.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
                 },
                 else => unreachable,
             }
@@ -553,7 +553,7 @@ pub const VM = struct {
     }
 
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
-        if (len < 0) return runtime_error.negativeBufferSize(len);
+        if (len < 0) return RuntimeErrorReporter.negativeBufferSize(len);
         const size = v.Bytes.calc_size(@intCast(len));
         try self.maybeCollectGarbage(size);
         const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);

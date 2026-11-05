@@ -320,7 +320,7 @@ pub const UnaryOp = enum {
         return switch (tag) {
             .minus => .neg,
             .not => .not,
-            else => err.Errors.ParserError,
+            else => err.CompileError.ParserError,
         };
     }
 };
@@ -359,7 +359,7 @@ pub const BinaryOp = enum {
             .ge => .gt_or_eq,
             .or_kw => .bool_or,
             .and_kw => .bool_and,
-            else => err.Errors.ParserError,
+            else => err.CompileError.ParserError,
         };
     }
 };
