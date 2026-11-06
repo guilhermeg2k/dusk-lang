@@ -16,19 +16,19 @@ python3 run_benchmarks.py
 | Field | Value |
 | --- | --- |
 | OS | Fedora Linux 44 (Workstation Edition) |
-| Kernel | Linux 7.2.10-200.fc44.x86_64 |
+| Kernel | Linux 7.2.13-200.fc44.x86_64 |
 | Architecture | x86_64 |
 | CPU | AMD Ryzen 5 5600X 6-Core Processor |
 | Cores / Threads | 6 cores / 12 threads |
 | CPU max | 4.65 GHz |
 | Memory | 31.2 GiB total |
-| Date | 2026-10-25 19:48 UTC |
+| Date | 2026-11-06 02:24 UTC |
 
 ## Language toolchains
 
 | Language | Version / mode |
 | --- | --- |
-| **Dusk** | **0.11.0-devel (git 66c9cb8) — built with Zig 0.16.0, ReleaseFast** |
+| **Dusk** | **0.13.0 (git 26157d0) — built with Zig 0.16.0, ReleaseFast** |
 | Zig (native) | 0.16.0 — native baseline, build-exe -OReleaseFast |
 | Java | openjdk version 25.0.4.1 2026-08-18 — precompiled with javac, JVM startup included |
 | Node.js | v22.23.1 |
@@ -55,13 +55,13 @@ Expected output: `9227465`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 19.1 ms | 191.9 µs | 18.9 ms | 20.1 ms | 1.00× | 0.7 MiB |
-| Java | 42.0 ms | 808.2 µs | 40.2 ms | 43.3 ms | 2.20× | 38.3 MiB |
-| Node.js | 144.3 ms | 975.1 µs | 142.6 ms | 146.0 ms | 7.56× | 58.5 MiB |
-| **Dusk** | **413.3 ms** | **5.0 ms** | **407.9 ms** | **423.4 ms** | **21.66×** | **1.2 MiB** |
-| Lua | 452.2 ms | 6.5 ms | 443.8 ms | 459.0 ms | 23.70× | 2.7 MiB |
-| Ruby | 686.9 ms | 15.5 ms | 678.5 ms | 714.5 ms | 36.00× | 14.8 MiB |
-| Python 3 | 905.2 ms | 36.2 ms | 858.5 ms | 958.8 ms | 47.44× | 9.4 MiB |
+| Zig (native) | 21.6 ms | 4.1 ms | 19.1 ms | 34.9 ms | 1.00× | 0.7 MiB |
+| Java | 49.7 ms | 8.4 ms | 42.9 ms | 71.5 ms | 2.30× | 38.3 MiB |
+| Node.js | 173.0 ms | 17.1 ms | 149.5 ms | 196.1 ms | 8.00× | 58.7 MiB |
+| **Dusk** | **498.7 ms** | **10.9 ms** | **490.2 ms** | **515.5 ms** | **23.05×** | **1.3 MiB** |
+| Lua | 518.6 ms | 4.2 ms | 514.5 ms | 524.7 ms | 23.97× | 2.8 MiB |
+| Ruby | 751.1 ms | 26.8 ms | 713.7 ms | 780.7 ms | 34.72× | 14.5 MiB |
+| Python 3 | 959.5 ms | 16.9 ms | 943.2 ms | 984.3 ms | 44.36× | 9.2 MiB |
 
 ![Recursive Fibonacci](assets/fib.png)
 
@@ -75,13 +75,13 @@ Expected output: `50049`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 6.1 ms | 225.2 µs | 5.6 ms | 7.1 ms | 1.00× | 3.8 MiB |
-| Java | 31.7 ms | 1.3 ms | 30.0 ms | 36.3 ms | 5.19× | 44.2 MiB |
-| Node.js | 147.7 ms | 1.2 ms | 145.4 ms | 149.9 ms | 24.16× | 85.3 MiB |
-| Lua | 261.9 ms | 4.4 ms | 254.2 ms | 270.2 ms | 42.86× | 21.6 MiB |
-| **Dusk** | **459.3 ms** | **20.6 ms** | **422.5 ms** | **483.9 ms** | **75.16×** | **17.0 MiB** |
-| Ruby | 1.458 s | 17.5 ms | 1.438 s | 1.481 s | 238.57× | 30.8 MiB |
-| Python 3 | 1.681 s | 103.7 ms | 1.571 s | 1.803 s | 275.06× | 34.9 MiB |
+| Zig (native) | 8.7 ms | 5.3 ms | 5.8 ms | 44.8 ms | 1.00× | 3.8 MiB |
+| Java | 41.8 ms | 13.3 ms | 31.8 ms | 76.9 ms | 4.81× | 43.8 MiB |
+| Node.js | 186.6 ms | 13.8 ms | 160.1 ms | 202.0 ms | 21.47× | 85.2 MiB |
+| Lua | 309.9 ms | 12.4 ms | 293.1 ms | 331.8 ms | 35.65× | 21.5 MiB |
+| **Dusk** | **834.6 ms** | **34.9 ms** | **795.8 ms** | **869.2 ms** | **95.99×** | **16.9 MiB** |
+| Ruby | 1.701 s | 38.5 ms | 1.665 s | 1.755 s | 195.59× | 30.7 MiB |
+| Python 3 | 1.938 s | 36.8 ms | 1.893 s | 1.992 s | 222.93× | 34.9 MiB |
 
 ![Particle System](assets/particles.png)
 
@@ -95,13 +95,13 @@ Expected output: `9592`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 719.9 µs | 54.9 µs | 579.7 µs | 901.8 µs | 1.00× | 0.8 MiB |
-| Lua | 5.3 ms | 203.3 µs | 4.8 ms | 5.9 ms | 7.30× | 4.8 MiB |
-| **Dusk** | **9.0 ms** | **368.8 µs** | **8.1 ms** | **10.8 ms** | **12.51×** | **3.0 MiB** |
-| Java | 16.4 ms | 361.5 µs | 15.9 ms | 17.6 ms | 22.83× | 38.1 MiB |
-| Python 3 | 22.3 ms | 655.7 µs | 21.3 ms | 25.6 ms | 31.04× | 10.1 MiB |
-| Ruby | 44.4 ms | 527.3 µs | 43.6 ms | 46.8 ms | 61.73× | 15.3 MiB |
-| Node.js | 73.1 ms | 820.1 µs | 71.4 ms | 74.9 ms | 101.53× | 59.7 MiB |
+| Zig (native) | 877.2 µs | 632.7 µs | 597.1 µs | 8.4 ms | 1.00× | 0.8 MiB |
+| Lua | 6.6 ms | 3.3 ms | 4.8 ms | 27.4 ms | 7.49× | 4.8 MiB |
+| **Dusk** | **12.2 ms** | **4.3 ms** | **10.0 ms** | **35.4 ms** | **13.91×** | **3.0 MiB** |
+| Java | 20.4 ms | 9.6 ms | 16.1 ms | 55.5 ms | 23.25× | 38.3 MiB |
+| Python 3 | 26.8 ms | 9.4 ms | 21.7 ms | 62.6 ms | 30.55× | 10.1 MiB |
+| Ruby | 55.1 ms | 15.8 ms | 44.7 ms | 90.1 ms | 62.79× | 15.2 MiB |
+| Node.js | 93.4 ms | 18.8 ms | 74.6 ms | 130.9 ms | 106.42× | 59.7 MiB |
 
 ![Sieve of Eratosthenes](assets/primes.png)
 
@@ -115,13 +115,13 @@ Expected output: `5001`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 651.1 µs | 54.0 µs | 534.1 µs | 818.2 µs | 1.00× | 0.8 MiB |
-| Lua | 3.0 ms | 84.1 µs | 2.7 ms | 3.3 ms | 4.59× | 3.1 MiB |
-| **Dusk** | **4.7 ms** | **132.8 µs** | **4.3 ms** | **5.1 ms** | **7.23×** | **1.5 MiB** |
-| Python 3 | 14.2 ms | 231.5 µs | 13.8 ms | 15.2 ms | 21.75× | 9.8 MiB |
-| Java | 15.8 ms | 366.0 µs | 14.9 ms | 17.3 ms | 24.26× | 38.3 MiB |
-| Ruby | 40.4 ms | 385.2 µs | 39.7 ms | 41.7 ms | 62.05× | 14.7 MiB |
-| Node.js | 71.6 ms | 1.0 ms | 70.1 ms | 74.0 ms | 110.01× | 58.9 MiB |
+| Zig (native) | 783.4 µs | 608.2 µs | 547.0 µs | 8.8 ms | 1.00× | 0.7 MiB |
+| Lua | 3.4 ms | 1.6 ms | 2.7 ms | 16.7 ms | 4.39× | 3.0 MiB |
+| **Dusk** | **6.1 ms** | **2.1 ms** | **5.1 ms** | **20.7 ms** | **7.73×** | **1.6 MiB** |
+| Python 3 | 18.5 ms | 7.5 ms | 14.2 ms | 50.7 ms | 23.66× | 9.7 MiB |
+| Java | 21.7 ms | 10.4 ms | 16.1 ms | 59.0 ms | 27.64× | 38.1 MiB |
+| Ruby | 52.5 ms | 15.7 ms | 41.1 ms | 89.4 ms | 67.00× | 14.6 MiB |
+| Node.js | 96.4 ms | 19.7 ms | 77.1 ms | 125.8 ms | 123.10× | 58.9 MiB |
 
 ![QuickSort](assets/quicksort.png)
 
@@ -135,17 +135,77 @@ Expected output: `141554306`
 
 | Language | Mean | Std dev | Min | Max | Relative | Peak mem |
 | --- | --- | --- | --- | --- | --- | --- |
-| Zig (native) | 306.0 ms | 42.3 µs | 306.0 ms | 306.1 ms | 1.00× | 0.7 MiB |
-| Java | 329.0 ms | 417.9 µs | 328.1 ms | 329.5 ms | 1.07× | 38.9 MiB |
-| Node.js | 379.8 ms | 530.0 µs | 379.1 ms | 380.6 ms | 1.24× | 60.8 MiB |
-| Lua | 4.387 s | 108.8 ms | 4.250 s | 4.525 s | 14.33× | 3.0 MiB |
-| **Dusk** | **7.713 s** | **54.2 ms** | **7.640 s** | **7.772 s** | **25.20×** | **1.2 MiB** |
-| Ruby | 9.987 s | 330.3 ms | 9.691 s | 10.509 s | 32.63× | 14.6 MiB |
-| Python 3 | 38.806 s | 806.4 ms | 38.205 s | 40.206 s | 126.80× | 9.5 MiB |
+| Zig (native) | 319.7 ms | 3.0 ms | 315.1 ms | 325.0 ms | 1.00× | 0.7 MiB |
+| Java | 354.8 ms | 13.0 ms | 342.7 ms | 379.1 ms | 1.11× | 38.7 MiB |
+| Node.js | 419.2 ms | 20.0 ms | 401.9 ms | 447.3 ms | 1.31× | 60.7 MiB |
+| Lua | 4.465 s | 121.6 ms | 4.274 s | 4.568 s | 13.97× | 3.0 MiB |
+| Ruby | 10.556 s | 371.7 ms | 10.227 s | 11.128 s | 33.01× | 14.6 MiB |
+| **Dusk** | **10.780 s** | **103.1 ms** | **10.618 s** | **10.880 s** | **33.71×** | **1.3 MiB** |
+| Python 3 | 43.590 s | 1.307 s | 41.793 s | 44.991 s | 136.33× | 9.4 MiB |
 
 ![Mandelbrot](assets/mandelbrot.png)
 
 ![Mandelbrot memory](assets/mandelbrot_mem.png)
+
+### Strings (`strings`)
+
+1,000,000 iterations of: build "item {i}: value={i*3} tag={name}" by interpolation, split it on spaces, join the pieces with commas; print the sum of the line, piece-count and joined lengths.
+
+Expected output: `73037032`
+
+| Language | Mean | Std dev | Min | Max | Relative | Peak mem |
+| --- | --- | --- | --- | --- | --- | --- |
+| Zig (native) | 93.8 ms | 2.8 ms | 89.0 ms | 102.3 ms | 1.00× | 0.7 MiB |
+| **Dusk** | **283.6 ms** | **6.5 ms** | **275.9 ms** | **298.8 ms** | **3.02×** | **3.1 MiB** |
+| Java | 342.4 ms | 7.6 ms | 331.8 ms | 353.2 ms | 3.65× | 286.5 MiB |
+| Node.js | 475.3 ms | 31.7 ms | 441.3 ms | 521.0 ms | 5.07× | 90.8 MiB |
+| Python 3 | 582.9 ms | 16.4 ms | 566.1 ms | 606.8 ms | 6.22× | 9.3 MiB |
+| Ruby | 943.6 ms | 23.7 ms | 928.6 ms | 985.5 ms | 10.06× | 14.6 MiB |
+| Lua | 1.143 s | 11.5 ms | 1.129 s | 1.158 s | 12.19× | 2.9 MiB |
+
+![Strings](assets/strings.png)
+
+![Strings memory](assets/strings_mem.png)
+
+### String Concatenation (`concat`)
+
+Grow a string by appending "ab" 200,000 times with plain concatenation (no builder), so every step copies the whole string; print the final length.
+
+Expected output: `400000`
+
+| Language | Mean | Std dev | Min | Max | Relative | Peak mem |
+| --- | --- | --- | --- | --- | --- | --- |
+| Node.js | 98.7 ms | 8.0 ms | 88.7 ms | 119.6 ms | 0.15× | 70.6 MiB |
+| Zig (native) | 660.3 ms | 8.8 ms | 649.5 ms | 669.1 ms | 1.00× | 1.3 MiB |
+| **Dusk** | **1.174 s** | **19.7 ms** | **1.149 s** | **1.193 s** | **1.78×** | **3.5 MiB** |
+| Java | 3.363 s | 39.9 ms | 3.300 s | 3.405 s | 5.09× | 592.9 MiB |
+| Ruby | 3.783 s | 445.5 ms | 3.420 s | 4.343 s | 5.73× | 78.8 MiB |
+| Lua | 4.842 s | 63.9 ms | 4.774 s | 4.946 s | 7.33× | 4.9 MiB |
+| Python 3 | 4.956 s | 601.0 ms | 3.914 s | 5.403 s | 7.51× | 10.1 MiB |
+
+![String Concatenation](assets/concat.png)
+
+![String Concatenation memory](assets/concat_mem.png)
+
+### CSV Parsing (`parse`)
+
+Build 500,000 "i,(i*7)%1000,item{i}" rows, join them with newlines, then split the text back into rows and fields and parse the first two fields as ints; print their sum plus the row count.
+
+Expected output: `125250000000`
+
+| Language | Mean | Std dev | Min | Max | Relative | Peak mem |
+| --- | --- | --- | --- | --- | --- | --- |
+| Zig (native) | 52.6 ms | 950.4 µs | 51.3 ms | 56.8 ms | 1.00× | 49.4 MiB |
+| Java | 230.6 ms | 2.8 ms | 226.4 ms | 236.2 ms | 4.39× | 259.8 MiB |
+| Node.js | 334.7 ms | 10.6 ms | 325.7 ms | 358.3 ms | 6.37× | 209.0 MiB |
+| Python 3 | 354.2 ms | 6.2 ms | 345.4 ms | 364.5 ms | 6.74× | 88.6 MiB |
+| **Dusk** | **411.7 ms** | **3.7 ms** | **407.8 ms** | **416.8 ms** | **7.83×** | **232.4 MiB** |
+| Lua | 497.0 ms | 17.4 ms | 480.2 ms | 524.2 ms | 9.45× | 82.2 MiB |
+| Ruby | 556.9 ms | 11.1 ms | 548.8 ms | 574.3 ms | 10.59× | 124.6 MiB |
+
+![CSV Parsing](assets/parse.png)
+
+![CSV Parsing memory](assets/parse_mem.png)
 
 ## Time summary
 
