@@ -1,6 +1,6 @@
 # Changelogs
 
-## v0.13 - Garou (in development)
+## v0.13 - Garou
 
 - Fixed a negative array index (`a[-1]`, `a[i] = x` with `i < 0`) crashing the VM. It is now an `ArrayOutOfBounds` runtime error, and array index errors print a message (`index 5 is out of bounds for array of length 2`) like buffer index errors
 - Breaking: `len` only takes arrays. Use `str_len(s)` for the byte count of a string and `buffer_len(b)` for a buffer.
