@@ -124,21 +124,19 @@ pub const VM = struct {
                 },
 
                 .ARRAY_LOAD => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     const idx = stack[stack_base + inst.c];
                     const value = try array.get(idx.int64);
                     stack[stack_base + inst.a] = value;
                 },
 
                 .ARRAY_APPEND => {
-                    const arr_ptr = stack[stack_base + inst.a].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
 
                     if (array.needsResize()) {
                         current_frame.cur_inst = cur_instruction;
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
-                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
+                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
                         array = try array.resize(self.getCurrentHeapAllocator());
                         stack[stack_base + inst.a].heap_obj = &array.obj;
 
@@ -151,16 +149,14 @@ pub const VM = struct {
                 },
 
                 .ARRAY_STORE => {
-                    const arr_ptr = stack[stack_base + inst.a].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
                     const idx = stack[stack_base + inst.b];
                     const value = stack[stack_base + inst.c];
                     try array.set(idx.int64, value);
                 },
 
                 .ARRAY_LEN => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     stack[stack_base + inst.a] = .{ .int64 = @intCast(array.len) };
                 },
 
@@ -194,8 +190,7 @@ pub const VM = struct {
                 },
 
                 .ARRAY_POP => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     const value = try array.pop();
                     stack[stack_base + inst.a] = value;
                 },
@@ -676,7 +671,8 @@ pub const VM = struct {
         stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
     }
 
-    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.Array {
+    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
+        const ptr = stack[stack_base + reg_idx].heap_obj;
         const current = ptr.followRelocated();
         if (current != ptr) stack[stack_base + reg_idx].heap_obj = current;
         return v.HeapValue.getParentPtr(v.Array, current);
