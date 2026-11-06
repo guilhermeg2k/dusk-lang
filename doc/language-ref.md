@@ -1298,6 +1298,12 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 | `insert(mut list, index, item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
 | `remove(mut list, index)` | `ArrayError!T` | Removes the item at `index`, moving the later items down, and returns it. Fails with `ArrayError.OutOfRange` outside the array. |
 | `clear(mut list)` | `void` | Removes every item. |
+| `reverse(mut list)` | `void` | Reverses the items in place. |
+| `slice(list, start, stop)` | `ArrayError![]T` | A new array with the items from `start` up to, not including, `stop`. The items are copies, so changing the slice never changes `list`. Fails with `ArrayError.OutOfRange` for a negative bound, `start > stop` or `stop > len(list)`. |
+| `index_of(list, item)` | `?int` | The position of the first item equal to `item`, or `null`. |
+| `contains(list, item)` | `bool` | Whether some item equals `item`. |
+
+`index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content.
 
 `insert` keeps its item like `append`, so the same [sharing rules](#sharing-values) apply: a `let` value used again later needs `copy`.
 
@@ -1396,4 +1402,6 @@ These are known gaps in v0.14 development. Most are planned in the [roadmap](roa
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.
+- **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
+- **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).
 - **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

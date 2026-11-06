@@ -12,7 +12,7 @@ func swap[T](mut xs: []T, i: int, j: int) -> void
     xs[j] = tmp
 end
 
-func reverse[T](xs: []T) -> []T
+func reversed[T](xs: []T) -> []T
     let mut out: []T = []
     let mut i = len(xs) - 1
     for i >= 0 do
@@ -23,7 +23,7 @@ func reverse[T](xs: []T) -> []T
 end
 
 func second[T](xs: []T) -> T
-    return first(reverse(xs))
+    return first(reversed(xs))
 end
 
 func maybe_first[T](xs: []T) -> ?T
@@ -60,7 +60,7 @@ func main() -> void
     let mut nums = [1, 2, 3]
     swap(nums, 0, 2)
     assert(nums[0] == 3)
-    assert(reverse([1, 2, 3])[0] == 3)
+    assert(reversed([1, 2, 3])[0] == 3)
     assert(second([1, 2, 3]) == 3)
     assert((maybe_first([7]) orelse 0) == 7)
     let empty: []int = []

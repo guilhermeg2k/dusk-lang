@@ -1,0 +1,8 @@
+struct Point
+    x: int
+end
+
+func main() -> void
+    let points = [Point(x = 1)]
+    let found = contains(points, Point(x = 1))
+end

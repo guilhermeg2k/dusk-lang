@@ -31,6 +31,8 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "_array_insert", Binding{ .native = &arrayInsert } },
     .{ "_array_remove", Binding{ .native = &arrayRemove } },
     .{ "clear", Binding{ .native = &arrayClear } },
+    .{ "index_of", Binding{ .native = &arrayIndexOf } },
+    .{ "contains", Binding{ .native = &arrayContains } },
     .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "append", Binding{ .@"inline" = &appendGen } },
@@ -147,6 +149,34 @@ pub fn arrayRemove(_: *VM, args: []v.Value) anyerror!NativeResult {
 pub fn arrayClear(_: *VM, args: []v.Value) anyerror!NativeResult {
     arrayArg(args, 0).len = 0;
     return ok(.{ .null = {} });
+}
+
+pub fn arrayIndexOf(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const index = findItem(args) orelse return ok(v.NULL_VALUE);
+    return ok(try vm.boxInt(@intCast(index)));
+}
+
+pub fn arrayContains(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return ok(.{ .bool = findItem(args) != null });
+}
+
+fn findItem(args: []v.Value) ?usize {
+    const array = arrayArg(args, 0);
+    const items = array.getDataPtr()[0..array.len];
+    for (items, 0..) |item, i| {
+        if (isSameItem(array.kind, item, args[1])) return i;
+    }
+    return null;
+}
+
+fn isSameItem(kind: v.ValueType, left: v.Value, right: v.Value) bool {
+    return switch (kind) {
+        .int64 => left.int64 == right.int64,
+        .float64 => left.float64 == right.float64,
+        .bool => left.bool == right.bool,
+        .string => std.mem.eql(u8, v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).slice(), v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).slice()),
+        else => left.heap_obj == right.heap_obj,
+    };
 }
 
 fn arrayArg(args: []v.Value, index: usize) *v.Array {

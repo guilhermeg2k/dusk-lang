@@ -2091,6 +2091,11 @@ test "builtins: insert, remove and clear change arrays in place" {
     try runCaseError("sema/append-named-shares-let.dsk", error.NeedsCopy);
 }
 
+test "builtins: reverse, slice, index_of and contains" {
+    try runCase("array-search-reverse-slice.dsk");
+    try runCaseError("sema/contains-struct.dsk", error.TypeDoesntFitSlot);
+}
+
 test "sema error: unknown return type is reported, not a crash" {
     try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }

@@ -1,0 +1,45 @@
+struct Point
+    x: int
+end
+
+func main() -> void
+    let mut xs = [1, 2, 3, 4]
+    reverse(xs)
+    assert(xs[0] == 4 and xs[3] == 1)
+    let mut odd = [1, 2, 3]
+    reverse(odd)
+    assert(odd[0] == 3 and odd[1] == 2 and odd[2] == 1)
+    let mut empty: []int = []
+    reverse(empty)
+    let mut points = [Point(x = 1), Point(x = 2)]
+    reverse(points)
+    assert(points[0].x == 2)
+
+    let part = slice(xs, 1, 3) catch []
+    assert(len(part) == 2 and part[0] == 3 and part[1] == 2)
+    let all = slice(xs, 0, len(xs)) catch []
+    assert(len(all) == 4)
+    let none = slice(xs, 2, 2) catch [9]
+    assert(len(none) == 0)
+    slice(xs, 3, 1) catch e then assert(e == ArrayError.OutOfRange) end
+    slice(xs, 0, 5) catch e then assert(e == ArrayError.OutOfRange) end
+    let mut copied = slice(points, 0, 1) catch []
+    copied[0].x = 99
+    assert(points[0].x == 2)
+    let mut grid = [[1], [2]]
+    let mut rows = slice(grid, 0, 2) catch []
+    append(rows[0], 5)
+    assert(len(grid[0]) == 1)
+
+    let names = ["ada", "bob"]
+    let wanted = str_concat("b", "ob")
+    assert(contains(names, wanted))
+    assert(!contains(names, "eve"))
+    let at = index_of(names, wanted) orelse -1
+    assert(at == 1)
+    assert((index_of([1, 2, 3], 3) orelse -1) == 2)
+    assert(index_of([1.5, 2.5], 0.5) == null)
+    assert(contains([true], true))
+    let bytes: []byte = [byte(1), byte(2)]
+    assert(contains(bytes, byte(2)))
+end
