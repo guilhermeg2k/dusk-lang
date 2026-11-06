@@ -1,1 +1,3 @@
-let n = str_to_int("1")
+func main() -> void
+    let n = str_to_int("1")
+end

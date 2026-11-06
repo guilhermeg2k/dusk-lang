@@ -1,4 +1,6 @@
-let mut rows = [[1]]
-for rows: row do
-    append(rows, [2])
+func main() -> void
+    let mut rows = [[1]]
+    for rows: row do
+        append(rows, [2])
+    end
 end

@@ -1,1 +1,3 @@
-let b = buffer("a")
+func main() -> void
+    let b = buffer("a")
+end

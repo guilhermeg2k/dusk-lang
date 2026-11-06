@@ -2,6 +2,8 @@ const std = @import("std");
 const ir = @import("ir.zig");
 const v = @import("value.zig");
 const tt = @import("type_table.zig");
+const VM = @import("vm.zig").VM;
+const natives = @import("natives.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -28,8 +30,8 @@ pub const BytecodeGen = struct {
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
     inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
+    native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
-
 
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
@@ -37,9 +39,8 @@ pub const BytecodeGen = struct {
     union_descriptors: std.ArrayList(UnionDescriptor),
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
-    is_generating_main: bool = false,
     current_function_name: []const u8 = "",
-    builtin_count: usize = 0,
+    extern_count: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
@@ -59,6 +60,7 @@ pub const BytecodeGen = struct {
             .break_patches = .empty,
             .continue_patches = .empty,
             .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
@@ -69,17 +71,13 @@ pub const BytecodeGen = struct {
         };
     }
 
-    pub fn generate(self: *Self, program: *const ir.Program, builtins: []const Function) !Program {
+    pub fn generate(self: *Self, program: *const ir.Program) !Program {
         var funcs: std.ArrayList(Function) = .empty;
-        self.builtin_count = builtins.len;
+        self.extern_count = program.externs.len;
 
-        for (builtins) |bf| {
-            switch (bf.kind) {
-                .@"inline" => |inl| try self.inline_functions_by_uid.put(bf.uid, inl),
-                else => {},
-            }
-            try self.fn_index_by_uid.put(bf.uid, @intCast(funcs.items.len));
-            try funcs.append(self.allocator, bf);
+        for (program.externs) |ext| {
+            try self.fn_index_by_uid.put(ext.uid, @intCast(funcs.items.len));
+            try funcs.append(self.allocator, try self.bindExtern(ext));
         }
 
         var next_fn_index: u16 = @intCast(funcs.items.len);
@@ -94,6 +92,7 @@ pub const BytecodeGen = struct {
                 next_fn_index += 1;
             }
         }
+
         for (program.functions) |func| {
             try self.fn_index_by_uid.put(func.uid, next_fn_index);
             next_fn_index += 1;
@@ -144,8 +143,6 @@ pub const BytecodeGen = struct {
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
-        self.is_generating_main = true;
-        defer self.is_generating_main = false;
         self.next_free_register = 0;
         self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -221,7 +218,7 @@ pub const BytecodeGen = struct {
         return chunk;
     }
 
-    fn genInstructionBlock(self: *Self, block: []const ir.Instruction) anyerror!void {
+    fn genInstructionBlock(self: *Self, block: ir.Block) anyerror!void {
         for (block) |instruction| {
             switch (instruction) {
                 .store_var => |store_var| {
@@ -236,7 +233,7 @@ pub const BytecodeGen = struct {
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
                 },
-                .scope => |instructions| {
+                .block => |instructions| {
                     const saved_next_free = self.next_free_register;
                     try self.genInstructionBlock(instructions);
                     self.freeRegisterN(self.next_free_register - saved_next_free);
@@ -277,6 +274,7 @@ pub const BytecodeGen = struct {
             self.register_types[idx] = store_var.type_id;
             return;
         }
+
         const reg_idx = try self.genValue(store_var.value, try self.consumeRegister());
         self.register_types[reg_idx] = store_var.type_id;
         try self.bindVariable(store_var.uid, reg_idx);
@@ -413,7 +411,7 @@ pub const BytecodeGen = struct {
 
     fn pushLoopCtx(self: *Self) !void {
         try self.loop_stack.append(self.allocator, LoopContext{
-            .first_break_patch_idx = self.break_patches.items.len,
+            .first_break_patch_index = self.break_patches.items.len,
             .first_continue_patch_index = self.continue_patches.items.len,
         });
     }
@@ -421,10 +419,56 @@ pub const BytecodeGen = struct {
     fn popLoopCtx(self: *Self) !void {
         const ctx = self.loop_stack.pop() orelse unreachable;
         const loop_end = self.chunk_instructions.items.len;
-        for (self.break_patches.items[ctx.first_break_patch_idx..]) |patch_idx| {
-            self.chunk_instructions.items[patch_idx].putAEx(@intCast(loop_end));
+        for (self.break_patches.items[ctx.first_break_patch_index..]) |patch_index| {
+            self.chunk_instructions.items[patch_index].putAEx(@intCast(loop_end));
         }
-        self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_idx);
+        self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_index);
+    }
+
+    fn bindExtern(self: *Self, ext: ir.Extern) !Function {
+        const binding = natives.bindings.get(ext.identifier) orelse @panic("extern without binding");
+        const num_args: u8 = @intCast(ext.params.len);
+        const kind: FunctionKind = switch (binding) {
+            .native => |func| blk: {
+                try self.native_params_by_uid.put(ext.uid, ext.params);
+                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
+            },
+            .@"inline" => |gen| blk: {
+                const inl = InlineFn{ .gen = gen, .num_args = num_args };
+                try self.inline_functions_by_uid.put(ext.uid, inl);
+                break :blk .{ .@"inline" = inl };
+            },
+        };
+        return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
+    }
+
+    fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {
+        return param.type_id == self.type_table.getPrimitive(.dynamic);
+    }
+
+    fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
+        var count: u8 = 0;
+        for (params) |param| {
+            if (self.isDynamicParam(param)) count += 1;
+        }
+        return count;
+    }
+
+    fn genArgKinds(self: *Self, fc: ir.FnCall) !usize {
+        const params = self.native_params_by_uid.get(fc.fn_uid) orelse return 0;
+        var count: usize = 0;
+        for (params, fc.args) |param, arg| {
+            if (!self.isDynamicParam(param)) continue;
+            const kind_reg = try self.consumeRegister();
+            const kind_value = ir.Value{
+                .type_id = self.type_table.getPrimitive(.int),
+                .data = .{ .i_int = @intFromEnum(v.ValueType.fromTypeId(self.type_table, arg.type_id)) },
+            };
+            try self.genLoadConst(v.TypedValue.from_ir_value(&kind_value), kind_reg);
+            self.register_types[kind_reg] = self.type_table.getPrimitive(.int);
+            count += 1;
+        }
+        return count;
     }
 
     fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
@@ -446,18 +490,7 @@ pub const BytecodeGen = struct {
             return;
         }
 
-        //note: temp hacky for echo
-        if (fc.fn_uid == 0) {
-            const arg_type_id = fc.args[0].type_id;
-            const arg_value_type = v.ValueType.fromTypeId(self.type_table, arg_type_id);
-            const type_reg = try self.consumeRegister();
-            const type_value = ir.Value{
-                .type_id = self.type_table.getPrimitive(.int),
-                .data = .{ .i_int = @intFromEnum(arg_value_type) },
-            };
-            try self.genLoadConst(v.TypedValue.from_ir_value(&type_value), type_reg);
-            self.register_types[type_reg] = self.type_table.getPrimitive(.int);
-        }
+        const kind_count = try self.genArgKinds(fc);
 
         var fn_call = Instruction{
             .op = .CALL,
@@ -469,8 +502,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
 
-        const num_args = fc.args.len + if (fc.fn_uid == 0) @as(usize, 1) else @as(usize, 0);
-        self.freeRegisterN(num_args);
+        self.freeRegisterN(fc.args.len + kind_count);
         self.register_types[target_reg] = value.type_id;
     }
 
@@ -492,6 +524,7 @@ pub const BytecodeGen = struct {
         if (return_stmt.value) |value| {
             if (self.tailCallIndex(value)) |fn_index| return self.genTailCall(value.data.fn_call, fn_index);
         }
+
         const return_value_register = if (return_stmt.value) |val|
             try self.genValue(val, try self.consumeRegister())
         else
@@ -506,11 +539,10 @@ pub const BytecodeGen = struct {
     }
 
     fn tailCallIndex(self: *Self, value: *const ir.Value) ?u16 {
-        if (self.is_generating_main) return null;
         if (value.data != .fn_call) return null;
         if (self.type_table.isErrorUnion(value.type_id)) return null;
         const fn_index = self.fn_index_by_uid.get(value.data.fn_call.fn_uid) orelse return null;
-        if (fn_index < self.builtin_count) return null;
+        if (fn_index < self.extern_count) return null;
         return fn_index;
     }
 
@@ -1242,11 +1274,7 @@ pub const BytecodeGen = struct {
     fn tooManyRegisters(self: *Self) BytecodeError {
         if (@import("builtin").is_test) return BytecodeError.TooManyRegisters;
         const hint = "uses more than 255 registers at once (variables and temporaries); split it into smaller functions";
-        if (self.is_generating_main) {
-            std.debug.print("error: the top-level code {s}\n", .{hint});
-        } else {
-            std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
-        }
+        std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
         return BytecodeError.TooManyRegisters;
     }
 
@@ -1469,8 +1497,12 @@ pub const Program = struct {
     error_names: []const []const u8,
 };
 
-pub const HostFn = struct {
-    func: *const fn (args: []v.Value) v.Value,
+pub const NativeResult = struct { value: v.Value, has_failed: bool = false };
+
+pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
+
+pub const NativeFn = struct {
+    func: NativeFnPtr,
     num_args: u8,
 };
 
@@ -1481,7 +1513,7 @@ pub const InlineFn = struct {
 
 pub const FunctionKind = union(enum) {
     dusk: Chunk,
-    host: HostFn,
+    native: NativeFn,
     @"inline": InlineFn,
 };
 
@@ -1575,20 +1607,17 @@ pub const Chunk = struct {
             .ARRAY_STORE,
             .BYTES_GET,
             .BYTES_SET,
-            .BYTES_CONCAT,
-            .STR_JOIN,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .ARRAY_APPEND,
             .ARRAY_LEN,
             .ARRAY_POP,
             .BYTES_NEW,
             .BYTES_LEN,
-            .BYTES_COPY,
             .DEEP_COPY,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
             .STR_BUILD => std.debug.print("R[{d}] RECIPE[{d}]", .{ inst.a, inst.bEx() }),
-            .TO_STRING, .STR_TO_NUMBER, .STR_OP => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .TO_STRING => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -1654,12 +1683,7 @@ pub const OpCode = enum(u8) {
     BYTES_LEN,
     BYTES_GET,
     BYTES_SET,
-    BYTES_COPY,
-    BYTES_CONCAT,
-    STR_JOIN,
-    STR_TO_NUMBER,
     DEEP_COPY,
-    STR_OP,
 
     STRUCT_INIT,
     STRUCT_LOAD,
@@ -1670,7 +1694,6 @@ pub const OpCode = enum(u8) {
     UNION_STORE,
     UNION_TAG,
     UNION_PAYLOAD,
-
 
     NULL_BOX_INIT,
     NULL_BOX_UNWRAP,
@@ -1723,7 +1746,7 @@ pub const OpCode = enum(u8) {
     JUMP_IF_FALSE,
 
     pub fn canFail(self: Self) bool {
-        return self == .CALL or self == .STR_TO_NUMBER or self == .STR_OP;
+        return self == .CALL;
     }
 
     pub fn canTriggerGc(self: Self) bool {
@@ -1737,10 +1760,6 @@ pub const OpCode = enum(u8) {
             .STR_BUILD,
             .TO_STRING,
             .BYTES_NEW,
-            .BYTES_COPY,
-            .BYTES_CONCAT,
-            .STR_JOIN,
-            .STR_OP,
             .DEEP_COPY,
             .CALL,
             => true,
@@ -1795,25 +1814,6 @@ pub const OpCode = enum(u8) {
     }
 };
 
-pub const StringOp = enum(u8) {
-    equal,
-    find,
-    contains,
-    starts_with,
-    ends_with,
-    count,
-    trim,
-    split,
-    replace,
-    upper,
-    lower,
-    repeat,
-    slice,
-    from_buffer,
-    byte_at,
-    char_at,
-};
-
 const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };
 
 const FailingCallHandler = union(enum) {
@@ -1822,6 +1822,6 @@ const FailingCallHandler = union(enum) {
 };
 
 const LoopContext = struct {
-    first_break_patch_idx: usize,
+    first_break_patch_index: usize,
     first_continue_patch_index: usize,
 };

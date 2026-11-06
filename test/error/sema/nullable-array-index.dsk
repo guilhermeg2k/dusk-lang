@@ -1,2 +1,4 @@
-let a: ?[]int = [1]
-echo(a[0])
+func main() -> void
+    let a: ?[]int = [1]
+    echo(a[0])
+end

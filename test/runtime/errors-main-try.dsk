@@ -9,5 +9,7 @@ func parse(n: int) -> !int
     return n
 end
 
-let a = try parse(1)
-let b = try parse(0)
+func main() -> !void
+    let a = try parse(1)
+    let b = try parse(0)
+end

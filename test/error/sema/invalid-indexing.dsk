@@ -1,2 +1,4 @@
-let arr = [1, 2, 3]
-echo(arr["not int"])
+func main() -> void
+    let arr = [1, 2, 3]
+    echo(arr["not int"])
+end

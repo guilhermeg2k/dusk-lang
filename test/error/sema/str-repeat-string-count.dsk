@@ -1,1 +1,3 @@
-echo(str_repeat("a", "b") catch "")
+func main() -> void
+    echo(str_repeat("a", "b") catch "")
+end

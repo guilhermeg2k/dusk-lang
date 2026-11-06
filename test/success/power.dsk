@@ -13,7 +13,9 @@ func power(base: int, exp: int) -> int
     return base * power(base, exp - 1)
 end
 
-assert(power(base=2, exp=0) == 1)
-assert(power(2, 3) == 8)
-assert(power(5, 2) == 25)
-assert(power(3, 4) == 81)
+func main() -> void
+    assert(power(base=2, exp=0) == 1)
+    assert(power(2, 3) == 8)
+    assert(power(5, 2) == 25)
+    assert(power(3, 4) == 81)
+end

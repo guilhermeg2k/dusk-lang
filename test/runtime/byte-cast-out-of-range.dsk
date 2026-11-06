@@ -1,2 +1,5 @@
 let n = 256
-let b = byte(n)
+
+func main() -> void
+    let b = byte(n)
+end

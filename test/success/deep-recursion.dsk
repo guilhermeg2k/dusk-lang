@@ -13,12 +13,6 @@ func recurse(depth: int) -> int
 # 200 is well under the 256 frame limit but deep enough to test GC tracing
 end
 
-let result = recurse(200)
-assert(result == 20100)
-
-# second test: create trash in deeper frames, keep canary at top
-let canary = [77, 88, 99]
-
 func recurse_with_trash(depth: int) -> int
     let _trash = [depth, depth, depth, depth]
 
@@ -29,8 +23,16 @@ func recurse_with_trash(depth: int) -> int
     return depth + recurse_with_trash(depth - 1)
 end
 
-let sum = recurse_with_trash(250)
-assert(sum == 31375)
-assert(canary[0] == 77)
-assert(canary[1] == 88)
-assert(canary[2] == 99)
+func main() -> void
+    let result = recurse(200)
+    assert(result == 20100)
+
+    # second test: create trash in deeper frames, keep canary at top
+    let canary = [77, 88, 99]
+
+    let sum = recurse_with_trash(250)
+    assert(sum == 31375)
+    assert(canary[0] == 77)
+    assert(canary[1] == 88)
+    assert(canary[2] == 99)
+end

@@ -1,2 +1,4 @@
-let optional: ?int = null
-optional orelse echo(1)
+func main() -> void
+    let optional: ?int = null
+    optional orelse echo(1)
+end

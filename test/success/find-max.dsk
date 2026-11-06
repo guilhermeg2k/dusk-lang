@@ -20,7 +20,9 @@ func find_max(arr: []int) -> int
     return max_val
 end
 
-echo(find_max([10, 50, 5, 213, 2131, 21312312321, 321321]))
-echo(find_max([]))
-echo(find_max([10000]))
-echo(find_max([0, 0, 0, 0, 0, 0, 0, 1]))
+func main() -> void
+    echo(find_max([10, 50, 5, 213, 2131, 21312312321, 321321]))
+    echo(find_max([]))
+    echo(find_max([10000]))
+    echo(find_max([0, 0, 0, 0, 0, 0, 0, 1]))
+end

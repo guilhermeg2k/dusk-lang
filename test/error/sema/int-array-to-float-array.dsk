@@ -1,0 +1,4 @@
+func main() -> void
+    let ints = [1, 2]
+    let floats: []float = ints
+end

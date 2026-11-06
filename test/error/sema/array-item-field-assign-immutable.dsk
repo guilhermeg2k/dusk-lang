@@ -5,5 +5,7 @@ struct P
     end
 end
 
-let ps = [P(x = 1)]
-ps[0].x = 3
+func main() -> void
+    let ps = [P(x = 1)]
+    ps[0].x = 3
+end

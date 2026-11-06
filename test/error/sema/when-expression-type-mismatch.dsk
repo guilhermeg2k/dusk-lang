@@ -1,4 +1,6 @@
-let value = when 1
-1 then 2 end
-else then "bad" end
+func main() -> void
+    let value = when 1
+    1 then 2 end
+    else then "bad" end
+    end
 end

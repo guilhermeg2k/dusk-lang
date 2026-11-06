@@ -1,5 +1,0 @@
-let mut limit = 3
-
-func check(n: int = limit) -> bool
-    return n > 0
-end

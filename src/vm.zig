@@ -2,8 +2,9 @@ const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const util = @import("util.zig");
-const RunTimeError = @import("error.zig").RunTimeError;
-const BuiltIn = @import("built-in.zig").BuiltIn;
+const RuntimeError = @import("error.zig").RuntimeError;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
+const format = @import("format.zig");
 
 pub const VM = struct {
     const Self = @This();
@@ -19,8 +20,9 @@ pub const VM = struct {
     stack: []v.Value,
     heap: Heap,
     scratch: std.Io.Writer.Allocating,
+    stdout: ?*std.Io.Writer,
 
-    pub fn init(program: *const bc.Program) VM {
+    pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
             .allocator = std.heap.page_allocator,
             .frames = &.{},
@@ -35,12 +37,18 @@ pub const VM = struct {
                 .threshold = MIN_GC_THRESHOLD,
             },
             .scratch = .init(std.heap.page_allocator),
+            .stdout = stdout,
         };
     }
 
-    noinline fn formatValue(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
+    pub fn deinit(self: *Self) void {
+        self.scratch.deinit();
+        for (&self.heap.arenas) |*arena| arena.deinit();
+    }
+
+    noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
         self.scratch.clearRetainingCapacity();
-        BuiltIn.printValue(&self.scratch.writer, value, kind);
+        format.printValue(&self.scratch.writer, value, kind);
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
         @memcpy(result.mutableSlice(), bytes);
@@ -54,7 +62,7 @@ pub const VM = struct {
                 try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
                 continue;
             }
-            BuiltIn.printValue(&self.scratch.writer, part, kind);
+            format.printValue(&self.scratch.writer, part, kind);
         }
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
@@ -94,7 +102,7 @@ pub const VM = struct {
 
                 .TO_STRING => {
                     current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try self.formatValue(stack[stack_base + inst.b], @enumFromInt(inst.c));
+                    stack[stack_base + inst.a] = try self.toString(stack[stack_base + inst.b], @enumFromInt(inst.c));
                 },
 
                 .STR_BUILD => {
@@ -116,21 +124,19 @@ pub const VM = struct {
                 },
 
                 .ARRAY_LOAD => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     const idx = stack[stack_base + inst.c];
-                    const value = try array.get(@intCast(idx.int64));
+                    const value = try array.get(idx.int64);
                     stack[stack_base + inst.a] = value;
                 },
 
                 .ARRAY_APPEND => {
-                    const arr_ptr = stack[stack_base + inst.a].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
 
                     if (array.needsResize()) {
                         current_frame.cur_inst = cur_instruction;
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
-                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
+                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
                         array = try array.resize(self.getCurrentHeapAllocator());
                         stack[stack_base + inst.a].heap_obj = &array.obj;
 
@@ -143,16 +149,14 @@ pub const VM = struct {
                 },
 
                 .ARRAY_STORE => {
-                    const arr_ptr = stack[stack_base + inst.a].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
                     const idx = stack[stack_base + inst.b];
                     const value = stack[stack_base + inst.c];
-                    try array.set(@intCast(idx.int64), value);
+                    try array.set(idx.int64, value);
                 },
 
                 .ARRAY_LEN => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     stack[stack_base + inst.a] = .{ .int64 = @intCast(array.len) };
                 },
 
@@ -169,43 +173,15 @@ pub const VM = struct {
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
-                    if (index < 0 or index >= bytes.len) return indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
                     stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
                 },
 
                 .BYTES_SET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
                     const index = stack[stack_base + inst.b].int64;
-                    if (index < 0 or index >= bytes.len) return indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
-                },
-
-                .BYTES_CONCAT => {
-                    current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try self.concatBytes(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
-                },
-
-                .STR_JOIN => {
-                    current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try self.joinStrings(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
-                },
-
-                .STR_TO_NUMBER => {
-                    const result = convertText(stack[stack_base + inst.b], @enumFromInt(inst.c));
-                    stack[stack_base + inst.a] = result.value;
-                    if (result.has_failed) cur_instruction += 1;
-                },
-
-                .STR_OP => {
-                    current_frame.cur_inst = cur_instruction;
-                    const result = try self.runStringOp(@enumFromInt(inst.c), stack[stack_base + inst.b ..]);
-                    stack[stack_base + inst.a] = result.value;
-                    if (result.has_failed) cur_instruction += 1;
-                },
-
-                .BYTES_COPY => {
-                    current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try self.copyToBuffer(&stack[stack_base + inst.b]);
                 },
 
                 .DEEP_COPY => {
@@ -214,8 +190,7 @@ pub const VM = struct {
                 },
 
                 .ARRAY_POP => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     const value = try array.pop();
                     stack[stack_base + inst.a] = value;
                 },
@@ -480,7 +455,7 @@ pub const VM = struct {
 
                 .I_TO_BYTE => {
                     const number = stack[stack_base + inst.b].int64;
-                    if (number < 0 or number > 255) return byteOutOfRange(number);
+                    if (number < 0 or number > 255) return RuntimeErrorReporter.byteOutOfRange(number);
                     stack[stack_base + inst.a] = .{ .int64 = number };
                 },
 
@@ -502,7 +477,7 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
-                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return self.callDepthExceeded();
+                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
                             self.frames[self.frame_count] = .{
                                 .function = func,
                                 .cur_inst = 0,
@@ -514,9 +489,12 @@ pub const VM = struct {
                             instructions = func.kind.dusk.instructions;
                             stack_base = new_offset;
                         },
-                        .host => |b| {
-                            const args = stack[stack_base + inst.a + 1 ..][0..b.num_args];
-                            stack[stack_base + inst.a] = b.func(args);
+                        .native => |n| {
+                            current_frame.cur_inst = cur_instruction;
+                            const args = stack[stack_base + inst.a + 1 ..][0..n.num_args];
+                            const result = try n.func(self, args);
+                            stack[stack_base + inst.a] = result.value;
+                            if (result.has_failed) cur_instruction += 1;
                         },
                         .@"inline" => unreachable,
                     }
@@ -562,7 +540,7 @@ pub const VM = struct {
                 },
 
                 .PANIC_ERR => {
-                    return self.panicUnhandledError(stack[stack_base + inst.a]);
+                    return RuntimeErrorReporter.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
                 },
                 else => unreachable,
             }
@@ -570,20 +548,10 @@ pub const VM = struct {
     }
 
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
-        if (len < 0) return negativeBufferSize(len);
+        if (len < 0) return RuntimeErrorReporter.negativeBufferSize(len);
         const size = v.Bytes.calc_size(@intCast(len));
         try self.maybeCollectGarbage(size);
         const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
-        self.increaseHeapAllocationCount(size);
-        return .{ .heap_obj = &bytes.obj };
-    }
-
-    noinline fn copyToBuffer(self: *Self, source: *const v.Value) !v.Value {
-        const source_len = v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).len;
-        const size = v.Bytes.calc_size(source_len);
-        try self.maybeCollectGarbage(size);
-        const source_bytes = v.HeapValue.getParentPtr(v.Bytes, source.heap_obj).slice();
-        const bytes = try v.Bytes.init(self.getCurrentHeapAllocator(), source_bytes, .buffer);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &bytes.obj };
     }
@@ -632,8 +600,7 @@ pub const VM = struct {
 
     fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
-        var current = slot.heap_obj;
-        while (current.relocated) |relocated| current = relocated;
+        const current = slot.heap_obj.followRelocated();
         if (current.kind == .string or current.kind == .null_box) {
             slot.heap_obj = current;
             return;
@@ -649,220 +616,7 @@ pub const VM = struct {
         slot.heap_obj = copy;
     }
 
-    noinline fn concatBytes(self: *Self, left: *const v.Value, right: *const v.Value) !v.Value {
-        const left_len = v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).len;
-        const right_len = v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).len;
-        const size = v.Bytes.calc_size(left_len + right_len);
-        try self.maybeCollectGarbage(size);
-        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), left_len + right_len, .string);
-        const data = result.mutableSlice();
-        @memcpy(data[0..left_len], v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).slice());
-        @memcpy(data[left_len..], v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).slice());
-        self.increaseHeapAllocationCount(size);
-        return .{ .heap_obj = &result.obj };
-    }
-
-    noinline fn joinStrings(self: *Self, parts_value: *v.Value, separator: *const v.Value) !v.Value {
-        var parts = joinParts(parts_value);
-        const separator_len = v.HeapValue.getParentPtr(v.Bytes, separator.heap_obj).len;
-        var total: usize = 0;
-        for (parts, 0..) |part, i| {
-            if (i > 0) total += separator_len;
-            total += v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).len;
-        }
-        const size = v.Bytes.calc_size(total);
-        try self.maybeCollectGarbage(size);
-        parts = joinParts(parts_value);
-        const separator_bytes = v.HeapValue.getParentPtr(v.Bytes, separator.heap_obj).slice();
-        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), total, .string);
-        const data = result.mutableSlice();
-        var offset: usize = 0;
-        for (parts, 0..) |part, i| {
-            if (i > 0) {
-                @memcpy(data[offset..][0..separator_bytes.len], separator_bytes);
-                offset += separator_bytes.len;
-            }
-            const part_bytes = v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice();
-            @memcpy(data[offset..][0..part_bytes.len], part_bytes);
-            offset += part_bytes.len;
-        }
-        self.increaseHeapAllocationCount(size);
-        return .{ .heap_obj = &result.obj };
-    }
-
-    fn joinParts(parts_value: *v.Value) []const v.Value {
-        if (v.HeapValue.followRelocated(parts_value.heap_obj)) |relocated| parts_value.heap_obj = relocated;
-        const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
-        return array.getDataPtr()[0..array.len];
-    }
-
-    const OpResult = struct { value: v.Value, has_failed: bool };
-
-    fn bytesArg(args: []const v.Value, index: usize) []const u8 {
-        return v.HeapValue.getParentPtr(v.Bytes, args[index].heap_obj).slice();
-    }
-
-    fn stringFailure(id: i64) OpResult {
-        return .{ .value = .{ .int64 = id }, .has_failed = true };
-    }
-
-    fn succeeded(value: v.Value) OpResult {
-        return .{ .value = value, .has_failed = false };
-    }
-
-    noinline fn runStringOp(self: *Self, op: bc.StringOp, args: []v.Value) !OpResult {
-        const text = bytesArg(args, 0);
-        return switch (op) {
-            .equal => {
-                const left = v.HeapValue.getParentPtr(v.Bytes, args[0].heap_obj);
-                const right = v.HeapValue.getParentPtr(v.Bytes, args[1].heap_obj);
-                if (!args[2].bool) return succeeded(.{ .bool = left.eql(right) });
-                return succeeded(.{ .bool = isEqualIgnoringCase(left.slice(), right.slice()) });
-            },
-            .find => {
-                const needle = bytesArg(args, 1);
-                if (needle.len == 0) return succeeded(v.NULL_VALUE);
-                const index = std.mem.indexOf(u8, text, needle) orelse return succeeded(v.NULL_VALUE);
-                return succeeded(try self.boxInt(@intCast(index)));
-            },
-            .contains => {
-                const needle = bytesArg(args, 1);
-                return succeeded(.{ .bool = needle.len > 0 and std.mem.indexOf(u8, text, needle) != null });
-            },
-            .starts_with => {
-                const prefix = bytesArg(args, 1);
-                return succeeded(.{ .bool = prefix.len > 0 and std.mem.startsWith(u8, text, prefix) });
-            },
-            .ends_with => {
-                const suffix = bytesArg(args, 1);
-                return succeeded(.{ .bool = suffix.len > 0 and std.mem.endsWith(u8, text, suffix) });
-            },
-            .count => {
-                const needle = bytesArg(args, 1);
-                if (needle.len == 0) return succeeded(.{ .int64 = 0 });
-                return succeeded(.{ .int64 = @intCast(std.mem.count(u8, text, needle)) });
-            },
-            .trim => {
-                const trimmed = std.mem.trim(u8, text, ascii_whitespace);
-                const start = @intFromPtr(trimmed.ptr) - @intFromPtr(text.ptr);
-                const result = try self.allocString(trimmed.len);
-                @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..trimmed.len]);
-                return succeeded(.{ .heap_obj = &result.obj });
-            },
-            .upper, .lower => {
-                const result = try self.allocString(text.len);
-                const data = result.mutableSlice();
-                @memcpy(data, bytesArg(args, 0));
-                changeCase(data, op == .upper);
-                return succeeded(.{ .heap_obj = &result.obj });
-            },
-            .repeat => {
-                const count = args[1].int64;
-                if (count < 0) return stringFailure(BuiltIn.string_negative_count_id);
-                const total = std.math.mul(usize, text.len, @intCast(count)) catch return error.OutOfMemory;
-                const result = try self.allocString(total);
-                const data = result.mutableSlice();
-                const source = bytesArg(args, 0);
-                var offset: usize = 0;
-                while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
-                return succeeded(.{ .heap_obj = &result.obj });
-            },
-            .replace => {
-                const old = bytesArg(args, 1);
-                if (old.len == 0) return succeeded(args[0]);
-                const matches = std.mem.count(u8, text, old);
-                const total = text.len - matches * old.len + matches * bytesArg(args, 2).len;
-                const result = try self.allocString(total);
-                _ = std.mem.replace(u8, bytesArg(args, 0), bytesArg(args, 1), bytesArg(args, 2), result.mutableSlice());
-                return succeeded(.{ .heap_obj = &result.obj });
-            },
-            .slice => {
-                const start = args[1].int64;
-                const end = args[2].int64;
-                const is_in_range = start >= 0 and start <= end and end <= text.len;
-                if (!is_in_range) return stringFailure(BuiltIn.string_out_of_range_id);
-                const start_index: usize = @intCast(start);
-                const end_index: usize = @intCast(end);
-                if (!isCharBoundary(text, start_index) or !isCharBoundary(text, end_index)) return stringFailure(BuiltIn.string_out_of_range_id);
-                const result = try self.allocString(end_index - start_index);
-                @memcpy(result.mutableSlice(), bytesArg(args, 0)[start_index..end_index]);
-                return succeeded(.{ .heap_obj = &result.obj });
-            },
-            .split => succeeded(try self.splitString(args)),
-            .byte_at => {
-                const index = args[1].int64;
-                if (index < 0 or index >= text.len) return stringFailure(BuiltIn.string_out_of_range_id);
-                return succeeded(.{ .int64 = text[@intCast(index)] });
-            },
-            .char_at => {
-                const wanted = args[1].int64;
-                if (wanted < 0) return stringFailure(BuiltIn.string_out_of_range_id);
-                var characters = Pieces{ .text = text, .separator = "" };
-                var position: i64 = 0;
-                while (characters.next()) |character| : (position += 1) {
-                    if (position != wanted) continue;
-                    const start = @intFromPtr(character.ptr) - @intFromPtr(text.ptr);
-                    const result = try self.allocString(character.len);
-                    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..character.len]);
-                    return succeeded(.{ .heap_obj = &result.obj });
-                }
-                return stringFailure(BuiltIn.string_out_of_range_id);
-            },
-            .from_buffer => {
-                if (!std.unicode.utf8ValidateSlice(text)) return stringFailure(BuiltIn.string_invalid_utf8_id);
-                const result = try self.allocString(text.len);
-                @memcpy(result.mutableSlice(), bytesArg(args, 0));
-                return succeeded(.{ .heap_obj = &result.obj });
-            },
-        };
-    }
-
-    fn isCharBoundary(text: []const u8, index: usize) bool {
-        if (index == text.len) return true;
-        return text[index] & 0xC0 != 0x80;
-    }
-
-    const ascii_whitespace = " \t\n\r\x0b\x0c";
-
-    fn isEqualIgnoringCase(left: []const u8, right: []const u8) bool {
-        if (left.len != right.len) return false;
-        var index: usize = 0;
-        while (index < left.len) : (index += 1) {
-            const is_latin_pair = left[index] == 0xC3 and right[index] == 0xC3 and index + 1 < left.len;
-            if (is_latin_pair) {
-                index += 1;
-                if (lowerLatinByte(left[index]) != lowerLatinByte(right[index])) return false;
-                continue;
-            }
-            if (std.ascii.toLower(left[index]) != std.ascii.toLower(right[index])) return false;
-        }
-        return true;
-    }
-
-    fn lowerLatinByte(second: u8) u8 {
-        const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
-        return if (is_upper_latin) second + 0x20 else second;
-    }
-
-    fn changeCase(data: []u8, is_upper: bool) void {
-        var index: usize = 0;
-        while (index < data.len) : (index += 1) {
-            const byte = data[index];
-            if (byte == 0xC3 and index + 1 < data.len) {
-                index += 1;
-                const second = data[index];
-                const is_lower_latin = second >= 0xA0 and second <= 0xBE and second != 0xB7;
-                const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
-                if (is_upper and is_lower_latin) data[index] = second - 0x20;
-                if (!is_upper and is_upper_latin) data[index] = second + 0x20;
-                continue;
-            }
-            if (is_upper and std.ascii.isLower(byte)) data[index] = std.ascii.toUpper(byte);
-            if (!is_upper and std.ascii.isUpper(byte)) data[index] = std.ascii.toLower(byte);
-        }
-    }
-
-    fn allocString(self: *Self, len: usize) !*v.Bytes {
+    pub fn allocString(self: *Self, len: usize) !*v.Bytes {
         const size = v.Bytes.calc_size(len);
         try self.maybeCollectGarbage(size);
         const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
@@ -870,134 +624,12 @@ pub const VM = struct {
         return result;
     }
 
-    const Pieces = struct {
-        text: []const u8,
-        separator: []const u8,
-        index: ?usize = 0,
-
-        fn next(self: *Pieces) ?[]const u8 {
-            const start = self.index orelse return null;
-            if (self.separator.len == 0) {
-                if (start >= self.text.len) {
-                    self.index = null;
-                    return null;
-                }
-                var end = start + 1;
-                while (!isCharBoundary(self.text, end)) end += 1;
-                self.index = end;
-                return self.text[start..end];
-            }
-            if (std.mem.indexOfPos(u8, self.text, start, self.separator)) |position| {
-                self.index = position + self.separator.len;
-                return self.text[start..position];
-            }
-            self.index = null;
-            return self.text[start..];
-        }
-    };
-
-    fn splitString(self: *Self, args: []v.Value) !v.Value {
-        var piece_count: usize = 0;
-        var total: usize = 0;
-        var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
-        while (pieces.next()) |piece| {
-            piece_count += 1;
-            total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
-        }
-        const capacity = @max(piece_count, 1);
-        total += v.Array.calc_size(capacity);
-        try self.maybeCollectGarbage(total);
-
-        const allocator = self.getCurrentHeapAllocator();
-        const array = try v.Array.init(allocator, .string, capacity);
-        self.increaseHeapAllocationCount(v.Array.calc_size(capacity));
-        pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
-        while (pieces.next()) |piece| {
-            const bytes = try v.Bytes.init(allocator, piece, .string);
-            self.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));
-            try array.append(.{ .heap_obj = &bytes.obj });
-        }
-        return .{ .heap_obj = &array.obj };
-    }
-
-    fn boxInt(self: *Self, number: i64) !v.Value {
+    pub fn boxInt(self: *Self, number: i64) !v.Value {
         const size = v.NullBox.calc_size();
         try self.maybeCollectGarbage(size);
         const box = try v.NullBox.init(self.getCurrentHeapAllocator(), .{ .int64 = number }, .int64);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &box.obj };
-    }
-
-    noinline fn convertText(text_value: v.Value, kind: v.ValueType) OpResult {
-        const text = v.HeapValue.getParentPtr(v.Bytes, text_value.heap_obj).slice();
-        const value: v.Value = switch (kind) {
-            .int64 => .{ .int64 = parseIntText(text) catch |failure| return conversionFailure(failure) },
-            .float64 => .{ .float64 = parseFloatText(text) catch |failure| return conversionFailure(failure) },
-            else => unreachable,
-        };
-        return .{ .value = value, .has_failed = false };
-    }
-
-    fn conversionFailure(failure: ConversionError) OpResult {
-        const id = switch (failure) {
-            error.Invalid => BuiltIn.conversion_invalid_id,
-            error.Overflow => BuiltIn.conversion_overflow_id,
-        };
-        return .{ .value = .{ .int64 = id }, .has_failed = true };
-    }
-
-    const ConversionError = error{ Invalid, Overflow };
-
-    fn skipDigits(text: []const u8, start: usize) usize {
-        var index = start;
-        while (index < text.len and std.ascii.isDigit(text[index])) index += 1;
-        return index;
-    }
-
-    fn parseIntText(text: []const u8) ConversionError!i64 {
-        const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
-        const digits_end = skipDigits(text, digits_start);
-        if (digits_end == digits_start or digits_end != text.len) return error.Invalid;
-        return std.fmt.parseInt(i64, text, 10) catch |failure| switch (failure) {
-            error.Overflow => error.Overflow,
-            error.InvalidCharacter => error.Invalid,
-        };
-    }
-
-    fn parseFloatText(text: []const u8) ConversionError!f64 {
-        const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
-        var end = skipDigits(text, digits_start);
-        if (end == digits_start) return error.Invalid;
-        if (end < text.len and text[end] == '.') {
-            const fraction_end = skipDigits(text, end + 1);
-            if (fraction_end == end + 1) return error.Invalid;
-            end = fraction_end;
-        }
-        if (end != text.len) return error.Invalid;
-        const number = std.fmt.parseFloat(f64, text) catch return error.Invalid;
-        if (std.math.isInf(number)) return error.Overflow;
-        return number;
-    }
-
-    noinline fn indexOutOfBounds(index: i64, len: usize) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.IndexOutOfBounds;
-        std.debug.print("error: index {d} is out of bounds for length {d}\n", .{ index, len });
-        return RunTimeError.IndexOutOfBounds;
-    }
-
-    noinline fn negativeBufferSize(len: i64) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.NegativeBufferSize;
-        std.debug.print("error: buffer size can't be negative: {d}\n", .{len});
-        return RunTimeError.NegativeBufferSize;
-    }
-
-    noinline fn byteOutOfRange(number: i64) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.ByteOutOfRange;
-        std.debug.print("error: value {d} doesn't fit in byte (0..255)\n", .{number});
-        return RunTimeError.ByteOutOfRange;
     }
 
     fn allocUntouched(self: *Self, comptime T: type, count: usize) ![]T {
@@ -1009,21 +641,6 @@ pub const VM = struct {
     fn freeUntouched(self: *Self, comptime T: type, items: []T) void {
         const bytes: [*]u8 = @ptrCast(items.ptr);
         self.allocator.rawFree(bytes[0 .. @sizeOf(T) * items.len], .of(T), @returnAddress());
-    }
-
-    noinline fn callDepthExceeded(self: *Self) RunTimeError {
-        @branchHint(.cold);
-        _ = self;
-        if (@import("builtin").is_test) return RunTimeError.CallDepthExceeded;
-        std.debug.print("error: call depth exceeded: more than {d} nested calls\n", .{MAX_CALL_DEPTH});
-        return RunTimeError.CallDepthExceeded;
-    }
-
-    noinline fn panicUnhandledError(self: *Self, err_value: v.Value) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.UnhandledError;
-        std.debug.print("error: unhandled error {s}\n", .{self.program.error_names[@intCast(err_value.int64)]});
-        return RunTimeError.UnhandledError;
     }
 
     fn initMainFrame(self: *Self) void {
@@ -1054,28 +671,19 @@ pub const VM = struct {
         stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
     }
 
-    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.Array {
-        const refreshed_pointer = refreshStackHeapPtr(stack, stack_base, reg_idx, ptr);
-        const array = v.HeapValue.getParentPtr(v.Array, refreshed_pointer);
-        return array;
+    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
+        const ptr = stack[stack_base + reg_idx].heap_obj;
+        const current = ptr.followRelocated();
+        if (current != ptr) stack[stack_base + reg_idx].heap_obj = current;
+        return v.HeapValue.getParentPtr(v.Array, current);
     }
 
-    fn refreshStackHeapPtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.HeapValue {
-        const follow = v.HeapValue.followRelocated(ptr);
-
-        if (follow) |relocated| {
-            stack[stack_base + reg_idx].heap_obj = relocated;
-        }
-
-        return follow orelse ptr;
-    }
-
-    fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
+    pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
         self.heap.allocated += bytes;
         self.heap.object_count += 1;
     }
 
-    fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
+    pub fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
         if (self.heap.allocated + bytes > self.heap.threshold) {
             try self.collectGarbage();
         }
@@ -1159,10 +767,7 @@ pub const VM = struct {
         const raw: u64 = @bitCast(value.*);
         if (raw == 0) return;
         if (self.program.string_pool.contains(value.heap_obj)) return;
-        var current = value.heap_obj;
-        while (current.relocated) |rel| {
-            current = rel;
-        }
+        const current = value.heap_obj.followRelocated();
 
         if (current.gc_forward) |fwd| {
             value.heap_obj = fwd;
@@ -1198,7 +803,7 @@ pub const VM = struct {
         };
     }
 
-    fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
+    pub fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
         return self.heap.arenas[self.heap.active].allocator();
     }
 };

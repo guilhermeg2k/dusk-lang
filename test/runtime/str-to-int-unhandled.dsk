@@ -1,1 +1,3 @@
-let n = try str_to_int("x")
+func main() -> !void
+    let n = try str_to_int("x")
+end

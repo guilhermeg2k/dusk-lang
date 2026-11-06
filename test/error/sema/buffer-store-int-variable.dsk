@@ -1,3 +1,6 @@
-let mut b = buffer(2)
 let n = 3
-b[0] = n
+
+func main() -> void
+    let mut b = buffer(2)
+    b[0] = n
+end

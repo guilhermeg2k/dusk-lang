@@ -6,6 +6,8 @@ struct Entry
     end
 end
 
-for [Entry(1)]: entry do
-    entry.update()
+func main() -> void
+    for [Entry(1)]: entry do
+        entry.update()
+    end
 end

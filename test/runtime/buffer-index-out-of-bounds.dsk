@@ -1,2 +1,4 @@
-let b = buffer(2)
-echo(b[2])
+func main() -> void
+    let b = buffer(2)
+    echo(b[2])
+end

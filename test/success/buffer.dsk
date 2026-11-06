@@ -1,39 +1,7 @@
-let mut buf = buffer(4)
-echo(buf)
-echo(len(buf))
-buf[0] = 'h'
-buf[1] = 105
-buf[3] = byte(200 + 55)
-echo(buf)
-let x = buf[0]
-echo(x)
-assert(x == 'h')
-let copy = buffer_from("olá")
-echo(copy)
-echo(len(copy))
-echo(string_from(copy) catch "invalid")
-echo(string_from(buf) catch "invalid")
-let mut total = 0
-for copy: b, i do
-    total += b
-end
-echo(total)
-echo("buf=$buf")
-let maybe: ?buffer = null
-echo(maybe)
-echo(buf |> len())
-let bufs = [buffer(1), buffer(2)]
-echo(bufs)
-let empty = buffer(0)
-echo(empty)
-echo(string_from(empty) catch "x")
 struct Packet
     data: buffer
 end
-let mut p = Packet(data = buffer(2))
-p.data[1] = 9
-echo(p.data)
-echo(len(p.data))
+
 func utf8_reason(data: buffer) -> string
     let text = string_from(data) catch e then
         return when e
@@ -43,5 +11,41 @@ func utf8_reason(data: buffer) -> string
     end
     return text
 end
-echo(utf8_reason(buf))
-echo(utf8_reason(buffer_from("fine")))
+
+func main() -> void
+    let mut buf = buffer(4)
+    echo(buf)
+    echo(buffer_len(buf))
+    buf[0] = 'h'
+    buf[1] = 105
+    buf[3] = byte(200 + 55)
+    echo(buf)
+    let x = buf[0]
+    echo(x)
+    assert(x == 'h')
+    let copy = buffer_from("olá")
+    echo(copy)
+    echo(buffer_len(copy))
+    echo(string_from(copy) catch "invalid")
+    echo(string_from(buf) catch "invalid")
+    let mut total = 0
+    for copy: b, i do
+        total += b
+    end
+    echo(total)
+    echo("buf=$buf")
+    let maybe: ?buffer = null
+    echo(maybe)
+    echo(buf |> buffer_len())
+    let bufs = [buffer(1), buffer(2)]
+    echo(bufs)
+    let empty = buffer(0)
+    echo(empty)
+    echo(string_from(empty) catch "x")
+    let mut p = Packet(data = buffer(2))
+    p.data[1] = 9
+    echo(p.data)
+    echo(buffer_len(p.data))
+    echo(utf8_reason(buf))
+    echo(utf8_reason(buffer_from("fine")))
+end

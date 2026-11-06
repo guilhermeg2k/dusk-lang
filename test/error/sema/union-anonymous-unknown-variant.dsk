@@ -3,4 +3,6 @@ union U
     b: string
 end
 
-let u: U = @(c = 1)
+func main() -> void
+    let u: U = @(c = 1)
+end

@@ -5,3 +5,6 @@ union U
     a: int
     b: string
 end
+
+func main() -> void
+end

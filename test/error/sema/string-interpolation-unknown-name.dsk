@@ -1,1 +1,3 @@
-let text = "Hello, $missing"
+func main() -> void
+    let text = "Hello, $missing"
+end

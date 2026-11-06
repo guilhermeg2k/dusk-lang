@@ -301,3 +301,6 @@ func many() -> int
     let v300 = 300
     return v300
 end
+
+func main() -> void
+end

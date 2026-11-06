@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.13 - Garou (in development)**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.13 - Garou**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -23,11 +23,17 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
 ## 1. Basics
 
-A program runs from top to bottom. There is no `main` function.
+A program starts at its `main` function. Since v0.13 every program must declare one, taking no parameters and returning `void`, or an error union of `void` (`-> !void`) when it uses `try` (see [try](#try)).
 
 ```nim
-echo("Hello, Dusk")
+func main() -> void
+    echo("Hello, Dusk")
+end
 ```
+
+The top level only holds declarations: functions, structs, enums, unions, error sets and [constants](#constants). Any other statement, a `let mut` or a `let` that isn't a constant at the top level is a compile error (`StatementOutsideMain`, `TopLevelLetNotConstant`). Functions and types are declared at the top level only, not inside a function (`DeclarationInsideFunction`).
+
+To keep them short, the examples in this reference show statements without the `main` around them.
 
 **Comments** start with `#` and run to the end of the line.
 
@@ -51,7 +57,7 @@ let total = 1 #= explanation =# + 2
 
 **Hoisting**: functions, structs, enums, unions, error sets and [constants](#constants) can be used before they're defined. Other variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -154,7 +160,7 @@ Changes made through a different mutable variable that shares the same value are
 
 ### Constants
 
-A top-level `let` whose value is known at compile time is a constant: an `int`, `float`, `bool`, `byte`, string or enum value built from literals, other constants, enum variants, static fields and operators. Constants are the only top-level names functions can see (see [Scope](#scope)), and they can be used anywhere in the program, even above their declaration.
+A top-level `let` whose value is known at compile time is a constant: an `int`, `float`, `bool`, `byte`, string or enum value built from literals, other constants, enum variants, static fields and operators. Constants are the only variables allowed at the top level, every function can see them (see [Scope](#scope)), and they can be used anywhere in the program, even above their declaration.
 
 ```nim
 let WIDTH = 80
@@ -167,7 +173,7 @@ func area() -> int
 end
 ```
 
-Every other top-level variable (a `let mut`, an array, a struct, a value computed by a call) is only visible to top-level code.
+Any other value (a `let mut`, an array, a struct, a value computed by a call) is a variable and belongs inside a function, usually `main`.
 
 ## 3. Types
 
@@ -182,6 +188,10 @@ Every other top-level variable (a `let mut`, an array, a struct, a value compute
 | `buffer` | Fixed-size block of mutable bytes             | `buffer(16)`        |
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
+
+Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `float(x)` converts an `int` or `byte` explicitly (`echo(float(count))`).
+
+A `float` never converts to `int` (use `//`), a `byte` only converts to `float` with `float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
 
 Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing closing quotes are compile errors. The runtime stores the UTF-8 bytes with an explicit byte length, so embedded NUL characters are preserved.
 
@@ -252,7 +262,7 @@ let mut data = buffer(4)
 data[0] = 'h'                     # writes take a byte
 data[1] = 105
 let first = data[0]               # reads give a byte
-echo(len(data))                   # 4
+echo(buffer_len(data))            # 4
 echo(data)                        # [104, 105, 0, 0]
 
 for data: b, i do
@@ -663,7 +673,7 @@ Use parentheses to change the order.
 | `/`      | Always `float`, even for two `int`s (`3 / 2` is `1.5`)        |
 | `//`     | Always `int`: divides, then truncates (`7 // 2` is `3`)       |
 
-An `int` mixed with a `float` is promoted to `float`.
+An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitives) for the other places an `int` becomes a `float`).
 
 ### Comparison and logic
 
@@ -965,7 +975,7 @@ assert(result == false)
 
 ### Scope
 
-A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). It can't see any other top-level variable: state a function reads or changes must be passed to it, with `mut` to change it. Default values (field and parameter defaults) follow the same rule.
+A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). It can't see the variables of other functions, including `main`: state a function reads or changes must be passed to it, with `mut` to change it. Default values (field and parameter defaults) can only use constants.
 
 ```nim
 let LIMIT = 3          # a constant: visible everywhere
@@ -978,9 +988,11 @@ func bump(mut stats: Stats) -> void
     if stats.count < LIMIT then stats.count += 1 end
 end
 
-let mut stats = Stats()
-bump(stats)
-echo(stats.count)      # 1
+func main() -> void
+    let mut stats = Stats()
+    bump(stats)
+    echo(stats.count)  # 1
+end
 ```
 
 Functions can be called before they are declared.
@@ -1041,7 +1053,7 @@ end
 ```
 
 - The current function must be able to fail. With an explicit set (`ParseError!int`), every error the call can return must be in it.
-- At the top level, outside any function, a failing `try` stops the program: `error: unhandled error ParseError.BadDigit`.
+- In `main`, which must then return `!void` (or `E!void`), an error that reaches the end of `main` stops the program: `error: unhandled error ParseError.BadDigit`.
 - `try` applies to the call right after it, including `.` and `[]` (`try a.b(c)`).
 
 ### catch
@@ -1110,8 +1122,8 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `echo`        | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
 | `assert`      | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
 | `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
-| `len`         | `len(data: buffer) -> int`                        | Returns the number of bytes in a buffer.                                             |
-| `len`         | `len(text: string) -> int`                        | Returns the number of bytes in a string (UTF-8).                                     |
+| `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
+| `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(list: []T, item: T) -> void`              | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
@@ -1125,7 +1137,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 
 String functions are builtins starting with `str_`. They never change their argument: a function that produces text returns a new string. They work with pipes: `line |> str_trim()`.
 
-Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
+Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
 
 | Function                               | Returns                 | Description                                                                                                                                                       |
 | :------------------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1145,7 +1157,7 @@ Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so 
 | `str_split(text, separator)`           | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
 | `str_replace(text, old, new)`          | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
 | `str_repeat(text, count)`              | `StringError!string`    | `text` repeated `count` times; `0` gives `""`.                                                                                                                    |
-| `str_slice(text, start, stop)`         | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, len(s))` is all of `s`.                                                                     |
+| `str_slice(text, start, stop)`         | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, str_len(s))` is all of `s`.                                                                 |
 | `str_to_int(text)`                     | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `str_to_float(text)`                   | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 
@@ -1153,7 +1165,7 @@ Positions are **byte offsets**, the same unit as `len(s)` and `str_byte_at`, so 
 
 | Error | When |
 | :---- | :--- |
-| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > len(text)`, or a bound inside a multi-byte character; `str_byte_at` / `str_char_at` with an index outside the string. |
+| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > str_len(text)`, or a bound inside a multi-byte character; `str_byte_at` / `str_char_at` with an index outside the string. |
 | `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
 | `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
@@ -1194,18 +1206,19 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, a failing `try` at the top level) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
 
 ## 14. Known Limitations
 
-These are known gaps in v0.13 development. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.13. Most are planned in the [roadmap](roadmap.md).
 
-- **Registers**: a function (or the top-level code) can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
+- **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Call depth**: at most 100,000 nested calls. Going deeper stops the program with a runtime error. A call returned directly (`return f(x)`, also in a `void` function) is a tail call: it reuses the current call instead of nesting, so tail-recursive functions can run any number of steps. Calls whose result is an error union (`E!T`) aren't tail calls.
 - **Strings**: `==` compares identity (use `str_equal` for text). Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Compound assignment**: only `+=` and `-=`.
+- **`append`**: the item isn't checked against the array's item type yet, so a value of the wrong type (including an `int` into a `[]float`) is stored as is. Make sure the item has the array's item type.
 - **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.

@@ -1,11 +1,4 @@
 let text = "olá, mundo"
-echo(try str_slice(text, 0, 2))
-echo(try str_slice(text, 0, 4))
-echo(try str_slice(text, 6, len(text)))
-echo("[${try str_slice(text, 4, 4)}]")
-echo("[${try str_slice("", 0, 0)}]")
-let comma = str_find(text, ",") orelse 0
-echo(try str_slice(text, 0, comma))
 func slice_or_reason(text: string, start: int, stop: int) -> string
     let piece = str_slice(text, start, stop) catch e then
         return when e
@@ -15,9 +8,19 @@ func slice_or_reason(text: string, start: int, stop: int) -> string
     end
     return piece
 end
-echo(slice_or_reason(text, -1, 2))
-echo(slice_or_reason(text, 3, 2))
-echo(slice_or_reason(text, 0, 99))
-echo(slice_or_reason(text, 0, 3))
-echo(slice_or_reason(text, 3, 4))
-echo(slice_or_reason(text, 2, 4))
+
+func main() -> !void
+    echo(try str_slice(text, 0, 2))
+    echo(try str_slice(text, 0, 4))
+    echo(try str_slice(text, 6, str_len(text)))
+    echo("[${try str_slice(text, 4, 4)}]")
+    echo("[${try str_slice("", 0, 0)}]")
+    let comma = str_find(text, ",") orelse 0
+    echo(try str_slice(text, 0, comma))
+    echo(slice_or_reason(text, -1, 2))
+    echo(slice_or_reason(text, 3, 2))
+    echo(slice_or_reason(text, 0, 99))
+    echo(slice_or_reason(text, 0, 3))
+    echo(slice_or_reason(text, 3, 4))
+    echo(slice_or_reason(text, 2, 4))
+end

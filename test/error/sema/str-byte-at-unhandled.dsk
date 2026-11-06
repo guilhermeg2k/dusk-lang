@@ -1,1 +1,3 @@
-let b = str_byte_at("abc", 0)
+func main() -> void
+    let b = str_byte_at("abc", 0)
+end

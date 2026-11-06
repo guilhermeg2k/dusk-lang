@@ -1,4 +1,6 @@
-let number: ?int = 1
+func main() -> void
+    let number: ?int = 1
 
-let value = if number: captured then captured else 0 end
-echo(captured)
+    let value = if number: captured then captured else 0 end
+    echo(captured)
+end

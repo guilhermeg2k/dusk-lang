@@ -1,12 +1,4 @@
 let word = "olá!"
-assert((try str_byte_at(word, 0)) == 'o')
-assert((try str_byte_at(word, 2)) == 195)
-assert((try str_byte_at(word, 3)) == 161)
-assert((try str_byte_at(word, 4)) == '!')
-assert(str_equal(try str_char_at(word, 0), "o"))
-assert(str_equal(try str_char_at(word, 2), "á"))
-assert(str_equal(try str_char_at(word, 3), "!"))
-assert(str_equal(try str_char_at("🌙x", 1), "x"))
 func byte_or_reason(text: string, index: int) -> string
     let b = str_byte_at(text, index) catch e then
         return when e
@@ -16,6 +8,7 @@ func byte_or_reason(text: string, index: int) -> string
     end
     return "$b"
 end
+
 func char_or_reason(text: string, index: int) -> string
     let c = str_char_at(text, index) catch e then
         return when e
@@ -25,20 +18,31 @@ func char_or_reason(text: string, index: int) -> string
     end
     return c
 end
-echo(byte_or_reason(word, -1))
-echo(byte_or_reason(word, 5))
-echo(byte_or_reason(word, 1))
-echo(char_or_reason(word, -1))
-echo(char_or_reason(word, 4))
-echo(char_or_reason(word, 2))
-echo(char_or_reason("", 0))
-let mut digits = 0
-for "a1b22": b do
-    if b >= '0' and b <= '9' then
-        digits += 1
+
+func main() -> !void
+    assert((try str_byte_at(word, 0)) == 'o')
+    assert((try str_byte_at(word, 2)) == 195)
+    assert((try str_byte_at(word, 3)) == 161)
+    assert((try str_byte_at(word, 4)) == '!')
+    assert(str_equal(try str_char_at(word, 0), "o"))
+    assert(str_equal(try str_char_at(word, 2), "á"))
+    assert(str_equal(try str_char_at(word, 3), "!"))
+    assert(str_equal(try str_char_at("🌙x", 1), "x"))
+    echo(byte_or_reason(word, -1))
+    echo(byte_or_reason(word, 5))
+    echo(byte_or_reason(word, 1))
+    echo(char_or_reason(word, -1))
+    echo(char_or_reason(word, 4))
+    echo(char_or_reason(word, 2))
+    echo(char_or_reason("", 0))
+    let mut digits = 0
+    for "a1b22": b do
+        if b >= '0' and b <= '9' then
+            digits += 1
+        end
     end
-end
-assert(digits == 3)
-for word: b, i do
-    echo("$i: $b")
+    assert(digits == 3)
+    for word: b, i do
+        echo("$i: $b")
+    end
 end

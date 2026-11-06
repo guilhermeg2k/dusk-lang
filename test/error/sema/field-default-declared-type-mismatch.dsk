@@ -1,3 +1,6 @@
 struct S
     n: ?[]int = "x"
 end
+
+func main() -> void
+end

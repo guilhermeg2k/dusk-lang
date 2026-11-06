@@ -1,3 +1,5 @@
-for [1]: item, index do
-    index = 2
+func main() -> void
+    for [1]: item, index do
+        index = 2
+    end
 end

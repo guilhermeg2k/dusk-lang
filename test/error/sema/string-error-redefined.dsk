@@ -1,3 +1,6 @@
 error StringError
     X
 end
+
+func main() -> void
+end

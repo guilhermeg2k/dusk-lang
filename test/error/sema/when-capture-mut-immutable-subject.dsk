@@ -3,9 +3,11 @@ union U
     n: int
 end
 
-let u = U(list = [1])
+func main() -> void
+    let u = U(list = [1])
 
-when u
-    list: mut l then l[0] = 2 end
-    n: k then echo(k) end
+    when u
+        list: mut l then l[0] = 2 end
+        n: k then echo(k) end
+    end
 end

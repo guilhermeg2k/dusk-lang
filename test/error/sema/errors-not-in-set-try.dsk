@@ -17,3 +17,6 @@ end
 func f() -> IoError!int
     return try parse(1)
 end
+
+func main() -> void
+end

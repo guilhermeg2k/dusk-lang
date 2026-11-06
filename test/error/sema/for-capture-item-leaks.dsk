@@ -1,4 +1,6 @@
-for [1]: item do
-end
+func main() -> void
+    for [1]: item do
+    end
 
-echo(item)
+    echo(item)
+end

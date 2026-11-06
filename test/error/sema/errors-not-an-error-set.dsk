@@ -17,3 +17,6 @@ end
 func f() -> Point!int
     return 1
 end
+
+func main() -> void
+end

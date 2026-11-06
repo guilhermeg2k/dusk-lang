@@ -10,8 +10,11 @@ union Shape
 end
 
 let c = Color.Red
-when c
-    Color.Red then echo(1) end
-    Color.Green, Color.Blue then echo(2) end
-    else then echo(3) end
+
+func main() -> void
+    when c
+        Color.Red then echo(1) end
+        Color.Green, Color.Blue then echo(2) end
+        else then echo(3) end
+    end
 end

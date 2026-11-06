@@ -1,2 +1,4 @@
-let b = buffer(1)
-let s: string = b
+func main() -> void
+    let b = buffer(1)
+    let s: string = b
+end

@@ -5,3 +5,6 @@ end
 struct Config
     let limit = read()
 end
+
+func main() -> void
+end

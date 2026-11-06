@@ -10,8 +10,6 @@ func f(a: []int) -> int
     return out
 end
 
-assert(f([1, 2, 3]) == 3)
-
 func g() -> int
     let mut out = 0
     let other = 5
@@ -19,4 +17,8 @@ func g() -> int
     out = id(out) + other
     return out
 end
-assert(g() == 12)
+
+func main() -> void
+    assert(f([1, 2, 3]) == 3)
+    assert(g() == 12)
+end

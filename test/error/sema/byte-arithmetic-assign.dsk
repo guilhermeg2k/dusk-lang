@@ -1,2 +1,4 @@
-let mut b: byte = 'a'
-b += 1
+func main() -> void
+    let mut b: byte = 'a'
+    b += 1
+end

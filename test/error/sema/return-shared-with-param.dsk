@@ -3,3 +3,6 @@ func collect(mut rows: [][]int) -> [][]int
     append(out, rows[0])
     return out
 end
+
+func main() -> void
+end

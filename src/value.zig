@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
-const RunTimeError = @import("error.zig").RunTimeError;
+const RuntimeError = @import("error.zig").RuntimeError;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const tt = @import("type_table.zig");
 
 pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
@@ -45,16 +46,9 @@ pub const HeapValue = extern struct {
         return @as(*T, @fieldParentPtr("obj", ptr));
     }
 
-    pub fn followRelocated(ptr: *Self) ?*Self {
+    pub fn followRelocated(ptr: *Self) *Self {
         var cur = ptr;
-        while (cur.relocated) |rel| {
-            cur = rel;
-        }
-
-        if (cur == ptr) {
-            return null;
-        }
-
+        while (cur.relocated) |rel| cur = rel;
         return cur;
     }
 };
@@ -201,22 +195,18 @@ pub const Array = extern struct {
         return array;
     }
 
-    pub fn get(self: *const Self, i: usize) !Value {
-        if (i >= self.len) {
-            return RunTimeError.ArrayOutOfBounds;
-        }
+    pub fn get(self: *const Self, i: i64) !Value {
+        if (i < 0 or i >= self.len) return RuntimeErrorReporter.arrayOutOfBounds(i, self.len);
 
         const items = self.getDataPtr();
-        return items[i];
+        return items[@intCast(i)];
     }
 
-    pub fn set(self: *Self, i: usize, value: Value) !void {
-        if (i >= self.len) {
-            return RunTimeError.ArrayOutOfBounds;
-        }
+    pub fn set(self: *Self, i: i64, value: Value) !void {
+        if (i < 0 or i >= self.len) return RuntimeErrorReporter.arrayOutOfBounds(i, self.len);
 
         const items = self.getDataPtr();
-        items[i] = value;
+        items[@intCast(i)] = value;
     }
 
     pub fn pop(self: *Self) !Value {
@@ -227,7 +217,7 @@ pub const Array = extern struct {
 
         self.len -= 1;
 
-        return try self.get(self.len);
+        return self.getDataPtr()[self.len];
     }
 
     pub fn needsResize(self: *Self) bool {

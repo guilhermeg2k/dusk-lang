@@ -3,3 +3,6 @@ func missing() -> int
         return item
     end
 end
+
+func main() -> void
+end

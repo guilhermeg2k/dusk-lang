@@ -1,7 +1,15 @@
 # Changelogs
 
-## v0.13 - Garou (in development)
+## v0.13 - Garou
 
+- Fixed a negative array index (`a[-1]`, `a[i] = x` with `i < 0`) crashing the VM. It is now an `ArrayOutOfBounds` runtime error, and array index errors print a message (`index 5 is out of bounds for array of length 2`) like buffer index errors
+- Breaking: `len` only takes arrays. Use `str_len(s)` for the byte count of a string and `buffer_len(b)` for a buffer.
+- `extern` is a reserved keyword. It declares builtins in the prelude, and using it in a program is an `ExternOutsidePrelude` error
+- An `int` converts to `float` wherever a `float` is expected: typed `let`s, assignments, arguments, return values, struct fields, union payloads, array items, default values, constants and `catch` fallbacks (before, only arithmetic, `if`/`when` results and `orelse` did). `int` and `?int` also convert to `?float`. `[]int` still doesn't convert to `[]float`, and `float` never converts to `int`. Int literals are converted at compile time
+- `float(x)` converts an `int` or `byte` to `float`
+- An untyped array literal that starts with ints and has a float item is a `[]float` (`[1, 2.5]`), instead of an error that depended on item order
+- Compile errors on a last line without a trailing newline print the marker on its own line, and an empty file reports `MissingMain` instead of crashing the error printer
+- Breaking: programs start at a required `main` function, `func main() -> void` or `func main() -> !void` (also `E!void`), with no parameters. The top level only holds functions, types, error sets and constants; other statements, `let mut` and non-constant `let`s there are compile errors, and an error returned from `main` stops the program like a top-level `try` did. Declaring a function or type inside a function is now a clear error instead of a crash. New errors: `MissingMain`, `InvalidMainSignature`, `StatementOutsideMain`, `TopLevelLetNotConstant`, `DeclarationInsideFunction`; `TopLevelVariableNotVisible` is gone. Codegen no longer special-cases top-level code (`is_generating_main`)
 - Language reference review: fixed two loop examples that called `echo` with two arguments and the sharing example (a `mut` value that isn't used again moves instead of failing); constants are hoisted; only nullable primitives and enums compare by value; `==` on arrays, structs, unions and buffers compares identity; member order isn't checked yet; `mut` arguments can be fields or new values; `when` captures follow the capture rules; the call depth runtime error; new known limitations for sharing values
 - Tail calls: `return f(x)` reuses the current call frame (new `TAIL_CALL` opcode), so tail-recursive and mutually recursive functions run in constant stack space (also `return f(x)` in a `void` function). Calls whose result is an error union aren't tail calls yet
 - Fixed recursion deeper than 256 calls crashing the VM (out-of-bounds frame write). The limit is now 100,000 nested calls (frames and registers are allocated when the program starts, and only touched as they're used), and going over stops with a `CallDepthExceeded` runtime error
@@ -48,6 +56,7 @@
 
 ## v0.12 - Kanade
 
+- `dusk --version` reports `0.12.0` (it still said `0.11.0-devel`); the language reference now points string features to v0.13
 - Nullable fallback: `value orelse fallback` evaluates its left operand once, unwraps it when non-null and evaluates the fallback only for null. Nullable fallbacks support chains; compatible result types use conditional-expression inference and numeric promotion
 - `orelse` is now a reserved keyword. It groups right-to-left at the same precedence as `catch`, and supports contextual anonymous initializers and empty arrays
 

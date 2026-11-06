@@ -1,1 +1,3 @@
-let x = try str_repeat("a", -1)
+func main() -> !void
+    let x = try str_repeat("a", -1)
+end

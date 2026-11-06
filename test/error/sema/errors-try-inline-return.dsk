@@ -11,3 +11,6 @@ func parse(n: int) -> ParseError!int
 end
 
 func f() -> return try parse(1)
+
+func main() -> void
+end

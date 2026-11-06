@@ -2,4 +2,6 @@ func f(a: int, b: int = 0) -> void
     return
 end
 
-f(b = 1)
+func main() -> void
+    f(b = 1)
+end

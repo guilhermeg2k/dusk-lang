@@ -31,11 +31,6 @@ func code(n: int) -> int
     return value
 end
 
-assert(code(5) == 5)
-assert(code(0) == -1)
-assert(code(-3) == -2)
-assert(code(100) == -2)
-
 func is_empty(n: int) -> bool
     let mut result = false
     parse(n) catch e then
@@ -46,10 +41,6 @@ func is_empty(n: int) -> bool
     end
     return result
 end
-
-assert(is_empty(0))
-assert(!is_empty(-1))
-assert(!is_empty(4))
 
 func load(n: int) -> !int
     if n == 1 then
@@ -70,12 +61,6 @@ func load_code(n: int) -> int
     return value
 end
 
-assert(load_code(1) == 10)
-assert(load_code(0) == 20)
-assert(load_code(-1) == 30)
-assert(load_code(500) == 40)
-assert(load_code(7) == 7)
-
 func load_or_zero(n: int) -> int
     let value = load(n) catch e then
         when e
@@ -85,9 +70,6 @@ func load_or_zero(n: int) -> int
     end
     return value
 end
-
-assert(load_or_zero(1) == 0)
-assert(load_or_zero(0) == -1)
 
 func count(list: []int) -> int
     let mut i = 0
@@ -108,21 +90,41 @@ func count(list: []int) -> int
     return empties
 end
 
-assert(count([0, 1, 0, -1, 0]) == 2)
+func main() -> void
+    assert(code(5) == 5)
+    assert(code(0) == -1)
+    assert(code(-3) == -2)
+    assert(code(100) == -2)
 
-let mut last: ?ParseError = null
-let mut seen = 0
-when last
-    null then seen = 1 end
-    ParseError.Empty then seen = 2 end
-    else then seen = 3 end
-end
-assert(seen == 1)
+    assert(is_empty(0))
+    assert(!is_empty(-1))
+    assert(!is_empty(4))
 
-last = ParseError.TooLong
-when last
-    null then seen = 1 end
-    ParseError.TooLong then seen = 4 end
-    else then seen = 3 end
+    assert(load_code(1) == 10)
+    assert(load_code(0) == 20)
+    assert(load_code(-1) == 30)
+    assert(load_code(500) == 40)
+    assert(load_code(7) == 7)
+
+    assert(load_or_zero(1) == 0)
+    assert(load_or_zero(0) == -1)
+
+    assert(count([0, 1, 0, -1, 0]) == 2)
+
+    let mut last: ?ParseError = null
+    let mut seen = 0
+    when last
+        null then seen = 1 end
+        ParseError.Empty then seen = 2 end
+        else then seen = 3 end
+    end
+    assert(seen == 1)
+
+    last = ParseError.TooLong
+    when last
+        null then seen = 1 end
+        ParseError.TooLong then seen = 4 end
+        else then seen = 3 end
+    end
+    assert(seen == 4)
 end
-assert(seen == 4)

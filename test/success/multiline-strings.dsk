@@ -6,24 +6,27 @@ func usage(name: string) -> string
         quote: \""" done
         """
 end
-echo(usage("dusk"))
-echo("[${"""
-"""}]")
-let x = """
-    a
 
-    """
-echo("[$x]")
-echo("[${"""
-    ${when 2
-        1 then "one" end
-        else then "other" end
-    end} tail
+func main() -> void
+    echo(usage("dusk"))
+    echo("[${"""
     """}]")
-if true then
-    let kept = """
-            kept
-            indent
+    let x = """
+        a
+
         """
-    echo("[$kept]")
+    echo("[$x]")
+    echo("[${"""
+        ${when 2
+            1 then "one" end
+            else then "other" end
+        end} tail
+        """}]")
+    if true then
+        let kept = """
+                kept
+                indent
+            """
+        echo("[$kept]")
+    end
 end

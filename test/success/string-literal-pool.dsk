@@ -1,31 +1,36 @@
 func greeting() -> string
     return "hello"
 end
+
 struct Holder
     let shared = "static text"
     text: string
 end
+
 let local = "hello"
-assert(local == greeting())
-assert("hello" == "hello")
-let mut kept: []string = []
-let holder = Holder(text = "field text")
-for 1..30000: i do
-    let garbage = "number $i"
-    let mut data = buffer(32)
-    data[0] = 1
-    if i % 10000 == 0 then
-        append(kept, "kept")
+
+func main() -> void
+    assert(local == greeting())
+    assert("hello" == "hello")
+    let mut kept: []string = []
+    let holder = Holder(text = "field text")
+    for 1..30000: i do
+        let garbage = "number $i"
+        let mut data = buffer(32)
+        data[0] = 1
+        if i % 10000 == 0 then
+            append(kept, "kept")
+        end
     end
+    assert(local == greeting())
+    assert(holder.text == "field text")
+    assert(Holder.shared == "static text")
+    assert(len(kept) == 3)
+    for kept: text do
+        assert(text == "kept")
+    end
+    echo(local)
+    echo(holder.text)
+    echo(Holder.shared)
+    echo(kept)
 end
-assert(local == greeting())
-assert(holder.text == "field text")
-assert(Holder.shared == "static text")
-assert(len(kept) == 3)
-for kept: text do
-    assert(text == "kept")
-end
-echo(local)
-echo(holder.text)
-echo(Holder.shared)
-echo(kept)

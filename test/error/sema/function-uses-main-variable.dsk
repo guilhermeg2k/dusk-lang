@@ -1,0 +1,8 @@
+func show() -> void
+    echo(count)
+end
+
+func main() -> void
+    let count = 3
+    show()
+end

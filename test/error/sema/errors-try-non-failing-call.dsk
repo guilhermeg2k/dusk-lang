@@ -13,4 +13,7 @@ end
 func g() -> int
     return 1
 end
-let x = try g()
+
+func main() -> !void
+    let x = try g()
+end

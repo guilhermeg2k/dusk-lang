@@ -29,6 +29,7 @@ pub const Statement = union(enum) {
 pub const FuncStmt = struct {
     identifier: []const u8,
     def: FnDef,
+    is_extern: bool = false,
 };
 
 pub const StructStmt = struct {
@@ -172,6 +173,7 @@ pub const Exp = union(enum) {
     int_literal: i64,
     byte_literal: u8,
     byte_cast: *ExpNode,
+    float_cast: *ExpNode,
     buffer_new: *ExpNode,
     string_literal: []const u8,
     string_interpolation: []const *ExpNode,
@@ -318,7 +320,7 @@ pub const UnaryOp = enum {
         return switch (tag) {
             .minus => .neg,
             .not => .not,
-            else => err.Errors.ParserError,
+            else => err.CompileError.ParserError,
         };
     }
 };
@@ -357,7 +359,7 @@ pub const BinaryOp = enum {
             .ge => .gt_or_eq,
             .or_kw => .bool_or,
             .and_kw => .bool_and,
-            else => err.Errors.ParserError,
+            else => err.CompileError.ParserError,
         };
     }
 };

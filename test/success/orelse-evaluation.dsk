@@ -3,8 +3,6 @@ struct Calls
     fallback = 0
 end
 
-let mut calls = Calls()
-
 func source(mut calls: Calls, is_present: bool) -> ?int
     calls.source += 1
     return if is_present then
@@ -19,27 +17,31 @@ func fallback(mut calls: Calls) -> int
     return 9
 end
 
-assert((source(calls, true) orelse fallback(calls)) == 5)
-assert(calls.source == 1)
-assert(calls.fallback == 0)
-assert((source(calls, false) orelse fallback(calls)) == 9)
-assert(calls.source == 2)
-assert(calls.fallback == 1)
-assert((source(calls, true) orelse source(calls, false) orelse fallback(calls)) == 5)
-assert(calls.source == 3)
-assert(calls.fallback == 1)
-source(calls, true) orelse fallback(calls)
-assert(calls.source == 4)
-assert(calls.fallback == 1)
-source(calls, false) orelse fallback(calls)
-assert(calls.source == 5)
-assert(calls.fallback == 2)
-let selected = (if source(calls, false) == null then
-    null
-else
-    null
-end) orelse fallback(calls)
+func main() -> void
+    let mut calls = Calls()
 
-assert(selected == 9)
-assert(calls.source == 6)
-assert(calls.fallback == 3)
+    assert((source(calls, true) orelse fallback(calls)) == 5)
+    assert(calls.source == 1)
+    assert(calls.fallback == 0)
+    assert((source(calls, false) orelse fallback(calls)) == 9)
+    assert(calls.source == 2)
+    assert(calls.fallback == 1)
+    assert((source(calls, true) orelse source(calls, false) orelse fallback(calls)) == 5)
+    assert(calls.source == 3)
+    assert(calls.fallback == 1)
+    source(calls, true) orelse fallback(calls)
+    assert(calls.source == 4)
+    assert(calls.fallback == 1)
+    source(calls, false) orelse fallback(calls)
+    assert(calls.source == 5)
+    assert(calls.fallback == 2)
+    let selected = (if source(calls, false) == null then
+        null
+    else
+        null
+    end) orelse fallback(calls)
+
+    assert(selected == 9)
+    assert(calls.source == 6)
+    assert(calls.fallback == 3)
+end

@@ -9,4 +9,6 @@ func mk() -> P
     return P(x = 1)
 end
 
-mk().x = 2
+func main() -> void
+    mk().x = 2
+end

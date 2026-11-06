@@ -1,6 +1,6 @@
 pub const Loc = @import("lexer.zig").Loc;
 
-pub const ErrorDispatcher = struct {
+pub const CompileErrorReporter = struct {
     const Self = @This();
 
     src: []const u8,
@@ -9,12 +9,12 @@ pub const ErrorDispatcher = struct {
     const LINE_MAX_CHAR_COUNT = 256;
     const padding = " " ** LINE_MAX_CHAR_COUNT;
 
-    pub fn unexpectedToken(self: *Self, token: Token) Errors {
+    pub fn unexpectedToken(self: *Self, token: Token) CompileError {
         self.log(try allocPrint(self.allocator, "Unexpected token '{s}'", .{token.value(self.src)}), token.loc);
-        return Errors.LexerError;
+        return CompileError.LexerError;
     }
 
-    pub fn invalidSyntax(self: *Self, expected: []const u8, token: Token) Errors {
+    pub fn invalidSyntax(self: *Self, expected: []const u8, token: Token) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -23,10 +23,10 @@ pub const ErrorDispatcher = struct {
             ),
             token.loc,
         );
-        return Errors.ParserError;
+        return CompileError.ParserError;
     }
 
-    pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
+    pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -38,12 +38,12 @@ pub const ErrorDispatcher = struct {
         return error.InvalidType;
     }
 
-    pub fn stringIndexing(self: *Self, loc: Loc) Errors {
+    pub fn stringIndexing(self: *Self, loc: Loc) CompileError {
         self.log("Strings can't be indexed: use str_byte_at(s, i) or str_char_at(s, i)", loc);
         return error.InvalidIndexing;
     }
 
-    pub fn byteOutOfRange(self: *Self, value: i64, loc: Loc) Errors {
+    pub fn byteOutOfRange(self: *Self, value: i64, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -55,7 +55,7 @@ pub const ErrorDispatcher = struct {
         return error.ByteOutOfRange;
     }
 
-    pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
+    pub fn invalidFunctionReturnType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -67,7 +67,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidReturnType;
     }
 
-    pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
+    pub fn invalidExpression(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -79,7 +79,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidExpression;
     }
 
-    pub fn invalidIndexing(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
+    pub fn invalidIndexing(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -91,7 +91,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidIndexing;
     }
 
-    pub fn invalidAssignment(self: *Self, expected: []const u8, found: []const u8, loc: Loc) Errors {
+    pub fn invalidAssignment(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -103,7 +103,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidAssignment;
     }
 
-    pub fn typeNotDefined(self: *Self, found: []const u8, loc: Loc) Errors {
+    pub fn typeNotDefined(self: *Self, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(self.allocator, "Invalid type '{s}'", .{found}),
             loc,
@@ -111,7 +111,7 @@ pub const ErrorDispatcher = struct {
         return error.UnknownType;
     }
 
-    pub fn invalidNumberOfArgs(self: *Self, expected: usize, found: usize, loc: Loc) Errors {
+    pub fn invalidNumberOfArgs(self: *Self, expected: usize, found: usize, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -123,7 +123,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidNumberOfArgs;
     }
 
-    pub fn missingArgument(self: *Self, expected: []const u8, loc: Loc) Errors {
+    pub fn missingArgument(self: *Self, expected: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -135,37 +135,37 @@ pub const ErrorDispatcher = struct {
         return error.MissingArgument;
     }
 
-    pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) Errors {
+    pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
         return error.AlreadyDefined;
     }
 
-    pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) Errors {
+    pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
         return error.NotDefined;
     }
 
-    pub fn notMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
+    pub fn notMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is not mutable", .{identifier}), loc);
         return error.NotMutable;
     }
 
-    pub fn temporaryNotMutable(self: *Self, loc: Loc) Errors {
+    pub fn temporaryNotMutable(self: *Self, loc: Loc) CompileError {
         self.log("A temporary value can't be changed; store it in a 'let mut' variable first", loc);
         return error.TemporaryNotMutable;
     }
 
-    pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) Errors {
+    pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
         return error.UnwrappedCantBeMutable;
     }
 
-    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: Loc) Errors {
+    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: Loc) CompileError {
         self.log("@ cannot be used outside of a struct", loc);
         return error.SelfOutsideStruct;
     }
 
-    pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: Loc) Errors {
+    pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -177,7 +177,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
-    pub fn invalidStructField(self: *Self, struct_name: []const u8, member: []const u8, loc: Loc) Errors {
+    pub fn invalidStructField(self: *Self, struct_name: []const u8, member: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -189,7 +189,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
-    pub fn invalidStructFunction(self: *Self, struct_name: []const u8, function: []const u8, loc: Loc) Errors {
+    pub fn invalidStructFunction(self: *Self, struct_name: []const u8, function: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -201,7 +201,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
-    pub fn invalidEnumFunction(self: *Self, enum_name: []const u8, function: []const u8, loc: Loc) Errors {
+    pub fn invalidEnumFunction(self: *Self, enum_name: []const u8, function: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -214,7 +214,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidEnumFunction;
     }
 
-    pub fn invalidEnumVariant(self: *Self, enum_name: []const u8, variant: []const u8, loc: Loc) Errors {
+    pub fn invalidEnumVariant(self: *Self, enum_name: []const u8, variant: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -226,7 +226,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidStructField;
     }
 
-    pub fn invalidUnionVariant(self: *Self, union_name: []const u8, variant: []const u8, loc: Loc) Errors {
+    pub fn invalidUnionVariant(self: *Self, union_name: []const u8, variant: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -238,7 +238,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidUnionVariant;
     }
 
-    pub fn invalidUnionMember(self: *Self, union_name: []const u8, member: []const u8, loc: Loc) Errors {
+    pub fn invalidUnionMember(self: *Self, union_name: []const u8, member: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -250,7 +250,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidUnionMember;
     }
 
-    pub fn invalidUnionFunction(self: *Self, union_name: []const u8, function: []const u8, loc: Loc) Errors {
+    pub fn invalidUnionFunction(self: *Self, union_name: []const u8, function: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -263,7 +263,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidUnionFunction;
     }
 
-    pub fn tooManyUnionVariants(self: *Self, union_name: []const u8, max: usize, loc: Loc) Errors {
+    pub fn tooManyUnionVariants(self: *Self, union_name: []const u8, max: usize, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -275,7 +275,7 @@ pub const ErrorDispatcher = struct {
         return error.TooManyUnionVariants;
     }
 
-    pub fn whenNotExhaustive(self: *Self, missing: []const u8, loc: Loc) Errors {
+    pub fn whenNotExhaustive(self: *Self, missing: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -287,7 +287,7 @@ pub const ErrorDispatcher = struct {
         return error.WhenNotExhaustive;
     }
 
-    pub fn whenNeedsElse(self: *Self, subject_type: []const u8, loc: Loc) Errors {
+    pub fn whenNeedsElse(self: *Self, subject_type: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -299,12 +299,12 @@ pub const ErrorDispatcher = struct {
         return error.WhenNotExhaustive;
     }
 
-    pub fn whenUselessElse(self: *Self, loc: Loc) Errors {
+    pub fn whenUselessElse(self: *Self, loc: Loc) CompileError {
         self.log("else is never reached: every case is already handled", loc);
         return error.WhenUselessElse;
     }
 
-    pub fn whenDuplicateCase(self: *Self, case: []const u8, loc: Loc) Errors {
+    pub fn whenDuplicateCase(self: *Self, case: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -316,12 +316,12 @@ pub const ErrorDispatcher = struct {
         return error.WhenDuplicateCase;
     }
 
-    pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) Errors {
+    pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) CompileError {
         self.log(msg, loc);
         return error.WhenInvalidCase;
     }
 
-    pub fn unhandledError(self: *Self, function: []const u8, loc: Loc) Errors {
+    pub fn unhandledError(self: *Self, function: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -333,12 +333,12 @@ pub const ErrorDispatcher = struct {
         return error.UnhandledError;
     }
 
-    pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) Errors {
+    pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
         self.log("try can only be used at the top level or in a function that can fail (-> E!T or -> !T)", loc);
         return error.TryOutsideFailingFunction;
     }
 
-    pub fn notAFailingCall(self: *Self, keyword: []const u8, loc: Loc) Errors {
+    pub fn notAFailingCall(self: *Self, keyword: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -350,24 +350,49 @@ pub const ErrorDispatcher = struct {
         return error.NotAFailingCall;
     }
 
-    pub fn topLevelVariableNotVisible(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn topLevelLetNotConstant(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
-                "'{s}' is a top-level variable: functions and default values can only use top-level constants (a 'let' with an int, float, bool, byte, string or enum value known at compile time). Pass it as a parameter",
+                "Top-level 'let {s}' must be a constant: a 'let' (not 'mut') with an int, float, bool, byte, string or enum value known at compile time. Declare variables inside 'main'",
                 .{name},
             ),
             loc,
         );
-        return error.TopLevelVariableNotVisible;
+        return error.TopLevelLetNotConstant;
     }
 
-    pub fn staticFieldCantBeMutable(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn statementOutsideMain(self: *Self, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Statements must be inside a function: the top level only holds declarations and constants. Move this into 'main'", .{}), loc);
+        return error.StatementOutsideMain;
+    }
+
+    pub fn declarationInsideFunction(self: *Self, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Functions, types and error sets must be declared at the top level, not inside a function", .{}), loc);
+        return error.DeclarationInsideFunction;
+    }
+
+    pub fn externOutsidePrelude(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'extern func {s}' is only allowed in the prelude", .{identifier}), loc);
+        return error.ExternOutsidePrelude;
+    }
+
+    pub fn missingMain(self: *Self) CompileError {
+        self.log(try allocPrint(self.allocator, "Missing 'main': declare 'func main() -> void' (or '-> !void')", .{}), .{ .start = 0, .end = 0 });
+        return error.MissingMain;
+    }
+
+    pub fn invalidMainSignature(self: *Self, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'main' must take no parameters and return 'void' or an error union of 'void' ('-> !void')", .{}), loc);
+        return error.InvalidMainSignature;
+    }
+
+    pub fn staticFieldCantBeMutable(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Static field '{s}' can't be mut: static fields are constants", .{name}), loc);
         return error.StaticFieldCantBeMutable;
     }
 
-    pub fn staticFieldNotConstant(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn staticFieldNotConstant(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -379,7 +404,7 @@ pub const ErrorDispatcher = struct {
         return error.StaticFieldNotConstant;
     }
 
-    pub fn invalidConstantType(self: *Self, name: []const u8, found: []const u8, loc: Loc) Errors {
+    pub fn invalidConstantType(self: *Self, name: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -391,7 +416,7 @@ pub const ErrorDispatcher = struct {
         return error.InvalidConstantType;
     }
 
-    pub fn payloadSharesErrors(self: *Self, payload_name: []const u8, set_name: []const u8, error_name: []const u8, loc: Loc) Errors {
+    pub fn payloadSharesErrors(self: *Self, payload_name: []const u8, set_name: []const u8, error_name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -403,7 +428,7 @@ pub const ErrorDispatcher = struct {
         return error.PayloadSharesErrors;
     }
 
-    pub fn errorNotInSet(self: *Self, error_name: []const u8, set_name: []const u8, loc: Loc) Errors {
+    pub fn errorNotInSet(self: *Self, error_name: []const u8, set_name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -415,12 +440,12 @@ pub const ErrorDispatcher = struct {
         return error.ErrorNotInSet;
     }
 
-    pub fn catchBlockMustLeave(self: *Self, loc: Loc) Errors {
+    pub fn catchBlockMustLeave(self: *Self, loc: Loc) CompileError {
         self.log("catch block must return, break or continue when the value is used", loc);
         return error.CatchBlockMustLeave;
     }
 
-    pub fn notAnErrorSet(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn notAnErrorSet(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -432,12 +457,12 @@ pub const ErrorDispatcher = struct {
         return error.NotAnErrorSet;
     }
 
-    pub fn invalidDefinition(self: *Self, loc: Loc) Errors {
+    pub fn invalidDefinition(self: *Self, loc: Loc) CompileError {
         self.log("struct and enum definitions cannot be mutable", loc);
         return error.InvalidDefinition;
     }
 
-    pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) Errors {
+    pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) CompileError {
         self.log(
             "Can't infer anonymous struct type",
             loc,
@@ -445,7 +470,7 @@ pub const ErrorDispatcher = struct {
         return error.CantInferAnonymousStruct;
     }
 
-    pub fn primitiveParamsCantBeMutable(self: *Self, loc: Loc) Errors {
+    pub fn primitiveParamsCantBeMutable(self: *Self, loc: Loc) CompileError {
         self.log(
             "Primitive params can't be mutable: only arrays, buffers, structs and unions can be changed through a mut param",
             loc,
@@ -453,12 +478,12 @@ pub const ErrorDispatcher = struct {
         return error.PrimitiveParamsCantBeMutable;
     }
 
-    pub fn needsCopy(self: *Self, message: []const u8, loc: Loc) Errors {
+    pub fn needsCopy(self: *Self, message: []const u8, loc: Loc) CompileError {
         self.log(message, loc);
         return error.NeedsCopy;
     }
 
-    pub fn changedWhileRead(self: *Self, target: []const u8, capture: []const u8, capture_line: usize, loc: Loc) Errors {
+    pub fn changedWhileRead(self: *Self, target: []const u8, capture: []const u8, capture_line: usize, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -470,7 +495,7 @@ pub const ErrorDispatcher = struct {
         return error.ChangedWhileRead;
     }
 
-    pub fn primitiveCaptureCantBeMutable(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn primitiveCaptureCantBeMutable(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -482,7 +507,7 @@ pub const ErrorDispatcher = struct {
         return error.PrimitiveCaptureCantBeMutable;
     }
 
-    pub fn mutBorrowCantBeReassigned(self: *Self, name: []const u8, loc: Loc) Errors {
+    pub fn mutBorrowCantBeReassigned(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -494,7 +519,7 @@ pub const ErrorDispatcher = struct {
         return error.MutBorrowCantBeReassigned;
     }
 
-    pub fn cantInferArrayLiteralType(self: *Self, loc: Loc) Errors {
+    pub fn cantInferArrayLiteralType(self: *Self, loc: Loc) CompileError {
         self.log(
             "Can't infer array literal type",
             loc,
@@ -502,7 +527,7 @@ pub const ErrorDispatcher = struct {
         return error.CantInferArrayLiteralType;
     }
 
-    pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: Loc) Errors {
+    pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -514,7 +539,7 @@ pub const ErrorDispatcher = struct {
         return error.UnecessaryOptionalChain;
     }
 
-    pub fn nullableMustBeUnwraped(self: *Self, member: []const u8, loc: Loc) Errors {
+    pub fn nullableMustBeUnwraped(self: *Self, member: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -526,7 +551,7 @@ pub const ErrorDispatcher = struct {
         return error.NullableMustBeUnwrapped;
     }
 
-    pub fn invalidParameterType(self: *Self, parameter_name: []const u8, loc: Loc) Errors {
+    pub fn invalidParameterType(self: *Self, parameter_name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
@@ -575,13 +600,13 @@ pub const ErrorDispatcher = struct {
         }
 
         std.log.err(
-            "{s} at line {d} col {d}\n--> {d}: {s} {s}",
+            "{s} at line {d} col {d}\n--> {d}: {s}\n {s}",
             .{
                 msg,
                 exactLoc.line.count,
                 exactLoc.col,
                 exactLoc.line.count,
-                self.src[exactLoc.line.start .. exactLoc.line.end + 1],
+                std.mem.trimEnd(u8, self.src[@min(exactLoc.line.start, self.src.len)..@min(exactLoc.line.end + 1, self.src.len)], "\r\n"),
                 error_loc_marker[0..error_loc_marker_len],
             },
         );
@@ -633,7 +658,7 @@ const ExactLoc = struct { line: struct {
     end: usize,
 }, col: usize };
 
-pub const Errors = error{
+pub const CompileError = error{
     OutOfMemory,
     UnableToFindLoc,
     AstError,
@@ -681,7 +706,12 @@ pub const Errors = error{
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,
-    TopLevelVariableNotVisible,
+    TopLevelLetNotConstant,
+    StatementOutsideMain,
+    MissingMain,
+    DeclarationInsideFunction,
+    ExternOutsidePrelude,
+    InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,
     InvalidConstantType,
@@ -689,7 +719,7 @@ pub const Errors = error{
     NotAnErrorSet,
 };
 
-pub const RunTimeError = error{
+pub const RuntimeError = error{
     OutOfMemory,
     ArrayOutOfBounds,
     ByteOutOfRange,
@@ -697,6 +727,44 @@ pub const RunTimeError = error{
     NegativeBufferSize,
     UnhandledError,
     CallDepthExceeded,
+};
+
+pub const RuntimeErrorReporter = struct {
+    pub noinline fn arrayOutOfBounds(index: i64, len: usize) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.ArrayOutOfBounds, "index {d} is out of bounds for array of length {d}", .{ index, len });
+    }
+
+    pub noinline fn indexOutOfBounds(index: i64, len: usize) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.IndexOutOfBounds, "index {d} is out of bounds for length {d}", .{ index, len });
+    }
+
+    pub noinline fn negativeBufferSize(len: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.NegativeBufferSize, "buffer size can't be negative: {d}", .{len});
+    }
+
+    pub noinline fn byteOutOfRange(number: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.ByteOutOfRange, "value {d} doesn't fit in byte (0..255)", .{number});
+    }
+
+    pub noinline fn callDepthExceeded(max_depth: usize) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.CallDepthExceeded, "call depth exceeded: more than {d} nested calls", .{max_depth});
+    }
+
+    pub noinline fn unhandledError(error_name: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.UnhandledError, "unhandled error {s}", .{error_name});
+    }
+
+    fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {
+        if (@import("builtin").is_test) return err;
+        std.debug.print("error: " ++ fmt ++ "\n", args);
+        return err;
+    }
 };
 
 const std = @import("std");

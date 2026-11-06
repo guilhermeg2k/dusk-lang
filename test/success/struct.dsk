@@ -13,21 +13,23 @@ struct User
     end
 end
 
-let user = User(id="1", auth_id="4", username="Geromel", auth_provider="discord")
+func main() -> void
+    let user = User(id="1", auth_id="4", username="Geromel", auth_provider="discord")
 
-let user2 = User(
-    id = "2",
-    auth_id = "312321123321x312-z032",
-    username = "Geromel",
-    auth_provider = "discord",
-)
+    let user2 = User(
+        id = "2",
+        auth_id = "312321123321x312-z032",
+        username = "Geromel",
+        auth_provider = "discord",
+    )
 
-let mut user3 = User(
-    id = "3",
-    auth_id = "3",
-    username = "Geromel",
-    auth_provider = "discord"
-)
+    let mut user3 = User(
+        id = "3",
+        auth_id = "3",
+        username = "Geromel",
+        auth_provider = "discord"
+    )
 
-user3.change_id("FSDF@!#W!@Z#!@")
-echo(user3.to_string())
+    user3.change_id("FSDF@!#W!@Z#!@")
+    echo(user3.to_string())
+end

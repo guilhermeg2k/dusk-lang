@@ -2,4 +2,6 @@ func echo2() -> int
     return 2
 end
 
-assert(echo2() == 2)
+func main() -> void
+    assert(echo2() == 2)
+end

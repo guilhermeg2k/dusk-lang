@@ -1,2 +1,5 @@
 let x: bool = 42
-echo(x)
+
+func main() -> void
+    echo(x)
+end

@@ -5,5 +5,7 @@ struct S
     end
 end
 
-let s = S(x = 1)
-s.g()
+func main() -> void
+    let s = S(x = 1)
+    s.g()
+end

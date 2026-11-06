@@ -8,10 +8,6 @@ func sign(x: int) -> int
     end
 end
 
-assert(sign(5) == 1)
-assert(sign(-5) == -1)
-assert(sign(0) == 0)
-
 func first_or(items: []int, fallback: int) -> int
     if len(items) > 0 then
         let value = items[0]
@@ -20,9 +16,6 @@ func first_or(items: []int, fallback: int) -> int
     return fallback
 end
 
-assert(first_or([7], 1) == 7)
-assert(first_or([], 1) == 1)
-
 func unwrap_or(n: ?int, fallback: int) -> int
     if n: value then
         return value
@@ -30,9 +23,6 @@ func unwrap_or(n: ?int, fallback: int) -> int
         return fallback
     end
 end
-
-assert(unwrap_or(3, 0) == 3)
-assert(unwrap_or(null, 0) == 0)
 
 enum Color
     Red
@@ -48,10 +38,6 @@ func code(c: Color) -> int
     end
 end
 
-assert(code(Color.Red) == 1)
-assert(code(Color.Green) == 2)
-assert(code(Color.Blue) == 3)
-
 union Shape
     circle: int
     square: int
@@ -64,9 +50,6 @@ union Shape
     end
 end
 
-assert(Shape(circle = 2).area() == 12)
-assert(Shape(square = 3).area() == 9)
-
 func describe(n: int) -> string
     when n
         0 then return "zero" end
@@ -75,8 +58,6 @@ func describe(n: int) -> string
     end
 end
 
-assert(len([describe(0), describe(2), describe(9)]) == 3)
-
 func maybe_code(c: ?Color) -> int
     when c
         null then return 0 end
@@ -84,10 +65,6 @@ func maybe_code(c: ?Color) -> int
         else then return 9 end
     end
 end
-
-assert(maybe_code(null) == 0)
-assert(maybe_code(Color.Red) == 1)
-assert(maybe_code(Color.Blue) == 9)
 
 func nested(a: bool, b: bool) -> int
     if a then
@@ -101,10 +78,6 @@ func nested(a: bool, b: bool) -> int
     end
 end
 
-assert(nested(true, true) == 1)
-assert(nested(true, false) == 2)
-assert(nested(false, true) == 3)
-
 func single(s: Shape) -> int
     let mut total = 0
     when s
@@ -114,5 +87,34 @@ func single(s: Shape) -> int
     return total
 end
 
-assert(single(Shape(square = 4)) == 4)
-assert(single(Shape(circle = 5)) == 5)
+func main() -> void
+    assert(sign(5) == 1)
+    assert(sign(-5) == -1)
+    assert(sign(0) == 0)
+
+    assert(first_or([7], 1) == 7)
+    assert(first_or([], 1) == 1)
+
+    assert(unwrap_or(3, 0) == 3)
+    assert(unwrap_or(null, 0) == 0)
+
+    assert(code(Color.Red) == 1)
+    assert(code(Color.Green) == 2)
+    assert(code(Color.Blue) == 3)
+
+    assert(Shape(circle = 2).area() == 12)
+    assert(Shape(square = 3).area() == 9)
+
+    assert(len([describe(0), describe(2), describe(9)]) == 3)
+
+    assert(maybe_code(null) == 0)
+    assert(maybe_code(Color.Red) == 1)
+    assert(maybe_code(Color.Blue) == 9)
+
+    assert(nested(true, true) == 1)
+    assert(nested(true, false) == 2)
+    assert(nested(false, true) == 3)
+
+    assert(single(Shape(square = 4)) == 4)
+    assert(single(Shape(circle = 5)) == 5)
+end

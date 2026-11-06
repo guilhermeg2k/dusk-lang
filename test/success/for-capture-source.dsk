@@ -2,56 +2,58 @@ struct Calls
     count = 0
 end
 
-let mut calls = Calls()
-
 func make_items(mut calls: Calls) -> []int
     calls.count += 1
     return [1, 2, 3]
 end
 
-let mut total = 0
+func main() -> void
+    let mut calls = Calls()
 
-for make_items(calls): item do
-    total += item
-end
+    let mut total = 0
 
-assert(calls.count == 1)
-assert(total == 6)
-let mut items = [1, 2, 3]
-
-for items: item, index do
-    assert(item == index + 1)
-    append(items, 99)
-end
-
-assert(len(items) == 6)
-let mut values = [1, 2, 3]
-
-for values: item, index do
-    if index == 0 then
-        values[1] = 20
+    for make_items(calls): item do
+        total += item
     end
 
-    if index == 1 then
-        assert(item == 20)
+    assert(calls.count == 1)
+    assert(total == 6)
+    let mut items = [1, 2, 3]
+
+    for items: item, index do
+        assert(item == index + 1)
+        append(items, 99)
     end
-end
 
-let mut original = [7, 8]
-let mut visits = 0
+    assert(len(items) == 6)
+    let mut values = [1, 2, 3]
 
-for original: item, index do
-    original = [99]
-    assert(item == index + 7)
-    visits += 1
-end
+    for values: item, index do
+        if index == 0 then
+            values[1] = 20
+        end
 
-assert(visits == 2)
-assert(original[0] == 99)
-let optional: ?[]int = [3, 4]
+        if index == 1 then
+            assert(item == 20)
+        end
+    end
 
-if optional: unwrapped then
-    for unwrapped: item do
-        assert(item >= 3)
+    let mut original = [7, 8]
+    let mut visits = 0
+
+    for original: item, index do
+        original = [99]
+        assert(item == index + 7)
+        visits += 1
+    end
+
+    assert(visits == 2)
+    assert(original[0] == 99)
+    let optional: ?[]int = [3, 4]
+
+    if optional: unwrapped then
+        for unwrapped: item do
+            assert(item >= 3)
+        end
     end
 end

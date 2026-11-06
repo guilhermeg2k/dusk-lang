@@ -55,21 +55,6 @@ func narrow(n: int) -> int
     return narrow(n - 1)
 end
 
-assert(down(300) == 300)
-assert(down(50000) == 50000)
-assert(count_down(1000000, 0) == 1000000)
-assert(is_even(1000001) == false)
-assert(swap_down(1, 2, 3) == 21)
-assert(garbage_walk(300000, []) == 2)
-assert(narrow(100000) == 5)
-
-let mut head: ?Node = null
-for 0..199999: i do
-    head = Node(value = i, next = head)
-end
-assert(contains_from(head, 0))
-assert(!contains_from(head, -1))
-
 struct Counter
     total: int
 
@@ -80,5 +65,22 @@ struct Counter
     end
 end
 
-let mut counter = Counter(total = 0)
-assert(counter.add_until(200000) == 20000100000)
+func main() -> void
+    assert(down(300) == 300)
+    assert(down(50000) == 50000)
+    assert(count_down(1000000, 0) == 1000000)
+    assert(is_even(1000001) == false)
+    assert(swap_down(1, 2, 3) == 21)
+    assert(garbage_walk(300000, []) == 2)
+    assert(narrow(100000) == 5)
+
+    let mut head: ?Node = null
+    for 0..199999: i do
+        head = Node(value = i, next = head)
+    end
+    assert(contains_from(head, 0))
+    assert(!contains_from(head, -1))
+
+    let mut counter = Counter(total = 0)
+    assert(counter.add_until(200000) == 20000100000)
+end
