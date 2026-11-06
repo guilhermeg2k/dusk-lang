@@ -33,7 +33,6 @@ pub const BytecodeGen = struct {
     native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
-
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
     type_id_to_struct_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
@@ -523,6 +522,7 @@ pub const BytecodeGen = struct {
         if (return_stmt.value) |value| {
             if (self.tailCallIndex(value)) |fn_index| return self.genTailCall(value.data.fn_call, fn_index);
         }
+
         const return_value_register = if (return_stmt.value) |val|
             try self.genValue(val, try self.consumeRegister())
         else
@@ -1692,7 +1692,6 @@ pub const OpCode = enum(u8) {
     UNION_STORE,
     UNION_TAG,
     UNION_PAYLOAD,
-
 
     NULL_BOX_INIT,
     NULL_BOX_UNWRAP,
