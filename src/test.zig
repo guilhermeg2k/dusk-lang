@@ -1986,6 +1986,23 @@ test "extern: only the prelude can declare extern functions" {
     try runCaseError("parser/extern-missing-func.dsk", error.ParserError);
 }
 
+test "generics: generic functions are checked where they are written" {
+    try runCase("generics-definitions.dsk");
+    try runCaseError("parser/generic-empty-slots.dsk", error.ParserError);
+    try runCaseError("parser/generic-slot-trailing-comma.dsk", error.ParserError);
+    try runCaseError("parser/generic-slot-missing-comma.dsk", error.ParserError);
+    try runCaseError("sema/generic-slot-arithmetic.dsk", error.InvalidType);
+    try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
+    try runCaseError("sema/generic-slot-mut-param.dsk", error.SlotParamCantBeMutable);
+    try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
+    try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
+    try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
+    try runCaseError("sema/generic-call-not-supported.dsk", error.GenericCallNotSupported);
+    try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
+    try runCaseError("sema/generic-returns-param-array.dsk", error.NeedsCopy);
+}
+
 test "prelude: every extern has a binding and every binding has an extern" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

@@ -1,0 +1,6 @@
+func add[T](a: T, b: T) -> T
+    return a + b
+end
+
+func main() -> void
+end

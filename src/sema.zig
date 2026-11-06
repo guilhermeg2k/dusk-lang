@@ -31,6 +31,7 @@ pub const SemaAnalyzer = struct {
     exp_types: std.AutoHashMapUnmanaged(*const ast.ExpNode, tt.TypeId) = .empty,
     exp_symbols: std.AutoHashMapUnmanaged(*const ast.ExpNode, Symbol) = .empty,
     flow_frames: std.ArrayList(FlowFrame) = .empty,
+    generic_functions: std.ArrayList(GenericFunction) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -627,7 +628,7 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
-        for (root.statements.items) |stmt| {
+        for (root.statements.items) |*stmt| {
             switch (stmt.data) {
                 .error_set => |es| {
                     const symbol = try self.createErrorSetSymbol(&es);
@@ -635,6 +636,11 @@ pub const SemaAnalyzer = struct {
                 },
                 .func => |fs| {
                     if (fs.is_extern and !self.is_in_prelude) return self.err_reporter.externOutsidePrelude(fs.identifier, stmt.loc);
+                    if (fs.slots.len > 0) {
+                        const symbol = try self.createGenericFuncSymbol(&stmt.data.func, stmt.loc);
+                        self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
+                        continue;
+                    }
                     const symbol = try self.createEmptyFuncSymbol(fs.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
                 },
@@ -672,6 +678,7 @@ pub const SemaAnalyzer = struct {
         for (root.statements.items) |stmt| {
             switch (stmt.data) {
                 .func => |fs| {
+                    if (fs.slots.len > 0) continue;
                     const symbol = try self.scope.symbol_table.getOrError(fs.identifier);
                     try self.fulfillFuncType(symbol, &fs.def, null, stmt.loc);
                 },
@@ -757,6 +764,17 @@ pub const SemaAnalyzer = struct {
         self.constants.items[index].is_resolving = false;
         root.symbols.getPtr(constant.let_stmt.identifier).?.type_id = value.type_id;
         return value;
+    }
+
+    fn createGenericFuncSymbol(self: *Self, func_stmt: *const ast.FuncStmt, loc: err.Loc) !Symbol {
+        const index = self.generic_functions.items.len;
+        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc });
+        return Symbol{
+            .identifier = func_stmt.identifier,
+            .uid = self.scope.genUid(),
+            .kind = .{ .generic_function = index },
+            .type_id = self.type_table.getPrimitive(.void),
+        };
     }
 
     fn createEmptyFuncSymbol(self: *Self, identifier: []const u8) !Symbol {
@@ -1506,10 +1524,52 @@ pub const SemaAnalyzer = struct {
         const fn_symbol = self.scope.symbol_table.getOrError(func_stmt.identifier) catch {
             return self.err_reporter.notDefined(func_stmt.identifier, stmt.loc);
         };
+        if (fn_symbol.kind == .generic_function) {
+            try self.checkGenericFunction(self.generic_functions.items[fn_symbol.kind.generic_function]);
+            return null;
+        }
         const fn_metadata = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function;
         const func = try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, null, stmt.loc);
         try self.functions.append(self.allocator, func);
         return null;
+    }
+
+    fn checkGenericFunction(self: *Self, generic: GenericFunction) CompileError!void {
+        const func_stmt = generic.func_stmt;
+        const old_return_type = self.scope.return_type_id;
+        try self.scope.enter(old_return_type);
+        defer self.scope.exit(old_return_type);
+
+        for (func_stmt.slots) |slot| {
+            const slot_type_id = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier } }, .is_nullable = false });
+            self.scope.symbol_table.put(.{
+                .identifier = slot.identifier,
+                .uid = self.scope.genUid(),
+                .type_id = slot_type_id,
+                .kind = .{ .type_slot = {} },
+            }) catch return self.err_reporter.alreadyDefined(slot.identifier, slot.loc);
+        }
+
+        for (func_stmt.def.params) |param| {
+            const annotation = param.type_annotation orelse continue;
+            if (param.default_value == null or !mentionsSlot(annotation, func_stmt.slots)) continue;
+            return self.err_reporter.slotParamCantHaveDefault(param.identifier, param.default_value.?.loc);
+        }
+
+        const symbol = try self.createEmptyFuncSymbol(func_stmt.identifier);
+        try self.fulfillFuncType(symbol, &func_stmt.def, null, generic.loc);
+        const metadata = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        _ = try self.visitFnDef(&func_stmt.def, metadata.uid, metadata, null, generic.loc);
+    }
+
+    fn mentionsSlot(annotation: *const ast.TypeAnnotation, slots: []const ast.Slot) bool {
+        return switch (annotation.type) {
+            .@"struct" => |name| for (slots) |slot| {
+                if (std.mem.eql(u8, slot.identifier, name)) break true;
+            } else false,
+            .array => |inner| mentionsSlot(inner, slots),
+            else => false,
+        };
     }
 
     fn visitStructStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
@@ -2571,6 +2631,9 @@ pub const SemaAnalyzer = struct {
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
+            if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind == .slot) {
+                return self.err_reporter.slotParamCantBeMutable(param.identifier, try self.type_table.name(param.type_id, self.allocator), loc);
+            }
             if (param.is_mut and !self.canBeChangedThrough(param.type_id)) {
                 return self.err_reporter.primitiveParamsCantBeMutable(loc);
             }
@@ -3158,6 +3221,8 @@ pub const SemaAnalyzer = struct {
                         try self.type_table.name((try self.resolveConstant(symbol.kind.constant)).type_id, self.allocator),
                         exp.loc,
                     ),
+                    .generic_function => return self.err_reporter.genericCallNotSupported(id, exp.loc),
+                    .type_slot => return self.err_reporter.slotUsedAsValue(id, exp.loc),
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
                         if (type_ptr.kind == .function) {
@@ -3628,6 +3693,8 @@ pub const SemaAnalyzer = struct {
 
         if (id_symbol) |symbol| {
             if (symbol.kind == .constant) return self.resolveConstant(symbol.kind.constant);
+            if (symbol.kind == .generic_function) return self.err_reporter.genericNeedsCall(id, exp.loc);
+            if (symbol.kind == .type_slot) return self.err_reporter.slotUsedAsValue(id, exp.loc);
             try self.exp_symbols.put(self.allocator, exp, symbol);
             self.noteMention(symbol.uid, exp.loc);
             const type_id = switch (symbol.kind) {
@@ -3644,6 +3711,11 @@ pub const SemaAnalyzer = struct {
         }
 
         return self.err_reporter.notDefined(id, exp.loc);
+    }
+
+    fn isSlotType(self: *Self, type_id: tt.TypeId) bool {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        return self.type_table.getTypePtrById(base_id).kind == .slot;
     }
 
     fn canBeChangedThrough(self: *Self, type_id: tt.TypeId) bool {
@@ -3851,6 +3923,10 @@ pub const SemaAnalyzer = struct {
             },
             //note: allowing everything
             .eq, .not_eq => {
+                if (self.isSlotType(left_type) or self.isSlotType(right_type)) {
+                    const slot_type = if (self.isSlotType(left_type)) left_type else right_type;
+                    return self.err_reporter.slotOperatorNotAllowed(if (bin_exp.op == .eq) "==" else "!=", try self.type_table.name(slot_type, self.allocator), exp.loc);
+                }
                 const left_is_nullable = self.type_table.getTypePtrById(left_type).is_nullable;
                 const right_is_nullable = self.type_table.getTypePtrById(right_type).is_nullable;
                 const left_is_null = self.type_table.getTypePtrById(left_type).kind == .null;
@@ -4011,6 +4087,7 @@ pub const SemaAnalyzer = struct {
                 const symbol = try self.scope.symbol_table.getOrError(struct_name);
                 const blueprint_type_id = switch (symbol.kind) {
                     .defined_type => |dt| dt.blueprint_type_id,
+                    .type_slot => symbol.type_id,
                     else => return CompileError.SemaError,
                 };
                 return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
@@ -4293,6 +4370,8 @@ pub const Symbol = struct {
         },
         function: void,
         constant: usize,
+        generic_function: usize,
+        type_slot: void,
     },
 };
 
@@ -4309,6 +4388,11 @@ const WhenSubject = struct {
     base_kind: @FieldType(tt.Type, "kind"),
     is_mutable: bool,
     exp: *const ast.ExpNode,
+};
+
+const GenericFunction = struct {
+    func_stmt: *const ast.FuncStmt,
+    loc: err.Loc,
 };
 
 const PendingWhenCheck = struct {

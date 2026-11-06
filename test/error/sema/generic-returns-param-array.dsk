@@ -1,0 +1,6 @@
+func same[T](xs: []T) -> []T
+    return xs
+end
+
+func main() -> void
+end

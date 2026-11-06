@@ -30,6 +30,12 @@ pub const FuncStmt = struct {
     identifier: []const u8,
     def: FnDef,
     is_extern: bool = false,
+    slots: []const Slot = &.{},
+};
+
+pub const Slot = struct {
+    identifier: []const u8,
+    loc: err.Loc,
 };
 
 pub const StructStmt = struct {

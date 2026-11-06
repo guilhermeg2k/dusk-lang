@@ -6,6 +6,7 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel` and recorde
 
 ### Features
 
+- Generic functions can be declared with type slots: `func first[T](xs: []T) -> T`. The body is checked where it's written, with `T` standing for any type: arithmetic, `==`/`!=` and assigning other types to `T` are errors, a `T` param can't be `mut` or have a default value, and `T` can't be used as a value. Sharing rules for a bare `T` are checked later, on each filled copy. Calling a generic function isn't supported yet (new `GenericCallNotSupported` error, until copies land), and using one as a value is a `GenericNeedsCall` error
 - Removed the `+=` and `-=` operators. Write `x = x + 1` and `x = x - 1`; `x += 1` is now a syntax error
 
 ### Fixes

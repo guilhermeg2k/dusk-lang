@@ -377,6 +377,36 @@ pub const CompileErrorReporter = struct {
         return error.ExternOutsidePrelude;
     }
 
+    pub fn slotParamCantHaveDefault(self: *Self, param: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Parameter '{s}' uses a type slot, so it can't have a default value", .{param}), loc);
+        return error.SlotParamCantHaveDefault;
+    }
+
+    pub fn slotParamCantBeMutable(self: *Self, param: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Parameter '{s}' can't be mut: '{s}' has no trait constraint, so it may be a primitive", .{ param, slot }), loc);
+        return error.SlotParamCantBeMutable;
+    }
+
+    pub fn slotOperatorNotAllowed(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on type slot '{s}': it needs a type list constraint", .{ operator, slot }), loc);
+        return error.SlotOperatorNotAllowed;
+    }
+
+    pub fn slotUsedAsValue(self: *Self, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a type slot, not a value", .{slot}), loc);
+        return error.SlotUsedAsValue;
+    }
+
+    pub fn genericNeedsCall(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Generic function '{s}' can only be called, not used as a value", .{identifier}), loc);
+        return error.GenericNeedsCall;
+    }
+
+    pub fn genericCallNotSupported(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Calling generic function '{s}' isn't supported yet", .{identifier}), loc);
+        return error.GenericCallNotSupported;
+    }
+
     pub fn missingMain(self: *Self) CompileError {
         self.log(try allocPrint(self.allocator, "Missing 'main': declare 'func main() -> void' (or '-> !void')", .{}), .{ .start = 0, .end = 0 });
         return error.MissingMain;
@@ -711,6 +741,12 @@ pub const CompileError = error{
     MissingMain,
     DeclarationInsideFunction,
     ExternOutsidePrelude,
+    SlotParamCantHaveDefault,
+    SlotParamCantBeMutable,
+    SlotOperatorNotAllowed,
+    SlotUsedAsValue,
+    GenericNeedsCall,
+    GenericCallNotSupported,
     InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,

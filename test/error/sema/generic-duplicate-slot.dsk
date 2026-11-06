@@ -1,0 +1,5 @@
+func twice[T, T](a: T) -> void
+end
+
+func main() -> void
+end

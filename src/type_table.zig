@@ -154,6 +154,9 @@ pub const TypeTable = struct {
             .@"union" => |u| {
                 return std.fmt.allocPrint(allocator, "{s}union {s}", .{ prefix, u.identifier });
             },
+            .slot => |s| {
+                return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, s.identifier });
+            },
             .array => |inner_id| {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
             },
@@ -324,6 +327,10 @@ pub const ErrorSet = struct {
     }
 };
 
+pub const Slot = struct {
+    identifier: []const u8,
+};
+
 pub const ErrorUnion = struct {
     error_set: TypeId,
     payload: TypeId,
@@ -377,6 +384,7 @@ pub const Type = struct {
         @"enum": Enum,
         @"union": Union,
         error_union: ErrorUnion,
+        slot: Slot,
     },
 
     is_nullable: bool,

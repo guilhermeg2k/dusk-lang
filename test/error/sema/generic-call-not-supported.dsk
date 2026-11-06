@@ -1,0 +1,7 @@
+func id[T](a: T) -> T
+    return a
+end
+
+func main() -> void
+    let x = id(1)
+end

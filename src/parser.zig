@@ -182,12 +182,26 @@ pub const Parser = struct {
     fn parseFuncStmt(self: *Self) !ast.FuncStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const fn_def = try self.parseFnDef();
 
         return ast.FuncStmt{
             .identifier = identifier_token.value(self.src),
             .def = fn_def,
+            .slots = slots,
         };
+    }
+
+    fn parseSlots(self: *Self) ![]const ast.Slot {
+        if (!self.match(.l_bracket)) return &.{};
+        var slots: std.ArrayList(ast.Slot) = .empty;
+        while (true) {
+            const slot_token = try self.expect(.identifier);
+            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .loc = slot_token.loc });
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_bracket);
+        return slots.toOwnedSlice(self.allocator);
     }
 
     fn parseStructStmt(self: *Self) !ast.StructStmt {

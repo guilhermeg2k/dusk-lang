@@ -1,0 +1,5 @@
+func spaced[T U]() -> void
+end
+
+func main() -> void
+end
