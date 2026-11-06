@@ -4,8 +4,8 @@
 
 ## Version 0.14 - Simon
 
-- Meta structs
 - Generics
+- Traits
 
 ## Version 0.15 - Fujiwara
 

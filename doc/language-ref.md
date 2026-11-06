@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.13 - Garou**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.14 - Simon (in development)**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -1210,7 +1210,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 ## 14. Known Limitations
 
-These are known gaps in v0.13. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.14 development. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Call depth**: at most 100,000 nested calls. Going deeper stops the program with a runtime error. A call returned directly (`return f(x)`, also in a `void` function) is a tail call: it reuses the current call instead of nesting, so tail-recursive functions can run any number of steps. Calls whose result is an error union (`E!T`) aren't tail calls.
