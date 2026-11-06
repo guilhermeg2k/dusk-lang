@@ -1998,9 +1998,18 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
-    try runCaseError("sema/generic-call-not-supported.dsk", error.GenericCallNotSupported);
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
     try runCaseError("sema/generic-returns-param-array.dsk", error.NeedsCopy);
+}
+
+test "generics: calls fill the slots from the arguments and compile one copy per type" {
+    try runCase("generics-calls.dsk");
+    try runCaseError("sema/generic-conflicting-slots.dsk", error.ConflictingSlotTypes);
+    try runCaseError("sema/generic-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-cant-infer-empty-array.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-copy-shares-param.dsk", error.NeedsCopy);
+    try runCaseError("sema/generic-copy-too-deep.dsk", error.GenericCopyTooDeep);
+    try runCaseError("sema/generic-void-argument.dsk", error.InvalidSlotType);
 }
 
 test "prelude: every extern has a binding and every binding has an extern" {

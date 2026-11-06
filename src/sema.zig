@@ -10,6 +10,7 @@ pub const CompileError = err.CompileError;
 
 pub const SemaAnalyzer = struct {
     const Self = @This();
+    const max_copy_depth = 64;
 
     allocator: std.mem.Allocator,
     src: []const u8 = "",
@@ -32,6 +33,8 @@ pub const SemaAnalyzer = struct {
     exp_symbols: std.AutoHashMapUnmanaged(*const ast.ExpNode, Symbol) = .empty,
     flow_frames: std.ArrayList(FlowFrame) = .empty,
     generic_functions: std.ArrayList(GenericFunction) = .empty,
+    pending_copies: std.ArrayList(PendingCopy) = .empty,
+    copy_depth: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -63,6 +66,7 @@ pub const SemaAnalyzer = struct {
 
         try self.flow_frames.append(self.allocator, .{});
         _ = try self.visitBlock(root);
+        try self.lowerPendingCopies();
         try self.resolveFlow();
         _ = self.flow_frames.pop();
         try self.resolveErrorEdges();
@@ -1560,6 +1564,174 @@ pub const SemaAnalyzer = struct {
         try self.fulfillFuncType(symbol, &func_stmt.def, null, generic.loc);
         const metadata = self.type_table.getTypePtrById(symbol.type_id).kind.function;
         _ = try self.visitFnDef(&func_stmt.def, metadata.uid, metadata, null, generic.loc);
+    }
+
+    fn callGenericFunction(
+        self: *Self,
+        index: usize,
+        fn_call: ast.FnCall,
+        loc: err.Loc,
+        inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
+    ) CompileError!Symbol {
+        const func_stmt = self.generic_functions.items[index].func_stmt;
+        const bindings = try self.allocator.alloc(?tt.TypeId, func_stmt.slots.len);
+        @memset(bindings, null);
+
+        for (func_stmt.def.params, 0..) |param, param_index| {
+            const annotation = param.type_annotation orelse continue;
+            if (!mentionsSlot(annotation, func_stmt.slots)) continue;
+            const arg_exp = argumentFor(fn_call, param_index, param.identifier) orelse continue;
+            const value = try self.evalExpExpecting(arg_exp, null);
+            try inferred_values.put(self.allocator, arg_exp, value);
+            try self.inferSlots(annotation, value.type_id, func_stmt.slots, bindings, arg_exp.loc);
+        }
+
+        const args = try self.allocator.alloc(tt.TypeId, bindings.len);
+        for (bindings, func_stmt.slots, 0..) |binding, slot, slot_index| {
+            args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, func_stmt.identifier, loc);
+        }
+        return self.instantiateGenericFunction(index, args, loc);
+    }
+
+    fn argumentFor(fn_call: ast.FnCall, param_index: usize, param_name: []const u8) ?*ast.ExpNode {
+        if (!fn_call.are_arguments_named) {
+            if (param_index >= fn_call.arguments.len) return null;
+            return fn_call.arguments[param_index].exp;
+        }
+        for (fn_call.arguments) |arg| {
+            const name = arg.identifier orelse continue;
+            if (std.mem.eql(u8, name, param_name)) return arg.exp;
+        }
+        return null;
+    }
+
+    fn inferSlots(self: *Self, annotation: *const ast.TypeAnnotation, arg_type: tt.TypeId, slots: []const ast.Slot, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
+        var type_id = arg_type;
+        if (annotation.is_nullable) {
+            if (self.type_table.getTypePtrById(type_id).kind == .null) return;
+            type_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        }
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        switch (annotation.type) {
+            .@"struct" => |name| {
+                const slot_index = for (slots, 0..) |slot, i| {
+                    if (std.mem.eql(u8, slot.identifier, name)) break i;
+                } else return;
+                if (kind == .dynamic) return;
+                if (kind == .void or kind == .null) {
+                    return self.err_reporter.invalidSlotType(name, try self.type_table.name(type_id, self.allocator), loc);
+                }
+                const bound = bindings[slot_index] orelse {
+                    bindings[slot_index] = type_id;
+                    return;
+                };
+                if (bound == type_id) return;
+                return self.err_reporter.conflictingSlotTypes(
+                    name,
+                    try self.type_table.syntaxName(bound, self.allocator),
+                    try self.type_table.syntaxName(type_id, self.allocator),
+                    loc,
+                );
+            },
+            .array => |inner| {
+                if (kind != .array) return;
+                try self.inferSlots(inner, kind.array, slots, bindings, loc);
+            },
+            else => {},
+        }
+    }
+
+    fn instantiateGenericFunction(self: *Self, index: usize, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
+        const generic = &self.generic_functions.items[index];
+        for (generic.copies.items) |copy| {
+            if (std.mem.eql(tt.TypeId, copy.args, args)) return copy.symbol;
+        }
+
+        if (self.copy_depth >= max_copy_depth) {
+            self.err_reporter.copy_context = null;
+            return self.err_reporter.genericCopyTooDeep(generic.func_stmt.identifier, max_copy_depth, loc);
+        }
+        const name = try self.copyName(generic.func_stmt.identifier, args);
+
+        const symbol = try self.createEmptyFuncSymbol(name);
+        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .depth = self.copy_depth + 1 });
+        const copy_index = generic.copies.items.len - 1;
+
+        const saved_table = try self.enterSlotScope(generic.func_stmt.slots, args);
+        defer self.scope.symbol_table = saved_table;
+        const saved_return_type = self.scope.return_type_id;
+        defer self.scope.return_type_id = saved_return_type;
+        try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
+
+        if (!self.containsSlot(args)) try self.pending_copies.append(self.allocator, .{ .generic = index, .copy = copy_index });
+        return symbol;
+    }
+
+    fn lowerPendingCopies(self: *Self) CompileError!void {
+        var next: usize = 0;
+        while (next < self.pending_copies.items.len) : (next += 1) {
+            const pending = self.pending_copies.items[next];
+            const generic = self.generic_functions.items[pending.generic];
+            const copy = generic.copies.items[pending.copy];
+
+            const saved_table = try self.enterSlotScope(generic.func_stmt.slots, copy.args);
+            defer self.scope.symbol_table = saved_table;
+            const saved_depth = self.copy_depth;
+            self.copy_depth = copy.depth;
+            defer self.copy_depth = saved_depth;
+            self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc };
+            defer self.err_reporter.copy_context = null;
+
+            const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
+            const func = try self.visitFnDef(&generic.func_stmt.def, metadata.uid, metadata, null, generic.loc);
+            try self.functions.append(self.allocator, func);
+        }
+        self.pending_copies.clearRetainingCapacity();
+    }
+
+    fn enterSlotScope(self: *Self, slots: []const ast.Slot, args: []const tt.TypeId) CompileError!*SymbolTable {
+        const saved_table = self.scope.symbol_table;
+        var root = saved_table;
+        while (root.parent) |parent| root = parent;
+        self.scope.symbol_table = root;
+        try self.scope.enter(self.scope.return_type_id);
+        for (slots, args) |slot, arg| {
+            try self.scope.symbol_table.put(.{
+                .identifier = slot.identifier,
+                .uid = self.scope.genUid(),
+                .type_id = arg,
+                .kind = .{ .type_slot = {} },
+            });
+        }
+        return saved_table;
+    }
+
+    fn copyName(self: *Self, identifier: []const u8, args: []const tt.TypeId) CompileError![]const u8 {
+        var name: std.ArrayList(u8) = .empty;
+        try name.appendSlice(self.allocator, identifier);
+        try name.append(self.allocator, '[');
+        for (args, 0..) |arg, i| {
+            if (i > 0) try name.appendSlice(self.allocator, ", ");
+            try name.appendSlice(self.allocator, try self.type_table.syntaxName(arg, self.allocator));
+        }
+        try name.append(self.allocator, ']');
+        return name.toOwnedSlice(self.allocator);
+    }
+
+    fn containsSlot(self: *Self, args: []const tt.TypeId) bool {
+        for (args) |arg| {
+            if (self.typeContainsSlot(arg)) return true;
+        }
+        return false;
+    }
+
+    fn typeContainsSlot(self: *Self, type_id: tt.TypeId) bool {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        return switch (self.type_table.getTypePtrById(base_id).kind) {
+            .slot => true,
+            .array => |inner| self.typeContainsSlot(inner),
+            else => false,
+        };
     }
 
     fn mentionsSlot(annotation: *const ast.TypeAnnotation, slots: []const ast.Slot) bool {
@@ -3173,6 +3345,7 @@ pub const SemaAnalyzer = struct {
         defer arg_exp_by_param_name.deinit();
 
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
+        var inferred_values: std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value) = .empty;
 
         switch (fn_call.target.data) {
             .identifier => |id| {
@@ -3221,7 +3394,14 @@ pub const SemaAnalyzer = struct {
                         try self.type_table.name((try self.resolveConstant(symbol.kind.constant)).type_id, self.allocator),
                         exp.loc,
                     ),
-                    .generic_function => return self.err_reporter.genericCallNotSupported(id, exp.loc),
+                    .generic_function => |index| {
+                        const copy_symbol = try self.callGenericFunction(index, fn_call, exp.loc, &inferred_values);
+                        const func = self.type_table.getTypePtrById(copy_symbol.type_id).kind.function;
+                        params = func.params;
+                        return_type = func.return_type_id;
+                        uid = func.uid;
+                        fn_identifier = func.identifier;
+                    },
                     .type_slot => return self.err_reporter.slotUsedAsValue(id, exp.loc),
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
@@ -3382,7 +3562,7 @@ pub const SemaAnalyzer = struct {
             }
 
             if (arg_exp) |_exp| {
-                const fn_call_arg_value = try self.evalExpExpecting(_exp, param.type_id);
+                const fn_call_arg_value = inferred_values.get(_exp) orelse try self.evalExpExpecting(_exp, param.type_id);
                 const arg_type = fn_call_arg_value.type_id;
 
                 if (!try self.canCoerce(arg_type, param.type_id, _exp.loc)) {
@@ -4392,6 +4572,19 @@ const WhenSubject = struct {
 const GenericFunction = struct {
     func_stmt: *const ast.FuncStmt,
     loc: err.Loc,
+    copies: std.ArrayList(GenericCopy) = .empty,
+};
+
+const GenericCopy = struct {
+    args: []const tt.TypeId,
+    symbol: Symbol,
+    call_loc: err.Loc,
+    depth: usize,
+};
+
+const PendingCopy = struct {
+    generic: usize,
+    copy: usize,
 };
 
 const PendingWhenCheck = struct {

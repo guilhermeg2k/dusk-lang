@@ -5,6 +5,7 @@ pub const CompileErrorReporter = struct {
 
     src: []const u8,
     allocator: std.mem.Allocator,
+    copy_context: ?CopyContext = null,
 
     const LINE_MAX_CHAR_COUNT = 256;
     const padding = " " ** LINE_MAX_CHAR_COUNT;
@@ -402,9 +403,24 @@ pub const CompileErrorReporter = struct {
         return error.GenericNeedsCall;
     }
 
-    pub fn genericCallNotSupported(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Calling generic function '{s}' isn't supported yet", .{identifier}), loc);
-        return error.GenericCallNotSupported;
+    pub fn cantInferSlot(self: *Self, slot: []const u8, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't work out '{s}' for '{s}' from the arguments", .{ slot, identifier }), loc);
+        return error.CantInferSlot;
+    }
+
+    pub fn conflictingSlotTypes(self: *Self, slot: []const u8, first: []const u8, second: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't be both '{s}' and '{s}'", .{ slot, first, second }), loc);
+        return error.ConflictingSlotTypes;
+    }
+
+    pub fn invalidSlotType(self: *Self, slot: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't be '{s}'", .{ slot, type_name }), loc);
+        return error.InvalidSlotType;
+    }
+
+    pub fn genericCopyTooDeep(self: *Self, name: []const u8, max_depth: usize, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' needs copies nested more than {d} deep: it probably calls itself with a bigger type each time", .{ name, max_depth }), loc);
+        return error.GenericCopyTooDeep;
     }
 
     pub fn missingMain(self: *Self) CompileError {
@@ -593,8 +609,9 @@ pub const CompileErrorReporter = struct {
         return error.InvalidParameterType;
     }
 
-    pub fn log(self: *Self, msg: []const u8, loc: Loc) void {
+    pub fn log(self: *Self, message: []const u8, loc: Loc) void {
         if (@import("builtin").is_test) return;
+        const msg = self.withCopyContext(message);
 
         const exactLoc = self.findExactLoc(loc.start);
         const start_col = 6 + loc.start - exactLoc.line.start;
@@ -642,6 +659,12 @@ pub const CompileErrorReporter = struct {
         );
     }
 
+    fn withCopyContext(self: *Self, message: []const u8) []const u8 {
+        const context = self.copy_context orelse return message;
+        const line = self.findExactLoc(context.call_loc.start).line.count;
+        return allocPrint(self.allocator, "in {s} (created at line {d}): {s}", .{ context.name, line, message }) catch message;
+    }
+
     fn findExactLoc(self: *Self, loc: usize) ExactLoc {
         var line_count: usize = 1;
         var line_start: usize = 0;
@@ -687,6 +710,11 @@ const ExactLoc = struct { line: struct {
     start: usize,
     end: usize,
 }, col: usize };
+
+pub const CopyContext = struct {
+    name: []const u8,
+    call_loc: Loc,
+};
 
 pub const CompileError = error{
     OutOfMemory,
@@ -746,7 +774,10 @@ pub const CompileError = error{
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
     GenericNeedsCall,
-    GenericCallNotSupported,
+    CantInferSlot,
+    ConflictingSlotTypes,
+    InvalidSlotType,
+    GenericCopyTooDeep,
     InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,

@@ -1,0 +1,7 @@
+func both[T](a: T, b: T) -> T
+    return a
+end
+
+func main() -> void
+    let x = both(1, 2.5)
+end

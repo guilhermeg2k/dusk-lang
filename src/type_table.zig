@@ -113,6 +113,33 @@ pub const TypeTable = struct {
         return false;
     }
 
+    pub fn syntaxName(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
+        const t = self.getTypePtrById(id);
+        if (t.is_nullable) {
+            const base = self.typeIdByNullableTypeId.get(id) orelse id;
+            if (base != id) return std.fmt.allocPrint(allocator, "?{s}", .{try self.syntaxName(base, allocator)});
+        }
+        return switch (t.kind) {
+            .float => "float",
+            .int => "int",
+            .byte => "byte",
+            .string => "string",
+            .buffer => "buffer",
+            .boolean => "bool",
+            .void => "void",
+            .null => "null",
+            .dynamic => "dynamic",
+            .meta => "meta",
+            .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
+            .function => |f| f.identifier,
+            .@"struct" => |s| s.identifier,
+            .@"enum" => |e| e.identifier,
+            .@"union" => |u| u.identifier,
+            .slot => |s| s.identifier,
+            .error_union => |eu| std.fmt.allocPrint(allocator, "!{s}", .{try self.syntaxName(eu.payload, allocator)}),
+        };
+    }
+
     pub fn name(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
         const t = self.getTypePtrById(id);
         const prefix = if (t.is_nullable) "nullable " else "";
