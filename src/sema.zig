@@ -1253,29 +1253,48 @@ pub const SemaAnalyzer = struct {
     }
 
     fn areAllPathsReturning(instructions: ir.Block) bool {
+        return doesBlockExit(instructions, .returns);
+    }
+
+    fn isBlockLeaving(instructions: ir.Block) bool {
+        return doesBlockExit(instructions, .leaves_block);
+    }
+
+    fn isValueReturning(value: *const ir.Value) bool {
+        return doesValueExit(value, .returns);
+    }
+
+    fn isValueLeaving(value: *const ir.Value) bool {
+        return doesValueExit(value, .leaves_block);
+    }
+
+    fn doesBlockExit(instructions: ir.Block, query: ExitQuery) bool {
         for (instructions) |inst| {
             switch (inst) {
                 .return_stmt, .return_error => return true,
+                .break_stmt, .continue_stmt => {
+                    if (query == .leaves_block) return true;
+                },
                 .store_var => |store| {
-                    if (isValueReturning(store.value)) return true;
+                    if (doesValueExit(store.value, query)) return true;
                 },
                 .expression_stmt => |expression| {
-                    if (isValueReturning(expression.value)) return true;
+                    if (doesValueExit(expression.value, query)) return true;
                 },
                 .update_indexed => |update| {
-                    if (isValueReturning(update.target) or isValueReturning(update.value)) return true;
+                    if (doesValueExit(update.target, query) or doesValueExit(update.value, query)) return true;
                 },
                 .loop => |loop| {
                     if (loop.condition) |condition| {
-                        if (isValueReturning(condition)) return true;
+                        if (doesValueExit(condition, query)) return true;
                     }
                 },
                 .branch_if => |branch| {
-                    if (isValueReturning(branch.condition)) return true;
-                    if (branch.else_block.len > 0 and areAllPathsReturning(branch.then_block) and areAllPathsReturning(branch.else_block)) return true;
+                    if (doesValueExit(branch.condition, query)) return true;
+                    if (branch.else_block.len > 0 and doesBlockExit(branch.then_block, query) and doesBlockExit(branch.else_block, query)) return true;
                 },
                 .block => |scoped| {
-                    if (areAllPathsReturning(scoped)) return true;
+                    if (doesBlockExit(scoped, query)) return true;
                 },
                 else => {},
             }
@@ -1283,68 +1302,32 @@ pub const SemaAnalyzer = struct {
         return false;
     }
 
-    fn isValueReturning(value: *const ir.Value) bool {
-        return doesValueExit(value, true);
-    }
-
-    fn isValueLeaving(value: *const ir.Value) bool {
-        return doesValueExit(value, false);
-    }
-
-    fn doesValueExit(value: *const ir.Value, needs_return: bool) bool {
+    fn doesValueExit(value: *const ir.Value, query: ExitQuery) bool {
         return switch (value.data) {
-            .block_value => |block| if (needs_return) areAllPathsReturning(block.instructions) else !block.can_complete,
-            .int_to_float, .array_length, .buffer_new, .bytes_length => |operand| doesValueExit(operand, needs_return),
-            .binary_op => |binary| doesValueExit(binary.left, needs_return) or doesValueExit(binary.right, needs_return),
-            .unary_op => |unary| doesValueExit(unary.right, needs_return),
-            .null_box_init => |box| if (box.value) |operand| doesValueExit(operand, needs_return) else false,
-            .fn_call => |call| doAnyValuesExit(call.args, needs_return),
-            .struct_init => |initialization| doAnyValuesExit(initialization.values, needs_return),
-            .i_array => |array| doAnyValuesExit(array.values, needs_return),
-            .string_interpolation => |parts| doAnyValuesExit(parts, needs_return),
-            .union_init => |initialization| if (initialization.value) |operand| doesValueExit(operand, needs_return) else false,
-            .indexed => |indexed| doesValueExit(indexed.target, needs_return) or doesValueExit(indexed.index, needs_return),
-            .union_tag, .union_payload => |operand| doesValueExit(operand, needs_return),
-            .try_call => |call| doesValueExit(call.call, needs_return),
-            .catch_call => |call| doesValueExit(call.call, needs_return),
+            .block_value => |block| switch (query) {
+                .returns => doesBlockExit(block.instructions, .returns),
+                .leaves_block => !block.can_complete,
+            },
+            .int_to_float, .array_length, .buffer_new, .bytes_length => |operand| doesValueExit(operand, query),
+            .binary_op => |binary| doesValueExit(binary.left, query) or doesValueExit(binary.right, query),
+            .unary_op => |unary| doesValueExit(unary.right, query),
+            .null_box_init => |box| if (box.value) |operand| doesValueExit(operand, query) else false,
+            .fn_call => |call| doAnyValuesExit(call.args, query),
+            .struct_init => |initialization| doAnyValuesExit(initialization.values, query),
+            .i_array => |array| doAnyValuesExit(array.values, query),
+            .string_interpolation => |parts| doAnyValuesExit(parts, query),
+            .union_init => |initialization| if (initialization.value) |operand| doesValueExit(operand, query) else false,
+            .indexed => |indexed| doesValueExit(indexed.target, query) or doesValueExit(indexed.index, query),
+            .union_tag, .union_payload => |operand| doesValueExit(operand, query),
+            .try_call => |call| doesValueExit(call.call, query),
+            .catch_call => |call| doesValueExit(call.call, query),
             else => false,
         };
     }
 
-    fn doAnyValuesExit(values: []const *ir.Value, needs_return: bool) bool {
+    fn doAnyValuesExit(values: []const *ir.Value, query: ExitQuery) bool {
         for (values) |value| {
-            if (doesValueExit(value, needs_return)) return true;
-        }
-        return false;
-    }
-
-    fn isBlockLeaving(instructions: ir.Block) bool {
-        for (instructions) |inst| {
-            switch (inst) {
-                .return_stmt, .return_error, .break_stmt, .continue_stmt => return true,
-                .store_var => |store| {
-                    if (isValueLeaving(store.value)) return true;
-                },
-                .expression_stmt => |expression| {
-                    if (isValueLeaving(expression.value)) return true;
-                },
-                .update_indexed => |update| {
-                    if (isValueLeaving(update.target) or isValueLeaving(update.value)) return true;
-                },
-                .loop => |loop| {
-                    if (loop.condition) |condition| {
-                        if (isValueLeaving(condition)) return true;
-                    }
-                },
-                .branch_if => |branch| {
-                    if (isValueLeaving(branch.condition)) return true;
-                    if (branch.else_block.len > 0 and isBlockLeaving(branch.then_block) and isBlockLeaving(branch.else_block)) return true;
-                },
-                .block => |scoped| {
-                    if (isBlockLeaving(scoped)) return true;
-                },
-                else => {},
-            }
+            if (doesValueExit(value, query)) return true;
         }
         return false;
     }
@@ -4301,6 +4284,8 @@ const VisitedBlock = struct {
 };
 
 const Side = enum { mutable, immutable };
+
+const ExitQuery = enum { returns, leaves_block };
 
 const FlowRootKind = enum { local, param, other };
 
