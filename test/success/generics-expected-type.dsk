@@ -1,0 +1,67 @@
+func empty[T]() -> []T
+    let out: []T = []
+    return out
+end
+
+func first_or[T](xs: []T, fallback: T) -> T
+    if len(xs) == 0 then return fallback end
+    return xs[0]
+end
+
+func first[T](xs: []T) -> T
+    return xs[0]
+end
+
+func nothing[T]() -> ?T
+    return null
+end
+
+func fill[T](n: int) -> []T
+    let out: []T = []
+    return out
+end
+
+func names() -> []string
+    return empty()
+end
+
+func total(xs: []int) -> int
+    return len(xs)
+end
+
+struct Box
+    items: []float
+end
+
+func main() -> void
+    let xs: []int = empty()
+    assert(len(xs) == 0)
+    let mut words: []string = empty()
+    append(words, "a")
+    assert(len(words) == 1)
+    assert(len(names()) == 0)
+    assert(total(empty()) == 0)
+    let b = Box(items = empty())
+    assert(len(b.items) == 0)
+    let n: ?int = nothing()
+    assert(n == null)
+    let grid: [][]int = empty()
+    assert(len(grid) == 0)
+    let f: float = first_or([], 2.5)
+    assert(f == 2.5)
+    let maybe: ?[]int = empty()
+    assert(maybe != null)
+    let filled: []byte = fill(3)
+    assert(len(filled) == 0)
+    let flag = true
+    let picked: []int = if flag then empty() else [1] end
+    assert(len(picked) == 0)
+    let chosen: []string = when 1
+        1 then empty() end
+        else then ["a"] end
+    end
+    assert(len(chosen) == 0)
+    let mut reset: []int = [1]
+    reset = empty()
+    assert(len(reset) == 0)
+end

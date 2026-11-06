@@ -404,7 +404,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn cantInferSlot(self: *Self, slot: []const u8, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Can't work out '{s}' for '{s}' from the arguments", .{ slot, identifier }), loc);
+        self.log(try allocPrint(self.allocator, "Can't work out '{s}' for '{s}': pass it through an argument or give the result a type", .{ slot, identifier }), loc);
         return error.CantInferSlot;
     }
 

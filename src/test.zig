@@ -2012,6 +2012,11 @@ test "generics: calls fill the slots from the arguments and compile one copy per
     try runCaseError("sema/generic-void-argument.dsk", error.InvalidSlotType);
 }
 
+test "generics: slots the arguments don't fill come from the expected type" {
+    try runCase("generics-expected-type.dsk");
+    try runCaseError("sema/generic-expected-type-mismatch.dsk", error.InvalidType);
+}
+
 test "prelude: every extern has a binding and every binding has an extern" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

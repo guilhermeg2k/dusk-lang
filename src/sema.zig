@@ -1372,12 +1372,18 @@ pub const SemaAnalyzer = struct {
         };
     }
 
+    fn evalHandledCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        const call = try self.evalFnCall(exp, expected_type);
+        if (self.type_table.isErrorUnion(call.type_id)) return self.err_reporter.unhandledError(callName(exp), exp.loc);
+        return call;
+    }
+
     fn evalFailingCall(self: *Self, exp: *const ast.ExpNode, keyword: []const u8) CompileError!*ir.Value {
         if (exp.data != .fn_call) {
             return self.err_reporter.notAFailingCall(keyword, exp.loc);
         }
 
-        const call = try self.evalFnCall(exp);
+        const call = try self.evalFnCall(exp, null);
         if (!self.type_table.isErrorUnion(call.type_id)) {
             return self.err_reporter.notAFailingCall(keyword, exp.loc);
         }
@@ -1570,6 +1576,7 @@ pub const SemaAnalyzer = struct {
         self: *Self,
         index: usize,
         fn_call: ast.FnCall,
+        expected_type: ?tt.TypeId,
         loc: err.Loc,
         inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
     ) CompileError!Symbol {
@@ -1585,12 +1592,29 @@ pub const SemaAnalyzer = struct {
             try inferred_values.put(self.allocator, arg_exp, value);
             try self.inferSlots(annotation, value.type_id, func_stmt.slots, bindings, arg_exp.loc);
         }
+        try self.inferSlotsFromExpectedType(func_stmt, expected_type, bindings, loc);
 
         const args = try self.allocator.alloc(tt.TypeId, bindings.len);
         for (bindings, func_stmt.slots, 0..) |binding, slot, slot_index| {
             args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, func_stmt.identifier, loc);
         }
         return self.instantiateGenericFunction(index, args, loc);
+    }
+
+    fn inferSlotsFromExpectedType(self: *Self, func_stmt: *const ast.FuncStmt, expected_type: ?tt.TypeId, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
+        const expected = expected_type orelse return;
+        const return_annotation = func_stmt.def.return_type orelse return;
+        if (func_stmt.def.error_set != null) return;
+        for (bindings) |binding| {
+            if (binding == null) break;
+        } else return;
+
+        const from_expected = try self.allocator.alloc(?tt.TypeId, bindings.len);
+        @memset(from_expected, null);
+        try self.inferSlots(return_annotation, expected, func_stmt.slots, from_expected, loc);
+        for (bindings, from_expected) |*binding, expected_binding| {
+            if (binding.* == null) binding.* = expected_binding;
+        }
     }
 
     fn argumentFor(fn_call: ast.FnCall, param_index: usize, param_name: []const u8) ?*ast.ExpNode {
@@ -3156,7 +3180,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const value = try self.evalExp(exp);
+        const value = if (exp.data == .fn_call) try self.evalHandledCall(exp, expected_type_id) else try self.evalExp(exp);
         const expected = expected_type_id orelse return value;
         if (isValueLeaving(value)) {
             return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected });
@@ -3285,13 +3309,7 @@ pub const SemaAnalyzer = struct {
             .identifier => {
                 return self.evalIdentifier(exp);
             },
-            .fn_call => {
-                const call = try self.evalFnCall(exp);
-                if (self.type_table.isErrorUnion(call.type_id)) {
-                    return self.err_reporter.unhandledError(callName(exp), exp.loc);
-                }
-                return call;
-            },
+            .fn_call => return self.evalHandledCall(exp, null),
             .try_exp => {
                 return self.evalTry(exp);
             },
@@ -3332,7 +3350,7 @@ pub const SemaAnalyzer = struct {
         return self.canBeChangedThrough(base_id);
     }
 
-    fn evalFnCall(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
+    fn evalFnCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) !*ir.Value {
         const fn_call = exp.data.fn_call;
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;
@@ -3395,7 +3413,7 @@ pub const SemaAnalyzer = struct {
                         exp.loc,
                     ),
                     .generic_function => |index| {
-                        const copy_symbol = try self.callGenericFunction(index, fn_call, exp.loc, &inferred_values);
+                        const copy_symbol = try self.callGenericFunction(index, fn_call, expected_type, exp.loc, &inferred_values);
                         const func = self.type_table.getTypePtrById(copy_symbol.type_id).kind.function;
                         params = func.params;
                         return_type = func.return_type_id;
