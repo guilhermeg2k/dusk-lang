@@ -2,7 +2,7 @@
 
 ## v0.14 - Simon (in development)
 
-Started v0.14 development: updated the CLI version to `0.14.0-devel` and recorded the implementation phases for generics and traits in `doc/v0.14-generics-plan.md`.
+Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 
 ### Features
 

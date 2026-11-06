@@ -16,10 +16,11 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 8. [Operators](#8-operators)
 9. [Control Flow](#9-control-flow)
 10. [Functions](#10-functions)
-11. [Error Handling](#11-error-handling)
-12. [Built-in Functions](#12-built-in-functions)
-13. [Errors](#13-errors)
-14. [Known Limitations](#14-known-limitations)
+11. [Generics and Traits](#11-generics-and-traits)
+12. [Error Handling](#12-error-handling)
+13. [Built-in Functions](#13-built-in-functions)
+14. [Errors](#14-errors)
+15. [Known Limitations](#15-known-limitations)
 
 ## 1. Basics
 
@@ -997,7 +998,161 @@ end
 
 Functions can be called before they are declared.
 
-## 11. Error Handling
+## 11. Generics and Traits
+
+A **type slot** is a placeholder for a type, written in brackets after a function, struct or union name. Each use fills the slots with real types, and the compiler makes one copy of the declaration per set of types.
+
+```nim
+func first[T](xs: []T) -> T
+    return xs[0]
+end
+
+echo(first([1, 2]))         # first[int]
+echo(first(["a", "b"]))     # first[string]
+```
+
+### Filling slots
+
+A call fills its slots from the arguments. The first argument that mentions a slot fills it, and the others must convert to that type: `both(2.5, 1)` makes `T` a `float`, while `both(1, 2.5)` is an error at `2.5`.
+
+Slots the arguments leave open come from the type the result is expected to have: a variable's annotation, a return type, a parameter or a field.
+
+```nim
+func empty[T]() -> []T
+    return []
+end
+
+let xs: []int = empty()     # empty[int]
+```
+
+A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There's no way to write the types in a call, like `empty[int]()`. A generic function can only be called, not used as a value.
+
+### Generic structs and unions
+
+Structs and unions take slots too. In types they're written with their arguments, `Stack[int]`. When building one, the slots come from the field or variant values, or from the expected type.
+
+```nim
+struct Stack[T]
+    items: []T
+
+    func push(mut self: @, item: T) -> void
+        append(self.items, item)
+    end
+end
+
+union Result[T, E]
+    ok: T
+    err: E
+end
+
+let mut numbers = Stack(items = [1, 2])          # Stack[int]
+numbers.push(3)
+let mut names: Stack[string] = @(items = [])
+let parsed: Result[int, string] = @(ok = 42)
+```
+
+Each filled type is its own type: a `Stack[int]` isn't a `Stack[float]`. Recursive types work (`next: ?Node[T]`), and static fields are shared by every copy (`Stack.MAX`).
+
+### Checked where written
+
+A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `echo`, `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value or be `mut` without a trait constraint.
+
+Each copy is checked again with its real types, so the [sharing rules](#sharing-values) apply per copy. An error there names the copy and the call that made it:
+
+```
+error: in first[[]int] (created at line 7): 'xs[0]' belongs to the caller ...
+```
+
+### Type lists
+
+A slot can be limited to some primitives with `|`. Members are `int`, `float`, `byte`, `string` and `bool`. A `trait` with `=` names a list, and lists can include other named lists.
+
+```nim
+trait Number = int | float
+trait Scalar = Number | string | bool
+
+func sum[T: Number](xs: []T) -> T
+    let mut total: T = 0
+    for xs: x do
+        total = total + x
+    end
+    return total
+end
+
+echo(sum([1, 2, 3]))        # 6
+echo(sum([0.5, 1.5]))       # 2
+sum(["a"])                  # error: 'string' doesn't fit T: Number
+```
+
+Each operator on `T` is checked for every member with the usual rules. It's allowed when every member supports it, and its type is:
+
+- the type every member gives, if they all give the same one: `x / 2` is a `float`, `a < b` a `bool`
+- otherwise `T`, when each member gives itself back: `a + b` on `int | float`
+- otherwise an error: on `byte | float`, `a + b` gives `int` for `byte` and `float` for `float`
+
+A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` need a list without `string`, since on strings they compare pointers (use `str_equal`). `x == null` works on any `?T`.
+
+### Traits
+
+A trait lists methods a type must have. Its methods are signatures without a body, take `self: @` or `mut self: @` first, and `@` stands for the type that fits the trait. `[T: Shape]` lets the generic code call them.
+
+```nim
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+struct Circle
+    r: float
+
+    func area(self: @) -> float
+        return 3.14 * self.r * self.r
+    end
+
+    func scale(mut self: @, by: float) -> void
+        self.r = self.r * by
+    end
+end
+
+func total_area[T: Shape](shapes: []T) -> float
+    let mut total = 0.0
+    for shapes: s do
+        total = total + s.area()
+    end
+    return total
+end
+
+func grow[T: Shape](mut shape: T) -> void
+    shape.scale(2.0)
+end
+```
+
+A struct, enum or union fits a trait when it has each of its methods with the same parameter types and return type (parameter names don't matter). A plain `self` method can stand in for a `mut self` one, not the other way around. There's no `implements` declaration: the check happens where a type fills the slot, in a call, a field or an annotation.
+
+```
+error: 'Plain' doesn't fit T: Shape: it has no method 'area'
+error: 'Wrong' doesn't fit T: Shape: its 'area' is (self: Wrong) -> int, the trait wants (self: Wrong) -> float
+```
+
+`+` combines traits, when declaring one or in a constraint. A trait that only combines others has an empty body.
+
+```nim
+trait Named
+    func name(self: @) -> string
+end
+
+trait Item: Shape + Named end
+
+func describe[T: Shape + Named](x: T) -> string
+    return "${x.name()}: ${x.area()}"
+end
+```
+
+Two traits can share a method if its signature is the same; different signatures are an error. A trait method that can fail names its error set (`func parse(self: @) -> ParseError!int`), and calls to it on `T` use `try` and `catch` as usual. A type list can't be combined with a trait (`Number + Shape`), since primitives have no methods.
+
+Traits only exist at compile time: a trait isn't a type, so `let s: Shape = ...` is an error. To keep different types in one array, use a [union](#6-unions).
+
+## 12. Error Handling
 
 A function that can fail says so in its return type. Errors are values: the caller has to handle them, and nothing is thrown or unwound.
 
@@ -1113,7 +1268,7 @@ end
 
 Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size, a `byte(x)` outside `0..255` or more than 100,000 nested calls still stops the program and can't be caught.
 
-## 12. Built-in Functions
+## 13. Built-in Functions
 
 `T` means any type.
 
@@ -1124,7 +1279,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
 | `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
-| `append`      | `append(list: []T, item: T) -> void`              | Adds an item to the end of a mutable array.                                          |
+| `append`      | `append(mut list: []T, item: T) -> void`          | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
@@ -1196,7 +1351,7 @@ echo(describe_age("abc"))    # not a number
 
 Optional parameters follow the usual call rule: a call is all positional or all named, so write `str_equal(a, b, true)` or `str_equal(a = x, b = y, ignore_case = true)`.
 
-## 13. Errors
+## 14. Errors
 
 Compile errors point to the line and column of the problem:
 
@@ -1206,9 +1361,9 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
-## 14. Known Limitations
+## 15. Known Limitations
 
 These are known gaps in v0.14 development. Most are planned in the [roadmap](roadmap.md).
 
@@ -1220,3 +1375,4 @@ These are known gaps in v0.14 development. Most are planned in the [roadmap](roa
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.
+- **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
