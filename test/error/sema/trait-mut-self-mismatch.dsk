@@ -1,0 +1,23 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+struct Grabby
+    x: int
+
+    func area(mut self: @) -> float
+        return 1.0
+    end
+
+    func scale(mut self: @, by: float) -> void
+    end
+end
+
+func main() -> void
+    area_of(Grabby(x = 1))
+end

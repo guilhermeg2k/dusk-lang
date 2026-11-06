@@ -204,8 +204,8 @@ pub const Parser = struct {
         var slots: std.ArrayList(ast.Slot) = .empty;
         while (true) {
             const slot_token = try self.expect(.identifier);
-            const type_list = if (self.match(.colon)) try self.parseTypeList() else &.{};
-            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .type_list = type_list, .loc = slot_token.loc });
+            const constraint = if (self.match(.colon)) try self.parseConstraint() else &.{};
+            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .constraint = constraint, .loc = slot_token.loc });
             if (!self.match(.comma)) break;
         }
         _ = try self.expect(.r_bracket);
@@ -221,13 +221,45 @@ pub const Parser = struct {
         return types.toOwnedSlice(self.allocator);
     }
 
+    fn parseConstraint(self: *Self) ![]const []const *ast.TypeAnnotation {
+        var terms: std.ArrayList([]const *ast.TypeAnnotation) = .empty;
+        while (true) {
+            try terms.append(self.allocator, try self.parseTypeList());
+            if (!self.match(.plus)) break;
+        }
+        return terms.toOwnedSlice(self.allocator);
+    }
+
     fn parseTraitStmt(self: *Self) !ast.TraitStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
-        _ = try self.expect(.eq);
+        const identifier = identifier_token.value(self.src);
+        if (self.match(.eq)) return ast.TraitStmt{ .identifier = identifier, .type_list = try self.parseTypeList() };
+
+        var parents: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        if (self.match(.colon)) {
+            while (true) {
+                try parents.append(self.allocator, try self.parseTypeAnnotation(false));
+                if (!self.match(.plus)) break;
+            }
+        }
+
+        var methods: std.ArrayList(ast.StatementNode) = .empty;
+        while (!self.match(.end_kw)) {
+            const start = self.peekCurrent();
+            if (start.tag != .func_kw) return self.err_reporter.invalidSyntax("func or end", start);
+            self.walk();
+            const method = try self.parseFuncSignature(false);
+            try methods.append(self.allocator, .{
+                .data = .{ .func = method },
+                .loc = .{ .start = start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+            });
+        }
+
         return ast.TraitStmt{
-            .identifier = identifier_token.value(self.src),
-            .type_list = try self.parseTypeList(),
+            .identifier = identifier,
+            .parents = try parents.toOwnedSlice(self.allocator),
+            .methods = try methods.toOwnedSlice(self.allocator),
         };
     }
 
@@ -787,15 +819,20 @@ pub const Parser = struct {
     fn parseExternFuncStmt(self: *Self) CompileError!ast.FuncStmt {
         self.walk();
         _ = try self.expect(.func_kw);
+        var func_stmt = try self.parseFuncSignature(true);
+        func_stmt.is_extern = true;
+        return func_stmt;
+    }
+
+    fn parseFuncSignature(self: *Self, can_have_slots: bool) CompileError!ast.FuncStmt {
         const identifier_token = try self.expect(.identifier);
-        const slots = try self.parseSlots();
+        const slots = if (can_have_slots) try self.parseSlots() else &.{};
         const params = try self.parseFnParams();
         _ = try self.expect(.arrow);
         const result = try self.parseFnResult();
 
         return ast.FuncStmt{
             .identifier = identifier_token.value(self.src),
-            .is_extern = true,
             .slots = slots,
             .def = .{
                 .params = params,

@@ -36,7 +36,7 @@ pub const FuncStmt = struct {
 
 pub const Slot = struct {
     identifier: []const u8,
-    type_list: []const *TypeAnnotation = &.{},
+    constraint: []const []const *TypeAnnotation = &.{},
     loc: err.Loc,
 };
 
@@ -64,7 +64,9 @@ pub const ErrorSetStmt = struct {
 
 pub const TraitStmt = struct {
     identifier: []const u8,
-    type_list: []const *TypeAnnotation,
+    type_list: []const *TypeAnnotation = &.{},
+    parents: []const *TypeAnnotation = &.{},
+    methods: []const StatementNode = &.{},
 };
 
 pub const ErrorVariant = struct {

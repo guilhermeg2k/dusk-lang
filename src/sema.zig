@@ -35,6 +35,9 @@ pub const SemaAnalyzer = struct {
     generic_functions: std.ArrayList(GenericFunction) = .empty,
     generic_types: std.ArrayList(GenericType) = .empty,
     traits: std.ArrayList(Trait) = .empty,
+    trait_self_type: ?tt.TypeId = null,
+    is_hoisting: bool = false,
+    pending_trait_checks: std.ArrayList(PendingTraitCheck) = .empty,
     copied_types: std.AutoHashMapUnmanaged(tt.TypeId, TypeCopy) = .empty,
     pending_copies: std.ArrayList(PendingCopy) = .empty,
     copy_depth: usize = 0,
@@ -668,6 +671,14 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
+        self.is_hoisting = true;
+        try self.hoistDeclarationsOf(root);
+        self.is_hoisting = false;
+        for (self.pending_trait_checks.items) |pending| try self.checkSlotFits(pending.slot, pending.type_id, pending.loc);
+        self.pending_trait_checks.clearRetainingCapacity();
+    }
+
+    fn hoistDeclarationsOf(self: *Self, root: *const ast.Root) !void {
         for (root.statements.items) |*stmt| {
             switch (stmt.data) {
                 .error_set => |es| {
@@ -1989,8 +2000,38 @@ pub const SemaAnalyzer = struct {
     }
 
     fn addSlotType(self: *Self, slot: ast.Slot) CompileError!tt.TypeId {
-        const type_list = try self.resolveTypeList(slot.type_list);
-        return self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier, .type_list = type_list } }, .is_nullable = false });
+        const constraint = try self.resolveConstraint(slot);
+        const slot_type_id = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier, .type_list = constraint.type_list } }, .is_nullable = false });
+        if (constraint.methods.len == 0) return slot_type_id;
+
+        const methods = try self.allocator.alloc(tt.SlotMethod, constraint.methods.len);
+        for (constraint.methods, methods) |method, *slot_method| {
+            slot_method.* = .{ .identifier = method.func_stmt.identifier, .type_id = try self.traitMethodType(method, slot_type_id) };
+        }
+        self.type_table.getTypePtrById(slot_type_id).kind.slot.methods = methods;
+        return slot_type_id;
+    }
+
+    fn resolveConstraint(self: *Self, slot: ast.Slot) CompileError!Constraint {
+        var constraint = Constraint{};
+        var methods: std.ArrayList(TraitMethod) = .empty;
+        var list_count: usize = 0;
+        var trait_count: usize = 0;
+        for (slot.constraint) |term| {
+            if (term.len == 1) {
+                if (self.methodTraitIndexOf(term[0])) |trait_index| {
+                    const trait_constraint = try self.resolveTrait(trait_index);
+                    try self.mergeTraitMethods(&methods, trait_constraint.methods, term[0].loc);
+                    trait_count += 1;
+                    continue;
+                }
+            }
+            constraint.type_list = try self.resolveTypeList(term);
+            list_count += 1;
+        }
+        if (list_count > 1 or (list_count > 0 and trait_count > 0)) return self.err_reporter.typeListWithTrait(slot.identifier, slot.loc);
+        constraint.methods = try methods.toOwnedSlice(self.allocator);
+        return constraint;
     }
 
     fn resolveTypeList(self: *Self, annotations: []const *ast.TypeAnnotation) CompileError![]const tt.TypeId {
@@ -2003,7 +2044,8 @@ pub const SemaAnalyzer = struct {
         var members: std.ArrayList(tt.TypeId) = .empty;
         for (annotations) |annotation| {
             if (self.traitIndexOf(annotation)) |trait_index| {
-                for (try self.resolveTrait(trait_index)) |member| {
+                if (self.isMethodTrait(trait_index)) return self.err_reporter.typeListWithTrait(annotation.type.@"struct", annotation.loc);
+                for ((try self.resolveTrait(trait_index)).type_list) |member| {
                     if (std.mem.indexOfScalar(tt.TypeId, members.items, member) == null) try members.append(self.allocator, member);
                 }
                 continue;
@@ -2019,20 +2061,124 @@ pub const SemaAnalyzer = struct {
 
     fn traitIndexOf(self: *Self, annotation: *const ast.TypeAnnotation) ?usize {
         if (annotation.type != .@"struct" or annotation.is_nullable or annotation.args.len > 0) return null;
-        const symbol = self.scope.symbol_table.get(annotation.type.@"struct") orelse return null;
+        var root = self.scope.symbol_table;
+        while (root.parent) |parent| root = parent;
+        const symbol = root.get(annotation.type.@"struct") orelse return null;
         if (symbol.kind != .trait) return null;
         return symbol.kind.trait;
     }
 
-    fn resolveTrait(self: *Self, index: usize) CompileError![]const tt.TypeId {
+    fn methodTraitIndexOf(self: *Self, annotation: *const ast.TypeAnnotation) ?usize {
+        const trait_index = self.traitIndexOf(annotation) orelse return null;
+        if (!self.isMethodTrait(trait_index)) return null;
+        return trait_index;
+    }
+
+    fn isMethodTrait(self: *Self, index: usize) bool {
+        return self.traits.items[index].trait_stmt.type_list.len == 0;
+    }
+
+    fn resolveTrait(self: *Self, index: usize) CompileError!Constraint {
         const trait = self.traits.items[index];
-        if (trait.type_list) |type_list| return type_list;
+        if (trait.constraint) |constraint| return constraint;
         if (trait.is_resolving) return self.err_reporter.traitRefersToItself(trait.trait_stmt.identifier, trait.loc);
         self.traits.items[index].is_resolving = true;
-        const type_list = try self.resolveTypeList(trait.trait_stmt.type_list);
-        self.traits.items[index].type_list = type_list;
+
+        var constraint = Constraint{};
+        if (!self.isMethodTrait(index)) {
+            constraint.type_list = try self.resolveTypeList(trait.trait_stmt.type_list);
+        } else {
+            var methods: std.ArrayList(TraitMethod) = .empty;
+            for (trait.trait_stmt.parents) |parent| {
+                if (self.traitIndexOf(parent)) |parent_index| {
+                    if (!self.isMethodTrait(parent_index)) return self.err_reporter.typeListWithTrait(trait.trait_stmt.identifier, parent.loc);
+                    try self.mergeTraitMethods(&methods, (try self.resolveTrait(parent_index)).methods, parent.loc);
+                    continue;
+                }
+                return self.err_reporter.notATrait(try parent.value(self.allocator), parent.loc);
+            }
+            var own: std.ArrayList(TraitMethod) = .empty;
+            for (trait.trait_stmt.methods) |*method_node| {
+                const method = TraitMethod{ .func_stmt = &method_node.data.func, .loc = method_node.loc };
+                try self.checkTraitMethod(method, own.items);
+                try own.append(self.allocator, method);
+            }
+            try self.mergeTraitMethods(&methods, own.items, trait.loc);
+            constraint.methods = try methods.toOwnedSlice(self.allocator);
+        }
+
+        self.traits.items[index].constraint = constraint;
         self.traits.items[index].is_resolving = false;
-        return type_list;
+        return constraint;
+    }
+
+    fn checkTraitMethod(self: *Self, method: TraitMethod, previous: []const TraitMethod) CompileError!void {
+        const def = method.func_stmt.def;
+        for (previous) |other| {
+            if (std.mem.eql(u8, other.func_stmt.identifier, method.func_stmt.identifier)) return self.err_reporter.alreadyDefined(method.func_stmt.identifier, method.loc);
+        }
+        const takes_self = def.params.len > 0 and def.params[0].type_annotation != null and def.params[0].type_annotation.?.type == .type_self and !def.params[0].type_annotation.?.is_nullable;
+        if (!takes_self) return self.err_reporter.traitMethodNeedsSelf(method.func_stmt.identifier, method.loc);
+        if (def.error_set) |error_set| {
+            if (error_set == .inferred) return self.err_reporter.traitMethodNeedsErrorSet(method.func_stmt.identifier, method.loc);
+        }
+        _ = try self.traitMethodType(method, try self.traitSelfType());
+    }
+
+    fn traitSelfType(self: *Self) CompileError!tt.TypeId {
+        if (self.trait_self_type) |type_id| return type_id;
+        const type_id = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = "@" } }, .is_nullable = false });
+        self.trait_self_type = type_id;
+        return type_id;
+    }
+
+    fn mergeTraitMethods(self: *Self, methods: *std.ArrayList(TraitMethod), added: []const TraitMethod, loc: err.Loc) CompileError!void {
+        for (added) |method| {
+            const existing = for (methods.items) |other| {
+                if (std.mem.eql(u8, other.func_stmt.identifier, method.func_stmt.identifier)) break other;
+            } else {
+                try methods.append(self.allocator, method);
+                continue;
+            };
+            if (existing.func_stmt == method.func_stmt) continue;
+            const self_type = try self.traitSelfType();
+            const existing_func = self.type_table.getTypePtrById(try self.traitMethodType(existing, self_type)).kind.function;
+            const method_func = self.type_table.getTypePtrById(try self.traitMethodType(method, self_type)).kind.function;
+            if (self.isSameSignature(existing_func, method_func)) continue;
+            return self.err_reporter.clashingTraitMethods(method.func_stmt.identifier, loc);
+        }
+    }
+
+    fn traitMethodType(self: *Self, method: TraitMethod, self_type: tt.TypeId) CompileError!tt.TypeId {
+        var root = self.scope.symbol_table;
+        while (root.parent) |parent| root = parent;
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = root;
+        defer self.scope.symbol_table = saved_table;
+
+        const saved_return_type = self.scope.return_type_id;
+        defer self.scope.return_type_id = saved_return_type;
+
+        const symbol = try self.createEmptyFuncSymbol(method.func_stmt.identifier);
+        const owner = Symbol{ .identifier = "@", .uid = 0, .type_id = self_type, .kind = .{ .defined_type = .{ .blueprint_type_id = self_type } } };
+        try self.fulfillFuncType(symbol, &method.func_stmt.def, owner, method.loc);
+        return symbol.type_id;
+    }
+
+    fn isSameSignature(self: *Self, a: tt.Func, b: tt.Func) bool {
+        if (a.params.len != b.params.len) return false;
+        for (a.params, b.params) |a_param, b_param| {
+            if (a_param.is_mut != b_param.is_mut or !self.isSameType(a_param.type_id, b_param.type_id)) return false;
+        }
+        return self.isSameType(a.return_type_id, b.return_type_id);
+    }
+
+    fn isSameType(self: *Self, a: tt.TypeId, b: tt.TypeId) bool {
+        if (a == b) return true;
+        const a_kind = self.type_table.getTypePtrById(a).kind;
+        const b_kind = self.type_table.getTypePtrById(b).kind;
+        if (a_kind != .error_union or b_kind != .error_union) return false;
+        return a_kind.error_union.error_set == b_kind.error_union.error_set and self.isSameType(a_kind.error_union.payload, b_kind.error_union.payload);
     }
 
     fn isTypeListMember(self: *Self, type_id: tt.TypeId) bool {
@@ -2045,17 +2191,78 @@ pub const SemaAnalyzer = struct {
     }
 
     fn checkSlotFits(self: *Self, slot: ast.Slot, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
-        if (slot.type_list.len == 0) return;
-        const type_list = try self.resolveTypeList(slot.type_list);
-        if (self.fitsTypeList(type_id, type_list)) return;
+        if (slot.constraint.len == 0) return;
+        const constraint = try self.resolveConstraint(slot);
+        if (constraint.type_list.len > 0) {
+            if (self.fitsTypeList(type_id, constraint.type_list)) return;
+            return self.err_reporter.typeDoesntFitSlot(try self.fitTypeText(type_id), try self.constraintText(slot), loc);
+        }
+        if (constraint.methods.len == 0) return;
+        if (self.is_hoisting) {
+            try self.pending_trait_checks.append(self.allocator, .{ .slot = slot, .type_id = type_id, .loc = loc });
+            return;
+        }
+        for (constraint.methods) |method| try self.checkMethodFits(slot, method, type_id, loc);
+    }
 
+    fn checkMethodFits(self: *Self, slot: ast.Slot, method: TraitMethod, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const name = method.func_stmt.identifier;
+        const required = self.type_table.getTypePtrById(try self.traitMethodType(method, type_id)).kind.function;
+        const actual_type_id = self.methodOf(type_id, name) orelse {
+            const reason = try allocPrint(self.allocator, "it has no method '{s}'", .{name});
+            return self.err_reporter.doesntFitTrait(try self.fitTypeText(type_id), try self.constraintText(slot), reason, loc);
+        };
+        const actual = self.type_table.getTypePtrById(actual_type_id).kind.function;
+        if (self.doesMethodFit(required, actual)) return;
+        const reason = try allocPrint(self.allocator, "its '{s}' is {s}, the trait wants {s}", .{ name, try self.signatureText(actual), try self.signatureText(required) });
+        return self.err_reporter.doesntFitTrait(try self.fitTypeText(type_id), try self.constraintText(slot), reason, loc);
+    }
+
+    fn doesMethodFit(self: *Self, required: tt.Func, actual: tt.Func) bool {
+        if (required.params.len != actual.params.len) return false;
+        for (required.params, actual.params, 0..) |required_param, actual_param, i| {
+            const is_less_demanding_self = i == 0 and required_param.is_mut and !actual_param.is_mut;
+            if (required_param.is_mut != actual_param.is_mut and !is_less_demanding_self) return false;
+            if (!self.isSameType(required_param.type_id, actual_param.type_id)) return false;
+        }
+        return self.isSameType(required.return_type_id, actual.return_type_id);
+    }
+
+    fn methodOf(self: *Self, type_id: tt.TypeId, name: []const u8) ?tt.TypeId {
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .@"struct" => |s| s.methods.get(name),
+            .@"enum" => |e| e.methods.get(name),
+            .@"union" => |u| u.methods.get(name),
+            .slot => |slot| for (slot.methods) |method| {
+                if (std.mem.eql(u8, method.identifier, name)) break method.type_id;
+            } else null,
+            else => null,
+        };
+    }
+
+    fn signatureText(self: *Self, func: tt.Func) CompileError![]const u8 {
+        var text: std.ArrayList(u8) = .empty;
+        try text.append(self.allocator, '(');
+        for (func.params, 0..) |param, i| {
+            if (i > 0) try text.appendSlice(self.allocator, ", ");
+            if (param.is_mut) try text.appendSlice(self.allocator, "mut ");
+            try text.print(self.allocator, "{s}: {s}", .{ param.identifier, try self.type_table.syntaxName(param.type_id, self.allocator) });
+        }
+        try text.print(self.allocator, ") -> {s}", .{try self.type_table.syntaxName(func.return_type_id, self.allocator)});
+        return text.toOwnedSlice(self.allocator);
+    }
+
+    fn constraintText(self: *Self, slot: ast.Slot) CompileError![]const u8 {
         var text: std.ArrayList(u8) = .empty;
         try text.print(self.allocator, "{s}: ", .{slot.identifier});
-        for (slot.type_list, 0..) |annotation, i| {
-            if (i > 0) try text.appendSlice(self.allocator, " | ");
-            try text.appendSlice(self.allocator, try annotation.value(self.allocator));
+        for (slot.constraint, 0..) |term, term_index| {
+            if (term_index > 0) try text.appendSlice(self.allocator, " + ");
+            for (term, 0..) |annotation, i| {
+                if (i > 0) try text.appendSlice(self.allocator, " | ");
+                try text.appendSlice(self.allocator, try annotation.value(self.allocator));
+            }
         }
-        return self.err_reporter.typeDoesntFitSlot(try self.fitTypeText(type_id), try text.toOwnedSlice(self.allocator), loc);
+        return text.toOwnedSlice(self.allocator);
     }
 
     fn fitTypeText(self: *Self, type_id: tt.TypeId) CompileError![]const u8 {
@@ -2260,7 +2467,7 @@ pub const SemaAnalyzer = struct {
             .type_id = subject.type_id,
         });
         const captured_type_id = self.type_table.typeIdByNullableTypeId.get(subject.type_id).?;
-        if (capture.identifier.is_mut and !self.canBeChangedThrough(captured_type_id)) {
+        if (capture.identifier.is_mut and !self.canBeMutable(captured_type_id)) {
             return self.err_reporter.primitiveCaptureCantBeMutable(capture.identifier.name, exp.loc);
         }
         const captured_symbol = Symbol{
@@ -2610,7 +2817,7 @@ pub const SemaAnalyzer = struct {
         var body: std.ArrayList(ir.Instruction) = .empty;
         const is_ignored = std.mem.eql(u8, variant.capture, "_");
         if (variant.is_mut) {
-            if (!self.canBeChangedThrough(variant_type_id)) return self.err_reporter.primitiveCaptureCantBeMutable(variant.capture, prong.loc);
+            if (!self.canBeMutable(variant_type_id)) return self.err_reporter.primitiveCaptureCantBeMutable(variant.capture, prong.loc);
             if (!subject.is_mutable) return self.err_reporter.unwrappedValueCantBeMutable(variant.capture, prong.loc);
         }
         const captured_symbol = Symbol{
@@ -3080,7 +3287,7 @@ pub const SemaAnalyzer = struct {
         if (!is_array_source and !is_buffer_source) return self.err_reporter.invalidType("array, buffer or string", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
         const item_type = if (is_buffer_source) self.type_table.getPrimitive(.byte) else source_type.kind.array;
         if (capture.is_item_mut) {
-            if (!self.canBeChangedThrough(item_type)) return self.err_reporter.primitiveCaptureCantBeMutable(capture.item, stmt.loc);
+            if (!self.canBeMutable(item_type)) return self.err_reporter.primitiveCaptureCantBeMutable(capture.item, stmt.loc);
             if (self.findImmutablePlace(capture.source) != null) return self.err_reporter.unwrappedValueCantBeMutable(capture.item, stmt.loc);
         }
         const integer_type = self.type_table.getPrimitive(.int);
@@ -3206,10 +3413,11 @@ pub const SemaAnalyzer = struct {
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
-            if (param.is_mut and self.type_table.getTypePtrById(param.type_id).kind == .slot) {
+            const param_kind = self.type_table.getTypePtrById(param.type_id).kind;
+            if (param.is_mut and param_kind == .slot and param_kind.slot.methods.len == 0) {
                 return self.err_reporter.slotParamCantBeMutable(param.identifier, try self.type_table.name(param.type_id, self.allocator), loc);
             }
-            if (param.is_mut and !self.canBeChangedThrough(param.type_id)) {
+            if (param.is_mut and !self.canBeMutable(param.type_id)) {
                 return self.err_reporter.primitiveParamsCantBeMutable(loc);
             }
 
@@ -3844,7 +4052,19 @@ pub const SemaAnalyzer = struct {
                 const target_type_id = target.type_id;
                 const target_type_ptr = self.type_table.getTypePtrById(target_type_id);
 
-                if (target_type_ptr.kind != .@"struct" and target_type_ptr.kind != .@"enum" and target_type_ptr.kind != .@"union") {
+                if (target_type_ptr.kind == .slot) {
+                    const fn_name = indexed.index.data.identifier;
+                    const fn_type_id = self.methodOf(target_type_id, fn_name) orelse return self.err_reporter.slotHasNoMethod(target_type_ptr.kind.slot.identifier, fn_name, exp.loc);
+                    const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
+                    if (self.shouldAutoBindSelf(target)) {
+                        if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
+                        try fn_call_arguments_values.append(self.allocator, target);
+                    }
+                    params = fn_metadata.params;
+                    return_type = fn_metadata.return_type_id;
+                    uid = fn_metadata.uid;
+                    fn_identifier = fn_name;
+                } else if (target_type_ptr.kind != .@"struct" and target_type_ptr.kind != .@"enum" and target_type_ptr.kind != .@"union") {
                     return self.err_reporter.invalidType(
                         "a defined type such as struct/enums or union",
                         try self.type_table.name(target_type_id, self.allocator),
@@ -3924,6 +4144,7 @@ pub const SemaAnalyzer = struct {
                         uid = fn_metadata.uid;
                         fn_identifier = fn_name;
                     },
+                    .slot => {},
                     else => unreachable,
                 }
             },
@@ -4316,6 +4537,12 @@ pub const SemaAnalyzer = struct {
     fn isSlotType(self: *Self, type_id: tt.TypeId) bool {
         const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
         return self.type_table.getTypePtrById(base_id).kind == .slot;
+    }
+
+    fn canBeMutable(self: *Self, type_id: tt.TypeId) bool {
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        if (kind == .slot) return kind.slot.methods.len > 0;
+        return self.canBeChangedThrough(type_id);
     }
 
     fn canBeChangedThrough(self: *Self, type_id: tt.TypeId) bool {
@@ -5176,8 +5403,24 @@ const GenericType = struct {
 const Trait = struct {
     trait_stmt: *const ast.TraitStmt,
     loc: err.Loc,
-    type_list: ?[]const tt.TypeId = null,
+    constraint: ?Constraint = null,
     is_resolving: bool = false,
+};
+
+const Constraint = struct {
+    type_list: []const tt.TypeId = &.{},
+    methods: []const TraitMethod = &.{},
+};
+
+const TraitMethod = struct {
+    func_stmt: *const ast.FuncStmt,
+    loc: err.Loc,
+};
+
+const PendingTraitCheck = struct {
+    slot: ast.Slot,
+    type_id: tt.TypeId,
+    loc: err.Loc,
 };
 
 const SlotResults = struct {

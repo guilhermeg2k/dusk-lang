@@ -1,0 +1,6 @@
+trait Factory
+    func make() -> int
+end
+
+func main() -> void
+end

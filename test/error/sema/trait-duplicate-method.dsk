@@ -1,0 +1,7 @@
+trait Shape
+    func area(self: @) -> float
+    func area(self: @) -> float
+end
+
+func main() -> void
+end

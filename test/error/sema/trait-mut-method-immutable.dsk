@@ -1,0 +1,15 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+func grow[T: Shape](x: T) -> void
+    x.scale(2.0)
+end
+
+func main() -> void
+end

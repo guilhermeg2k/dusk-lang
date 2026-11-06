@@ -1,0 +1,8 @@
+struct Point
+    x: int
+end
+
+trait Located: Point end
+
+func main() -> void
+end

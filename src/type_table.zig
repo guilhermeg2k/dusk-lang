@@ -357,6 +357,12 @@ pub const ErrorSet = struct {
 pub const Slot = struct {
     identifier: []const u8,
     type_list: []const TypeId = &.{},
+    methods: []const SlotMethod = &.{},
+};
+
+pub const SlotMethod = struct {
+    identifier: []const u8,
+    type_id: TypeId,
 };
 
 pub const ErrorUnion = struct {

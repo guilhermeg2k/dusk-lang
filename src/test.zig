@@ -2057,6 +2057,27 @@ test "generics: type lists constrain a slot to primitives" {
     try runCaseError("sema/trait-inside-function.dsk", error.DeclarationInsideFunction);
 }
 
+test "generics: traits constrain a slot to types with methods" {
+    try runCase("generics-traits.dsk");
+    try runCaseError("parser/trait-method-with-body.dsk", error.ParserError);
+    try runCaseError("parser/trait-method-slots.dsk", error.ParserError);
+    try runCaseError("sema/trait-missing-method.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-wrong-signature.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-mut-self-mismatch.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-field-doesnt-fit.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-unconstrained-slot-doesnt-fit.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-mut-method-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/trait-slot-no-method.dsk", error.SlotHasNoMethod);
+    try runCaseError("sema/trait-with-type-list.dsk", error.TypeListWithTrait);
+    try runCaseError("sema/trait-in-type-list.dsk", error.TypeListWithTrait);
+    try runCaseError("sema/trait-clashing-methods.dsk", error.ClashingTraitMethods);
+    try runCaseError("sema/trait-parent-cycle.dsk", error.TraitRefersToItself);
+    try runCaseError("sema/trait-method-needs-self.dsk", error.TraitMethodNeedsSelf);
+    try runCaseError("sema/trait-method-inferred-errors.dsk", error.TraitMethodNeedsErrorSet);
+    try runCaseError("sema/trait-parent-not-trait.dsk", error.NotATrait);
+    try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
+}
+
 test "sema error: unknown return type is reported, not a crash" {
     try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }

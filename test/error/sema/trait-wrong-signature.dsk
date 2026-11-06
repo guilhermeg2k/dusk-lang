@@ -1,0 +1,23 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+struct Wrong
+    x: int
+
+    func area(self: @) -> int
+        return 1
+    end
+
+    func scale(mut self: @, by: float) -> void
+    end
+end
+
+func main() -> void
+    area_of(Wrong(x = 1))
+end

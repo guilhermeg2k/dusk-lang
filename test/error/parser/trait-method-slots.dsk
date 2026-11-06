@@ -1,0 +1,6 @@
+trait Mapper
+    func map[U](self: @, x: U) -> U
+end
+
+func main() -> void
+end

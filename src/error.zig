@@ -423,6 +423,41 @@ pub const CompileErrorReporter = struct {
         return error.TraitRefersToItself;
     }
 
+    pub fn doesntFitTrait(self: *Self, type_name: []const u8, slot: []const u8, reason: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} doesn't fit {s}: {s}", .{ type_name, slot, reason }), loc);
+        return error.DoesntFitTrait;
+    }
+
+    pub fn typeListWithTrait(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' mixes a type list with another constraint: '+' only joins traits with methods, and primitives have no methods", .{identifier}), loc);
+        return error.TypeListWithTrait;
+    }
+
+    pub fn notATrait(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't a trait", .{identifier}), loc);
+        return error.NotATrait;
+    }
+
+    pub fn clashingTraitMethods(self: *Self, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Method '{s}' comes from two traits with different signatures", .{method}), loc);
+        return error.ClashingTraitMethods;
+    }
+
+    pub fn traitMethodNeedsSelf(self: *Self, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Trait method '{s}' must take 'self: @' or 'mut self: @' first", .{method}), loc);
+        return error.TraitMethodNeedsSelf;
+    }
+
+    pub fn traitMethodNeedsErrorSet(self: *Self, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Trait method '{s}' needs a named error set, like 'ParseError!int'", .{method}), loc);
+        return error.TraitMethodNeedsErrorSet;
+    }
+
+    pub fn slotHasNoMethod(self: *Self, slot: []const u8, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' has no method '{s}': its constraint doesn't list it", .{ slot, method }), loc);
+        return error.SlotHasNoMethod;
+    }
+
     pub fn traitUsedAsType(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is a trait: it can only constrain a type slot, like [T: {s}]", .{ identifier, identifier }), loc);
         return error.TraitUsedAsType;
@@ -822,6 +857,13 @@ pub const CompileError = error{
     TypeListNotPrimitive,
     TraitRefersToItself,
     TraitUsedAsType,
+    DoesntFitTrait,
+    TypeListWithTrait,
+    NotATrait,
+    ClashingTraitMethods,
+    TraitMethodNeedsSelf,
+    TraitMethodNeedsErrorSet,
+    SlotHasNoMethod,
     GenericNeedsCall,
     CantInferSlot,
     ConflictingSlotTypes,
