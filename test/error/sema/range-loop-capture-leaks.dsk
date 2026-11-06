@@ -1,4 +1,6 @@
-for 1..2: value do
-end
+func main() -> void
+    for 1..2: value do
+    end
 
-echo(value)
+    echo(value)
+end

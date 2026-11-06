@@ -10,6 +10,8 @@ func parse(n: int) -> ParseError!int
     return n
 end
 
-let x = parse(1) catch e then
-    echo(e)
+func main() -> void
+    let x = parse(1) catch e then
+        echo(e)
+    end
 end

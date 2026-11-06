@@ -1,24 +1,26 @@
 struct Api
-    #Static fields
     let ip = "127.0.0.1"
-    let mut port: string = "8080"
+    let port = 8000 + 80
+    let secure = false
 
-    #Fields
     endpoint: string = ""
 
-    #Methods
     func fetch(self: @) -> string
         return self.ip
     end
+
+    func url(self: @) -> string
+        return "${Api.ip}:${Api.port}${self.endpoint}"
+    end
 end
 
-let api = Api("/me")
+func main() -> void
+    let api = Api("/me")
 
-Api.port = ":9090"
-
-echo(api.fetch())
-echo(Api.fetch(api))
-echo(Api.port)
-
-
-
+    assert(str_equal(api.fetch(), "127.0.0.1"))
+    assert(str_equal(Api.fetch(api), "127.0.0.1"))
+    assert(Api.port == 8080)
+    assert(api.port == 8080)
+    assert(Api.secure == false)
+    assert(str_equal(api.url(), "127.0.0.1:8080/me"))
+end

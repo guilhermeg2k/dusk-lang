@@ -74,7 +74,8 @@ LANGUAGES = [
 # Java uses PascalCase file names; everything else uses the benchmark key.
 JAVA_CLASS = {"fib": "Fib", "particles": "Particles",
               "primes": "Primes", "quicksort": "Quicksort",
-              "mandelbrot": "Mandelbrot"}
+              "mandelbrot": "Mandelbrot", "strings": "Strings",
+              "concat": "Concat", "parse": "Parse"}
 
 BENCHMARKS = [
     {
@@ -114,6 +115,34 @@ BENCHMARKS = [
                 "IEEE-754 double math everywhere); print the sum of all "
                 "iteration counts as a checksum.",
         "expected": "141554306",
+        "numeric": False,
+    },
+    {
+        "key": "strings",
+        "title": "Strings",
+        "desc": "1,000,000 iterations of: build \"item {i}: value={i*3} tag={name}\" "
+                "by interpolation, split it on spaces, join the pieces with commas; "
+                "print the sum of the line, piece-count and joined lengths.",
+        "expected": "73037032",
+        "numeric": False,
+    },
+    {
+        "key": "concat",
+        "title": "String Concatenation",
+        "desc": "Grow a string by appending \"ab\" 200,000 times with plain "
+                "concatenation (no builder), so every step copies the whole "
+                "string; print the final length.",
+        "expected": "400000",
+        "numeric": False,
+    },
+    {
+        "key": "parse",
+        "title": "CSV Parsing",
+        "desc": "Build 500,000 \"i,(i*7)%1000,item{i}\" rows, join them with "
+                "newlines, then split the text back into rows and fields and "
+                "parse the first two fields as ints; print their sum plus the "
+                "row count.",
+        "expected": "125250000000",
         "numeric": False,
     },
 ]

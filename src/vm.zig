@@ -2,27 +2,33 @@ const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const util = @import("util.zig");
-const RunTimeError = @import("error.zig").RunTimeError;
+const RuntimeError = @import("error.zig").RuntimeError;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
+const format = @import("format.zig");
 
 pub const VM = struct {
     const Self = @This();
     const MIN_GC_THRESHOLD = 1000000; //1MB
+    const MAX_CALL_DEPTH = 100_000;
+    const STACK_SLOTS = 4_000_000;
+    const MAX_FRAME_REGISTERS = 256;
 
     allocator: std.mem.Allocator,
     program: *const bc.Program,
-    frames: [256]CallFrame,
+    frames: []CallFrame,
     frame_count: usize,
-    stack: [16383]v.Value,
+    stack: []v.Value,
     heap: Heap,
-    static_store: []v.Value,
+    scratch: std.Io.Writer.Allocating,
+    stdout: ?*std.Io.Writer,
 
-    pub fn init(program: *const bc.Program) VM {
+    pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
             .allocator = std.heap.page_allocator,
-            .frames = undefined,
+            .frames = &.{},
             .frame_count = 0,
             .program = program,
-            .stack = undefined,
+            .stack = &.{},
             .heap = .{
                 .arenas = .{
                     std.heap.ArenaAllocator.init(std.heap.page_allocator),
@@ -30,12 +36,45 @@ pub const VM = struct {
                 },
                 .threshold = MIN_GC_THRESHOLD,
             },
-            .static_store = &.{},
+            .scratch = .init(std.heap.page_allocator),
+            .stdout = stdout,
         };
     }
 
+    pub fn deinit(self: *Self) void {
+        self.scratch.deinit();
+        for (&self.heap.arenas) |*arena| arena.deinit();
+    }
+
+    noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
+        self.scratch.clearRetainingCapacity();
+        format.printValue(&self.scratch.writer, value, kind);
+        const bytes = self.scratch.written();
+        const result = try self.allocString(bytes.len);
+        @memcpy(result.mutableSlice(), bytes);
+        return .{ .heap_obj = &result.obj };
+    }
+
+    noinline fn buildString(self: *Self, parts: []const v.Value, kinds: []const v.ValueType) !v.Value {
+        self.scratch.clearRetainingCapacity();
+        for (parts, kinds) |part, kind| {
+            if (kind == .string) {
+                try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
+                continue;
+            }
+            format.printValue(&self.scratch.writer, part, kind);
+        }
+        const bytes = self.scratch.written();
+        const result = try self.allocString(bytes.len);
+        @memcpy(result.mutableSlice(), bytes);
+        return .{ .heap_obj = &result.obj };
+    }
+
     pub noinline fn run(self: *Self) !void {
-        try self.initStaticStore();
+        self.frames = try self.allocUntouched(CallFrame, MAX_CALL_DEPTH);
+        defer self.freeUntouched(CallFrame, self.frames);
+        self.stack = try self.allocUntouched(v.Value, STACK_SLOTS);
+        defer self.freeUntouched(v.Value, self.stack);
         self.initMainFrame();
 
         const stack = self.stack[0..];
@@ -58,12 +97,18 @@ pub const VM = struct {
                 },
 
                 .LOAD_STRING => {
-                    const str_data = current_frame.function.kind.dusk.string_constants[inst.bEx()];
+                    stack[stack_base + inst.a] = self.program.string_pool.values[inst.bEx()];
+                },
+
+                .TO_STRING => {
                     current_frame.cur_inst = cur_instruction;
-                    try self.maybeCollectGarbage(v.String.calc_size(str_data.len));
-                    var string_obj = try v.String.init(self.getCurrentHeapAllocator(), str_data);
-                    self.increaseHeapAllocationCount(v.String.calc_size(str_data.len));
-                    stack[stack_base + inst.a] = .{ .heap_obj = &string_obj.obj };
+                    stack[stack_base + inst.a] = try self.toString(stack[stack_base + inst.b], @enumFromInt(inst.c));
+                },
+
+                .STR_BUILD => {
+                    current_frame.cur_inst = cur_instruction;
+                    const kinds = current_frame.function.kind.dusk.build_recipes[inst.bEx()];
+                    stack[stack_base + inst.a] = try self.buildString(stack[stack_base + inst.a + 1 ..][0..kinds.len], kinds);
                 },
 
                 .LOAD => {
@@ -79,21 +124,19 @@ pub const VM = struct {
                 },
 
                 .ARRAY_LOAD => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     const idx = stack[stack_base + inst.c];
-                    const value = try array.get(@intCast(idx.int64));
+                    const value = try array.get(idx.int64);
                     stack[stack_base + inst.a] = value;
                 },
 
                 .ARRAY_APPEND => {
-                    const arr_ptr = stack[stack_base + inst.a].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
 
                     if (array.needsResize()) {
                         current_frame.cur_inst = cur_instruction;
                         try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
-                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, stack[stack_base + inst.a].heap_obj);
+                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
                         array = try array.resize(self.getCurrentHeapAllocator());
                         stack[stack_base + inst.a].heap_obj = &array.obj;
 
@@ -106,22 +149,48 @@ pub const VM = struct {
                 },
 
                 .ARRAY_STORE => {
-                    const arr_ptr = stack[stack_base + inst.a].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
                     const idx = stack[stack_base + inst.b];
                     const value = stack[stack_base + inst.c];
-                    try array.set(@intCast(idx.int64), value);
+                    try array.set(idx.int64, value);
                 },
 
                 .ARRAY_LEN => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     stack[stack_base + inst.a] = .{ .int64 = @intCast(array.len) };
                 },
 
+                .BYTES_NEW => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.newBuffer(stack[stack_base + inst.b].int64);
+                },
+
+                .BYTES_LEN => {
+                    const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
+                    stack[stack_base + inst.a] = .{ .int64 = @intCast(bytes.len) };
+                },
+
+                .BYTES_GET => {
+                    const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
+                    const index = stack[stack_base + inst.c].int64;
+                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
+                    stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
+                },
+
+                .BYTES_SET => {
+                    const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
+                    const index = stack[stack_base + inst.b].int64;
+                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
+                    bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
+                },
+
+                .DEEP_COPY => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try self.deepCopy(stack_base + inst.b);
+                },
+
                 .ARRAY_POP => {
-                    const arr_ptr = stack[stack_base + inst.b].heap_obj;
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b, arr_ptr);
+                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     const value = try array.pop();
                     stack[stack_base + inst.a] = value;
                 },
@@ -147,22 +216,6 @@ pub const VM = struct {
                     const struct_vl = v.HeapValue.getParentPtr(v.Struct, struct_ptr);
                     const vl = stack[stack_base + inst.c];
                     struct_vl.set(inst.b, vl);
-                },
-
-                .STATIC_LOAD => {
-                    stack[stack_base + inst.a] = self.static_store[inst.bEx()];
-                },
-
-                .STATIC_STORE => {
-                    self.static_store[inst.bEx()] = stack[stack_base + inst.a];
-                },
-
-                .GLOBAL_LOAD => {
-                    stack[stack_base + inst.a] = stack[inst.bEx()];
-                },
-
-                .GLOBAL_STORE => {
-                    stack[inst.bEx()] = stack[stack_base + inst.a];
                 },
 
                 .UNION_INIT => {
@@ -206,28 +259,6 @@ pub const VM = struct {
 
                     self.increaseHeapAllocationCount(size);
                     stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
-                },
-
-                .NULL_BOX_STORE => {
-                    const is_null = inst.b == 0;
-                    if (is_null) {
-                        stack[stack_base + inst.a] = v.NULL_VALUE;
-                        continue;
-                    }
-
-                    const new_value = stack[stack_base + inst.c];
-                    const current_raw: u64 = @bitCast(stack[stack_base + inst.a]);
-                    if (current_raw == 0) {
-                        const size = v.NullBox.calc_size();
-                        current_frame.cur_inst = cur_instruction;
-                        try self.maybeCollectGarbage(size);
-                        var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), new_value, @enumFromInt(inst.b - 1));
-                        self.increaseHeapAllocationCount(size);
-                        stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
-                    } else {
-                        const nullable_vl = v.HeapValue.getParentPtr(v.NullBox, stack[stack_base + inst.a].heap_obj);
-                        nullable_vl.value = new_value;
-                    }
                 },
 
                 .NULL_BOX_UNWRAP => {
@@ -422,6 +453,12 @@ pub const VM = struct {
                     };
                 },
 
+                .I_TO_BYTE => {
+                    const number = stack[stack_base + inst.b].int64;
+                    if (number < 0 or number > 255) return RuntimeErrorReporter.byteOutOfRange(number);
+                    stack[stack_base + inst.a] = .{ .int64 = number };
+                },
+
                 .I_TO_F => {
                     stack[stack_base + inst.a] = .{
                         .float64 = @floatFromInt(stack[stack_base + inst.a].int64),
@@ -440,6 +477,7 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
+                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
                             self.frames[self.frame_count] = .{
                                 .function = func,
                                 .cur_inst = 0,
@@ -451,12 +489,25 @@ pub const VM = struct {
                             instructions = func.kind.dusk.instructions;
                             stack_base = new_offset;
                         },
-                        .host => |b| {
-                            const args = stack[stack_base + inst.a + 1 ..][0..b.num_args];
-                            stack[stack_base + inst.a] = b.func(args);
+                        .native => |n| {
+                            current_frame.cur_inst = cur_instruction;
+                            const args = stack[stack_base + inst.a + 1 ..][0..n.num_args];
+                            const result = try n.func(self, args);
+                            stack[stack_base + inst.a] = result.value;
+                            if (result.has_failed) cur_instruction += 1;
                         },
                         .@"inline" => unreachable,
                     }
+                },
+
+                .TAIL_CALL => {
+                    const func = &self.program.functions[inst.bEx()];
+                    const chunk = &func.kind.dusk;
+                    const args_start = stack_base + inst.a + 1;
+                    std.mem.copyForwards(v.Value, stack[stack_base..][0..chunk.num_params], stack[args_start..][0..chunk.num_params]);
+                    current_frame.function = func;
+                    cur_instruction = 0;
+                    instructions = chunk.instructions;
                 },
 
                 .JUMP => {
@@ -489,25 +540,107 @@ pub const VM = struct {
                 },
 
                 .PANIC_ERR => {
-                    return self.panicUnhandledError(stack[stack_base + inst.a]);
+                    return RuntimeErrorReporter.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
                 },
                 else => unreachable,
             }
         }
     }
 
-    noinline fn panicUnhandledError(self: *Self, err_value: v.Value) RunTimeError {
-        @branchHint(.cold);
-        if (@import("builtin").is_test) return RunTimeError.UnhandledError;
-        std.debug.print("error: unhandled error {s}\n", .{self.program.error_names[@intCast(err_value.int64)]});
-        return RunTimeError.UnhandledError;
+    noinline fn newBuffer(self: *Self, len: i64) !v.Value {
+        if (len < 0) return RuntimeErrorReporter.negativeBufferSize(len);
+        const size = v.Bytes.calc_size(@intCast(len));
+        try self.maybeCollectGarbage(size);
+        const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &bytes.obj };
     }
 
-    fn initStaticStore(self: *Self) !void {
-        if (self.program.static_count > 0) {
-            self.static_store = try self.allocator.alloc(v.Value, self.program.static_count);
-            @memset(self.static_store, v.NULL_VALUE);
+    noinline fn deepCopy(self: *Self, source_index: usize) !v.Value {
+        if (@as(u64, @bitCast(self.stack[source_index])) == 0) return self.stack[source_index];
+        try self.maybeCollectGarbage(heapObjectSize(self.stack[source_index].heap_obj));
+
+        var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
+        defer copies.deinit(self.allocator);
+        var pending: std.ArrayList(*v.HeapValue) = .empty;
+        defer pending.deinit(self.allocator);
+
+        var result = self.stack[source_index];
+        try self.deepCopySlot(&result, &copies, &pending);
+        while (pending.pop()) |copy| {
+            switch (copy.kind) {
+                .array => {
+                    const array = v.HeapValue.getParentPtr(v.Array, copy);
+                    switch (array.kind) {
+                        .buffer, .@"struct", .array, .@"union", .nullable => {
+                            for (array.getDataPtr()[0..array.len]) |*item| try self.deepCopySlot(item, &copies, &pending);
+                        },
+                        else => {},
+                    }
+                },
+                .@"struct" => {
+                    const s = v.HeapValue.getParentPtr(v.Struct, copy);
+                    const desc = self.program.struct_descriptors[s.descriptor_id];
+                    const fields = s.getDataPtr()[0..s.field_count];
+                    for (0..s.field_count) |i| {
+                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(i)) != 0) try self.deepCopySlot(&fields[i], &copies, &pending);
+                    }
+                },
+                .@"union" => {
+                    const u = v.HeapValue.getParentPtr(v.Union, copy);
+                    if (u.active_tag == v.Union.NO_TAG) continue;
+                    const desc = self.program.union_descriptors[u.descriptor_id];
+                    if (desc.heap_bitmap & (@as(u256, 1) << @intCast(u.active_tag)) != 0) try self.deepCopySlot(&u.getDataPtr()[0], &copies, &pending);
+                },
+                else => {},
+            }
         }
+        return result;
+    }
+
+    fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
+        if (@as(u64, @bitCast(slot.*)) == 0) return;
+        const current = slot.heap_obj.followRelocated();
+        if (current.kind == .string or current.kind == .null_box) {
+            slot.heap_obj = current;
+            return;
+        }
+        if (copies.get(current)) |copy| {
+            slot.heap_obj = copy;
+            return;
+        }
+        const copy = try cloneHeapObj(self.getCurrentHeapAllocator(), current);
+        self.increaseHeapAllocationCount(heapObjectSize(copy));
+        try copies.put(self.allocator, current, copy);
+        if (copy.kind != .buffer) try pending.append(self.allocator, copy);
+        slot.heap_obj = copy;
+    }
+
+    pub fn allocString(self: *Self, len: usize) !*v.Bytes {
+        const size = v.Bytes.calc_size(len);
+        try self.maybeCollectGarbage(size);
+        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
+        self.increaseHeapAllocationCount(size);
+        return result;
+    }
+
+    pub fn boxInt(self: *Self, number: i64) !v.Value {
+        const size = v.NullBox.calc_size();
+        try self.maybeCollectGarbage(size);
+        const box = try v.NullBox.init(self.getCurrentHeapAllocator(), .{ .int64 = number }, .int64);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &box.obj };
+    }
+
+    fn allocUntouched(self: *Self, comptime T: type, count: usize) ![]T {
+        const bytes = self.allocator.rawAlloc(@sizeOf(T) * count, .of(T), @returnAddress()) orelse return error.OutOfMemory;
+        const items: [*]T = @ptrCast(@alignCast(bytes));
+        return items[0..count];
+    }
+
+    fn freeUntouched(self: *Self, comptime T: type, items: []T) void {
+        const bytes: [*]u8 = @ptrCast(items.ptr);
+        self.allocator.rawFree(bytes[0 .. @sizeOf(T) * items.len], .of(T), @returnAddress());
     }
 
     fn initMainFrame(self: *Self) void {
@@ -538,28 +671,19 @@ pub const VM = struct {
         stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
     }
 
-    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.Array {
-        const refreshed_pointer = refreshStackHeapPtr(stack, stack_base, reg_idx, ptr);
-        const array = v.HeapValue.getParentPtr(v.Array, refreshed_pointer);
-        return array;
+    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
+        const ptr = stack[stack_base + reg_idx].heap_obj;
+        const current = ptr.followRelocated();
+        if (current != ptr) stack[stack_base + reg_idx].heap_obj = current;
+        return v.HeapValue.getParentPtr(v.Array, current);
     }
 
-    fn refreshStackHeapPtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.HeapValue {
-        const follow = v.HeapValue.followRelocated(ptr);
-
-        if (follow) |relocated| {
-            stack[stack_base + reg_idx].heap_obj = relocated;
-        }
-
-        return follow orelse ptr;
-    }
-
-    fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
+    pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
         self.heap.allocated += bytes;
         self.heap.object_count += 1;
     }
 
-    fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
+    pub fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
         if (self.heap.allocated + bytes > self.heap.threshold) {
             try self.collectGarbage();
         }
@@ -589,23 +713,13 @@ pub const VM = struct {
             }
         }
 
-        for (0..self.program.static_count) |i| {
-            const word_idx = i >> 6;
-            const bit_idx = i & 63;
-            if (word_idx < self.program.static_heap_bitmap.len and
-                self.program.static_heap_bitmap[word_idx] & (@as(u64, 1) << @intCast(bit_idx)) != 0)
-            {
-                try self.copyHeapValue(new_alloc, &self.static_store[i]);
-            }
-        }
-
         while (self.heap.gc_queue.items.len > 0) {
             const obj = self.heap.gc_queue.pop().?;
             switch (obj.kind) {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
                     switch (array.kind) {
-                        .string, .@"struct", .array, .@"union", .nullable => {
+                        .string, .buffer, .@"struct", .array, .@"union", .nullable => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
                                 try self.copyHeapValue(new_alloc, item);
@@ -652,10 +766,8 @@ pub const VM = struct {
     fn copyHeapValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value) !void {
         const raw: u64 = @bitCast(value.*);
         if (raw == 0) return;
-        var current = value.heap_obj;
-        while (current.relocated) |rel| {
-            current = rel;
-        }
+        if (self.program.string_pool.contains(value.heap_obj)) return;
+        const current = value.heap_obj.followRelocated();
 
         if (current.gc_forward) |fwd| {
             value.heap_obj = fwd;
@@ -663,7 +775,7 @@ pub const VM = struct {
             const new_ptr = try cloneHeapObj(new_alloc, current);
             current.gc_forward = new_ptr;
             value.heap_obj = new_ptr;
-            if (new_ptr.kind != .string) {
+            if (new_ptr.kind != .string and new_ptr.kind != .buffer) {
                 try self.heap.gc_queue.append(self.allocator, new_ptr);
             }
             self.heap.object_count += 1;
@@ -677,7 +789,7 @@ pub const VM = struct {
             .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
             .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
             .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
-            .string => &(try v.HeapValue.getParentPtr(v.String, obj_ptr).clone(allocator)).obj,
+            .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
         };
     }
 
@@ -687,11 +799,11 @@ pub const VM = struct {
             .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
             .@"union" => v.Union.calc_size(),
             .null_box => v.NullBox.calc_size(),
-            .string => v.String.calc_size(v.HeapValue.getParentPtr(v.String, ptr).len),
+            .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
         };
     }
 
-    fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
+    pub fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
         return self.heap.arenas[self.heap.active].allocator();
     }
 };

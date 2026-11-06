@@ -257,25 +257,27 @@ union Max
     v255: string
 end
 
-let first = Max(v0 = 1)
-let last = Max(v255 = "last")
+func main() -> void
+    let first = Max(v0 = 1)
+    let last = Max(v255 = "last")
 
-if first.v0: n then
-    assert(n == 1)
-else
-    assert(false)
-end
+    if first.v0: n then
+        assert(n == 1)
+    else
+        assert(false)
+    end
 
-if last.v255: s then
-    assert(true)
-else
-    assert(false)
-end
+    if last.v255: s then
+        assert(true)
+    else
+        assert(false)
+    end
 
-assert(first.v255 == null)
-assert(last.v0 == null)
+    assert(first.v255 == null)
+    assert(last.v0 == null)
 
-when last
-    v255: s then assert(true) end
-    else then assert(false) end
+    when last
+        v255: s then assert(true) end
+        else then assert(false) end
+    end
 end

@@ -1,0 +1,7 @@
+func main() -> void
+    let mut count: ?int = 1
+
+    if count: mut k then
+        k = 5
+    end
+end

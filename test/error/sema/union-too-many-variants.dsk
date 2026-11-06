@@ -258,4 +258,6 @@ union Big
     v256: int
 end
 
-let a = Big(v0 = 1)
+func main() -> void
+    let a = Big(v0 = 1)
+end

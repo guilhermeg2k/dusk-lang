@@ -1,6 +1,396 @@
 const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
+const Lexer = @import("lexer.zig").Lexer;
+
+fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "string interpolation" {
+    try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
+        "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
+        "Escaped: $name ${a + b} $name $ $5\n" ++
+        "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
+        "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
+        "true 1.5 null 7 1.5 true text null\n3 6 [1, 2] { 9 }\n<union>\n");
+}
+
+test "string interpolation in batches" {
+    try runCaseOutput("string-interpolation-large.dsk", "0=0 1=1 2=2 3=3 4=4 5=5 6=6 7=7 8=8 9=9 10=10 11=11 12=12 13=13 14=14 15=15 16=16 17=17 18=18 19=19 20=20 21=21 22=22 23=23 24=24 25=25 26=26 27=27 28=28 29=29 30=30 31=31 32=32 33=33 34=34 35=35 36=36 37=37 38=38 39=39\ntrue 1.5 [1, 2] 5 null done\n");
+    try runCaseOutput("string-interpolation-build-gc.dsk", "[item 5000: [5000, 5001] 5000 nested 5000 1.5 true, item 10000: [10000, 10001] 10000 nested 10000 1.5 true, " ++
+        "item 15000: [15000, 15001] 15000 nested 15000 1.5 true, item 20000: [20000, 20001] 20000 nested 20000 1.5 true]\n1034474\n");
+}
+
+test "string interpolation compiles to one STR_BUILD" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compile("func main() -> void let a = 1 let b = [2] let s = \"a=$a b=$b\" end");
+    const chunk = for (program.functions) |func| {
+        if (std.mem.eql(u8, func.name, "main")) break func.kind.dusk;
+    } else return error.MainNotFound;
+    var builds: usize = 0;
+    var snapshots: usize = 0;
+    for (chunk.instructions) |inst| {
+        if (inst.op == .STR_BUILD) builds += 1;
+        if (inst.op == .TO_STRING) snapshots += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), builds);
+    try testing.expectEqual(@as(usize, 1), snapshots);
+    try testing.expectEqual(@as(usize, 1), chunk.build_recipes.len);
+    try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
+}
+
+test "string interpolation GC" {
+    try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
+}
+
+test "string interpolation control flow" {
+    try runCaseOutput("string-interpolation-control-flow.dsk", "number=5\nfallback\ncaught=8\nearly\nbefore 4 after\n1\n3\n4\nother\n");
+}
+
+test "string interpolation ignores braces in comments" {
+    const sources = [_][]const u8{
+        "func main() -> void\nlet value = \"${1 #= } #= nested =# =# + 2}\"\nend",
+        "func main() -> void\nlet value = \"${1 + 2 # ignored }\n}\"\nend",
+    };
+    for (sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        try dusk.compileAndRun(source);
+    }
+}
+
+test "string interpolation empty" {
+    try runCaseError("parser/string-interpolation-empty.dsk", error.ParserError);
+}
+
+test "string interpolation extra expression" {
+    try runCaseError("parser/string-interpolation-extra-expression.dsk", error.ParserError);
+}
+
+test "string interpolation unclosed" {
+    try runCaseError("parser/string-interpolation-unclosed.dsk", error.LexerError);
+}
+
+test "string interpolation unknown name" {
+    try runCaseError("sema/string-interpolation-unknown-name.dsk", error.NotDefined);
+}
+
+test "string interpolation void" {
+    try runCaseError("sema/string-interpolation-void.dsk", error.InvalidExpression);
+}
+
+test "string interpolation unhandled error" {
+    try runCaseError("sema/string-interpolation-unhandled-error.dsk", error.UnhandledError);
+}
+
+test "multiline comments preserve tokens and locations" {
+    const src = "#= header\n#= nested =#\n=#let#==#x = 1#= inline =#+2#= tail =#";
+    var lexer = Lexer.init(testing.allocator, src);
+    var tokens = try lexer.list();
+    defer tokens.deinit(testing.allocator);
+    const Tag = @import("lexer.zig").Tag;
+    const expected = [_]Tag{ .let_kw, .identifier, .eq, .int_literal, .plus, .int_literal, .eof };
+    try testing.expectEqual(expected.len, tokens.items.len);
+    for (expected, tokens.items) |tag, token| {
+        try testing.expectEqual(tag, token.tag);
+    }
+    try testing.expectEqualStrings("let", tokens.items[0].value(src));
+    try testing.expectEqual(std.mem.indexOf(u8, src, "let").?, tokens.items[0].loc.start);
+    try testing.expectEqual(src.len, tokens.items[6].loc.start);
+}
+
+test "comment delimiters inside strings and line comments" {
+    const src = "\"#= text =#\" # ignored #=\n42 # EOF";
+    var lexer = Lexer.init(testing.allocator, src);
+    var tokens = try lexer.list();
+    defer tokens.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), tokens.items.len);
+    try testing.expectEqualStrings("#= text =#", tokens.items[0].value(src));
+    try testing.expectEqualStrings("42", tokens.items[1].value(src));
+}
+
+test "comments and whitespace at EOF" {
+    const sources = [_][]const u8{ "# line comment", "#", "   ", "#==#", "#=\n=#", "#= #= nested =# =#   " };
+    for (sources) |src| {
+        var lexer = Lexer.init(testing.allocator, src);
+        var tokens = try lexer.list();
+        defer tokens.deinit(testing.allocator);
+        try testing.expectEqual(@as(usize, 1), tokens.items.len);
+        try testing.expectEqual(@import("lexer.zig").Tag.eof, tokens.items[0].tag);
+    }
+}
+
+test "unterminated multiline comments" {
+    const sources = [_][]const u8{ "#=", "#= text", "#= #= nested =#", "#= =", "#= #" };
+    for (sources) |src| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var lexer = Lexer.init(arena.allocator(), src);
+        try testing.expectError(error.LexerError, lexer.list());
+    }
+}
+
+test "string escapes decode into UTF-8 literals" {
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = "\"\"", .expected = "" },
+        .{ .source = "\"Olá 🌙\"", .expected = "Olá 🌙" },
+        .{ .source = "\"a\\nb\\rc\\td\\0e\"", .expected = "a\nb\rc\td\x00e" },
+        .{ .source = "\"say \\\"hi\\\"\\\\\"", .expected = "say \"hi\"\\" },
+        .{ .source = "\"\\\\n\"", .expected = "\\n" },
+        .{ .source = "\"\\u{0}\\u{7f}\\u{80}\\u{7ff}\\u{800}\"", .expected = "\x00\x7f\u{80}\u{7ff}\u{800}" },
+        .{ .source = "\"\\u{D7FF}\\u{e000}\\u{ffff}\\u{10000}\\u{10FFFF}\"", .expected = "\u{d7ff}\u{e000}\u{ffff}\u{10000}\u{10ffff}" },
+        .{ .source = "\"\\u{000041}\\u{1F319}\"", .expected = "A🌙" },
+        .{ .source = "\"\\u{22}#= text =#\\u{5c}\"", .expected = "\"#= text =#\\" },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
+        var lexer = Lexer.init(arena.allocator(), source);
+        const tokens = try lexer.list();
+        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        const root = try parser.parse();
+        const decoded = root.statements.items[0].data.let.value.data.string_literal;
+        try testing.expectEqualStrings(case.expected, decoded);
+        try testing.expect(std.unicode.utf8ValidateSlice(decoded));
+    }
+}
+
+test "multiline strings strip the closing indentation" {
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = "\"\"\"\n\"\"\"", .expected = "" },
+        .{ .source = "\"\"\"   \n  a\n  \"\"\"", .expected = "a" },
+        .{ .source = "\"\"\"\n    a\n      b\n    \"\"\"", .expected = "a\n  b" },
+        .{ .source = "\"\"\"\n        a\n        b\n    \"\"\"", .expected = "    a\n    b" },
+        .{ .source = "\"\"\"\n  a\n\n \n      \n  b\n  \"\"\"", .expected = "a\n\n\n\nb" },
+        .{ .source = "\"\"\"\n  a\n\n  \"\"\"", .expected = "a\n" },
+        .{ .source = "\"\"\"\n\n  a\n  \"\"\"", .expected = "\na" },
+        .{ .source = "\"\"\"\na\n\"\"\"", .expected = "a" },
+        .{ .source = "\"\"\"\n  \"a\" \"\"b\"\" \\\"\"\"\n  \"\"\"", .expected = "\"a\" \"\"b\"\" \"\"\"" },
+        .{ .source = "\"\"\"\n  \\t\\u{1F319} #= =# $\n  \"\"\"", .expected = "\t🌙 #= =# $" },
+    };
+    for (cases) |case| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
+        var lexer = Lexer.init(arena.allocator(), source);
+        const tokens = try lexer.list();
+        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        const root = try parser.parse();
+        try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.data.string_literal);
+    }
+}
+
+test "multiline strings" {
+    try runCaseOutput("multiline-strings.dsk", "Usage: dusk <file>\n  -h  show 2 \"help\"\n\nquote: \"\"\" done\n" ++
+        "[]\n[a\n]\n[other tail]\n[    kept\n    indent]\n");
+}
+
+test "string constants outlive compilation and source storage" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = try testing.allocator.dupe(u8, "func main() -> void let mut text = \"a\\n\\u{1F319}\\0\" let mut same = \"a\\n🌙\\0\" let mut plain = \"plain\" end");
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = dusk.compile(source) catch |failure| {
+        testing.allocator.free(source);
+        return failure;
+    };
+    testing.allocator.free(source);
+    const pool = program.string_pool;
+    try testing.expectEqual(@as(usize, 2), pool.values.len);
+    try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
+    try testing.expectEqualStrings("plain", pool.textAt(1));
+    var vm = @import("vm.zig").VM.init(&program, null);
+    defer vm.deinit();
+    try vm.run();
+}
+
+test "str_equal" {
+    try runCaseOutput("str-equal.dsk", "true\nfalse\n");
+    try runCaseError("sema/str-equal-nullable.dsk", error.InvalidType);
+    try runCaseError("sema/str-equal-int.dsk", error.InvalidType);
+}
+
+test "string length and char count" {
+    try runCaseOutput("string-length.dsk", "4\n3\n");
+    try runCaseError("sema/len-nullable-string.dsk", error.InvalidType);
+    try runCaseError("sema/len-string.dsk", error.InvalidType);
+    try runCaseError("sema/len-buffer.dsk", error.InvalidType);
+    try runCaseError("sema/str-char-count-int.dsk", error.InvalidType);
+}
+
+test "string concat and join" {
+    try runCaseOutput("string-concat-join.dsk", "Hello, Dusk\na, b, c\nonly\n[]\n--\nxy\ngrow the array\nabc\nxy\np+q\n");
+    try runCaseOutput("string-concat-join-gc.dsk", "item-5000-end! | item-10000-end! | item-15000-end! | item-20000-end!\n288894\n");
+    try runCaseError("sema/str-concat-int.dsk", error.InvalidType);
+    try runCaseError("sema/str-join-int-array.dsk", error.InvalidType);
+    try runCaseError("sema/str-join-int-separator.dsk", error.InvalidType);
+}
+
+test "string conversion" {
+    try runCaseOutput("string-conversion.dsk", "42\n-9223372036854775808\n3\n-0.25\n-1\n" ++
+        "'1' -> ok 1\n'' -> invalid\n'-' -> invalid\n'+1' -> invalid\n' 1' -> invalid\n'1 ' -> invalid\n" ++
+        "'1_000' -> invalid\n'0x10' -> invalid\n'1.5' -> invalid\n'9223372036854775808' -> overflow\n" ++
+        "'1.' -> -1\n'.5' -> -1\n'1e3' -> -1\n'inf' -> -1\n'nan' -> -1\n'2.50' -> 2.5\n");
+    try runCaseRuntimeError("str-to-int-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/str-to-int-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/str-to-int-int.dsk", error.InvalidType);
+    try runCaseError("sema/conversion-error-redefined.dsk", error.AlreadyDefined);
+}
+
+test "string indexing and loops" {
+    try runCaseOutput("string-index.dsk", "out of range\nout of range\n108\nout of range\nout of range\n\u{E1}\nout of range\n" ++
+        "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
+    try runCaseError("sema/string-index-read.dsk", error.InvalidIndexing);
+    try runCaseError("sema/string-index-assign.dsk", error.InvalidIndexing);
+    try runCaseError("sema/str-byte-at-unhandled.dsk", error.UnhandledError);
+}
+
+test "string search" {
+    try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
+    try runCaseError("sema/string-error-redefined.dsk", error.AlreadyDefined);
+}
+
+test "string transforms" {
+    try runCaseOutput("string-transform.dsk", "[hello world]\n[]\n[none]\n[x]\n[\u{A0}x\u{A0}]\n[a, b, , c]\n[abc]\n1\n[a, b, c]\n[ol\u{E1}, mundo]\n" ++
+        "a+b+c\nbbbbbb\nheo\nabc\nHELLO, A\u{C7}\u{C3}O! \u{DF} \u{FF} \u{D7} \u{F7} \u{3B1}\nhello, a\u{E7}\u{E3}o! \u{17D} \u{3A9}\n" ++
+        "ababab\n[]\n[]\n[o, l, \u{E1}]\n0\n[a, b]\nabc\nnegative count\nabab\n[a,  b , c]\n");
+    try runCaseOutput("string-transform-gc.dsk", "[KEY5000v5000,  extra, KEY10000v10000,  extra, KEY15000v15000,  extra, KEY20000v20000,  extra]\n317788\n");
+    try runCaseError("sema/str-trim-int.dsk", error.InvalidType);
+    try runCaseError("sema/str-repeat-string-count.dsk", error.InvalidType);
+    try runCaseRuntimeError("str-repeat-unhandled.dsk", error.UnhandledError);
+}
+
+test "string slice" {
+    try runCaseOutput("string-slice.dsk", "ol\nol\u{E1}\nmundo\n[]\n[]\nol\u{E1}\n" ++
+        "out of range\nout of range\nout of range\nout of range\nout of range\n\u{E1}\n");
+    try runCaseError("sema/str-slice-unhandled.dsk", error.UnhandledError);
+    try runCaseRuntimeError("str-slice-unhandled.dsk", error.UnhandledError);
+}
+
+test "string literal pool" {
+    try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
+}
+
+test "more than 65536 distinct string literals are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(arena.allocator(), "func main() -> void\nend\n");
+    for (0..65536) |i| {
+        if (i % 1000 == 0) try source.print(arena.allocator(), "func f{d}() -> void\n", .{i});
+        try source.print(arena.allocator(), "echo(\"s{d}\")\n", .{i});
+        if (i % 1000 == 999 or i == 65535) try source.appendSlice(arena.allocator(), "end\n");
+    }
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    _ = try dusk.compile(source.items);
+    try source.print(arena.allocator(), "func g() -> void\necho(\"one more\")\nend\n", .{});
+    try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
+}
+
+test "invalid string escapes are rejected" {
+    const sources = [_][]const u8{
+        "\"\\q\"",       "\"\\x41\"",       "\"\\u\"",         "\"\\u0041\"",      "\"\\u{}\"",
+        "\"\\u{g}\"",    "\"\\u{-1}\"",     "\"\\u{ 41}\"",    "\"\\u{41\"",       "\"\\u{D800}\"",
+        "\"\\u{DFFF}\"", "\"\\u{110000}\"", "\"\\u{FFFFFF}\"", "\"\\u{0000000}\"", "\"\"\"\n\\q\n\"\"\"",
+    };
+    for (sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        const program = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{source});
+        try testing.expectError(error.ParserError, dusk.compile(program));
+    }
+}
+
+test "byte" {
+    try runCaseOutput("byte.dsk", "119\nc=119 newline=10\nlower\ndigit\nnewline\nother\n[97, 98, 39, 92, 34, 65, 0, 9, 13, 36]\n");
+}
+
+test "byte errors" {
+    try runCaseError("sema/byte-constant-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseError("sema/byte-negative-constant.dsk", error.ByteOutOfRange);
+    try runCaseError("sema/byte-from-int-variable.dsk", error.InvalidType);
+    try runCaseError("sema/byte-cast-string.dsk", error.InvalidType);
+    try runCaseError("sema/byte-arithmetic-assign.dsk", error.InvalidType);
+    try runCaseError("sema/byte-when-case-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseRuntimeError("byte-cast-negative.dsk", error.ByteOutOfRange);
+}
+
+test "buffer" {
+    try runCaseOutput("buffer.dsk", "[0, 0, 0, 0]\n4\n[104, 105, 0, 255]\n104\n[111, 108, 195, 161]\n4\nol\xc3\xa1\ninvalid\n575\n" ++
+        "buf=[104, 105, 0, 255]\nnull\n4\n[[0], [0, 0]]\n[]\n\n[0, 9]\n2\ninvalid utf-8\nfine\n");
+}
+
+test "buffer annotations and parameters" {
+    try runCaseOutput("buffer-params.dsk", "[[120, 120, 120, 120]]\n");
+}
+
+test "buffer GC" {
+    try runCaseOutput("buffer-gc.dsk", "388894\n");
+}
+
+test "buffer errors" {
+    try runCaseError("sema/buffer-store-out-of-range.dsk", error.ByteOutOfRange);
+    try runCaseError("sema/buffer-store-int-variable.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/len-invalid-argument.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-size-string.dsk", error.InvalidType);
+    try runCaseError("sema/string-from-string.dsk", error.InvalidType);
+    try runCaseError("sema/string-from-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/buffer-as-string.dsk", error.InvalidType);
+    try runCaseError("sema/buffer-immutable-param.dsk", error.NotMutable);
+    try runCaseError("sema/buffer-mut-param-immutable-arg.dsk", error.NotMutable);
+    try runCaseRuntimeError("buffer-index-out-of-bounds.dsk", error.IndexOutOfBounds);
+    try runCaseRuntimeError("buffer-store-negative-index.dsk", error.IndexOutOfBounds);
+    try runCaseRuntimeError("buffer-negative-size.dsk", error.NegativeBufferSize);
+}
+
+test "invalid byte literals are rejected" {
+    const parser_sources = [_][]const u8{ "''", "'ab'", "'\xc3\xa9'", "'\\q'", "'\\u{80}'", "'\\n\\n'" };
+    for (parser_sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        const program = try std.fmt.allocPrint(arena.allocator(), "let b = {s}", .{source});
+        try testing.expectError(error.ParserError, dusk.compile(program));
+    }
+    const lexer_sources = [_][]const u8{ "'", "'a", "'\\'", "'a\nb'", "'\\" };
+    for (lexer_sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        try testing.expectError(error.LexerError, dusk.compile(source));
+    }
+}
+
+test "invalid UTF-8 and unterminated strings are rejected" {
+    const sources = [_][]const u8{
+        "\"",                "\"missing",                      "\"trailing\\",            "\"escaped\\\"",        "\"missing\n",
+        "\"\xff\"",          "\"\xc0\x80\"",                   "\"\xed\xa0\x80\"",        "\"\xf4\x90\x80\x80\"", "\"\xe2\x82\"",
+        "\"first\nsecond\"", "\"a\\\nb\"",                     "\"\\\n\"",                "\"\"\" x\n\"\"\"",     "\"\"\"\n  x",
+        "\"\"\"\n  x\"\"\"", "\"\"\"\n    a\n  b\n    \"\"\"", "\"\"\"\n\t\ta\n  \"\"\"", "\"\"\"\n\xff\n\"\"\"",
+    };
+    for (sources) |source| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        try testing.expectError(error.LexerError, dusk.compile(source));
+    }
+}
 
 fn runCase(src_file: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -112,6 +502,10 @@ test "union anonymous syntax" {
 
 test "when" {
     try runCase("when.dsk");
+}
+
+test "when on strings" {
+    try runCase("when-string.dsk");
 }
 
 test "returns inside branches" {
@@ -306,8 +700,8 @@ test "sema error: struct field assign type mismatch" {
     try runCaseError("sema/struct-field-assign-type-mismatch.dsk", error.InvalidType);
 }
 
-test "sema error: static field assign type mismatch" {
-    try runCaseError("sema/static-field-assign-type-mismatch.dsk", error.InvalidType);
+test "sema error: static field can't be mut" {
+    try runCaseError("sema/static-field-cant-be-mut.dsk", error.StaticFieldCantBeMutable);
 }
 
 test "sema error: call non function" {
@@ -356,6 +750,58 @@ test "sema error: static field not mutable" {
 
 test "sema error: self binding not mut" {
     try runCaseError("sema/self-binding-not-mut.dsk", error.NotMutable);
+}
+
+test "sema error: struct field assign immutable" {
+    try runCaseError("sema/struct-field-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: nested struct field assign immutable" {
+    try runCaseError("sema/nested-struct-field-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: array item field assign immutable" {
+    try runCaseError("sema/array-item-field-assign-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: struct param field assign" {
+    try runCaseError("sema/struct-param-field-assign.dsk", error.NotMutable);
+}
+
+test "sema error: self field assign not mut" {
+    try runCaseError("sema/self-field-assign-not-mut.dsk", error.NotMutable);
+}
+
+test "sema error: capture struct field assign" {
+    try runCaseError("sema/capture-struct-field-assign.dsk", error.NotMutable);
+}
+
+test "sema error: mut array arg field path" {
+    try runCaseError("sema/mut-array-arg-field-path.dsk", error.NotMutable);
+}
+
+test "sema error: mut struct arg field path" {
+    try runCaseError("sema/mut-struct-arg-field-path.dsk", error.NotMutable);
+}
+
+test "sema error: append field path immutable" {
+    try runCaseError("sema/append-field-path-immutable.dsk", error.NotMutable);
+}
+
+test "sema error: temporary field assign" {
+    try runCaseError("sema/temporary-field-assign.dsk", error.TemporaryNotMutable);
+}
+
+test "sema error: temporary mut method call" {
+    try runCaseError("sema/temporary-mut-method-call.dsk", error.TemporaryNotMutable);
+}
+
+test "mutable paths" {
+    try runCase("mutable-paths.dsk");
+}
+
+test "nullable box values" {
+    try runCase("nullable-box-values.dsk");
 }
 
 test "sema error: assign undefined" {
@@ -434,8 +880,8 @@ test "sema error: union with too many variants" {
     try runCaseError("sema/union-too-many-variants.dsk", error.TooManyUnionVariants);
 }
 
-test "sema error: mutable union param" {
-    try runCaseError("sema/union-mut-param.dsk", error.UnionParamsCantBeMutable);
+test "sema error: mut union param reassign" {
+    try runCaseError("sema/union-mut-param-reassign.dsk", error.MutBorrowCantBeReassigned);
 }
 
 test "sema error: anonymous union unknown variant" {
@@ -480,6 +926,30 @@ test "sema error: when case type mismatch" {
 
 test "sema error: when unsupported subject" {
     try runCaseError("sema/when-unsupported-subject.dsk", error.InvalidType);
+}
+
+test "sema error: when string needs else" {
+    try runCaseError("sema/when-string-needs-else.dsk", error.WhenNotExhaustive);
+}
+
+test "sema error: when string duplicate case" {
+    try runCaseError("sema/when-string-duplicate-case.dsk", error.WhenDuplicateCase);
+}
+
+test "sema error: when string non-literal case" {
+    try runCaseError("sema/when-string-non-literal-case.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when string interpolated case" {
+    try runCaseError("sema/when-string-interpolated-case.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when string range case" {
+    try runCaseError("sema/when-string-range-case.dsk", error.WhenInvalidCase);
+}
+
+test "sema error: when string case type mismatch" {
+    try runCaseError("sema/when-string-case-type-mismatch.dsk", error.InvalidType);
 }
 
 test "sema error: when float subject" {
@@ -682,20 +1152,56 @@ test "codegen error: too many variables in a function" {
     try runCaseError("codegen/too-many-variables.dsk", error.TooManyRegisters);
 }
 
-test "sema error: global called before declared" {
-    try runCaseError("sema/global-called-before-declared.dsk", error.UsedBeforeDeclared);
+test "sema error: top-level let mut" {
+    try runCaseError("sema/top-level-let-mut.dsk", error.TopLevelLetNotConstant);
 }
 
-test "sema error: global called before declared through another function" {
-    try runCaseError("sema/global-called-before-declared-indirect.dsk", error.UsedBeforeDeclared);
+test "sema error: top-level let not constant" {
+    try runCaseError("sema/top-level-let-not-constant.dsk", error.TopLevelLetNotConstant);
 }
 
-test "sema error: global used in its own initializer" {
-    try runCaseError("sema/global-used-in-own-initializer.dsk", error.UsedBeforeDeclared);
+test "sema error: statement outside main" {
+    try runCaseError("sema/statement-outside-main.dsk", error.StatementOutsideMain);
 }
 
-test "sema error: global used by static default" {
-    try runCaseError("sema/global-used-by-static-default.dsk", error.UsedBeforeDeclared);
+test "sema error: missing main" {
+    try runCaseError("sema/missing-main.dsk", error.MissingMain);
+}
+
+test "sema error: main with params" {
+    try runCaseError("sema/main-with-params.dsk", error.InvalidMainSignature);
+}
+
+test "sema error: main returns value" {
+    try runCaseError("sema/main-returns-value.dsk", error.InvalidMainSignature);
+}
+
+test "sema error: function uses main variable" {
+    try runCaseError("sema/function-uses-main-variable.dsk", error.NotDefined);
+}
+
+test "sema error: function inside function" {
+    try runCaseError("sema/function-inside-function.dsk", error.DeclarationInsideFunction);
+}
+
+test "sema error: struct inside function" {
+    try runCaseError("sema/struct-inside-function.dsk", error.DeclarationInsideFunction);
+}
+
+test "sema error: constant assign" {
+    try runCaseError("sema/constant-assign.dsk", error.NotMutable);
+}
+
+test "sema error: constant invalid type" {
+    try runCaseError("sema/constant-invalid-type.dsk", error.InvalidConstantType);
+}
+
+test "sema error: static field not constant" {
+    try runCaseError("sema/static-field-not-constant.dsk", error.StaticFieldNotConstant);
+}
+
+test "sema error: static field array not constant" {
+    try runCaseError("sema/static-field-array-not-constant.dsk", error.StaticFieldNotConstant);
 }
 
 test "sema error: success type is the error set" {
@@ -762,8 +1268,12 @@ test "parser error: catch block missing end" {
     try runCaseError("parser/errors-catch-block-missing-end.dsk", error.ParserError);
 }
 
-test "runtime error: top-level try" {
-    try runCaseRuntimeError("errors-top-level-try.dsk", error.UnhandledError);
+test "runtime error: unhandled error from main" {
+    try runCaseRuntimeError("errors-main-try.dsk", error.UnhandledError);
+}
+
+test "main returns error union" {
+    try runCase("main-returns-error-union.dsk");
 }
 
 test "errors: when on caught errors" {
@@ -994,8 +1504,168 @@ test "for-capture-extra-binding" {
     try runCaseError("parser/for-capture-extra-binding.dsk", error.ParserError);
 }
 
-test "for-capture-mutable" {
-    try runCaseError("parser/for-capture-mutable.dsk", error.ParserError);
+test "sema error: for capture mut primitive" {
+    try runCaseError("sema/for-capture-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "sema error: for capture mut immutable source" {
+    try runCaseError("sema/for-capture-mut-immutable-source.dsk", error.UnwrappedCantBeMutable);
+}
+
+test "sema error: if capture mut primitive" {
+    try runCaseError("sema/if-capture-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "sema error: when capture mut primitive" {
+    try runCaseError("sema/when-capture-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "sema error: when capture mut immutable subject" {
+    try runCaseError("sema/when-capture-mut-immutable-subject.dsk", error.UnwrappedCantBeMutable);
+}
+
+test "sema error: if capture mut reassign" {
+    try runCaseError("sema/if-capture-mut-reassign.dsk", error.MutBorrowCantBeReassigned);
+}
+
+test "sema error: mut param reassign" {
+    try runCaseError("sema/mut-param-reassign.dsk", error.MutBorrowCantBeReassigned);
+}
+
+test "sema error: for capture mut reassign" {
+    try runCaseError("sema/for-capture-mut-reassign.dsk", error.MutBorrowCantBeReassigned);
+}
+
+test "sema error: range capture mut" {
+    try runCaseError("sema/range-capture-mut.dsk", error.PrimitiveCaptureCantBeMutable);
+}
+
+test "mut captures" {
+    try runCase("mut-captures.dsk");
+}
+
+test "copy" {
+    try runCase("copy.dsk");
+}
+
+test "sharing rules" {
+    try runCase("sharing-rules.dsk");
+}
+
+test "tail calls" {
+    try runCase("tail-calls.dsk");
+}
+
+test "assignment reads its own target" {
+    try runCase("assign-reads-target.dsk");
+}
+
+test "runtime error: call depth exceeded" {
+    try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
+}
+
+test "sema error: let from mut used again" {
+    try runCaseError("sema/let-from-mut-used-again.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut from let used again" {
+    try runCaseError("sema/mut-from-let-used-again.dsk", error.NeedsCopy);
+}
+
+test "sema error: let from mut path used again" {
+    try runCaseError("sema/let-from-mut-path-used-again.dsk", error.NeedsCopy);
+}
+
+test "sema error: let from shared mut" {
+    try runCaseError("sema/let-from-shared-mut.dsk", error.NeedsCopy);
+}
+
+test "sema error: move inside loop" {
+    try runCaseError("sema/move-inside-loop.dsk", error.NeedsCopy);
+}
+
+test "sema error: return param" {
+    try runCaseError("sema/return-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: return param field" {
+    try runCaseError("sema/return-param-field.dsk", error.NeedsCopy);
+}
+
+test "sema error: return shared with param" {
+    try runCaseError("sema/return-shared-with-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut param from immutable param" {
+    try runCaseError("sema/mut-param-from-immutable-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut param from other mut param" {
+    try runCaseError("sema/mut-param-from-other-mut-param.dsk", error.NeedsCopy);
+}
+
+test "sema error: mut from immutable capture" {
+    try runCaseError("sema/mut-from-immutable-capture.dsk", error.NeedsCopy);
+}
+
+test "sema error: changed while read for" {
+    try runCaseError("sema/changed-while-read-for.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read if" {
+    try runCaseError("sema/changed-while-read-if.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read when" {
+    try runCaseError("sema/changed-while-read-when.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read mut arg" {
+    try runCaseError("sema/changed-while-read-mut-arg.dsk", error.ChangedWhileRead);
+}
+
+test "sema error: changed while read mut capture" {
+    try runCaseError("sema/changed-while-read-mut-capture.dsk", error.ChangedWhileRead);
+}
+
+test "min" {
+    try runCase("min.dsk");
+}
+
+test "gc stress struct field mutation" {
+    try runCase("gc-stress-struct-field-mutation.dsk");
+}
+
+test "deep recursion" {
+    try runCase("deep-recursion.dsk");
+}
+
+test "elif" {
+    try runCase("elif.dsk");
+}
+
+test "gc stress array of structs" {
+    try runCase("gc-stress-array-of-structs.dsk");
+}
+
+test "gc stress fn return struct" {
+    try runCase("gc-stress-fn-return-struct.dsk");
+}
+
+test "gc stress struct field append" {
+    try runCase("gc-stress-struct-field-append.dsk");
+}
+
+test "gc struct with array in loop" {
+    try runCase("gc-struct-with-array-in-loop.dsk");
+}
+
+test "register stress" {
+    try runCase("register-stress.dsk");
+}
+
+test "test" {
+    try runCase("test.dsk");
 }
 
 test "for-capture-missing-do" {
@@ -1026,8 +1696,8 @@ test "when-integer-ranges" {
     try runCase("when-integer-ranges.dsk");
 }
 
-test "globals" {
-    try runCase("globals.dsk");
+test "constants" {
+    try runCase("constants.dsk");
 }
 
 test "gc-nullable-starts-null" {
@@ -1280,4 +1950,70 @@ test "orelse-direct-break" {
 
 test "orelse-direct-continue" {
     try runCaseError("parser/orelse-direct-continue.dsk", error.ParserError);
+}
+
+test "int to float promotion" {
+    try runCase("int-to-float-promotion.dsk");
+}
+
+test "sema error: int array to float array" {
+    try runCaseError("sema/int-array-to-float-array.dsk", error.InvalidType);
+}
+
+test "sema error: nullable int to float" {
+    try runCaseError("sema/nullable-int-to-float.dsk", error.InvalidType);
+}
+
+test "sema error: missing main in an empty file" {
+    try runCaseError("sema/missing-main-empty-file.dsk", error.MissingMain);
+}
+
+test "float cast" {
+    try runCase("float-cast.dsk");
+}
+
+test "sema error: float cast of a string" {
+    try runCaseError("sema/float-cast-string.dsk", error.InvalidType);
+}
+
+test "extern: only the prelude can declare extern functions" {
+    try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsidePrelude);
+    try runCaseError("sema/builtin-redefined.dsk", error.AlreadyDefined);
+    try runCaseError("parser/extern-missing-return-type.dsk", error.ParserError);
+    try runCaseError("parser/extern-missing-func.dsk", error.ParserError);
+}
+
+test "prelude: every extern has a binding and every binding has an extern" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const dusk = @import("dusk.zig");
+    const bindings = @import("natives.zig").bindings;
+    const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
+    var extern_count: usize = 0;
+    for (prelude.statements.items) |stmt| {
+        if (stmt.data != .func) continue;
+        try testing.expect(stmt.data.func.is_extern);
+        try testing.expect(bindings.has(stmt.data.func.identifier));
+        extern_count += 1;
+    }
+    try testing.expectEqual(bindings.keys().len, extern_count);
+}
+
+test "prelude: builtin error ids match the natives constants" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const natives = @import("natives.zig");
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compile("func main() -> void\nend\n");
+    try testing.expectEqualStrings("ConversionError.Invalid", program.error_names[natives.conversion_invalid_id]);
+    try testing.expectEqualStrings("ConversionError.Overflow", program.error_names[natives.conversion_overflow_id]);
+    try testing.expectEqualStrings("StringError.OutOfRange", program.error_names[natives.string_out_of_range_id]);
+    try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
+    try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
+}
+
+test "array index out of bounds is a runtime error" {
+    try runCaseRuntimeError("array-index-out-of-bounds.dsk", error.ArrayOutOfBounds);
+    try runCaseRuntimeError("array-negative-index.dsk", error.ArrayOutOfBounds);
+    try runCaseRuntimeError("array-store-negative-index.dsk", error.ArrayOutOfBounds);
 }

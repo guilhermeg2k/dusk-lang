@@ -5,13 +5,13 @@ const err = @import("error.zig");
 const std = @import("std");
 const Token = lexer.Token;
 const Tag = lexer.Tag;
-const Errors = err.Errors;
+const CompileError = err.CompileError;
 
 pub const Parser = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    err_dispatcher: err.ErrorDispatcher,
+    err_reporter: err.CompileErrorReporter,
     tokens: []const Token = &.{},
     src: []const u8 = "",
     cur_index: usize = 0,
@@ -28,7 +28,7 @@ pub const Parser = struct {
             .allocator = allocator,
             .src = src,
             .tokens = tokens,
-            .err_dispatcher = .{
+            .err_reporter = .{
                 .allocator = allocator,
                 .src = src,
             },
@@ -39,7 +39,7 @@ pub const Parser = struct {
         return self.parseBlock(&.{});
     }
 
-    pub fn parseBlock(self: *Self, extra_stop_tags: []const Tag) Errors!ast.Block {
+    pub fn parseBlock(self: *Self, extra_stop_tags: []const Tag) CompileError!ast.Block {
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
         var statements: std.ArrayList(ast.StatementNode) = .empty;
@@ -74,6 +74,13 @@ pub const Parser = struct {
             },
             .func_kw => {
                 const func_stmt_value = try self.parseFuncStmt();
+                return ast.StatementNode{
+                    .data = .{ .func = func_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .extern_kw => {
+                const func_stmt_value = try self.parseExternFuncStmt();
                 return ast.StatementNode{
                     .data = .{ .func = func_stmt_value },
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
@@ -123,14 +130,14 @@ pub const Parser = struct {
             },
             .break_kw => {
                 if (self.loop_depth == 0) {
-                    return self.err_dispatcher.invalidSyntax("break called outside a loop", tk);
+                    return self.err_reporter.invalidSyntax("break called outside a loop", tk);
                 }
                 self.walk();
                 return ast.StatementNode{ .data = .{ .@"break" = {} }, .loc = tk.loc };
             },
             .continue_kw => {
                 if (self.loop_depth == 0) {
-                    return self.err_dispatcher.invalidSyntax("continue called outside a loop", tk);
+                    return self.err_reporter.invalidSyntax("continue called outside a loop", tk);
                 }
                 self.walk();
                 return ast.StatementNode{ .data = .{ .@"continue" = {} }, .loc = tk.loc };
@@ -141,11 +148,11 @@ pub const Parser = struct {
                 return ast.StatementNode{ .data = .{ .@"return" = return_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
             },
             .then_kw, .do_kw, .end_kw, .elif_kw, .else_kw => {
-                return self.err_dispatcher.invalidSyntax("unexpected keyword", tk);
+                return self.err_reporter.invalidSyntax("unexpected keyword", tk);
             },
             else => {
                 if (self.branch_depth > 0 and self.canStartExpression(tk.tag)) return self.parseIdentifierStmt();
-                return self.err_dispatcher.invalidSyntax("let, if, for, return ...", tk);
+                return self.err_reporter.invalidSyntax("let, if, for, return ...", tk);
             },
         }
     }
@@ -232,8 +239,8 @@ pub const Parser = struct {
                     self.walk();
                     break;
                 },
-                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
-                else => return self.err_dispatcher.invalidSyntax("identifier or 'end'", tk),
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => return self.err_reporter.invalidSyntax("identifier or 'end'", tk),
             }
         }
 
@@ -311,7 +318,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseCondition(self: *Self) Errors!*ast.ExpNode {
+    fn parseCondition(self: *Self) CompileError!*ast.ExpNode {
         const was_parsing_condition = self.is_parsing_condition;
         self.is_parsing_condition = true;
         defer self.is_parsing_condition = was_parsing_condition;
@@ -324,13 +331,13 @@ pub const Parser = struct {
         return was_parsing_condition;
     }
 
-    fn parseBranchBlock(self: *Self, stop_tags: []const Tag) Errors!ast.Block {
+    fn parseBranchBlock(self: *Self, stop_tags: []const Tag) CompileError!ast.Block {
         self.branch_depth += 1;
         defer self.branch_depth -= 1;
         return self.parseBlock(stop_tags);
     }
 
-    fn parseIfCapture(self: *Self, exp: *ast.ExpNode) Errors!ast.IfCaptureStmt {
+    fn parseIfCapture(self: *Self, exp: *ast.ExpNode) CompileError!ast.IfCaptureStmt {
         const is_mut = self.match(.mut_kw);
         const identifier = try self.expect(.identifier);
         _ = try self.expect(.then_kw);
@@ -345,7 +352,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseIfStmt(self: *Self, first_cond: *ast.ExpNode) Errors!ast.IfStmt {
+    fn parseIfStmt(self: *Self, first_cond: *ast.ExpNode) CompileError!ast.IfStmt {
         _ = try self.expect(.then_kw);
         const then_block = try self.parseBranchBlock(&.{ .else_kw, .elif_kw });
 
@@ -395,7 +402,7 @@ pub const Parser = struct {
         return .{ .condition = first_cond, .then_block = then_block, .else_block = else_block };
     }
 
-    fn parseWhenStmt(self: *Self) Errors!ast.WhenStmt {
+    fn parseWhenStmt(self: *Self) CompileError!ast.WhenStmt {
         const subject = try self.parseExp(0);
 
         var prongs: std.ArrayList(ast.WhenProng) = .empty;
@@ -421,8 +428,9 @@ pub const Parser = struct {
                 if (tk.tag == .identifier and self.peekNext().tag == .colon) {
                     self.walk();
                     self.walk();
+                    const is_mut = self.match(.mut_kw);
                     const capture = try self.expect(.identifier);
-                    break :blk .{ .variant = .{ .name = tk.value(self.src), .capture = capture.value(self.src) } };
+                    break :blk .{ .variant = .{ .name = tk.value(self.src), .capture = capture.value(self.src), .is_mut = is_mut } };
                 }
 
                 var values: std.ArrayList(*ast.ExpNode) = .empty;
@@ -455,7 +463,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseForStmt(self: *Self) Errors!ast.Statement {
+    fn parseForStmt(self: *Self) CompileError!ast.Statement {
         self.walk();
 
         self.loop_depth += 1;
@@ -463,12 +471,13 @@ pub const Parser = struct {
 
         const condition = try self.parseExp(0);
         if (self.match(.colon)) {
+            const is_item_mut = self.match(.mut_kw);
             const item = try self.expect(.identifier);
             const index = if (self.match(.comma)) (try self.expect(.identifier)).value(self.src) else null;
             _ = try self.expect(.do_kw);
             const body = try self.parseBlock(&.{});
             _ = try self.expect(.end_kw);
-            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .index = index, .do_block = body } };
+            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .is_item_mut = is_item_mut, .index = index, .do_block = body } };
         }
         _ = try self.expect(.do_kw);
         const do_block = try self.parseBlock(&.{});
@@ -491,13 +500,13 @@ pub const Parser = struct {
 
         return .{
             .identifier = identifier,
-            .is_mut = true,
+            .is_mut = false,
             .type = type_annotation,
             .default_value = value,
         };
     }
 
-    fn parseStructDef(self: *Self) Errors!ast.Struct {
+    fn parseStructDef(self: *Self) CompileError!ast.Struct {
         var static_fields: std.ArrayList(ast.Field) = .empty;
         var fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
@@ -537,9 +546,9 @@ pub const Parser = struct {
                     self.walk();
                     break;
                 },
-                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
                 else => {
-                    return self.err_dispatcher.invalidSyntax("let or an identifier", tk);
+                    return self.err_reporter.invalidSyntax("let or an identifier", tk);
                 },
             }
         }
@@ -551,7 +560,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseAnonymousStructDef(self: *Self) Errors!ast.Struct {
+    fn parseAnonymousStructDef(self: *Self) CompileError!ast.Struct {
         var fields: std.ArrayList(ast.Field) = .empty;
 
         while (true) {
@@ -569,9 +578,9 @@ pub const Parser = struct {
                     self.walk();
                     break;
                 },
-                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
                 else => {
-                    return self.err_dispatcher.invalidSyntax("identifier", tk);
+                    return self.err_reporter.invalidSyntax("identifier", tk);
                 },
             }
         }
@@ -583,7 +592,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseEnumDef(self: *Self) Errors!ast.EnumDef {
+    fn parseEnumDef(self: *Self) CompileError!ast.EnumDef {
         var variants: std.ArrayList(ast.EnumVariant) = .empty;
         var static_fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
@@ -599,7 +608,7 @@ pub const Parser = struct {
                     if (self.match(.eq)) {
                         switch (mode) {
                             .none => mode = .explicit,
-                            .implicit => return self.err_dispatcher.invalidSyntax(
+                            .implicit => return self.err_reporter.invalidSyntax(
                                 "all enum variants to either have explicit values or none at all",
                                 tk,
                             ),
@@ -608,7 +617,7 @@ pub const Parser = struct {
 
                         const value_tk = try self.expect(.int_literal);
                         const value = std.fmt.parseInt(i64, value_tk.value(self.src), 10) catch {
-                            return self.err_dispatcher.invalidSyntax("integer literal", value_tk);
+                            return self.err_reporter.invalidSyntax("integer literal", value_tk);
                         };
 
                         try variants.append(self.allocator, .{
@@ -618,7 +627,7 @@ pub const Parser = struct {
                     } else {
                         switch (mode) {
                             .none => mode = .implicit,
-                            .explicit => return self.err_dispatcher.invalidSyntax(
+                            .explicit => return self.err_reporter.invalidSyntax(
                                 "all enum variants to either have explicit values or none at all",
                                 tk,
                             ),
@@ -661,9 +670,9 @@ pub const Parser = struct {
                     self.walk();
                     break;
                 },
-                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
                 else => {
-                    return self.err_dispatcher.invalidSyntax("identifier, let, func or 'end'", tk);
+                    return self.err_reporter.invalidSyntax("identifier, let, func or 'end'", tk);
                 },
             }
         }
@@ -675,7 +684,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseUnionDef(self: *Self) Errors!ast.UnionDef {
+    fn parseUnionDef(self: *Self) CompileError!ast.UnionDef {
         var variants: std.ArrayList(ast.UnionVariant) = .empty;
         var static_fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
@@ -721,9 +730,9 @@ pub const Parser = struct {
                     self.walk();
                     break;
                 },
-                .eof => return self.err_dispatcher.invalidSyntax("'end'", tk),
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
                 else => {
-                    return self.err_dispatcher.invalidSyntax("identifier, let, func or 'end'", tk);
+                    return self.err_reporter.invalidSyntax("identifier, let, func or 'end'", tk);
                 },
             }
         }
@@ -735,18 +744,8 @@ pub const Parser = struct {
         };
     }
 
-    fn parseFnDef(self: *Self) Errors!ast.FnDef {
-        _ = try self.expect(.l_paren);
-        var arguments: std.ArrayList(ast.FnParam) = .empty;
-        var body_block: ast.Block = undefined;
-        var return_type: ?*ast.TypeAnnotation = null;
-        var error_set: ?ast.FnErrorSet = null;
-
-        if (self.peekCurrent().tag != .r_paren) {
-            arguments = try self.parseFnArgs();
-        }
-
-        _ = try self.expect(.r_paren);
+    fn parseFnDef(self: *Self) CompileError!ast.FnDef {
+        const params = try self.parseFnParams();
         _ = try self.expect(.arrow);
 
         const tk = self.peekCurrent();
@@ -758,37 +757,83 @@ pub const Parser = struct {
                 .loc = .{ .start = tk.loc.start, .end = if (ret_stmt.exp) |exp| exp.loc.end else tk.loc.end },
             };
             try statements.append(self.allocator, return_stmt);
-            body_block = .{ .statements = statements };
-        } else {
-            if (tk.tag == .not) {
-                self.walk();
-                error_set = .{ .inferred = tk.loc };
-            }
-
-            return_type = try self.parseTypeAnnotation(false);
-
-            if (error_set == null and self.peekCurrent().tag == .not) {
-                if (return_type.?.type != .@"struct" or return_type.?.is_nullable) {
-                    return self.err_dispatcher.invalidSyntax("error set name before '!'", self.peekCurrent());
-                }
-                error_set = .{ .named = .{ .identifier = return_type.?.type.@"struct", .loc = tk.loc } };
-                self.walk();
-                return_type = try self.parseTypeAnnotation(false);
-            }
-
-            body_block = try self.parseBlock(&.{});
-            _ = try self.expect(.end_kw);
+            return ast.FnDef{
+                .params = params,
+                .body_block = .{ .statements = statements },
+                .return_type = null,
+            };
         }
 
+        const result = try self.parseFnResult();
+        const body_block = try self.parseBlock(&.{});
+        _ = try self.expect(.end_kw);
+
         return ast.FnDef{
-            .params = try arguments.toOwnedSlice(self.allocator),
+            .params = params,
             .body_block = body_block,
-            .return_type = return_type,
-            .error_set = error_set,
+            .return_type = result.return_type,
+            .error_set = result.error_set,
         };
     }
 
-    fn parseFnArgs(self: *Self) Errors!std.ArrayList(ast.FnParam) {
+    fn parseExternFuncStmt(self: *Self) CompileError!ast.FuncStmt {
+        self.walk();
+        _ = try self.expect(.func_kw);
+        const identifier_token = try self.expect(.identifier);
+        const params = try self.parseFnParams();
+        _ = try self.expect(.arrow);
+        const result = try self.parseFnResult();
+
+        return ast.FuncStmt{
+            .identifier = identifier_token.value(self.src),
+            .is_extern = true,
+            .def = .{
+                .params = params,
+                .body_block = .{ .statements = .empty },
+                .return_type = result.return_type,
+                .error_set = result.error_set,
+            },
+        };
+    }
+
+    fn parseFnParams(self: *Self) CompileError![]const ast.FnParam {
+        _ = try self.expect(.l_paren);
+        var arguments: std.ArrayList(ast.FnParam) = .empty;
+        if (self.peekCurrent().tag != .r_paren) {
+            arguments = try self.parseFnArgs();
+        }
+        _ = try self.expect(.r_paren);
+        return arguments.toOwnedSlice(self.allocator);
+    }
+
+    const FnResult = struct {
+        return_type: *ast.TypeAnnotation,
+        error_set: ?ast.FnErrorSet,
+    };
+
+    fn parseFnResult(self: *Self) CompileError!FnResult {
+        const tk = self.peekCurrent();
+        var error_set: ?ast.FnErrorSet = null;
+        if (tk.tag == .not) {
+            self.walk();
+            error_set = .{ .inferred = tk.loc };
+        }
+
+        var return_type = try self.parseTypeAnnotation(false);
+
+        if (error_set == null and self.peekCurrent().tag == .not) {
+            if (return_type.type != .@"struct" or return_type.is_nullable) {
+                return self.err_reporter.invalidSyntax("error set name before '!'", self.peekCurrent());
+            }
+            error_set = .{ .named = .{ .identifier = return_type.type.@"struct", .loc = tk.loc } };
+            self.walk();
+            return_type = try self.parseTypeAnnotation(false);
+        }
+
+        return .{ .return_type = return_type, .error_set = error_set };
+    }
+
+    fn parseFnArgs(self: *Self) CompileError!std.ArrayList(ast.FnParam) {
         var arguments: std.ArrayList(ast.FnParam) = .empty;
         while (true) {
             const arg = try self.parseFnArg();
@@ -801,7 +846,7 @@ pub const Parser = struct {
         return arguments;
     }
 
-    fn parseFnArg(self: *Self) Errors!ast.FnParam {
+    fn parseFnArg(self: *Self) CompileError!ast.FnParam {
         var default_value: ?*ast.ExpNode = null;
         var type_annotation: ?*ast.TypeAnnotation = null;
 
@@ -827,7 +872,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseArrayLiteral(self: *Self) Errors!ast.ArrayLiteral {
+    fn parseArrayLiteral(self: *Self) CompileError!ast.ArrayLiteral {
         var exps: []const *ast.ExpNode = &.{};
         if (self.peekCurrent().tag != .r_bracket) {
             exps = try self.parseExpList();
@@ -838,7 +883,7 @@ pub const Parser = struct {
         return ast.ArrayLiteral{ .exps = exps };
     }
 
-    fn parseExpList(self: *Self) Errors![]const *ast.ExpNode {
+    fn parseExpList(self: *Self) CompileError![]const *ast.ExpNode {
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
         var exps: std.ArrayList(*ast.ExpNode) = .empty;
@@ -855,7 +900,7 @@ pub const Parser = struct {
         return exps.toOwnedSlice(self.allocator);
     }
 
-    fn parseFnCallArgs(self: *Self) Errors![]const ast.FnCallArg {
+    fn parseFnCallArgs(self: *Self) CompileError![]const ast.FnCallArg {
         if (self.peekCurrent().tag == .r_paren) {
             return &.{};
         }
@@ -879,11 +924,11 @@ pub const Parser = struct {
 
             if (are_arguments_named.?) {
                 if (tk.tag != .eq) {
-                    return self.err_dispatcher.invalidSyntax("=", tk);
+                    return self.err_reporter.invalidSyntax("=", tk);
                 }
 
                 if (exp.data != .identifier) {
-                    return self.err_dispatcher.invalidSyntax("identifier", .{ .tag = .identifier, .loc = exp.loc });
+                    return self.err_reporter.invalidSyntax("identifier", .{ .tag = .identifier, .loc = exp.loc });
                 }
 
                 self.walk();
@@ -916,6 +961,11 @@ pub const Parser = struct {
             .int_literal,
             .float_literal,
             .string_literal,
+            .multiline_string_literal,
+            .byte_literal,
+            .byte_kw,
+            .float_kw,
+            .buffer_kw,
             .true_literal,
             .false_literal,
             .null_literal,
@@ -932,7 +982,7 @@ pub const Parser = struct {
         };
     }
 
-    fn parseReturnStmt(self: *Self) Errors!ast.ReturnStmt {
+    fn parseReturnStmt(self: *Self) CompileError!ast.ReturnStmt {
         self.walk();
         const cur_tk = self.peekCurrent();
 
@@ -948,7 +998,7 @@ pub const Parser = struct {
         const right = try self.parseExp(self.getBindingPower(.l_paren));
 
         if (right.data != .fn_call) {
-            return self.err_dispatcher.invalidSyntax("function call after '->'", .{ .tag = .identifier, .loc = right.loc });
+            return self.err_reporter.invalidSyntax("function call after '->'", .{ .tag = .identifier, .loc = right.loc });
         }
 
         const old_args = right.data.fn_call.arguments;
@@ -967,7 +1017,7 @@ pub const Parser = struct {
         return right;
     }
 
-    fn parseCatch(self: *Self, operand: *ast.ExpNode) Errors!*ast.ExpNode {
+    fn parseCatch(self: *Self, operand: *ast.ExpNode) CompileError!*ast.ExpNode {
         self.walk();
         const tk = self.peekCurrent();
 
@@ -995,7 +1045,7 @@ pub const Parser = struct {
         });
     }
 
-    fn parseOrelse(self: *Self, operand: *ast.ExpNode) Errors!*ast.ExpNode {
+    fn parseOrelse(self: *Self, operand: *ast.ExpNode) CompileError!*ast.ExpNode {
         self.walk();
         const fallback = try self.parseExp(self.getBindingPower(.orelse_kw) - 1);
         return ast.ExpNode.init(self.allocator, .{
@@ -1004,7 +1054,7 @@ pub const Parser = struct {
         });
     }
 
-    fn parseExp(self: *Self, min_bp: u8) Errors!*ast.ExpNode {
+    fn parseExp(self: *Self, min_bp: u8) CompileError!*ast.ExpNode {
         var exp = try self.parsePrefix();
         exp = try self.parsePostfix(exp);
 
@@ -1031,7 +1081,7 @@ pub const Parser = struct {
             }
 
             if (tk.tag == .range) {
-                if (exp.data == .range) return self.err_dispatcher.invalidSyntax("a single range", tk);
+                if (exp.data == .range) return self.err_reporter.invalidSyntax("a single range", tk);
                 self.walk();
                 const end = try self.parseExp(op_bp);
                 exp = try ast.ExpNode.init(self.allocator, .{
@@ -1063,7 +1113,169 @@ pub const Parser = struct {
         return exp;
     }
 
-    fn parsePrefix(self: *Self) Errors!*ast.ExpNode {
+    fn invalidStringEscape(self: *Self, base: usize, start: usize, end: usize, message: []const u8) CompileError {
+        self.err_reporter.log(message, .{ .start = base + start, .end = base + end });
+        return error.ParserError;
+    }
+
+    fn skipStringIndent(self: *Self, index: usize, dedent: usize) usize {
+        const line_end = std.mem.indexOfScalarPos(u8, self.src, index, '\n') orelse self.src.len;
+        const is_blank = std.mem.indexOfNone(u8, self.src[index..line_end], " ") == null;
+        if (is_blank) return line_end;
+        return index + dedent;
+    }
+
+    fn decodeStringLiteral(self: *Self, start_index: usize, end_index: usize, dedent: ?usize) CompileError![]const u8 {
+        const raw = self.src[start_index..end_index];
+        const has_escape = std.mem.indexOfScalar(u8, raw, '\\') != null;
+        const has_newline = dedent != null and std.mem.indexOfScalar(u8, raw, '\n') != null;
+        if (!has_escape and !has_newline) return raw;
+
+        var decoded: std.ArrayList(u8) = .empty;
+        errdefer decoded.deinit(self.allocator);
+        var index: usize = 0;
+        while (index < raw.len) {
+            if (raw[index] == '\n' and dedent != null) {
+                try decoded.append(self.allocator, '\n');
+                index = self.skipStringIndent(start_index + index + 1, dedent.?) - start_index;
+                continue;
+            }
+            if (raw[index] != '\\') {
+                try decoded.append(self.allocator, raw[index]);
+                index += 1;
+                continue;
+            }
+
+            const start = index;
+            index += 1;
+            if (index >= raw.len) return self.invalidStringEscape(start_index, start, start, "Incomplete string escape");
+            const escaped: u8 = switch (raw[index]) {
+                '"' => '"',
+                '\'' => '\'',
+                '\\' => '\\',
+                '$' => '$',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '0' => 0,
+                'u' => {
+                    index += 1;
+                    if (index >= raw.len or raw[index] != '{') return self.invalidStringEscape(start_index, start, index - 1, "Unicode escape requires '{' after '\\u'");
+                    index += 1;
+                    const digits_start = index;
+                    var codepoint: u21 = 0;
+                    while (index < raw.len and raw[index] != '}') : (index += 1) {
+                        if (index - digits_start >= 6) return self.invalidStringEscape(start_index, start, index, "Unicode escape requires one to six hexadecimal digits");
+                        const digit = std.fmt.charToDigit(raw[index], 16) catch return self.invalidStringEscape(start_index, start, index, "Invalid hexadecimal digit in Unicode escape");
+                        const next_codepoint = @as(u32, codepoint) * 16 + digit;
+                        if (next_codepoint > 0x10ffff) return self.invalidStringEscape(start_index, start, index, "Unicode escape is outside the Unicode scalar range");
+                        codepoint = @intCast(next_codepoint);
+                    }
+                    if (index >= raw.len) return self.invalidStringEscape(start_index, start, index - 1, "Unterminated Unicode escape: expected '}'");
+                    if (index == digits_start) return self.invalidStringEscape(start_index, start, index, "Unicode escape requires one to six hexadecimal digits");
+                    var bytes: [4]u8 = undefined;
+                    const len = std.unicode.utf8Encode(codepoint, &bytes) catch return self.invalidStringEscape(start_index, start, index, "Unicode escape must be a Unicode scalar value, excluding surrogates");
+                    try decoded.appendSlice(self.allocator, bytes[0..len]);
+                    index += 1;
+                    continue;
+                },
+                else => return self.invalidStringEscape(start_index, start, index, "Unknown string escape"),
+            };
+            try decoded.append(self.allocator, escaped);
+            index += 1;
+        }
+        return decoded.toOwnedSlice(self.allocator);
+    }
+
+    fn appendStringSegment(self: *Self, parts: *std.ArrayList(*ast.ExpNode), start: usize, end: usize, dedent: ?usize) CompileError!void {
+        if (start == end) return;
+        try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .string_literal = try self.decodeStringLiteral(start, end, dedent) },
+            .loc = .{ .start = start, .end = end - 1 },
+        }));
+    }
+
+    fn parseStringLiteral(self: *Self, tk: Token) CompileError!*ast.ExpNode {
+        return self.parseStringContent(tk.loc.start + 1, tk.loc.end, null, tk.loc);
+    }
+
+    fn parseByteLiteral(self: *Self, tk: Token) CompileError!*ast.ExpNode {
+        const decoded = try self.decodeStringLiteral(tk.loc.start + 1, tk.loc.end, null);
+        if (decoded.len == 0) {
+            self.err_reporter.log("Empty byte literal: expected one character", tk.loc);
+            return error.ParserError;
+        }
+        if (decoded.len > 1 or decoded[0] >= 0x80) {
+            self.err_reporter.log("Byte literal must be a single ASCII character or escape", tk.loc);
+            return error.ParserError;
+        }
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .byte_literal = decoded[0] }, .loc = tk.loc });
+    }
+
+    fn parseMultilineStringLiteral(self: *Self, tk: Token) CompileError!*ast.ExpNode {
+        const closing = tk.loc.end - 2;
+        const closing_line_start = std.mem.lastIndexOfScalar(u8, self.src[0..closing], '\n').? + 1;
+        const dedent = closing - closing_line_start;
+        const content_start = std.mem.indexOfScalarPos(u8, self.src, tk.loc.start, '\n').? + 1;
+        if (content_start == closing_line_start) return self.parseStringContent(content_start, content_start, dedent, tk.loc);
+        return self.parseStringContent(self.skipStringIndent(content_start, dedent), closing_line_start - 1, dedent, tk.loc);
+    }
+
+    fn parseStringContent(self: *Self, content_start: usize, content_end: usize, dedent: ?usize, loc: err.Loc) CompileError!*ast.ExpNode {
+        var parts: std.ArrayList(*ast.ExpNode) = .empty;
+        var segment_start = content_start;
+        var index = segment_start;
+        while (index < content_end) {
+            if (self.src[index] == '\\') {
+                index += 2;
+                continue;
+            }
+            if (self.src[index] != '$' or index + 1 >= content_end) {
+                index += 1;
+                continue;
+            }
+            const next = self.src[index + 1];
+            const is_identifier = std.ascii.isAlphabetic(next) or next == '_';
+            if (next != '{' and !is_identifier) {
+                index += 1;
+                continue;
+            }
+            try self.appendStringSegment(&parts, segment_start, index, dedent);
+            if (is_identifier) {
+                const start = index + 1;
+                index = start + 1;
+                while (index < content_end and (std.ascii.isAlphanumeric(self.src[index]) or self.src[index] == '_')) : (index += 1) {}
+                try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = self.src[start..index] },
+                    .loc = .{ .start = start, .end = index - 1 },
+                }));
+            } else {
+                var expression_lexer = lexer.Lexer.init(self.allocator, self.src);
+                expression_lexer.cur_index = index;
+                expression_lexer.end_index = content_end;
+                const end = try expression_lexer.readInterpolation();
+                expression_lexer.cur_index = index + 2;
+                expression_lexer.end_index = end;
+                const tokens = try expression_lexer.list();
+                var expression_parser = Self.init(self.allocator, self.src, tokens.items);
+                expression_parser.loop_depth = self.loop_depth;
+                expression_parser.branch_depth = self.branch_depth;
+                const expression = try expression_parser.parseExp(0);
+                _ = try expression_parser.expect(.eof);
+                try parts.append(self.allocator, expression);
+                index = end + 1;
+            }
+            segment_start = index;
+        }
+        if (parts.items.len == 0) return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .string_literal = try self.decodeStringLiteral(content_start, content_end, dedent) },
+            .loc = loc,
+        });
+        try self.appendStringSegment(&parts, segment_start, content_end, dedent);
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_interpolation = try parts.toOwnedSlice(self.allocator) }, .loc = loc });
+    }
+
+    fn parsePrefix(self: *Self) CompileError!*ast.ExpNode {
         const tk = self.peekCurrent();
         self.walk();
 
@@ -1094,7 +1306,7 @@ pub const Parser = struct {
             },
             .int_literal => {
                 const value = std.fmt.parseInt(i64, tk.value(self.src), 10) catch {
-                    return self.err_dispatcher.invalidSyntax("int literal", tk);
+                    return self.err_reporter.invalidSyntax("int literal", tk);
                 };
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{ .int_literal = value },
@@ -1103,12 +1315,31 @@ pub const Parser = struct {
             },
             .float_literal => {
                 const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
-                    return self.err_dispatcher.invalidSyntax("float literal", tk);
+                    return self.err_reporter.invalidSyntax("float literal", tk);
                 };
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .float_literal = value }, .loc = tk.loc });
             },
             .string_literal => {
-                return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_literal = tk.value(self.src) }, .loc = tk.loc });
+                return self.parseStringLiteral(tk);
+            },
+            .multiline_string_literal => {
+                return self.parseMultilineStringLiteral(tk);
+            },
+            .byte_literal => {
+                return self.parseByteLiteral(tk);
+            },
+            .byte_kw, .float_kw, .buffer_kw => {
+                _ = try self.expect(.l_paren);
+                const was_parsing_condition = self.leaveCondition();
+                defer self.is_parsing_condition = was_parsing_condition;
+                const operand = try self.parseExp(0);
+                const r_paren = try self.expect(.r_paren);
+                const data: ast.Exp = switch (tk.tag) {
+                    .byte_kw => .{ .byte_cast = operand },
+                    .float_kw => .{ .float_cast = operand },
+                    else => .{ .buffer_new = operand },
+                };
+                return ast.ExpNode.init(self.allocator, .{ .data = data, .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end } });
             },
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });
@@ -1149,7 +1380,7 @@ pub const Parser = struct {
             .at => {
                 const l_paren = self.peekCurrent();
                 if (l_paren.tag != .l_paren) {
-                    return self.err_dispatcher.invalidSyntax("'(' after '@'", l_paren);
+                    return self.err_reporter.invalidSyntax("'(' after '@'", l_paren);
                 }
                 self.walk();
                 const args = try self.parseFnCallArgs();
@@ -1166,12 +1397,12 @@ pub const Parser = struct {
                 });
             },
             else => {
-                return self.err_dispatcher.invalidSyntax("valid expression", tk);
+                return self.err_reporter.invalidSyntax("valid expression", tk);
             },
         };
     }
 
-    fn parsePostfix(self: *Self, left: *ast.ExpNode) Errors!*ast.ExpNode {
+    fn parsePostfix(self: *Self, left: *ast.ExpNode) CompileError!*ast.ExpNode {
         var node = left;
 
         var is_done = false;
@@ -1267,11 +1498,11 @@ pub const Parser = struct {
         self.walk();
 
         if (!can_define_anonymous_struct and tk.tag == .struct_kw) {
-            return self.err_dispatcher.invalidSyntax("type string, number, bool, void, ...", tk);
+            return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
         }
 
         return switch (tk.tag) {
-            .string_kw, .int_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+            .string_kw, .buffer_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .is_nullable = is_nullable,
             }),
@@ -1296,7 +1527,7 @@ pub const Parser = struct {
                 });
             },
             else => {
-                return self.err_dispatcher.invalidSyntax("type string, number, bool, void, ...", tk);
+                return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
             },
         };
     }
@@ -1318,7 +1549,7 @@ pub const Parser = struct {
             return token;
         }
 
-        return self.err_dispatcher.invalidSyntax(@tagName(tag), token);
+        return self.err_reporter.invalidSyntax(@tagName(tag), token);
     }
 
     fn walkBack(self: *Self) void {

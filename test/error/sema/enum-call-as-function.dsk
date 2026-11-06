@@ -3,4 +3,6 @@ enum S
     B
 end
 
-echo(S())
+func main() -> void
+    echo(S())
+end

@@ -10,7 +10,10 @@ union Shape
 end
 
 let n = 3
-when n
-    null then echo(0) end
-    else then echo(1) end
+
+func main() -> void
+    when n
+        null then echo(0) end
+        else then echo(1) end
+    end
 end

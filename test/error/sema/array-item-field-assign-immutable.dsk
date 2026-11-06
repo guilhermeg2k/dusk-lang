@@ -1,0 +1,11 @@
+struct P
+    x: int
+    func set(mut self: @, v: int) -> void
+        self.x = v
+    end
+end
+
+func main() -> void
+    let ps = [P(x = 1)]
+    ps[0].x = 3
+end

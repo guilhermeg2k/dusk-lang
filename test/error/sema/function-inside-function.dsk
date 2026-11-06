@@ -1,0 +1,6 @@
+func main() -> void
+    func helper() -> int
+        return 1
+    end
+    echo(helper())
+end

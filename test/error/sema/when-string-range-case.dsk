@@ -1,0 +1,8 @@
+let name = "b"
+
+func main() -> void
+    when name
+        "a".."c" then echo(1) end
+        else then echo(0) end
+    end
+end

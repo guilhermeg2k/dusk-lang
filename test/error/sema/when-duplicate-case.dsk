@@ -10,8 +10,11 @@ union Shape
 end
 
 let n = 3
-when n
-    1, 2 then echo(1) end
-    2 then echo(2) end
-    else then echo(3) end
+
+func main() -> void
+    when n
+        1, 2 then echo(1) end
+        2 then echo(2) end
+        else then echo(3) end
+    end
 end

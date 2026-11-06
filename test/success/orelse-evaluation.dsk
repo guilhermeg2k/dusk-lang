@@ -1,10 +1,10 @@
 struct Calls
-    let mut source = 0
-    let mut fallback = 0
+    source = 0
+    fallback = 0
 end
 
-func source(is_present: bool) -> ?int
-    Calls.source += 1
+func source(mut calls: Calls, is_present: bool) -> ?int
+    calls.source += 1
     return if is_present then
         5
     else
@@ -12,32 +12,36 @@ func source(is_present: bool) -> ?int
     end
 end
 
-func fallback() -> int
-    Calls.fallback += 1
+func fallback(mut calls: Calls) -> int
+    calls.fallback += 1
     return 9
 end
 
-assert((source(true) orelse fallback()) == 5)
-assert(Calls.source == 1)
-assert(Calls.fallback == 0)
-assert((source(false) orelse fallback()) == 9)
-assert(Calls.source == 2)
-assert(Calls.fallback == 1)
-assert((source(true) orelse source(false) orelse fallback()) == 5)
-assert(Calls.source == 3)
-assert(Calls.fallback == 1)
-source(true) orelse fallback()
-assert(Calls.source == 4)
-assert(Calls.fallback == 1)
-source(false) orelse fallback()
-assert(Calls.source == 5)
-assert(Calls.fallback == 2)
-let selected = (if source(false) == null then
-    null
-else
-    null
-end) orelse fallback()
+func main() -> void
+    let mut calls = Calls()
 
-assert(selected == 9)
-assert(Calls.source == 6)
-assert(Calls.fallback == 3)
+    assert((source(calls, true) orelse fallback(calls)) == 5)
+    assert(calls.source == 1)
+    assert(calls.fallback == 0)
+    assert((source(calls, false) orelse fallback(calls)) == 9)
+    assert(calls.source == 2)
+    assert(calls.fallback == 1)
+    assert((source(calls, true) orelse source(calls, false) orelse fallback(calls)) == 5)
+    assert(calls.source == 3)
+    assert(calls.fallback == 1)
+    source(calls, true) orelse fallback(calls)
+    assert(calls.source == 4)
+    assert(calls.fallback == 1)
+    source(calls, false) orelse fallback(calls)
+    assert(calls.source == 5)
+    assert(calls.fallback == 2)
+    let selected = (if source(calls, false) == null then
+        null
+    else
+        null
+    end) orelse fallback(calls)
+
+    assert(selected == 9)
+    assert(calls.source == 6)
+    assert(calls.fallback == 3)
+end

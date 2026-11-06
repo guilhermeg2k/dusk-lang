@@ -10,4 +10,6 @@ func parse(n: int) -> ParseError!int
     return n
 end
 
-parse(1)
+func main() -> void
+    parse(1)
+end

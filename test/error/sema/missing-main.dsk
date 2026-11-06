@@ -1,0 +1,3 @@
+func run() -> void
+    echo("no main")
+end

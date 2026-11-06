@@ -2,5 +2,7 @@ struct S
     x: int
 end
 
-let s: ?S = null
-echo(s.x)
+func main() -> void
+    let s: ?S = null
+    echo(s.x)
+end

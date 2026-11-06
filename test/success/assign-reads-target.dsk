@@ -1,0 +1,52 @@
+struct Node
+    value: int
+    next: ?Node
+end
+
+union Tree
+    leaf: int
+    pair: []Tree
+end
+
+func main() -> void
+    let mut head: ?Node = null
+    for 0..2: i do
+        head = Node(value = i, next = head)
+    end
+    if head: first then
+        assert(first.value == 2)
+        if first.next: second then
+            assert(second.value == 1)
+            if second.next: third then
+                assert(third.value == 0)
+                assert(third.next == null)
+            else
+                assert(false)
+            end
+        else
+            assert(false)
+        end
+    else
+        assert(false)
+    end
+
+    let mut items = [1, 2]
+    items = [items[1], items[0], len(items)]
+    assert(items[0] == 2)
+    assert(items[1] == 1)
+    assert(items[2] == 2)
+
+    let mut tree = Tree(leaf = 1)
+    tree = Tree(pair = [tree, Tree(leaf = 2)])
+    if tree.pair: children then
+        assert(len(children) == 2)
+        if children[0].leaf: value then assert(value == 1) else assert(false) end
+    else
+        assert(false)
+    end
+
+    let mut grid = [[1]]
+    grid = if len(grid) > 0 then [grid[0], [2]] else grid end
+    assert(len(grid) == 2)
+    assert(grid[0][0] == 1)
+end

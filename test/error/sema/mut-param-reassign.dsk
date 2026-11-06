@@ -1,0 +1,6 @@
+func reset(mut list: []int) -> void
+    list = []
+end
+
+func main() -> void
+end

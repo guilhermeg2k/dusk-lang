@@ -4,17 +4,19 @@ struct Node
 
     func append(mut self: @, new_node: Node) -> void
         if self.next: mut tail then
-            tail.next = new_node
+            tail.next = copy(new_node)
         else
-            self.next = new_node
+            self.next = copy(new_node)
         end
     end
 end
 
-let mut node1 = Node(value = 1, next = null)
-let node2 = Node(value = 2, next = null)
-node1.append(node2)
+func main() -> void
+    let mut node1 = Node(value = 1, next = null)
+    let node2 = Node(value = 2, next = null)
+    node1.append(node2)
 
-if node1.next: node then
-    echo(node.value)
+    if node1.next: node then
+        echo(node.value)
+    end
 end

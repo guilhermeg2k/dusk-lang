@@ -9,9 +9,6 @@ func color_code(color: Color) -> return when color
     Color.Blue then 2 end
 end
 
-assert(color_code(Color.Red) == 1)
-assert(color_code(Color.Blue) == 2)
-
 union Shape
     circle: int
     square: int
@@ -25,49 +22,12 @@ func area(shape: ?Shape) -> int
     end
 end
 
-assert(area(null) == -1)
-assert(area(Shape(circle = 2)) == 12)
-assert(area(Shape(square = 3)) == 9)
-
 func nullable_fallback(shape: ?Shape) -> int
     return when shape
         circle: radius then radius end
         else then 10 end
     end
 end
-
-assert(nullable_fallback(null) == 10)
-assert(nullable_fallback(Shape(square = 2)) == 10)
-
-let integer = when 2
-    1, 2 then
-        let base = 10
-        base + 2
-    end
-
-    -1 then 3 end
-    else then 4 end
-end
-
-assert(integer == 12)
-
-let nested = if true then
-    when 0
-        0 then if true then 7 else 8 end end
-        else then 9 end
-    end
-else
-    10
-end
-
-assert(nested == 7)
-
-let shape: Shape = when 0
-    0 then @(circle = 5) end
-    else then @(square = 2) end
-end
-
-assert(area(shape) == 75)
 
 error Problem
     Missing
@@ -80,9 +40,6 @@ func error_code(problem: Problem) -> int
         Problem.Invalid then 2 end
     end
 end
-
-assert(error_code(Problem.Missing) == 1)
-assert(error_code(Problem.Invalid) == 2)
 
 func fail() -> !int
     return Problem.Missing
@@ -98,17 +55,7 @@ func handle_inferred() -> int
     return handled
 end
 
-assert(handle_inferred() == 8)
-
 let radius = 30
-
-let shadowed_radius = when Shape(circle = 4)
-    circle: radius then radius end
-    square: _ then 0 end
-end
-
-assert(shadowed_radius == 4)
-assert(radius == 30)
 
 func ignored_payload(shape: Shape) -> int
     return when shape
@@ -116,9 +63,6 @@ func ignored_payload(shape: Shape) -> int
         square: _ then 2 end
     end
 end
-
-assert(ignored_payload(Shape(circle = 9)) == 1)
-assert(ignored_payload(Shape(square = 9)) == 2)
 
 func nullable_color(color: ?Color) -> int
     return when color
@@ -128,9 +72,6 @@ func nullable_color(color: ?Color) -> int
     end
 end
 
-assert(nullable_color(null) == -1)
-assert(nullable_color(Color.Blue) == 2)
-
 func nullable_integer(number: ?int) -> int
     return when number
         null then -1 end
@@ -139,6 +80,67 @@ func nullable_integer(number: ?int) -> int
     end
 end
 
-assert(nullable_integer(null) == -1)
-assert(nullable_integer(1) == 10)
-assert(nullable_integer(2) == 20)
+func main() -> void
+    assert(color_code(Color.Red) == 1)
+    assert(color_code(Color.Blue) == 2)
+
+    assert(area(null) == -1)
+    assert(area(Shape(circle = 2)) == 12)
+    assert(area(Shape(square = 3)) == 9)
+
+    assert(nullable_fallback(null) == 10)
+    assert(nullable_fallback(Shape(square = 2)) == 10)
+
+    let integer = when 2
+        1, 2 then
+            let base = 10
+            base + 2
+        end
+
+        -1 then 3 end
+        else then 4 end
+    end
+
+    assert(integer == 12)
+
+    let nested = if true then
+        when 0
+            0 then if true then 7 else 8 end end
+            else then 9 end
+        end
+    else
+        10
+    end
+
+    assert(nested == 7)
+
+    let shape: Shape = when 0
+        0 then @(circle = 5) end
+        else then @(square = 2) end
+    end
+
+    assert(area(shape) == 75)
+
+    assert(error_code(Problem.Missing) == 1)
+    assert(error_code(Problem.Invalid) == 2)
+
+    assert(handle_inferred() == 8)
+
+    let shadowed_radius = when Shape(circle = 4)
+        circle: radius then radius end
+        square: _ then 0 end
+    end
+
+    assert(shadowed_radius == 4)
+    assert(radius == 30)
+
+    assert(ignored_payload(Shape(circle = 9)) == 1)
+    assert(ignored_payload(Shape(square = 9)) == 2)
+
+    assert(nullable_color(null) == -1)
+    assert(nullable_color(Color.Blue) == 2)
+
+    assert(nullable_integer(null) == -1)
+    assert(nullable_integer(1) == 10)
+    assert(nullable_integer(2) == 20)
+end

@@ -1,0 +1,10 @@
+struct P
+    x: int
+
+    func f(self: @) -> void
+        self.x = 1
+    end
+end
+
+func main() -> void
+end

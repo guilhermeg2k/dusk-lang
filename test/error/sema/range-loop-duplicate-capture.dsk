@@ -1,2 +1,4 @@
-for 1..2: value, value do
+func main() -> void
+    for 1..2: value, value do
+    end
 end

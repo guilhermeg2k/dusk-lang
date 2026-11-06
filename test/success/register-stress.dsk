@@ -32,9 +32,6 @@ func register_blast() -> int
     return (((((a + b) * (c + d)) + ((e + f) * (g + h))) * (((i + j) * (k + l)) + ((m + n) * (o + p)))) + ((((q + r) * (s + t)) + ((u + v) * (w + x))) + (y * z)))
 end
 
-let r1 = register_blast()
-assert(r1 > 0)
-
 # second function: many parameters + deep nesting
 func param_blast(v01: int, v02: int, v03: int, v04: int, v05: int, v06: int, v07: int, v08: int, v09: int, v10: int, v11: int, v12: int, v13: int, v14: int, v15: int) -> int
     let a = v01 + v02
@@ -54,5 +51,10 @@ func param_blast(v01: int, v02: int, v03: int, v04: int, v05: int, v06: int, v07
     return n
 end
 
-let r2 = param_blast(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
-assert(r2 == 15)
+func main() -> void
+    let r1 = register_blast()
+    assert(r1 > 0)
+
+    let r2 = param_blast(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+    assert(r2 == 15)
+end

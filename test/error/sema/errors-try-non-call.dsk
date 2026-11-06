@@ -11,4 +11,7 @@ func parse(n: int) -> ParseError!int
 end
 
 let y = 1
-let x = try y
+
+func main() -> !void
+    let x = try y
+end

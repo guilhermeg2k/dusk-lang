@@ -29,6 +29,7 @@ pub const Statement = union(enum) {
 pub const FuncStmt = struct {
     identifier: []const u8,
     def: FnDef,
+    is_extern: bool = false,
 };
 
 pub const StructStmt = struct {
@@ -86,7 +87,7 @@ pub const WhenStmt = struct {
 pub const WhenProng = struct {
     pattern: union(enum) {
         values: []const *ExpNode,
-        variant: struct { name: []const u8, capture: []const u8 },
+        variant: struct { name: []const u8, capture: []const u8, is_mut: bool },
         null_case: void,
     },
     body: Block,
@@ -101,6 +102,7 @@ pub const ForStmt = struct {
 pub const ForCaptureStmt = struct {
     source: *ExpNode,
     item: []const u8,
+    is_item_mut: bool,
     index: ?[]const u8,
     do_block: Block,
 };
@@ -169,7 +171,12 @@ pub const Exp = union(enum) {
 
     float_literal: f64,
     int_literal: i64,
+    byte_literal: u8,
+    byte_cast: *ExpNode,
+    float_cast: *ExpNode,
+    buffer_new: *ExpNode,
     string_literal: []const u8,
+    string_interpolation: []const *ExpNode,
     bool_literal: bool,
     identifier: []const u8,
     anonymous_init: AnonymousInit,
@@ -313,7 +320,7 @@ pub const UnaryOp = enum {
         return switch (tag) {
             .minus => .neg,
             .not => .not,
-            else => err.Errors.ParserError,
+            else => err.CompileError.ParserError,
         };
     }
 };
@@ -352,7 +359,7 @@ pub const BinaryOp = enum {
             .ge => .gt_or_eq,
             .or_kw => .bool_or,
             .and_kw => .bool_and,
-            else => err.Errors.ParserError,
+            else => err.CompileError.ParserError,
         };
     }
 };

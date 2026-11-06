@@ -1,0 +1,10 @@
+func read() -> int
+    return 1
+end
+
+struct Config
+    let limit = read()
+end
+
+func main() -> void
+end

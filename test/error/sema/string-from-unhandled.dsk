@@ -1,0 +1,3 @@
+func main() -> void
+    let s = string_from(buffer(1))
+end

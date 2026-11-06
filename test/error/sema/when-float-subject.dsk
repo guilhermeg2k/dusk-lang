@@ -10,7 +10,10 @@ union Shape
 end
 
 let f = 1.5
-when f
-    1.5 then echo(1) end
-    else then echo(0) end
+
+func main() -> void
+    when f
+        1.5 then echo(1) end
+        else then echo(0) end
+    end
 end

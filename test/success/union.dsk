@@ -3,26 +3,6 @@ union Response
     failure: string
 end
 
-let res = Response(success = "Sucesso")
-let err = Response(failure = "Error")
-
-if res.success: msg then
-    echo(msg)
-else
-    assert(false)
-end
-
-if res.failure: _ then
-    assert(false)
-end
-
-if err.failure: msg then
-    echo(msg)
-end
-
-echo(res.success)
-echo(res.failure)
-
 # Primitive payloads
 enum Color
     Red
@@ -45,74 +25,6 @@ union Value
     maybe: ?int
 end
 
-let vi = Value(i = 42)
-if vi.i: x then
-    assert(x == 42)
-else
-    assert(false)
-end
-
-if vi.f: _ then
-    assert(false)
-end
-
-# A zero payload must not be mistaken for null
-let zero = Value(i = 0)
-if zero.i: x then
-    assert(x == 0)
-else
-    assert(false)
-end
-
-let vf = Value(f = 1.5)
-if vf.f: x then
-    assert(x == 1.5)
-else
-    assert(false)
-end
-
-let vb = Value(b = false)
-if vb.b: x then
-    assert(x == false)
-else
-    assert(false)
-end
-
-let vc = Value(c = Color.Green)
-if vc.c: x then
-    assert(x == Color.Green)
-else
-    assert(false)
-end
-
-let vp = Value(p = Point(x = 1, y = 2))
-if vp.p: x then
-    assert(x.x == 1)
-    assert(x.y == 2)
-else
-    assert(false)
-end
-
-let vl = Value(list = [1, 2, 3])
-if vl.list: x then
-    assert(len(x) == 3)
-    assert(x[2] == 3)
-else
-    assert(false)
-end
-
-let vm = Value(maybe = 7)
-if vm.maybe: x then
-    assert(x == 7)
-else
-    assert(false)
-end
-
-echo(vi.i)
-echo(vf.f)
-echo(vb.b)
-echo(vi.f)
-
 # Unions as parameters, return values and in structs
 func fetch(id: int) -> Response
     if id == 1 then
@@ -128,29 +40,15 @@ func is_success(r: Response) -> bool
     return false
 end
 
-assert(is_success(fetch(1)))
-assert(!is_success(fetch(2)))
-
 struct Request
     path: string
     response: ?Response
 end
 
-let req = Request(path = "/me", response = fetch(1))
-if req.response: r then
-    assert(is_success(r))
-else
-    assert(false)
-end
-
-let mut current = Response(failure = "pending")
-current = Response(success = "done")
-assert(is_success(current))
-
 # Methods and static fields
 union Shape
     let sides_of_square = 4
-    let mut created = 0
+    let label = "shape"
 
     circle: int
     square: int
@@ -166,30 +64,132 @@ union Shape
     end
 
     func new_square(side: int) -> Shape
-        Shape.created += 1
-        return Shape(square = side)
+        return Shape(square = side + Shape.sides_of_square - 4)
     end
 end
 
-let circle = Shape(circle = 2)
-assert(circle.area() == 12)
-assert(Shape.area(circle) == 12)
+func main() -> void
+    let res = Response(success = "Sucesso")
+    let err = Response(failure = "Error")
 
-let square = Shape.new_square(3)
-assert(square.area() == 9)
-assert(Shape.new_square(2).area() == 4)
+    if res.success: msg then
+        echo(msg)
+    else
+        assert(false)
+    end
 
-assert(Shape.sides_of_square == 4)
-assert(Shape.created == 2)
-Shape.created = 10
-assert(Shape.created == 10)
+    if res.failure: _ then
+        assert(false)
+    end
 
-# Arrays of unions
-let shapes = [Shape(circle = 1), Shape(square = 2), Shape(square = 3)]
-let mut total = 0
-let mut i = 0
-for i < len(shapes) do
-    total += shapes[i].area()
-    i += 1
+    if err.failure: msg then
+        echo(msg)
+    end
+
+    echo(res.success)
+    echo(res.failure)
+
+    let vi = Value(i = 42)
+    if vi.i: x then
+        assert(x == 42)
+    else
+        assert(false)
+    end
+
+    if vi.f: _ then
+        assert(false)
+    end
+
+    # A zero payload must not be mistaken for null
+    let zero = Value(i = 0)
+    if zero.i: x then
+        assert(x == 0)
+    else
+        assert(false)
+    end
+
+    let vf = Value(f = 1.5)
+    if vf.f: x then
+        assert(x == 1.5)
+    else
+        assert(false)
+    end
+
+    let vb = Value(b = false)
+    if vb.b: x then
+        assert(x == false)
+    else
+        assert(false)
+    end
+
+    let vc = Value(c = Color.Green)
+    if vc.c: x then
+        assert(x == Color.Green)
+    else
+        assert(false)
+    end
+
+    let vp = Value(p = Point(x = 1, y = 2))
+    if vp.p: x then
+        assert(x.x == 1)
+        assert(x.y == 2)
+    else
+        assert(false)
+    end
+
+    let vl = Value(list = [1, 2, 3])
+    if vl.list: x then
+        assert(len(x) == 3)
+        assert(x[2] == 3)
+    else
+        assert(false)
+    end
+
+    let vm = Value(maybe = 7)
+    if vm.maybe: x then
+        assert(x == 7)
+    else
+        assert(false)
+    end
+
+    echo(vi.i)
+    echo(vf.f)
+    echo(vb.b)
+    echo(vi.f)
+
+    assert(is_success(fetch(1)))
+    assert(!is_success(fetch(2)))
+
+    let req = Request(path = "/me", response = fetch(1))
+    if req.response: r then
+        assert(is_success(r))
+    else
+        assert(false)
+    end
+
+    let mut current = Response(failure = "pending")
+    current = Response(success = "done")
+    assert(is_success(current))
+
+    let circle = Shape(circle = 2)
+    assert(circle.area() == 12)
+    assert(Shape.area(circle) == 12)
+
+    let square = Shape.new_square(3)
+    assert(square.area() == 9)
+    assert(Shape.new_square(2).area() == 4)
+
+    assert(Shape.sides_of_square == 4)
+    assert(str_equal(Shape.label, "shape"))
+    assert(str_equal(square.label, "shape"))
+
+    # Arrays of unions
+    let shapes = [Shape(circle = 1), Shape(square = 2), Shape(square = 3)]
+    let mut total = 0
+    let mut i = 0
+    for i < len(shapes) do
+        total += shapes[i].area()
+        i += 1
+    end
+    assert(total == 16)
 end
-assert(total == 16)

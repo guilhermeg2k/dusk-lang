@@ -1,0 +1,11 @@
+union U
+    a: int
+    b: string
+
+    func set_b(mut self: @, s: string) -> void
+        self = U(b = s)
+    end
+end
+
+func main() -> void
+end

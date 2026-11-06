@@ -17,3 +17,6 @@ end
 func f() -> ParseError!int
     return IoError.NotFound
 end
+
+func main() -> void
+end

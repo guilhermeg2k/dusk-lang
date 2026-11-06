@@ -1,7 +1,9 @@
-when 1
-    5..1 then
-    end
+func main() -> void
+    when 1
+        5..1 then
+        end
 
-    else then
+        else then
+        end
     end
 end

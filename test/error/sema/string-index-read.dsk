@@ -1,0 +1,5 @@
+let s = "abc"
+
+func main() -> void
+    echo(s[0])
+end

@@ -1,3 +1,5 @@
 func add(a: int, b: int) -> return a + b
 
-assert(add(10,10) == 20)
+func main() -> void
+    assert(add(10,10) == 20)
+end

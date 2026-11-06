@@ -1,0 +1,6 @@
+error ConversionError
+    X
+end
+
+func main() -> void
+end

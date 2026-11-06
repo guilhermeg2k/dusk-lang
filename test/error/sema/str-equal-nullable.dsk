@@ -1,0 +1,4 @@
+func main() -> void
+    let x: ?string = "a"
+    echo(str_equal(x, "a"))
+end

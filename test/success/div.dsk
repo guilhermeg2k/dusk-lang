@@ -5,8 +5,10 @@ let z: int = 5//2
 let w: int = 5%2
 let a: float = 5.5%2
 
-assert(x == 2.0)
-assert(y == 2.5)
-assert(z == 2)
-assert(w == 1)
-assert(a == 1.5)
+func main() -> void
+    assert(x == 2.0)
+    assert(y == 2.5)
+    assert(z == 2)
+    assert(w == 1)
+    assert(a == 1.5)
+end

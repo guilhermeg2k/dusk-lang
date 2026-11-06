@@ -1,0 +1,7 @@
+func main() -> void
+    let mut buf: []int = []
+    for 0..3: i do
+        append(buf, i)
+        let snapshot = buf
+    end
+end

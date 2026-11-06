@@ -1,9 +1,10 @@
 union U
     let count = 1
-    let mut hits = 0
 
     a: int
     b: string
 end
 
-let u = U(1)
+func main() -> void
+    let u = U(1)
+end

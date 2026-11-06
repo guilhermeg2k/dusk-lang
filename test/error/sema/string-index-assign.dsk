@@ -1,0 +1,4 @@
+func main() -> void
+    let mut s = "abc"
+    s[0] = 1
+end

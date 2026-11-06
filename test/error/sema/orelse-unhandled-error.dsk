@@ -6,5 +6,7 @@ func failing() -> Failure!int
     return Failure.Missing
 end
 
-let optional: ?int = null
-let selected = optional orelse failing()
+func main() -> void
+    let optional: ?int = null
+    let selected = optional orelse failing()
+end

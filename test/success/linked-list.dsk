@@ -9,7 +9,7 @@ struct LinkedList
     len: int = 0
 
     func add(mut self: @, value: int) -> void
-        let new_node: Node = @(value = value, next = null)
+        let mut new_node: Node = @(value = value, next = null)
 
         if self.tail: mut tail then
             tail.next = new_node
@@ -23,7 +23,7 @@ struct LinkedList
     end
 
     func add_head(mut self: @, value: int) -> void
-        let new_node = @(value = value, next = self.root)
+        let mut new_node = @(value = value, next = self.root)
         self.root = new_node
 
         if self.tail == null then
@@ -93,48 +93,50 @@ struct LinkedList
     end
 
     func contains(self: @, value: int) -> bool
-        let mut cur_node = self.root
-        for cur_node != null do
-            if cur_node: c_node then
-                if c_node.value == value then
-                    return true
-                end
-
-                cur_node = c_node.next
-            end
-        end
-
-        return false
+        return contains_from(self.root, value)
     end
 
     func print(self: @) -> void
-        let mut cur_node = self.root
-        for cur_node != null do
-            if cur_node: c_node then
-                echo(c_node.value)
-                cur_node = c_node.next
-            end
-        end
+        print_from(self.root)
     end
 end
 
-let mut list = LinkedList(root = null, tail = null)
+func contains_from(node: ?Node, value: int) -> bool
+    if node: current then
+        if current.value == value then
+            return true
+        end
+        return contains_from(current.next, value)
+    end
+    return false
+end
 
-list.add(10)
-list.add(20)
-list.add(30)
-list.add(40)
-list.add_head(50)
-list.add_head(60)
-list.print()
-echo(list.contains(10))
-echo(list.len)
-list.pop()
-list.pop()
-list.print()
-echo(list.len)
-list.pop_value(50)
-list.pop_value(60)
-echo(list.contains(60))
-list.print()
-echo(list.len)
+func print_from(node: ?Node) -> void
+    if node: current then
+        echo(current.value)
+        return print_from(current.next)
+    end
+end
+
+func main() -> void
+    let mut list = LinkedList(root = null, tail = null)
+
+    list.add(10)
+    list.add(20)
+    list.add(30)
+    list.add(40)
+    list.add_head(50)
+    list.add_head(60)
+    list.print()
+    echo(list.contains(10))
+    echo(list.len)
+    list.pop()
+    list.pop()
+    list.print()
+    echo(list.len)
+    list.pop_value(50)
+    list.pop_value(60)
+    echo(list.contains(60))
+    list.print()
+    echo(list.len)
+end

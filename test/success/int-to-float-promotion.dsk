@@ -1,0 +1,88 @@
+let PI: float = 3
+
+struct P
+    x: float
+    y: float = 2
+end
+
+union U
+    f: float
+    i: int
+end
+
+func half(x: float) -> float
+    return x / 2.0
+end
+
+func avg(total: int) -> float
+    return total
+end
+
+func scale(k: float = 4) -> float
+    return k
+end
+
+error E
+    Bad
+end
+
+func fails(n: int) -> !float
+    if n == 0 then
+        return E.Bad
+    end
+    return n
+end
+
+func main() -> !void
+    let n = 3
+    let f: float = n
+    assert(f == 3.0)
+    let lit: float = 5
+    assert(lit == 5.0)
+    assert(PI == 3.0)
+    let mut m = 1.5
+    m = n
+    assert(m == 3.0)
+    assert(half(n) == 1.5)
+    assert(avg(7) == 7.0)
+    assert(scale() == 4.0)
+    let p = P(x = n)
+    assert(p.x == 3.0)
+    assert(p.y == 2.0)
+    let mut q = P(x = 1.5)
+    q.x = n
+    assert(q.x == 3.0)
+    let xs: []float = [1.5, n]
+    assert(xs[1] == 3.0)
+    let mixed = [1, n, 1.5]
+    assert(mixed[1] == 3.0)
+    let mut ys = [1.5, 2.5]
+    ys[0] = n
+    assert(ys[0] == 3.0)
+    let nf: ?float = n
+    assert((nf orelse 0.0) == 3.0)
+    let ni: ?int = 4
+    let nf2: ?float = ni
+    assert((nf2 orelse 0.0) == 4.0)
+    let none: ?int = null
+    let nf3: ?float = none
+    assert(nf3 == null)
+    let caught = fails(0) catch n
+    assert(caught == 3.0)
+    let ok = try fails(2)
+    assert(ok == 2.0)
+    let u = U(f = n)
+    if u.f: v then
+        assert(v == 3.0)
+    end
+    let b = if n > 0 then n else 2.5 end
+    assert(b == 3.0)
+    let mut total = 0.0
+    for 1..20000: i do
+        let maybe: ?int = i
+        let boxed: ?float = maybe
+        let items: []float = [i, 1.5]
+        if boxed: value then total += value + items[0] end
+    end
+    assert(total == 400020000.0)
+end

@@ -1,0 +1,86 @@
+struct Node
+    value: int
+    next: ?Node
+end
+
+func down(n: int) -> int
+    if n == 0 then return 0 end
+    return down(n - 1) + 1
+end
+
+func count_down(n: int, acc: int) -> int
+    if n == 0 then return acc end
+    return count_down(n - 1, acc + 1)
+end
+
+func is_even(n: int) -> bool
+    if n == 0 then return true end
+    return is_odd(n - 1)
+end
+
+func is_odd(n: int) -> bool
+    if n == 0 then return false end
+    return is_even(n - 1)
+end
+
+func swap_down(a: int, b: int, n: int) -> int
+    if n == 0 then return a * 10 + b end
+    return swap_down(b, a, n - 1)
+end
+
+func garbage_walk(n: int, keep: []int) -> int
+    if n == 0 then return len(keep) end
+    let trash = [n, n, n]
+    return garbage_walk(n - 1, [n, trash[0]])
+end
+
+func contains_from(node: ?Node, value: int) -> bool
+    if node: current then
+        if current.value == value then return true end
+        return contains_from(current.next, value)
+    end
+    return false
+end
+
+func wide(a: int) -> int
+    let b = a + 1
+    let c = b + 1
+    let d = c + 1
+    let e = d + 1
+    return e
+end
+
+func narrow(n: int) -> int
+    if n == 0 then return wide(1) end
+    return narrow(n - 1)
+end
+
+struct Counter
+    total: int
+
+    func add_until(mut self: @, n: int) -> int
+        if n == 0 then return self.total end
+        self.total += n
+        return self.add_until(n - 1)
+    end
+end
+
+func main() -> void
+    assert(down(300) == 300)
+    assert(down(50000) == 50000)
+    assert(count_down(1000000, 0) == 1000000)
+    assert(is_even(1000001) == false)
+    assert(swap_down(1, 2, 3) == 21)
+    assert(garbage_walk(300000, []) == 2)
+    assert(narrow(100000) == 5)
+
+    let mut head: ?Node = null
+    for 0..199999: i do
+        head = Node(value = i, next = head)
+    end
+    assert(contains_from(head, 0))
+    assert(!contains_from(head, -1))
+
+    let mut counter = Counter(total = 0)
+    assert(counter.add_until(200000) == 20000100000)
+end

@@ -27,12 +27,6 @@ func parse_deep(n: int) -> ParseError!int
     return try parse_twice(n) + try parse_twice(n)
 end
 
-assert((parse_twice(2) catch 0) == 5)
-assert((parse_twice(0) catch 0) == 0)
-assert((parse_deep(1) catch 0) == 6)
-assert((parse_deep(-1) catch 99) == 99)
-assert(try parse(5) == 5)
-
 struct Calculator
     total: int
 
@@ -48,34 +42,21 @@ struct Calculator
     end
 end
 
-let calc = Calculator(total = 10)
-assert((calc.divide(5) catch 0) == 2)
-assert((calc.divide(0) catch -1) == -1)
-assert(try calc.halve() == 5)
-assert((Calculator.divide(calc, 0) catch -2) == -2)
-
 struct Counter
-    let mut count = 0
+    count = 0
 end
 
-func check(n: int) -> ParseError!void
+func check(mut counter: Counter, n: int) -> ParseError!void
     if n == 0 then
         return ParseError.Empty
     end
-    Counter.count += 1
+    counter.count += 1
 end
 
-func check_all(n: int) -> ParseError!void
-    try check(n)
-    try check(n)
+func check_all(mut counter: Counter, n: int) -> ParseError!void
+    try check(counter, n)
+    try check(counter, n)
 end
-
-try check_all(1)
-assert(Counter.count == 2)
-check_all(0) catch e then
-    assert(e == ParseError.Empty)
-end
-assert(Counter.count == 2)
 
 func label(n: int) -> ParseError!string
     if n == 0 then
@@ -84,8 +65,6 @@ func label(n: int) -> ParseError!string
     return "ok"
 end
 
-let text = label(0) catch "fallback"
-echo(text)
 func find(n: int) -> ParseError!?int
     if n == 0 then
         return ParseError.Empty
@@ -96,20 +75,46 @@ func find(n: int) -> ParseError!?int
     return n
 end
 
-let maybe = find(0) catch null
-assert(maybe == null)
-let found = find(1) catch 5
-assert(found == null)
-let other = find(3) catch null
-if other: o then
-    assert(o == 3)
-else
-    assert(false)
-end
-
 func next(n: int) -> int
     return n + 1
 end
 
-assert((2 |> parse() catch 0) == 2)
-assert(try parse(next(1)) == 2)
+func main() -> !void
+    assert((parse_twice(2) catch 0) == 5)
+    assert((parse_twice(0) catch 0) == 0)
+    assert((parse_deep(1) catch 0) == 6)
+    assert((parse_deep(-1) catch 99) == 99)
+    assert(try parse(5) == 5)
+
+    let calc = Calculator(total = 10)
+    assert((calc.divide(5) catch 0) == 2)
+    assert((calc.divide(0) catch -1) == -1)
+    assert(try calc.halve() == 5)
+    assert((Calculator.divide(calc, 0) catch -2) == -2)
+
+    let mut counter = Counter()
+
+    try check_all(counter, 1)
+    assert(counter.count == 2)
+    check_all(counter, 0) catch e then
+        assert(e == ParseError.Empty)
+    end
+    assert(counter.count == 2)
+
+    let text = label(0) catch "fallback"
+    echo(text)
+
+    let maybe = find(0) catch null
+    assert(maybe == null)
+    let found = find(1) catch 5
+    assert(found == null)
+    let other = find(3) catch null
+    if other: o then
+        assert(o == 3)
+    else
+        assert(false)
+    end
+
+    assert((2 |> parse() catch 0) == 2)
+    assert(try parse(next(1)) == 2)
+end

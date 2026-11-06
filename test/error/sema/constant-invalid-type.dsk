@@ -1,0 +1,12 @@
+struct P
+    x: int
+
+    func make() -> int
+        return 1
+    end
+end
+
+let MAKER = P.make
+
+func main() -> void
+end

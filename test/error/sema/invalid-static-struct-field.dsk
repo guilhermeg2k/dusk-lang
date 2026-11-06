@@ -3,5 +3,7 @@ struct S
     y: int
 end
 
-let s = S(y = 1)
-S.missing = "fail"
+func main() -> void
+    let s = S(y = 1)
+    S.missing = "fail"
+end

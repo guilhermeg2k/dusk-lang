@@ -1,0 +1,19 @@
+let name = "olá"
+
+func main() -> void
+    assert(str_len(name) == 4)
+    assert(str_char_count(name) == 3)
+    assert(str_len("") == 0)
+    assert(str_char_count("") == 0)
+    assert(str_len("🌙") == 4)
+    assert(str_char_count("🌙") == 1)
+    assert(str_char_count("a🌙é\n") == 4)
+    assert(str_len("x${name}y") == 6)
+    assert((name |> str_char_count()) == 3)
+    let maybe: ?string = "abc"
+    if maybe: text then
+        assert(str_len(text) == 3)
+    end
+    echo(str_len(name))
+    echo(str_char_count(name))
+end

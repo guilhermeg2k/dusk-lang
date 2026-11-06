@@ -1,0 +1,4 @@
+extern f() -> int
+
+func main() -> void
+end

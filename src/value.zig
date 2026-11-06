@@ -1,6 +1,7 @@
 const std = @import("std");
 const ir = @import("ir.zig");
-const RunTimeError = @import("error.zig").RunTimeError;
+const RuntimeError = @import("error.zig").RuntimeError;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const tt = @import("type_table.zig");
 
 pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
@@ -27,6 +28,7 @@ const HeapValueType = enum(u8) {
     array,
     @"struct",
     string,
+    buffer,
     @"union",
     null_box,
 };
@@ -44,16 +46,9 @@ pub const HeapValue = extern struct {
         return @as(*T, @fieldParentPtr("obj", ptr));
     }
 
-    pub fn followRelocated(ptr: *Self) ?*Self {
+    pub fn followRelocated(ptr: *Self) *Self {
         var cur = ptr;
-        while (cur.relocated) |rel| {
-            cur = rel;
-        }
-
-        if (cur == ptr) {
-            return null;
-        }
-
+        while (cur.relocated) |rel| cur = rel;
         return cur;
     }
 };
@@ -200,22 +195,18 @@ pub const Array = extern struct {
         return array;
     }
 
-    pub fn get(self: *const Self, i: usize) !Value {
-        if (i >= self.len) {
-            return RunTimeError.ArrayOutOfBounds;
-        }
+    pub fn get(self: *const Self, i: i64) !Value {
+        if (i < 0 or i >= self.len) return RuntimeErrorReporter.arrayOutOfBounds(i, self.len);
 
         const items = self.getDataPtr();
-        return items[i];
+        return items[@intCast(i)];
     }
 
-    pub fn set(self: *Self, i: usize, value: Value) !void {
-        if (i >= self.len) {
-            return RunTimeError.ArrayOutOfBounds;
-        }
+    pub fn set(self: *Self, i: i64, value: Value) !void {
+        if (i < 0 or i >= self.len) return RuntimeErrorReporter.arrayOutOfBounds(i, self.len);
 
         const items = self.getDataPtr();
-        items[i] = value;
+        items[@intCast(i)] = value;
     }
 
     pub fn pop(self: *Self) !Value {
@@ -226,7 +217,7 @@ pub const Array = extern struct {
 
         self.len -= 1;
 
-        return try self.get(self.len);
+        return self.getDataPtr()[self.len];
     }
 
     pub fn needsResize(self: *Self) bool {
@@ -289,31 +280,44 @@ pub const Array = extern struct {
     }
 };
 
-pub const String = extern struct {
+pub const Bytes = extern struct {
     const Self = @This();
 
     obj: HeapValue,
     len: usize,
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8) !*Self {
-        const total_bytes = Self.calc_size(source.len);
-        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
-        const string_ptr = @as(*Self, @ptrCast(raw_memory.ptr));
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, kind: HeapValueType) !*Self {
+        const bytes = try Self.initUndefined(allocator, source.len, kind);
+        @memcpy(bytes.getDataPtr()[0..source.len], source);
+        return bytes;
+    }
 
-        string_ptr.obj = .{
-            .kind = .string,
-        };
+    pub fn initZeroed(allocator: std.mem.Allocator, len: usize, kind: HeapValueType) !*Self {
+        const bytes = try Self.initUndefined(allocator, len, kind);
+        @memset(bytes.getDataPtr()[0..len], 0);
+        return bytes;
+    }
 
-        string_ptr.len = source.len;
-
-        const data = string_ptr.getDataPtr();
-        @memcpy(data[0..source.len], source);
-
-        return string_ptr;
+    pub fn initUndefined(allocator: std.mem.Allocator, len: usize, kind: HeapValueType) !*Self {
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(len));
+        const bytes = @as(*Self, @ptrCast(raw_memory.ptr));
+        bytes.obj = .{ .kind = kind };
+        bytes.len = len;
+        return bytes;
     }
 
     pub fn slice(self: *const Self) []const u8 {
         return self.getDataPtr()[0..self.len];
+    }
+
+    pub fn mutableSlice(self: *Self) []u8 {
+        return self.getDataPtr()[0..self.len];
+    }
+
+    pub fn eql(self: *const Self, other: *const Self) bool {
+        if (self == other) return true;
+        if (self.len != other.len) return false;
+        return std.mem.eql(u8, self.slice(), other.slice());
     }
 
     pub fn getDataPtr(self: *const Self) [*]u8 {
@@ -387,6 +391,7 @@ pub const ValueType = enum(u8) {
     null,
 
     string,
+    buffer,
     //note: maybe this needs to get the inner type?
     array,
     @"struct",
@@ -395,7 +400,7 @@ pub const ValueType = enum(u8) {
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .array, .@"struct", .@"union", .nullable => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable => true,
             else => false,
         };
     }
@@ -408,10 +413,11 @@ pub const ValueType = enum(u8) {
         }
 
         return switch (ty.kind) {
-            .int => .int64,
+            .int, .byte => .int64,
             .float => .float64,
             .boolean => .bool,
             .string => .string,
+            .buffer => .buffer,
             .array => .array,
             .@"struct" => .@"struct",
             .@"union" => .@"union",
@@ -437,7 +443,7 @@ pub const TypedValueHashContext = struct {
             .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
             .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
             .null => {},
-            .string => unreachable,
+            .string, .buffer => unreachable,
             .array => unreachable,
             .nullable => unreachable,
             .@"struct" => unreachable,
@@ -454,7 +460,7 @@ pub const TypedValueHashContext = struct {
             .bool => a.value.bool == b.value.bool,
             .null => true,
             .nullable => unreachable,
-            .string => unreachable,
+            .string, .buffer => unreachable,
             .array => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,

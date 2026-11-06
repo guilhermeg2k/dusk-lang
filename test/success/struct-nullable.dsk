@@ -20,62 +20,57 @@ struct User
     info: ?UserInfo
 end
 
-let mut user = User(
-    info = @(
-        address = @(
-            city = null,
-            state = "DF",
-            country = @(
-                id = 1,
-                name = "Brasil",
-                code = "BR"
-            )
+func main() -> void
+    let mut user = User(
+        info = @(
+            address = @(
+                city = null,
+                state = "DF",
+                country = @(
+                    id = 1,
+                    name = "Brasil",
+                    code = "BR"
+                )
+            ),
+            phone = null
         ),
-        phone = null
-    ),
-)
+    )
 
-if user.info?.address: address then
-    if address.country?.name: name then
-        echo(name)
+    if user.info?.address: address then
+        if address.country?.name: name then
+            echo(name)
+        end
+
+        if address.state: name then
+            echo(name)
+        end
+
+        if address.city: name then
+            echo(name)
+        end
     end
 
-    if address.state: name then
-        echo(name)
+    if user.info: mut info then
+        info.phone = "40028922"
     end
 
-    if address.city: name then
-        echo(name)
+    if user.info?.address?.country?.code: code then
+        echo(code)
     end
+
+    if user.info?.phone: phone then
+        echo(phone)
+    end
+
+    if user.info: mut info then
+        info.phone = "40028922"
+    end
+
+    if user.info?.phone: phone then
+        echo(phone)
+    end
+
+
+    # should still be DF
+    echo(user.info?.address?.state)
 end
-
-if user.info: mut info then
-    info.phone = "40028922"
-end
-
-if user.info?.address?.country?.code: code then
-    echo(code)
-end
-
-if user.info?.phone: phone then
-    echo(phone)
-end
-
-if user.info: mut info then
-    info.phone = "40028922"
-end
-
-if user.info?.phone: phone then
-    echo(phone)
-end
-
-
-# NAME IS A VALUE SO CHANGE IT ONLY CHANGE FOR THE CURRENT SCOPE
-if user.info?.address?.state: mut state_name then
-    state_name = "SP"
-end
-
-
-# should still be DF
-echo(user.info?.address?.state)
-

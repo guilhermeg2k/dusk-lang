@@ -1,0 +1,6 @@
+func main() -> void
+    let mut a = [1]
+    let mut b = a
+    let c = b
+    echo(a)
+end

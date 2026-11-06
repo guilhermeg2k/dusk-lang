@@ -1,2 +1,4 @@
-let arr = []
-echo(arr)
+func main() -> void
+    let arr = []
+    echo(arr)
+end

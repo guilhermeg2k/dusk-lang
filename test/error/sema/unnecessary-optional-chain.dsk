@@ -1,2 +1,5 @@
 let x = 1
-echo(x?.foo)
+
+func main() -> void
+    echo(x?.foo)
+end

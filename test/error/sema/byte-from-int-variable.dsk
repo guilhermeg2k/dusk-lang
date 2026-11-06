@@ -1,0 +1,5 @@
+let n = 3
+let b: byte = n
+
+func main() -> void
+end

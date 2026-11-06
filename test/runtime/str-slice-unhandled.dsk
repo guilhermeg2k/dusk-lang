@@ -1,0 +1,3 @@
+func main() -> !void
+    let s = try str_slice("abc", 0, 9)
+end

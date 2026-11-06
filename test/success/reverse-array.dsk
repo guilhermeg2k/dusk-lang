@@ -12,8 +12,8 @@ func reverse_list(mut arr: []string) -> []string
     return result
 end
 
-let mut arr: []string = ["Salve", "General", "Doutor", "Hoje", "Eu", "Não"]
-let reversed: []string = reverse_list(arr)
-echo(reversed)
-
-
+func main() -> void
+    let mut arr: []string = ["Salve", "General", "Doutor", "Hoje", "Eu", "Não"]
+    let reversed: []string = reverse_list(arr)
+    echo(reversed)
+end

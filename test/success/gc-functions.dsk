@@ -9,13 +9,15 @@ func make_array(n: int) -> []int
     return result
 end
 
-let mut i = 0
-for i < 10000 do
-    let trash = make_array(10)
-    i += 1
-end
+func main() -> void
+    let mut i = 0
+    for i < 10000 do
+        let trash = make_array(10)
+        i += 1
+    end
 
-let kept = make_array(5)
-assert(len(kept) == 5)
-assert(kept[0] == 0)
-assert(kept[4] == 4)
+    let kept = make_array(5)
+    assert(len(kept) == 5)
+    assert(kept[0] == 0)
+    assert(kept[4] == 4)
+end

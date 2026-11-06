@@ -1,30 +1,27 @@
 const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
+const TypedIdentifier = @import("type_table.zig").TypedIdentifier;
 
 pub const Program = struct {
-    instructions: []const Instruction,
+    instructions: Block,
+    externs: []const Extern,
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
-    global_uids: []const usize,
 };
 
-pub const Block = struct {
-    return_type: TypeId,
-    instructions: []const Instruction,
-};
+pub const Block = []const Instruction;
 
 pub const Instruction = union(enum) {
     store_var: StoreVar,
     branch_if: BranchIf,
-    scope: []const Instruction,
+    block: Block,
     loop: Loop,
     return_stmt: ReturnStmt,
     return_error: ReturnError,
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
-    update_null_box: UpdateNullBox,
     break_stmt: void,
     continue_stmt: void,
 };
@@ -42,7 +39,6 @@ pub const Struct = struct {
     type_id: TypeId,
     identifier: []const u8,
     fields: []const Field,
-    static_fields: []const Field,
     funcs: []const Func,
 };
 
@@ -52,7 +48,6 @@ pub const Enum = struct {
     identifier: []const u8,
 
     variants: std.StringHashMap(i64),
-    static_fields: []const Field,
     funcs: []const Func,
 };
 
@@ -62,7 +57,6 @@ pub const Union = struct {
     identifier: []const u8,
 
     variants: std.StringHashMap(TypeId),
-    static_fields: []const Field,
     funcs: []const Func,
 };
 
@@ -72,11 +66,17 @@ pub const Field = struct {
     default_value: ?*Value,
 };
 
+pub const Extern = struct {
+    uid: usize,
+    identifier: []const u8,
+    params: []const TypedIdentifier,
+};
+
 pub const Func = struct {
     uid: usize,
     identifier: []const u8,
     params: []const FuncParam,
-    body: []const Instruction,
+    body: Block,
     return_type: TypeId,
 };
 
@@ -121,14 +121,14 @@ pub const UpdateVar = struct {
 
 pub const BranchIf = struct {
     condition: *Value,
-    then_block: []const Instruction,
-    else_block: []const Instruction,
+    then_block: Block,
+    else_block: Block,
 };
 
 pub const Loop = struct {
-    advancement: []const Instruction = &.{},
+    advancement: Block = &.{},
     condition: ?*Value,
-    do_block: []const Instruction,
+    do_block: Block,
 };
 
 pub const ReturnStmt = struct {
@@ -156,11 +156,11 @@ pub const CatchBlock = struct {
     capture_uid: usize,
     capture_identifier: []const u8,
     capture_type_id: TypeId,
-    instructions: []const Instruction,
+    instructions: Block,
 };
 
 pub const BlockValue = struct {
-    instructions: []const Instruction,
+    instructions: Block,
     result_uid: usize,
     can_complete: bool,
 };
@@ -176,6 +176,7 @@ pub const Value = struct {
         i_int: i64,
         i_bool: bool,
         i_string: []const u8,
+        string_interpolation: []const *Value,
         i_void: void,
         i_null: void,
         i_array: Array,
@@ -197,6 +198,8 @@ pub const Value = struct {
         block_value: BlockValue,
         int_to_float: *Value,
         array_length: *Value,
+        buffer_new: *Value,
+        bytes_length: *Value,
     },
 
     type_id: TypeId,
@@ -225,13 +228,6 @@ pub const UnwrapNullBox = struct {
     null_box: *Value,
 };
 
-pub const UpdateNullBox = struct {
-    uid: usize,
-    type_id: TypeId,
-    identifier: []const u8,
-    value: ?*Value,
-};
-
 pub const IndexedValue = struct {
     target: *Value,
     index: *Value,
@@ -253,6 +249,7 @@ pub const UnaryOpKind = enum {
     i_neg,
     f_neg,
     not,
+    to_byte,
 };
 
 pub const BinaryOpKind = enum {

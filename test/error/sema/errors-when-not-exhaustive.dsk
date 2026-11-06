@@ -18,8 +18,10 @@ func load(n: int) -> !int
     return try parse(n)
 end
 
-parse(0) catch e then
-    when e
-        ParseError.Empty then echo(1) end
+func main() -> void
+    parse(0) catch e then
+        when e
+            ParseError.Empty then echo(1) end
+        end
     end
 end

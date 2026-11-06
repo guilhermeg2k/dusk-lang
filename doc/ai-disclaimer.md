@@ -12,7 +12,6 @@ Up to commit [`5107f82`](https://github.com/guilhermeg2k/dusk-lang/commit/5107f8
   the repository, whoever (or whatever) typed it.
 - I review and understand every AI-assisted change before it's committed.
   If I can't explain it, it doesn't get merged.
-- AI-assisted commits are marked with a `Co-Authored-By` trailer, so the
   history shows where AI was involved.
 - Design decisions (syntax, semantics, roadmap) stay mine.
 

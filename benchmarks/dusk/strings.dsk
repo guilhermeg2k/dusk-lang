@@ -1,0 +1,12 @@
+let name = "dusk"
+
+func main() -> void
+    let mut total = 0
+    for 0..999999: i do
+        let line = "item $i: value=${i * 3} tag=$name"
+        let fields = str_split(line, " ")
+        let joined = str_join(fields, ",")
+        total += str_len(line) + len(fields) + str_len(joined)
+    end
+    echo(total)
+end

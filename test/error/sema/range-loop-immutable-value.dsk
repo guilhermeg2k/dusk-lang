@@ -1,3 +1,5 @@
-for 1..2: value do
-    value = 3
+func main() -> void
+    for 1..2: value do
+        value = 3
+    end
 end

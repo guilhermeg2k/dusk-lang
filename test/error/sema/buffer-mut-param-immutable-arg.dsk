@@ -1,0 +1,8 @@
+func f(mut b: buffer) -> void
+    b[0] = 1
+end
+
+func main() -> void
+    let data = buffer(2)
+    f(data)
+end

@@ -1,0 +1,3 @@
+func main() -> void
+    let n = str_to_int(1) catch 0
+end

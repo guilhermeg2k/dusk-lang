@@ -1,0 +1,5 @@
+func main() -> void
+    let mut players = [[1]]
+    let first = players[0]
+    append(players, [2])
+end

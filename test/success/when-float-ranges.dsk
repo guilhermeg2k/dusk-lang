@@ -18,19 +18,6 @@ func classify(value: float) -> int
     end
 end
 
-assert(classify(0.0) == 1)
-assert(classify(1.0) == 1)
-assert(classify(1.5) == 0)
-assert(classify(2.0) == 1)
-assert(classify(3.5) == 1)
-assert(classify(-3.0) == 2)
-assert(classify(-1.0) == 2)
-assert(classify(-4.0) == 0)
-assert(classify(5.0) == 3)
-assert(classify(0.0 / 0.0) == 0)
-assert(classify(1.0 / 0.0) == 0)
-assert(classify(-1.0 / 0.0) == 0)
-
 func optional(value: ?float) -> int
     return when value
         null then
@@ -47,10 +34,6 @@ func optional(value: ?float) -> int
     end
 end
 
-assert(optional(null) == 0)
-assert(optional(0.5) == 1)
-assert(optional(2.0) == 2)
-
 func optional_else(value: ?float) -> int
     return when value
         0.0..1.0 then
@@ -63,26 +46,47 @@ func optional_else(value: ?float) -> int
     end
 end
 
-assert(optional_else(null) == 2)
-assert(optional_else(0.5) == 1)
-
 struct Calls
-    let mut count = 0
+    count = 0
 end
 
-func next_value() -> float
-    Calls.count += 1
+func next_value(mut calls: Calls) -> float
+    calls.count += 1
     return 0.5
 end
 
-when next_value()
-    0.0..1.0 then
-        assert(Calls.count == 1)
+func main() -> void
+    assert(classify(0.0) == 1)
+    assert(classify(1.0) == 1)
+    assert(classify(1.5) == 0)
+    assert(classify(2.0) == 1)
+    assert(classify(3.5) == 1)
+    assert(classify(-3.0) == 2)
+    assert(classify(-1.0) == 2)
+    assert(classify(-4.0) == 0)
+    assert(classify(5.0) == 3)
+    assert(classify(0.0 / 0.0) == 0)
+    assert(classify(1.0 / 0.0) == 0)
+    assert(classify(-1.0 / 0.0) == 0)
+
+    assert(optional(null) == 0)
+    assert(optional(0.5) == 1)
+    assert(optional(2.0) == 2)
+
+    assert(optional_else(null) == 2)
+    assert(optional_else(0.5) == 1)
+
+    let mut calls = Calls()
+
+    when next_value(calls)
+        0.0..1.0 then
+            assert(calls.count == 1)
+        end
+
+        else then
+            assert(false)
+        end
     end
 
-    else then
-        assert(false)
-    end
+    assert(calls.count == 1)
 end
-
-assert(Calls.count == 1)

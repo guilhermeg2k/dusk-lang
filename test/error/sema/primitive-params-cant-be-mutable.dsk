@@ -1,3 +1,6 @@
 func f(mut x: int) -> void
     return
 end
+
+func main() -> void
+end

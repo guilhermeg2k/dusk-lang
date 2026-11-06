@@ -1,0 +1,5 @@
+let n = -1
+
+func main() -> void
+    let b = buffer(n)
+end

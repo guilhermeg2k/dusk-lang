@@ -1,2 +1,5 @@
 let x = 1
-echo(x[0])
+
+func main() -> void
+    echo(x[0])
+end

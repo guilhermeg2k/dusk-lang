@@ -1,0 +1,9 @@
+let name = "dusk"
+let other = "dusk"
+
+func main() -> void
+    when name
+        other then echo(1) end
+        else then echo(0) end
+    end
+end

@@ -1,0 +1,11 @@
+struct P
+    x: int
+end
+
+func main() -> void
+    let ps = [P(x = 1)]
+
+    for ps: mut p do
+        p.x = 2
+    end
+end

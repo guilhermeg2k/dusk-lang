@@ -2,7 +2,9 @@ enum Color
     Red
 end
 
-when Color.Red
-    0..1 then
+func main() -> void
+    when Color.Red
+        0..1 then
+        end
     end
 end

@@ -9,9 +9,11 @@ union Shape
     square: int
 end
 
-let s = Shape(circle = 1)
-when s
-    circle: r then echo(r) end
-    circle: x then echo(x) end
-    square: x then echo(x) end
+func main() -> void
+    let s = Shape(circle = 1)
+    when s
+        circle: r then echo(r) end
+        circle: x then echo(x) end
+        square: x then echo(x) end
+    end
 end

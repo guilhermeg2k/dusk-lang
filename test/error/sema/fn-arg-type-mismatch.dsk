@@ -2,4 +2,6 @@ func f(x: int) -> void
     return
 end
 
-f("hello")
+func main() -> void
+    f("hello")
+end

@@ -1,0 +1,13 @@
+union U
+    list: []int
+    n: int
+end
+
+func main() -> void
+    let u = U(list = [1])
+
+    when u
+        list: mut l then l[0] = 2 end
+        n: k then echo(k) end
+    end
+end

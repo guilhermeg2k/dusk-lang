@@ -1,0 +1,10 @@
+struct P
+    items: []int
+end
+
+func items(p: P) -> []int
+    return p.items
+end
+
+func main() -> void
+end

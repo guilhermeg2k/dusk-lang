@@ -15,9 +15,11 @@ func isPrime(n: int) -> bool
     return true
 end
 
-assert(isPrime(1) == false)
-assert(isPrime(3) == true)
-assert(isPrime(5) == true)
-assert(isPrime(7) == true)
-assert(isPrime(9) == false)
-assert(isPrime(18) == false)
+func main() -> void
+    assert(isPrime(1) == false)
+    assert(isPrime(3) == true)
+    assert(isPrime(5) == true)
+    assert(isPrime(7) == true)
+    assert(isPrime(9) == false)
+    assert(isPrime(18) == false)
+end

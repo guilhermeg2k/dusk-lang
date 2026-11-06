@@ -1,0 +1,6 @@
+func add(mut rows: [][]int, row: []int) -> void
+    append(rows, row)
+end
+
+func main() -> void
+end
