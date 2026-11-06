@@ -46,16 +46,9 @@ pub const HeapValue = extern struct {
         return @as(*T, @fieldParentPtr("obj", ptr));
     }
 
-    pub fn followRelocated(ptr: *Self) ?*Self {
+    pub fn followRelocated(ptr: *Self) *Self {
         var cur = ptr;
-        while (cur.relocated) |rel| {
-            cur = rel;
-        }
-
-        if (cur == ptr) {
-            return null;
-        }
-
+        while (cur.relocated) |rel| cur = rel;
         return cur;
     }
 };

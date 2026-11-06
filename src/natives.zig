@@ -64,7 +64,7 @@ pub fn strConcat(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn joinParts(parts_value: *v.Value) []const v.Value {
-    if (v.HeapValue.followRelocated(parts_value.heap_obj)) |relocated| parts_value.heap_obj = relocated;
+    parts_value.heap_obj = parts_value.heap_obj.followRelocated();
     const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
     return array.getDataPtr()[0..array.len];
 }

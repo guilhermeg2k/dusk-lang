@@ -2,6 +2,7 @@
 
 ## v0.13 - Garou (in development)
 
+- Internal: `HeapValue.followRelocated` returns the current object instead of `null` when it didn't move, and is the one place that follows the `relocated` chain: `deepCopySlot`, `copyHeapValue`, `getArrayFromHeapValuePtr` and `joinParts` use it, and `refreshStackHeapPtr` is gone
 - Fixed a negative array index (`a[-1]`, `a[i] = x` with `i < 0`) crashing the VM. It is now an `ArrayOutOfBounds` runtime error, and array index errors print a message (`index 5 is out of bounds for array of length 2`) like buffer index errors
 - Internal: runtime error messages moved from `vm.zig` to `RuntimeErrorReporter` in `error.zig`, next to the runtime error set, with one shared `report`. Renamed `ErrorDispatcher` to `CompileErrorReporter` (field `err_dispatcher` to `err_reporter`), the compile error set `Errors` to `CompileError` and `RunTimeError` to `RuntimeError`
 - Breaking: `len` only takes arrays. Use `str_len(s)` for the byte count of a string and `buffer_len(b)` for a buffer. All three are ordinary prelude builtins that compile to one `ARRAY_LEN` / `BYTES_LEN` instruction, so sema no longer special-cases `len` and the `.sema` binding kind is gone

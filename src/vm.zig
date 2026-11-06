@@ -46,7 +46,7 @@ pub const VM = struct {
         for (&self.heap.arenas) |*arena| arena.deinit();
     }
 
-    noinline fn formatValue(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
+    noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
         self.scratch.clearRetainingCapacity();
         format.printValue(&self.scratch.writer, value, kind);
         const bytes = self.scratch.written();
@@ -102,7 +102,7 @@ pub const VM = struct {
 
                 .TO_STRING => {
                     current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try self.formatValue(stack[stack_base + inst.b], @enumFromInt(inst.c));
+                    stack[stack_base + inst.a] = try self.toString(stack[stack_base + inst.b], @enumFromInt(inst.c));
                 },
 
                 .STR_BUILD => {
@@ -605,8 +605,7 @@ pub const VM = struct {
 
     fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
-        var current = slot.heap_obj;
-        while (current.relocated) |relocated| current = relocated;
+        const current = slot.heap_obj.followRelocated();
         if (current.kind == .string or current.kind == .null_box) {
             slot.heap_obj = current;
             return;
@@ -678,19 +677,9 @@ pub const VM = struct {
     }
 
     fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.Array {
-        const refreshed_pointer = refreshStackHeapPtr(stack, stack_base, reg_idx, ptr);
-        const array = v.HeapValue.getParentPtr(v.Array, refreshed_pointer);
-        return array;
-    }
-
-    fn refreshStackHeapPtr(stack: []v.Value, stack_base: usize, reg_idx: u8, ptr: *v.HeapValue) *v.HeapValue {
-        const follow = v.HeapValue.followRelocated(ptr);
-
-        if (follow) |relocated| {
-            stack[stack_base + reg_idx].heap_obj = relocated;
-        }
-
-        return follow orelse ptr;
+        const current = ptr.followRelocated();
+        if (current != ptr) stack[stack_base + reg_idx].heap_obj = current;
+        return v.HeapValue.getParentPtr(v.Array, current);
     }
 
     pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
@@ -782,10 +771,7 @@ pub const VM = struct {
         const raw: u64 = @bitCast(value.*);
         if (raw == 0) return;
         if (self.program.string_pool.contains(value.heap_obj)) return;
-        var current = value.heap_obj;
-        while (current.relocated) |rel| {
-            current = rel;
-        }
+        const current = value.heap_obj.followRelocated();
 
         if (current.gc_forward) |fwd| {
             value.heap_obj = fwd;
