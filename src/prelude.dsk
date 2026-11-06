@@ -11,7 +11,7 @@ end
 
 extern func echo(msgs: dynamic) -> void
 extern func append[T](mut array: []T, value: T) -> void
-extern func len(array: []dynamic) -> int
+extern func len[T](array: []T) -> int
 extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
 extern func assert(cond: bool) -> void

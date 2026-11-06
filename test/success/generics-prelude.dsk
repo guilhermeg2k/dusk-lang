@@ -53,4 +53,8 @@ func main() -> void
     append(original[0], 9)
     assert(len(snapshot[0]) == 1)
     assert(copy(5) == 5)
+    assert(len([1, 2]) == 2)
+    assert(len([[1], [2, 3]]) == 2)
+    let no_names: []string = []
+    assert(len(no_names) == 0)
 end

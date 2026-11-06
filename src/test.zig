@@ -2036,6 +2036,8 @@ test "generics: append and copy are generic prelude functions" {
     try runCaseError("sema/append-wrong-item-type.dsk", error.InvalidType);
     try runCaseError("sema/append-int-into-strings.dsk", error.InvalidType);
     try runCaseError("sema/generic-conflicting-slots-in-one-argument.dsk", error.ConflictingSlotTypes);
+    try runCaseError("sema/len-empty-literal.dsk", error.CantInferSlot);
+    try runCaseError("sema/len-not-array.dsk", error.InvalidType);
 }
 
 test "generics: type lists constrain a slot to primitives" {

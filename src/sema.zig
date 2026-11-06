@@ -1768,7 +1768,8 @@ pub const SemaAnalyzer = struct {
                 );
             },
             .array => |inner| {
-                if (kind != .array) return;
+                if (kind == .dynamic or kind == .null) return;
+                if (kind != .array) return self.err_reporter.invalidType("an array", try self.type_table.name(arg_type, self.allocator), loc);
                 try self.inferSlots(inner, kind.array, slots, bindings, loc);
             },
             else => {},
