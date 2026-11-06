@@ -3412,7 +3412,6 @@ pub const SemaAnalyzer = struct {
             argument.* = try self.boxForTarget(argument.*, param.type_id);
         }
 
-
         if (is_struct_init) {
             var keys: std.ArrayList([]const u8) = .empty;
             for (params) |param| {
