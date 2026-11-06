@@ -1030,6 +1030,9 @@ test "syntax error: union missing end" {
 
 test "syntax error: anonymous struct missing end" {
     try runCaseError("parser/anon-struct-missing-end.dsk", error.ParserError);
+    try runCaseError("parser/struct-field-missing-type.dsk", error.ParserError);
+    try runCaseError("parser/nested-struct-field-missing-type.dsk", error.ParserError);
+    try runCaseError("parser/struct-static-keyword.dsk", error.ParserError);
 }
 
 test "syntax error: fn args mixed named positional" {

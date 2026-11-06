@@ -1,0 +1,9 @@
+struct Customer
+    name: string
+    address: struct
+        city
+    end
+end
+
+func main() -> void
+end

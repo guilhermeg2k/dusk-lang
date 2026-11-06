@@ -493,6 +493,11 @@ pub const Parser = struct {
         }
 
         const has_initial_value = self.match(.eq);
+        if (!has_type_annotation and !has_initial_value) {
+            const expected = try std.fmt.allocPrint(self.allocator, "':' or '=' after field '{s}'", .{identifier});
+            return self.err_reporter.invalidSyntax(expected, self.peekCurrent());
+        }
+
         var value: ?*ast.ExpNode = null;
         if (has_initial_value) {
             value = try self.parseExp(0);

@@ -8,6 +8,8 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel` and recorde
 
 ### Fixes
 
+- A struct field with neither a type nor a default (`x` alone, or `static x = 1`, which reads as a field named `static`) is now a parser error, `expected ':' or '=' after field 'x'`, instead of crashing the compiler. Fields of inline nested structs are checked too
+
 ## v0.13 - Garou
 
 Started v0.13 development: updated the CLI version to `0.13.0-devel` and recorded the implementation phases for comments and string features.
