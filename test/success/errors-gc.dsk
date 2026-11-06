@@ -36,14 +36,14 @@ func main() -> void
     for i < 40000 do
         let box = build(i) catch e then
             let trash = [i, i, i, i]
-            failures += 1
-            i += 1
+            failures = failures + 1
+            i = i + 1
             continue
         end
         if i % 1000 == 0 then
             append(kept, box)
         end
-        i += 1
+        i = i + 1
     end
 
     assert(failures == 20000)
@@ -56,11 +56,11 @@ func main() -> void
     for j < 20000 do
         let fallback = Box(id = -1, items = [0])
         let box = build_twice(j) catch fallback
-        total += box.id
+        total = total + box.id
         build(j) catch e then
             let trash = ["x", "y", "z"]
         end
-        j += 1
+        j = j + 1
     end
     assert(total > 0)
 
@@ -71,7 +71,7 @@ func main() -> void
         if k % 5000 == 0 or k % 5000 == 1 then
             append(kept_names, name)
         end
-        k += 1
+        k = k + 1
     end
     assert(len(kept_names) == 12)
     echo(kept_names)

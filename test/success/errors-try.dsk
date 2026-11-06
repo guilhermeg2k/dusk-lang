@@ -50,7 +50,7 @@ func check(mut counter: Counter, n: int) -> ParseError!void
     if n == 0 then
         return ParseError.Empty
     end
-    counter.count += 1
+    counter.count = counter.count + 1
 end
 
 func check_all(mut counter: Counter, n: int) -> ParseError!void

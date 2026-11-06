@@ -31,7 +31,7 @@ func main() -> !void
     let mut visits = 0
     for 1..4: i do
         let text = "${if i == 2 then continue else i end}"
-        visits += 1
+        visits = visits + 1
         echo(text)
     end
     assert(visits == 3)

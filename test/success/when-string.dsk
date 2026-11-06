@@ -62,8 +62,8 @@ func main() -> void
     for 0..1999: i do
         let key = "k${i % 3}"
         when key
-            "k0" then hits += 1 end
-            "k1", "k2" then hits += 0 end
+            "k0" then hits = hits + 1 end
+            "k1", "k2" then hits = hits + 0 end
             else then assert(false) end
         end
     end

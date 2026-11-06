@@ -109,12 +109,12 @@ func main() -> void
     let mut people = [Item(value = 1, next = null), Item(value = 2, next = null)]
     let mut total = 0
     for people: person do
-        total += person.value
+        total = total + person.value
     end
     people[0].value = 10
     for people: mut person do
-        person.value += 1
-        people[1].value += 0
+        person.value = person.value + 1
+        people[1].value = people[1].value + 0
     end
     assert(total == 3)
     assert(people[0].value == 11)

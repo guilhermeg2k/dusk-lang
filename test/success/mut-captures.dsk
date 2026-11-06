@@ -31,7 +31,7 @@ end
 func shift(mut s: Shape, dx: int) -> void
     if s.poly: mut pts then
         for pts: mut p do
-            p.x += dx
+            p.x = p.x + dx
         end
     end
 end

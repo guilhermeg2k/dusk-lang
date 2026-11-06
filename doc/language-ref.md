@@ -249,7 +249,7 @@ end
 ```
 
 - An int constant outside `0..255` (`let b: byte = 300`, `byte(-1)`) is a compile error. `byte(x)` with an int variable outside that range stops the program with a runtime error.
-- An int variable never converts to `byte` implicitly: use `byte(x)`. So `b += 1` on a `byte` variable is an error, because `b + 1` is an `int`.
+- An int variable never converts to `byte` implicitly: use `byte(x)`. So `b = b + 1` on a `byte` variable is an error, because `b + 1` is an `int`.
 - Bytes work as `when` subjects with literal and range cases (an `else` is required), as array indexes and as range-loop bounds.
 - `?byte` works like `?int`. A `[]byte` is a regular array, using as much memory per item as `[]int`.
 
@@ -685,7 +685,7 @@ On arrays, structs, unions and buffers, `==` and `!=` compare identity: two sepa
 
 ### Assignment
 
-`=` assigns, and `+=` and `-=` add or subtract in place. There are no other compound operators (`*=`, `/=`).
+`=` assigns. There are no compound assignment operators: write `x = x + 1`, not `x += 1`.
 
 ## 9. Control Flow
 
@@ -835,7 +835,7 @@ Rules:
 let mut i = 0
 for i < 5 do
     echo(i)
-    i += 1
+    i = i + 1
 end
 ```
 
@@ -875,7 +875,7 @@ Iteration advances by one. Equal endpoints produce one item; a start greater tha
 ```nim
 let mut n = 0
 for true do
-    n += 1
+    n = n + 1
     if n % 2 == 0 then
         continue
     end
@@ -985,7 +985,7 @@ struct Stats
 end
 
 func bump(mut stats: Stats) -> void
-    if stats.count < LIMIT then stats.count += 1 end
+    if stats.count < LIMIT then stats.count = stats.count + 1 end
 end
 
 func main() -> void
@@ -1218,7 +1218,6 @@ These are known gaps in v0.13. Most are planned in the [roadmap](roadmap.md).
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
-- **Compound assignment**: only `+=` and `-=`.
 - **`append`**: the item isn't checked against the array's item type yet, so a value of the wrong type (including an `int` into a `[]float`) is stored as is. Make sure the item has the array's item type.
 - **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.

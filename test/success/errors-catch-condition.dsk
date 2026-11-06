@@ -47,14 +47,14 @@ end
 func main() -> void
     let mut hits = 0
     if check(false) catch fallback then
-        hits += 1
+        hits = hits + 1
     end
     assert(hits == 1)
 
     if check(false) catch no_fallback then
-        hits += 10
+        hits = hits + 10
     elif check(false) catch fallback then
-        hits += 100
+        hits = hits + 100
     end
     assert(hits == 101)
 

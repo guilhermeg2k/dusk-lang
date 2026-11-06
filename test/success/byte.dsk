@@ -43,7 +43,7 @@ func main() -> void
     assert(numbers[byte(1)] == 20)
     let mut total = 0
     for 'a'..'c': i do
-        total += i
+        total = total + i
     end
     assert(total == 294)
     assert(next(255) == 256)

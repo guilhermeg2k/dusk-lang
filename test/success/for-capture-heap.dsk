@@ -60,6 +60,6 @@ func main() -> void
             assert(flag == (index == 0))
         end
 
-        iteration += 1
+        iteration = iteration + 1
     end
 end

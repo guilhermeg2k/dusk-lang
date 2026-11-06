@@ -7,7 +7,7 @@ func main() -> !void
         data[63] = 7
         let copy = buffer_from("payload number $i")
         assert(str_len(try string_from(copy)) == buffer_len(copy))
-        total += buffer_len(copy)
+        total = total + buffer_len(copy)
         if i % 1000 == 0 then
             append(kept, data)
         end

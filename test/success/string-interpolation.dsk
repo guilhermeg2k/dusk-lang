@@ -7,7 +7,7 @@ struct Calls
 end
 
 func next(mut calls: Calls) -> int
-    calls.count += 1
+    calls.count = calls.count + 1
     return calls.count
 end
 

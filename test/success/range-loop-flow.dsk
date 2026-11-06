@@ -21,7 +21,7 @@ func main() -> void
             break
         end
 
-        total += value
+        total = total + value
     end
 
     assert(total == 4)
@@ -37,7 +37,7 @@ func main() -> void
                 continue
             end
 
-            visits += 1
+            visits = visits + 1
         end
     end
 
@@ -51,7 +51,7 @@ func main() -> void
                 inner
             end
 
-            total += outer * value
+            total = total + outer * value
         end
     end
 
@@ -68,7 +68,7 @@ func main() -> void
             end
         end
 
-        total += selected
+        total = total + selected
     end
 
     assert(total == 19)

@@ -22,13 +22,13 @@ func main() -> void
                 zx = zx2 - zy2 + cx
                 zx2 = zx * zx
                 zy2 = zy * zy
-                iter += 1
+                iter = iter + 1
             end
 
-            sum += iter
-            px += 1
+            sum = sum + iter
+            px = px + 1
         end
-        py += 1
+        py = py + 1
     end
 
     echo(sum)

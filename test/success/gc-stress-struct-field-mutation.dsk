@@ -7,7 +7,7 @@ func main() -> void
     for i < 50000 do
         canary.extra = [i, i, i]
         let trash = @(value = i, items = [i, i + 1, i + 2, i + 3])
-        i += 1
+        i = i + 1
     end
 
     assert(canary.id == 999)

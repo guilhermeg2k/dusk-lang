@@ -20,7 +20,7 @@ func main() -> void
         if i % 1000 == 0 then
             append(appended, Item(count = i))
         end
-        i += 1
+        i = i + 1
     end
 
     if items[0].name: s then

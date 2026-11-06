@@ -30,7 +30,7 @@ func main() -> void
     echo(string_from(buf) catch "invalid")
     let mut total = 0
     for copy: b, i do
-        total += b
+        total = total + b
     end
     echo(total)
     echo("buf=$buf")

@@ -3,7 +3,7 @@ struct Counter
 end
 
 func tick(mut counter: Counter, value: int) -> int
-    counter.calls += 1
+    counter.calls = counter.calls + 1
     return value
 end
 
@@ -75,10 +75,10 @@ func main() -> void
     let mut total = 0
 
     for true do
-        index += 1
+        index = index + 1
 
         let value = if index == 2 then continue elif index == 5 then break else index end
-        total += value
+        total = total + value
     end
 
     assert(total == 8)
@@ -87,7 +87,7 @@ func main() -> void
     let mut case_total = 0
 
     for true do
-        case_index += 1
+        case_index = case_index + 1
 
         let value = when case_index
             2 then continue end
@@ -95,7 +95,7 @@ func main() -> void
             else then case_index end
         end
 
-        case_total += value
+        case_total = case_total + value
     end
 
     assert(case_total == 8)

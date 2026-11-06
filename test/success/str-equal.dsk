@@ -15,7 +15,7 @@ func main() -> void
     for 1..20000: i do
         let text = "item $i"
         if str_equal(text, "item 19999") then
-            matches += 1
+            matches = matches + 1
         end
     end
     assert(matches == 1)

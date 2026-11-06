@@ -37,7 +37,7 @@ struct Counter
 end
 
 func next_value(mut counter: Counter) -> int
-    counter.calls += 1
+    counter.calls = counter.calls + 1
     return counter.calls
 end
 
@@ -209,11 +209,11 @@ func main() -> void
     let mut i = 0
     let mut sum = 0
     for true do
-        i += 1
+        i = i + 1
         when i
             3 then continue end
             6 then break end
-            else then sum += i end
+            else then sum = sum + i end
         end
     end
     assert(sum == 1 + 2 + 4 + 5)
@@ -225,17 +225,17 @@ func main() -> void
         when node
             text: t then
                 let copy = [t, t, t]
-                total += len(copy)
+                total = total + len(copy)
             end
             items: list then
                 let mut bigger: []string = []
                 append(bigger, list[0])
                 append(bigger, list[1])
                 append(bigger, "x")
-                total += len(bigger)
+                total = total + len(bigger)
             end
         end
-        k += 1
+        k = k + 1
     end
     assert(total == 1000 * 3 + 1000 * 3)
 end

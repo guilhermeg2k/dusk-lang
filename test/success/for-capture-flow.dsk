@@ -21,7 +21,7 @@ func main() -> void
             break
         end
 
-        total += item
+        total = total + item
     end
 
     assert(total == 4)
@@ -37,7 +37,7 @@ func main() -> void
                 break
             end
 
-            visits += 1
+            visits = visits + 1
         end
     end
 
@@ -45,14 +45,14 @@ func main() -> void
     let mut counter = 0
 
     for counter < 3 do
-        counter += 1
+        counter = counter + 1
 
         for [1, 2]: item do
             if item == 1 then
                 continue
             end
 
-            visits += 1
+            visits = visits + 1
         end
 
         continue
@@ -67,7 +67,7 @@ func main() -> void
             item
         end
 
-        total += value
+        total = total + value
     end
 
     assert(total == 8)
@@ -83,7 +83,7 @@ func main() -> void
             end
         end
 
-        total += value
+        total = total + value
     end
 
     assert(total == 9)
@@ -100,13 +100,13 @@ func main() -> void
         let mut inner = 0
 
         for inner < 3 do
-            inner += 1
+            inner = inner + 1
 
             if inner == 2 then
                 continue
             end
 
-            mixed_total += outer
+            mixed_total = mixed_total + outer
         end
     end
 

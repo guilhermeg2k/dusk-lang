@@ -16,15 +16,15 @@ func quicksort(mut arr: []int, lo: int, hi: int) -> void
 
     for i <= j do
         for arr[i] < pivot do
-            i += 1
+            i = i + 1
         end
         for arr[j] > pivot do
-            j -= 1
+            j = j - 1
         end
         if i <= j then
             swap(arr, i, j)
-            i += 1
-            j -= 1
+            i = i + 1
+            j = j - 1
         end
     end
 
@@ -37,7 +37,7 @@ func main() -> void
     let mut n: int = 10000
     for n > 0 do
         append(data, n)
-        n -= 1
+        n = n - 1
     end
 
     quicksort(data, 0, len(data) - 1)

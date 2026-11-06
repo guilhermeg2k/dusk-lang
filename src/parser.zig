@@ -267,48 +267,6 @@ pub const Parser = struct {
                 };
             },
 
-            .plus_eq => {
-                self.walk();
-                const right_exp = try self.parseExp(0);
-                const bin_exp = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .binary_exp = .{
-                        .left = expr,
-                        .op = .add,
-                        .right = right_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = right_exp.loc.end },
-                });
-
-                return ast.StatementNode{
-                    .data = .{ .assign = .{
-                        .target = expr,
-                        .exp = bin_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = bin_exp.loc.end },
-                };
-            },
-
-            .minus_eq => {
-                self.walk();
-                const right_exp = try self.parseExp(0);
-                const bin_exp = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .binary_exp = .{
-                        .left = expr,
-                        .op = .sub,
-                        .right = right_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = right_exp.loc.end },
-                });
-
-                return ast.StatementNode{
-                    .data = .{ .assign = .{
-                        .target = expr,
-                        .exp = bin_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = bin_exp.loc.end },
-                };
-            },
-
             else => {
                 return ast.StatementNode{
                     .data = .{ .expression = expr },
