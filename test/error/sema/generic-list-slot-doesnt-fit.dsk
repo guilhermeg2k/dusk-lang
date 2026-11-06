@@ -1,0 +1,10 @@
+func wide[T: int | float](x: T) -> T
+    return narrow(x)
+end
+
+func narrow[T: int](x: T) -> T
+    return x
+end
+
+func main() -> void
+end

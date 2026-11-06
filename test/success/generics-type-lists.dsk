@@ -1,0 +1,110 @@
+trait Number = int | float
+trait Scalar = Number | string | bool
+
+func sum[T: Number](xs: []T) -> T
+    let mut total: T = 0
+    for xs: x do
+        total = total + x
+    end
+    return total
+end
+
+func max[T: int | float | byte](a: T, b: T) -> T
+    if a > b then return a end
+    return b
+end
+
+func half[T: Number](x: T) -> float
+    return x / 2
+end
+
+func neg[T: Number](x: T) -> T
+    return -x
+end
+
+func same[T: int | bool](a: T, b: T) -> bool
+    return a == b
+end
+
+func both[T: bool](a: T, b: T) -> bool
+    return a and b
+end
+
+func widen[T: Number](x: T) -> float
+    let y: float = x
+    return y
+end
+
+func from_int[T: Number](n: int) -> T
+    let x: T = n
+    return x
+end
+
+func count_nonzero[T: Number](xs: []T) -> int
+    let mut n = 0
+    for xs: x do
+        if x != 0 then n = n + 1 end
+    end
+    return n
+end
+
+func add_bytes[T: int | byte](a: T, b: T) -> int
+    return a + b
+end
+
+func first_or[T: Number](xs: []T, fallback: T) -> T
+    if len(xs) == 0 then return fallback end
+    return xs[0]
+end
+
+func show[T: Scalar](x: T) -> string
+    return "<${x}>"
+end
+
+func total_of[T: Number](xs: []T) -> T
+    return sum(xs)
+end
+
+func is_missing[T](x: ?T) -> bool
+    return x == null
+end
+
+struct Pair[T: Number]
+    a: T
+    b: T
+
+    func total(self: @) -> T
+        return self.a + self.b
+    end
+end
+
+func main() -> void
+    assert(sum([1, 2, 3]) == 6)
+    assert(sum([0.5, 1.5]) == 2.0)
+    assert(total_of([4, 5]) == 9)
+    assert(max(3, 7) == 7)
+    assert(max(2.5, 1.0) == 2.5)
+    assert(half(3) == 1.5)
+    assert(neg(2) == -2)
+    assert(neg(2.5) == -2.5)
+    assert(same(true, true))
+    assert(!same(1, 2))
+    assert(both(true, true))
+    assert(widen(3) == 3.0)
+    let f: float = from_int(3)
+    assert(f == 3.0)
+    assert(count_nonzero([0, 1, 2]) == 2)
+    assert(count_nonzero([0.0, 0.5]) == 1)
+    assert(add_bytes(1, 2) == 3)
+    let empty: []float = []
+    assert(first_or(empty, 1) == 1.0)
+    assert(str_equal(show(1), "<1>"))
+    assert(str_equal(show("hi"), "<hi>"))
+    assert(str_equal(show(true), "<true>"))
+    let none: ?int = null
+    assert(is_missing(none))
+    let p = Pair(a = 1, b = 2)
+    assert(p.total() == 3)
+    let q: Pair[float] = Pair(a = 1.5, b = 2)
+    assert(q.total() == 3.5)
+end

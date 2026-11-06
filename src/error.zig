@@ -393,6 +393,41 @@ pub const CompileErrorReporter = struct {
         return error.SlotOperatorNotAllowed;
     }
 
+    pub fn slotOperatorNotAllowedOn(self: *Self, operator: []const u8, slot: []const u8, member: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': '{s}' doesn't support it", .{ operator, slot, member }), loc);
+        return error.SlotOperatorNotAllowed;
+    }
+
+    pub fn slotStringEquality(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': on a string it would compare pointers. Use str_equal", .{ operator, slot }), loc);
+        return error.SlotOperatorNotAllowed;
+    }
+
+    pub fn slotResultDiffers(self: *Self, operator: []const u8, first_member: []const u8, first_result: []const u8, second_member: []const u8, second_result: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' has no single result type here: it gives '{s}' for '{s}' and '{s}' for '{s}'", .{ operator, first_result, first_member, second_result, second_member }), loc);
+        return error.SlotResultDiffers;
+    }
+
+    pub fn typeDoesntFitSlot(self: *Self, type_name: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} doesn't fit {s}", .{ type_name, slot }), loc);
+        return error.TypeDoesntFitSlot;
+    }
+
+    pub fn typeListNotPrimitive(self: *Self, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Type lists only hold int, float, byte, string and bool, found '{s}'", .{type_name}), loc);
+        return error.TypeListNotPrimitive;
+    }
+
+    pub fn traitRefersToItself(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Trait '{s}' refers to itself", .{identifier}), loc);
+        return error.TraitRefersToItself;
+    }
+
+    pub fn traitUsedAsType(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a trait: it can only constrain a type slot, like [T: {s}]", .{ identifier, identifier }), loc);
+        return error.TraitUsedAsType;
+    }
+
     pub fn slotUsedAsValue(self: *Self, slot: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is a type slot, not a value", .{slot}), loc);
         return error.SlotUsedAsValue;
@@ -782,6 +817,11 @@ pub const CompileError = error{
     SlotParamCantBeMutable,
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
+    SlotResultDiffers,
+    TypeDoesntFitSlot,
+    TypeListNotPrimitive,
+    TraitRefersToItself,
+    TraitUsedAsType,
     GenericNeedsCall,
     CantInferSlot,
     ConflictingSlotTypes,

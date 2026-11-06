@@ -1,0 +1,6 @@
+func f[T: int |](a: T) -> T
+    return a
+end
+
+func main() -> void
+end

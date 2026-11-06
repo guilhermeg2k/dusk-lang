@@ -117,6 +117,13 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
+            .trait_kw => {
+                const trait_stmt = try self.parseTraitStmt();
+                return ast.StatementNode{
+                    .data = .{ .trait = trait_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
             .if_kw, .when_kw => {
                 return self.parseIdentifierStmt();
             },
@@ -197,11 +204,31 @@ pub const Parser = struct {
         var slots: std.ArrayList(ast.Slot) = .empty;
         while (true) {
             const slot_token = try self.expect(.identifier);
-            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .loc = slot_token.loc });
+            const type_list = if (self.match(.colon)) try self.parseTypeList() else &.{};
+            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .type_list = type_list, .loc = slot_token.loc });
             if (!self.match(.comma)) break;
         }
         _ = try self.expect(.r_bracket);
         return slots.toOwnedSlice(self.allocator);
+    }
+
+    fn parseTypeList(self: *Self) ![]const *ast.TypeAnnotation {
+        var types: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        while (true) {
+            try types.append(self.allocator, try self.parseTypeAnnotation(false));
+            if (!self.match(.bar)) break;
+        }
+        return types.toOwnedSlice(self.allocator);
+    }
+
+    fn parseTraitStmt(self: *Self) !ast.TraitStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        _ = try self.expect(.eq);
+        return ast.TraitStmt{
+            .identifier = identifier_token.value(self.src),
+            .type_list = try self.parseTypeList(),
+        };
     }
 
     fn parseStructStmt(self: *Self) !ast.StructStmt {
@@ -1488,6 +1515,7 @@ pub const Parser = struct {
             .string_kw, .buffer_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .is_nullable = is_nullable,
+                .loc = tk.loc,
             }),
             .identifier => {
                 const args = try self.parseTypeArgs();
@@ -1512,6 +1540,7 @@ pub const Parser = struct {
                 return ast.TypeAnnotation.init(self.allocator, .{
                     .type = .{ .array = arr_type },
                     .is_nullable = is_nullable,
+                    .loc = .{ .start = tk.loc.start, .end = arr_type.loc.end },
                 });
             },
             else => {

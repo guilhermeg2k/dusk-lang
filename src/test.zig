@@ -1991,7 +1991,7 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("parser/generic-empty-slots.dsk", error.ParserError);
     try runCaseError("parser/generic-slot-trailing-comma.dsk", error.ParserError);
     try runCaseError("parser/generic-slot-missing-comma.dsk", error.ParserError);
-    try runCaseError("sema/generic-slot-arithmetic.dsk", error.InvalidType);
+    try runCaseError("sema/generic-slot-arithmetic.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
     try runCaseError("sema/generic-slot-mut-param.dsk", error.SlotParamCantBeMutable);
@@ -2027,7 +2027,7 @@ test "generics: generic structs and unions" {
     try runCaseError("sema/generic-struct-cant-infer.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-type-copy-shares-field.dsk", error.NeedsCopy);
     try runCaseError("sema/generic-type-void-arg.dsk", error.InvalidSlotType);
-    try runCaseError("sema/generic-struct-method-arithmetic.dsk", error.InvalidType);
+    try runCaseError("sema/generic-struct-method-arithmetic.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-type-duplicate-slot.dsk", error.AlreadyDefined);
 }
 
@@ -2036,6 +2036,25 @@ test "generics: append and copy are generic prelude functions" {
     try runCaseError("sema/append-wrong-item-type.dsk", error.InvalidType);
     try runCaseError("sema/append-int-into-strings.dsk", error.InvalidType);
     try runCaseError("sema/generic-conflicting-slots-in-one-argument.dsk", error.ConflictingSlotTypes);
+}
+
+test "generics: type lists constrain a slot to primitives" {
+    try runCase("generics-type-lists.dsk");
+    try runCaseError("parser/generic-list-trailing-bar.dsk", error.ParserError);
+    try runCaseError("parser/trait-missing-eq.dsk", error.ParserError);
+    try runCaseError("sema/generic-list-doesnt-fit.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-list-annotation-doesnt-fit.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-list-slot-doesnt-fit.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-list-string-equality.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-list-operator-member.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-list-result-differs.dsk", error.SlotResultDiffers);
+    try runCaseError("sema/generic-list-literal-doesnt-fit.dsk", error.InvalidType);
+    try runCaseError("sema/generic-list-not-primitive.dsk", error.TypeListNotPrimitive);
+    try runCaseError("sema/generic-list-nullable-member.dsk", error.TypeListNotPrimitive);
+    try runCaseError("sema/trait-list-cycle.dsk", error.TraitRefersToItself);
+    try runCaseError("sema/trait-used-as-type.dsk", error.TraitUsedAsType);
+    try runCaseError("sema/trait-used-as-value.dsk", error.TraitUsedAsType);
+    try runCaseError("sema/trait-inside-function.dsk", error.DeclarationInsideFunction);
 }
 
 test "sema error: unknown return type is reported, not a crash" {

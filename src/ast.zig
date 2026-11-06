@@ -17,6 +17,7 @@ pub const Statement = union(enum) {
     @"enum": EnumStmt,
     @"union": UnionStmt,
     error_set: ErrorSetStmt,
+    trait: TraitStmt,
     @"for": ForStmt,
     for_capture: ForCaptureStmt,
     assign: AssignStmt,
@@ -35,6 +36,7 @@ pub const FuncStmt = struct {
 
 pub const Slot = struct {
     identifier: []const u8,
+    type_list: []const *TypeAnnotation = &.{},
     loc: err.Loc,
 };
 
@@ -58,6 +60,11 @@ pub const UnionStmt = struct {
 pub const ErrorSetStmt = struct {
     identifier: []const u8,
     variants: []const ErrorVariant,
+};
+
+pub const TraitStmt = struct {
+    identifier: []const u8,
+    type_list: []const *TypeAnnotation,
 };
 
 pub const ErrorVariant = struct {

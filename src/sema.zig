@@ -34,6 +34,7 @@ pub const SemaAnalyzer = struct {
     flow_frames: std.ArrayList(FlowFrame) = .empty,
     generic_functions: std.ArrayList(GenericFunction) = .empty,
     generic_types: std.ArrayList(GenericType) = .empty,
+    traits: std.ArrayList(Trait) = .empty,
     copied_types: std.AutoHashMapUnmanaged(tt.TypeId, TypeCopy) = .empty,
     pending_copies: std.ArrayList(PendingCopy) = .empty,
     copy_depth: usize = 0,
@@ -110,7 +111,7 @@ pub const SemaAnalyzer = struct {
         const generic = self.generic_functions.items[index];
         const args = try self.allocator.alloc(tt.TypeId, generic.func_stmt.slots.len);
         for (generic.func_stmt.slots, 0..) |slot, i| {
-            args[i] = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier } }, .is_nullable = false });
+            args[i] = try self.addSlotType(slot);
         }
         const saved_table = try self.enterSlotScope(generic.func_stmt.slots, args);
         defer self.scope.symbol_table = saved_table;
@@ -122,7 +123,7 @@ pub const SemaAnalyzer = struct {
 
     fn isDeclaration(stmt: ast.Statement) bool {
         return switch (stmt) {
-            .func, .@"struct", .@"enum", .@"union", .error_set => true,
+            .func, .@"struct", .@"enum", .@"union", .error_set, .trait => true,
             else => false,
         };
     }
@@ -301,6 +302,7 @@ pub const SemaAnalyzer = struct {
 
     fn canCoerce(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !bool {
         if (self.type_table.canCoerce(from, to)) return true;
+        if (try self.canCoerceThroughTypeList(from, to)) return true;
 
         const from_is_nullable = self.type_table.getTypePtrById(from).is_nullable;
         const to_is_nullable = self.type_table.getTypePtrById(to).is_nullable;
@@ -312,6 +314,20 @@ pub const SemaAnalyzer = struct {
         if (!self.errorSetOf(from_base).is_inferred or self.errorSetOf(to_base).is_inferred) return false;
 
         try self.addErrorEdge(from_base, to_base, loc);
+        return true;
+    }
+
+    fn canCoerceThroughTypeList(self: *Self, from: tt.TypeId, to: tt.TypeId) CompileError!bool {
+        const from_slot = self.slotBase(from);
+        const to_slot = self.slotBase(to);
+        if ((from_slot == null) == (to_slot == null)) return false;
+        const slot_id = from_slot orelse to_slot.?;
+        const type_list = self.type_table.getTypePtrById(slot_id).kind.slot.type_list;
+        if (type_list.len == 0) return false;
+        for (type_list) |member| {
+            const is_convertible = if (from_slot != null) self.canConvertTo(try self.substituteSlot(from, member), to) else self.canConvertTo(from, try self.substituteSlot(to, member));
+            if (!is_convertible) return false;
+        }
         return true;
     }
 
@@ -658,6 +674,15 @@ pub const SemaAnalyzer = struct {
                     const symbol = try self.createErrorSetSymbol(&es);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
                 },
+                .trait => |ts| {
+                    try self.traits.append(self.allocator, .{ .trait_stmt = &stmt.data.trait, .loc = stmt.loc });
+                    self.scope.symbol_table.put(.{
+                        .identifier = ts.identifier,
+                        .uid = self.scope.genUid(),
+                        .type_id = self.type_table.getPrimitive(.meta),
+                        .kind = .{ .trait = self.traits.items.len - 1 },
+                    }) catch return self.err_reporter.alreadyDefined(ts.identifier, stmt.loc);
+                },
                 .func => |fs| {
                     if (fs.is_extern and !self.is_in_prelude) return self.err_reporter.externOutsidePrelude(fs.identifier, stmt.loc);
                     if (fs.slots.len > 0) {
@@ -728,6 +753,11 @@ pub const SemaAnalyzer = struct {
                 .@"enum" => |ss| {
                     const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
                     try self.fulfillEnumType(symbol, &ss.def);
+                },
+
+                .trait => |ts| {
+                    const symbol = try self.scope.symbol_table.getOrError(ts.identifier);
+                    _ = try self.resolveTrait(symbol.kind.trait);
                 },
 
                 .@"union" => |us| {
@@ -1275,7 +1305,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" => try self.visitStructStmt(&stmt),
                 .@"enum" => try self.visitEnumStmt(&stmt),
                 .@"union" => try self.visitUnionStmt(&stmt),
-                .error_set => null,
+                .error_set, .trait => null,
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
                 .expression => try self.visitExpressionStmt(&stmt),
@@ -1603,7 +1633,7 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(old_return_type);
 
         for (func_stmt.slots) |slot| {
-            const slot_type_id = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier } }, .is_nullable = false });
+            const slot_type_id = try self.addSlotType(slot);
             self.scope.symbol_table.put(.{
                 .identifier = slot.identifier,
                 .uid = self.scope.genUid(),
@@ -1714,6 +1744,7 @@ pub const SemaAnalyzer = struct {
                     return self.err_reporter.invalidSlotType(name, try self.type_table.name(type_id, self.allocator), loc);
                 }
                 const bound = bindings[slot_index] orelse {
+                    try self.checkSlotFits(slots[slot_index], type_id, loc);
                     bindings[slot_index] = type_id;
                     return;
                 };
@@ -1739,6 +1770,7 @@ pub const SemaAnalyzer = struct {
             if (std.mem.eql(tt.TypeId, copy.args, args)) return copy.symbol;
         }
 
+        for (generic.func_stmt.slots, args) |slot, arg| try self.checkSlotFits(slot, arg, loc);
         if (self.copy_depth >= max_copy_depth) {
             self.err_reporter.copy_context = null;
             return self.err_reporter.genericCopyTooDeep(generic.func_stmt.identifier, max_copy_depth, loc);
@@ -1770,7 +1802,7 @@ pub const SemaAnalyzer = struct {
             for (generic.slots[0..i]) |previous| {
                 if (std.mem.eql(u8, previous.identifier, slot.identifier)) return self.err_reporter.alreadyDefined(slot.identifier, slot.loc);
             }
-            args[i] = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier } }, .is_nullable = false });
+            args[i] = try self.addSlotType(slot);
         }
         const symbol = try self.instantiateGenericType(index, args, generic.loc);
         self.generic_types.items[index].opaque_copy = symbol;
@@ -1861,6 +1893,7 @@ pub const SemaAnalyzer = struct {
         for (generic.copies.items) |copy| {
             if (std.mem.eql(tt.TypeId, copy.args, args)) return copy.symbol;
         }
+        for (generic.slots, args) |slot, arg| try self.checkSlotFits(slot, arg, loc);
         if (self.copy_depth >= max_copy_depth) {
             self.err_reporter.copy_context = null;
             return self.err_reporter.genericCopyTooDeep(generic.identifier, max_copy_depth, loc);
@@ -1953,6 +1986,101 @@ pub const SemaAnalyzer = struct {
             });
         }
         return saved_table;
+    }
+
+    fn addSlotType(self: *Self, slot: ast.Slot) CompileError!tt.TypeId {
+        const type_list = try self.resolveTypeList(slot.type_list);
+        return self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier, .type_list = type_list } }, .is_nullable = false });
+    }
+
+    fn resolveTypeList(self: *Self, annotations: []const *ast.TypeAnnotation) CompileError![]const tt.TypeId {
+        var root = self.scope.symbol_table;
+        while (root.parent) |parent| root = parent;
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = root;
+        defer self.scope.symbol_table = saved_table;
+
+        var members: std.ArrayList(tt.TypeId) = .empty;
+        for (annotations) |annotation| {
+            if (self.traitIndexOf(annotation)) |trait_index| {
+                for (try self.resolveTrait(trait_index)) |member| {
+                    if (std.mem.indexOfScalar(tt.TypeId, members.items, member) == null) try members.append(self.allocator, member);
+                }
+                continue;
+            }
+            const member = try self.resolveTypeAnnotation(annotation, null);
+            if (!self.isTypeListMember(member)) {
+                return self.err_reporter.typeListNotPrimitive(try self.type_table.syntaxName(member, self.allocator), annotation.loc);
+            }
+            if (std.mem.indexOfScalar(tt.TypeId, members.items, member) == null) try members.append(self.allocator, member);
+        }
+        return members.toOwnedSlice(self.allocator);
+    }
+
+    fn traitIndexOf(self: *Self, annotation: *const ast.TypeAnnotation) ?usize {
+        if (annotation.type != .@"struct" or annotation.is_nullable or annotation.args.len > 0) return null;
+        const symbol = self.scope.symbol_table.get(annotation.type.@"struct") orelse return null;
+        if (symbol.kind != .trait) return null;
+        return symbol.kind.trait;
+    }
+
+    fn resolveTrait(self: *Self, index: usize) CompileError![]const tt.TypeId {
+        const trait = self.traits.items[index];
+        if (trait.type_list) |type_list| return type_list;
+        if (trait.is_resolving) return self.err_reporter.traitRefersToItself(trait.trait_stmt.identifier, trait.loc);
+        self.traits.items[index].is_resolving = true;
+        const type_list = try self.resolveTypeList(trait.trait_stmt.type_list);
+        self.traits.items[index].type_list = type_list;
+        self.traits.items[index].is_resolving = false;
+        return type_list;
+    }
+
+    fn isTypeListMember(self: *Self, type_id: tt.TypeId) bool {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) return false;
+        return switch (type_ptr.kind) {
+            .int, .float, .byte, .string, .boolean => true,
+            else => false,
+        };
+    }
+
+    fn checkSlotFits(self: *Self, slot: ast.Slot, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        if (slot.type_list.len == 0) return;
+        const type_list = try self.resolveTypeList(slot.type_list);
+        if (self.fitsTypeList(type_id, type_list)) return;
+
+        var text: std.ArrayList(u8) = .empty;
+        try text.print(self.allocator, "{s}: ", .{slot.identifier});
+        for (slot.type_list, 0..) |annotation, i| {
+            if (i > 0) try text.appendSlice(self.allocator, " | ");
+            try text.appendSlice(self.allocator, try annotation.value(self.allocator));
+        }
+        return self.err_reporter.typeDoesntFitSlot(try self.fitTypeText(type_id), try text.toOwnedSlice(self.allocator), loc);
+    }
+
+    fn fitTypeText(self: *Self, type_id: tt.TypeId) CompileError![]const u8 {
+        const name = try self.type_table.syntaxName(type_id, self.allocator);
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        if (kind != .slot or kind.slot.type_list.len == 0) return std.fmt.allocPrint(self.allocator, "'{s}'", .{name});
+
+        var text: std.ArrayList(u8) = .empty;
+        try text.print(self.allocator, "'{s}' (", .{name});
+        for (kind.slot.type_list, 0..) |member, i| {
+            if (i > 0) try text.appendSlice(self.allocator, " | ");
+            try text.appendSlice(self.allocator, try self.type_table.syntaxName(member, self.allocator));
+        }
+        try text.append(self.allocator, ')');
+        return text.toOwnedSlice(self.allocator);
+    }
+
+    fn fitsTypeList(self: *Self, type_id: tt.TypeId, type_list: []const tt.TypeId) bool {
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        if (kind != .slot) return std.mem.indexOfScalar(tt.TypeId, type_list, type_id) != null;
+        if (kind.slot.type_list.len == 0) return false;
+        for (kind.slot.type_list) |member| {
+            if (std.mem.indexOfScalar(tt.TypeId, type_list, member) == null) return false;
+        }
+        return true;
     }
 
     fn copyName(self: *Self, identifier: []const u8, args: []const tt.TypeId) CompileError![]const u8 {
@@ -3687,6 +3815,7 @@ pub const SemaAnalyzer = struct {
                         fn_identifier = func.identifier;
                     },
                     .type_slot => return self.err_reporter.slotUsedAsValue(id, exp.loc),
+                    .trait => return self.err_reporter.traitUsedAsType(id, exp.loc),
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
                         if (type_ptr.kind == .function) {
@@ -4165,6 +4294,7 @@ pub const SemaAnalyzer = struct {
                 });
             }
             if (symbol.kind == .type_slot) return self.err_reporter.slotUsedAsValue(id, exp.loc);
+            if (symbol.kind == .trait) return self.err_reporter.traitUsedAsType(id, exp.loc);
             try self.exp_symbols.put(self.allocator, exp, symbol);
             self.noteMention(symbol.uid, exp.loc);
             const type_id = switch (symbol.kind) {
@@ -4308,6 +4438,16 @@ pub const SemaAnalyzer = struct {
         if (isValueLeaving(exp_value)) return exp_value;
         const exp_type = exp_value.type_id;
 
+        if (self.isSlotType(exp_type)) {
+            return ir.Value.init(self.allocator, .{
+                .data = .{ .unary_op = .{
+                    .kind = self.astUnaryOpToIrUnaryOpKind(unary_exp.op, exp_type),
+                    .right = exp_value,
+                } },
+                .type_id = try self.slotUnaryOpType(unary_exp.op, exp_type, exp.loc),
+            });
+        }
+
         switch (unary_exp.op) {
             .neg => {
                 if (!self.isTypeNumber(exp_type)) {
@@ -4338,6 +4478,29 @@ pub const SemaAnalyzer = struct {
         });
     }
 
+    fn slotUnaryOpType(self: *Self, op: ast.UnaryOp, type_id: tt.TypeId, loc: err.Loc) CompileError!tt.TypeId {
+        const op_text = if (op == .neg) "-" else "!";
+        var results = SlotResults{};
+        for (try self.operandTypeList(op_text, type_id, loc)) |member| {
+            const operand = try self.substituteSlot(type_id, member);
+            const result = self.unaryOpType(op, operand) orelse return self.err_reporter.slotOperatorNotAllowedOn(
+                op_text,
+                try self.type_table.name(type_id, self.allocator),
+                try self.type_table.syntaxName(member, self.allocator),
+                loc,
+            );
+            results.add(result, member, member);
+        }
+        return self.slotResultType(&results, op_text, type_id, type_id, loc);
+    }
+
+    fn unaryOpType(self: *Self, op: ast.UnaryOp, type_id: tt.TypeId) ?tt.TypeId {
+        return switch (op) {
+            .neg => if (!self.isTypeNumber(type_id)) null else if (type_id == self.type_table.getPrimitive(.byte)) self.type_table.getPrimitive(.int) else type_id,
+            .not => if (self.type_table.eql(type_id, self.type_table.getPrimitive(.boolean))) type_id else null,
+        };
+    }
+
     fn isTypeNumber(self: *Self, t: tt.TypeId) bool {
         return self.type_table.eql(t, self.type_table.getPrimitive(.float)) or self.isIntegerType(t);
     }
@@ -4363,50 +4526,36 @@ pub const SemaAnalyzer = struct {
         const left_type = left_value.type_id;
         const right_type = right_value.type_id;
 
+        if (self.isSlotType(left_type) or self.isSlotType(right_type)) {
+            return ir.Value.init(self.allocator, .{
+                .data = .{ .binary_op = .{
+                    .kind = self.astBinOpToIrBinOpKind(bin_exp.op, left_type, right_type),
+                    .left = left_value,
+                    .right = right_value,
+                } },
+                .type_id = try self.slotBinaryOpType(bin_exp.op, left_type, right_type, exp.loc),
+            });
+        }
+
         var op_type: tt.TypeId = self.type_table.getPrimitive(.void);
 
         switch (bin_exp.op) {
-            .add, .sub, .mult, .mod, .div, .trunc_div => {
-                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) {
-                    return self.err_reporter.invalidType(
-                        "int or float",
-                        try self.type_table.name(left_type, self.allocator),
-                        exp.loc,
-                    );
-                }
-
-                op_type = switch (bin_exp.op) {
-                    .div => self.type_table.getPrimitive(.float),
-                    .trunc_div => self.type_table.getPrimitive(.int),
-                    else => if (self.type_table.eql(left_type, self.type_table.getPrimitive(.float)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.float))) self.type_table.getPrimitive(.float) else self.type_table.getPrimitive(.int),
-                };
-            },
-            .lt, .lt_or_eq, .gt, .gt_or_eq => {
-                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) {
-                    return self.err_reporter.invalidType(
-                        "int or float",
-                        try self.type_table.name(left_type, self.allocator),
-                        exp.loc,
-                    );
-                }
-                op_type = self.type_table.getPrimitive(.boolean);
+            .add, .sub, .mult, .mod, .div, .trunc_div, .lt, .lt_or_eq, .gt, .gt_or_eq => {
+                op_type = self.binaryOpType(bin_exp.op, left_type, right_type) orelse return self.err_reporter.invalidType(
+                    "int or float",
+                    try self.type_table.name(left_type, self.allocator),
+                    exp.loc,
+                );
             },
             .bool_or, .bool_and => {
-                if (!self.type_table.eql(left_type, self.type_table.getPrimitive(.boolean)) or !self.type_table.eql(right_type, self.type_table.getPrimitive(.boolean))) {
-                    return self.err_reporter.invalidType(
-                        "boolean",
-                        try self.type_table.name(left_type, self.allocator),
-                        exp.loc,
-                    );
-                }
-                op_type = self.type_table.getPrimitive(.boolean);
+                op_type = self.binaryOpType(bin_exp.op, left_type, right_type) orelse return self.err_reporter.invalidType(
+                    "boolean",
+                    try self.type_table.name(left_type, self.allocator),
+                    exp.loc,
+                );
             },
             //note: allowing everything
             .eq, .not_eq => {
-                if (self.isSlotType(left_type) or self.isSlotType(right_type)) {
-                    const slot_type = if (self.isSlotType(left_type)) left_type else right_type;
-                    return self.err_reporter.slotOperatorNotAllowed(if (bin_exp.op == .eq) "==" else "!=", try self.type_table.name(slot_type, self.allocator), exp.loc);
-                }
                 const left_is_nullable = self.type_table.getTypePtrById(left_type).is_nullable;
                 const right_is_nullable = self.type_table.getTypePtrById(right_type).is_nullable;
                 const left_is_null = self.type_table.getTypePtrById(left_type).kind == .null;
@@ -4464,6 +4613,124 @@ pub const SemaAnalyzer = struct {
         });
     }
 
+    fn binaryOpType(self: *Self, op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId) ?tt.TypeId {
+        const float_type = self.type_table.getPrimitive(.float);
+        const int_type = self.type_table.getPrimitive(.int);
+        const bool_type = self.type_table.getPrimitive(.boolean);
+        switch (op) {
+            .add, .sub, .mult, .mod, .div, .trunc_div => {
+                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) return null;
+                return switch (op) {
+                    .div => float_type,
+                    .trunc_div => int_type,
+                    else => if (self.type_table.eql(left_type, float_type) or self.type_table.eql(right_type, float_type)) float_type else int_type,
+                };
+            },
+            .lt, .lt_or_eq, .gt, .gt_or_eq => {
+                if (!self.isTypeNumber(left_type) or !self.isTypeNumber(right_type)) return null;
+                return bool_type;
+            },
+            .bool_or, .bool_and => {
+                if (!self.type_table.eql(left_type, bool_type) or !self.type_table.eql(right_type, bool_type)) return null;
+                return bool_type;
+            },
+            .eq, .not_eq => return bool_type,
+        }
+    }
+
+    fn slotBinaryOpType(self: *Self, op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId, loc: err.Loc) CompileError!tt.TypeId {
+        const op_text = binaryOpText(op);
+        const is_equality = op == .eq or op == .not_eq;
+        const null_type = self.type_table.getPrimitive(.null);
+        if (is_equality and (left_type == null_type or right_type == null_type)) return self.type_table.getPrimitive(.boolean);
+
+        const left_list = try self.operandTypeList(op_text, left_type, loc);
+        const right_list = try self.operandTypeList(op_text, right_type, loc);
+        const is_same_slot = self.slotBase(left_type) != null and self.slotBase(left_type) == self.slotBase(right_type);
+
+        var results = SlotResults{};
+        for (left_list, 0..) |left_member, left_index| {
+            for (right_list, 0..) |right_member, right_index| {
+                if (is_same_slot and left_index != right_index) continue;
+                const left = try self.substituteSlot(left_type, left_member);
+                const right = try self.substituteSlot(right_type, right_member);
+                const slot_type = if (self.slotBase(left_type) != null) left_type else right_type;
+                const member = if (self.slotBase(left_type) != null) left_member else right_member;
+                if (is_equality and (self.isStringType(left) or self.isStringType(right))) {
+                    return self.err_reporter.slotStringEquality(op_text, try self.type_table.name(slot_type, self.allocator), loc);
+                }
+                const result = self.binaryOpType(op, left, right) orelse return self.err_reporter.slotOperatorNotAllowedOn(
+                    op_text,
+                    try self.type_table.name(slot_type, self.allocator),
+                    try self.type_table.syntaxName(member, self.allocator),
+                    loc,
+                );
+                results.add(result, left_member, right_member);
+            }
+        }
+        return self.slotResultType(&results, op_text, left_type, right_type, loc);
+    }
+
+    fn operandTypeList(self: *Self, op_text: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError![]const tt.TypeId {
+        const slot_id = self.slotBase(type_id) orelse return self.allocator.dupe(tt.TypeId, &.{type_id});
+        const type_list = self.type_table.getTypePtrById(slot_id).kind.slot.type_list;
+        if (type_list.len == 0) return self.err_reporter.slotOperatorNotAllowed(op_text, try self.type_table.name(type_id, self.allocator), loc);
+        return type_list;
+    }
+
+    fn slotResultType(self: *Self, results: *const SlotResults, op_text: []const u8, left_type: tt.TypeId, right_type: tt.TypeId, loc: err.Loc) CompileError!tt.TypeId {
+        const differing = results.differing orelse return results.first.?.result;
+        if (results.gives_left_member and self.slotBase(left_type) != null) return self.slotBase(left_type).?;
+        if (results.gives_right_member and self.slotBase(right_type) != null) return self.slotBase(right_type).?;
+        const first = results.first.?;
+        const first_member = if (self.slotBase(left_type) != null) first.left_member else first.right_member;
+        const second_member = if (self.slotBase(left_type) != null) differing.left_member else differing.right_member;
+        return self.err_reporter.slotResultDiffers(
+            op_text,
+            try self.type_table.syntaxName(first_member, self.allocator),
+            try self.type_table.syntaxName(first.result, self.allocator),
+            try self.type_table.syntaxName(second_member, self.allocator),
+            try self.type_table.syntaxName(differing.result, self.allocator),
+            loc,
+        );
+    }
+
+    fn slotBase(self: *Self, type_id: tt.TypeId) ?tt.TypeId {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        if (self.type_table.getTypePtrById(base_id).kind != .slot) return null;
+        return base_id;
+    }
+
+    fn substituteSlot(self: *Self, type_id: tt.TypeId, member: tt.TypeId) CompileError!tt.TypeId {
+        if (self.slotBase(type_id) == null) return type_id;
+        if (self.type_table.getTypePtrById(type_id).is_nullable) return self.type_table.getOrAddNullable(member);
+        return member;
+    }
+
+    fn isStringType(self: *Self, type_id: tt.TypeId) bool {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        return self.type_table.getTypePtrById(base_id).kind == .string;
+    }
+
+    fn binaryOpText(op: ast.BinaryOp) []const u8 {
+        return switch (op) {
+            .add => "+",
+            .sub => "-",
+            .mult => "*",
+            .div => "/",
+            .trunc_div => "//",
+            .mod => "%",
+            .eq => "==",
+            .not_eq => "!=",
+            .lt => "<",
+            .lt_or_eq => "<=",
+            .gt => ">",
+            .gt_or_eq => ">=",
+            .bool_or => "or",
+            .bool_and => "and",
+        };
+    }
+
     fn isBoxedNullable(self: *Self, type_id: tt.TypeId) bool {
         const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse return false;
         return self.needsNullBox(type_id, base);
@@ -4519,6 +4786,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn coerceValue(self: *Self, value: *ir.Value, target_type: tt.TypeId, loc: err.Loc) CompileError!*ir.Value {
+        if (!self.type_table.canCoerce(value.type_id, target_type) and try self.canCoerceThroughTypeList(value.type_id, target_type)) {
+            return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = target_type });
+        }
         const promoted = try self.promoteToFloat(value, target_type);
         if (!try self.canCoerce(promoted.type_id, target_type, loc)) {
             return self.err_reporter.invalidType(
@@ -4571,6 +4841,7 @@ pub const SemaAnalyzer = struct {
                 const blueprint_type_id = switch (symbol.kind) {
                     .defined_type => |dt| dt.blueprint_type_id,
                     .type_slot => symbol.type_id,
+                    .trait => return self.err_reporter.traitUsedAsType(struct_name, type_annotation.loc),
                     .generic_type => |index| try self.resolveGenericTypeAnnotation(index, type_annotation, current_defined_type_type_id),
                     else => return CompileError.SemaError,
                 };
@@ -4857,6 +5128,7 @@ pub const Symbol = struct {
         generic_function: usize,
         generic_type: usize,
         type_slot: void,
+        trait: usize,
     },
 };
 
@@ -4899,6 +5171,37 @@ const GenericType = struct {
     loc: err.Loc,
     copies: std.ArrayList(GenericCopy) = .empty,
     opaque_copy: ?Symbol = null,
+};
+
+const Trait = struct {
+    trait_stmt: *const ast.TraitStmt,
+    loc: err.Loc,
+    type_list: ?[]const tt.TypeId = null,
+    is_resolving: bool = false,
+};
+
+const SlotResults = struct {
+    const Entry = struct {
+        result: tt.TypeId,
+        left_member: tt.TypeId,
+        right_member: tt.TypeId,
+    };
+
+    first: ?Entry = null,
+    differing: ?Entry = null,
+    gives_left_member: bool = true,
+    gives_right_member: bool = true,
+
+    fn add(self: *SlotResults, result: tt.TypeId, left_member: tt.TypeId, right_member: tt.TypeId) void {
+        const entry = Entry{ .result = result, .left_member = left_member, .right_member = right_member };
+        if (result != left_member) self.gives_left_member = false;
+        if (result != right_member) self.gives_right_member = false;
+        const first = self.first orelse {
+            self.first = entry;
+            return;
+        };
+        if (self.differing == null and first.result != result) self.differing = entry;
+    }
 };
 
 const TypeCopy = struct {

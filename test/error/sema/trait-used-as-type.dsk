@@ -1,0 +1,5 @@
+trait Number = int | float
+
+func main() -> void
+    let x: Number = 1
+end

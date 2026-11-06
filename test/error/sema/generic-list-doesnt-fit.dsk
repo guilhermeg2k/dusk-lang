@@ -1,0 +1,9 @@
+trait Number = int | float
+
+func twice[T: Number](x: T) -> T
+    return x + x
+end
+
+func main() -> void
+    twice("a")
+end

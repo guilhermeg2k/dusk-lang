@@ -1,0 +1,4 @@
+trait Number int | float
+
+func main() -> void
+end

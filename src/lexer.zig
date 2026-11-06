@@ -20,6 +20,7 @@ pub const Lexer = struct {
         .{ "enum", Tag.enum_kw },
         .{ "union", Tag.union_kw },
         .{ "error", Tag.error_kw },
+        .{ "trait", Tag.trait_kw },
         .{ "if", Tag.if_kw },
         .{ "else", Tag.else_kw },
         .{ "elif", Tag.elif_kw },
@@ -155,7 +156,7 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('=', Tag.not_eq, Tag.not);
                 },
                 '|' => {
-                    return self.readComplexSymbol('>', Tag.pipe, Tag.err);
+                    return self.readComplexSymbol('>', Tag.pipe, Tag.bar);
                 },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
@@ -451,6 +452,7 @@ pub const Tag = enum {
     enum_kw,
     union_kw,
     error_kw,
+    trait_kw,
     if_kw,
     else_kw,
     elif_kw,
@@ -506,6 +508,7 @@ pub const Tag = enum {
     double_slash,
     percent,
     pipe,
+    bar,
     eof,
     err,
 };
