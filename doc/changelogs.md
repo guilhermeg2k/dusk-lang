@@ -1,5 +1,9 @@
 # Changelogs
 
+## v0.14 - Simon (in development)
+
+- Started v0.14 development: updated the CLI version to `0.14.0-devel` and recorded the implementation phases for generics and traits in `doc/v0.14-generics-plan.md`
+
 ## v0.13 - Garou
 
 - Fixed a negative array index (`a[-1]`, `a[i] = x` with `i < 0`) crashing the VM. It is now an `ArrayOutOfBounds` runtime error, and array index errors print a message (`index 5 is out of bounds for array of length 2`) like buffer index errors
