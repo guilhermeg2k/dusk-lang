@@ -1,0 +1,4 @@
+func main() -> void
+    let mut names: []string = []
+    append(names, 1)
+end

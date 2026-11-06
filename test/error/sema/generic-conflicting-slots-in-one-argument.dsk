@@ -1,0 +1,12 @@
+struct Pair[A, B]
+    left: A
+    right: B
+end
+
+func same[T](p: Pair[T, T]) -> T
+    return p.left
+end
+
+func main() -> void
+    let x = same(Pair(left = 1, right = "x"))
+end

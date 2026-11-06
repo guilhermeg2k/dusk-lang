@@ -2004,7 +2004,7 @@ test "generics: generic functions are checked where they are written" {
 
 test "generics: calls fill the slots from the arguments and compile one copy per type" {
     try runCase("generics-calls.dsk");
-    try runCaseError("sema/generic-conflicting-slots.dsk", error.ConflictingSlotTypes);
+    try runCaseError("sema/generic-conflicting-slots.dsk", error.InvalidType);
     try runCaseError("sema/generic-cant-infer.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-cant-infer-empty-array.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-copy-shares-param.dsk", error.NeedsCopy);
@@ -2029,6 +2029,13 @@ test "generics: generic structs and unions" {
     try runCaseError("sema/generic-type-void-arg.dsk", error.InvalidSlotType);
     try runCaseError("sema/generic-struct-method-arithmetic.dsk", error.InvalidType);
     try runCaseError("sema/generic-type-duplicate-slot.dsk", error.AlreadyDefined);
+}
+
+test "generics: append and copy are generic prelude functions" {
+    try runCase("generics-prelude.dsk");
+    try runCaseError("sema/append-wrong-item-type.dsk", error.InvalidType);
+    try runCaseError("sema/append-int-into-strings.dsk", error.InvalidType);
+    try runCaseError("sema/generic-conflicting-slots-in-one-argument.dsk", error.ConflictingSlotTypes);
 }
 
 test "sema error: unknown return type is reported, not a crash" {

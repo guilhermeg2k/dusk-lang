@@ -97,9 +97,27 @@ pub const SemaAnalyzer = struct {
         for (prelude.statements.items) |stmt| {
             if (stmt.data != .func) continue;
             const symbol = try self.scope.symbol_table.getOrError(stmt.data.func.identifier);
+            if (symbol.kind == .generic_function) {
+                try self.externs.append(self.allocator, try self.genericExtern(symbol.kind.generic_function));
+                continue;
+            }
             const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
             try self.externs.append(self.allocator, .{ .uid = func.uid, .identifier = func.identifier, .params = func.params });
         }
+    }
+
+    fn genericExtern(self: *Self, index: usize) CompileError!ir.Extern {
+        const generic = self.generic_functions.items[index];
+        const args = try self.allocator.alloc(tt.TypeId, generic.func_stmt.slots.len);
+        for (generic.func_stmt.slots, 0..) |slot, i| {
+            args[i] = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier } }, .is_nullable = false });
+        }
+        const saved_table = try self.enterSlotScope(generic.func_stmt.slots, args);
+        defer self.scope.symbol_table = saved_table;
+        const symbol = try self.createEmptyFuncSymbol(generic.func_stmt.identifier);
+        try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
+        const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        return .{ .uid = generic.extern_uid.?, .identifier = generic.func_stmt.identifier, .params = func.params };
     }
 
     fn isDeclaration(stmt: ast.Statement) bool {
@@ -803,7 +821,8 @@ pub const SemaAnalyzer = struct {
 
     fn createGenericFuncSymbol(self: *Self, func_stmt: *const ast.FuncStmt, loc: err.Loc) !Symbol {
         const index = self.generic_functions.items.len;
-        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc });
+        const extern_uid = if (func_stmt.is_extern) self.scope.genFnUid() else null;
+        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc, .extern_uid = extern_uid });
         return Symbol{
             .identifier = func_stmt.identifier,
             .uid = self.scope.genUid(),
@@ -1619,7 +1638,7 @@ pub const SemaAnalyzer = struct {
 
         for (func_stmt.def.params, 0..) |param, param_index| {
             const annotation = param.type_annotation orelse continue;
-            if (!mentionsSlot(annotation, func_stmt.slots)) continue;
+            if (!mentionsSlot(annotation, func_stmt.slots) or areMentionedSlotsBound(annotation, func_stmt.slots, bindings)) continue;
             const arg_exp = argumentFor(fn_call, param_index, param.identifier) orelse continue;
             const value = try self.evalExpExpecting(arg_exp, null);
             try inferred_values.put(self.allocator, arg_exp, value);
@@ -1648,6 +1667,14 @@ pub const SemaAnalyzer = struct {
         for (bindings, from_expected) |*binding, expected_binding| {
             if (binding.* == null) binding.* = expected_binding;
         }
+    }
+
+    fn canConvertTo(self: *Self, from: tt.TypeId, to: tt.TypeId) bool {
+        if (self.type_table.canCoerce(from, to)) return true;
+        const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
+        const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
+        const is_widening = from_base == self.type_table.getPrimitive(.int) and to_base == self.type_table.getPrimitive(.float);
+        return is_widening and (from_base == from or to_base != to);
     }
 
     fn argumentFor(fn_call: ast.FnCall, param_index: usize, param_name: []const u8) ?*ast.ExpNode {
@@ -1682,15 +1709,15 @@ pub const SemaAnalyzer = struct {
                     }
                     return;
                 };
-                if (kind == .dynamic) return;
-                if (kind == .void or kind == .null) {
+                if (kind == .dynamic or kind == .null) return;
+                if (kind == .void) {
                     return self.err_reporter.invalidSlotType(name, try self.type_table.name(type_id, self.allocator), loc);
                 }
                 const bound = bindings[slot_index] orelse {
                     bindings[slot_index] = type_id;
                     return;
                 };
-                if (bound == type_id) return;
+                if (bound == type_id or self.canConvertTo(type_id, bound)) return;
                 return self.err_reporter.conflictingSlotTypes(
                     name,
                     try self.type_table.syntaxName(bound, self.allocator),
@@ -1728,6 +1755,10 @@ pub const SemaAnalyzer = struct {
         defer self.scope.return_type_id = saved_return_type;
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
 
+        if (generic.extern_uid) |extern_uid| {
+            self.type_table.getTypePtrById(symbol.type_id).kind.function.uid = extern_uid;
+            return symbol;
+        }
         if (!self.containsSlot(args)) try self.pending_copies.append(self.allocator, .{ .kind = .function, .generic = index, .copy = copy_index });
         return symbol;
     }
@@ -1788,7 +1819,7 @@ pub const SemaAnalyzer = struct {
             .@"struct" => |struct_def| {
                 for (struct_def.fields, 0..) |field, field_index| {
                     const annotation = field.type orelse continue;
-                    if (!mentionsSlot(annotation, generic.slots)) continue;
+                    if (!mentionsSlot(annotation, generic.slots) or areMentionedSlotsBound(annotation, generic.slots, bindings)) continue;
                     const arg_exp = argumentFor(fn_call, field_index, field.identifier) orelse continue;
                     const value = try self.evalExpExpecting(arg_exp, null);
                     try inferred_values.put(self.allocator, arg_exp, value);
@@ -1949,6 +1980,18 @@ pub const SemaAnalyzer = struct {
             .slot => true,
             .array => |inner| self.typeContainsSlot(inner),
             else => false,
+        };
+    }
+
+    fn areMentionedSlotsBound(annotation: *const ast.TypeAnnotation, slots: []const ast.Slot, bindings: []const ?tt.TypeId) bool {
+        return switch (annotation.type) {
+            .@"struct" => |name| for (slots, bindings) |slot, binding| {
+                if (std.mem.eql(u8, slot.identifier, name)) break binding != null;
+            } else for (annotation.args) |arg| {
+                if (!areMentionedSlotsBound(arg, slots, bindings)) break false;
+            } else true,
+            .array => |inner| areMentionedSlotsBound(inner, slots, bindings),
+            else => true,
         };
     }
 
@@ -3539,15 +3582,14 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    fn evalCopyCall(self: *Self, symbol: Symbol, argument: *const ast.ExpNode) CompileError!*ir.Value {
+    fn evalCopyCall(self: *Self, copy_uid: usize, identifier: []const u8, argument: *const ast.ExpNode) CompileError!*ir.Value {
         const value = try self.evalExp(argument);
         if (isValueLeaving(value)) return value;
         if (!self.isChangeableType(value.type_id)) return value;
         const args = try self.allocator.alloc(*ir.Value, 1);
         args[0] = value;
-        const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
         return ir.Value.init(self.allocator, .{
-            .data = .{ .fn_call = .{ .fn_uid = func.uid, .identifier = symbol.identifier, .args = args } },
+            .data = .{ .fn_call = .{ .fn_uid = copy_uid, .identifier = identifier, .args = args } },
             .type_id = value.type_id,
         });
     }
@@ -3581,8 +3623,10 @@ pub const SemaAnalyzer = struct {
 
                 fn_identifier = symbol.identifier;
 
-                if (symbol.kind == .function and std.mem.eql(u8, id, "copy") and fn_call.arguments.len == 1) {
-                    return self.evalCopyCall(symbol, fn_call.arguments[0].exp);
+                if (symbol.kind == .generic_function and std.mem.eql(u8, id, "copy") and fn_call.arguments.len == 1) {
+                    if (self.generic_functions.items[symbol.kind.generic_function].extern_uid) |copy_uid| {
+                        return self.evalCopyCall(copy_uid, id, fn_call.arguments[0].exp);
+                    }
                 }
 
                 switch (symbol.kind) {
@@ -4834,6 +4878,7 @@ const WhenSubject = struct {
 const GenericFunction = struct {
     func_stmt: *const ast.FuncStmt,
     loc: err.Loc,
+    extern_uid: ?usize = null,
     copies: std.ArrayList(GenericCopy) = .empty,
 };
 

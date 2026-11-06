@@ -761,6 +761,7 @@ pub const Parser = struct {
         self.walk();
         _ = try self.expect(.func_kw);
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const params = try self.parseFnParams();
         _ = try self.expect(.arrow);
         const result = try self.parseFnResult();
@@ -768,6 +769,7 @@ pub const Parser = struct {
         return ast.FuncStmt{
             .identifier = identifier_token.value(self.src),
             .is_extern = true,
+            .slots = slots,
             .def = .{
                 .params = params,
                 .body_block = .{ .statements = .empty },
