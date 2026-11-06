@@ -25,6 +25,8 @@ pub const SemaAnalyzer = struct {
 
     fn_depth: usize = 0,
     is_in_prelude: bool = false,
+    prelude_src: []const u8 = "",
+    internal_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
     constants: std.ArrayList(Constant) = .empty,
@@ -91,6 +93,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn loadPrelude(self: *Self, prelude: *const ast.Root, src: []const u8) !void {
+        self.prelude_src = src;
         self.src = src;
         self.err_reporter.src = src;
         self.is_in_prelude = true;
@@ -101,6 +104,8 @@ pub const SemaAnalyzer = struct {
         for (prelude.statements.items) |stmt| {
             if (stmt.data != .func) continue;
             const symbol = try self.scope.symbol_table.getOrError(stmt.data.func.identifier);
+            if (isInternalName(stmt.data.func.identifier)) try self.internal_uids.put(self.allocator, symbol.uid, {});
+            if (!stmt.data.func.is_extern) continue;
             if (symbol.kind == .generic_function) {
                 try self.externs.append(self.allocator, try self.genericExtern(symbol.kind.generic_function));
                 continue;
@@ -108,6 +113,38 @@ pub const SemaAnalyzer = struct {
             const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
             try self.externs.append(self.allocator, .{ .uid = func.uid, .identifier = func.identifier, .params = func.params });
         }
+
+        try self.flow_frames.append(self.allocator, .{});
+        for (prelude.statements.items) |*stmt| {
+            if (stmt.data != .func or stmt.data.func.is_extern) continue;
+            _ = try self.visitFuncStmt(stmt);
+        }
+        try self.resolveFlow();
+        _ = self.flow_frames.pop();
+    }
+
+    fn isInternalName(identifier: []const u8) bool {
+        return identifier.len > 1 and identifier[0] == '_';
+    }
+
+    fn checkNotInternal(self: *Self, symbol: Symbol, loc: err.Loc) CompileError!void {
+        if (self.is_in_prelude or !self.internal_uids.contains(symbol.uid)) return;
+        return self.err_reporter.internalBuiltin(symbol.identifier, loc);
+    }
+
+    fn enterPreludeContext(self: *Self, is_prelude: bool) PreludeContext {
+        const saved = PreludeContext{ .src = self.src, .is_in_prelude = self.is_in_prelude };
+        if (!is_prelude) return saved;
+        self.src = self.prelude_src;
+        self.err_reporter.src = self.prelude_src;
+        self.is_in_prelude = true;
+        return saved;
+    }
+
+    fn exitPreludeContext(self: *Self, saved: PreludeContext) void {
+        self.src = saved.src;
+        self.err_reporter.src = saved.src;
+        self.is_in_prelude = saved.is_in_prelude;
     }
 
     fn genericExtern(self: *Self, index: usize) CompileError!ir.Extern {
@@ -863,7 +900,7 @@ pub const SemaAnalyzer = struct {
     fn createGenericFuncSymbol(self: *Self, func_stmt: *const ast.FuncStmt, loc: err.Loc) !Symbol {
         const index = self.generic_functions.items.len;
         const extern_uid = if (func_stmt.is_extern) self.scope.genFnUid() else null;
-        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc, .extern_uid = extern_uid });
+        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc, .extern_uid = extern_uid, .is_prelude = self.is_in_prelude });
         return Symbol{
             .identifier = func_stmt.identifier,
             .uid = self.scope.genUid(),
@@ -1790,13 +1827,15 @@ pub const SemaAnalyzer = struct {
         const name = try self.copyName(generic.func_stmt.identifier, args);
 
         const symbol = try self.createEmptyFuncSymbol(name);
-        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .depth = self.copy_depth + 1 });
+        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
         const copy_index = generic.copies.items.len - 1;
 
         const saved_table = try self.enterSlotScope(generic.func_stmt.slots, args);
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;
         defer self.scope.return_type_id = saved_return_type;
+        const saved_context = self.enterPreludeContext(generic.is_prelude);
+        defer self.exitPreludeContext(saved_context);
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
 
         if (generic.extern_uid) |extern_uid| {
@@ -1916,7 +1955,7 @@ pub const SemaAnalyzer = struct {
             .@"struct" => try self.createEmptyStructSymbol(name),
             .@"union" => try self.createEmptyUnionSymbol(name),
         };
-        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .depth = self.copy_depth + 1 });
+        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
         const copy_index = generic.copies.items.len - 1;
         try self.copied_types.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .generic = index, .args = args });
 
@@ -1960,10 +1999,12 @@ pub const SemaAnalyzer = struct {
 
             const saved_table = try self.enterSlotScope(generic.func_stmt.slots, copy.args);
             defer self.scope.symbol_table = saved_table;
+            const saved_context = self.enterPreludeContext(generic.is_prelude);
+            defer self.exitPreludeContext(saved_context);
             const saved_depth = self.copy_depth;
             self.copy_depth = copy.depth;
             defer self.copy_depth = saved_depth;
-            self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc };
+            self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc, .call_src = copy.call_src };
             defer self.err_reporter.copy_context = null;
 
             const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
@@ -1978,7 +2019,7 @@ pub const SemaAnalyzer = struct {
         const saved_depth = self.copy_depth;
         self.copy_depth = copy.depth;
         defer self.copy_depth = saved_depth;
-        self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc };
+        self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc, .call_src = copy.call_src };
         defer self.err_reporter.copy_context = null;
         try self.defined_types.append(self.allocator, try self.visitTypeCopy(pending.generic, pending.copy));
     }
@@ -3957,6 +3998,7 @@ pub const SemaAnalyzer = struct {
                 const symbol = self.scope.symbol_table.getOrError(id) catch {
                     return self.err_reporter.notDefined(id, exp.loc);
                 };
+                try self.checkNotInternal(symbol, exp.loc);
 
                 fn_identifier = symbol.identifier;
 
@@ -4506,6 +4548,7 @@ pub const SemaAnalyzer = struct {
         const id_symbol = self.scope.symbol_table.get(id);
 
         if (id_symbol) |symbol| {
+            try self.checkNotInternal(symbol, exp.loc);
             if (symbol.kind == .constant) return self.resolveConstant(symbol.kind.constant);
             if (symbol.kind == .generic_function) return self.err_reporter.genericNeedsCall(id, exp.loc);
             if (symbol.kind == .generic_type) {
@@ -5378,14 +5421,21 @@ const WhenSubject = struct {
 const GenericFunction = struct {
     func_stmt: *const ast.FuncStmt,
     loc: err.Loc,
+    is_prelude: bool = false,
     extern_uid: ?usize = null,
     copies: std.ArrayList(GenericCopy) = .empty,
+};
+
+const PreludeContext = struct {
+    src: []const u8,
+    is_in_prelude: bool,
 };
 
 const GenericCopy = struct {
     args: []const tt.TypeId,
     symbol: Symbol,
     call_loc: err.Loc,
+    call_src: []const u8,
     depth: usize,
 };
 

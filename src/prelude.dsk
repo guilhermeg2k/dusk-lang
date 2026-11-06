@@ -9,9 +9,15 @@ error StringError
     InvalidUtf8
 end
 
+error ArrayError
+    Empty
+    OutOfRange
+end
+
 extern func echo(msgs: dynamic) -> void
 extern func append[T](mut array: []T, value: T) -> void
 extern func len[T](array: []T) -> int
+extern func _array_pop[T](mut array: []T) -> T
 extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
 extern func assert(cond: bool) -> void
@@ -38,3 +44,8 @@ extern func str_upper(text: string) -> string
 extern func str_lower(text: string) -> string
 extern func str_slice(text: string, start: int, stop: int) -> StringError!string
 extern func str_repeat(text: string, count: int) -> StringError!string
+
+func pop[T](mut array: []T) -> ArrayError!T
+    if len(array) == 0 then return ArrayError.Empty end
+    return _array_pop(array)
+end

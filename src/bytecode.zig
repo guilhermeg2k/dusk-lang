@@ -1032,16 +1032,6 @@ pub const BytecodeGen = struct {
         try self.recordHeapMap();
     }
 
-    fn genArrayPop(self: *Self, array_reg: u8, target_reg: u8) !void {
-        const pop_inst = Instruction{
-            .op = .ARRAY_POP,
-            .a = target_reg,
-            .b = array_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, pop_inst);
-    }
-
     fn genArrayLen(self: *Self, array_reg: u8, target_reg: u8) !void {
         const len_inst = Instruction{
             .op = .ARRAY_LEN,

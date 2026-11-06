@@ -463,6 +463,11 @@ pub const CompileErrorReporter = struct {
         return error.TraitUsedAsType;
     }
 
+    pub fn internalBuiltin(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is internal to the prelude and can't be used directly", .{identifier}), loc);
+        return error.InternalBuiltin;
+    }
+
     pub fn slotUsedAsValue(self: *Self, slot: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is a type slot, not a value", .{slot}), loc);
         return error.SlotUsedAsValue;
@@ -740,7 +745,10 @@ pub const CompileErrorReporter = struct {
 
     fn withCopyContext(self: *Self, message: []const u8) []const u8 {
         const context = self.copy_context orelse return message;
+        const saved_src = self.src;
+        self.src = context.call_src;
         const line = self.findExactLoc(context.call_loc.start).line.count;
+        self.src = saved_src;
         return allocPrint(self.allocator, "in {s} (created at line {d}): {s}", .{ context.name, line, message }) catch message;
     }
 
@@ -793,6 +801,7 @@ const ExactLoc = struct { line: struct {
 pub const CopyContext = struct {
     name: []const u8,
     call_loc: Loc,
+    call_src: []const u8,
 };
 
 pub const CompileError = error{
@@ -852,6 +861,7 @@ pub const CompileError = error{
     SlotParamCantBeMutable,
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
+    InternalBuiltin,
     SlotResultDiffers,
     TypeDoesntFitSlot,
     TypeListNotPrimitive,

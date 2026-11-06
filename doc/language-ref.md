@@ -1288,6 +1288,22 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 
 `copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
+### Array functions
+
+Functions that change an array take it as `mut`, and the ones that can fail return an error union, handled with `try` or `catch`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
+
+```nim
+let mut stack = [1, 2, 3]
+for true do
+    let item = pop(stack) catch _ then break end
+    echo(item)   # 3, 2, 1
+end
+```
+
 ### String functions
 
 String functions are builtins starting with `str_`. They never change their argument: a function that produces text returns a new string. They work with pipes: `line |> str_trim()`.
@@ -1316,7 +1332,7 @@ Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`,
 | `str_to_int(text)`                     | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `str_to_float(text)`                   | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 
-**Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Two builtin error sets exist, and their names can't be used for other error sets:
+**Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Three builtin error sets exist (`ArrayError` is described with the [array functions](#array-functions)), and their names can't be used for other error sets:
 
 | Error | When |
 | :---- | :--- |

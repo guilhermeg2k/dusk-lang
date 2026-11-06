@@ -21,7 +21,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 6 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 8 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -2080,6 +2080,11 @@ test "generics: traits constrain a slot to types with methods" {
     try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
 }
 
+test "builtins: pop is a prelude function over an internal builtin" {
+    try runCase("array-pop.dsk");
+    try runCaseError("sema/internal-builtin.dsk", error.InternalBuiltin);
+}
+
 test "sema error: unknown return type is reported, not a crash" {
     try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }
@@ -2092,8 +2097,7 @@ test "prelude: every extern has a binding and every binding has an extern" {
     const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
     var extern_count: usize = 0;
     for (prelude.statements.items) |stmt| {
-        if (stmt.data != .func) continue;
-        try testing.expect(stmt.data.func.is_extern);
+        if (stmt.data != .func or !stmt.data.func.is_extern) continue;
         try testing.expect(bindings.has(stmt.data.func.identifier));
         extern_count += 1;
     }
@@ -2111,6 +2115,8 @@ test "prelude: builtin error ids match the natives constants" {
     try testing.expectEqualStrings("StringError.OutOfRange", program.error_names[natives.string_out_of_range_id]);
     try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
     try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
+    try testing.expectEqualStrings("ArrayError.Empty", program.error_names[natives.array_empty_id]);
+    try testing.expectEqualStrings("ArrayError.OutOfRange", program.error_names[natives.array_out_of_range_id]);
 }
 
 test "array index out of bounds is a runtime error" {

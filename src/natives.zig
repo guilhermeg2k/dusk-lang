@@ -11,6 +11,8 @@ pub const conversion_overflow_id: i64 = 2;
 pub const string_out_of_range_id: i64 = 3;
 pub const string_negative_count_id: i64 = 4;
 pub const string_invalid_utf8_id: i64 = 5;
+pub const array_empty_id: i64 = 6;
+pub const array_out_of_range_id: i64 = 7;
 
 const ascii_whitespace = " \t\n\r\x0b\x0c";
 
@@ -25,6 +27,7 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
     .{ "len", Binding{ .@"inline" = &arrayLenGen } },
+    .{ "_array_pop", Binding{ .@"inline" = &arrayPopGen } },
     .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "append", Binding{ .@"inline" = &appendGen } },
@@ -278,6 +281,12 @@ pub fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn arrayLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
     var list: std.ArrayList(bc.Instruction) = .empty;
     try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn arrayPopGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .ARRAY_POP, .a = target_reg, .b = arg_start_reg });
     return try list.toOwnedSlice(alloc);
 }
 
