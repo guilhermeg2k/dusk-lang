@@ -1295,6 +1295,11 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
+| `insert(mut list, index, item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
+| `remove(mut list, index)` | `ArrayError!T` | Removes the item at `index`, moving the later items down, and returns it. Fails with `ArrayError.OutOfRange` outside the array. |
+| `clear(mut list)` | `void` | Removes every item. |
+
+`insert` keeps its item like `append`, so the same [sharing rules](#sharing-values) apply: a `let` value used again later needs `copy`.
 
 ```nim
 let mut stack = [1, 2, 3]

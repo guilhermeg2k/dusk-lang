@@ -18,6 +18,9 @@ extern func echo(msgs: dynamic) -> void
 extern func append[T](mut array: []T, value: T) -> void
 extern func len[T](array: []T) -> int
 extern func _array_pop[T](mut array: []T) -> T
+extern func _array_insert[T](mut array: []T, index: int, value: T) -> void
+extern func _array_remove[T](mut array: []T, index: int) -> T
+extern func clear[T](mut array: []T) -> void
 extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
 extern func assert(cond: bool) -> void
@@ -48,4 +51,14 @@ extern func str_repeat(text: string, count: int) -> StringError!string
 func pop[T](mut array: []T) -> ArrayError!T
     if len(array) == 0 then return ArrayError.Empty end
     return _array_pop(array)
+end
+
+func insert[T](mut array: []T, index: int, value: T) -> ArrayError!void
+    if index < 0 or index > len(array) then return ArrayError.OutOfRange end
+    _array_insert(array, index, value)
+end
+
+func remove[T](mut array: []T, index: int) -> ArrayError!T
+    if index < 0 or index >= len(array) then return ArrayError.OutOfRange end
+    return _array_remove(array, index)
 end

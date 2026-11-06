@@ -2085,6 +2085,12 @@ test "builtins: pop is a prelude function over an internal builtin" {
     try runCaseError("sema/internal-builtin.dsk", error.InternalBuiltin);
 }
 
+test "builtins: insert, remove and clear change arrays in place" {
+    try runCase("array-insert-remove.dsk");
+    try runCaseError("sema/insert-shares-let.dsk", error.NeedsCopy);
+    try runCaseError("sema/append-named-shares-let.dsk", error.NeedsCopy);
+}
+
 test "sema error: unknown return type is reported, not a crash" {
     try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }

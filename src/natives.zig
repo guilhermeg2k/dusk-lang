@@ -28,6 +28,9 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "assert", Binding{ .native = &assert } },
     .{ "len", Binding{ .@"inline" = &arrayLenGen } },
     .{ "_array_pop", Binding{ .@"inline" = &arrayPopGen } },
+    .{ "_array_insert", Binding{ .native = &arrayInsert } },
+    .{ "_array_remove", Binding{ .native = &arrayRemove } },
+    .{ "clear", Binding{ .native = &arrayClear } },
     .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "append", Binding{ .@"inline" = &appendGen } },
@@ -112,6 +115,44 @@ pub fn strConcat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     @memcpy(data[0..left_len], bytesArg(args, 0));
     @memcpy(data[left_len..], bytesArg(args, 1));
     return stringResult(result);
+}
+
+pub fn arrayInsert(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var array = arrayArg(args, 0);
+    if (array.needsResize()) {
+        const new_size = v.Array.calc_size(array.calcNewCapacity());
+        try vm.maybeCollectGarbage(new_size);
+        array = try arrayArg(args, 0).resize(vm.getCurrentHeapAllocator());
+        args[0].heap_obj = &array.obj;
+        vm.increaseHeapAllocationCount(new_size);
+    }
+    const index: usize = @intCast(args[1].int64);
+    const items = array.getDataPtr();
+    std.mem.copyBackwards(v.Value, items[index + 1 .. array.len + 1], items[index..array.len]);
+    items[index] = args[2];
+    array.len += 1;
+    return ok(.{ .null = {} });
+}
+
+pub fn arrayRemove(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const array = arrayArg(args, 0);
+    const index: usize = @intCast(args[1].int64);
+    const items = array.getDataPtr();
+    const removed = items[index];
+    std.mem.copyForwards(v.Value, items[index .. array.len - 1], items[index + 1 .. array.len]);
+    array.len -= 1;
+    return ok(removed);
+}
+
+pub fn arrayClear(_: *VM, args: []v.Value) anyerror!NativeResult {
+    arrayArg(args, 0).len = 0;
+    return ok(.{ .null = {} });
+}
+
+fn arrayArg(args: []v.Value, index: usize) *v.Array {
+    const current = args[index].heap_obj.followRelocated();
+    args[index].heap_obj = current;
+    return v.HeapValue.getParentPtr(v.Array, current);
 }
 
 pub fn strJoin(vm: *VM, args: []v.Value) anyerror!NativeResult {

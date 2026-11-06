@@ -1755,6 +1755,27 @@ pub const SemaAnalyzer = struct {
         return is_widening and (from_base == from or to_base != to);
     }
 
+    fn storedArgument(fn_call: ast.FnCall, params: []const tt.TypedIdentifier) ?StoredArgument {
+        if (fn_call.target.data != .identifier) return null;
+        const name = fn_call.target.data.identifier;
+        const is_storing = std.mem.eql(u8, name, "append") or std.mem.eql(u8, name, "insert");
+        if (!is_storing) return null;
+        var stored: StoredArgument = undefined;
+        var found: usize = 0;
+        for (params, 0..) |param, i| {
+            if (std.mem.eql(u8, param.identifier, "array")) {
+                stored.target = argumentFor(fn_call, i, param.identifier) orelse return null;
+                found += 1;
+            }
+            if (std.mem.eql(u8, param.identifier, "value")) {
+                stored.value = argumentFor(fn_call, i, param.identifier) orelse return null;
+                found += 1;
+            }
+        }
+        if (found != 2) return null;
+        return stored;
+    }
+
     fn argumentFor(fn_call: ast.FnCall, param_index: usize, param_name: []const u8) ?*ast.ExpNode {
         if (!fn_call.are_arguments_named) {
             if (param_index >= fn_call.arguments.len) return null;
@@ -4262,8 +4283,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const is_append = fn_call.target.data == .identifier and std.mem.eql(u8, fn_call.target.data.identifier, "append") and fn_call.arguments.len == 2;
-        if (is_append) try self.checkStore(fn_call.arguments[1].exp, self.storeTargetOf(fn_call.arguments[0].exp));
+        if (storedArgument(fn_call, params)) |stored| try self.checkStore(stored.value, self.storeTargetOf(stored.target));
 
         for (params, fn_call_arguments_values.items) |param, *argument| {
             argument.* = try self.boxForTarget(argument.*, param.type_id);
@@ -5424,6 +5444,11 @@ const GenericFunction = struct {
     is_prelude: bool = false,
     extern_uid: ?usize = null,
     copies: std.ArrayList(GenericCopy) = .empty,
+};
+
+const StoredArgument = struct {
+    target: *ast.ExpNode,
+    value: *ast.ExpNode,
 };
 
 const PreludeContext = struct {
