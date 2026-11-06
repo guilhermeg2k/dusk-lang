@@ -1391,21 +1391,7 @@ pub const SemaAnalyzer = struct {
         switch (catch_exp.fallback) {
             .value => |fallback_exp| {
                 const fallback = try self.evalExpExpecting(fallback_exp, payload);
-                if (!try self.canCoerce(fallback.type_id, payload, fallback_exp.loc)) {
-                    return self.err_reporter.invalidType(
-                        try self.type_table.name(payload, self.allocator),
-                        try self.type_table.name(fallback.type_id, self.allocator),
-                        fallback_exp.loc,
-                    );
-                }
-
-                const boxed_fallback = if (self.needsNullBox(payload, fallback.type_id))
-                    try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{ .value = fallback } },
-                        .type_id = fallback.type_id,
-                    })
-                else
-                    fallback;
+                const boxed_fallback = try self.coerceValue(fallback, payload, fallback_exp.loc);
 
                 return ir.Value.init(self.allocator, .{
                     .data = .{ .catch_call = .{ .call = call, .fallback = .{ .value = boxed_fallback } } },
@@ -1481,13 +1467,7 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        if (!try self.canCoerce(expression_type_id, var_type_id, stmt.data.let.value.loc)) {
-            return self.err_reporter.invalidType(
-                try self.type_table.name(var_type_id, self.allocator),
-                try self.type_table.name(expression_type_id, self.allocator),
-                stmt.data.let.value.loc,
-            );
-        }
+        const boxed_value = try self.coerceValue(expression_value, var_type_id, stmt.data.let.value.loc);
 
         const expr_type = self.type_table.getTypePtrById(expression_type_id);
         if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .dynamic) {
@@ -1512,14 +1492,6 @@ pub const SemaAnalyzer = struct {
                 .kind = if (let_stmt.is_mut) .mut_value else .let_value,
             });
         }
-
-        const boxed_value = if (self.needsNullBox(var_type_id, expression_value.type_id))
-            try ir.Value.init(self.allocator, .{
-                .data = .{ .null_box_init = .{ .value = expression_value } },
-                .type_id = expression_value.type_id,
-            })
-        else
-            expression_value;
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
@@ -2180,7 +2152,6 @@ pub const SemaAnalyzer = struct {
                 if (id_symbol.kind != .variable) return self.err_reporter.notMutable(id, assign_stmt.target.loc);
 
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
-                const assignment_value_type = assignment_value.type_id;
 
                 if (!id_symbol.kind.variable.is_mut) {
                     return self.err_reporter.notMutable(id, assign_stmt.target.loc);
@@ -2192,21 +2163,7 @@ pub const SemaAnalyzer = struct {
                 try self.ensureRootNotReadLocked(id_symbol.uid, id, assign_stmt.target.loc);
                 try self.checkStore(assign_stmt.exp, .{ .side = .mutable, .local = id_symbol.uid, .kind = .mut_value });
 
-                if (!try self.canCoerce(assignment_value_type, id_symbol.type_id, assign_stmt.exp.loc)) {
-                    return self.err_reporter.invalidType(
-                        try self.type_table.name(id_symbol.type_id, self.allocator),
-                        try self.type_table.name(assignment_value_type, self.allocator),
-                        assign_stmt.exp.loc,
-                    );
-                }
-
-                const boxed_value = if (self.needsNullBox(id_symbol.type_id, assignment_value.type_id))
-                    try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{ .value = assignment_value } },
-                        .type_id = assignment_value.type_id,
-                    })
-                else
-                    assignment_value;
+                const boxed_value = try self.coerceValue(assignment_value, id_symbol.type_id, assign_stmt.exp.loc);
 
                 return ir.Instruction{ .store_var = .{
                     .identifier = id_symbol.identifier,
@@ -2347,13 +2304,7 @@ pub const SemaAnalyzer = struct {
                     else => unreachable,
                 }
 
-                const boxed_value = if (self.needsNullBox(field_maybe_nullable_type_id, assignment_value.type_id))
-                    try ir.Value.init(self.allocator, .{
-                        .data = .{ .null_box_init = .{ .value = assignment_value } },
-                        .type_id = assignment_value.type_id,
-                    })
-                else
-                    assignment_value;
+                const boxed_value = try self.boxForTarget(assignment_value, field_maybe_nullable_type_id);
 
                 return ir.Instruction{
                     .update_indexed = .{
@@ -2683,13 +2634,7 @@ pub const SemaAnalyzer = struct {
                 );
             }
 
-            const boxed_value = if (self.needsNullBox(self.scope.return_type_id, exp_value_type))
-                try ir.Value.init(self.allocator, .{
-                    .data = .{ .null_box_init = .{ .value = exp_value } },
-                    .type_id = exp_value_type,
-                })
-            else
-                exp_value;
+            const boxed_value = try self.boxForTarget(exp_value, self.scope.return_type_id);
 
             return ir.Instruction{ .return_stmt = .{
                 .value = boxed_value,
@@ -2759,13 +2704,7 @@ pub const SemaAnalyzer = struct {
             );
         }
 
-        const boxed_value = if (self.needsNullBox(payload, value.type_id))
-            try ir.Value.init(self.allocator, .{
-                .data = .{ .null_box_init = .{ .value = value } },
-                .type_id = value.type_id,
-            })
-        else
-            value;
+        const boxed_value = try self.boxForTarget(value, payload);
 
         return ir.Instruction{ .return_stmt = .{ .value = boxed_value } };
     }
@@ -2937,13 +2876,7 @@ pub const SemaAnalyzer = struct {
         if (value.data == .i_array and value_kind == .array and result_kind == .array and value_kind.array == self.type_table.getPrimitive(.dynamic)) {
             value.type_id = result_base;
         }
-        const converted = try self.promoteToFloat(value, result_type);
-        if (!try self.canCoerce(converted.type_id, result_type, loc)) {
-            return self.err_reporter.invalidType(try self.type_table.name(result_type, self.allocator), try self.type_table.name(converted.type_id, self.allocator), loc);
-        }
-        if (self.needsNullBox(result_type, converted.type_id)) {
-            return ir.Value.init(self.allocator, .{ .data = .{ .null_box_init = .{ .value = converted } }, .type_id = result_type });
-        }
+        const converted = try self.coerceValue(value, result_type, loc);
         if (converted.type_id == self.type_table.getPrimitive(.null)) {
             return ir.Value.init(self.allocator, .{ .data = .i_null, .type_id = result_type });
         }
@@ -3410,14 +3343,8 @@ pub const SemaAnalyzer = struct {
         const is_append = fn_call.target.data == .identifier and std.mem.eql(u8, fn_call.target.data.identifier, "append") and fn_call.arguments.len == 2;
         if (is_append) try self.checkStore(fn_call.arguments[1].exp, self.storeTargetOf(fn_call.arguments[0].exp));
 
-        for (params, fn_call_arguments_values.items, 0..) |param, _, i| {
-            if (self.needsNullBox(param.type_id, fn_call_arguments_values.items[i].type_id)) {
-                const current = fn_call_arguments_values.items[i];
-                fn_call_arguments_values.items[i] = try ir.Value.init(self.allocator, .{
-                    .data = .{ .null_box_init = .{ .value = current } },
-                    .type_id = current.type_id,
-                });
-            }
+        for (params, fn_call_arguments_values.items) |param, *argument| {
+            argument.* = try self.boxForTarget(argument.*, param.type_id);
         }
 
 
@@ -3490,13 +3417,7 @@ pub const SemaAnalyzer = struct {
             else
                 return self.err_reporter.missingArgument(field.identifier, exp.loc);
             const loc = if (argument) |operand| operand.loc else exp.loc;
-            if (!try self.canCoerce(value.type_id, field.type_id, loc)) {
-                return self.err_reporter.invalidType(try self.type_table.name(field.type_id, self.allocator), try self.type_table.name(value.type_id, self.allocator), loc);
-            }
-            values[index] = if (self.needsNullBox(field.type_id, value.type_id))
-                try ir.Value.init(self.allocator, .{ .data = .{ .null_box_init = .{ .value = value } }, .type_id = field.type_id })
-            else
-                value;
+            values[index] = try self.coerceValue(value, field.type_id, loc);
         }
         return ir.Value.init(self.allocator, .{ .data = .{ .struct_init = .{ .keys = keys, .values = values } }, .type_id = type_id });
     }
@@ -3536,21 +3457,7 @@ pub const SemaAnalyzer = struct {
         };
 
         const raw_value = try self.evalExpExpecting(arg.exp, variant_type_id);
-        if (!try self.canCoerce(raw_value.type_id, variant_type_id, arg.exp.loc)) {
-            return self.err_reporter.invalidType(
-                try self.type_table.name(variant_type_id, self.allocator),
-                try self.type_table.name(raw_value.type_id, self.allocator),
-                arg.exp.loc,
-            );
-        }
-
-        const value = if (self.needsNullBox(variant_type_id, raw_value.type_id))
-            try ir.Value.init(self.allocator, .{
-                .data = .{ .null_box_init = .{ .value = raw_value } },
-                .type_id = raw_value.type_id,
-            })
-        else
-            raw_value;
+        const value = try self.coerceValue(raw_value, variant_type_id, arg.exp.loc);
 
         return ir.Value.init(self.allocator, .{
             .data = .{ .union_init = .{ .tag = variant_name, .value = value } },
@@ -3823,17 +3730,7 @@ pub const SemaAnalyzer = struct {
                 for (values.items) |*previous| previous.* = try self.promoteToFloat(previous.*, float_type);
             }
 
-            if (!try self.canCoerce(exp_value_type, array_literal_type, exp.loc)) {
-                return self.err_reporter.invalidType(try self.type_table.name(array_literal_type, self.allocator), try self.type_table.name(exp_value_type, self.allocator), exp.loc);
-            }
-
-            const item_value = if (self.needsNullBox(array_literal_type, exp_value_type))
-                try ir.Value.init(self.allocator, .{
-                    .data = .{ .null_box_init = .{ .value = exp_value } },
-                    .type_id = exp_value_type,
-                })
-            else
-                exp_value;
+            const item_value = try self.coerceValue(exp_value, array_literal_type, exp.loc);
 
             try values.append(self.allocator, item_value);
         }
@@ -4063,6 +3960,23 @@ pub const SemaAnalyzer = struct {
             .else_block = null_instructions,
         } });
         return self.finishBranchResult(&result, try instructions.toOwnedSlice(self.allocator));
+    }
+
+    fn coerceValue(self: *Self, value: *ir.Value, target_type: tt.TypeId, loc: err.Loc) CompileError!*ir.Value {
+        const promoted = try self.promoteToFloat(value, target_type);
+        if (!try self.canCoerce(promoted.type_id, target_type, loc)) {
+            return self.err_reporter.invalidType(
+                try self.type_table.name(target_type, self.allocator),
+                try self.type_table.name(promoted.type_id, self.allocator),
+                loc,
+            );
+        }
+        return self.boxForTarget(promoted, target_type);
+    }
+
+    fn boxForTarget(self: *Self, value: *ir.Value, target_type: tt.TypeId) CompileError!*ir.Value {
+        if (!self.needsNullBox(target_type, value.type_id)) return value;
+        return ir.Value.init(self.allocator, .{ .data = .{ .null_box_init = .{ .value = value } }, .type_id = target_type });
     }
 
     fn needsNullBox(self: *Self, target_type: tt.TypeId, value_type: tt.TypeId) bool {

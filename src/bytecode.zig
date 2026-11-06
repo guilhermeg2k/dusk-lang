@@ -92,6 +92,7 @@ pub const BytecodeGen = struct {
                 next_fn_index += 1;
             }
         }
+
         for (program.functions) |func| {
             try self.fn_index_by_uid.put(func.uid, next_fn_index);
             next_fn_index += 1;
@@ -273,6 +274,7 @@ pub const BytecodeGen = struct {
             self.register_types[idx] = store_var.type_id;
             return;
         }
+
         const reg_idx = try self.genValue(store_var.value, try self.consumeRegister());
         self.register_types[reg_idx] = store_var.type_id;
         try self.bindVariable(store_var.uid, reg_idx);
