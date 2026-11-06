@@ -41,6 +41,7 @@ pub const Slot = struct {
 pub const StructStmt = struct {
     identifier: []const u8,
     def: Struct,
+    slots: []const Slot = &.{},
 };
 
 pub const EnumStmt = struct {
@@ -51,6 +52,7 @@ pub const EnumStmt = struct {
 pub const UnionStmt = struct {
     identifier: []const u8,
     def: UnionDef,
+    slots: []const Slot = &.{},
 };
 
 pub const ErrorSetStmt = struct {
@@ -130,6 +132,8 @@ pub const TypeAnnotation = struct {
     },
 
     is_nullable: bool,
+    args: []const *TypeAnnotation = &.{},
+    loc: err.Loc = .{ .start = 0, .end = 0 },
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);

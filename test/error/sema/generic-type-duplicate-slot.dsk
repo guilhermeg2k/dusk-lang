@@ -1,0 +1,6 @@
+struct Twice[T, T]
+    a: T
+end
+
+func main() -> void
+end

@@ -1,0 +1,10 @@
+struct Pairwise[T]
+    items: []T
+
+    func sum(self: @) -> T
+        return self.items[0] + self.items[1]
+    end
+end
+
+func main() -> void
+end

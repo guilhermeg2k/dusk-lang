@@ -1,0 +1,124 @@
+struct Stack[T]
+    let MAX = 10
+
+    items: []T
+
+    func push(mut self: @, item: T) -> void
+        append(self.items, item)
+    end
+
+    func peek(self: @) -> T
+        return self.items[len(self.items) - 1]
+    end
+
+    func size(self: @) -> int
+        return len(self.items)
+    end
+end
+
+struct Pair[A, B]
+    left: A
+    right: B
+end
+
+struct Node[T]
+    value: T
+    next: ?Node[T]
+end
+
+union Result[T, E]
+    ok: T
+    err: E
+end
+
+func top[T](s: Stack[T]) -> T
+    return s.peek()
+end
+
+func length[T](node: Node[T]) -> int
+    if node.next: next then return 1 + length(next) end
+    return 1
+end
+
+func divide(a: int, b: int) -> Result[int, string]
+    if b == 0 then return @(err = "division by zero") end
+    return @(ok = a // b)
+end
+
+let LIMIT = Stack.MAX * 2
+
+
+union Choice[T]
+    let NAME = "choice"
+    one: T
+end
+
+struct Box[T]
+    value: T
+
+    func get(self: @) -> T
+        return self.value
+    end
+
+    func listed(self: @) -> []T
+        return single(self.value)
+    end
+end
+
+func wrap[T](x: T) -> Box[T]
+    return Box(value = x)
+end
+
+func single[T](x: T) -> []T
+    return [x]
+end
+
+func unwrap_all[T](boxes: []Box[T]) -> []T
+    let mut out: []T = []
+    for boxes: b do append(out, b.value) end
+    return out
+end
+
+func main() -> void
+    let mut s = Stack(items = [1, 2])
+    s.push(3)
+    assert(s.peek() == 3)
+    assert(s.size() == 3)
+    assert(top(s) == 3)
+
+    let mut words: Stack[string] = @(items = [])
+    words.push("a")
+    assert(str_equal(words.peek(), "a"))
+
+    let mut empty: Stack[float] = Stack(items = [])
+    empty.push(1.5)
+    assert(empty.peek() == 1.5)
+
+    let p = Pair(left = 1, right = "x")
+    assert(p.left == 1)
+    assert(str_equal(p.right, "x"))
+
+    let list = Node(value = 1, next = Node(value = 2, next = null))
+    assert(length(list) == 2)
+
+    let r = divide(10, 2)
+    when r
+        ok: value then assert(value == 5) end
+        err: _ then assert(false) end
+    end
+    let bad = divide(1, 0)
+    if bad.err: message then assert(str_equal(message, "division by zero")) end
+
+    let explicit: Result[bool, int] = Result(ok = true)
+    assert(explicit.ok orelse false)
+    assert(Stack.MAX == 10)
+    assert(LIMIT == 20)
+    assert(str_equal(Choice.NAME, "choice"))
+    let b = wrap(5)
+    assert(b.get() == 5)
+    assert(len(b.listed()) == 1)
+    let greeting = wrap("hi")
+    assert(str_equal(greeting.get(), "hi"))
+    let values = unwrap_all([wrap(1), wrap(2)])
+    assert(values[1] == 2)
+end

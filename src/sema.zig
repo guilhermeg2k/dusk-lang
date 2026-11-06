@@ -33,6 +33,8 @@ pub const SemaAnalyzer = struct {
     exp_symbols: std.AutoHashMapUnmanaged(*const ast.ExpNode, Symbol) = .empty,
     flow_frames: std.ArrayList(FlowFrame) = .empty,
     generic_functions: std.ArrayList(GenericFunction) = .empty,
+    generic_types: std.ArrayList(GenericType) = .empty,
+    copied_types: std.AutoHashMapUnmanaged(tt.TypeId, TypeCopy) = .empty,
     pending_copies: std.ArrayList(PendingCopy) = .empty,
     copy_depth: usize = 0,
 
@@ -649,6 +651,11 @@ pub const SemaAnalyzer = struct {
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
                 },
                 .@"struct" => |ss| {
+                    if (ss.slots.len > 0) {
+                        const symbol = try self.createGenericTypeSymbol(ss.identifier, ss.slots, .{ .@"struct" = &stmt.data.@"struct".def }, stmt.loc);
+                        self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
+                        continue;
+                    }
                     const symbol = try self.createEmptyStructSymbol(ss.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
                 },
@@ -657,6 +664,11 @@ pub const SemaAnalyzer = struct {
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .@"union" => |un| {
+                    if (un.slots.len > 0) {
+                        const symbol = try self.createGenericTypeSymbol(un.identifier, un.slots, .{ .@"union" = &stmt.data.@"union".def }, stmt.loc);
+                        self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(un.identifier, stmt.loc);
+                        continue;
+                    }
                     const symbol = try self.createEmptyUnionSymbol(un.identifier);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(un.identifier, stmt.loc);
                 },
@@ -688,6 +700,10 @@ pub const SemaAnalyzer = struct {
                 },
                 .@"struct" => |ss| {
                     const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
+                    if (symbol.kind == .generic_type) {
+                        try self.createOpaqueCopy(symbol.kind.generic_type);
+                        continue;
+                    }
                     try self.fulfillStructType(symbol, &ss.def);
                 },
 
@@ -698,6 +714,10 @@ pub const SemaAnalyzer = struct {
 
                 .@"union" => |us| {
                     const symbol = try self.scope.symbol_table.getOrError(us.identifier);
+                    if (symbol.kind == .generic_type) {
+                        try self.createOpaqueCopy(symbol.kind.generic_type);
+                        continue;
+                    }
                     try self.fulfillUnionType(symbol, &us.def, stmt.loc);
                 },
                 else => {},
@@ -720,7 +740,7 @@ pub const SemaAnalyzer = struct {
                 const symbol = self.scope.symbol_table.get(name) orelse return false;
                 return symbol.kind == .constant;
             },
-            .indexed => |indexed| indexed.index.data == .identifier and self.definedTypeOf(indexed.target) != null and !indexed.is_nullable,
+            .indexed => |indexed| indexed.index.data == .identifier and self.isTypeName(indexed.target) and !indexed.is_nullable,
             .unary_exp => |unary| self.isConstantExp(unary.right),
             .binary_exp => |binary| self.isConstantExp(binary.left) and self.isConstantExp(binary.right),
             else => false,
@@ -768,6 +788,17 @@ pub const SemaAnalyzer = struct {
         self.constants.items[index].is_resolving = false;
         root.symbols.getPtr(constant.let_stmt.identifier).?.type_id = value.type_id;
         return value;
+    }
+
+    fn createGenericTypeSymbol(self: *Self, identifier: []const u8, slots: []const ast.Slot, def: @FieldType(GenericType, "def"), loc: err.Loc) !Symbol {
+        const index = self.generic_types.items.len;
+        try self.generic_types.append(self.allocator, .{ .identifier = identifier, .slots = slots, .def = def, .loc = loc });
+        return Symbol{
+            .identifier = identifier,
+            .uid = self.scope.genUid(),
+            .kind = .{ .generic_type = index },
+            .type_id = self.type_table.getPrimitive(.meta),
+        };
     }
 
     fn createGenericFuncSymbol(self: *Self, func_stmt: *const ast.FuncStmt, loc: err.Loc) !Symbol {
@@ -1125,7 +1156,8 @@ pub const SemaAnalyzer = struct {
 
             if (param.type_annotation) |annotation| {
                 const owner_type_id = if (fn_owner_symbol) |symbol| symbol.kind.defined_type.blueprint_type_id else null;
-                param_type_id = self.resolveTypeAnnotation(annotation, owner_type_id) catch {
+                param_type_id = self.resolveTypeAnnotation(annotation, owner_type_id) catch |failure| {
+                    if (failure != error.SemaError) return failure;
                     return self.err_reporter.typeNotDefined(
                         try param.type_annotation.?.value(self.allocator),
                         loc,
@@ -1174,8 +1206,9 @@ pub const SemaAnalyzer = struct {
         }
 
         if (fn_def.return_type) |r_type| {
-            return_type_id = self.resolveTypeAnnotation(r_type, null) catch {
-                return self.err_reporter.typeNotDefined(r_type.type.primitive, loc);
+            return_type_id = self.resolveTypeAnnotation(r_type, null) catch |failure| {
+                if (failure != error.SemaError) return failure;
+                return self.err_reporter.typeNotDefined(try r_type.value(self.allocator), loc);
             };
         } else if (fn_def.body_block.statements.items[0].data.@"return".exp) |return_exp| {
             const return_value = try self.evalExp(return_exp);
@@ -1640,7 +1673,15 @@ pub const SemaAnalyzer = struct {
             .@"struct" => |name| {
                 const slot_index = for (slots, 0..) |slot, i| {
                     if (std.mem.eql(u8, slot.identifier, name)) break i;
-                } else return;
+                } else {
+                    const copy = self.copied_types.get(type_id) orelse return;
+                    const generic = self.generic_types.items[copy.generic];
+                    if (!std.mem.eql(u8, generic.identifier, name) or annotation.args.len != copy.args.len) return;
+                    for (annotation.args, copy.args) |arg_annotation, copied_arg| {
+                        try self.inferSlots(arg_annotation, copied_arg, slots, bindings, loc);
+                    }
+                    return;
+                };
                 if (kind == .dynamic) return;
                 if (kind == .void or kind == .null) {
                     return self.err_reporter.invalidSlotType(name, try self.type_table.name(type_id, self.allocator), loc);
@@ -1687,14 +1728,157 @@ pub const SemaAnalyzer = struct {
         defer self.scope.return_type_id = saved_return_type;
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
 
-        if (!self.containsSlot(args)) try self.pending_copies.append(self.allocator, .{ .generic = index, .copy = copy_index });
+        if (!self.containsSlot(args)) try self.pending_copies.append(self.allocator, .{ .kind = .function, .generic = index, .copy = copy_index });
         return symbol;
+    }
+
+    fn createOpaqueCopy(self: *Self, index: usize) CompileError!void {
+        const generic = self.generic_types.items[index];
+        const args = try self.allocator.alloc(tt.TypeId, generic.slots.len);
+        for (generic.slots, 0..) |slot, i| {
+            for (generic.slots[0..i]) |previous| {
+                if (std.mem.eql(u8, previous.identifier, slot.identifier)) return self.err_reporter.alreadyDefined(slot.identifier, slot.loc);
+            }
+            args[i] = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier } }, .is_nullable = false });
+        }
+        const symbol = try self.instantiateGenericType(index, args, generic.loc);
+        self.generic_types.items[index].opaque_copy = symbol;
+    }
+
+    fn checkGenericType(self: *Self, index: usize) CompileError!void {
+        const generic = self.generic_types.items[index];
+        const opaque_copy = generic.opaque_copy orelse unreachable;
+        for (generic.copies.items, 0..) |copy, copy_index| {
+            if (copy.symbol.uid != opaque_copy.uid) continue;
+            _ = try self.visitTypeCopy(index, copy_index);
+            return;
+        }
+    }
+
+    fn resolveGenericTypeAnnotation(self: *Self, index: usize, annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) CompileError!tt.TypeId {
+        const generic = self.generic_types.items[index];
+        if (annotation.args.len != generic.slots.len) {
+            return self.err_reporter.wrongSlotCount(generic.identifier, generic.slots.len, annotation.args.len, annotation.loc);
+        }
+        const args = try self.allocator.alloc(tt.TypeId, annotation.args.len);
+        for (annotation.args, generic.slots, 0..) |arg, slot, i| {
+            args[i] = try self.resolveTypeAnnotation(arg, current_defined_type_type_id);
+            const kind = self.type_table.getTypePtrById(args[i]).kind;
+            if (kind == .void or kind == .null) {
+                return self.err_reporter.invalidSlotType(slot.identifier, try self.type_table.name(args[i], self.allocator), annotation.loc);
+            }
+        }
+        const symbol = try self.instantiateGenericType(index, args, annotation.loc);
+        return symbol.kind.defined_type.blueprint_type_id;
+    }
+
+    fn constructGenericType(
+        self: *Self,
+        index: usize,
+        fn_call: ast.FnCall,
+        expected_type: ?tt.TypeId,
+        loc: err.Loc,
+        inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
+    ) CompileError!Symbol {
+        const generic = self.generic_types.items[index];
+        const bindings = try self.allocator.alloc(?tt.TypeId, generic.slots.len);
+        @memset(bindings, null);
+
+        switch (generic.def) {
+            .@"struct" => |struct_def| {
+                for (struct_def.fields, 0..) |field, field_index| {
+                    const annotation = field.type orelse continue;
+                    if (!mentionsSlot(annotation, generic.slots)) continue;
+                    const arg_exp = argumentFor(fn_call, field_index, field.identifier) orelse continue;
+                    const value = try self.evalExpExpecting(arg_exp, null);
+                    try inferred_values.put(self.allocator, arg_exp, value);
+                    try self.inferSlots(annotation, value.type_id, generic.slots, bindings, arg_exp.loc);
+                }
+            },
+            .@"union" => |union_def| {
+                for (fn_call.arguments) |arg| {
+                    const name = arg.identifier orelse continue;
+                    for (union_def.variants) |variant| {
+                        if (!std.mem.eql(u8, variant.identifier, name) or !mentionsSlot(variant.type, generic.slots)) continue;
+                        const value = try self.evalExpExpecting(arg.exp, null);
+                        try self.inferSlots(variant.type, value.type_id, generic.slots, bindings, arg.exp.loc);
+                    }
+                }
+            },
+        }
+
+        if (expected_type) |expected| {
+            const base_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
+            if (self.copied_types.get(base_id)) |copy| {
+                if (copy.generic == index) {
+                    for (bindings, copy.args) |*binding, arg| {
+                        if (binding.* == null) binding.* = arg;
+                    }
+                }
+            }
+        }
+
+        const args = try self.allocator.alloc(tt.TypeId, bindings.len);
+        for (bindings, generic.slots, 0..) |binding, slot, slot_index| {
+            args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, generic.identifier, loc);
+        }
+        return self.instantiateGenericType(index, args, loc);
+    }
+
+    fn instantiateGenericType(self: *Self, index: usize, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
+        const generic = &self.generic_types.items[index];
+        for (generic.copies.items) |copy| {
+            if (std.mem.eql(tt.TypeId, copy.args, args)) return copy.symbol;
+        }
+        if (self.copy_depth >= max_copy_depth) {
+            self.err_reporter.copy_context = null;
+            return self.err_reporter.genericCopyTooDeep(generic.identifier, max_copy_depth, loc);
+        }
+
+        const name = try self.copyName(generic.identifier, args);
+        const symbol = switch (generic.def) {
+            .@"struct" => try self.createEmptyStructSymbol(name),
+            .@"union" => try self.createEmptyUnionSymbol(name),
+        };
+        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .depth = self.copy_depth + 1 });
+        const copy_index = generic.copies.items.len - 1;
+        try self.copied_types.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .generic = index, .args = args });
+
+        const saved_table = try self.enterSlotScope(generic.slots, args);
+        defer self.scope.symbol_table = saved_table;
+        const saved_return_type = self.scope.return_type_id;
+        defer self.scope.return_type_id = saved_return_type;
+        const saved_depth = self.copy_depth;
+        self.copy_depth += 1;
+        defer self.copy_depth = saved_depth;
+        switch (generic.def) {
+            .@"struct" => |struct_def| try self.fulfillStructType(symbol, struct_def),
+            .@"union" => |union_def| try self.fulfillUnionType(symbol, union_def, generic.loc),
+        }
+
+        if (!self.containsSlot(args)) try self.pending_copies.append(self.allocator, .{ .kind = .type, .generic = index, .copy = copy_index });
+        return symbol;
+    }
+
+    fn visitTypeCopy(self: *Self, index: usize, copy_index: usize) CompileError!ir.DefinedType {
+        const generic = self.generic_types.items[index];
+        const copy = generic.copies.items[copy_index];
+        const saved_table = try self.enterSlotScope(generic.slots, copy.args);
+        defer self.scope.symbol_table = saved_table;
+        return switch (generic.def) {
+            .@"struct" => |struct_def| .{ .kind = .{ .@"struct" = try self.visitStructDef(struct_def, copy.symbol) } },
+            .@"union" => |union_def| try self.visitUnionDef(union_def, copy.symbol),
+        };
     }
 
     fn lowerPendingCopies(self: *Self) CompileError!void {
         var next: usize = 0;
         while (next < self.pending_copies.items.len) : (next += 1) {
             const pending = self.pending_copies.items[next];
+            if (pending.kind == .type) {
+                try self.lowerTypeCopy(pending);
+                continue;
+            }
             const generic = self.generic_functions.items[pending.generic];
             const copy = generic.copies.items[pending.copy];
 
@@ -1711,6 +1895,16 @@ pub const SemaAnalyzer = struct {
             try self.functions.append(self.allocator, func);
         }
         self.pending_copies.clearRetainingCapacity();
+    }
+
+    fn lowerTypeCopy(self: *Self, pending: PendingCopy) CompileError!void {
+        const copy = self.generic_types.items[pending.generic].copies.items[pending.copy];
+        const saved_depth = self.copy_depth;
+        self.copy_depth = copy.depth;
+        defer self.copy_depth = saved_depth;
+        self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc };
+        defer self.err_reporter.copy_context = null;
+        try self.defined_types.append(self.allocator, try self.visitTypeCopy(pending.generic, pending.copy));
     }
 
     fn enterSlotScope(self: *Self, slots: []const ast.Slot, args: []const tt.TypeId) CompileError!*SymbolTable {
@@ -1762,6 +1956,8 @@ pub const SemaAnalyzer = struct {
         return switch (annotation.type) {
             .@"struct" => |name| for (slots) |slot| {
                 if (std.mem.eql(u8, slot.identifier, name)) break true;
+            } else for (annotation.args) |arg| {
+                if (mentionsSlot(arg, slots)) break true;
             } else false,
             .array => |inner| mentionsSlot(inner, slots),
             else => false,
@@ -1770,7 +1966,12 @@ pub const SemaAnalyzer = struct {
 
     fn visitStructStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
         const struct_stmt = stmt.data.@"struct";
-        const struct_def = try self.visitStructDef(&struct_stmt.def, struct_stmt.identifier);
+        const struct_symbol = try self.scope.symbol_table.getOrError(struct_stmt.identifier);
+        if (struct_symbol.kind == .generic_type) {
+            try self.checkGenericType(struct_symbol.kind.generic_type);
+            return null;
+        }
+        const struct_def = try self.visitStructDef(&struct_stmt.def, struct_symbol);
         try self.defined_types.append(self.allocator, .{ .kind = .{ .@"struct" = struct_def } });
         return null;
     }
@@ -1807,12 +2008,21 @@ pub const SemaAnalyzer = struct {
     fn visitUnionStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
         const union_stmt = stmt.data.@"union";
         const union_symbol = try self.scope.symbol_table.getOrError(union_stmt.identifier);
+        if (union_symbol.kind == .generic_type) {
+            try self.checkGenericType(union_symbol.kind.generic_type);
+            return null;
+        }
+        try self.defined_types.append(self.allocator, try self.visitUnionDef(&union_stmt.def, union_symbol));
+        return null;
+    }
+
+    fn visitUnionDef(self: *Self, union_ast: *const ast.UnionDef, union_symbol: Symbol) CompileError!ir.DefinedType {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
         const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
 
         var funcs: std.ArrayList(ir.Func) = .empty;
 
-        for (union_stmt.def.funcs) |func_node| {
+        for (union_ast.funcs) |func_node| {
             const func = func_node.data.func;
             const fn_type_id = union_def.methods.get(func.identifier) orelse continue;
             const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
@@ -1820,19 +2030,17 @@ pub const SemaAnalyzer = struct {
             try funcs.append(self.allocator, fn_def);
         }
 
-        try self.defined_types.append(self.allocator, .{
+        return .{
             .kind = .{
                 .@"union" = .{
                     .uid = union_symbol.uid,
                     .type_id = blueprint_type_id,
-                    .identifier = union_stmt.identifier,
+                    .identifier = union_symbol.identifier,
                     .variants = union_def.variants,
                     .funcs = try funcs.toOwnedSlice(self.allocator),
                 },
             },
-        });
-
-        return null;
+        };
     }
 
     fn lowerIf(self: *Self, exp: *const ast.ExpNode, result: ?*BranchResult) CompileError!ir.Instruction {
@@ -2764,8 +2972,8 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn visitStructDef(self: *Self, struct_def: *const ast.Struct, identifier: []const u8) CompileError!ir.Struct {
-        const struct_symbol = try self.scope.symbol_table.getOrError(identifier);
+    fn visitStructDef(self: *Self, struct_def: *const ast.Struct, struct_symbol: Symbol) CompileError!ir.Struct {
+        const identifier = struct_symbol.identifier;
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
         const prev_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
@@ -3412,6 +3620,20 @@ pub const SemaAnalyzer = struct {
                         try self.type_table.name((try self.resolveConstant(symbol.kind.constant)).type_id, self.allocator),
                         exp.loc,
                     ),
+                    .generic_type => |index| {
+                        const copy_symbol = try self.constructGenericType(index, fn_call, expected_type, exp.loc, &inferred_values);
+                        const blueprint_type_id = copy_symbol.kind.defined_type.blueprint_type_id;
+                        switch (self.type_table.getTypePtrById(blueprint_type_id).kind) {
+                            .@"struct" => |struct_def| {
+                                params = struct_def.fields_in_order;
+                                return_type = blueprint_type_id;
+                                uid = copy_symbol.uid;
+                                is_struct_init = true;
+                            },
+                            .@"union" => return self.evalUnionInit(exp, fn_call.arguments, blueprint_type_id),
+                            else => unreachable,
+                        }
+                    },
                     .generic_function => |index| {
                         const copy_symbol = try self.callGenericFunction(index, fn_call, expected_type, exp.loc, &inferred_values);
                         const func = self.type_table.getTypePtrById(copy_symbol.type_id).kind.function;
@@ -3891,6 +4113,13 @@ pub const SemaAnalyzer = struct {
         if (id_symbol) |symbol| {
             if (symbol.kind == .constant) return self.resolveConstant(symbol.kind.constant);
             if (symbol.kind == .generic_function) return self.err_reporter.genericNeedsCall(id, exp.loc);
+            if (symbol.kind == .generic_type) {
+                const opaque_copy = self.generic_types.items[symbol.kind.generic_type].opaque_copy orelse unreachable;
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .identifier = .{ .uid = opaque_copy.uid, .name = symbol.identifier } },
+                    .type_id = opaque_copy.kind.defined_type.blueprint_type_id,
+                });
+            }
             if (symbol.kind == .type_slot) return self.err_reporter.slotUsedAsValue(id, exp.loc);
             try self.exp_symbols.put(self.allocator, exp, symbol);
             self.noteMention(symbol.uid, exp.loc);
@@ -3922,9 +4151,19 @@ pub const SemaAnalyzer = struct {
         };
     }
 
+    fn isTypeName(self: *Self, exp: *const ast.ExpNode) bool {
+        if (exp.data != .identifier) return false;
+        const sym = self.scope.symbol_table.get(exp.data.identifier) orelse return false;
+        return sym.kind == .defined_type or sym.kind == .generic_type;
+    }
+
     fn definedTypeOf(self: *Self, exp: *const ast.ExpNode) ?tt.TypeId {
         if (exp.data != .identifier) return null;
         const sym = self.scope.symbol_table.get(exp.data.identifier) orelse return null;
+        if (sym.kind == .generic_type) {
+            const opaque_copy = self.generic_types.items[sym.kind.generic_type].opaque_copy orelse return null;
+            return opaque_copy.kind.defined_type.blueprint_type_id;
+        }
         if (sym.kind != .defined_type) return null;
         return sym.kind.defined_type.blueprint_type_id;
     }
@@ -4282,9 +4521,13 @@ pub const SemaAnalyzer = struct {
             .@"struct" => |struct_name| {
                 if (self.is_in_prelude and std.mem.eql(u8, struct_name, "dynamic")) return self.type_table.getPrimitive(.dynamic);
                 const symbol = try self.scope.symbol_table.getOrError(struct_name);
+                if (symbol.kind != .generic_type and type_annotation.args.len > 0) {
+                    return self.err_reporter.wrongSlotCount(struct_name, 0, type_annotation.args.len, type_annotation.loc);
+                }
                 const blueprint_type_id = switch (symbol.kind) {
                     .defined_type => |dt| dt.blueprint_type_id,
                     .type_slot => symbol.type_id,
+                    .generic_type => |index| try self.resolveGenericTypeAnnotation(index, type_annotation, current_defined_type_type_id),
                     else => return CompileError.SemaError,
                 };
                 return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
@@ -4568,6 +4811,7 @@ pub const Symbol = struct {
         function: void,
         constant: usize,
         generic_function: usize,
+        generic_type: usize,
         type_slot: void,
     },
 };
@@ -4600,7 +4844,25 @@ const GenericCopy = struct {
     depth: usize,
 };
 
+const GenericType = struct {
+    identifier: []const u8,
+    slots: []const ast.Slot,
+    def: union(enum) {
+        @"struct": *const ast.Struct,
+        @"union": *const ast.UnionDef,
+    },
+    loc: err.Loc,
+    copies: std.ArrayList(GenericCopy) = .empty,
+    opaque_copy: ?Symbol = null,
+};
+
+const TypeCopy = struct {
+    generic: usize,
+    args: []const tt.TypeId,
+};
+
 const PendingCopy = struct {
+    kind: enum { function, type },
     generic: usize,
     copy: usize,
 };

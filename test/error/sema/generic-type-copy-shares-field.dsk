@@ -1,0 +1,21 @@
+struct Stack[T]
+    items: []T
+
+    func first(self: @) -> T
+        return self.items[0]
+    end
+end
+
+union Result[T, E]
+    ok: T
+    err: E
+end
+
+struct Point
+    x: int
+end
+
+func main() -> void
+    let s = Stack(items = [[1], [2]])
+    let x = s.first()
+end

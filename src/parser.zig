@@ -207,11 +207,13 @@ pub const Parser = struct {
     fn parseStructStmt(self: *Self) !ast.StructStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const struct_def = try self.parseStructDef();
 
         return ast.StructStmt{
             .identifier = identifier_token.value(self.src),
             .def = struct_def,
+            .slots = slots,
         };
     }
 
@@ -229,11 +231,13 @@ pub const Parser = struct {
     fn parseUnionStmt(self: *Self) !ast.UnionStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const union_def = try self.parseUnionDef();
 
         return ast.UnionStmt{
             .identifier = identifier_token.value(self.src),
             .def = union_def,
+            .slots = slots,
         };
     }
 
@@ -1483,10 +1487,15 @@ pub const Parser = struct {
                 .type = .{ .primitive = tk.value(self.src) },
                 .is_nullable = is_nullable,
             }),
-            .identifier => ast.TypeAnnotation.init(self.allocator, .{
-                .type = .{ .@"struct" = tk.value(self.src) },
-                .is_nullable = is_nullable,
-            }),
+            .identifier => {
+                const args = try self.parseTypeArgs();
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .type = .{ .@"struct" = tk.value(self.src) },
+                    .is_nullable = is_nullable,
+                    .args = args,
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
             .struct_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .anonymous_struct = try self.parseAnonymousStructDef() },
                 .is_nullable = is_nullable,
@@ -1507,6 +1516,17 @@ pub const Parser = struct {
                 return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
             },
         };
+    }
+
+    fn parseTypeArgs(self: *Self) CompileError![]const *ast.TypeAnnotation {
+        if (!self.match(.l_bracket)) return &.{};
+        var args: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        while (true) {
+            try args.append(self.allocator, try self.parseTypeAnnotation(false));
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_bracket);
+        return args.toOwnedSlice(self.allocator);
     }
 
     fn match(self: *Self, tag: Tag) bool {

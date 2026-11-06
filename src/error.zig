@@ -418,6 +418,15 @@ pub const CompileErrorReporter = struct {
         return error.InvalidSlotType;
     }
 
+    pub fn wrongSlotCount(self: *Self, identifier: []const u8, expected: usize, found: usize, loc: Loc) CompileError {
+        if (expected == 0) {
+            self.log(try allocPrint(self.allocator, "'{s}' isn't generic, so it takes no type arguments", .{identifier}), loc);
+            return error.WrongSlotCount;
+        }
+        self.log(try allocPrint(self.allocator, "'{s}' takes {d} type argument(s), found {d}", .{ identifier, expected, found }), loc);
+        return error.WrongSlotCount;
+    }
+
     pub fn genericCopyTooDeep(self: *Self, name: []const u8, max_depth: usize, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' needs copies nested more than {d} deep: it probably calls itself with a bigger type each time", .{ name, max_depth }), loc);
         return error.GenericCopyTooDeep;
@@ -778,6 +787,7 @@ pub const CompileError = error{
     ConflictingSlotTypes,
     InvalidSlotType,
     GenericCopyTooDeep,
+    WrongSlotCount,
     InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,

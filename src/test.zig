@@ -2017,6 +2017,24 @@ test "generics: slots the arguments don't fill come from the expected type" {
     try runCaseError("sema/generic-expected-type-mismatch.dsk", error.InvalidType);
 }
 
+test "generics: generic structs and unions" {
+    try runCase("generics-types.dsk");
+    try runCaseError("parser/generic-enum.dsk", error.ParserError);
+    try runCaseError("sema/generic-type-too-many-args.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-type-missing-args.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-args-on-plain-struct.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-union-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-struct-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-type-copy-shares-field.dsk", error.NeedsCopy);
+    try runCaseError("sema/generic-type-void-arg.dsk", error.InvalidSlotType);
+    try runCaseError("sema/generic-struct-method-arithmetic.dsk", error.InvalidType);
+    try runCaseError("sema/generic-type-duplicate-slot.dsk", error.AlreadyDefined);
+}
+
+test "sema error: unknown return type is reported, not a crash" {
+    try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
+}
+
 test "prelude: every extern has a binding and every binding has an extern" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
