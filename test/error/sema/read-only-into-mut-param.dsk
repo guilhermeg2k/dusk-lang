@@ -1,0 +1,12 @@
+struct Obj
+    items: []int
+end
+
+func grow(mut o: Obj) -> void
+    append(o.items, 1)
+end
+
+func main() -> void
+    let frozen = [1, 2]
+    grow(Obj(items = frozen))
+end

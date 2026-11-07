@@ -1,0 +1,9 @@
+struct Obj
+    items: []int
+end
+
+func main() -> void
+    let frozen = [1, 2]
+    let mut x = Obj(items = [])
+    x.items = frozen
+end

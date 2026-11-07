@@ -608,6 +608,14 @@ pub const CompileErrorReporter = struct {
         return error.PrimitiveParamsCantBeMutable;
     }
 
+    pub fn readOnlyIntoMutable(self: *Self, text: []const u8, loc: Loc) CompileError {
+        self.log(
+            try allocPrint(self.allocator, "'{s}' can't change, so it can't go into a mutable value: use copy({s}), or make it mutable", .{ text, text }),
+            loc,
+        );
+        return error.ReadOnlyIntoMutable;
+    }
+
     pub fn primitiveCaptureCantBeMutable(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
@@ -807,6 +815,7 @@ pub const CompileError = error{
     NotDefined,
     NotMutable,
     TemporaryNotMutable,
+    ReadOnlyIntoMutable,
     UnwrappedCantBeMutable,
     SelfOutsideStruct,
     InvalidStructField,

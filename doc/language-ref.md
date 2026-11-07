@@ -106,6 +106,18 @@ echo(snapshot)   # [1, 2]
 
 Strings and primitives can't be changed in place, so sharing them never shows.
 
+A value read through a name that can't change it (a `let` variable, a parameter or capture without `mut`, `self` in a method without `mut self`, or a field or item reached through one of them) can't go into a mutable place: a `let mut` variable, an assignment to one or to its fields and items, `append` and `insert`, or a `mut` argument. Constructors, array literals and `if`, `when`, `orelse` and `catch` results count as the values they hold. Otherwise the value could change without any `mut` on its own name:
+
+```nim
+let frozen = [1, 2]
+let mut z = frozen                      # error: 'frozen' can't change, so it can't go into a mutable value
+let mut x = Obj(items = frozen)         # error, same reason
+let view = Obj(items = frozen)          # fine: nothing changes through 'view'
+let mut owned = Obj(items = copy(frozen))   # fine
+```
+
+New values (literals, constructors of new values, call results and `copy(x)`) can go anywhere. The other way around is fine too: a `let` can share a `let mut` value, and sees its changes.
+
 ### Constants
 
 A top-level `let` whose value is known at compile time is a constant: an `int`, `float`, `bool`, `byte`, string or enum value built from literals, other constants, enum variants, static fields and operators. Constants are the only variables allowed at the top level, every function can see them (see [Scope](#scope)), and they can be used anywhere in the program, even above their declaration.
@@ -1345,6 +1357,7 @@ These are known gaps in v0.14 development. Most are planned in the [roadmap](roa
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
+- **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`. Generic code storing a bare `T` (`append(self.items, item)` with `item: T`) isn't checked either.
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
 - **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).

@@ -31,6 +31,7 @@ pub const SemaAnalyzer = struct {
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
     constants: std.ArrayList(Constant) = .empty,
     constant_by_exp: std.AutoHashMapUnmanaged(*const ast.ExpNode, usize) = .empty,
+    exp_types: std.AutoHashMapUnmanaged(*const ast.ExpNode, tt.TypeId) = .empty,
     generic_functions: std.ArrayList(GenericFunction) = .empty,
     generic_types: std.ArrayList(GenericType) = .empty,
     traits: std.ArrayList(Trait) = .empty,
@@ -1317,6 +1318,7 @@ pub const SemaAnalyzer = struct {
         }) catch {
             return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
+        if (let_stmt.is_mut) try self.ensureNotReadOnlySource(let_stmt.value);
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
@@ -2704,6 +2706,7 @@ pub const SemaAnalyzer = struct {
                 if (id_symbol.kind.variable.is_borrowed) {
                     return self.err_reporter.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
                 }
+                try self.ensureNotReadOnlySource(assign_stmt.exp);
 
                 const boxed_value = try self.coerceValue(assignment_value, id_symbol.type_id, assign_stmt.exp.loc);
 
@@ -2729,7 +2732,10 @@ pub const SemaAnalyzer = struct {
                 const assignment_value_type = assignment_value.type_id;
 
                 const is_static_target = self.definedTypeOf(index_exp.target) != null;
-                if (!is_static_target) try self.ensureMutable(index_exp.target);
+                if (!is_static_target) {
+                    try self.ensureMutable(index_exp.target);
+                    try self.ensureNotReadOnlySource(assign_stmt.exp);
+                }
 
                 var field_maybe_nullable_type_id: tt.TypeId = undefined;
 
@@ -3422,6 +3428,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalExpExpecting(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) CompileError!*ir.Value {
+        const value = try self.evalExpExpectingUnrecorded(exp, expected_type_id);
+        try self.exp_types.put(self.allocator, exp, value.type_id);
+        return value;
+    }
+
+    fn evalExpExpectingUnrecorded(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId) CompileError!*ir.Value {
         if (isConditional(exp)) return self.evalConditional(exp, expected_type_id);
         if (expected_type_id) |expected| {
             const base_type_id = self.type_table.typeIdByNullableTypeId.get(expected) orelse expected;
@@ -3510,6 +3522,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
+        const value = try self.evalExpUnrecorded(exp);
+        try self.exp_types.put(self.allocator, exp, value.type_id);
+        return value;
+    }
+
+    fn evalExpUnrecorded(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
         switch (exp.*.data) {
             .if_exp, .if_capture_exp, .when_exp, .orelse_exp => return self.evalConditional(exp, null),
             .range => return self.err_reporter.invalidExpression("range in a capture loop or when case", "range value", exp.loc),
@@ -3881,6 +3899,7 @@ pub const SemaAnalyzer = struct {
                 if (param.is_mut and (_exp.data == .identifier or _exp.data == .indexed)) {
                     try self.ensureMutable(_exp);
                 }
+                if (param.is_mut or isStoredArgument(fn_call, param.identifier)) try self.ensureNotReadOnlySource(_exp);
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
             } else if (param.default_value) |value| {
                 try fn_call_arguments_values.append(self.allocator, value);
@@ -4263,6 +4282,80 @@ pub const SemaAnalyzer = struct {
             },
             else => return .temporary,
         }
+    }
+
+    fn ensureNotReadOnlySource(self: *Self, value: *const ast.ExpNode) CompileError!void {
+        if (self.is_in_prelude or self.err_reporter.copy_context != null) return;
+        const source = self.readOnlySourceOf(value) orelse return;
+        const text = self.src[source.loc.start..@min(source.loc.end + 1, self.src.len)];
+        return self.err_reporter.readOnlyIntoMutable(text, source.loc);
+    }
+
+    fn readOnlySourceOf(self: *Self, exp: *const ast.ExpNode) ?*const ast.ExpNode {
+        switch (exp.data) {
+            .identifier, .indexed => {
+                const type_id = self.exp_types.get(exp) orelse return null;
+                if (!self.isChangeableType(type_id)) return null;
+                const place = self.findImmutablePlace(exp) orelse return null;
+                return if (place == .binding) exp else null;
+            },
+            .array_literal => |literal| return self.firstReadOnlySource(literal.exps),
+            .anonymous_init => |anonymous| return self.firstReadOnlyArgument(anonymous.arguments),
+            .fn_call => |call| {
+                if (!self.isConstructorCall(call)) return null;
+                return self.firstReadOnlyArgument(call.arguments);
+            },
+            .try_exp => |try_exp| return self.readOnlySourceOf(try_exp.operand),
+            .orelse_exp => |orelse_exp| return self.readOnlySourceOf(orelse_exp.operand) orelse self.readOnlySourceOf(orelse_exp.fallback),
+            .catch_exp => |catch_exp| return self.readOnlySourceOf(catch_exp.operand) orelse switch (catch_exp.fallback) {
+                .value => |fallback| self.readOnlySourceOf(fallback),
+                .block => |block| self.readOnlyBlockTail(&block.body),
+            },
+            .if_exp => |if_exp| return self.readOnlyBlockTail(&if_exp.then_block) orelse if (if_exp.else_block) |*block| self.readOnlyBlockTail(block) else null,
+            .if_capture_exp => |capture| return self.readOnlyBlockTail(&capture.body) orelse if (capture.else_block) |*block| self.readOnlyBlockTail(block) else null,
+            .when_exp => |when_exp| {
+                for (when_exp.prongs) |*prong| {
+                    if (self.readOnlyBlockTail(&prong.body)) |source| return source;
+                }
+                return if (when_exp.else_block) |*block| self.readOnlyBlockTail(block) else null;
+            },
+            else => return null,
+        }
+    }
+
+    fn firstReadOnlySource(self: *Self, exps: []const *ast.ExpNode) ?*const ast.ExpNode {
+        for (exps) |item| {
+            if (self.readOnlySourceOf(item)) |source| return source;
+        }
+        return null;
+    }
+
+    fn firstReadOnlyArgument(self: *Self, arguments: []const ast.FnCallArg) ?*const ast.ExpNode {
+        for (arguments) |argument| {
+            if (self.readOnlySourceOf(argument.exp)) |source| return source;
+        }
+        return null;
+    }
+
+    fn readOnlyBlockTail(self: *Self, block: *const ast.Block) ?*const ast.ExpNode {
+        const statements = block.statements.items;
+        if (statements.len == 0) return null;
+        const last = statements[statements.len - 1];
+        if (last.data != .expression) return null;
+        return self.readOnlySourceOf(last.data.expression);
+    }
+
+    fn isConstructorCall(self: *Self, call: ast.FnCall) bool {
+        if (call.target.data != .identifier) return false;
+        const symbol = self.scope.symbol_table.get(call.target.data.identifier) orelse return false;
+        return symbol.kind == .defined_type or symbol.kind == .generic_type;
+    }
+
+    fn isStoredArgument(fn_call: ast.FnCall, param_name: []const u8) bool {
+        if (fn_call.target.data != .identifier) return false;
+        const name = fn_call.target.data.identifier;
+        const is_storing = std.mem.eql(u8, name, "append") or std.mem.eql(u8, name, "insert");
+        return is_storing and std.mem.eql(u8, param_name, "value");
     }
 
     fn ensureMutable(self: *Self, exp: *const ast.ExpNode) CompileError!void {

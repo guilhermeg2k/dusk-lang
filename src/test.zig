@@ -1551,6 +1551,17 @@ test "copy" {
     try runCase("copy.dsk");
 }
 
+test "values from non-mut names can't go into mutable places" {
+    try runCase("read-only-sources.dsk");
+    try runCaseError("sema/read-only-into-let-mut.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-constructor.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-append.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-mut-param.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-field.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-assignment.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-capture-into-array.dsk", error.ReadOnlyIntoMutable);
+}
+
 test "tail calls" {
     try runCase("tail-calls.dsk");
 }

@@ -1,0 +1,7 @@
+func main() -> void
+    let rows = [[1], [2]]
+    let mut kept: [][]int = []
+    for rows: row do
+        append(kept, row)
+    end
+end
