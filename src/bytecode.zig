@@ -848,6 +848,7 @@ pub const BytecodeGen = struct {
             .catch_call => |cc| switch (cc.fallback) {
                 .value => |fallback| {
                     _ = try self.genValue(fallback, call_reg);
+                    if (cc.is_success_boxed) return self.genBoxedCatchJoin(error_union.payload, value, call_reg, target_reg, jump_ok_idx);
                 },
                 .block => |block| {
                     const saved_next_free = self.next_free_register;
@@ -860,6 +861,26 @@ pub const BytecodeGen = struct {
         }
 
         self.chunk_instructions.items[jump_ok_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genBoxedCatchJoin(self: *Self, payload: tt.TypeId, value: *const ir.Value, call_reg: u8, target_reg: u8, jump_ok_idx: usize) !void {
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+        const jump_join_idx = self.chunk_instructions.items.len - 1;
+
+        self.chunk_instructions.items[jump_ok_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        self.register_types[call_reg] = payload;
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = call_reg,
+            .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, payload)),
+            .c = call_reg,
+        });
+        try self.recordHeapMap();
+
+        self.chunk_instructions.items[jump_join_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        self.register_types[call_reg] = value.type_id;
         try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
         self.register_types[target_reg] = value.type_id;
     }

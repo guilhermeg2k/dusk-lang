@@ -92,6 +92,11 @@ test "tail calls: return try f(x) reuses the frame when the success types match"
     try testing.expectEqual(@as(usize, 0), try countOps(boxed, "f", .TAIL_CALL));
 }
 
+test "catch: a null fallback makes the result nullable when a nullable is expected" {
+    try runCase("catch-nullable-fallback.dsk");
+    try runCaseError("sema/catch-null-without-nullable.dsk", error.InvalidType);
+}
+
 test "string interpolation GC" {
     try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
 }

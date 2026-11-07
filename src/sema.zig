@@ -1183,7 +1183,7 @@ pub const SemaAnalyzer = struct {
             .when_exp => return ir.Instruction{ .block = try self.lowerWhen(expression_stmt, null) },
             .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
             .try_exp => try self.evalTry(expression_stmt),
-            .catch_exp => try self.evalCatch(expression_stmt, true),
+            .catch_exp => try self.evalCatch(expression_stmt, true, null),
             else => return self.err_reporter.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc),
         };
 
@@ -1230,7 +1230,7 @@ pub const SemaAnalyzer = struct {
         });
     }
 
-    fn evalCatch(self: *Self, exp: *const ast.ExpNode, is_statement: bool) CompileError!*ir.Value {
+    fn evalCatch(self: *Self, exp: *const ast.ExpNode, is_statement: bool, expected_type_id: ?tt.TypeId) CompileError!*ir.Value {
         const catch_exp = exp.data.catch_exp;
         const call = try self.evalFailingCall(catch_exp.operand, "catch");
         const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
@@ -1239,6 +1239,16 @@ pub const SemaAnalyzer = struct {
         switch (catch_exp.fallback) {
             .value => |fallback_exp| {
                 const fallback = try self.evalExpExpecting(fallback_exp, payload);
+                if (try self.nullableCatchType(payload, fallback.type_id, expected_type_id)) |nullable| {
+                    return ir.Value.init(self.allocator, .{
+                        .data = .{ .catch_call = .{
+                            .call = call,
+                            .fallback = .{ .value = try self.coerceValue(fallback, nullable, fallback_exp.loc) },
+                            .is_success_boxed = self.isBoxedNullable(nullable),
+                        } },
+                        .type_id = nullable,
+                    });
+                }
                 const boxed_fallback = try self.coerceValue(fallback, payload, fallback_exp.loc);
 
                 return ir.Value.init(self.allocator, .{
@@ -1278,6 +1288,16 @@ pub const SemaAnalyzer = struct {
                 });
             },
         }
+    }
+
+    fn nullableCatchType(self: *Self, payload: tt.TypeId, fallback_type: tt.TypeId, expected_type_id: ?tt.TypeId) CompileError!?tt.TypeId {
+        const expected = expected_type_id orelse return null;
+        if (!self.type_table.getTypePtrById(expected).is_nullable) return null;
+        if (self.type_table.getTypePtrById(payload).is_nullable) return null;
+        if (self.type_table.canCoerce(fallback_type, payload)) return null;
+        const nullable = try self.type_table.getOrAddNullable(payload);
+        if (!self.type_table.canCoerce(fallback_type, nullable) or !self.type_table.canCoerce(nullable, expected)) return null;
+        return nullable;
     }
 
     fn callName(exp: *const ast.ExpNode) []const u8 {
@@ -3552,7 +3572,11 @@ pub const SemaAnalyzer = struct {
             }
         }
 
-        const value = if (exp.data == .fn_call) try self.evalHandledCall(exp, expected_type_id) else try self.evalExp(exp);
+        const value = switch (exp.data) {
+            .fn_call => try self.evalHandledCall(exp, expected_type_id),
+            .catch_exp => try self.evalCatch(exp, false, expected_type_id),
+            else => try self.evalExp(exp),
+        };
         const expected = expected_type_id orelse return value;
         if (isValueLeaving(value)) {
             return ir.Value.init(self.allocator, .{ .data = value.data, .type_id = expected });
@@ -3673,7 +3697,7 @@ pub const SemaAnalyzer = struct {
                 return self.evalTry(exp);
             },
             .catch_exp => {
-                return self.evalCatch(exp, false);
+                return self.evalCatch(exp, false, null);
             },
             .anonymous_init => {
                 return self.evalAnonymousStructInit(exp);

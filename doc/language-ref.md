@@ -1193,6 +1193,16 @@ let n = parse_digit(-1) catch 0
 let m = parse_digit(-1) catch parse_digit(2) catch 0
 ```
 
+When the result goes where a nullable is expected (a typed `let`, an assignment, an argument or a `return`), the fallback can be `null`: the success value becomes a `?T` too.
+
+```nim
+let digit: ?int = parse_digit(-1) catch null
+
+func first_or_null[T](mut items: []T) -> ?T
+    return pop(items) catch null
+end
+```
+
 `call catch e then ... end` runs a block with the error bound to `e`. When the result is used (`let`, assignment, argument, `return`), the block must leave with `return`, `break` or `continue`. Used as a statement, or for an `E!void` call, it can just end.
 
 ```nim

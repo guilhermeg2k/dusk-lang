@@ -170,6 +170,7 @@ pub const CatchCall = struct {
         value: *Value,
         block: CatchBlock,
     },
+    is_success_boxed: bool = false,
 };
 
 pub const CatchBlock = struct {

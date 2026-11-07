@@ -1,0 +1,9 @@
+error E
+    Bad
+end
+func number() -> E!int
+    return 1
+end
+func main() -> void
+    let x = number() catch null
+end
