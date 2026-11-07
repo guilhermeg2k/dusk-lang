@@ -3,6 +3,6 @@ func f(mut b: buffer) -> void
 end
 
 func main() -> void
-    let data = buffer(2)
+    let data = new_buffer(2)
     f(data)
 end

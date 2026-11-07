@@ -1,11 +1,11 @@
 func main() -> void
     let n = 7
     let b = 'a'
-    assert(float(n) / 2.0 == 3.5)
-    assert(float(b) == 97.0)
-    assert(float(2.5) == 2.5)
-    assert(float(-3) == -3.0)
-    assert(float(n + 1) == 8.0)
-    let items = [float(n), 1.5]
+    assert(to_float(n) / 2.0 == 3.5)
+    assert(to_float(b) == 97.0)
+    assert(to_float(2.5) == 2.5)
+    assert(to_float(-3) == -3.0)
+    assert(to_float(n + 1) == 8.0)
+    let items = [to_float(n), 1.5]
     assert(items[0] == 7.0)
 end

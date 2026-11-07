@@ -40,6 +40,6 @@ func main() -> void
     assert((index_of([1, 2, 3], 3) orelse -1) == 2)
     assert(index_of([1.5, 2.5], 0.5) == null)
     assert(contains([true], true))
-    let bytes: []byte = [byte(1), byte(2)]
-    assert(contains(bytes, byte(2)))
+    let bytes: []byte = [to_byte(1), to_byte(2)]
+    assert(contains(bytes, to_byte(2)))
 end

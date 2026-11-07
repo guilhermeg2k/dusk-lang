@@ -37,7 +37,7 @@ func main() -> void
     let number: ?int = 3
     assert(number == 3)
     check_error()
-    let data = buffer(2)
+    let data = new_buffer(2)
     assert(data == data)
 end
 

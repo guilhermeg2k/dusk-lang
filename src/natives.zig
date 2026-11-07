@@ -35,6 +35,9 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "contains", Binding{ .native = &arrayContains } },
     .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
+    .{ "__new_buffer", Binding{ .@"inline" = &newBufferGen } },
+    .{ "to_byte", Binding{ .@"inline" = &toByteGen } },
+    .{ "to_float", Binding{ .@"inline" = &toFloatGen } },
     .{ "append", Binding{ .@"inline" = &appendGen } },
     .{ "copy", Binding{ .@"inline" = &copyGen } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
@@ -364,6 +367,25 @@ fn arrayPopGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]c
 fn bytesLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
     var list: std.ArrayList(bc.Instruction) = .empty;
     try list.append(alloc, .{ .op = .BYTES_LEN, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn newBufferGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .BYTES_NEW, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn toByteGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .I_TO_BYTE, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn toFloatGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .LOAD, .a = target_reg, .b = arg_start_reg });
+    try list.append(alloc, .{ .op = .I_TO_F, .a = target_reg });
     return try list.toOwnedSlice(alloc);
 }
 

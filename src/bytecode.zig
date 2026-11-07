@@ -313,7 +313,7 @@ pub const BytecodeGen = struct {
             } else false,
             .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
             .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,
-            .union_tag, .union_payload, .int_to_float, .array_length, .buffer_new, .bytes_length => |inner| readsVariable(inner, uid),
+            .union_tag, .union_payload, .int_to_float, .array_length, .bytes_length => |inner| readsVariable(inner, uid),
             .try_call, .catch_call, .block_value => true,
             .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null => false,
         };
@@ -733,10 +733,7 @@ pub const BytecodeGen = struct {
             .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
             .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
             .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
-            .buffer_new => |size| {
-                try self.genUnaryOpcode(.BYTES_NEW, size, value.type_id, target_reg);
-                try self.recordHeapMap();
-            },
+
         }
 
         return target_reg;

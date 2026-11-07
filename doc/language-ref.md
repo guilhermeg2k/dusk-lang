@@ -145,13 +145,13 @@ Any other value (a `let mut`, an array, a struct, a value computed by a call) is
 | `byte`   | Unsigned 8-bit value (`0` to `255`)           | `'a'`, `'\n'`, `65` |
 | `float`  | 64-bit floating-point number                  | `3.14`, `-0.5`      |
 | `string` | Text in double quotes                         | `"Hello"`           |
-| `buffer` | Fixed-size block of mutable bytes             | `buffer(16)`        |
+| `buffer` | Fixed-size block of mutable bytes             | `new_buffer(16)`        |
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
-Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `float(x)` converts an `int` or `byte` explicitly (`echo(float(count))`).
+Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `to_float(x)` converts an `int` or `byte` explicitly (`echo(to_float(count))`).
 
-A `float` never converts to `int` (use `//`), a `byte` only converts to `float` with `float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
+A `float` never converts to `int` (use `//`), a `byte` only converts to `float` with `to_float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
 
 Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing closing quotes are compile errors. The runtime stores the UTF-8 bytes with an explicit byte length, so embedded NUL characters are preserved.
 
@@ -197,7 +197,7 @@ A `byte` holds one value from `0` to `255`. A byte literal is one ASCII characte
 let comma = ','
 let a: byte = 65           # an int constant that fits converts to byte
 let n = 200
-let b = byte(n)            # converting an int variable is checked at run time
+let b = to_byte(n)         # converting an int variable is checked at run time
 let digit = '7' - '0'      # arithmetic on bytes gives an int: 7
 let code: int = comma      # a byte converts to int automatically
 
@@ -208,17 +208,17 @@ when comma
 end
 ```
 
-- An int constant outside `0..255` (`let b: byte = 300`, `byte(-1)`) is a compile error. `byte(x)` with an int variable outside that range stops the program with a runtime error.
-- An int variable never converts to `byte` implicitly: use `byte(x)`. So `b = b + 1` on a `byte` variable is an error, because `b + 1` is an `int`.
+- An int constant outside `0..255` (`let b: byte = 300`, `to_byte(-1)`) is a compile error. `to_byte(x)` with an int variable outside that range stops the program with a runtime error.
+- An int variable never converts to `byte` implicitly: use `to_byte(x)`. So `b = b + 1` on a `byte` variable is an error, because `b + 1` is an `int`.
 - Bytes work as `when` subjects with literal and range cases (an `else` is required), as array indexes and as range-loop bounds.
 - `?byte` works like `?int`. A `[]byte` is a regular array, using as much memory per item as `[]int`.
 
 ### Buffers
 
-A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `buffer(n)` creates one with `n` zero bytes; its size never changes.
+A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `new_buffer(n)` creates one with `n` zero bytes; its size never changes.
 
 ```nim
-let mut data = buffer(4)
+let mut data = new_buffer(4)
 data[0] = 'h'                     # writes take a byte
 data[1] = 105
 let first = data[0]               # reads give a byte
@@ -233,8 +233,8 @@ let bytes = buffer_from("olá")    # [111, 108, 195, 161]
 let text = string_from(bytes) catch "not UTF-8"
 ```
 
-- The type is written `buffer`: `let mut data: buffer = buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
-- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
+- The type is written `buffer`: `let mut data: buffer = new_buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
+- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer, or a negative size in `new_buffer(n)`, stops the program with a runtime error.
 - `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
 - `==` on buffers compares identity: a buffer is only equal to itself.
 
@@ -1239,7 +1239,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size, a `byte(x)` outside `0..255`, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits or more than 100,000 nested calls still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `new_buffer(n)` size, a `to_byte(x)` outside `0..255`, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits or more than 100,000 nested calls still stops the program and can't be caught.
 
 ## 13. Built-in Functions
 
@@ -1251,6 +1251,9 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `assert`      | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
 | `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
 | `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
+| `new_buffer`  | `new_buffer(size: int) -> buffer`                 | Returns a new buffer of `size` zero bytes. A negative size stops the program.         |
+| `to_byte`     | `to_byte(value: int) -> byte`                     | Converts an `int` or `byte` to `byte`; outside `0..255` it's a compile error for a constant and stops the program otherwise. |
+| `to_float`    | `to_float(value: int) -> float`                   | Converts an `int`, `byte` or `float` to `float`.                                     |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(mut list: []T, item: T) -> void`          | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
@@ -1359,7 +1362,7 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `to_byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
 ## 15. Known Limitations
 

@@ -13,12 +13,12 @@ func utf8_reason(data: buffer) -> string
 end
 
 func main() -> void
-    let mut buf = buffer(4)
+    let mut buf = new_buffer(4)
     echo(buf)
     echo(buffer_len(buf))
     buf[0] = 'h'
     buf[1] = 105
-    buf[3] = byte(200 + 55)
+    buf[3] = to_byte(200 + 55)
     echo(buf)
     let x = buf[0]
     echo(x)
@@ -37,12 +37,12 @@ func main() -> void
     let maybe: ?buffer = null
     echo(maybe)
     echo(buf |> buffer_len())
-    let bufs = [buffer(1), buffer(2)]
+    let bufs = [new_buffer(1), new_buffer(2)]
     echo(bufs)
-    let empty = buffer(0)
+    let empty = new_buffer(0)
     echo(empty)
     echo(string_from(empty) catch "x")
-    let mut p = Packet(data = buffer(2))
+    let mut p = Packet(data = new_buffer(2))
     p.data[1] = 9
     echo(p.data)
     echo(buffer_len(p.data))

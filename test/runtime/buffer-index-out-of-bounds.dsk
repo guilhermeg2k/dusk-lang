@@ -1,4 +1,4 @@
 func main() -> void
-    let b = buffer(2)
+    let b = new_buffer(2)
     echo(b[2])
 end

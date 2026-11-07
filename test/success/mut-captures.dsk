@@ -74,7 +74,7 @@ func main() -> void
     end
     if maybe: p then assert(p.x == 5) else assert(false) end
 
-    let mut data = [buffer(2)]
+    let mut data = [new_buffer(2)]
     for data: mut b do
         b[0] = 'z'
     end

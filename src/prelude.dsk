@@ -25,6 +25,9 @@ extern func index_of[T: int | float | byte | bool | string](array: []T, value: T
 extern func contains[T: int | float | byte | bool | string](array: []T, value: T) -> bool
 extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
+extern func __new_buffer(size: int) -> buffer
+extern func to_byte(value: int) -> byte
+extern func to_float(value: int) -> float
 extern func assert(cond: bool) -> void
 extern func buffer_from(text: string) -> buffer
 extern func string_from(data: buffer) -> StringError!string
@@ -86,4 +89,8 @@ func slice[T](array: []T, start: int, stop: int) -> ArrayError![]T
         i = i + 1
     end
     return out
+end
+
+func new_buffer(size: int) -> buffer
+    return __new_buffer(size)
 end

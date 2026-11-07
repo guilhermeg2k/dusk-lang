@@ -1150,7 +1150,7 @@ pub const SemaAnalyzer = struct {
                 .returns => doesBlockExit(block.instructions, .returns),
                 .leaves_block => !block.can_complete,
             },
-            .int_to_float, .array_length, .buffer_new, .bytes_length => |operand| doesValueExit(operand, query),
+            .int_to_float, .array_length, .bytes_length => |operand| doesValueExit(operand, query),
             .binary_op => |binary| doesValueExit(binary.left, query) or doesValueExit(binary.right, query),
             .unary_op => |unary| doesValueExit(unary.right, query),
             .null_box_init => |box| if (box.value) |operand| doesValueExit(operand, query) else false,
@@ -3638,20 +3638,7 @@ pub const SemaAnalyzer = struct {
             .byte_literal => |byte| {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_int = byte }, .type_id = self.type_table.getPrimitive(.byte) });
             },
-            .float_cast => |operand| {
-                return self.evalFloatCast(operand);
-            },
-            .byte_cast => |operand| {
-                return self.evalByteCast(operand);
-            },
-            .buffer_new => |size| {
-                const value = try self.evalExp(size);
-                if (isValueLeaving(value)) return value;
-                if (!self.isIntegerType(value.type_id)) {
-                    return self.err_reporter.invalidType("int", try self.type_table.name(value.type_id, self.allocator), size.loc);
-                }
-                return ir.Value.init(self.allocator, .{ .data = .{ .buffer_new = value }, .type_id = self.type_table.getPrimitive(.buffer) });
-            },
+
             .string_literal => {
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_string = exp.data.string_literal }, .type_id = self.type_table.getPrimitive(.string) });
             },
@@ -3744,6 +3731,11 @@ pub const SemaAnalyzer = struct {
                 try self.checkNotInternal(symbol, exp.loc);
 
                 fn_identifier = symbol.identifier;
+
+                if (symbol.kind == .function and fn_call.arguments.len == 1) {
+                    if (std.mem.eql(u8, id, "to_byte")) return self.evalByteCast(fn_call.arguments[0].exp);
+                    if (std.mem.eql(u8, id, "to_float")) return self.evalFloatCast(fn_call.arguments[0].exp);
+                }
 
                 if (symbol.kind == .generic_function and std.mem.eql(u8, id, "copy") and fn_call.arguments.len == 1) {
                     if (self.generic_functions.items[symbol.kind.generic_function].extern_uid) |copy_uid| {

@@ -9,7 +9,7 @@ func first(b: buffer) -> byte
 end
 
 func main() -> void
-    let mut data: buffer = buffer(4)
+    let mut data: buffer = new_buffer(4)
     fill(data, 'x')
     assert(first(data) == 'x')
     assert(data[3] == 'x')
