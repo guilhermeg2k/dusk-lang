@@ -322,6 +322,16 @@ test "string slice" {
     try runCaseRuntimeError("str-slice-unhandled.dsk", error.UnhandledError);
 }
 
+test "equality: only same types (or numbers) compare, strings and unions can't" {
+    try runCase("equality-rules.dsk");
+    try runCaseError("sema/compare-different-structs.dsk", error.CantCompare);
+    try runCaseError("sema/compare-bool-int.dsk", error.CantCompare);
+    try runCaseError("sema/compare-int-string.dsk", error.CantCompare);
+    try runCaseError("sema/compare-strings.dsk", error.CantCompare);
+    try runCaseError("sema/compare-unions.dsk", error.CantCompare);
+    try runCaseError("sema/compare-not-nullable-with-null.dsk", error.CantCompare);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }

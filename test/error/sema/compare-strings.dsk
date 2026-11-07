@@ -1,0 +1,4 @@
+func main() -> void
+    let a = "x"
+    let same = a == "x"
+end

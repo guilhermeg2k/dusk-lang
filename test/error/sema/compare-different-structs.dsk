@@ -1,0 +1,11 @@
+struct P
+    x: int
+end
+
+struct Q
+    x: int
+end
+
+func main() -> void
+    let same = P(x = 1) == Q(x = 1)
+end

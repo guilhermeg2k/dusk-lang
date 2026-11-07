@@ -30,8 +30,8 @@ func main() -> void
     assert((no_failure orelse Failure.Invalid) == Failure.Invalid)
     let optional_text: ?string = text
     let no_text: ?string = null
-    assert((optional_text orelse "other") == text)
-    assert((no_text orelse text) == text)
+    assert(str_equal(optional_text orelse "other", text))
+    assert(str_equal(no_text orelse text, text))
     let original = Point(1)
     let point: ?Point = original
     let no_point: ?Point = null
@@ -40,7 +40,12 @@ func main() -> void
     let original_choice = Choice(number = 3)
     let choice: ?Choice = original_choice
     let no_choice: ?Choice = null
-    assert((choice orelse Choice(text = "other")) == original_choice)
+    let picked = choice orelse Choice(text = "other")
+    if picked.number: number then
+        assert(number == 3)
+    else
+        assert(false)
+    end
     let selected_choice = no_choice orelse Choice(number = 4)
 
     when selected_choice

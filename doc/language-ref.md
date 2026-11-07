@@ -236,7 +236,7 @@ let text = string_from(bytes) catch "not UTF-8"
 - The type is written `buffer`: `let mut data: buffer = buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
 - Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
 - `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
-- `==` on buffers compares identity, like strings today.
+- `==` on buffers compares identity: a buffer is only equal to itself.
 
 ### Multiline strings
 
@@ -523,7 +523,7 @@ end
 echo(Shape(square = 3).area())
 ```
 
-- `==` on unions compares identity, not contents.
+- `==` and `!=` can't compare unions: check the variant with `when` or `if u.variant: value then ... end`.
 - `echo` on a union prints `<union>`.
 
 ## 7. Nullables
@@ -540,7 +540,7 @@ count = null
 
 A nullable can't be used directly as its inner type. Unwrap it first.
 
-`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?string`, `?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`.
+`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`. `?string` can only be compared with `null`.
 
 ### Capture
 
@@ -639,11 +639,13 @@ An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitiv
 
 ### Comparison and logic
 
-`==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
+`==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool`, enums and errors. `and`, `or` and `!` work on `bool`.
 
-On arrays, structs, unions and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet.
+`==` and `!=` only compare values of the same type: `true == 1`, `1 == "a"` and a `Point` with a `Size` are compile errors, since they could never be equal. Numbers are the exception: an `int`, `float` or `byte` compares with any other number (`1 == 1.0`). A nullable compares with `null` or with its inner type, and `x == null` is an error when `x` can't be null.
 
-`==` on strings compares identity, not text. Literals with the same text are the same string, so `"dusk" == "dusk"` is `true`, but a string built at run time (for example with interpolation) is never equal to a literal. Use `str_equal(a, b)` to compare text.
+On arrays, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions can't be compared with `==`.
+
+`==` and `!=` can't compare strings: use `str_equal(a, b)` to compare their text.
 
 ### Assignment
 
@@ -727,7 +729,7 @@ Rules:
 - A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).
 - A value or variant can only appear in one case.
-- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `str_equal`, not by reference like `==`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
+- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `str_equal`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
 
 Range matching uses the same rules in statements and expressions:
@@ -1061,7 +1063,7 @@ Each operator on `T` is checked for every member with the usual rules. It's allo
 - otherwise `T`, when each member gives itself back: `a + b` on `int | float`
 - otherwise an error: on `byte | float`, `a + b` gives `int` for `byte` and `float` for `float`
 
-A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` need a list without `string`, since on strings they compare pointers (use `str_equal`). `x == null` works on any `?T`.
+A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` need a list without `string`, since strings can't be compared with `==` (use `str_equal`). `x == null` works on any `?T`.
 
 ### Traits
 
@@ -1365,7 +1367,7 @@ These are known gaps in v0.14 development. Most are planned in the [roadmap](roa
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Call depth**: at most 100,000 nested calls. Going deeper stops the program with a runtime error. A call returned directly (`return f(x)`, also in a `void` function) is a tail call: it reuses the current call instead of nesting, so tail-recursive functions can run any number of steps. In a function that can fail, `return try f(x)` is a tail call too when `f` succeeds with the same type (a `-> E!?int` function returning `try` of an `E!int` call isn't, since the result is converted first).
-- **Strings**: `==` compares identity (use `str_equal` for text). Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
+- **Strings**: Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.

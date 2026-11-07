@@ -4674,6 +4674,8 @@ pub const SemaAnalyzer = struct {
                     return nnull;
                 }
 
+                try self.checkEquality(bin_exp.op, left_type, right_type, exp.loc);
+
                 if (self.isBoxedNullable(left_type) or self.isBoxedNullable(right_type)) {
                     return self.lowerNullableEquality(bin_exp.op, left_value, right_value, exp.loc);
                 }
@@ -4692,6 +4694,31 @@ pub const SemaAnalyzer = struct {
             },
             .type_id = op_type,
         });
+    }
+
+    fn checkEquality(self: *Self, op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        const op_text = binaryOpText(op);
+        const left_base = self.type_table.typeIdByNullableTypeId.get(left_type) orelse left_type;
+        const right_base = self.type_table.typeIdByNullableTypeId.get(right_type) orelse right_type;
+        const left_kind = self.type_table.getTypePtrById(left_base).kind;
+        const right_kind = self.type_table.getTypePtrById(right_base).kind;
+
+        if (left_kind == .null or right_kind == .null) {
+            const other = if (left_kind == .null) right_type else left_type;
+            if (self.type_table.getTypePtrById(other).is_nullable or self.type_table.getTypePtrById(other).kind == .null) return;
+            return self.err_reporter.cantCompareWithNull(op_text, try self.type_table.name(other, self.allocator), loc);
+        }
+        if (left_kind == .string and right_kind == .string) return self.err_reporter.cantCompareStrings(op_text, loc);
+        if (left_kind == .@"union" and right_kind == .@"union") return self.err_reporter.cantCompareUnions(op_text, loc);
+        if (self.isTypeNumber(left_base) and self.isTypeNumber(right_base)) return;
+        if (self.type_table.isErrorSet(left_base) and self.type_table.isErrorSet(right_base)) return;
+        if (left_base == right_base) return;
+        return self.err_reporter.cantCompareTypes(
+            op_text,
+            try self.type_table.name(left_type, self.allocator),
+            try self.type_table.name(right_type, self.allocator),
+            loc,
+        );
     }
 
     fn binaryOpType(self: *Self, op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId) ?tt.TypeId {

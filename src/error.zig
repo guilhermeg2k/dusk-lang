@@ -313,6 +313,26 @@ pub const CompileErrorReporter = struct {
         return error.WhenDuplicateCase;
     }
 
+    pub fn cantCompareTypes(self: *Self, op: []const u8, left: []const u8, right: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare '{s}' with '{s}': values of different types are never equal", .{ op, left, right }), loc);
+        return error.CantCompare;
+    }
+
+    pub fn cantCompareWithNull(self: *Self, op: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare '{s}' with null: only nullable values can be null", .{ op, type_name }), loc);
+        return error.CantCompare;
+    }
+
+    pub fn cantCompareStrings(self: *Self, op: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare strings: use str_equal(a, b) to compare their text", .{op}), loc);
+        return error.CantCompare;
+    }
+
+    pub fn cantCompareUnions(self: *Self, op: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare unions: check the variant with 'when' or 'if u.variant: value then ... end'", .{op}), loc);
+        return error.CantCompare;
+    }
+
     pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) CompileError {
         self.log(msg, loc);
         return error.WhenInvalidCase;
@@ -832,6 +852,7 @@ pub const CompileError = error{
     WhenUselessElse,
     WhenDuplicateCase,
     WhenInvalidCase,
+    CantCompare,
     UnhandledError,
     TryOutsideFailingFunction,
     NotAFailingCall,
