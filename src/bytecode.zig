@@ -23,6 +23,7 @@ pub const BytecodeGen = struct {
 
     string_texts: std.ArrayList([]const u8),
     chunk_build_recipes: std.ArrayList([]const v.ValueType) = .empty,
+    chunk_jump_tables: std.ArrayList(JumpTable) = .empty,
     string_id_by_text: std.StringHashMap(u16),
 
     chunk_instructions: std.ArrayList(Instruction),
@@ -192,6 +193,7 @@ pub const BytecodeGen = struct {
             self.chunk_constants_types = .empty;
             self.chunk_heap_maps = .empty;
             self.chunk_build_recipes = .empty;
+            self.chunk_jump_tables = .empty;
             self.const_id_by_value.clearRetainingCapacity();
         }
 
@@ -211,6 +213,7 @@ pub const BytecodeGen = struct {
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
             .build_recipes = try self.chunk_build_recipes.toOwnedSlice(self.allocator),
+            .jump_tables = try self.chunk_jump_tables.toOwnedSlice(self.allocator),
         };
 
         // chunk.disasamble();
@@ -232,6 +235,9 @@ pub const BytecodeGen = struct {
                 },
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
+                },
+                .match => |match| {
+                    try self.genMatch(match);
                 },
                 .block => |instructions| {
                     const saved_next_free = self.next_free_register;
@@ -351,6 +357,70 @@ pub const BytecodeGen = struct {
             self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
         }
 
+        self.freeRegisterN(self.next_free_register - saved_next_free);
+    }
+
+    fn genMatch(self: *Self, match: ir.Match) !void {
+        const saved_next_free = self.next_free_register;
+        var end_jumps: std.ArrayList(usize) = .empty;
+        defer end_jumps.deinit(self.allocator);
+
+        var null_jump: ?usize = null;
+        if (match.null_check) |condition| {
+            const condition_reg = try self.genValue(condition, try self.consumeRegister());
+            try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
+            null_jump = self.chunk_instructions.items.len - 1;
+        }
+
+        var default_position: usize = undefined;
+        if (match.table) |table| {
+            const subject_reg = try self.genValue(table.subject, try self.consumeRegister());
+            var table_inst = Instruction{ .op = .JUMP_TABLE, .a = subject_reg };
+            table_inst.putBEx(@intCast(self.chunk_jump_tables.items.len));
+            try self.chunk_instructions.append(self.allocator, table_inst);
+
+            const case_positions = try self.allocator.alloc(u16, match.cases.len);
+            for (match.cases, 0..) |case, i| {
+                case_positions[i] = @intCast(self.chunk_instructions.items.len);
+                try self.genInstructionBlock(case.body);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+                try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
+            }
+            default_position = self.chunk_instructions.items.len;
+            try self.genInstructionBlock(match.default_block);
+
+            const targets = try self.allocator.alloc(u16, table.case_by_offset.len);
+            for (table.case_by_offset, targets) |case_index, *target| {
+                target.* = if (case_index) |index| case_positions[index] else @intCast(default_position);
+            }
+            try self.chunk_jump_tables.append(self.allocator, .{ .min = table.min, .targets = targets, .default = @intCast(default_position) });
+        } else {
+            for (match.cases) |case| {
+                const condition_reg = try self.genValue(case.condition, try self.consumeRegister());
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
+                const next_case_jump = self.chunk_instructions.items.len - 1;
+                try self.genInstructionBlock(case.body);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+                try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
+                self.chunk_instructions.items[next_case_jump].putBEx(@intCast(self.chunk_instructions.items.len));
+            }
+            default_position = self.chunk_instructions.items.len;
+            try self.genInstructionBlock(match.default_block);
+        }
+
+        if (null_jump) |jump| {
+            var null_position = default_position;
+            if (match.null_body) |body| {
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+                try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
+                null_position = self.chunk_instructions.items.len;
+                try self.genInstructionBlock(body);
+            }
+            self.chunk_instructions.items[jump].putBEx(@intCast(null_position));
+        }
+
+        const end_position: u16 = @intCast(self.chunk_instructions.items.len);
+        for (end_jumps.items) |jump| self.chunk_instructions.items[jump].putAEx(end_position);
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
@@ -1513,6 +1583,12 @@ pub const Function = struct {
     kind: FunctionKind,
 };
 
+pub const JumpTable = struct {
+    min: i64,
+    targets: []const u16,
+    default: u16,
+};
+
 pub const Chunk = struct {
     const Self = @This();
 
@@ -1523,6 +1599,7 @@ pub const Chunk = struct {
     shadow_types: []v.ValueType,
     heap_maps: []const HeapMap,
     build_recipes: []const []const v.ValueType,
+    jump_tables: []const JumpTable = &.{},
 
     pub fn disasamble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
@@ -1593,6 +1670,7 @@ pub const Chunk = struct {
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
+            .JUMP_TABLE => std.debug.print("R[{d}] T[{d}]", .{ inst.a, inst.bEx() }),
             .ARRAY_LOAD,
             .ARRAY_STORE,
             .BYTES_GET,
@@ -1734,6 +1812,7 @@ pub const OpCode = enum(u8) {
 
     JUMP,
     JUMP_IF_FALSE,
+    JUMP_TABLE,
 
     pub fn canFail(self: Self) bool {
         return self == .CALL;

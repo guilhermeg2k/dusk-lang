@@ -15,6 +15,7 @@ pub const Block = []const Instruction;
 pub const Instruction = union(enum) {
     store_var: StoreVar,
     branch_if: BranchIf,
+    match: Match,
     block: Block,
     loop: Loop,
     return_stmt: ReturnStmt,
@@ -123,6 +124,25 @@ pub const BranchIf = struct {
     condition: *Value,
     then_block: Block,
     else_block: Block,
+};
+
+pub const Match = struct {
+    null_check: ?*Value = null,
+    null_body: ?Block = null,
+    cases: []const MatchCase,
+    table: ?JumpTable = null,
+    default_block: Block,
+};
+
+pub const MatchCase = struct {
+    condition: *Value,
+    body: Block,
+};
+
+pub const JumpTable = struct {
+    subject: *Value,
+    min: i64,
+    case_by_offset: []const ?usize,
 };
 
 pub const Loop = struct {

@@ -50,6 +50,36 @@ test "string interpolation compiles to one STR_BUILD" {
     try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
 }
 
+fn countOps(source: []const u8, function: []const u8, op: @import("bytecode.zig").OpCode) !usize {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compile(source);
+    const chunk = for (program.functions) |func| {
+        if (std.mem.eql(u8, func.name, function)) break func.kind.dusk;
+    } else return error.FunctionNotFound;
+    var count: usize = 0;
+    for (chunk.instructions) |inst| {
+        if (inst.op == op) count += 1;
+    }
+    return count;
+}
+
+test "when: dense cases compile to a jump table, sparse ones to compares" {
+    try runCaseOutput("when-jump-tables.dsk", "[10, 4, 21, 2, 1]\n[6, 9, 9, 0]\n[A, B, C, F, ?, ?]\n[0, 3, -2]\n[10, 40, 99, 99]\n[-1, 1, 2]\n[1, 2, 3, 4, 5]\n");
+    const dense = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 2 then out = 2 end 3 then out = 3 end 4 then out = 4 end else then out = 5 end end return out end func main() -> void end";
+    const sparse = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 100 then out = 2 end 3 then out = 3 end 4 then out = 4 end else then out = 5 end end return out end func main() -> void end";
+    const few = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 2 then out = 2 end else then out = 5 end end return out end func main() -> void end";
+    try testing.expectEqual(@as(usize, 1), try countOps(dense, "f", .JUMP_TABLE));
+    try testing.expectEqual(@as(usize, 0), try countOps(sparse, "f", .JUMP_TABLE));
+    try testing.expectEqual(@as(usize, 0), try countOps(few, "f", .JUMP_TABLE));
+}
+
+test "when: a nullable subject without a null case lowers else once" {
+    const source = "func f(n: ?int) -> void when n 1 then end 2 then end else then echo(7) end end end func main() -> void end";
+    try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
+}
+
 test "string interpolation GC" {
     try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
 }

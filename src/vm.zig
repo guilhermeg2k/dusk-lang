@@ -525,6 +525,15 @@ pub const VM = struct {
                     }
                 },
 
+                .JUMP_TABLE => {
+                    const table = current_frame.function.kind.dusk.jump_tables[inst.bEx()];
+                    const value = stack[stack_base + inst.a].int64;
+                    cur_instruction = table.default;
+                    if (value < table.min) continue;
+                    const offset = @as(u64, @bitCast(value)) -% @as(u64, @bitCast(table.min));
+                    if (offset < table.targets.len) cur_instruction = table.targets[@intCast(offset)];
+                },
+
                 .RETURN => {
                     self.frame_count -= 1;
                     if (self.frame_count == 0) break;

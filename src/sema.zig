@@ -1121,6 +1121,9 @@ pub const SemaAnalyzer = struct {
                     if (doesValueExit(branch.condition, query)) return true;
                     if (branch.else_block.len > 0 and doesBlockExit(branch.then_block, query) and doesBlockExit(branch.else_block, query)) return true;
                 },
+                .match => |match| {
+                    if (doesMatchExit(match, query)) return true;
+                },
                 .block => |scoped| {
                     if (doesBlockExit(scoped, query)) return true;
                 },
@@ -1128,6 +1131,17 @@ pub const SemaAnalyzer = struct {
             }
         }
         return false;
+    }
+
+    fn doesMatchExit(match: ir.Match, query: ExitQuery) bool {
+        if (!doesBlockExit(match.default_block, query)) return false;
+        if (match.null_body) |body| {
+            if (!doesBlockExit(body, query)) return false;
+        }
+        for (match.cases) |case| {
+            if (!doesBlockExit(case.body, query)) return false;
+        }
+        return true;
     }
 
     fn doesValueExit(value: *const ir.Value, query: ExitQuery) bool {
@@ -2224,42 +2238,94 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         const refs = try self.storeWhenSubject(&instructions, subject);
 
-        var chain: ir.Block = if (when_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{};
-
-        var null_insts: ir.Block = &.{};
-        if (subject.is_nullable and !prongs.has_null_case) {
-            null_insts = (try self.visitBranchBlock(&when_stmt.else_block.?, result)).block;
-        }
-
         const unconditional_prong_idx = if (when_stmt.else_block == null) findUnconditionalProng(when_stmt.prongs) else null;
+        var cases: std.ArrayList(ir.MatchCase) = .empty;
+        const case_of_prong = try self.allocator.alloc(?usize, when_stmt.prongs.len);
+        @memset(case_of_prong, null);
+        var default_block: ir.Block = &.{};
+        var null_body: ?ir.Block = null;
 
-        var prong_idx = when_stmt.prongs.len;
-        while (prong_idx > 0) {
-            prong_idx -= 1;
-            const prong = when_stmt.prongs[prong_idx];
-
+        for (when_stmt.prongs, 0..) |*prong, prong_idx| {
             const lowered = switch (prong.pattern) {
                 .null_case => {
-                    null_insts = (try self.visitBranchBlock(&prong.body, result)).block;
+                    null_body = (try self.visitBranchBlock(&prong.body, result)).block;
                     continue;
                 },
-                .variant => try self.lowerWhenVariantProng(&prong, subject, refs.unwrapped, result),
-                .values => try self.lowerWhenValuesProng(&prong, prongs.values[prong_idx], prongs.ranges[prong_idx], refs.unwrapped, result),
+                .variant => try self.lowerWhenVariantProng(prong, subject, refs.unwrapped, result),
+                .values => try self.lowerWhenValuesProng(prong, prongs.values[prong_idx], prongs.ranges[prong_idx], refs.unwrapped, result),
             };
-
-            chain = if (unconditional_prong_idx == prong_idx) lowered.body else try self.wrapBranch(lowered.condition, lowered.body, chain);
+            if (unconditional_prong_idx == prong_idx) {
+                default_block = lowered.body;
+                continue;
+            }
+            case_of_prong[prong_idx] = cases.items.len;
+            try cases.append(self.allocator, .{ .condition = lowered.condition, .body = lowered.body });
         }
+        if (when_stmt.else_block) |else_block| default_block = (try self.visitBranchBlock(&else_block, result)).block;
 
-        if (subject.is_nullable) {
-            const not_null = try ir.Value.init(self.allocator, .{
-                .data = .{ .unary_op = .{ .kind = .box_not_null, .right = refs.subject } },
-                .type_id = self.type_table.getPrimitive(.boolean),
-            });
-            chain = try self.wrapBranch(not_null, chain, null_insts);
-        }
+        const null_check: ?*ir.Value = if (subject.is_nullable) try ir.Value.init(self.allocator, .{
+            .data = .{ .unary_op = .{ .kind = .box_not_null, .right = refs.subject } },
+            .type_id = self.type_table.getPrimitive(.boolean),
+        }) else null;
 
-        try instructions.appendSlice(self.allocator, chain);
+        try instructions.append(self.allocator, .{ .match = .{
+            .null_check = null_check,
+            .null_body = null_body,
+            .cases = try cases.toOwnedSlice(self.allocator),
+            .table = try self.buildJumpTable(when_stmt, subject, prongs, case_of_prong, refs.unwrapped),
+            .default_block = default_block,
+        } });
         return instructions.toOwnedSlice(self.allocator);
+    }
+
+    const min_jump_table_values = 4;
+    const max_jump_table_span = 1024;
+
+    fn buildJumpTable(self: *Self, when_stmt: ast.WhenStmt, subject: WhenSubject, prongs: WhenProngs, case_of_prong: []const ?usize, unwrapped_ref: *ir.Value) CompileError!?ir.JumpTable {
+        if (subject.base_kind == .string or subject.base_kind == .float) return null;
+        var entries: std.ArrayList(JumpTableEntry) = .empty;
+        for (when_stmt.prongs, 0..) |prong, prong_idx| {
+            const case_index = case_of_prong[prong_idx];
+            switch (prong.pattern) {
+                .null_case => {},
+                .variant => |variant| try entries.append(self.allocator, .{
+                    .value = @intCast(unionTagIndex(subject.base_kind.@"union", variant.name)),
+                    .case_index = case_index,
+                }),
+                .values => for (prongs.values[prong_idx], prongs.ranges[prong_idx]) |value, range| {
+                    const bounds = range orelse {
+                        try entries.append(self.allocator, .{ .value = value.data.i_int, .case_index = case_index });
+                        continue;
+                    };
+                    const start = bounds.start.data.i_int;
+                    const count = @as(i128, bounds.end.data.i_int) - start + 1;
+                    if (count > max_jump_table_span) return null;
+                    for (0..@intCast(count)) |offset| {
+                        try entries.append(self.allocator, .{ .value = start + @as(i64, @intCast(offset)), .case_index = case_index });
+                    }
+                },
+            }
+        }
+        if (entries.items.len < min_jump_table_values) return null;
+
+        var min = entries.items[0].value;
+        var max = min;
+        for (entries.items) |entry| {
+            min = @min(min, entry.value);
+            max = @max(max, entry.value);
+        }
+        const span = @as(i128, max) - min + 1;
+        if (span > max_jump_table_span or span > 2 * entries.items.len) return null;
+
+        const case_by_offset = try self.allocator.alloc(?usize, @intCast(span));
+        @memset(case_by_offset, null);
+        for (entries.items) |entry| case_by_offset[@intCast(entry.value - min)] = entry.case_index;
+
+        const table_subject = if (subject.base_kind == .@"union") try ir.Value.init(self.allocator, .{
+            .data = .{ .union_tag = unwrapped_ref },
+            .type_id = self.type_table.getPrimitive(.int),
+        }) else unwrapped_ref;
+        return .{ .subject = table_subject, .min = min, .case_by_offset = case_by_offset };
     }
 
     fn resolveWhenSubject(self: *Self, exp: *const ast.ExpNode) CompileError!WhenSubject {
@@ -5200,6 +5266,11 @@ const WhenProngs = struct {
     seen_strings: std.StringHashMap(void),
     seen_variants: std.StringHashMap(void),
     has_null_case: bool,
+};
+
+const JumpTableEntry = struct {
+    value: i64,
+    case_index: ?usize,
 };
 
 const WhenSubjectRefs = struct {
