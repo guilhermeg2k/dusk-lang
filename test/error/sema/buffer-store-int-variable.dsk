@@ -1,6 +1,6 @@
 let n = 3
 
-func main() -> void
-    let mut b = new_buffer(2)
+func main() -> !void
+    let mut b = try new_buffer(2)
     b[0] = n
 end

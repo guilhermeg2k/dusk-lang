@@ -2,7 +2,7 @@ func main() -> !void
     let mut kept: []buffer = []
     let mut total = 0
     for 1..20000: i do
-        let mut data = new_buffer(64)
+        let mut data = try new_buffer(64)
         data[0] = to_byte(i % 256)
         data[63] = 7
         let copy = buffer_from("payload number $i")

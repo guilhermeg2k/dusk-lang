@@ -36,7 +36,7 @@ func shift(mut s: Shape, dx: int) -> void
     end
 end
 
-func main() -> void
+func main() -> !void
     let mut shape = Shape(poly = [Point(x = 0, y = 0)])
     add_point(shape, Point(x = 1, y = 1))
     shape.add(Point(x = 2, y = 2))
@@ -74,7 +74,7 @@ func main() -> void
     end
     if maybe: p then assert(p.x == 5) else assert(false) end
 
-    let mut data = [new_buffer(2)]
+    let mut data = [try new_buffer(2)]
     for data: mut b do
         b[0] = 'z'
     end

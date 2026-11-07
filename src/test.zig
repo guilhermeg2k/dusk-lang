@@ -21,7 +21,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 8 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 9 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -413,7 +413,8 @@ test "buffer errors" {
     try runCaseError("sema/buffer-mut-param-immutable-arg.dsk", error.NotMutable);
     try runCaseRuntimeError("buffer-index-out-of-bounds.dsk", error.IndexOutOfBounds);
     try runCaseRuntimeError("buffer-store-negative-index.dsk", error.IndexOutOfBounds);
-    try runCaseRuntimeError("buffer-negative-size.dsk", error.NegativeBufferSize);
+    try runCaseRuntimeError("buffer-negative-size.dsk", error.UnhandledError);
+    try runCase("buffer-negative-size-error.dsk");
 }
 
 test "invalid byte literals are rejected" {

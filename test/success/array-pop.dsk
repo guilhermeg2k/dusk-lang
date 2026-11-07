@@ -28,4 +28,11 @@ func main() -> void
     pop(xs) catch e then
         assert(e == ArrayError.Empty)
     end
+    let mut maybe = [1, 2]
+    assert(pop_or_null(maybe) == 2)
+    assert(pop_or_null(maybe) == 1)
+    assert(pop_or_null(maybe) == null)
+    let mut words = ["only"]
+    assert(str_equal(pop_or_null(words) orelse "", "only"))
+    assert(pop_or_null(words) == null)
 end

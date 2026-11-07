@@ -1,5 +1,5 @@
 let n = -1
 
-func main() -> void
-    let b = new_buffer(n)
+func main() -> !void
+    let b = try new_buffer(n)
 end

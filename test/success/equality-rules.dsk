@@ -15,7 +15,7 @@ func fail() -> E!int
     return E.Bad
 end
 
-func main() -> void
+func main() -> !void
     assert(1 == 1.0)
     let small: byte = 'a'
     assert(small == 97)
@@ -37,7 +37,7 @@ func main() -> void
     let number: ?int = 3
     assert(number == 3)
     check_error()
-    let data = new_buffer(2)
+    let data = try new_buffer(2)
     assert(data == data)
 end
 

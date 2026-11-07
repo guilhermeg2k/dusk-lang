@@ -9,14 +9,14 @@ end
 
 let local = "hello"
 
-func main() -> void
+func main() -> !void
     assert(str_equal(local, greeting()))
     assert(str_equal("hello", "hello"))
     let mut kept: []string = []
     let holder = Holder(text = "field text")
     for 1..30000: i do
         let garbage = "number $i"
-        let mut data = new_buffer(32)
+        let mut data = try new_buffer(32)
         data[0] = 1
         if i % 10000 == 0 then
             append(kept, "kept")
