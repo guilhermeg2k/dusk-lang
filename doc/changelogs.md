@@ -23,6 +23,7 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 
 ### Fixes
 
+- An integer `//` or `%` by `0` crashed the VM (and was undefined behavior in release builds), and so did `7.0 // 0.0`; it's now a `DivisionByZero` runtime error. The smallest `int` `// -1` is a `DivisionOverflow` runtime error, and its `% -1` gives `0` instead of crashing
 - `len([])` crashed the compiler; it's now a `CantInferSlot` error, since an empty literal gives no item type. Passing a non-array where a generic function takes `[]T` (`len(5)`, `first(5)`) reports `expected 'an array' found 'int'` instead of `CantInferSlot`
 - A function whose return type names an unknown type (`func f() -> Missing`) crashed the compiler; it's now an `Invalid type 'Missing'` error
 - A struct field with neither a type nor a default (`x` alone, or `static x = 1`, which reads as a field named `static`) is now a parser error, `expected ':' or '=' after field 'x'`, instead of crashing the compiler. Fields of inline nested structs are checked too

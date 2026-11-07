@@ -295,17 +295,21 @@ pub const VM = struct {
                 },
 
                 .TRUNC_DIV => {
-                    stack[stack_base + inst.a] = .{ .int64 = @divTrunc(
-                        stack[stack_base + inst.b].int64,
-                        stack[stack_base + inst.c].int64,
-                    ) };
+                    const dividend = stack[stack_base + inst.b].int64;
+                    const divisor = stack[stack_base + inst.c].int64;
+                    if (divisor == 0) return RuntimeErrorReporter.divisionByZero("//");
+                    if (divisor == -1 and dividend == std.math.minInt(i64)) return RuntimeErrorReporter.divisionOverflow(dividend);
+                    stack[stack_base + inst.a] = .{ .int64 = @divTrunc(dividend, divisor) };
                 },
 
                 .I_MOD => {
-                    stack[stack_base + inst.a] = .{ .int64 = @mod(
-                        stack[stack_base + inst.b].int64,
-                        stack[stack_base + inst.c].int64,
-                    ) };
+                    const divisor = stack[stack_base + inst.c].int64;
+                    if (divisor == 0) return RuntimeErrorReporter.divisionByZero("%");
+                    if (divisor == -1) {
+                        stack[stack_base + inst.a] = .{ .int64 = 0 };
+                        continue;
+                    }
+                    stack[stack_base + inst.a] = .{ .int64 = @mod(stack[stack_base + inst.b].int64, divisor) };
                 },
 
                 .I_EQ => {

@@ -1,0 +1,10 @@
+func main() -> void
+    let smallest = 0 - 9223372036854775807 - 1
+    assert(smallest % -1 == 0)
+    assert(smallest // 1 == smallest)
+    assert(7 % -2 == -1)
+    assert(-7 % 2 == 1)
+    assert(-7 // 2 == -3)
+    assert(7 // -2 == -3)
+    assert(7.0 / 2.0 == 3.5)
+end

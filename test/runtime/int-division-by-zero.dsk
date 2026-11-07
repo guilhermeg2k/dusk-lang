@@ -1,0 +1,7 @@
+func divide(a: int, b: int) -> int
+    return a // b
+end
+
+func main() -> void
+    echo(divide(7, 0))
+end

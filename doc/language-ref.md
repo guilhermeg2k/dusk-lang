@@ -635,6 +635,8 @@ Use parentheses to change the order.
 
 An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitives) for the other places an `int` becomes a `float`).
 
+`%` takes the sign of the right side (`7 % -2` is `-1`, `-7 % 2` is `1`), while `//` truncates toward zero (`-7 // 2` is `-3`). `//` turns `float` sides into `int`s first. An `int` `//` or `%` by `0` stops the program with a runtime error, and so does the smallest `int` `// -1`, whose result doesn't fit. `/` by `0` follows floating point: `1 / 0` is `inf`, and `%` with `float` sides gives `nan` for a `0` right side.
+
 ### Comparison and logic
 
 `==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
@@ -1225,7 +1227,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size, a `byte(x)` outside `0..255` or more than 100,000 nested calls still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size, a `byte(x)` outside `0..255`, an integer `//` or `%` by `0` or more than 100,000 nested calls still stops the program and can't be caught.
 
 ## 13. Built-in Functions
 

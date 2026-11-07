@@ -1566,6 +1566,14 @@ test "assignment reads its own target" {
     try runCase("assign-reads-target.dsk");
 }
 
+test "division: '//' and '%' by zero are runtime errors" {
+    try runCase("division-edges.dsk");
+    try runCaseRuntimeError("int-division-by-zero.dsk", error.DivisionByZero);
+    try runCaseRuntimeError("int-modulo-by-zero.dsk", error.DivisionByZero);
+    try runCaseRuntimeError("float-floor-division-by-zero.dsk", error.DivisionByZero);
+    try runCaseRuntimeError("int-division-overflow.dsk", error.DivisionOverflow);
+}
+
 test "runtime error: call depth exceeded" {
     try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
 }

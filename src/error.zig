@@ -881,6 +881,8 @@ pub const RuntimeError = error{
     NegativeBufferSize,
     UnhandledError,
     CallDepthExceeded,
+    DivisionByZero,
+    DivisionOverflow,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -907,6 +909,16 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn callDepthExceeded(max_depth: usize) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.CallDepthExceeded, "call depth exceeded: more than {d} nested calls", .{max_depth});
+    }
+
+    pub noinline fn divisionByZero(operator: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.DivisionByZero, "integer division by zero ('{s}' with a right side of 0)", .{operator});
+    }
+
+    pub noinline fn divisionOverflow(dividend: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.DivisionOverflow, "integer overflow: {d} // -1 doesn't fit in an int", .{dividend});
     }
 
     pub noinline fn unhandledError(error_name: []const u8) RuntimeError {
