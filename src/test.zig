@@ -1551,10 +1551,6 @@ test "copy" {
     try runCase("copy.dsk");
 }
 
-test "sharing rules" {
-    try runCase("sharing-rules.dsk");
-}
-
 test "tail calls" {
     try runCase("tail-calls.dsk");
 }

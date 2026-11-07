@@ -89,75 +89,22 @@ let mut q = Point(x = 1, y = 2)
 q.x = 5
 ```
 
-A `let` value is never changed by anything: see [Sharing values](#sharing-values) for how the compiler keeps mutable variables from reaching it.
+`let` only stops changes made through that name: another variable that shares the value can still change it (see [Sharing values](#sharing-values)).
 
 ### Sharing values
 
-Arrays, buffers, structs and unions (and their nullables) are shared when assigned: `let mut b = a` makes `b` and `a` the same array. Mutable values can share freely. Values that can't change (`let` variables, parameters without `mut`, captures without `mut`) can share with each other too. What the compiler doesn't allow is a mutable variable and an immutable one sharing a value, since a change through one would show through the other:
+Arrays, buffers, structs and unions (and their nullables) are shared when assigned or passed: `let b = a` makes `b` and `a` the same array, so a change through one shows through the other. This also holds between a `let mut` variable and a `let` one. Use `copy(x)` for an independent value:
 
 ```nim
-let mut list = [1, 2]
-let frozen = list          # error: 'list' is mutable, so a let can't share it ('list' is used again below)
-append(list, 3)
-
 let mut items = [1, 2]
-let snapshot = copy(items) # fine: copy(x) returns a deep copy
+let view = items
+let snapshot = copy(items)
 append(items, 3)
+echo(view)       # [1, 2, 3]
+echo(snapshot)   # [1, 2]
 ```
 
-This applies to every place a value is stored: `let`, assignment, `append`, constructor arguments, array items, and values coming out of `if`, `when`, `orelse` and `catch`. Strings and primitives are always safe to share.
-
-**Moves.** A local variable that doesn't share its value with anything else and isn't used again moves for free, so building a value and then keeping it as a `let` needs no copy:
-
-```nim
-let mut squares: []int = []
-for 0..9: i do append(squares, i * i) end
-let result = squares       # fine: 'squares' isn't used again, so its value moves
-
-let template = [0, 0, 0]
-let mut board = template   # fine the other way too
-```
-
-The value needs `copy` when the variable is used again later, when it may share data with another variable, or when the move is inside a loop and the variable is declared outside it. Fields and items of a local can move under the same conditions (`let first = rows[0]` when `rows` isn't used again). The error names the reason.
-
-**Functions.** A function can only return values that don't share data with its parameters, and can only store into a `mut` parameter values that don't come from its other parameters. New values, locals built inside the function and copies are fine:
-
-```nim
-func build(n: int) -> [][]int
-    let mut out: [][]int = []
-    for 0..n: i do append(out, [i]) end
-    return out                  # fine: built here
-end
-
-func first(rows: [][]int) -> []int
-    return rows[0]              # error: 'rows[0]' belongs to the caller: return copy(rows[0])
-end
-
-struct Bag
-    items: [][]int
-
-    func add(mut self: @, item: []int) -> void
-        append(self.items, copy(item))   # 'item' belongs to the caller, so it's copied
-    end
-end
-```
-
-A `mut` parameter can share data with the function's own locals, so a method can link the same new value in two places (a list's `tail` and the previous node's `next`).
-
-**Captures.** A capture without `mut` reads its value. While it's in use (inside its block), the variable it came from can't change: assignments, `append`, passing it as a `mut` argument, `mut self` calls and `mut` captures of it are errors. Use a `mut` capture to change things inside the block, or change them after it:
-
-```nim
-let mut players = [Player(hp = 10)]
-for players: p do
-    echo(p.hp)                 # fine: reading
-    players[0].hp = 0          # error: 'players' can't change while capture 'p' reads from it
-end
-for players: mut p do
-    p.hp = 0                   # fine
-end
-```
-
-Changes made through a different mutable variable that shares the same value aren't caught by this check.
+Strings and primitives can't be changed in place, so sharing them never shows.
 
 ### Constants
 
@@ -1057,10 +1004,10 @@ Each filled type is its own type: a `Stack[int]` isn't a `Stack[float]`. Recursi
 
 A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `echo`, `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value or be `mut` without a trait constraint.
 
-Each copy is checked again with its real types, so the [sharing rules](#sharing-values) apply per copy. An error there names the copy and the call that made it:
+Each copy is checked again with its real types. An error there names the copy and the call that made it:
 
 ```
-error: in first[[]int] (created at line 7): 'xs[0]' belongs to the caller ...
+error: in first[[]int] (created at line 7): ...
 ```
 
 ### Type lists
@@ -1305,8 +1252,6 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 
 `index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content.
 
-`insert` keeps its item like `append`, so the same [sharing rules](#sharing-values) apply: a `let` value used again later needs `copy`.
-
 ```nim
 let mut stack = [1, 2, 3]
 for true do
@@ -1400,7 +1345,6 @@ These are known gaps in v0.14 development. Most are planned in the [roadmap](roa
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
-- **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
 - **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).
