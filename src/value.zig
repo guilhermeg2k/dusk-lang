@@ -178,7 +178,8 @@ pub const Array = extern struct {
     len: usize,
     capacity: usize,
 
-    pub fn init(allocator: std.mem.Allocator, kind: ValueType, capacity: usize) !*Self {
+    pub fn init(allocator: std.mem.Allocator, kind: ValueType, requested_capacity: usize) !*Self {
+        const capacity = if (requested_capacity != 0) requested_capacity else 8;
         const total_bytes = Self.calc_size(capacity);
         const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), total_bytes);
 
@@ -190,7 +191,7 @@ pub const Array = extern struct {
 
         array.len = 0;
         array.kind = kind;
-        array.capacity = if (capacity != 0) capacity else 8;
+        array.capacity = capacity;
 
         return array;
     }
@@ -225,7 +226,7 @@ pub const Array = extern struct {
     }
 
     pub fn calcNewCapacity(self: *Self) usize {
-        return self.capacity + self.capacity / 2;
+        return self.capacity + @max(self.capacity / 2, 1);
     }
 
     pub fn resize(self: *Self, allocator: std.mem.Allocator) !*Self {

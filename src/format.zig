@@ -36,7 +36,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 writer.print("null", .{}) catch @panic("failed to print null");
                 return;
             }
-            const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj);
+            const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
             const data = array.getDataPtr();
             writer.print("[", .{}) catch @panic("failed to print array bracket");
             for (0..array.len) |i| {

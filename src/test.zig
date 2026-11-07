@@ -80,6 +80,10 @@ test "when: a nullable subject without a null case lowers else once" {
     try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
 }
 
+test "arrays print their items after growing, and a one-item array grows" {
+    try runCaseOutput("array-growth-printing.dsk", "[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[a, b, c]\n");
+}
+
 test "string interpolation GC" {
     try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
 }
