@@ -84,6 +84,14 @@ test "arrays print their items after growing, and a one-item array grows" {
     try runCaseOutput("array-growth-printing.dsk", "[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[a, b, c]\n");
 }
 
+test "tail calls: return try f(x) reuses the frame when the success types match" {
+    try runCase("tail-calls-failing.dsk");
+    const same = "error E\n Bad\nend\nfunc f(n: int) -> E!int\n if n == 0 then return E.Bad end\n return try f(n - 1)\nend\nfunc main() -> void\nend";
+    const boxed = "error E\n Bad\nend\nfunc g(n: int) -> E!int\n return n\nend\nfunc f(n: int) -> E!?int\n return try g(n)\nend\nfunc main() -> void\nend";
+    try testing.expectEqual(@as(usize, 1), try countOps(same, "f", .TAIL_CALL));
+    try testing.expectEqual(@as(usize, 0), try countOps(boxed, "f", .TAIL_CALL));
+}
+
 test "string interpolation GC" {
     try runCaseOutput("string-interpolation-gc.dsk", "value=12000 / nested value=12001 / [first, second] / 42\n[first, second] 42\n");
 }

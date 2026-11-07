@@ -592,7 +592,9 @@ pub const BytecodeGen = struct {
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
         if (return_stmt.value) |value| {
-            if (self.tailCallIndex(value)) |fn_index| return self.genTailCall(value.data.fn_call, fn_index);
+            if (self.tailCallOf(value)) |call| {
+                if (self.tailCallIndex(call)) |fn_index| return self.genTailCall(call.data.fn_call, fn_index);
+            }
         }
 
         const return_value_register = if (return_stmt.value) |val|
@@ -608,9 +610,14 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, inst);
     }
 
+    fn tailCallOf(self: *Self, value: *const ir.Value) ?*const ir.Value {
+        if (value.data == .try_call) return if (value.data.try_call.is_top_level) null else value.data.try_call.call;
+        if (self.type_table.isErrorUnion(value.type_id)) return null;
+        return value;
+    }
+
     fn tailCallIndex(self: *Self, value: *const ir.Value) ?u16 {
         if (value.data != .fn_call) return null;
-        if (self.type_table.isErrorUnion(value.type_id)) return null;
         const fn_index = self.fn_index_by_uid.get(value.data.fn_call.fn_uid) orelse return null;
         if (fn_index < self.extern_count) return null;
         return fn_index;

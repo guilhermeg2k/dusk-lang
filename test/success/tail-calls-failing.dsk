@@ -1,0 +1,67 @@
+error E
+    Bad
+    Worse
+end
+
+error Small
+    Bad
+end
+
+func count(n: int) -> E!int
+    if n < 0 then return E.Bad end
+    if n == 0 then return 42 end
+    return try count(n - 1)
+end
+
+func fail_at_bottom(n: int) -> E!int
+    if n == 0 then return E.Worse end
+    return try fail_at_bottom(n - 1)
+end
+
+func walk(n: int) -> E!void
+    if n == 0 then return end
+    return try walk(n - 1)
+end
+
+func even(n: int) -> !bool
+    if n == 0 then return true end
+    return try odd(n - 1)
+end
+
+func odd(n: int) -> Small!bool
+    if n == 0 then return false end
+    if n < 0 then return Small.Bad end
+    return try even(n - 1)
+end
+
+func inferred(n: int) -> !int
+    if n == 0 then return E.Bad end
+    return try inferred(n - 1)
+end
+
+func boxed(n: int) -> E!?int
+    if n == 0 then return null end
+    return try count(n)
+end
+
+func main() -> void
+    assert((count(200000) catch -1) == 42)
+    assert((count(-1) catch -1) == -1)
+    const_check()
+    walk(300000) catch e then
+        assert(false)
+    end
+    assert(!(even(200001) catch true))
+    assert(even(200000) catch false)
+    assert((inferred(150000) catch -7) == -7)
+    assert(((boxed(5) catch null) orelse 0) == 42)
+    assert(((boxed(0) catch 1) orelse 9) == 9)
+end
+
+func const_check() -> void
+    let failure = fail_at_bottom(250000) catch e then
+        assert(e == E.Worse)
+        return
+    end
+    assert(false)
+end
