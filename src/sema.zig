@@ -4266,21 +4266,21 @@ pub const SemaAnalyzer = struct {
         return static_fields.get(indexed.index.data.identifier);
     }
 
-    fn findImmutablePlace(self: *Self, exp: *const ast.ExpNode) ?ImmutablePlace {
+    fn findImmutablePlace(self: *Self, exp: *const ast.ExpNode) ?[]const u8 {
         switch (exp.data) {
             .identifier => |name| {
                 const sym = self.scope.symbol_table.get(name) orelse return null;
                 if (sym.kind == .variable and sym.kind.variable.is_mut) return null;
-                return .{ .binding = name };
+                return name;
             },
             .indexed => |indexed| {
                 if (self.staticFieldOf(indexed)) |field| {
                     if (field.is_mut) return null;
-                    return .{ .binding = field.identifier };
+                    return field.identifier;
                 }
                 return self.findImmutablePlace(indexed.target);
             },
-            else => return .temporary,
+            else => return null,
         }
     }
 
@@ -4296,8 +4296,8 @@ pub const SemaAnalyzer = struct {
             .identifier, .indexed => {
                 const type_id = self.exp_types.get(exp) orelse return null;
                 if (!self.isChangeableType(type_id)) return null;
-                const place = self.findImmutablePlace(exp) orelse return null;
-                return if (place == .binding) exp else null;
+                if (self.findImmutablePlace(exp) == null) return null;
+                return exp;
             },
             .array_literal => |literal| return self.firstReadOnlySource(literal.exps),
             .anonymous_init => |anonymous| return self.firstReadOnlyArgument(anonymous.arguments),
@@ -4359,11 +4359,8 @@ pub const SemaAnalyzer = struct {
     }
 
     fn ensureMutable(self: *Self, exp: *const ast.ExpNode) CompileError!void {
-        const place = self.findImmutablePlace(exp) orelse return;
-        return switch (place) {
-            .binding => |name| self.err_reporter.notMutable(name, exp.loc),
-            .temporary => self.err_reporter.temporaryNotMutable(exp.loc),
-        };
+        const name = self.findImmutablePlace(exp) orelse return;
+        return self.err_reporter.notMutable(name, exp.loc);
     }
 
     fn shouldAutoBindSelf(self: *Self, target: *ir.Value) bool {
@@ -5048,10 +5045,6 @@ pub const Symbol = struct {
     },
 };
 
-const ImmutablePlace = union(enum) {
-    binding: []const u8,
-    temporary,
-};
 
 const WhenSubject = struct {
     value: *ir.Value,

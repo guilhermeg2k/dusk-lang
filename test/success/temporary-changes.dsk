@@ -1,0 +1,29 @@
+struct Builder
+    count: int
+    items: []int
+
+    func add(mut self: @, n: int) -> Builder
+        self.count = self.count + n
+        append(self.items, n)
+        return self
+    end
+end
+
+func make() -> Builder
+    return Builder(count = 0, items = [])
+end
+
+func main() -> void
+    let mut b = make()
+    b.add(1).add(2).add(3)
+    assert(b.count == 6)
+    assert(len(b.items) == 3)
+
+    let c = make().add(5).add(6)
+    assert(c.count == 11)
+    assert(Builder(count = 1, items = [4]).add(2).count == 3)
+
+    make().count = 9
+    Builder(count = 0, items = [1]).items[0] = 2
+    append(make().items, 3)
+end

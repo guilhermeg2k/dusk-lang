@@ -151,10 +151,6 @@ pub const CompileErrorReporter = struct {
         return error.NotMutable;
     }
 
-    pub fn temporaryNotMutable(self: *Self, loc: Loc) CompileError {
-        self.log("A temporary value can't be changed; store it in a 'let mut' variable first", loc);
-        return error.TemporaryNotMutable;
-    }
 
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
@@ -814,7 +810,6 @@ pub const CompileError = error{
     AlreadyDefined,
     NotDefined,
     NotMutable,
-    TemporaryNotMutable,
     ReadOnlyIntoMutable,
     UnwrappedCantBeMutable,
     SelfOutsideStruct,

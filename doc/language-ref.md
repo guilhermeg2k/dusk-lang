@@ -79,7 +79,7 @@ let mut y = 10
 y = 20
 ```
 
-A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and `for`, `if` and `when` captures. A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
+A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and `for`, `if` and `when` captures. A value that isn't stored in a variable, such as a function result or a new struct, can be changed directly, so `mut self` methods chain: `b.add(1).add(2)` when `add` returns `self`.
 
 ```nim
 let p = Point(x = 1, y = 2)

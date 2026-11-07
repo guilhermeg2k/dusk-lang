@@ -788,12 +788,8 @@ test "sema error: append field path immutable" {
     try runCaseError("sema/append-field-path-immutable.dsk", error.NotMutable);
 }
 
-test "sema error: temporary field assign" {
-    try runCaseError("sema/temporary-field-assign.dsk", error.TemporaryNotMutable);
-}
-
-test "sema error: temporary mut method call" {
-    try runCaseError("sema/temporary-mut-method-call.dsk", error.TemporaryNotMutable);
+test "temporary values can be changed and chained" {
+    try runCase("temporary-changes.dsk");
 }
 
 test "mutable paths" {
