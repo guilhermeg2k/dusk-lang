@@ -383,8 +383,9 @@ test "byte errors" {
     try runCaseError("sema/byte-cast-string.dsk", error.InvalidType);
     try runCaseError("sema/byte-arithmetic-assign.dsk", error.InvalidType);
     try runCaseError("sema/byte-when-case-out-of-range.dsk", error.ByteOutOfRange);
-    try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.ByteOutOfRange);
-    try runCaseRuntimeError("byte-cast-negative.dsk", error.ByteOutOfRange);
+    try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.UnhandledError);
+    try runCaseRuntimeError("byte-cast-negative.dsk", error.UnhandledError);
+    try runCase("to-byte-errors.dsk");
 }
 
 test "buffer" {

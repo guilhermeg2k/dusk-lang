@@ -3628,21 +3628,6 @@ pub const SemaAnalyzer = struct {
         return ir.Value.init(self.allocator, .{ .data = .{ .int_to_float = value }, .type_id = float_type });
     }
 
-    fn evalByteCast(self: *Self, operand: *const ast.ExpNode) CompileError!*ir.Value {
-        if (intConstant(operand)) |number| return self.evalByteConstant(number, operand.loc);
-        const value = try self.evalExp(operand);
-        if (isValueLeaving(value)) return value;
-        if (!self.isIntegerType(value.type_id)) {
-            return self.err_reporter.invalidType("int or byte", try self.type_table.name(value.type_id, self.allocator), operand.loc);
-        }
-        const byte_type = self.type_table.getPrimitive(.byte);
-        if (value.type_id == byte_type) return value;
-        return ir.Value.init(self.allocator, .{
-            .data = .{ .unary_op = .{ .kind = .to_byte, .right = value } },
-            .type_id = byte_type,
-        });
-    }
-
     fn evalExp(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
         const value = try self.evalExpUnrecorded(exp);
         try self.exp_types.put(self.allocator, exp, value.type_id);
@@ -3757,7 +3742,6 @@ pub const SemaAnalyzer = struct {
                 fn_identifier = symbol.identifier;
 
                 if (symbol.kind == .function and fn_call.arguments.len == 1) {
-                    if (std.mem.eql(u8, id, "to_byte")) return self.evalByteCast(fn_call.arguments[0].exp);
                     if (std.mem.eql(u8, id, "to_float")) return self.evalFloatCast(fn_call.arguments[0].exp);
                 }
 

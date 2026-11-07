@@ -18,7 +18,7 @@ func main() -> !void
     echo(buffer_len(buf))
     buf[0] = 'h'
     buf[1] = 105
-    buf[3] = to_byte(200 + 55)
+    buf[3] = try to_byte(200 + 55)
     echo(buf)
     let x = buf[0]
     echo(x)

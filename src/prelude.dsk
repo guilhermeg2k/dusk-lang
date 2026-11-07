@@ -30,7 +30,7 @@ extern func contains[T: int | float | byte | bool | string](array: []T, value: T
 extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
 extern func __new_buffer(size: int) -> buffer
-extern func to_byte(value: int) -> byte
+extern func __to_byte(value: int) -> byte
 extern func to_float(value: int) -> float
 extern func assert(cond: bool) -> void
 extern func buffer_from(text: string) -> buffer
@@ -104,4 +104,11 @@ func new_buffer(size: int) -> BufferError!buffer
         return BufferError.NegativeSize
     end
     return __new_buffer(size)
+end
+
+func to_byte(value: int) -> ConversionError!byte
+    if value < 0 or value > 255 then
+        return ConversionError.Overflow
+    end
+    return __to_byte(value)
 end

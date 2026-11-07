@@ -1,0 +1,16 @@
+func main() -> void
+    assert((to_byte(0) catch 1) == 0)
+    assert((to_byte(255) catch 1) == 255)
+    let low = 0 - 1
+    let high = 256
+    check(low)
+    check(high)
+end
+
+func check(value: int) -> void
+    let failed = to_byte(value) catch e then
+        assert(e == ConversionError.Overflow)
+        return
+    end
+    assert(false)
+end

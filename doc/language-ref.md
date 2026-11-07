@@ -197,7 +197,7 @@ A `byte` holds one value from `0` to `255`. A byte literal is one ASCII characte
 let comma = ','
 let a: byte = 65           # an int constant that fits converts to byte
 let n = 200
-let b = to_byte(n)         # converting an int variable is checked at run time
+let b = to_byte(n) catch 0 # fails with ConversionError.Overflow outside 0..255
 let digit = '7' - '0'      # arithmetic on bytes gives an int: 7
 let code: int = comma      # a byte converts to int automatically
 
@@ -208,7 +208,7 @@ when comma
 end
 ```
 
-- An int constant outside `0..255` (`let b: byte = 300`, `to_byte(-1)`) is a compile error. `to_byte(x)` with an int variable outside that range stops the program with a runtime error.
+- An int constant outside `0..255` (`let b: byte = 300`) is a compile error. `to_byte(x)` returns `ConversionError!byte` and fails with `ConversionError.Overflow` outside that range, so it needs `try` or `catch`.
 - An int variable never converts to `byte` implicitly: use `to_byte(x)`. So `b = b + 1` on a `byte` variable is an error, because `b + 1` is an `int`.
 - Bytes work as `when` subjects with literal and range cases (an `else` is required), as array indexes and as range-loop bounds.
 - `?byte` works like `?int`. A `[]byte` is a regular array, using as much memory per item as `[]int`.
@@ -1249,7 +1249,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds, a `to_byte(x)` outside `0..255`, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits or more than 100,000 nested calls still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits or more than 100,000 nested calls still stops the program and can't be caught.
 
 ## 13. Built-in Functions
 
@@ -1262,7 +1262,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
 | `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
 | `new_buffer`  | `new_buffer(size: int) -> BufferError!buffer`     | Returns a new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size. |
-| `to_byte`     | `to_byte(value: int) -> byte`                     | Converts an `int` or `byte` to `byte`; outside `0..255` it's a compile error for a constant and stops the program otherwise. |
+| `to_byte`     | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
 | `to_float`    | `to_float(value: int) -> float`                   | Converts an `int`, `byte` or `float` to `float`.                                     |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(mut list: []T, item: T) -> void`          | Adds an item to the end of a mutable array.                                          |
@@ -1336,7 +1336,7 @@ Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`,
 | `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
 | `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
-| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, or a float too large to represent. |
+| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, a float too large to represent, or a `to_byte` value outside `0..255`. |
 | `BufferError.NegativeSize` | `new_buffer` with a negative size. |
 
 ```nim
@@ -1374,7 +1374,7 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `to_byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
 ## 15. Known Limitations
 
