@@ -37,6 +37,7 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
     .{ "__new_buffer", Binding{ .@"inline" = &newBufferGen } },
     .{ "__to_byte", Binding{ .@"inline" = &toByteGen } },
+    .{ "__to_int", Binding{ .@"inline" = &toIntGen } },
     .{ "to_float", Binding{ .@"inline" = &toFloatGen } },
     .{ "append", Binding{ .@"inline" = &appendGen } },
     .{ "copy", Binding{ .@"inline" = &copyGen } },
@@ -379,6 +380,13 @@ fn newBufferGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]
 fn toByteGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
     var list: std.ArrayList(bc.Instruction) = .empty;
     try list.append(alloc, .{ .op = .I_TO_BYTE, .a = target_reg, .b = arg_start_reg });
+    return try list.toOwnedSlice(alloc);
+}
+
+fn toIntGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
+    var list: std.ArrayList(bc.Instruction) = .empty;
+    try list.append(alloc, .{ .op = .LOAD, .a = target_reg, .b = arg_start_reg });
+    try list.append(alloc, .{ .op = .F_TO_I, .a = target_reg });
     return try list.toOwnedSlice(alloc);
 }
 

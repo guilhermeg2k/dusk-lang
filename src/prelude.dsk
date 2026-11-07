@@ -31,6 +31,7 @@ extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
 extern func __new_buffer(size: int) -> buffer
 extern func __to_byte(value: int) -> byte
+extern func __to_int(value: float) -> int
 extern func to_float(value: int) -> float
 extern func assert(cond: bool) -> void
 extern func buffer_from(text: string) -> buffer
@@ -111,4 +112,12 @@ func to_byte(value: int) -> ConversionError!byte
         return ConversionError.Overflow
     end
     return __to_byte(value)
+end
+
+func to_int(value: float) -> ConversionError!int
+    let is_out_of_range = value != value or value < -9223372036854775808.0 or value >= 9223372036854775808.0
+    if is_out_of_range then
+        return ConversionError.Overflow
+    end
+    return __to_int(value)
 end

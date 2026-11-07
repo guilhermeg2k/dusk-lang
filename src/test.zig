@@ -386,6 +386,7 @@ test "byte errors" {
     try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.UnhandledError);
     try runCaseRuntimeError("byte-cast-negative.dsk", error.UnhandledError);
     try runCase("to-byte-errors.dsk");
+    try runCase("to-int.dsk");
 }
 
 test "buffer" {

@@ -1,0 +1,22 @@
+func main() -> void
+    assert((to_int(7.9) catch 0) == 7)
+    assert((to_int(-7.9) catch 0) == -7)
+    assert((to_int(0.0) catch 1) == 0)
+    assert((to_int(5) catch 0) == 5)
+    assert((to_int(9000000000000000000.0) catch 0) == 9000000000000000000)
+    assert((to_int(-9223372036854775808.0) catch 0) == 0 - 9223372036854775807 - 1)
+    let zero = 0.0
+    check(zero / zero)
+    check(1.0 / zero)
+    check(-1.0 / zero)
+    check(9223372036854775808.0)
+    check(100000000000000000000.0)
+end
+
+func check(value: float) -> void
+    let failed = to_int(value) catch e then
+        assert(e == ConversionError.Overflow)
+        return
+    end
+    assert(false)
+end

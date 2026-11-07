@@ -151,7 +151,7 @@ Any other value (a `let mut`, an array, a struct, a value computed by a call) is
 
 Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `to_float(x)` converts an `int` or `byte` explicitly (`echo(to_float(count))`).
 
-A `float` never converts to `int` (use `//`), a `byte` only converts to `float` with `to_float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
+A `float` never converts to `int` automatically (use `to_int(x)`, which truncates and can fail), a `byte` only converts to `float` with `to_float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
 
 Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing closing quotes are compile errors. The runtime stores the UTF-8 bytes with an explicit byte length, so embedded NUL characters are preserved.
 
@@ -1264,6 +1264,7 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `new_buffer`  | `new_buffer(size: int) -> BufferError!buffer`     | Returns a new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size. |
 | `to_byte`     | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
 | `to_float`    | `to_float(value: int) -> float`                   | Converts an `int`, `byte` or `float` to `float`.                                     |
+| `to_int`      | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(mut list: []T, item: T) -> void`          | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
@@ -1336,7 +1337,7 @@ Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`,
 | `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
 | `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
-| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, a float too large to represent, or a `to_byte` value outside `0..255`. |
+| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, a float too large to represent, a `to_byte` value outside `0..255`, or a `to_int` value that's `nan`, infinite or outside the `int` range. |
 | `BufferError.NegativeSize` | `new_buffer` with a negative size. |
 
 ```nim
