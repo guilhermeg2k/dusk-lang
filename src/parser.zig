@@ -1043,12 +1043,13 @@ pub const Parser = struct {
     fn parsePipeOperator(self: *Self, exp: *ast.ExpNode) !*ast.ExpNode {
         self.walk();
         const right = try self.parseExp(self.getBindingPower(.l_paren));
+        const call = if (right.data == .try_exp) right.data.try_exp.operand else right;
 
-        if (right.data != .fn_call) {
-            return self.err_reporter.invalidSyntax("function call after '->'", .{ .tag = .identifier, .loc = right.loc });
+        if (call.data != .fn_call) {
+            return self.err_reporter.invalidSyntax("function call or 'try' call after '|>'", .{ .tag = .identifier, .loc = right.loc });
         }
 
-        const old_args = right.data.fn_call.arguments;
+        const old_args = call.data.fn_call.arguments;
         var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
 
         new_args.appendAssumeCapacity(
@@ -1060,7 +1061,7 @@ pub const Parser = struct {
 
         new_args.appendSliceAssumeCapacity(old_args);
 
-        right.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
+        call.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
         return right;
     }
 

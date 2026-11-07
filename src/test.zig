@@ -562,6 +562,7 @@ test "nested structs" {
 
 test "simple pipe" {
     try runCase("simple-pipe.dsk");
+    try runCase("errors-try-pipe.dsk");
 }
 
 test "float ints" {
@@ -1045,6 +1046,7 @@ test "syntax error: anonymous init missing paren" {
 
 test "syntax error: pipe non fn call" {
     try runCaseError("parser/pipe-non-fn-call.dsk", error.ParserError);
+    try runCaseError("parser/pipe-try-non-call.dsk", error.ParserError);
 }
 
 test "syntax error: unknown type annotation" {

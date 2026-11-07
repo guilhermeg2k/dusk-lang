@@ -935,6 +935,16 @@ let result = 2
 assert(result == false)
 ```
 
+The right side can also be a `try` call: `x |> try f()` calls `f(x)` and passes its error up, so a chain of failing steps reads left to right:
+
+```nim
+func run(text: string) -> ParseError!int
+    return try parse(text) |> try half() |> add(1)
+end
+```
+
+`try` binds tighter than `|>`, so `try x |> f()` means `(try x) |> f()`. To `try` the result of a whole pipe, write `x |> try f()` or `try (x |> f())`.
+
 ### Scope
 
 A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). It can't see the variables of other functions, including `main`: state a function reads or changes must be passed to it, with `mut` to change it. Default values (field and parameter defaults) can only use constants.
