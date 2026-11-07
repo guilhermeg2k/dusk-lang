@@ -124,7 +124,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn isInternalName(identifier: []const u8) bool {
-        return identifier.len > 1 and identifier[0] == '_';
+        return identifier.len > 2 and std.mem.startsWith(u8, identifier, "__");
     }
 
     fn checkNotInternal(self: *Self, symbol: Symbol, loc: err.Loc) CompileError!void {

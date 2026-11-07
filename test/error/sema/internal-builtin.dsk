@@ -1,4 +1,4 @@
 func main() -> void
     let mut xs = [1]
-    let x = _array_pop(xs)
+    let x = __array_pop(xs)
 end
