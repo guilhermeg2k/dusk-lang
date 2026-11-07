@@ -93,7 +93,7 @@ A `let` value is never changed by anything: see [Sharing values](#sharing-values
 
 ### Sharing values
 
-Arrays, buffers, structs and unions (and their nullables) are shared when assigned: `let mut b = a` makes `b` and `a` the same array. Mutable values can share freely, like in Python. Values that can't change (`let` variables, parameters without `mut`, captures without `mut`) can share with each other too. What the compiler doesn't allow is a mutable variable and an immutable one sharing a value, since a change through one would show through the other:
+Arrays, buffers, structs and unions (and their nullables) are shared when assigned: `let mut b = a` makes `b` and `a` the same array. Mutable values can share freely. Values that can't change (`let` variables, parameters without `mut`, captures without `mut`) can share with each other too. What the compiler doesn't allow is a mutable variable and an immutable one sharing a value, since a change through one would show through the other:
 
 ```nim
 let mut list = [1, 2]
