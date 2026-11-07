@@ -722,7 +722,7 @@ Rules:
 
 - Enum and union cases must cover every variant, and `null` for a nullable subject, unless there's an `else`. An `else` that can never run is an error.
 - `int`, `byte`, `float` and `string` subjects always need an `else`, even if ranges appear to cover every value.
-- Int cases can be literals (`1`, `-1`) or inclusive ranges (`1..5`). A case can combine them (`1..5, 8, 10..12 then ... end`). Range bounds must be int literals.
+- Int cases can be values known at compile time or inclusive ranges of them (`1..5`): literals (`1`, `-1`), [constants](#constants), static fields (`Grid.SIZE`) and `+`, `-`, `*`, `//`, `%` on them (`LOW + 1`, `-Grid.SIZE`). A case can combine them (`1..5, 8, LOW..HIGH then ... end`). Variables and calls aren't allowed, and a case value that overflows or divides by zero is a compile error.
 - Float cases must be inclusive ranges (`0.0..1.0`), not individual values. Bounds must be finite numeric literals; int bounds are promoted to float. NaN and infinities reach `else`.
 - A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).

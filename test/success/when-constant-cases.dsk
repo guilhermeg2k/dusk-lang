@@ -1,0 +1,34 @@
+let LOW = 10
+let HIGH = LOW * 2
+
+struct Grid
+    let SIZE = 3
+end
+
+func kind(n: int) -> string
+    let mut out = ""
+    when n
+        0 then out = "zero" end
+        -1 then out = "minus one" end
+        LOW then out = "low" end
+        LOW + 1 then out = "low plus one" end
+        Grid.SIZE then out = "size" end
+        -Grid.SIZE then out = "minus size" end
+        HIGH..HIGH + 5 then out = "high" end
+        HIGH * 10 // 2 then out = "hundred" end
+        else then out = "other" end
+    end
+    return out
+end
+
+func main() -> void
+    assert(str_equal(kind(0), "zero"))
+    assert(str_equal(kind(-1), "minus one"))
+    assert(str_equal(kind(10), "low"))
+    assert(str_equal(kind(11), "low plus one"))
+    assert(str_equal(kind(3), "size"))
+    assert(str_equal(kind(-3), "minus size"))
+    assert(str_equal(kind(22), "high"))
+    assert(str_equal(kind(100), "hundred"))
+    assert(str_equal(kind(7), "other"))
+end

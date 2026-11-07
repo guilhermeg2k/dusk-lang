@@ -2622,21 +2622,22 @@ pub const SemaAnalyzer = struct {
         }
 
         if (self.isIntegerType(expected_type)) {
-            const literal = intConstant(exp);
             const type_name = try self.type_table.name(expected_type, self.allocator);
-
-            if (literal == null) {
+            const number = intConstant(exp) orelse blk: {
                 const value = try self.evalExp(exp);
                 if (!self.type_table.canCoerce(value.type_id, expected_type)) {
                     return self.err_reporter.invalidType(type_name, try self.type_table.name(value.type_id, self.allocator), exp.loc);
                 }
-                return self.err_reporter.whenInvalidCase(try std.fmt.allocPrint(self.allocator, "{s} cases must be {s} literals", .{ type_name, type_name }), exp.loc);
-            }
+                if (!self.isConstantExp(exp)) {
+                    return self.err_reporter.whenInvalidCase(try std.fmt.allocPrint(self.allocator, "{s} cases must be known at compile time: literals, constants, static fields and operators on them", .{type_name}), exp.loc);
+                }
+                break :blk try self.foldInt(value, exp.loc) orelse return self.err_reporter.whenInvalidCase(try std.fmt.allocPrint(self.allocator, "{s} cases must be {s} values known at compile time", .{ type_name, type_name }), exp.loc);
+            };
 
             const is_byte = self.type_table.getTypePtrById(expected_type).kind == .byte;
-            if (is_byte and (literal.? < 0 or literal.? > 255)) return self.err_reporter.byteOutOfRange(literal.?, exp.loc);
+            if (is_byte and (number < 0 or number > 255)) return self.err_reporter.byteOutOfRange(number, exp.loc);
 
-            return ir.Value.init(self.allocator, .{ .data = .{ .i_int = literal.? }, .type_id = expected_type });
+            return ir.Value.init(self.allocator, .{ .data = .{ .i_int = number }, .type_id = expected_type });
         }
 
         const value = try self.evalExp(exp);
@@ -2651,6 +2652,37 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.whenInvalidCase("enum cases must be variants, like 'Color.Red'", exp.loc);
         }
         return value;
+    }
+
+    fn foldInt(self: *Self, value: *const ir.Value, loc: err.Loc) CompileError!?i64 {
+        switch (value.data) {
+            .i_int => |number| return number,
+            .unary_op => |unary| {
+                if (unary.kind != .i_neg) return null;
+                const operand = try self.foldInt(unary.right, loc) orelse return null;
+                if (operand == std.math.minInt(i64)) return self.err_reporter.whenInvalidCase("this case value doesn't fit in an int", loc);
+                return -operand;
+            },
+            .binary_op => |binary| {
+                const left = try self.foldInt(binary.left, loc) orelse return null;
+                const right = try self.foldInt(binary.right, loc) orelse return null;
+                const result = switch (binary.kind) {
+                    .i_add => @addWithOverflow(left, right),
+                    .i_sub => @subWithOverflow(left, right),
+                    .i_mult => @mulWithOverflow(left, right),
+                    .trunc_div, .i_mod => {
+                        if (right == 0) return self.err_reporter.whenInvalidCase("this case value divides by zero", loc);
+                        if (binary.kind == .i_mod) return if (right == -1) 0 else @mod(left, right);
+                        if (right == -1 and left == std.math.minInt(i64)) return self.err_reporter.whenInvalidCase("this case value doesn't fit in an int", loc);
+                        return @divTrunc(left, right);
+                    },
+                    else => return null,
+                };
+                if (result[1] != 0) return self.err_reporter.whenInvalidCase("this case value doesn't fit in an int", loc);
+                return result[0];
+            },
+            else => return null,
+        }
     }
 
     fn strEqual(self: *Self, left: *ir.Value, right: *ir.Value) !*ir.Value {

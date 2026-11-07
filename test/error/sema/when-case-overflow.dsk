@@ -1,0 +1,11 @@
+let BIG = 9223372036854775807
+
+func main() -> void
+    when 3
+        BIG + 1 then
+        end
+
+        else then
+        end
+    end
+end

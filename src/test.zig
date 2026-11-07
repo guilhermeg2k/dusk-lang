@@ -1762,6 +1762,11 @@ test "when-range-expression-bound" {
     try runCaseError("sema/when-range-expression-bound.dsk", error.WhenInvalidCase);
 }
 
+test "when: int cases can be constants, static fields and operators on them" {
+    try runCase("when-constant-cases.dsk");
+    try runCaseError("sema/when-case-overflow.dsk", error.WhenInvalidCase);
+}
+
 test "when-range-float-on-int" {
     try runCaseError("sema/when-range-float-on-int.dsk", error.InvalidType);
 }
