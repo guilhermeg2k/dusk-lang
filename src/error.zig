@@ -608,23 +608,6 @@ pub const CompileErrorReporter = struct {
         return error.PrimitiveParamsCantBeMutable;
     }
 
-    pub fn needsCopy(self: *Self, message: []const u8, loc: Loc) CompileError {
-        self.log(message, loc);
-        return error.NeedsCopy;
-    }
-
-    pub fn changedWhileRead(self: *Self, target: []const u8, capture: []const u8, capture_line: usize, loc: Loc) CompileError {
-        self.log(
-            try allocPrint(
-                self.allocator,
-                "'{s}' can't change while capture '{s}' (line {d}) reads from it: make the capture mut, or change it after that block",
-                .{ target, capture, capture_line },
-            ),
-            loc,
-        );
-        return error.ChangedWhileRead;
-    }
-
     pub fn primitiveCaptureCantBeMutable(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
@@ -839,8 +822,6 @@ pub const CompileError = error{
     InvalidUnionMember,
     InvalidUnionFunction,
     PrimitiveCaptureCantBeMutable,
-    NeedsCopy,
-    ChangedWhileRead,
     MutBorrowCantBeReassigned,
     TooManyUnionVariants,
     WhenNotExhaustive,

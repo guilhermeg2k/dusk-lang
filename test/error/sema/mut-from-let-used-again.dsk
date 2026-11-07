@@ -1,5 +1,0 @@
-func main() -> void
-    let base = [1]
-    let mut work = base
-    echo(base)
-end

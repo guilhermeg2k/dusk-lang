@@ -1567,70 +1567,6 @@ test "runtime error: call depth exceeded" {
     try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
 }
 
-test "sema error: let from mut used again" {
-    try runCaseError("sema/let-from-mut-used-again.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut from let used again" {
-    try runCaseError("sema/mut-from-let-used-again.dsk", error.NeedsCopy);
-}
-
-test "sema error: let from mut path used again" {
-    try runCaseError("sema/let-from-mut-path-used-again.dsk", error.NeedsCopy);
-}
-
-test "sema error: let from shared mut" {
-    try runCaseError("sema/let-from-shared-mut.dsk", error.NeedsCopy);
-}
-
-test "sema error: move inside loop" {
-    try runCaseError("sema/move-inside-loop.dsk", error.NeedsCopy);
-}
-
-test "sema error: return param" {
-    try runCaseError("sema/return-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: return param field" {
-    try runCaseError("sema/return-param-field.dsk", error.NeedsCopy);
-}
-
-test "sema error: return shared with param" {
-    try runCaseError("sema/return-shared-with-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut param from immutable param" {
-    try runCaseError("sema/mut-param-from-immutable-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut param from other mut param" {
-    try runCaseError("sema/mut-param-from-other-mut-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut from immutable capture" {
-    try runCaseError("sema/mut-from-immutable-capture.dsk", error.NeedsCopy);
-}
-
-test "sema error: changed while read for" {
-    try runCaseError("sema/changed-while-read-for.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read if" {
-    try runCaseError("sema/changed-while-read-if.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read when" {
-    try runCaseError("sema/changed-while-read-when.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read mut arg" {
-    try runCaseError("sema/changed-while-read-mut-arg.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read mut capture" {
-    try runCaseError("sema/changed-while-read-mut-capture.dsk", error.ChangedWhileRead);
-}
-
 test "min" {
     try runCase("min.dsk");
 }
@@ -1999,7 +1935,6 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
-    try runCaseError("sema/generic-returns-param-array.dsk", error.NeedsCopy);
 }
 
 test "generics: calls fill the slots from the arguments and compile one copy per type" {
@@ -2007,7 +1942,6 @@ test "generics: calls fill the slots from the arguments and compile one copy per
     try runCaseError("sema/generic-conflicting-slots.dsk", error.InvalidType);
     try runCaseError("sema/generic-cant-infer.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-cant-infer-empty-array.dsk", error.CantInferSlot);
-    try runCaseError("sema/generic-copy-shares-param.dsk", error.NeedsCopy);
     try runCaseError("sema/generic-copy-too-deep.dsk", error.GenericCopyTooDeep);
     try runCaseError("sema/generic-void-argument.dsk", error.InvalidSlotType);
 }
@@ -2025,7 +1959,6 @@ test "generics: generic structs and unions" {
     try runCaseError("sema/generic-args-on-plain-struct.dsk", error.WrongSlotCount);
     try runCaseError("sema/generic-union-cant-infer.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-struct-cant-infer.dsk", error.CantInferSlot);
-    try runCaseError("sema/generic-type-copy-shares-field.dsk", error.NeedsCopy);
     try runCaseError("sema/generic-type-void-arg.dsk", error.InvalidSlotType);
     try runCaseError("sema/generic-struct-method-arithmetic.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-type-duplicate-slot.dsk", error.AlreadyDefined);
@@ -2087,8 +2020,6 @@ test "builtins: pop is a prelude function over an internal builtin" {
 
 test "builtins: insert, remove and clear change arrays in place" {
     try runCase("array-insert-remove.dsk");
-    try runCaseError("sema/insert-shares-let.dsk", error.NeedsCopy);
-    try runCaseError("sema/append-named-shares-let.dsk", error.NeedsCopy);
 }
 
 test "builtins: reverse, slice, index_of and contains" {

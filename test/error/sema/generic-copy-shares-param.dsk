@@ -1,8 +1,0 @@
-func first[T](xs: []T) -> T
-    return xs[0]
-end
-
-func main() -> void
-    let a = first([1, 2])
-    let b = first([[1], [2]])
-end

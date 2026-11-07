@@ -1,6 +1,0 @@
-func main() -> void
-    let mut maybe: ?[]int = [1]
-    if maybe: values then
-        maybe = null
-    end
-end

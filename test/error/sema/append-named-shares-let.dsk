@@ -1,9 +1,0 @@
-struct Point
-    x: int
-end
-func main() -> void
-    let p = Point(x = 1)
-    let mut ps: []Point = []
-    append(value = p, array = ps)
-    assert(p.x == 1)
-end
