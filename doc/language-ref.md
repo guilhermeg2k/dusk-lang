@@ -1251,6 +1251,17 @@ end
 
 Errors are for failures the program expects. A failed `assert`, an index out of bounds, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits or more than 100,000 nested calls still stops the program and can't be caught.
 
+The message names the function that was running, and the builtin when the failure happened inside one:
+
+```
+error: index 5 is out of bounds for array of length 2
+  in function 'pick'
+error: out of memory
+  in builtin 'str_repeat', called from function 'grow'
+```
+
+There are no line numbers yet.
+
 ## 13. Built-in Functions
 
 `T` means any type.

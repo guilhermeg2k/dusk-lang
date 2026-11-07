@@ -17,6 +17,7 @@ pub const VM = struct {
     program: *const bc.Program,
     frames: []CallFrame,
     frame_count: usize,
+    failed_builtin: ?[]const u8 = null,
     stack: []v.Value,
     heap: Heap,
     scratch: std.Io.Writer.Allocating,
@@ -76,7 +77,27 @@ pub const VM = struct {
         self.stack = try self.allocUntouched(v.Value, STACK_SLOTS);
         defer self.freeUntouched(v.Value, self.stack);
         self.initMainFrame();
+        self.execute() catch |failure| {
+            self.reportWhere(failure);
+            return failure;
+        };
+    }
 
+    fn reportWhere(self: *Self, failure: anyerror) void {
+        if (@import("builtin").is_test) return;
+        if (failure == error.OutOfMemory) std.debug.print("error: out of memory\n", .{});
+        if (self.frame_count == 0) return;
+        const function = self.frames[self.frame_count - 1].function.name;
+        const is_top_level = function.len > 0 and function[0] == '$';
+        if (self.failed_builtin) |builtin| {
+            if (is_top_level) return std.debug.print("  in builtin '{s}'\n", .{builtin});
+            return std.debug.print("  in builtin '{s}', called from function '{s}'\n", .{ builtin, function });
+        }
+        if (is_top_level) return;
+        std.debug.print("  in function '{s}'\n", .{function});
+    }
+
+    noinline fn execute(self: *Self) !void {
         const stack = self.stack[0..];
         var current_frame = &self.frames[self.frame_count - 1];
         var cur_instruction: usize = 0;
@@ -497,7 +518,10 @@ pub const VM = struct {
                         .native => |n| {
                             current_frame.cur_inst = cur_instruction;
                             const args = stack[stack_base + inst.a + 1 ..][0..n.num_args];
-                            const result = try n.func(self, args);
+                            const result = n.func(self, args) catch |failure| {
+                                self.failed_builtin = func.name;
+                                return failure;
+                            };
                             stack[stack_base + inst.a] = result.value;
                             if (result.has_failed) cur_instruction += 1;
                         },
