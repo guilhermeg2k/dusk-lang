@@ -883,6 +883,8 @@ pub const RuntimeError = error{
     CallDepthExceeded,
     DivisionByZero,
     DivisionOverflow,
+    IntegerOverflow,
+    FloatOutOfIntRange,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -919,6 +921,21 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn divisionOverflow(dividend: i64) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.DivisionOverflow, "integer overflow: {d} // -1 doesn't fit in an int", .{dividend});
+    }
+
+    pub noinline fn integerOverflow(operator: []const u8, left: i64, right: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.IntegerOverflow, "integer overflow: {d} {s} {d} doesn't fit in an int", .{ left, operator, right });
+    }
+
+    pub noinline fn negationOverflow(operand: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.IntegerOverflow, "integer overflow: -({d}) doesn't fit in an int", .{operand});
+    }
+
+    pub noinline fn floatOutOfIntRange(value: f64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.FloatOutOfIntRange, "{d} doesn't fit in an int", .{value});
     }
 
     pub noinline fn unhandledError(error_name: []const u8) RuntimeError {

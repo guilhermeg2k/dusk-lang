@@ -1574,6 +1574,16 @@ test "division: '//' and '%' by zero are runtime errors" {
     try runCaseRuntimeError("int-division-overflow.dsk", error.DivisionOverflow);
 }
 
+test "integer overflow and float to int out of range are runtime errors" {
+    try runCase("integer-limits.dsk");
+    try runCaseRuntimeError("int-add-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("int-sub-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("int-mult-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("int-negate-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("float-to-int-out-of-range.dsk", error.FloatOutOfIntRange);
+    try runCaseRuntimeError("float-to-int-nan.dsk", error.FloatOutOfIntRange);
+}
+
 test "runtime error: call depth exceeded" {
     try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
 }

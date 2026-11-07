@@ -23,6 +23,7 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 
 ### Fixes
 
+- Integer overflow (`9223372036854775807 + 1`, and `-`, `*` or negating the smallest `int`) crashed the VM and was undefined behavior in release builds; it's now an `IntegerOverflow` runtime error. A `float` side of `//` that's `nan`, infinite or outside the `int` range crashed too; it's now a `FloatOutOfIntRange` runtime error
 - An integer `//` or `%` by `0` crashed the VM (and was undefined behavior in release builds), and so did `7.0 // 0.0`; it's now a `DivisionByZero` runtime error. The smallest `int` `// -1` is a `DivisionOverflow` runtime error, and its `% -1` gives `0` instead of crashing
 - `len([])` crashed the compiler; it's now a `CantInferSlot` error, since an empty literal gives no item type. Passing a non-array where a generic function takes `[]T` (`len(5)`, `first(5)`) reports `expected 'an array' found 'int'` instead of `CantInferSlot`
 - A function whose return type names an unknown type (`func f() -> Missing`) crashed the compiler; it's now an `Invalid type 'Missing'` error

@@ -277,21 +277,21 @@ pub const VM = struct {
                 },
 
                 .I_ADD => {
-                    stack[stack_base + inst.a] = .{
-                        .int64 = stack[stack_base + inst.b].int64 + stack[stack_base + inst.c].int64,
-                    };
+                    const result = @addWithOverflow(stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    if (result[1] != 0) return RuntimeErrorReporter.integerOverflow("+", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    stack[stack_base + inst.a] = .{ .int64 = result[0] };
                 },
 
                 .I_SUB => {
-                    stack[stack_base + inst.a] = .{
-                        .int64 = stack[stack_base + inst.b].int64 - stack[stack_base + inst.c].int64,
-                    };
+                    const result = @subWithOverflow(stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    if (result[1] != 0) return RuntimeErrorReporter.integerOverflow("-", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    stack[stack_base + inst.a] = .{ .int64 = result[0] };
                 },
 
                 .I_MULT => {
-                    stack[stack_base + inst.a] = .{
-                        .int64 = stack[stack_base + inst.b].int64 * stack[stack_base + inst.c].int64,
-                    };
+                    const result = @mulWithOverflow(stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    if (result[1] != 0) return RuntimeErrorReporter.integerOverflow("*", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    stack[stack_base + inst.a] = .{ .int64 = result[0] };
                 },
 
                 .TRUNC_DIV => {
@@ -349,9 +349,9 @@ pub const VM = struct {
                 },
 
                 .I_NEG => {
-                    stack[stack_base + inst.a] = .{
-                        .int64 = -stack[stack_base + inst.b].int64,
-                    };
+                    const operand = stack[stack_base + inst.b].int64;
+                    if (operand == std.math.minInt(i64)) return RuntimeErrorReporter.negationOverflow(operand);
+                    stack[stack_base + inst.a] = .{ .int64 = -operand };
                 },
 
                 .F_ADD => {
@@ -470,9 +470,10 @@ pub const VM = struct {
                 },
 
                 .F_TO_I => {
-                    stack[stack_base + inst.a] = .{
-                        .int64 = @trunc(stack[stack_base + inst.a].float64),
-                    };
+                    const truncated = @trunc(stack[stack_base + inst.a].float64);
+                    const is_in_range = truncated >= -0x1p63 and truncated < 0x1p63;
+                    if (!is_in_range) return RuntimeErrorReporter.floatOutOfIntRange(stack[stack_base + inst.a].float64);
+                    stack[stack_base + inst.a] = .{ .int64 = @intFromFloat(truncated) };
                 },
 
                 .CALL => {

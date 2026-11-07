@@ -1,0 +1,7 @@
+func grow(n: int) -> int
+    return n + 1
+end
+
+func main() -> void
+    echo(grow(9223372036854775807))
+end

@@ -1,0 +1,15 @@
+func main() -> void
+    let largest = 9223372036854775807
+    let smallest = 0 - largest - 1
+    assert(largest - 1 + 1 == largest)
+    assert(smallest + 1 - 1 == smallest)
+    assert(-largest == smallest + 1)
+    assert(3037000499 * 3037000499 == 9223372030926249001)
+    assert(9000000000000000000.0 // 1.0 == 9000000000000000000)
+    assert((0 - 7.9) // 2.0 == -3)
+    let mut count = 0
+    for largest - 2..largest: i do
+        count = count + 1
+    end
+    assert(count == 3)
+end
