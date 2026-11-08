@@ -42,7 +42,8 @@ pub const BytecodeGen = struct {
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     current_function_name: []const u8 = "",
-    current_function_origin: ?ir.FuncOrigin = null,
+    current_function_loc: ?err.Loc = null,
+    err_reporter: err.CompileErrorReporter,
     extern_count: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
@@ -71,6 +72,7 @@ pub const BytecodeGen = struct {
             .union_descriptors = .empty,
             .type_id_to_union_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
             .union_tag_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
+            .err_reporter = .{ .src = "", .allocator = alloc },
         };
     }
 
@@ -146,8 +148,7 @@ pub const BytecodeGen = struct {
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
-        self.current_function_name = "$main";
-        self.current_function_origin = null;
+        self.enterFunction("$main", null);
         self.next_free_register = 0;
         self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -172,8 +173,7 @@ pub const BytecodeGen = struct {
     }
 
     fn genFunction(self: *Self, func: ir.Func) !Function {
-        self.current_function_name = func.identifier;
-        self.current_function_origin = func.origin;
+        self.enterFunction(func.identifier, func.origin);
         self.next_free_register = @intCast(func.params.len);
         self.peak_register = @intCast(func.params.len);
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -189,6 +189,13 @@ pub const BytecodeGen = struct {
             .name = func.identifier,
             .kind = .{ .dusk = try self.genFunctionChunk(func) },
         };
+    }
+
+    fn enterFunction(self: *Self, name: []const u8, origin: ?ir.FuncOrigin) void {
+        self.current_function_name = name;
+        self.current_function_loc = if (origin) |known| known.loc else null;
+        self.err_reporter.src = if (origin) |known| known.src else "";
+        self.err_reporter.copy_context = if (origin) |known| known.copy_context else null;
     }
 
     fn genFunctionChunk(self: *Self, func: ir.Func) !Chunk {
@@ -1247,7 +1254,7 @@ pub const BytecodeGen = struct {
         if (!result.found_existing) {
             if (self.string_texts.items.len > std.math.maxInt(u16)) {
                 _ = self.string_id_by_text.remove(s);
-                return self.tooManyStrings();
+                return self.err_reporter.tooManyStrings();
             }
             result.value_ptr.* = @intCast(self.string_texts.items.len);
             try self.string_texts.append(self.allocator, s);
@@ -1262,13 +1269,6 @@ pub const BytecodeGen = struct {
 
         load_string.putBEx(string_id);
         try self.chunk_instructions.append(self.allocator, load_string);
-    }
-
-    fn tooManyStrings(self: *Self) BytecodeError {
-        _ = self;
-        if (@import("builtin").is_test) return BytecodeError.TooManyStrings;
-        std.debug.print("error: the program has more than 65536 different string literals\n", .{});
-        return BytecodeError.TooManyStrings;
     }
 
     fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
@@ -1374,31 +1374,10 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn tooManyRegisters(self: *Self) BytecodeError {
-        self.logFunctionError("uses more than 255 registers at once (variables and temporaries); split it into smaller functions");
-        return BytecodeError.TooManyRegisters;
-    }
-
     fn currentPosition(self: *Self) BytecodeError!u16 {
         const position = self.chunk_instructions.items.len;
         if (position <= std.math.maxInt(u16)) return @intCast(position);
-        return self.functionTooLong();
-    }
-
-    fn functionTooLong(self: *Self) BytecodeError {
-        self.logFunctionError("is too long (more than 65535 bytecode instructions); split it into smaller functions");
-        return BytecodeError.FunctionTooLong;
-    }
-
-    fn logFunctionError(self: *Self, hint: []const u8) void {
-        if (@import("builtin").is_test) return;
-        const message = std.fmt.allocPrint(self.allocator, "function '{s}' {s}", .{ self.current_function_name, hint }) catch hint;
-        const origin = self.current_function_origin orelse {
-            std.debug.print("error: {s}\n", .{message});
-            return;
-        };
-        var reporter = err.CompileErrorReporter{ .src = origin.src, .allocator = self.allocator, .copy_context = origin.copy_context };
-        reporter.log(message, origin.loc);
+        return self.err_reporter.functionTooLong(self.current_function_name, self.current_function_loc);
     }
 
     fn freeRegister(self: *Self) void {
@@ -1414,7 +1393,7 @@ pub const BytecodeGen = struct {
     }
 
     fn consumeRegister(self: *Self) !u8 {
-        if (self.next_free_register == std.math.maxInt(u8)) return self.tooManyRegisters();
+        if (self.next_free_register == std.math.maxInt(u8)) return self.err_reporter.tooManyRegisters(self.current_function_name, self.current_function_loc);
         const id = self.next_free_register;
         self.next_free_register += 1;
         self.peak_register = @max(self.peak_register, self.next_free_register);

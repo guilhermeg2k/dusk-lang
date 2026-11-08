@@ -695,6 +695,41 @@ pub const CompileErrorReporter = struct {
         return error.InvalidParameterType;
     }
 
+    pub fn tooManyRegisters(self: *Self, function: []const u8, loc: ?Loc) error{ OutOfMemory, TooManyRegisters } {
+        self.logAt(
+            try allocPrint(
+                self.allocator,
+                "function '{s}' uses more than 255 registers at once (variables and temporaries); split it into smaller functions",
+                .{function},
+            ),
+            loc,
+        );
+        return error.TooManyRegisters;
+    }
+
+    pub fn functionTooLong(self: *Self, function: []const u8, loc: ?Loc) error{ OutOfMemory, FunctionTooLong } {
+        self.logAt(
+            try allocPrint(
+                self.allocator,
+                "function '{s}' is too long (more than 65535 bytecode instructions); split it into smaller functions",
+                .{function},
+            ),
+            loc,
+        );
+        return error.FunctionTooLong;
+    }
+
+    pub fn tooManyStrings(self: *Self) error{TooManyStrings} {
+        self.logAt("the program has more than 65536 different string literals", null);
+        return error.TooManyStrings;
+    }
+
+    fn logAt(self: *Self, message: []const u8, loc: ?Loc) void {
+        if (loc) |known| return self.log(message, known);
+        if (@import("builtin").is_test) return;
+        std.debug.print("error: {s}\n", .{self.withCopyContext(message)});
+    }
+
     pub fn log(self: *Self, message: []const u8, loc: Loc) void {
         if (@import("builtin").is_test) return;
         const msg = self.withCopyContext(message);
