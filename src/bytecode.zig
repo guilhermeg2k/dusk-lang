@@ -376,8 +376,10 @@ pub const BytecodeGen = struct {
         var default_position: u16 = undefined;
         if (match.table) |table| {
             const subject_reg = try self.genValue(table.subject, try self.consumeRegister());
+            const table_index = self.chunk_jump_tables.items.len;
+            try self.chunk_jump_tables.append(self.allocator, undefined);
             var table_inst = Instruction{ .op = .JUMP_TABLE, .a = subject_reg };
-            table_inst.putBEx(@intCast(self.chunk_jump_tables.items.len));
+            table_inst.putBEx(@intCast(table_index));
             try self.chunk_instructions.append(self.allocator, table_inst);
 
             const case_positions = try self.allocator.alloc(u16, match.cases.len);
@@ -394,7 +396,7 @@ pub const BytecodeGen = struct {
             for (table.case_by_offset, targets) |case_index, *target| {
                 target.* = if (case_index) |index| case_positions[index] else default_position;
             }
-            try self.chunk_jump_tables.append(self.allocator, .{ .min = table.min, .targets = targets, .default = default_position });
+            self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .targets = targets, .default = default_position };
         } else {
             for (match.cases) |case| {
                 const condition_reg = try self.genValue(case.condition, try self.consumeRegister());

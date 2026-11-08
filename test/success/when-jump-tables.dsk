@@ -88,6 +88,24 @@ func sparse(n: int) -> int
     return out
 end
 
+func nested(a: int, b: int) -> int
+    when a
+        1 then
+            when b
+                10 then return 110 end
+                11 then return 111 end
+                12 then return 112 end
+                13 then return 113 end
+                else then return 199 end
+            end
+        end
+        2 then return 2 end
+        3 then return 3 end
+        4 then return 4 end
+        else then return 9 end
+    end
+end
+
 func main() -> void
     echo([apply(Op.Add, 7, 3), apply(Op.Sub, 7, 3), apply(Op.Mul, 7, 3), apply(Op.Div, 7, 3), apply(Op.Mod, 7, 3)])
     echo([size(Shape(circle = 2)), size(Shape(square = 3)), size(Shape(line = 9)), size(Shape(dot = 1))])
@@ -96,4 +114,5 @@ func main() -> void
     echo([maybe(1), maybe(4), maybe(5), maybe(null)])
     echo([maybe_null(null), maybe_null(3), maybe_null(9)])
     echo([sparse(1), sparse(1000), sparse(-5000), sparse(77777), sparse(2)])
+    echo([nested(1, 10), nested(1, 13), nested(1, 50), nested(2, 10), nested(4, 0), nested(7, 0)])
 end

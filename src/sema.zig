@@ -3621,6 +3621,12 @@ pub const SemaAnalyzer = struct {
         if (isValueLeaving(value)) return value;
         const float_type = self.type_table.getPrimitive(.float);
         if (value.type_id == float_type) return value;
+        if (self.slotBase(value.type_id) != null) {
+            if (!try self.areSlotMembersNumeric(value.type_id)) {
+                return self.err_reporter.invalidType("int, byte or float", try self.type_table.name(value.type_id, self.allocator), operand.loc);
+            }
+            return ir.Value.init(self.allocator, .{ .data = .{ .int_to_float = value }, .type_id = float_type });
+        }
         if (!self.isIntegerType(value.type_id)) {
             return self.err_reporter.invalidType("int, byte or float", try self.type_table.name(value.type_id, self.allocator), operand.loc);
         }
@@ -3628,6 +3634,18 @@ pub const SemaAnalyzer = struct {
             return ir.Value.init(self.allocator, .{ .data = .{ .i_float = @floatFromInt(value.data.i_int) }, .type_id = float_type });
         }
         return ir.Value.init(self.allocator, .{ .data = .{ .int_to_float = value }, .type_id = float_type });
+    }
+
+    fn areSlotMembersNumeric(self: *Self, type_id: tt.TypeId) CompileError!bool {
+        const slot_id = self.slotBase(type_id).?;
+        const type_list = self.type_table.getTypePtrById(slot_id).kind.slot.type_list;
+        if (type_list.len == 0) return false;
+        const float_type = self.type_table.getPrimitive(.float);
+        for (type_list) |member| {
+            const member_type = try self.substituteSlot(type_id, member);
+            if (member_type != float_type and !self.isIntegerType(member_type)) return false;
+        }
+        return true;
     }
 
     fn evalExp(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {

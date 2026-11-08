@@ -66,7 +66,7 @@ fn countOps(source: []const u8, function: []const u8, op: @import("bytecode.zig"
 }
 
 test "when: dense cases compile to a jump table, sparse ones to compares" {
-    try runCaseOutput("when-jump-tables.dsk", "[10, 4, 21, 2, 1]\n[6, 9, 9, 0]\n[A, B, C, F, ?, ?]\n[0, 3, -2]\n[10, 40, 99, 99]\n[-1, 1, 2]\n[1, 2, 3, 4, 5]\n");
+    try runCaseOutput("when-jump-tables.dsk", "[10, 4, 21, 2, 1]\n[6, 9, 9, 0]\n[A, B, C, F, ?, ?]\n[0, 3, -2]\n[10, 40, 99, 99]\n[-1, 1, 2]\n[1, 2, 3, 4, 5]\n[110, 113, 199, 2, 4, 9]\n");
     const dense = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 2 then out = 2 end 3 then out = 3 end 4 then out = 4 end else then out = 5 end end return out end func main() -> void end";
     const sparse = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 100 then out = 2 end 3 then out = 3 end 4 then out = 4 end else then out = 5 end end return out end func main() -> void end";
     const few = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 2 then out = 2 end else then out = 5 end end return out end func main() -> void end";
@@ -2018,6 +2018,10 @@ test "float cast" {
 
 test "sema error: float cast of a string" {
     try runCaseError("sema/float-cast-string.dsk", error.InvalidType);
+}
+
+test "sema error: float cast of a slot that allows a string" {
+    try runCaseError("sema/float-cast-slot-string.dsk", error.InvalidType);
 }
 
 test "extern: only the prelude can declare extern functions" {
