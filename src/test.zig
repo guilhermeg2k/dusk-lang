@@ -357,6 +357,17 @@ test "more than 65536 distinct string literals are rejected" {
     try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
 }
 
+test "functions over 65535 instructions are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(arena.allocator(), "func main() -> void\nend\nfunc big(x: int) -> int\nlet mut y = x\n");
+    for (0..20000) |_| try source.appendSlice(arena.allocator(), "if y > 5 then y = y - 1 end\n");
+    try source.appendSlice(arena.allocator(), "return y\nend\n");
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    try testing.expectError(error.FunctionTooLong, dusk.compile(source.items));
+}
+
 test "invalid string escapes are rejected" {
     const sources = [_][]const u8{
         "\"\\q\"",       "\"\\x41\"",       "\"\\u\"",         "\"\\u0041\"",      "\"\\u{}\"",

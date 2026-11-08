@@ -41,6 +41,7 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 - `len([])` crashed the compiler; it's now a `CantInferSlot` error, since an empty literal gives no item type. Passing a non-array where a generic function takes `[]T` (`len(5)`, `first(5)`) reports `expected 'an array' found 'int'` instead of `CantInferSlot`
 - A function whose return type names an unknown type (`func f() -> Missing`) crashed the compiler; it's now an `Invalid type 'Missing'` error
 - A struct field with neither a type nor a default (`x` alone, or `static x = 1`, which reads as a field named `static`) is now a parser error, `expected ':' or '=' after field 'x'`, instead of crashing the compiler. Fields of inline nested structs are checked too
+- A function longer than 65,535 bytecode instructions crashed the compiler with `integer does not fit in destination type`; it's now a compile error asking to split it into smaller functions
 
 ## v0.13 - Garou
 

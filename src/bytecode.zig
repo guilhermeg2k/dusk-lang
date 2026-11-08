@@ -204,6 +204,7 @@ pub const BytecodeGen = struct {
                 try self.chunk_instructions.append(self.allocator, Instruction{ .op = .RETURN });
             }
         }
+        _ = try self.currentPosition();
 
         const chunk = Chunk{
             .num_registers = self.peak_register,
@@ -345,16 +346,16 @@ pub const BytecodeGen = struct {
 
             try self.chunk_instructions.append(self.allocator, jump_pass_else);
             const jump_pass_else_idx = self.chunk_instructions.items.len - 1;
-            const jump_into_else_position = self.chunk_instructions.items.len;
+            const jump_into_else_position = try self.currentPosition();
 
             try self.genInstructionBlock(ifStmt.else_block);
-            const jump_pass_else_position = self.chunk_instructions.items.len;
+            const jump_pass_else_position = try self.currentPosition();
 
-            self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
-            self.chunk_instructions.items[jump_pass_else_idx].putAEx(@intCast(jump_pass_else_position));
+            self.chunk_instructions.items[jump_into_else_idx].putBEx(jump_into_else_position);
+            self.chunk_instructions.items[jump_pass_else_idx].putAEx(jump_pass_else_position);
         } else {
-            const jump_into_else_position = self.chunk_instructions.items.len;
-            self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
+            const jump_into_else_position = try self.currentPosition();
+            self.chunk_instructions.items[jump_into_else_idx].putBEx(jump_into_else_position);
         }
 
         self.freeRegisterN(self.next_free_register - saved_next_free);
@@ -372,7 +373,7 @@ pub const BytecodeGen = struct {
             null_jump = self.chunk_instructions.items.len - 1;
         }
 
-        var default_position: usize = undefined;
+        var default_position: u16 = undefined;
         if (match.table) |table| {
             const subject_reg = try self.genValue(table.subject, try self.consumeRegister());
             var table_inst = Instruction{ .op = .JUMP_TABLE, .a = subject_reg };
@@ -381,19 +382,19 @@ pub const BytecodeGen = struct {
 
             const case_positions = try self.allocator.alloc(u16, match.cases.len);
             for (match.cases, 0..) |case, i| {
-                case_positions[i] = @intCast(self.chunk_instructions.items.len);
+                case_positions[i] = try self.currentPosition();
                 try self.genInstructionBlock(case.body);
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
             }
-            default_position = self.chunk_instructions.items.len;
+            default_position = try self.currentPosition();
             try self.genInstructionBlock(match.default_block);
 
             const targets = try self.allocator.alloc(u16, table.case_by_offset.len);
             for (table.case_by_offset, targets) |case_index, *target| {
-                target.* = if (case_index) |index| case_positions[index] else @intCast(default_position);
+                target.* = if (case_index) |index| case_positions[index] else default_position;
             }
-            try self.chunk_jump_tables.append(self.allocator, .{ .min = table.min, .targets = targets, .default = @intCast(default_position) });
+            try self.chunk_jump_tables.append(self.allocator, .{ .min = table.min, .targets = targets, .default = default_position });
         } else {
             for (match.cases) |case| {
                 const condition_reg = try self.genValue(case.condition, try self.consumeRegister());
@@ -402,9 +403,9 @@ pub const BytecodeGen = struct {
                 try self.genInstructionBlock(case.body);
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
-                self.chunk_instructions.items[next_case_jump].putBEx(@intCast(self.chunk_instructions.items.len));
+                self.chunk_instructions.items[next_case_jump].putBEx(try self.currentPosition());
             }
-            default_position = self.chunk_instructions.items.len;
+            default_position = try self.currentPosition();
             try self.genInstructionBlock(match.default_block);
         }
 
@@ -413,20 +414,20 @@ pub const BytecodeGen = struct {
             if (match.null_body) |body| {
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
-                null_position = self.chunk_instructions.items.len;
+                null_position = try self.currentPosition();
                 try self.genInstructionBlock(body);
             }
-            self.chunk_instructions.items[jump].putBEx(@intCast(null_position));
+            self.chunk_instructions.items[jump].putBEx(null_position);
         }
 
-        const end_position: u16 = @intCast(self.chunk_instructions.items.len);
+        const end_position = try self.currentPosition();
         for (end_jumps.items) |jump| self.chunk_instructions.items[jump].putAEx(end_position);
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn genLoop(self: *Self, loopStmt: ir.Loop) !void {
         const saved_next_free = self.next_free_register;
-        const loop_begin_idx = self.chunk_instructions.items.len;
+        const loop_begin_position = try self.currentPosition();
 
         try self.pushLoopCtx();
 
@@ -445,10 +446,10 @@ pub const BytecodeGen = struct {
 
         try self.genInstructionBlock(loopStmt.do_block);
 
-        const advancement_begin = self.chunk_instructions.items.len;
+        const advancement_begin = try self.currentPosition();
         const context = self.loop_stack.items[self.loop_stack.items.len - 1];
         for (self.continue_patches.items[context.first_continue_patch_index..]) |patch_index| {
-            self.chunk_instructions.items[patch_index].putAEx(@intCast(advancement_begin));
+            self.chunk_instructions.items[patch_index].putAEx(advancement_begin);
         }
         self.continue_patches.shrinkRetainingCapacity(context.first_continue_patch_index);
         try self.genInstructionBlock(loopStmt.advancement);
@@ -457,12 +458,12 @@ pub const BytecodeGen = struct {
             .op = .JUMP,
         };
 
-        jump_to_begin.putAEx(@intCast(loop_begin_idx));
+        jump_to_begin.putAEx(loop_begin_position);
 
         try self.chunk_instructions.append(self.allocator, jump_to_begin);
-        const jump_pass_loop_position = self.chunk_instructions.items.len;
+        const jump_pass_loop_position = try self.currentPosition();
 
-        self.chunk_instructions.items[jump_if_false_idx].putBEx(@intCast(jump_pass_loop_position));
+        self.chunk_instructions.items[jump_if_false_idx].putBEx(jump_pass_loop_position);
 
         try self.popLoopCtx();
 
@@ -488,9 +489,9 @@ pub const BytecodeGen = struct {
 
     fn popLoopCtx(self: *Self) !void {
         const ctx = self.loop_stack.pop() orelse unreachable;
-        const loop_end = self.chunk_instructions.items.len;
+        const loop_end = try self.currentPosition();
         for (self.break_patches.items[ctx.first_break_patch_index..]) |patch_index| {
-            self.chunk_instructions.items[patch_index].putAEx(@intCast(loop_end));
+            self.chunk_instructions.items[patch_index].putAEx(loop_end);
         }
         self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_index);
     }
@@ -582,7 +583,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.appendSlice(self.allocator, instructions);
         for (instructions, 0..) |inl_inst, j| {
             if (inl_inst.op.canTriggerGc()) {
-                const pc: u16 = @intCast(self.chunk_instructions.items.len - instructions.len + j);
+                const pc: u16 = @intCast(try self.currentPosition() - instructions.len + j);
                 try self.recordHeapMapAt(pc);
             }
         }
@@ -824,7 +825,7 @@ pub const BytecodeGen = struct {
             .c = number_register,
         });
         try self.recordHeapMap();
-        self.chunk_instructions.items[null_jump_index].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[null_jump_index].putBEx(try self.currentPosition());
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
@@ -860,7 +861,7 @@ pub const BytecodeGen = struct {
             },
         }
 
-        self.chunk_instructions.items[jump_ok_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
         try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
         self.register_types[target_reg] = value.type_id;
     }
@@ -869,7 +870,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
         const jump_join_idx = self.chunk_instructions.items.len - 1;
 
-        self.chunk_instructions.items[jump_ok_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
         self.register_types[call_reg] = payload;
         try self.chunk_instructions.append(self.allocator, .{
             .op = .NULL_BOX_INIT,
@@ -879,7 +880,7 @@ pub const BytecodeGen = struct {
         });
         try self.recordHeapMap();
 
-        self.chunk_instructions.items[jump_join_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[jump_join_idx].putAEx(try self.currentPosition());
         self.register_types[call_reg] = value.type_id;
         try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
         self.register_types[target_reg] = value.type_id;
@@ -998,7 +999,7 @@ pub const BytecodeGen = struct {
             else => unreachable,
         }
 
-        self.chunk_instructions.items[jump_idx].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[jump_idx].putBEx(try self.currentPosition());
         self.register_types[target_reg] = value.type_id;
     }
 
@@ -1363,6 +1364,19 @@ pub const BytecodeGen = struct {
         return BytecodeError.TooManyRegisters;
     }
 
+    fn currentPosition(self: *Self) BytecodeError!u16 {
+        const position = self.chunk_instructions.items.len;
+        if (position <= std.math.maxInt(u16)) return @intCast(position);
+        return self.functionTooLong();
+    }
+
+    fn functionTooLong(self: *Self) BytecodeError {
+        if (@import("builtin").is_test) return BytecodeError.FunctionTooLong;
+        const hint = "is too long (more than 65535 bytecode instructions); split it into smaller functions";
+        std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
+        return BytecodeError.FunctionTooLong;
+    }
+
     fn freeRegister(self: *Self) void {
         self.freeRegisterN(1);
     }
@@ -1395,7 +1409,7 @@ pub const BytecodeGen = struct {
     }
 
     fn recordHeapMap(self: *Self) !void {
-        try self.recordHeapMapAt(@intCast(self.chunk_instructions.items.len - 1));
+        try self.recordHeapMapAt(try self.currentPosition() - 1);
     }
 
     fn recordHeapMapAt(self: *Self, pc: u16) !void {
@@ -1908,7 +1922,7 @@ pub const OpCode = enum(u8) {
     }
 };
 
-const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };
+const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings, FunctionTooLong };
 
 const FailingCallHandler = union(enum) {
     try_call: ir.TryCall,
