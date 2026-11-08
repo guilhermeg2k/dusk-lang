@@ -184,7 +184,8 @@ pub const VM = struct {
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
-                    if (index < 0 or index >= bytes.len) {
+                    const is_out_of_bounds = index < 0 or index >= bytes.len;
+                    if (is_out_of_bounds) {
                         return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
                     }
                     stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
@@ -193,7 +194,8 @@ pub const VM = struct {
                 .BYTES_SET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
                     const index = stack[stack_base + inst.b].int64;
-                    if (index < 0 or index >= bytes.len) {
+                    const is_out_of_bounds = index < 0 or index >= bytes.len;
+                    if (is_out_of_bounds) {
                         return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
                     }
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
@@ -321,7 +323,8 @@ pub const VM = struct {
                     if (divisor == 0) {
                         return RuntimeErrorReporter.divisionByZero("//");
                     }
-                    if (divisor == -1 and dividend == std.math.minInt(i64)) {
+                    const does_overflow = divisor == -1 and dividend == std.math.minInt(i64);
+                    if (does_overflow) {
                         return RuntimeErrorReporter.divisionOverflow(dividend);
                     }
                     stack[stack_base + inst.a] = .{ .int64 = @divTrunc(dividend, divisor) };
@@ -488,7 +491,8 @@ pub const VM = struct {
 
                 .I_TO_BYTE => {
                     const number = stack[stack_base + inst.b].int64;
-                    if (number < 0 or number > 255) {
+                    const is_out_of_byte_range = number < 0 or number > 255;
+                    if (is_out_of_byte_range) {
                         return RuntimeErrorReporter.byteOutOfRange(number);
                     }
                     stack[stack_base + inst.a] = .{ .int64 = number };
@@ -515,7 +519,8 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
-                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) {
+                            const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
+                            if (is_stack_full) {
                                 return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
                             }
                             self.frames[self.frame_count] = .{
@@ -665,7 +670,8 @@ pub const VM = struct {
     fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
-        if (current.kind == .string or current.kind == .null_box) {
+        const is_immutable = current.kind == .string or current.kind == .null_box;
+        if (is_immutable) {
             slot.heap_obj = current;
             return;
         }
@@ -723,7 +729,8 @@ pub const VM = struct {
         const desc = self.program.union_descriptors[union_vl.descriptor_id];
         const needs_box = desc.box_bitmap & (@as(u256, 1) << @intCast(tag)) != 0;
 
-        if (!needs_box or union_vl.active_tag != tag) {
+        const can_load_unboxed = !needs_box or union_vl.active_tag != tag;
+        if (can_load_unboxed) {
             stack[stack_base + target_reg] = union_vl.get(tag);
             return;
         }
@@ -856,7 +863,8 @@ pub const VM = struct {
             const new_ptr = try cloneHeapObj(new_alloc, current);
             current.gc_forward = new_ptr;
             value.heap_obj = new_ptr;
-            if (new_ptr.kind != .string and new_ptr.kind != .buffer) {
+            const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer;
+            if (has_references) {
                 try self.heap.gc_queue.append(self.allocator, new_ptr);
             }
             self.heap.object_count += 1;
