@@ -156,13 +156,7 @@ pub const VM = struct {
 
                     if (array.needsResize()) {
                         current_frame.cur_inst = cur_instruction;
-                        try self.maybeCollectGarbage(v.Array.calc_size(array.calcNewCapacity()));
-                        array = getArrayFromHeapValuePtr(stack, stack_base, inst.a);
-                        array = try array.resize(self.getCurrentHeapAllocator());
-                        stack[stack_base + inst.a].heap_obj = &array.obj;
-
-                        const new_size = v.Array.calc_size(array.capacity);
-                        self.heap.allocated += new_size;
+                        array = try self.growArray(&stack[stack_base + inst.a]);
                     }
 
                     const value = stack[stack_base + inst.b];
@@ -714,6 +708,19 @@ pub const VM = struct {
         const current = ptr.followRelocated();
         if (current != ptr) stack[stack_base + reg_idx].heap_obj = current;
         return v.HeapValue.getParentPtr(v.Array, current);
+    }
+
+    pub fn growArray(self: *Self, slot: *v.Value) !*v.Array {
+        try self.maybeCollectGarbage(v.Array.calc_size(arrayInSlot(slot).calcNewCapacity()));
+        const array = try arrayInSlot(slot).resize(self.getCurrentHeapAllocator());
+        slot.heap_obj = &array.obj;
+        self.increaseHeapAllocationCount(v.Array.calc_size(array.capacity));
+        return array;
+    }
+
+    fn arrayInSlot(slot: *v.Value) *v.Array {
+        slot.heap_obj = slot.heap_obj.followRelocated();
+        return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
     }
 
     pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {

@@ -127,13 +127,7 @@ pub fn strConcat(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 pub fn arrayInsert(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var array = arrayArg(args, 0);
-    if (array.needsResize()) {
-        const new_size = v.Array.calc_size(array.calcNewCapacity());
-        try vm.maybeCollectGarbage(new_size);
-        array = try arrayArg(args, 0).resize(vm.getCurrentHeapAllocator());
-        args[0].heap_obj = &array.obj;
-        vm.increaseHeapAllocationCount(new_size);
-    }
+    if (array.needsResize()) array = try vm.growArray(&args[0]);
     const index: usize = @intCast(args[1].int64);
     const items = array.getDataPtr();
     std.mem.copyBackwards(v.Value, items[index + 1 .. array.len + 1], items[index..array.len]);
