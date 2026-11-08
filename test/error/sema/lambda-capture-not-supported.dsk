@@ -1,4 +1,0 @@
-func main() -> void
-    let n = 1
-    let f = func(x: int) -> return x + n
-end

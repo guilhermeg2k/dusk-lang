@@ -34,6 +34,8 @@ pub const BytecodeGen = struct {
     intrinsic_by_uid: std.AutoHashMap(usize, natives.Intrinsic),
     native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
+    boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    boxed_type_by_uid: std.AutoHashMapUnmanaged(usize, tt.TypeId) = .empty,
 
     chunk_heap_maps: std.ArrayList(HeapMap),
     struct_descriptors: std.ArrayList(StructDescriptor),
@@ -79,6 +81,7 @@ pub const BytecodeGen = struct {
     pub fn generate(self: *Self, program: *const ir.Program) !Program {
         var funcs: std.ArrayList(Function) = .empty;
         self.extern_count = program.externs.len;
+        self.boxed_uids = program.boxed_uids;
 
         for (program.externs) |ext| {
             try self.fn_index_by_uid.put(ext.uid, @intCast(funcs.items.len));
@@ -234,11 +237,20 @@ pub const BytecodeGen = struct {
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
             .build_recipes = try self.chunk_build_recipes.toOwnedSlice(self.allocator),
             .jump_tables = try self.chunk_jump_tables.toOwnedSlice(self.allocator),
+            .capture_kinds = try self.captureKinds(func.captures),
         };
 
         // chunk.disasamble();
 
         return chunk;
+    }
+
+    fn captureKinds(self: *Self, captures: []const ir.Capture) ![]const v.ValueType {
+        const kinds = try self.allocator.alloc(v.ValueType, captures.len);
+        for (captures, kinds) |capture, *kind| {
+            kind.* = if (capture.is_boxed) .cell else v.ValueType.fromTypeId(self.type_table, capture.type_id);
+        }
+        return kinds;
     }
 
     fn genInstructionBlock(self: *Self, block: ir.Block) anyerror!void {
@@ -280,6 +292,9 @@ pub const BytecodeGen = struct {
                 .unwrap_null_box => |stmt| {
                     _ = try self.genUnwrapNullBox(stmt, try self.consumeRegister());
                 },
+                .update_capture => |stmt| {
+                    try self.genUpdateCapture(stmt);
+                },
                 .break_stmt => try self.genBreak(),
                 .continue_stmt => try self.genContinue(),
             }
@@ -287,6 +302,9 @@ pub const BytecodeGen = struct {
     }
 
     fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
+        if (self.boxed_uids.contains(store_var.uid)) {
+            return self.genStoreBoxedVar(store_var);
+        }
         const register_idx = self.var_register_id_by_uid.get(store_var.uid);
         if (register_idx) |idx| {
             if (isBuiltInSteps(store_var.value) and readsVariable(store_var.value, store_var.uid)) {
@@ -304,6 +322,38 @@ pub const BytecodeGen = struct {
         const reg_idx = try self.genValue(store_var.value, try self.consumeRegister());
         self.register_types[reg_idx] = store_var.type_id;
         try self.bindVariable(store_var.uid, reg_idx);
+    }
+
+    fn genStoreBoxedVar(self: *Self, store_var: ir.StoreVar) !void {
+        if (self.var_register_id_by_uid.get(store_var.uid)) |cell_reg| {
+            const value_reg = try self.genValue(store_var.value, try self.consumeRegister());
+            defer self.freeRegister();
+            try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_SET, .a = cell_reg, .b = value_reg });
+            return;
+        }
+
+        const reg = try self.genValue(store_var.value, try self.consumeRegister());
+        self.register_types[reg] = store_var.type_id;
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .CELL_NEW,
+            .a = reg,
+            .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, store_var.type_id)),
+            .c = reg,
+        });
+        try self.recordHeapMap();
+        self.register_types[reg] = self.type_table.getPrimitive(.cell);
+        try self.boxed_type_by_uid.put(self.allocator, store_var.uid, store_var.type_id);
+        try self.bindVariable(store_var.uid, reg);
+    }
+
+    fn genUpdateCapture(self: *Self, stmt: ir.UpdateCapture) !void {
+        const cell_reg = try self.consumeRegister();
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = cell_reg, .b = stmt.index });
+        self.register_types[cell_reg] = self.type_table.getPrimitive(.cell);
+        const value_reg = try self.genValue(stmt.value, try self.consumeRegister());
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_SET, .a = cell_reg, .b = value_reg });
     }
 
     fn isBuiltInSteps(value: *const ir.Value) bool {
@@ -344,6 +394,13 @@ pub const BytecodeGen = struct {
                     break true;
                 }
             } else false,
+            .make_closure => |closure| for (closure.sources) |source| {
+                if (readsVariable(source, uid)) {
+                    break true;
+                }
+            } else false,
+            .var_box => |box_uid| box_uid == uid,
+            .capture_ref, .capture_raw => false,
             .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
             .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,
             .union_tag, .union_payload, .int_to_float, .array_length, .bytes_length => |inner| readsVariable(inner, uid),
@@ -639,6 +696,28 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = value.type_id;
     }
 
+    fn genMakeClosure(self: *Self, closure: ir.MakeClosure, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const closure_reg = try self.consumeRegister();
+            defer self.freeRegister();
+            try self.genMakeClosure(closure, value, closure_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = closure_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
+        for (closure.sources) |source| {
+            _ = try self.genValue(source, try self.consumeRegister());
+        }
+        var make = Instruction{ .op = .MAKE_CLOSURE, .a = target_reg };
+        make.putBEx(self.fn_index_by_uid.get(closure.fn_uid) orelse unreachable);
+        try self.chunk_instructions.append(self.allocator, make);
+        try self.recordHeapMap();
+
+        self.freeRegisterN(closure.sources.len);
+        self.register_types[target_reg] = value.type_id;
+    }
+
     fn genCall(self: *Self, call: *const ir.Value, target_reg: u8) !void {
         switch (call.data) {
             .fn_call => |fc| try self.genFnCall(fc, call, target_reg),
@@ -740,6 +819,11 @@ pub const BytecodeGen = struct {
 
             .identifier => |id| {
                 const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse return BytecodeError.UndefinedVariable;
+                if (self.boxed_type_by_uid.get(id.uid)) |boxed_type| {
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = symbol_reg });
+                    self.register_types[target_reg] = boxed_type;
+                    return target_reg;
+                }
 
                 const inst = Instruction{
                     .op = .LOAD,
@@ -802,6 +886,29 @@ pub const BytecodeGen = struct {
 
             .call_value => |cv| {
                 try self.genCallValue(cv, value, target_reg);
+            },
+
+            .make_closure => |closure| {
+                try self.genMakeClosure(closure, value, target_reg);
+            },
+
+            .capture_ref => |capture| {
+                try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = capture.index });
+                if (capture.is_boxed) {
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = target_reg });
+                }
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .capture_raw => |index| {
+                try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = index });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .var_box => |uid| {
+                const cell_reg = self.var_register_id_by_uid.get(uid) orelse return BytecodeError.UndefinedVariable;
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = cell_reg });
+                self.register_types[target_reg] = value.type_id;
             },
 
             .try_call => |tc| {
@@ -1701,6 +1808,7 @@ pub const Chunk = struct {
     heap_maps: []const HeapMap,
     build_recipes: []const []const v.ValueType,
     jump_tables: []const JumpTable = &.{},
+    capture_kinds: []const v.ValueType = &.{},
 
     pub fn disasamble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
@@ -1717,6 +1825,7 @@ pub const Chunk = struct {
                 .@"union" => std.debug.print("<union>", .{}),
                 .nullable => std.debug.print("<nullable:", .{}),
                 .function => std.debug.print("<func>", .{}),
+                .cell => std.debug.print("<cell>", .{}),
                 .string, .buffer => unreachable,
             }
             std.debug.print("\n", .{});
@@ -1768,7 +1877,10 @@ pub const Chunk = struct {
             .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG, .I_TO_BYTE => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .CALL, .TAIL_CALL, .LOAD_FUNC => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
+            .CALL, .TAIL_CALL, .LOAD_FUNC, .MAKE_CLOSURE => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
+            .CAPTURE_GET => std.debug.print("R[{d}] CAP[{d}]", .{ inst.a, inst.b }),
+            .CELL_NEW => std.debug.print("R[{d}] K[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
+            .CELL_GET, .CELL_SET => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .CALL_VALUE => std.debug.print("R[{d}]", .{inst.a}),
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
@@ -1908,6 +2020,11 @@ pub const OpCode = enum(u8) {
     B_NOT,
 
     LOAD_FUNC,
+    MAKE_CLOSURE,
+    CAPTURE_GET,
+    CELL_NEW,
+    CELL_GET,
+    CELL_SET,
     CALL,
     CALL_VALUE,
     TAIL_CALL,
@@ -1937,6 +2054,8 @@ pub const OpCode = enum(u8) {
             .DEEP_COPY,
             .CALL,
             .CALL_VALUE,
+            .MAKE_CLOSURE,
+            .CELL_NEW,
             => true,
             else => false,
         };

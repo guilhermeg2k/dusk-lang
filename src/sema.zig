@@ -13,6 +13,7 @@ pub const SemaAnalyzer = struct {
     const Self = @This();
     const max_copy_depth = 64;
     const lambda_name = "$lambda";
+    const max_captures = 255;
 
     allocator: std.mem.Allocator,
     src: []const u8 = "",
@@ -47,7 +48,8 @@ pub const SemaAnalyzer = struct {
     copy_depth: usize = 0,
     is_lowering_copy: bool = false,
     is_checking_opaque: bool = false,
-    lambda_uid_floor: usize = 0,
+    lambda_contexts: std.ArrayList(LambdaContext) = .empty,
+    boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     lambda_binding: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
@@ -89,6 +91,7 @@ pub const SemaAnalyzer = struct {
         return .{
             .instructions = instructions,
             .externs = try self.externs.toOwnedSlice(self.allocator),
+            .boxed_uids = self.boxed_uids,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
@@ -2860,7 +2863,9 @@ pub const SemaAnalyzer = struct {
                 const id_symbol = self.scope.symbol_table.getOrError(id) catch {
                     return self.err_reporter.notDefined(id, assign_stmt.target.loc);
                 };
-                if (id_symbol.kind != .variable) return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                if (id_symbol.kind != .variable) {
+                    return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                }
 
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
 
@@ -2873,6 +2878,11 @@ pub const SemaAnalyzer = struct {
                 try self.ensureNotReadOnlySource(assign_stmt.exp);
 
                 const boxed_value = try self.coerceValue(assignment_value, id_symbol.type_id, assign_stmt.exp.loc);
+
+                if (self.outerVariableContext(id_symbol)) |context_index| {
+                    const index = try self.resolveCapture(context_index, id_symbol, assign_stmt.target.loc);
+                    return ir.Instruction{ .update_capture = .{ .index = index, .value = boxed_value } };
+                }
 
                 return ir.Instruction{ .store_var = .{
                     .identifier = id_symbol.identifier,
@@ -3689,21 +3699,91 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.lambdaParamCantHaveDefault(param.identifier, default_value.loc);
         }
 
-        const saved_floor = self.lambda_uid_floor;
-        self.lambda_uid_floor = self.scope.next_uid;
-        defer self.lambda_uid_floor = saved_floor;
+        try self.lambda_contexts.append(self.allocator, .{ .floor = self.scope.next_uid });
+        const context_index = self.lambda_contexts.items.len - 1;
+        defer _ = self.lambda_contexts.pop();
 
         const symbol = try self.createEmptyFuncSymbol(lambda_name);
         try self.fulfillFuncType(symbol, def, null, exp.loc);
         const metadata = self.type_table.getTypePtrById(symbol.type_id).kind.function;
-        const func = try self.visitFnDef(def, metadata.uid, metadata, null, exp.loc);
+        var func = try self.visitFnDef(def, metadata.uid, metadata, null, exp.loc);
+
+        const captures = self.lambda_contexts.items[context_index].captures.items;
+        const capture_infos = try self.allocator.alloc(ir.Capture, captures.len);
+        const sources = try self.allocator.alloc(*ir.Value, captures.len);
+        for (captures, capture_infos, sources) |capture, *info, *source| {
+            info.* = .{ .type_id = capture.type_id, .is_boxed = capture.is_boxed };
+            source.* = capture.source;
+        }
+        func.captures = capture_infos;
         if (!self.is_checking_opaque) {
             try self.functions.append(self.allocator, func);
         }
 
+        const func_type_id = try self.funcValueType(metadata);
+        if (captures.len == 0) {
+            return ir.Value.init(self.allocator, .{
+                .data = .{ .func_ref = .{ .fn_uid = metadata.uid, .name = lambda_name } },
+                .type_id = func_type_id,
+            });
+        }
         return ir.Value.init(self.allocator, .{
-            .data = .{ .func_ref = .{ .fn_uid = metadata.uid, .name = lambda_name } },
-            .type_id = try self.funcValueType(metadata),
+            .data = .{ .make_closure = .{ .fn_uid = metadata.uid, .sources = sources } },
+            .type_id = func_type_id,
+        });
+    }
+
+    fn outerVariableContext(self: *Self, symbol: Symbol) ?usize {
+        if (symbol.kind != .variable) {
+            return null;
+        }
+        const context = self.lambda_contexts.getLastOrNull() orelse return null;
+        if (symbol.uid >= context.floor) {
+            return null;
+        }
+        return self.lambda_contexts.items.len - 1;
+    }
+
+    fn resolveCapture(self: *Self, context_index: usize, symbol: Symbol, loc: err.Loc) CompileError!u8 {
+        for (self.lambda_contexts.items[context_index].captures.items, 0..) |capture, i| {
+            if (capture.symbol_uid == symbol.uid) {
+                return @intCast(i);
+            }
+        }
+        const count = self.lambda_contexts.items[context_index].captures.items.len;
+        if (count == max_captures) {
+            return self.err_reporter.tooManyCaptures(max_captures, loc);
+        }
+
+        const is_boxed = symbol.kind.variable.is_mut and !symbol.kind.variable.is_borrowed;
+        const is_parent_local = context_index == 0 or symbol.uid >= self.lambda_contexts.items[context_index - 1].floor;
+        const cell_type = self.type_table.getPrimitive(.cell);
+        const raw_type = if (is_boxed) cell_type else symbol.type_id;
+        const source = if (is_parent_local and is_boxed)
+            try ir.Value.init(self.allocator, .{ .data = .{ .var_box = symbol.uid }, .type_id = cell_type })
+        else if (is_parent_local)
+            try ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = symbol.uid, .name = symbol.identifier } }, .type_id = symbol.type_id })
+        else
+            try ir.Value.init(self.allocator, .{ .data = .{ .capture_raw = try self.resolveCapture(context_index - 1, symbol, loc) }, .type_id = raw_type });
+
+        if (is_boxed) {
+            try self.boxed_uids.put(self.allocator, symbol.uid, {});
+        }
+        try self.lambda_contexts.items[context_index].captures.append(self.allocator, .{
+            .symbol_uid = symbol.uid,
+            .type_id = symbol.type_id,
+            .is_boxed = is_boxed,
+            .source = source,
+        });
+        return @intCast(count);
+    }
+
+    fn evalCaptureRef(self: *Self, context_index: usize, symbol: Symbol, loc: err.Loc) CompileError!*ir.Value {
+        const index = try self.resolveCapture(context_index, symbol, loc);
+        const capture = self.lambda_contexts.items[context_index].captures.items[index];
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .capture_ref = .{ .index = index, .is_boxed = capture.is_boxed } },
+            .type_id = symbol.type_id,
         });
     }
 
@@ -4301,9 +4381,8 @@ pub const SemaAnalyzer = struct {
             if (symbol.kind == .function) {
                 return self.evalFuncRef(symbol.type_id, exp.loc);
             }
-            const is_outer_variable = symbol.kind == .variable and symbol.uid < self.lambda_uid_floor;
-            if (is_outer_variable) {
-                return self.err_reporter.captureNotSupported(id, exp.loc);
+            if (self.outerVariableContext(symbol)) |context_index| {
+                return self.evalCaptureRef(context_index, symbol, exp.loc);
             }
             if (symbol.kind == .generic_function) {
                 return self.err_reporter.genericNeedsCall(id, exp.loc);
@@ -5058,7 +5137,7 @@ pub const SemaAnalyzer = struct {
         const params = try self.allocator.alloc(tt.FuncTypeParam, func.params.len);
         for (func.params, params) |param, *resolved| {
             const type_id = try self.resolveTypeAnnotation(param.type, current_defined_type_type_id);
-            const is_checked_mut = param.is_mut and !self.is_lowering_copy and !self.isSlotType(type_id);
+            const is_checked_mut = param.is_mut and !self.namesSlot(param.type);
             if (is_checked_mut and !self.canBeMutable(type_id)) {
                 return self.err_reporter.primitiveParamsCantBeMutable(loc);
             }
@@ -5073,6 +5152,14 @@ pub const SemaAnalyzer = struct {
             });
         }
         return self.type_table.getOrAddFuncType(.{ .params = params, .return_type_id = return_type_id });
+    }
+
+    fn namesSlot(self: *Self, annotation: *const ast.TypeAnnotation) bool {
+        if (annotation.type != .@"struct") {
+            return false;
+        }
+        const symbol = self.scope.symbol_table.get(annotation.type.@"struct") orelse return false;
+        return symbol.kind == .type_slot;
     }
 
     fn getIndexedType(self: *Self, target: *ir.Value, index: *ir.Value) tt.TypeId {
@@ -5271,6 +5358,18 @@ pub const Symbol = struct {
     },
 };
 
+
+const LambdaContext = struct {
+    floor: usize,
+    captures: std.ArrayList(LambdaCapture) = .empty,
+};
+
+const LambdaCapture = struct {
+    symbol_uid: usize,
+    type_id: tt.TypeId,
+    is_boxed: bool,
+    source: *ir.Value,
+};
 
 const WhenSubject = struct {
     value: *ir.Value,

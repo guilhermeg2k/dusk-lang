@@ -554,6 +554,29 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = .{ .heap_obj = @constCast(&self.program.static_closures[inst.bEx()].obj) };
                 },
 
+                .MAKE_CLOSURE => {
+                    current_frame.cur_inst = cur_instruction;
+                    try self.makeClosure(stack_base + inst.a, inst.bEx());
+                },
+
+                .CAPTURE_GET => {
+                    const closure = v.HeapValue.getParentPtr(v.Closure, stack[stack_base - 1].heap_obj);
+                    stack[stack_base + inst.a] = closure.captures()[inst.b];
+                },
+
+                .CELL_NEW => {
+                    current_frame.cur_inst = cur_instruction;
+                    try self.newCell(stack_base + inst.a, stack_base + inst.c, @enumFromInt(inst.b));
+                },
+
+                .CELL_GET => {
+                    stack[stack_base + inst.a] = v.HeapValue.getParentPtr(v.Cell, stack[stack_base + inst.b].heap_obj).value;
+                },
+
+                .CELL_SET => {
+                    v.HeapValue.getParentPtr(v.Cell, stack[stack_base + inst.a].heap_obj).value = stack[stack_base + inst.b];
+                },
+
                 .CALL_VALUE => {
                     const closure = v.HeapValue.getParentPtr(v.Closure, stack[stack_base + inst.a].heap_obj);
                     const func = closure.function;
@@ -633,6 +656,25 @@ pub const VM = struct {
         }
     }
 
+    noinline fn makeClosure(self: *Self, target_index: usize, fn_index: u16) !void {
+        const function = &self.program.functions[fn_index];
+        const capture_count = function.kind.dusk.capture_kinds.len;
+        const size = v.Closure.calc_size(capture_count);
+        try self.maybeCollectGarbage(size);
+        const closure = try v.Closure.init(self.getCurrentHeapAllocator(), function, capture_count);
+        self.increaseHeapAllocationCount(size);
+        @memcpy(closure.captures(), self.stack[target_index + 1 ..][0..capture_count]);
+        self.stack[target_index] = .{ .heap_obj = &closure.obj };
+    }
+
+    noinline fn newCell(self: *Self, target_index: usize, source_index: usize, kind: v.ValueType) !void {
+        const size = v.Cell.calc_size();
+        try self.maybeCollectGarbage(size);
+        const cell = try v.Cell.init(self.getCurrentHeapAllocator(), self.stack[source_index], kind);
+        self.increaseHeapAllocationCount(size);
+        self.stack[target_index] = .{ .heap_obj = &cell.obj };
+    }
+
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
         if (len < 0) {
             return RuntimeErrorReporter.negativeBufferSize(len);
@@ -695,7 +737,10 @@ pub const VM = struct {
     fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
-        const is_immutable = current.kind == .string or current.kind == .null_box or current.kind == .closure;
+        const is_immutable = switch (current.kind) {
+            .string, .null_box, .closure, .cell => true,
+            else => false,
+        };
         if (is_immutable) {
             slot.heap_obj = current;
             return;
@@ -851,6 +896,20 @@ pub const VM = struct {
                         }
                     }
                 },
+                .closure => {
+                    const closure = v.HeapValue.getParentPtr(v.Closure, obj);
+                    const kinds = closure.function.kind.dusk.capture_kinds;
+                    for (closure.captures(), kinds) |*capture, kind| {
+                        if (!kind.isHeapType()) continue;
+                        try self.copyHeapValue(new_alloc, capture);
+                    }
+                },
+                .cell => {
+                    const cell = v.HeapValue.getParentPtr(v.Cell, obj);
+                    if (cell.kind.isHeapType()) {
+                        try self.copyHeapValue(new_alloc, &cell.value);
+                    }
+                },
                 .@"union" => {
                     const u = v.HeapValue.getParentPtr(v.Union, obj);
                     if (u.active_tag != v.Union.NO_TAG) {
@@ -905,6 +964,7 @@ pub const VM = struct {
             .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
             .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
             .closure => &(try v.HeapValue.getParentPtr(v.Closure, obj_ptr).clone(allocator)).obj,
+            .cell => &(try v.HeapValue.getParentPtr(v.Cell, obj_ptr).clone(allocator)).obj,
             .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
         };
     }
@@ -916,6 +976,7 @@ pub const VM = struct {
             .@"union" => v.Union.calc_size(),
             .null_box => v.NullBox.calc_size(),
             .closure => v.Closure.calc_size(v.HeapValue.getParentPtr(v.Closure, ptr).capture_count),
+            .cell => v.Cell.calc_size(),
             .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
         };
     }

@@ -1,0 +1,148 @@
+error Bad
+    Nope
+end
+
+union Shape
+    circle: int
+    square: int
+end
+
+struct Counter
+    count: int
+end
+
+struct Stack[T]
+    items: []T
+
+    func each(self: @, f: func(T) -> void) -> void
+        for self.items: item do
+            f(item)
+        end
+    end
+
+    func pusher(mut self: @) -> func(mut T) -> void
+        return func(mut x: T) -> void
+            append(self.items, x)
+        end
+    end
+end
+
+func make_counter() -> func() -> int
+    let mut count = 0
+    return func() -> int
+        count = count + 1
+        return count
+    end
+end
+
+func make_adder(n: int) -> func(int) -> int
+    return func(x: int) -> return x + n
+end
+
+func apply(f: func(int) -> int, x: int) -> int
+    return f(x)
+end
+
+func fail() -> Bad!int
+    return Bad.Nope
+end
+
+func repeat[T](x: T, n: int) -> []T
+    let mut out: []T = []
+    let add = func() -> void
+        append(out, copy(x))
+    end
+    for 1..n: i do
+        add()
+    end
+    return out
+end
+
+func main() -> void
+    let base = 10
+    let add_base = func(x: int) -> return x + base
+    assert(add_base(5) == 15)
+
+    let mut total = 0
+    let add = func(x: int) -> void
+        total = total + x
+    end
+    add(3)
+    add(4)
+    assert(total == 7)
+    total = 100
+    add(1)
+    assert(total == 101)
+
+    let next = make_counter()
+    assert(next() == 1)
+    assert(next() == 2)
+    let other = make_counter()
+    assert(other() == 1)
+    assert(next() == 3)
+
+    assert(apply(make_adder(5), 1) == 6)
+
+    let mut items: []int = []
+    let push = func(x: int) -> void
+        append(items, x)
+    end
+    push(1)
+    push(2)
+    assert(len(items) == 2)
+
+    let mut fns: []func() -> int = []
+    for 1..3: i do
+        append(fns, func() -> return i * 10)
+    end
+    assert(fns[0]() == 10)
+    assert(fns[2]() == 30)
+
+    let mut name = "a"
+    let outer = func() -> func() -> string
+        return func() -> string
+            name = "$name!"
+            return name
+        end
+    end
+    let inner = outer()
+    assert(str_equal(inner(), "a!"))
+    assert(str_equal(inner(), "a!!"))
+    assert(str_equal(name, "a!!"))
+
+    let c = Counter(count = 1)
+    let read = func() -> return c.count
+    assert(read() == 1)
+
+    let repeated = repeat("ab", 3)
+    assert(len(repeated) == 3)
+
+    let mut s = Stack(items = [1, 2])
+    let push_item = s.pusher()
+    push_item(3)
+    let mut sum = 0
+    s.each(func(x: int) -> void
+        sum = sum + x
+    end)
+    assert(sum == 6)
+
+    let maybe: ?int = 5
+    if maybe: m then
+        let double = func() -> return m * 2
+        assert(double() == 10)
+    end
+
+    let shape = Shape(circle = 3)
+    when shape
+        circle: r then
+            let area = func() -> return r * r
+            assert(area() == 9)
+        end
+        square: side then assert(side == 0) end
+    end
+
+    fail() catch e then
+        let is_nope = func() -> return e == Bad.Nope
+        assert(is_nope())
+    end
+end

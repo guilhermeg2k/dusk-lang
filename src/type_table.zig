@@ -35,6 +35,7 @@ pub const TypeTable = struct {
                     .null => .{ .null = {} },
                     .dynamic => .{ .dynamic = {} },
                     .meta => .{ .meta = {} },
+                    .cell => .{ .cell = {} },
                 },
                 .is_nullable = false,
             });
@@ -134,6 +135,7 @@ pub const TypeTable = struct {
             .null => "null",
             .dynamic => "dynamic",
             .meta => "meta",
+            .cell => "cell",
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
             .function => |f| f.identifier,
             .func_type => |f| self.funcTypeText(f, allocator),
@@ -160,6 +162,7 @@ pub const TypeTable = struct {
             .null => if (t.is_nullable) "nullable null" else "null",
             .dynamic => if (t.is_nullable) "nullable dynamic" else "dynamic",
             .meta => "Meta Symbol",
+            .cell => "cell",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
             },
@@ -365,6 +368,7 @@ pub const PrimitiveType = enum {
     null,
     dynamic,
     meta,
+    cell,
 };
 
 pub const Struct = struct {
@@ -475,6 +479,7 @@ pub const Type = struct {
         dynamic,
 
         meta,
+        cell,
 
         function: Func,
         func_type: FuncType,

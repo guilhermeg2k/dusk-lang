@@ -9,6 +9,7 @@ pub const Program = struct {
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
+    boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
 };
 
 pub const Block = []const Instruction;
@@ -24,6 +25,7 @@ pub const Instruction = union(enum) {
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
+    update_capture: UpdateCapture,
     break_stmt: void,
     continue_stmt: void,
 };
@@ -81,6 +83,17 @@ pub const Func = struct {
     body: Block,
     return_type: TypeId,
     origin: ?FuncOrigin = null,
+    captures: []const Capture = &.{},
+};
+
+pub const Capture = struct {
+    type_id: TypeId,
+    is_boxed: bool,
+};
+
+pub const UpdateCapture = struct {
+    index: u8,
+    value: *Value,
 };
 
 pub const FuncOrigin = struct {
@@ -219,6 +232,10 @@ pub const Value = struct {
         fn_call: FnCall,
         func_ref: FuncRef,
         call_value: CallValue,
+        make_closure: MakeClosure,
+        capture_ref: CaptureRef,
+        capture_raw: u8,
+        var_box: usize,
         struct_init: StructInit,
         union_init: UnionInit,
         null_box_init: NullBoxInit,
@@ -277,6 +294,16 @@ pub const FnCall = struct {
 pub const FuncRef = struct {
     fn_uid: usize,
     name: []const u8,
+};
+
+pub const MakeClosure = struct {
+    fn_uid: usize,
+    sources: []const *Value,
+};
+
+pub const CaptureRef = struct {
+    index: u8,
+    is_boxed: bool,
 };
 
 pub const CallValue = struct {

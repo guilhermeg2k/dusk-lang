@@ -67,6 +67,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 .@"struct" => printValue(writer, value, .@"struct"),
                 .@"union" => printValue(writer, value, .@"union"),
                 .closure => printValue(writer, value, .function),
+                .cell => unreachable,
             }
         },
         .@"struct" => {
@@ -93,6 +94,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 writer.print("<union>", .{}) catch @panic("failed to print union");
             }
         },
+        .cell => unreachable,
         .function => {
             const raw: u64 = @bitCast(value);
             if (raw == 0) {

@@ -1,6 +1,0 @@
-func main() -> void
-    let mut total = 0
-    let f = func(x: int) -> void
-        total = total + x
-    end
-end

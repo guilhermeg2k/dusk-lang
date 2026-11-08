@@ -509,9 +509,9 @@ pub const CompileErrorReporter = struct {
         return error.LambdaCallsItself;
     }
 
-    pub fn captureNotSupported(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Lambdas can't use '{s}' from the function around them yet", .{identifier}), loc);
-        return error.CaptureNotSupported;
+    pub fn tooManyCaptures(self: *Self, max: usize, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "A lambda can use at most {d} variables from the functions around it", .{max}), loc);
+        return error.TooManyCaptures;
     }
 
     pub fn builtinAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
@@ -947,7 +947,7 @@ pub const CompileError = error{
     GenericNeedsCall,
     BuiltinAsValue,
     LambdaParamCantHaveDefault,
-    CaptureNotSupported,
+    TooManyCaptures,
     LambdaCallsItself,
     FieldAndMethodSameName,
     NamedArgumentsOnValue,

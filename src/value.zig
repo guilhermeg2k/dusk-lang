@@ -33,6 +33,7 @@ const HeapValueType = enum(u8) {
     @"union",
     null_box,
     closure,
+    cell,
 };
 
 pub const HeapValue = extern struct {
@@ -385,6 +386,18 @@ pub const Closure = extern struct {
         return obj.kind == .closure and HeapValue.getParentPtr(Self, @constCast(obj)).capture_count == 0;
     }
 
+    pub fn init(allocator: std.mem.Allocator, function: *const bc.Function, capture_count: usize) !*Self {
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(capture_count));
+        const closure: *Self = @ptrCast(raw_memory.ptr);
+        closure.* = .{ .obj = .{ .kind = .closure }, .function = function, .capture_count = @intCast(capture_count) };
+        return closure;
+    }
+
+    pub fn captures(self: *Self) []Value {
+        const data_pointer: [*]Value = @ptrCast(@as([*]Self, @ptrCast(self)) + 1);
+        return data_pointer[0..self.capture_count];
+    }
+
     pub fn calc_size(capture_count: usize) usize {
         return @sizeOf(Self) + capture_count * @sizeOf(Value);
     }
@@ -398,6 +411,28 @@ pub const Closure = extern struct {
         new_obj.obj.gc_forward = null;
         new_obj.obj.relocated = null;
         return new_obj;
+    }
+};
+
+pub const Cell = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    kind: ValueType,
+    value: Value,
+
+    pub fn init(allocator: std.mem.Allocator, value: Value, kind: ValueType) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = .{ .obj = .{ .kind = .cell }, .kind = kind, .value = value };
+        return ptr;
+    }
+
+    pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
+        return Self.init(allocator, self.value, self.kind);
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
     }
 };
 
@@ -432,10 +467,11 @@ pub const ValueType = enum(u8) {
     @"union",
     nullable,
     function,
+    cell,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell => true,
             else => false,
         };
     }
@@ -457,6 +493,7 @@ pub const ValueType = enum(u8) {
             .@"struct" => .@"struct",
             .@"union" => .@"union",
             .func_type => .function,
+            .cell => .cell,
             .@"enum" => .int64,
             //note: void -> null
             .void => .null,
@@ -484,7 +521,7 @@ pub const TypedValueHashContext = struct {
             .nullable => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
-            .function => unreachable,
+            .function, .cell => unreachable,
         }
         return hasher.final();
     }
@@ -501,7 +538,7 @@ pub const TypedValueHashContext = struct {
             .array => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
-            .function => unreachable,
+            .function, .cell => unreachable,
         };
     }
 };
