@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.14 - Simon**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.15 - Fujiwara** (in development). Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -643,7 +643,7 @@ An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitiv
 
 `==` and `!=` only compare values of the same type: `true == 1`, `1 == "a"` and a `Point` with a `Size` are compile errors, since they could never be equal. Numbers are the exception: an `int`, `float` or `byte` compares with any other number (`1 == 1.0`). A nullable compares with `null` or with its inner type, and `x == null` is an error when `x` can't be null.
 
-On arrays, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions can't be compared with `==`.
+On arrays, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions and functions can't be compared with `==`.
 
 `==` and `!=` can't compare strings: use `str_equal(a, b)` to compare their text.
 
@@ -965,7 +965,7 @@ end
 
 ### Scope
 
-A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). It can't see the variables of other functions, including `main`: state a function reads or changes must be passed to it, with `mut` to change it. Default values (field and parameter defaults) can only use constants.
+A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). A function declared with a name can't see the variables of other functions, including `main`: state it reads or changes must be passed to it, with `mut` to change it. [Lambdas](#lambdas) are the exception: they can use the variables of the functions around them (see [Closures](#closures)). Default values (field and parameter defaults) can only use constants.
 
 ```nim
 let LIMIT = 3          # a constant: visible everywhere
@@ -986,6 +986,141 @@ end
 ```
 
 Functions can be called before they are declared.
+
+### Function values
+
+A function is a value. Its name without parentheses is the function itself, which can be stored in a variable, passed as an argument, put in an array or a struct field, and returned from another function. Calling a value works like calling the function:
+
+```nim
+func add(a: int, b: int) -> return a + b
+func sub(a: int, b: int) -> return a - b
+
+func apply(f: func(int, int) -> int, a: int, b: int) -> int
+    return f(a, b)
+end
+
+let op = add
+echo(op(1, 2))              # 3
+echo(apply(sub, 5, 3))      # 2
+let ops = [add, sub]
+echo(ops[1](10, 4))         # 6
+echo(op)                    # <func add>
+```
+
+A call through a value passes every argument, in order: default values and named arguments belong to the declaration, so they don't carry over to a value.
+
+A struct field that holds a function is called like a method: `button.on_click()`. A struct can't have a field and a method with the same name, so `x.name()` always has one meaning.
+
+A generic function becomes a value when a function type fills its slots: `let same: func(int) -> int = id` makes `id[int]`. Without one, `let f = id` is an error. Builtins can't be used as values: call the builtin from a lambda or a function and use that instead.
+
+Functions can't be compared with `==` or `!=`. `echo` prints a named function as `<func add>` and a lambda as `<func>`.
+
+### Function types
+
+A function type lists the parameter types and the return type: `func(int, int) -> int`. A parameter that the function takes as `mut` is written `mut` in the type too (`func(mut []int) -> void`), and a function that can fail names its error set (`func(string) -> ParseError!int`). An error set can't be left to inference (`-> !int`) in a type. `?func() -> void` is a function that may be missing, unwrapped like any nullable:
+
+```nim
+let reader: func(string) -> ParseError!int = parse
+let size = reader("") catch -1
+
+let mut handler: ?func() -> void = null
+handler = func() -> void
+    echo("handled")
+end
+if handler: run then
+    run()
+end
+```
+
+A function fits a function type only when everything matches: the parameter types, which parameters are `mut`, the return type and the error set. `add` (`-> int`) doesn't fit `func(int, int) -> float`, and `func(xs: []int)` doesn't fit `func(mut []int) -> void`.
+
+### Lambdas
+
+A lambda is a function without a name, written where a value goes. Like a declaration, it has an inline form that returns one expression and a block form that names its return type:
+
+```nim
+let square = func(x: int) -> return x * x
+let describe = func(x: int) -> string
+    if x > 10 then
+        return "big"
+    end
+    return "small"
+end
+
+echo(apply(func(a: int, b: int) -> return a * b, 6, 7))    # 42
+```
+
+Where a function type is expected (an annotation, a parameter, a field, an array item, a return value), the lambda's parameters can leave out their types and take them from that function type. A `mut` parameter is still written `mut`, matching the function type:
+
+```nim
+let double: func(int) -> int = func(x) -> return x * 2
+echo(apply(func(a, b) -> return a - b, 9, 4))    # 5
+```
+
+In a call to a generic function, the other arguments fill the slots first, the lambda's parameters take their types from them, and what the lambda returns can fill the slots that are left:
+
+```nim
+# signatures only: keep returns the items ok accepts, map_to the results of f
+func keep[T](items: []T, ok: func(T) -> bool) -> []T
+func map_to[T, U](items: []T, f: func(T) -> U) -> []U
+
+echo(keep([1, 5, 12], func(x) -> return x > 2))            # [5, 12]
+echo(map_to(["a", "bbb"], func(s) -> return str_len(s)))   # [1, 3]: U is int
+```
+
+A lambda without a function type to take its types from needs them written: `let f = func(x) -> return x` is an error. Its parameters can't have default values, and `break` and `continue` inside it only see its own loops.
+
+A lambda can't call itself through the name it's being assigned to (`let fact = func(n: int) -> int ... fact(n - 1) ... end` is an error): declare a function with a name to recurse.
+
+### Closures
+
+A lambda can use the variables of the functions around it. It shares them with that function instead of copying them: changing a `let mut` variable inside the lambda changes it for the function, and the other way around.
+
+```nim
+let limit = 2
+let mut total = 0
+let add = func(x: int) -> void
+    if x > limit then
+        total = total + x
+    end
+end
+add(5)
+add(7)
+echo(total)    # 12
+total = 0
+add(3)
+echo(total)    # 3
+```
+
+A lambda keeps its variables after the function that made it returns, so each call below makes a separate counter:
+
+```nim
+func make_counter() -> func() -> int
+    let mut count = 0
+    return func() -> int
+        count = count + 1
+        return count
+    end
+end
+
+let next = make_counter()
+let other = make_counter()
+echo(next())     # 1
+echo(next())     # 2
+echo(other())    # 1
+```
+
+Each pass of a loop has its own loop variable, so lambdas made in a loop see different values:
+
+```nim
+let mut steps: []func() -> int = []
+for 1..3: i do
+    append(steps, func() -> return i * 10)
+end
+echo("${steps[0]()} ${steps[1]()} ${steps[2]()}")    # 10 20 30
+```
+
+The usual mutability rules apply to what a lambda uses: a `let` variable or a parameter without `mut` can be read but not changed, and a `let mut` one can be reassigned or changed through. A lambda inside another lambda can use the variables of every function around it.
 
 ## 11. Generics and Traits
 
@@ -1014,7 +1149,9 @@ end
 let xs: []int = empty()     # empty[int]
 ```
 
-A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There's no way to write the types in a call, like `empty[int]()`. A generic function can only be called, not used as a value.
+A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There's no way to write the types in a call, like `empty[int]()`. A generic function used as a value takes its slots from the function type it's used as (see [Function values](#function-values)).
+
+Lambda arguments are checked after the other arguments: their parameters take their types from the slots filled so far, and their result can fill the rest (see [Lambdas](#lambdas)).
 
 ### Generic structs and unions
 
@@ -1298,7 +1435,7 @@ There are no line numbers yet.
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
 
-`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
+`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, functions as `<func name>` (`<func>` for a lambda), and structs as raw values.
 
 `copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
@@ -1406,7 +1543,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 ## 15. Known Limitations
 
-These are known gaps in v0.14. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Function size**: a function can compile to at most 65,535 bytecode instructions. Going over is a compile error; split the code into smaller functions.
@@ -1419,4 +1556,6 @@ These are known gaps in v0.14. Most are planned in the [roadmap](roadmap.md).
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
 - **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).
+- **Function values**: builtins and methods can't be used as values (`let f = str_len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
+- **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
