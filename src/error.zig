@@ -499,6 +499,21 @@ pub const CompileErrorReporter = struct {
         return error.FieldAndMethodSameName;
     }
 
+    pub fn lambdaParamCantHaveDefault(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Lambda param '{s}' can't have a default value: a lambda is only called through a function value, which passes every argument", .{identifier}), loc);
+        return error.LambdaParamCantHaveDefault;
+    }
+
+    pub fn lambdaCallsItself(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "A lambda can't use '{s}', the name it's being assigned to: declare '{s}' as a top-level function to call it recursively", .{ identifier, identifier }), loc);
+        return error.LambdaCallsItself;
+    }
+
+    pub fn captureNotSupported(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Lambdas can't use '{s}' from the function around them yet", .{identifier}), loc);
+        return error.CaptureNotSupported;
+    }
+
     pub fn builtinAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Builtin '{s}' can't be used as a value: call it from a function and use that function instead", .{identifier}), loc);
         return error.BuiltinAsValue;
@@ -931,6 +946,9 @@ pub const CompileError = error{
     SlotHasNoMethod,
     GenericNeedsCall,
     BuiltinAsValue,
+    LambdaParamCantHaveDefault,
+    CaptureNotSupported,
+    LambdaCallsItself,
     FieldAndMethodSameName,
     NamedArgumentsOnValue,
     CantInferSlot,

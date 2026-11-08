@@ -1021,6 +1021,7 @@ pub const Parser = struct {
             .try_kw,
             .if_kw,
             .when_kw,
+            .func_kw,
             => true,
             else => false,
         };
@@ -1333,6 +1334,18 @@ pub const Parser = struct {
                     .{ .if_exp = try self.parseIfStmt(condition) };
                 return ast.ExpNode.init(self.allocator, .{
                     .data = data,
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
+            .func_kw => {
+                const saved_loop_depth = self.loop_depth;
+                self.loop_depth = 0;
+                defer self.loop_depth = saved_loop_depth;
+                const was_parsing_condition = self.leaveCondition();
+                defer self.is_parsing_condition = was_parsing_condition;
+                const def = try self.parseFnDef();
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .lambda = def },
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 });
             },

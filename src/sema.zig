@@ -12,6 +12,7 @@ pub const CompileError = err.CompileError;
 pub const SemaAnalyzer = struct {
     const Self = @This();
     const max_copy_depth = 64;
+    const lambda_name = "$lambda";
 
     allocator: std.mem.Allocator,
     src: []const u8 = "",
@@ -45,6 +46,9 @@ pub const SemaAnalyzer = struct {
     pending_copies: std.ArrayList(PendingCopy) = .empty,
     copy_depth: usize = 0,
     is_lowering_copy: bool = false,
+    is_checking_opaque: bool = false,
+    lambda_uid_floor: usize = 0,
+    lambda_binding: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -919,6 +923,7 @@ pub const SemaAnalyzer = struct {
         var params_metadata: std.ArrayList(tt.TypedIdentifier) = .empty;
 
         //create a temporary scope just for inline return type inference
+        const saved_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
@@ -930,7 +935,9 @@ pub const SemaAnalyzer = struct {
             if (param.type_annotation) |annotation| {
                 const owner_type_id = if (fn_owner_symbol) |symbol| symbol.kind.defined_type.blueprint_type_id else null;
                 param_type_id = self.resolveTypeAnnotation(annotation, owner_type_id) catch |failure| {
-                    if (failure != error.SemaError) return failure;
+                    if (failure != error.SemaError) {
+                        return failure;
+                    }
                     return self.err_reporter.typeNotDefined(
                         try param.type_annotation.?.value(self.allocator),
                         loc,
@@ -972,7 +979,9 @@ pub const SemaAnalyzer = struct {
 
         if (fn_def.return_type) |r_type| {
             return_type_id = self.resolveTypeAnnotation(r_type, null) catch |failure| {
-                if (failure != error.SemaError) return failure;
+                if (failure != error.SemaError) {
+                    return failure;
+                }
                 return self.err_reporter.typeNotDefined(try r_type.value(self.allocator), loc);
             };
         } else if (fn_def.body_block.statements.items[0].data.@"return".exp) |return_exp| {
@@ -993,7 +1002,7 @@ pub const SemaAnalyzer = struct {
         }
 
         //restore main scope
-        self.scope.exit(self.type_table.getPrimitive(.void));
+        self.scope.exit(saved_return_type);
 
         self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.return_type_id = return_type_id;
         self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.params = try params_metadata.toOwnedSlice(self.allocator);
@@ -1314,7 +1323,10 @@ pub const SemaAnalyzer = struct {
         else
             null;
 
+        const saved_binding = self.lambda_binding;
+        self.lambda_binding = if (let_stmt.value.data == .lambda) let_stmt.identifier else null;
         const expression_value = try self.evalExpExpecting(let_stmt.value, annotated_type_id);
+        self.lambda_binding = saved_binding;
         const expression_type_id = expression_value.type_id;
 
         if (annotated_type_id) |type_id| {
@@ -1344,7 +1356,9 @@ pub const SemaAnalyzer = struct {
         }) catch {
             return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
-        if (let_stmt.is_mut) try self.ensureNotReadOnlySource(let_stmt.value);
+        if (let_stmt.is_mut) {
+            try self.ensureNotReadOnlySource(let_stmt.value);
+        }
 
         return ir.Instruction{ .store_var = .{
             .uid = uid,
@@ -1371,6 +1385,9 @@ pub const SemaAnalyzer = struct {
 
     fn checkGenericFunction(self: *Self, generic: GenericFunction) CompileError!void {
         const func_stmt = generic.func_stmt;
+        const was_checking_opaque = self.is_checking_opaque;
+        self.is_checking_opaque = true;
+        defer self.is_checking_opaque = was_checking_opaque;
         const old_return_type = self.scope.return_type_id;
         try self.scope.enter(old_return_type);
         defer self.scope.exit(old_return_type);
@@ -1572,6 +1589,9 @@ pub const SemaAnalyzer = struct {
     fn checkGenericType(self: *Self, index: usize) CompileError!void {
         const generic = self.generic_types.items[index];
         const opaque_copy = generic.opaque_copy orelse unreachable;
+        const was_checking_opaque = self.is_checking_opaque;
+        self.is_checking_opaque = true;
+        defer self.is_checking_opaque = was_checking_opaque;
         for (generic.copies.items, 0..) |copy, copy_index| {
             if (copy.symbol.uid != opaque_copy.uid) continue;
             _ = try self.visitTypeCopy(index, copy_index);
@@ -3658,7 +3678,33 @@ pub const SemaAnalyzer = struct {
             .binary_exp => {
                 return self.evalBinaryExp(exp);
             },
+            .lambda => return self.evalLambda(exp),
         }
+    }
+
+    fn evalLambda(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
+        const def = &exp.data.lambda;
+        for (def.params) |param| {
+            const default_value = param.default_value orelse continue;
+            return self.err_reporter.lambdaParamCantHaveDefault(param.identifier, default_value.loc);
+        }
+
+        const saved_floor = self.lambda_uid_floor;
+        self.lambda_uid_floor = self.scope.next_uid;
+        defer self.lambda_uid_floor = saved_floor;
+
+        const symbol = try self.createEmptyFuncSymbol(lambda_name);
+        try self.fulfillFuncType(symbol, def, null, exp.loc);
+        const metadata = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        const func = try self.visitFnDef(def, metadata.uid, metadata, null, exp.loc);
+        if (!self.is_checking_opaque) {
+            try self.functions.append(self.allocator, func);
+        }
+
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .func_ref = .{ .fn_uid = metadata.uid, .name = lambda_name } },
+            .type_id = try self.funcValueType(metadata),
+        });
     }
 
     fn evalCopyCall(self: *Self, copy_uid: usize, identifier: []const u8, argument: *const ast.ExpNode) CompileError!*ir.Value {
@@ -3698,7 +3744,7 @@ pub const SemaAnalyzer = struct {
         resolve: switch (fn_call.target.data) {
             .identifier => |id| {
                 const symbol = self.scope.symbol_table.getOrError(id) catch {
-                    return self.err_reporter.notDefined(id, exp.loc);
+                    return self.notDefined(id, exp.loc);
                 };
                 try self.checkNotInternal(symbol, exp.loc);
 
@@ -4255,6 +4301,10 @@ pub const SemaAnalyzer = struct {
             if (symbol.kind == .function) {
                 return self.evalFuncRef(symbol.type_id, exp.loc);
             }
+            const is_outer_variable = symbol.kind == .variable and symbol.uid < self.lambda_uid_floor;
+            if (is_outer_variable) {
+                return self.err_reporter.captureNotSupported(id, exp.loc);
+            }
             if (symbol.kind == .generic_function) {
                 return self.err_reporter.genericNeedsCall(id, exp.loc);
             }
@@ -4284,7 +4334,15 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        return self.err_reporter.notDefined(id, exp.loc);
+        return self.notDefined(id, exp.loc);
+    }
+
+    fn notDefined(self: *Self, id: []const u8, loc: err.Loc) CompileError {
+        const binding = self.lambda_binding orelse return self.err_reporter.notDefined(id, loc);
+        if (!std.mem.eql(u8, binding, id)) {
+            return self.err_reporter.notDefined(id, loc);
+        }
+        return self.err_reporter.lambdaCallsItself(id, loc);
     }
 
     fn evalFuncRef(self: *Self, func_type_id: tt.TypeId, loc: err.Loc) CompileError!*ir.Value {

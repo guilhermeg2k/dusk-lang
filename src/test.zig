@@ -2086,6 +2086,17 @@ test "function values: named functions as values, function types and calls throu
     try runCaseError("sema/generic-struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
 }
 
+test "lambdas: func(...) expressions without captures" {
+    try runCaseOutput("lambdas.dsk", "<func>\n");
+    try runCaseError("parser/lambda-block-without-return-type.dsk", error.ParserError);
+    try runCaseError("parser/lambda-break-outer-loop.dsk", error.ParserError);
+    try runCaseError("sema/lambda-capture-not-supported.dsk", error.CaptureNotSupported);
+    try runCaseError("sema/lambda-assign-outer-not-supported.dsk", error.CaptureNotSupported);
+    try runCaseError("sema/lambda-param-default.dsk", error.LambdaParamCantHaveDefault);
+    try runCaseError("sema/lambda-param-without-type.dsk", error.InvalidParameterType);
+    try runCaseError("sema/lambda-calls-itself.dsk", error.LambdaCallsItself);
+}
+
 test "generics: calls fill the slots from the arguments and compile one copy per type" {
     try runCase("generics-calls.dsk");
     try runCaseError("sema/generic-conflicting-slots.dsk", error.InvalidType);

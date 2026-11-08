@@ -1,0 +1,5 @@
+func main() -> void
+    let f = func(x: int)
+        echo(x)
+    end
+end

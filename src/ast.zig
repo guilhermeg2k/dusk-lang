@@ -243,6 +243,7 @@ pub const Exp = union(enum) {
     if_capture_exp: IfCaptureStmt,
     when_exp: WhenStmt,
     range: Range,
+    lambda: FnDef,
 };
 
 pub const Range = struct {
