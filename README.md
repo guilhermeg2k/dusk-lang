@@ -10,7 +10,7 @@ A small/lightweight statically typed scripting language
 
 [Language Reference](doc/language-ref.md)
 
-[Bulding & Running](doc/build.md)
+[Building & Running](doc/build.md)
 
 [Roadmap](doc/roadmap.md)
 

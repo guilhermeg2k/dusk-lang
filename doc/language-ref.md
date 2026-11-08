@@ -1265,7 +1265,7 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits or more than 100,000 nested calls still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits, a `float` side of `//` outside the `int` range or more than 100,000 nested calls still stops the program and can't be caught.
 
 The message names the function that was running, and the builtin when the failure happened inside one:
 
@@ -1290,7 +1290,7 @@ There are no line numbers yet.
 | `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
 | `new_buffer`  | `new_buffer(size: int) -> BufferError!buffer`     | Returns a new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size. |
 | `to_byte`     | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
-| `to_float`    | `to_float(value: int \| byte \| float) -> float` | Converts an `int`, `byte` or `float` to `float`.                                     |
+| `to_float`    | `to_float(value: int \| byte \| float) -> float` | Converts an `int`, `byte` or `float` to `float`. Also takes a `T` whose type list only has `int`, `byte` and `float` (`[T: int \| float]`). |
 | `to_int`      | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(mut list: []T, mut item: T) -> void`      | Adds an item to the end of a mutable array.                                          |
@@ -1402,7 +1402,7 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, an integer division by `0`, an `int` overflow, too many nested calls, an error returned from `main`; see [Runtime errors](#runtime-errors)) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
 ## 15. Known Limitations
 
