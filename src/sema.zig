@@ -43,6 +43,7 @@ pub const SemaAnalyzer = struct {
     copied_types: std.AutoHashMapUnmanaged(tt.TypeId, TypeCopy) = .empty,
     pending_copies: std.ArrayList(PendingCopy) = .empty,
     copy_depth: usize = 0,
+    is_lowering_copy: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -1707,13 +1708,8 @@ pub const SemaAnalyzer = struct {
 
             const saved_table = try self.enterSlotScope(generic.func_stmt.slots, copy.args);
             defer self.scope.symbol_table = saved_table;
-            const saved_context = self.enterPreludeContext(generic.is_prelude);
-            defer self.exitPreludeContext(saved_context);
-            const saved_depth = self.copy_depth;
-            self.copy_depth = copy.depth;
-            defer self.copy_depth = saved_depth;
-            self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc, .call_src = copy.call_src };
-            defer self.err_reporter.copy_context = null;
+            const saved_lowering = self.enterCopyLowering(copy, generic.is_prelude);
+            defer self.exitCopyLowering(saved_lowering);
 
             const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
             const func = try self.visitFnDef(&generic.func_stmt.def, metadata.uid, metadata, null, generic.loc);
@@ -1724,12 +1720,29 @@ pub const SemaAnalyzer = struct {
 
     fn lowerTypeCopy(self: *Self, pending: PendingCopy) CompileError!void {
         const copy = self.generic_types.items[pending.generic].copies.items[pending.copy];
-        const saved_depth = self.copy_depth;
-        self.copy_depth = copy.depth;
-        defer self.copy_depth = saved_depth;
-        self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc, .call_src = copy.call_src };
-        defer self.err_reporter.copy_context = null;
+        const saved_lowering = self.enterCopyLowering(copy, false);
+        defer self.exitCopyLowering(saved_lowering);
         try self.defined_types.append(self.allocator, try self.visitTypeCopy(pending.generic, pending.copy));
+    }
+
+    fn enterCopyLowering(self: *Self, copy: GenericCopy, is_prelude: bool) CopyLowering {
+        const saved = CopyLowering{
+            .prelude = self.enterPreludeContext(is_prelude),
+            .depth = self.copy_depth,
+            .copy_context = self.err_reporter.copy_context,
+            .is_lowering_copy = self.is_lowering_copy,
+        };
+        self.copy_depth = copy.depth;
+        self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc, .call_src = copy.call_src };
+        self.is_lowering_copy = true;
+        return saved;
+    }
+
+    fn exitCopyLowering(self: *Self, saved: CopyLowering) void {
+        self.exitPreludeContext(saved.prelude);
+        self.copy_depth = saved.depth;
+        self.err_reporter.copy_context = saved.copy_context;
+        self.is_lowering_copy = saved.is_lowering_copy;
     }
 
     fn enterSlotScope(self: *Self, slots: []const ast.Slot, args: []const tt.TypeId) CompileError!*SymbolTable {
@@ -3227,7 +3240,7 @@ pub const SemaAnalyzer = struct {
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
-            const is_checked_mut = param.is_mut and self.err_reporter.copy_context == null and !self.isSlotType(param.type_id);
+            const is_checked_mut = param.is_mut and !self.is_lowering_copy and !self.isSlotType(param.type_id);
             if (is_checked_mut and !self.canBeMutable(param.type_id)) {
                 return self.err_reporter.primitiveParamsCantBeMutable(loc);
             }
@@ -4410,7 +4423,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn ensureNotReadOnlySource(self: *Self, value: *const ast.ExpNode) CompileError!void {
-        if (self.is_in_prelude or self.err_reporter.copy_context != null) return;
+        if (self.is_in_prelude or self.is_lowering_copy) return;
         const source = self.readOnlySourceOf(value) orelse return;
         const text = self.src[source.loc.start..@min(source.loc.end + 1, self.src.len)];
         return self.err_reporter.readOnlyIntoMutable(text, source.loc);
@@ -5212,6 +5225,13 @@ const GenericFunction = struct {
 const PreludeContext = struct {
     src: []const u8,
     is_in_prelude: bool,
+};
+
+const CopyLowering = struct {
+    prelude: PreludeContext,
+    depth: usize,
+    copy_context: ?err.CopyContext,
+    is_lowering_copy: bool,
 };
 
 const GenericCopy = struct {
