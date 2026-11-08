@@ -786,6 +786,25 @@ pub const Parser = struct {
 
     fn parseFnDef(self: *Self) CompileError!ast.FnDef {
         const params = try self.parseFnParams();
+        return self.parseFnBody(params);
+    }
+
+    fn parseLambdaDef(self: *Self) CompileError!ast.FnDef {
+        const params = try self.parseFnParams();
+        if (self.peekCurrent().tag == .arrow) {
+            return self.parseFnBody(params);
+        }
+
+        const body_block = try self.parseBlock(&.{});
+        _ = try self.expect(.end_kw);
+        return ast.FnDef{
+            .params = params,
+            .body_block = body_block,
+            .return_type = null,
+        };
+    }
+
+    fn parseFnBody(self: *Self, params: []const ast.FnParam) CompileError!ast.FnDef {
         _ = try self.expect(.arrow);
 
         const tk = self.peekCurrent();
@@ -1343,7 +1362,7 @@ pub const Parser = struct {
                 defer self.loop_depth = saved_loop_depth;
                 const was_parsing_condition = self.leaveCondition();
                 defer self.is_parsing_condition = was_parsing_condition;
-                const def = try self.parseFnDef();
+                const def = try self.parseLambdaDef();
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{ .lambda = def },
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },

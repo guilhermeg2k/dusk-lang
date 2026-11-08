@@ -1,0 +1,87 @@
+error LookupError
+    Missing
+end
+
+struct Db
+    names: []string
+end
+
+func get(db: Db, n: int) -> LookupError!string
+    if n > len(db.names) then
+        return LookupError.Missing
+    end
+    return db.names[n - 1]
+end
+
+func map[T, U](items: []T, f: func(T) -> U) -> []U
+    let mut out: []U = []
+    for items: item do
+        append(out, f(item))
+    end
+    return out
+end
+
+func main() -> !void
+    let db = Db(names = ["ana", "bia", "caio"])
+    let arr = [1, 2, 3]
+
+    let people = map(arr, func(n)
+        let name = db.names[n - 1]
+        return @(id = n, name = name)
+    end)
+    assert(people[2].id == 3)
+    assert(str_equal(people[2].name, "caio"))
+
+    let double = func(x: int)
+        return x * 2
+    end
+    assert(double(4) == 8)
+
+    let mut count = 0
+    let bump = func()
+        count = count + 1
+    end
+    bump()
+    bump()
+    assert(count == 2)
+
+    let lookup = func(n: int)
+        let name = try get(db, n)
+        return name
+    end
+    assert(str_equal(try lookup(2), "bia"))
+    let missing = lookup(9) catch "none"
+    assert(str_equal(missing, "none"))
+
+    let check = func(n: int)
+        if n < 0 then
+            return LookupError.Missing
+        end
+        return n
+    end
+    assert((try check(5)) == 5)
+
+    let typed: func(int) -> float = func(x)
+        return x
+    end
+    assert(typed(2) == 2.0)
+
+    let sign = func(n: int)
+        if n < 0 then
+            return "neg"
+        end
+        return "pos"
+    end
+    assert(str_equal(sign(-1), "neg"))
+
+    let inline = func(x: int) -> return x + 1
+    assert(inline(1) == 2)
+
+    let outer = func(x: int)
+        let inner = func(y: int)
+            return y * 10
+        end
+        return inner(x) + 1
+    end
+    assert(outer(2) == 21)
+end

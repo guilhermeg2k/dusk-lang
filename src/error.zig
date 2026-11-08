@@ -514,6 +514,11 @@ pub const CompileErrorReporter = struct {
         return error.LambdaParamNeedsType;
     }
 
+    pub fn lambdaReturnsDiffer(self: *Self, first: []const u8, found: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "This lambda returns '{s}' here but '{s}' before: every return must have the same type, or give the lambda a return type", .{ found, first }), loc);
+        return error.LambdaReturnsDiffer;
+    }
+
     pub fn wrongLambdaParamCount(self: *Self, found: usize, expected: usize, loc: Loc) CompileError {
         const noun = if (found == 1) "param" else "params";
         self.log(try allocPrint(self.allocator, "This lambda takes {d} {s}, but the function type it's used as takes {d}", .{ found, noun, expected }), loc);
@@ -969,6 +974,7 @@ pub const CompileError = error{
     LambdaParamCantHaveDefault,
     TooManyCaptures,
     LambdaParamNeedsType,
+    LambdaReturnsDiffer,
     WrongLambdaParamCount,
     LambdaParamMutDiffers,
     LambdaCallsItself,

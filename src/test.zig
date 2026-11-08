@@ -2088,7 +2088,6 @@ test "function values: named functions as values, function types and calls throu
 
 test "lambdas: func(...) expressions" {
     try runCaseOutput("lambdas.dsk", "<func>\n");
-    try runCaseError("parser/lambda-block-without-return-type.dsk", error.ParserError);
     try runCaseError("parser/lambda-break-outer-loop.dsk", error.ParserError);
     try runCaseError("sema/lambda-param-default.dsk", error.LambdaParamCantHaveDefault);
     try runCaseError("sema/lambda-param-without-type.dsk", error.LambdaParamNeedsType);
@@ -2106,8 +2105,19 @@ test "lambdas: param types come from the expected function type" {
     try runCaseError("sema/lambda-param-unfillable-slot.dsk", error.LambdaParamNeedsType);
     try runCaseError("sema/lambda-param-count.dsk", error.WrongLambdaParamCount);
     try runCaseError("sema/lambda-param-missing-mut.dsk", error.LambdaParamMutDiffers);
-    try runCaseError("sema/lambda-inferred-wrong-return.dsk", error.InvalidType);
+    try runCaseError("sema/lambda-inferred-wrong-return.dsk", error.InvalidReturnType);
     try runCaseError("sema/lambda-annotated-param-mismatch.dsk", error.InvalidType);
+}
+
+test "lambdas: return types come from the body" {
+    try runCase("lambda-return-inference.dsk");
+    try runCaseError("sema/lambda-returns-differ.dsk", error.LambdaReturnsDiffer);
+    try runCaseError("sema/lambda-returns-value-and-null.dsk", error.LambdaReturnsDiffer);
+    try runCaseError("sema/lambda-inferred-missing-return.dsk", error.InvalidReturnType);
+    try runCaseError("sema/lambda-expected-return-type.dsk", error.InvalidReturnType);
+    try runCaseError("sema/lambda-inferred-error-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/lambda-inferred-error-not-in-set.dsk", error.ErrorNotInSet);
+    try runCaseError("parser/func-block-without-return-type.dsk", error.ParserError);
 }
 
 test "generics: calls fill the slots from the arguments and compile one copy per type" {

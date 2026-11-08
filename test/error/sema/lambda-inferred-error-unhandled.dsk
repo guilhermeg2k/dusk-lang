@@ -1,0 +1,12 @@
+error E
+    Bad
+end
+func p(x: int) -> E!int
+    return x
+end
+func main() -> void
+    let f = func(n: int)
+        return try p(n)
+    end
+    let y = f(1)
+end

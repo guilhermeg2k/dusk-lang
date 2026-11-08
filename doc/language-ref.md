@@ -1036,7 +1036,7 @@ A function fits a function type only when everything matches: the parameter type
 
 ### Lambdas
 
-A lambda is a function without a name, written where a value goes. Like a declaration, it has an inline form that returns one expression and a block form that names its return type:
+A lambda is a function without a name, written where a value goes. Like a declaration, it has an inline form that returns one expression and a block form that ends with `end`. The block form can name its return type after `->`:
 
 ```nim
 let square = func(x: int) -> return x * x
@@ -1068,7 +1068,36 @@ echo(keep([1, 5, 12], func(x) -> return x > 2))            # [5, 12]
 echo(map_to(["a", "bbb"], func(s) -> return str_len(s)))   # [1, 3]: U is int
 ```
 
-A lambda without a function type to take its types from needs them written: `let f = func(x) -> return x` is an error. Its parameters can't have default values, and `break` and `continue` inside it only see its own loops.
+A lambda can also leave out its return type. Where a function type is expected, it takes the return type from it. Otherwise its body decides: every `return` must give the same type, and a lambda that never returns a value returns `void`. Using `try`, or returning an error, makes the lambda fail with the errors it can return, as `-> !T` does for a declaration:
+
+```nim
+let describe = func(x: int)
+    if x > 10 then
+        return "big"
+    end
+    return "small"
+end
+
+let people = map_to([1, 2], func(n)
+    let name = "user ${n}"
+    return @(id = n, name = name)
+end)
+echo(people[1].id)    # 2
+
+let sum_all = func(items: []string)
+    let mut total = 0
+    for items: item do
+        total = total + try str_to_int(item)
+    end
+    return total
+end
+echo(try sum_all(["1", "2"]))          # 3
+echo(sum_all(["1", "x"]) catch -1)     # -1
+```
+
+Returns of different types are an error (`return 1` in one place and `return "one"` in another), and so are `return user` and `return null` in one lambda: name the type (`-> ?User`) for that. Named functions always name their return type, unless they use the inline form.
+
+A lambda without a function type to take its param types from needs them written: `let f = func(x) -> return x` is an error. Its parameters can't have default values, and `break` and `continue` inside it only see its own loops.
 
 A lambda can't call itself through the name it's being assigned to (`let fact = func(n: int) -> int ... fact(n - 1) ... end` is an error): declare a function with a name to recurse.
 
