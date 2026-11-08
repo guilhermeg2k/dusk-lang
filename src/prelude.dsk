@@ -32,7 +32,7 @@ extern func buffer_len(data: buffer) -> int
 extern func __new_buffer(size: int) -> buffer
 extern func __to_byte(value: int) -> byte
 extern func __to_int(value: float) -> int
-extern func to_float(value: int) -> float
+extern func to_float[T: int | byte | float](value: T) -> float
 extern func assert(cond: bool) -> void
 extern func buffer_from(text: string) -> buffer
 extern func string_from(data: buffer) -> StringError!string

@@ -20,27 +20,29 @@ const ConversionError = error{ Invalid, Overflow };
 
 pub const Binding = union(enum) {
     native: bc.NativeFnPtr,
-    @"inline": @FieldType(bc.InlineFn, "gen"),
+    intrinsic: Intrinsic,
 };
+
+pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy };
 
 pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
-    .{ "len", Binding{ .@"inline" = &arrayLenGen } },
-    .{ "__array_pop", Binding{ .@"inline" = &arrayPopGen } },
+    .{ "len", Binding{ .intrinsic = .array_len } },
+    .{ "__array_pop", Binding{ .intrinsic = .array_pop } },
     .{ "__array_insert", Binding{ .native = &arrayInsert } },
     .{ "__array_remove", Binding{ .native = &arrayRemove } },
     .{ "clear", Binding{ .native = &arrayClear } },
     .{ "index_of", Binding{ .native = &arrayIndexOf } },
     .{ "contains", Binding{ .native = &arrayContains } },
-    .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
-    .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
-    .{ "__new_buffer", Binding{ .@"inline" = &newBufferGen } },
-    .{ "__to_byte", Binding{ .@"inline" = &toByteGen } },
-    .{ "__to_int", Binding{ .@"inline" = &toIntGen } },
-    .{ "to_float", Binding{ .@"inline" = &toFloatGen } },
-    .{ "append", Binding{ .@"inline" = &appendGen } },
-    .{ "copy", Binding{ .@"inline" = &copyGen } },
+    .{ "str_len", Binding{ .intrinsic = .bytes_len } },
+    .{ "buffer_len", Binding{ .intrinsic = .bytes_len } },
+    .{ "__new_buffer", Binding{ .intrinsic = .new_buffer } },
+    .{ "__to_byte", Binding{ .intrinsic = .to_byte } },
+    .{ "__to_int", Binding{ .intrinsic = .to_int } },
+    .{ "to_float", Binding{ .intrinsic = .to_float } },
+    .{ "append", Binding{ .intrinsic = .append } },
+    .{ "copy", Binding{ .intrinsic = .copy } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
     .{ "string_from", Binding{ .native = &stringFrom } },
     .{ "str_equal", Binding{ .native = &strEqual } },
@@ -351,62 +353,6 @@ pub fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var offset: usize = 0;
     while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
     return stringResult(result);
-}
-
-fn arrayLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn arrayPopGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_POP, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn bytesLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .BYTES_LEN, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn newBufferGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .BYTES_NEW, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn toByteGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .I_TO_BYTE, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn toIntGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .LOAD, .a = target_reg, .b = arg_start_reg });
-    try list.append(alloc, .{ .op = .F_TO_I, .a = target_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn toFloatGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .LOAD, .a = target_reg, .b = arg_start_reg });
-    try list.append(alloc, .{ .op = .I_TO_F, .a = target_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn appendGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn copyGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .DEEP_COPY, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
 }
 
 fn ok(value: v.Value) NativeResult {

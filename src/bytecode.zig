@@ -30,7 +30,7 @@ pub const BytecodeGen = struct {
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
-    inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
+    intrinsic_by_uid: std.AutoHashMap(usize, natives.Intrinsic),
     native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
@@ -60,7 +60,7 @@ pub const BytecodeGen = struct {
             .loop_stack = .empty,
             .break_patches = .empty,
             .continue_patches = .empty,
-            .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .intrinsic_by_uid = std.AutoHashMap(usize, natives.Intrinsic).init(alloc),
             .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
@@ -504,10 +504,9 @@ pub const BytecodeGen = struct {
                 try self.native_params_by_uid.put(ext.uid, ext.params);
                 break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
             },
-            .@"inline" => |gen| blk: {
-                const inl = InlineFn{ .gen = gen, .num_args = num_args };
-                try self.inline_functions_by_uid.put(ext.uid, inl);
-                break :blk .{ .@"inline" = inl };
+            .intrinsic => |intrinsic| blk: {
+                try self.intrinsic_by_uid.put(ext.uid, intrinsic);
+                break :blk .{ .intrinsic = intrinsic };
             },
         };
         return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
@@ -556,8 +555,8 @@ pub const BytecodeGen = struct {
             _ = try self.genValue(arg, try self.consumeRegister());
         }
 
-        if (self.inline_functions_by_uid.get(fc.fn_uid)) |inl| {
-            try self.genInlineCall(inl, fc, value, target_reg);
+        if (self.intrinsic_by_uid.get(fc.fn_uid)) |intrinsic| {
+            try self.genIntrinsicCall(intrinsic, fc, value, target_reg);
             return;
         }
 
@@ -577,18 +576,32 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = value.type_id;
     }
 
-    fn genInlineCall(self: *Self, inl: InlineFn, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
-        const instructions = try inl.gen(target_reg, target_reg + 1, self.allocator);
-        defer self.allocator.free(instructions);
-        try self.chunk_instructions.appendSlice(self.allocator, instructions);
-        for (instructions, 0..) |inl_inst, j| {
-            if (inl_inst.op.canTriggerGc()) {
-                const pc: u16 = @intCast(try self.currentPosition() - instructions.len + j);
-                try self.recordHeapMapAt(pc);
-            }
+    fn genIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+        const arg = target_reg + 1;
+        switch (intrinsic) {
+            .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),
+            .array_pop => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_POP, .a = target_reg, .b = arg }),
+            .bytes_len => try self.appendIntrinsicInstruction(.{ .op = .BYTES_LEN, .a = target_reg, .b = arg }),
+            .new_buffer => try self.appendIntrinsicInstruction(.{ .op = .BYTES_NEW, .a = target_reg, .b = arg }),
+            .to_byte => try self.appendIntrinsicInstruction(.{ .op = .I_TO_BYTE, .a = target_reg, .b = arg }),
+            .to_int => {
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+                try self.appendIntrinsicInstruction(.{ .op = .F_TO_I, .a = target_reg });
+            },
+            .to_float => {
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+                try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+            },
+            .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
+            .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
         }
         self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
+    }
+
+    fn appendIntrinsicInstruction(self: *Self, instruction: Instruction) !void {
+        try self.chunk_instructions.append(self.allocator, instruction);
+        if (instruction.op.canTriggerGc()) try self.recordHeapMap();
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
@@ -1605,15 +1618,10 @@ pub const NativeFn = struct {
     num_args: u8,
 };
 
-pub const InlineFn = struct {
-    gen: *const fn (target_reg: u8, arg_start_reg: u8, std.mem.Allocator) anyerror![]const Instruction,
-    num_args: u8,
-};
-
 pub const FunctionKind = union(enum) {
     dusk: Chunk,
     native: NativeFn,
-    @"inline": InlineFn,
+    intrinsic: natives.Intrinsic,
 };
 
 pub const Function = struct {

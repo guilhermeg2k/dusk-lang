@@ -525,7 +525,7 @@ pub const VM = struct {
                             stack[stack_base + inst.a] = result.value;
                             if (result.has_failed) cur_instruction += 1;
                         },
-                        .@"inline" => unreachable,
+                        .intrinsic => unreachable,
                     }
                 },
 

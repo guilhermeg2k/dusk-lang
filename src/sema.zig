@@ -3,6 +3,7 @@ const err = @import("error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
 const tt = @import("type_table.zig");
+const natives = @import("natives.zig");
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
 
@@ -27,6 +28,7 @@ pub const SemaAnalyzer = struct {
     is_in_prelude: bool = false,
     prelude_src: []const u8 = "",
     internal_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    intrinsic_by_uid: std.AutoHashMapUnmanaged(usize, natives.Intrinsic) = .empty,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
     constants: std.ArrayList(Constant) = .empty,
@@ -101,6 +103,9 @@ pub const SemaAnalyzer = struct {
             const symbol = try self.scope.symbol_table.getOrError(stmt.data.func.identifier);
             if (isInternalName(stmt.data.func.identifier)) try self.internal_uids.put(self.allocator, symbol.uid, {});
             if (!stmt.data.func.is_extern) continue;
+            if (natives.bindings.get(stmt.data.func.identifier)) |binding| {
+                if (binding == .intrinsic) try self.intrinsic_by_uid.put(self.allocator, symbol.uid, binding.intrinsic);
+            }
             if (symbol.kind == .generic_function) {
                 try self.externs.append(self.allocator, try self.genericExtern(symbol.kind.generic_function));
                 continue;
@@ -3738,14 +3743,8 @@ pub const SemaAnalyzer = struct {
 
                 fn_identifier = symbol.identifier;
 
-                if (symbol.kind == .function and fn_call.arguments.len == 1) {
-                    if (std.mem.eql(u8, id, "to_float")) return self.evalFloatCast(fn_call.arguments[0].exp);
-                }
-
-                if (symbol.kind == .generic_function and std.mem.eql(u8, id, "copy") and fn_call.arguments.len == 1) {
-                    if (self.generic_functions.items[symbol.kind.generic_function].extern_uid) |copy_uid| {
-                        return self.evalCopyCall(copy_uid, id, fn_call.arguments[0].exp);
-                    }
+                if (self.intrinsic_by_uid.get(symbol.uid)) |intrinsic| {
+                    if (try self.evalIntrinsicCall(intrinsic, symbol, fn_call)) |value| return value;
                 }
 
                 switch (symbol.kind) {
@@ -4040,6 +4039,19 @@ pub const SemaAnalyzer = struct {
                 .type_id = return_type,
             },
         );
+    }
+
+    fn evalIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, symbol: Symbol, fn_call: ast.FnCall) CompileError!?*ir.Value {
+        if (fn_call.arguments.len != 1) return null;
+        const argument = fn_call.arguments[0].exp;
+        return switch (intrinsic) {
+            .to_float => try self.evalFloatCast(argument),
+            .copy => {
+                const copy_uid = self.generic_functions.items[symbol.kind.generic_function].extern_uid.?;
+                return try self.evalCopyCall(copy_uid, symbol.identifier, argument);
+            },
+            .array_len, .array_pop, .bytes_len, .new_buffer, .to_byte, .to_int, .append => null,
+        };
     }
 
     fn evalExpectedStructInit(self: *Self, exp: *const ast.ExpNode, type_id: tt.TypeId) CompileError!*ir.Value {
