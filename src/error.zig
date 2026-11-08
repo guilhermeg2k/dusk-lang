@@ -564,6 +564,11 @@ pub const CompileErrorReporter = struct {
         return error.InvalidSlotType;
     }
 
+    pub fn slotCantFail(self: *Self, slot: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't be '{s}': a slot can't hold a type that can fail. Pass a value or function that doesn't fail, or handle its errors first", .{ slot, type_name }), loc);
+        return error.SlotCantFail;
+    }
+
     pub fn wrongSlotCount(self: *Self, identifier: []const u8, expected: usize, found: usize, loc: Loc) CompileError {
         if (expected == 0) {
             self.log(try allocPrint(self.allocator, "'{s}' isn't generic, so it takes no type arguments", .{identifier}), loc);
@@ -975,6 +980,7 @@ pub const CompileError = error{
     TooManyCaptures,
     LambdaParamNeedsType,
     LambdaReturnsDiffer,
+    SlotCantFail,
     WrongLambdaParamCount,
     LambdaParamMutDiffers,
     LambdaCallsItself,

@@ -1,0 +1,18 @@
+error E
+    Bad
+end
+func p(x: int) -> E!int
+    return x
+end
+func map[T, U](items: []T, f: func(T) -> U) -> []U
+    let mut out: []U = []
+    for items: item do
+        append(out, f(item))
+    end
+    return out
+end
+func main() -> !void
+    let xs = map([1], func(n)
+        return try p(n)
+    end)
+end

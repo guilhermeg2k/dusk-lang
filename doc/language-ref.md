@@ -1182,6 +1182,8 @@ A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There'
 
 Lambda arguments are checked after the other arguments: their parameters take their types from the slots filled so far, and their result can fill the rest (see [Lambdas](#lambdas)).
 
+A slot can't be `void` or a type that can fail. Passing `parse`, which returns `ConversionError!int`, for `f: func(T) -> U` is an error at the call (`'U' can't be 'ConversionError!int'`), and so is a lambda that uses `try`. A caught error value fills a slot like any other value (`id(e)` after `catch e then`).
+
 ### Generic structs and unions
 
 Structs and unions take slots too. In types they're written with their arguments, `Stack[int]`. When building one, the slots come from the field or variant values, or from the expected type.

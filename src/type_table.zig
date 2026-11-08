@@ -143,7 +143,7 @@ pub const TypeTable = struct {
             .@"enum" => |e| e.identifier,
             .@"union" => |u| u.identifier,
             .slot => |s| s.identifier,
-            .error_union => |eu| std.fmt.allocPrint(allocator, "!{s}", .{try self.syntaxName(eu.payload, allocator)}),
+            .error_union => |eu| std.fmt.allocPrint(allocator, "{s}!{s}", .{ self.errorSetSyntaxName(eu.error_set), try self.syntaxName(eu.payload, allocator) }),
         };
     }
 
@@ -214,15 +214,13 @@ pub const TypeTable = struct {
             try text.appendSlice(allocator, try self.syntaxName(param.type_id, allocator));
         }
         try text.appendSlice(allocator, ") -> ");
-        const return_type = self.getTypePtrById(func.return_type_id);
-        if (return_type.kind == .error_union) {
-            const set = self.getTypePtrById(return_type.kind.error_union.error_set).kind.@"enum";
-            if (!set.error_set.?.is_inferred) {
-                try text.appendSlice(allocator, set.identifier);
-            }
-        }
         try text.appendSlice(allocator, try self.syntaxName(func.return_type_id, allocator));
         return text.toOwnedSlice(allocator);
+    }
+
+    fn errorSetSyntaxName(self: *Self, error_set: TypeId) []const u8 {
+        const set = self.getTypePtrById(error_set).kind.@"enum";
+        return if (set.error_set.?.is_inferred) "" else set.identifier;
     }
 
     pub fn isErrorSet(self: *Self, id: TypeId) bool {

@@ -13,6 +13,11 @@ Started v0.15 development: updated the CLI version to `0.15.0-devel`.
 - Lambdas can leave out their return type, in the block form too (`func(n)`, the body, then `end`). Where a function type is expected, they take it from there (`let half: func(int) -> float = func(x) -> return x`). Otherwise the body decides: every `return` must give the same type, and a lambda that never returns a value returns `void`. `try` or returning an error makes the lambda fail with the errors it can return, as `-> !T` does. The result can fill a generic slot, so `map_to(ids, func(n) ... return @(id = n, name = name) end)` gives an array of anonymous structs. New error: `LambdaReturnsDiffer` (two returns with different types, `return user` and `return null` included: name the type for that). Named functions still name their return type
 - Breaking: a struct can't have a field and a method with the same name (`FieldAndMethodSameName`), so `b.click()` always means one thing: a method call, or a call to the function stored in the field
 
+### Fixes
+
+- A function or lambda that can fail, passed to a generic param like `f: func(T) -> U`, filled `U` with the failing type and reported the error inside the generic function's body (`in map[string, !int] ...: 'f' can fail`). It's now a `SlotCantFail` error at the call: `'U' can't be 'ConversionError!int': a slot can't hold a type that can fail`. A caught error value can still fill a slot (`id(e)`, `Box(item = e)`)
+- Types in compile errors name the error set of a failing type (`ConversionError!int`, `func(string) -> ConversionError!int` was already right) instead of only `!int`
+
 ## v0.14 - Simon
 
 Started v0.14 development: updated the CLI version to `0.14.0-devel`.

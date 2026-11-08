@@ -1575,6 +1575,9 @@ pub const SemaAnalyzer = struct {
                 if (kind == .void) {
                     return self.err_reporter.invalidSlotType(name, try self.type_table.name(type_id, self.allocator), loc);
                 }
+                if (kind == .error_union) {
+                    return self.err_reporter.slotCantFail(name, try self.type_table.syntaxName(type_id, self.allocator), loc);
+                }
                 const bound = bindings[slot_index] orelse {
                     try self.checkSlotFits(slots[slot_index], type_id, loc);
                     bindings[slot_index] = type_id;

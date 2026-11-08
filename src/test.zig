@@ -2120,6 +2120,12 @@ test "lambdas: return types come from the body" {
     try runCaseError("parser/func-block-without-return-type.dsk", error.ParserError);
 }
 
+test "generics: a slot can hold an error value but not a type that can fail" {
+    try runCase("generic-error-values.dsk");
+    try runCaseError("sema/slot-failing-function.dsk", error.SlotCantFail);
+    try runCaseError("sema/slot-failing-lambda.dsk", error.SlotCantFail);
+}
+
 test "generics: calls fill the slots from the arguments and compile one copy per type" {
     try runCase("generics-calls.dsk");
     try runCaseError("sema/generic-conflicting-slots.dsk", error.InvalidType);
