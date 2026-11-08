@@ -125,14 +125,21 @@ pub const BytecodeGen = struct {
 
         try funcs.append(self.allocator, main_func);
 
+        const functions = try funcs.toOwnedSlice(self.allocator);
+        const static_closures = try self.allocator.alloc(v.Closure, functions.len);
+        for (functions, static_closures) |*function, *closure| {
+            closure.* = v.Closure.initStatic(function);
+        }
+
         const string_pool = try StringPool.init(self.allocator, self.string_texts.items);
         self.string_texts.clearAndFree(self.allocator);
         self.string_id_by_text.clearAndFree();
 
         return Program{
             .string_pool = string_pool,
-            .main_func_index = funcs.items.len - 1,
-            .functions = try funcs.toOwnedSlice(self.allocator),
+            .main_func_index = functions.len - 1,
+            .functions = functions,
+            .static_closures = static_closures,
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
             .error_names = try self.copyErrorNames(program.error_names),
@@ -313,22 +320,35 @@ pub const BytecodeGen = struct {
             .binary_op => |op| readsVariable(op.left, uid) or readsVariable(op.right, uid),
             .unary_op => |op| readsVariable(op.right, uid),
             .fn_call => |call| for (call.args) |arg| {
-                if (readsVariable(arg, uid)) break true;
+                if (readsVariable(arg, uid)) {
+                    break true;
+                }
             } else false,
             .struct_init => |struct_init| for (struct_init.values) |field| {
-                if (readsVariable(field, uid)) break true;
+                if (readsVariable(field, uid)) {
+                    break true;
+                }
             } else false,
             .i_array => |array| for (array.values) |item| {
-                if (readsVariable(item, uid)) break true;
+                if (readsVariable(item, uid)) {
+                    break true;
+                }
             } else false,
             .string_interpolation => |parts| for (parts) |part| {
-                if (readsVariable(part, uid)) break true;
+                if (readsVariable(part, uid)) {
+                    break true;
+                }
+            } else false,
+            .call_value => |call| readsVariable(call.callee, uid) or for (call.args) |arg| {
+                if (readsVariable(arg, uid)) {
+                    break true;
+                }
             } else false,
             .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
             .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,
             .union_tag, .union_payload, .int_to_float, .array_length, .bytes_length => |inner| readsVariable(inner, uid),
             .try_call, .catch_call, .block_value => true,
-            .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null => false,
+            .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null, .func_ref => false,
         };
     }
 
@@ -597,6 +617,36 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = value.type_id;
     }
 
+    fn genCallValue(self: *Self, cv: ir.CallValue, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const call_reg = try self.consumeRegister();
+            defer self.freeRegister();
+            try self.genCallValue(cv, value, call_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
+        _ = try self.genValue(cv.callee, target_reg);
+        for (cv.args) |arg| {
+            _ = try self.genValue(arg, try self.consumeRegister());
+        }
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CALL_VALUE, .a = target_reg });
+        try self.recordHeapMap();
+
+        self.freeRegisterN(cv.args.len);
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genCall(self: *Self, call: *const ir.Value, target_reg: u8) !void {
+        switch (call.data) {
+            .fn_call => |fc| try self.genFnCall(fc, call, target_reg),
+            .call_value => |cv| try self.genCallValue(cv, call, target_reg),
+            else => unreachable,
+        }
+    }
+
     fn genIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
         const arg = target_reg + 1;
         switch (intrinsic) {
@@ -743,6 +793,17 @@ pub const BytecodeGen = struct {
                 try self.genFnCall(fc, value, target_reg);
             },
 
+            .func_ref => |func_ref| {
+                var load = Instruction{ .op = .LOAD_FUNC, .a = target_reg };
+                load.putBEx(self.fn_index_by_uid.get(func_ref.fn_uid) orelse unreachable);
+                try self.chunk_instructions.append(self.allocator, load);
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .call_value => |cv| {
+                try self.genCallValue(cv, value, target_reg);
+            },
+
             .try_call => |tc| {
                 try self.genFailingCall(tc.call, value, target_reg, .{ .try_call = tc });
             },
@@ -868,7 +929,7 @@ pub const BytecodeGen = struct {
         const call_reg = try self.consumeRegister();
         defer self.freeRegister();
 
-        try self.genFnCall(call.data.fn_call, call, call_reg);
+        try self.genCall(call, call_reg);
         self.register_types[call_reg] = error_union.error_set;
 
         std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op.canFail());
@@ -883,7 +944,9 @@ pub const BytecodeGen = struct {
             .catch_call => |cc| switch (cc.fallback) {
                 .value => |fallback| {
                     _ = try self.genValue(fallback, call_reg);
-                    if (cc.is_success_boxed) return self.genBoxedCatchJoin(error_union.payload, value, call_reg, target_reg, jump_ok_idx);
+                    if (cc.is_success_boxed) {
+                        return self.genBoxedCatchJoin(error_union.payload, value, call_reg, target_reg, jump_ok_idx);
+                    }
                 },
                 .block => |block| {
                     const saved_next_free = self.next_free_register;
@@ -1594,6 +1657,7 @@ pub const Program = struct {
     string_pool: StringPool,
     main_func_index: usize,
     functions: []const Function,
+    static_closures: []const v.Closure,
     struct_descriptors: []const StructDescriptor,
     union_descriptors: []const UnionDescriptor,
     error_names: []const []const u8,
@@ -1652,6 +1716,7 @@ pub const Chunk = struct {
                 .@"struct" => std.debug.print("<struct>", .{}),
                 .@"union" => std.debug.print("<union>", .{}),
                 .nullable => std.debug.print("<nullable:", .{}),
+                .function => std.debug.print("<func>", .{}),
                 .string, .buffer => unreachable,
             }
             std.debug.print("\n", .{});
@@ -1703,7 +1768,8 @@ pub const Chunk = struct {
             .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .B_NOT, .I_NEG, .F_NEG, .I_TO_BYTE => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .CALL, .TAIL_CALL => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
+            .CALL, .TAIL_CALL, .LOAD_FUNC => std.debug.print("R[{d}] FN[{d}]", .{ inst.a, inst.bEx() }),
+            .CALL_VALUE => std.debug.print("R[{d}]", .{inst.a}),
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
@@ -1841,7 +1907,9 @@ pub const OpCode = enum(u8) {
     B_NEQ,
     B_NOT,
 
+    LOAD_FUNC,
     CALL,
+    CALL_VALUE,
     TAIL_CALL,
     RETURN,
     RETURN_ERR,
@@ -1852,7 +1920,7 @@ pub const OpCode = enum(u8) {
     JUMP_TABLE,
 
     pub fn canFail(self: Self) bool {
-        return self == .CALL;
+        return self == .CALL or self == .CALL_VALUE;
     }
 
     pub fn canTriggerGc(self: Self) bool {
@@ -1868,6 +1936,7 @@ pub const OpCode = enum(u8) {
             .BYTES_NEW,
             .DEEP_COPY,
             .CALL,
+            .CALL_VALUE,
             => true,
             else => false,
         };

@@ -138,6 +138,7 @@ pub const TypeAnnotation = struct {
         anonymous_struct: Struct,
         array: *TypeAnnotation,
         type_self: void,
+        function: FuncTypeAnnotation,
     },
 
     is_nullable: bool,
@@ -157,7 +158,9 @@ pub const TypeAnnotation = struct {
             .anonymous_struct => |anom_struct| {
                 var field_list: std.ArrayList(u8) = .empty;
                 for (anom_struct.fields, 0..) |field, i| {
-                    if (i > 0) try field_list.appendSlice(alloc, ", ");
+                    if (i > 0) {
+                        try field_list.appendSlice(alloc, ", ");
+                    }
                     try field_list.appendSlice(alloc, field.identifier);
                 }
                 return std.fmt.allocPrint(alloc, "anonymous struct {{ {s} }}", .{field_list.items});
@@ -168,8 +171,38 @@ pub const TypeAnnotation = struct {
             .type_self => {
                 return "@";
             },
+            .function => |func| {
+                var text: std.ArrayList(u8) = .empty;
+                try text.appendSlice(alloc, "func(");
+                for (func.params, 0..) |param, i| {
+                    if (i > 0) {
+                        try text.appendSlice(alloc, ", ");
+                    }
+                    if (param.is_mut) {
+                        try text.appendSlice(alloc, "mut ");
+                    }
+                    try text.appendSlice(alloc, try param.type.value(alloc));
+                }
+                try text.appendSlice(alloc, ") -> ");
+                if (func.error_set) |set| {
+                    try text.print(alloc, "{s}!", .{set});
+                }
+                try text.appendSlice(alloc, try func.return_type.value(alloc));
+                return text.toOwnedSlice(alloc);
+            },
         };
     }
+};
+
+pub const FuncTypeAnnotation = struct {
+    params: []const FuncTypeParam,
+    return_type: *TypeAnnotation,
+    error_set: ?[]const u8,
+};
+
+pub const FuncTypeParam = struct {
+    type: *TypeAnnotation,
+    is_mut: bool,
 };
 
 pub const ExpNode = struct {

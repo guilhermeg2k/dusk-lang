@@ -333,6 +333,11 @@ pub const CompileErrorReporter = struct {
         return error.CantCompare;
     }
 
+    pub fn cantCompareFunctions(self: *Self, op: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare functions", .{op}), loc);
+        return error.CantCompare;
+    }
+
     pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) CompileError {
         self.log(msg, loc);
         return error.WhenInvalidCase;
@@ -485,8 +490,18 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn genericNeedsCall(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Generic function '{s}' can only be called, not used as a value", .{identifier}), loc);
+        self.log(try allocPrint(self.allocator, "Generic function '{s}' needs a function type to be used as a value, like 'let f: func(int) -> int = {s}'", .{ identifier, identifier }), loc);
         return error.GenericNeedsCall;
+    }
+
+    pub fn builtinAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Builtin '{s}' can't be used as a value: call it from a function and use that function instead", .{identifier}), loc);
+        return error.BuiltinAsValue;
+    }
+
+    pub fn namedArgumentsOnValue(self: *Self, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "A call through a function value can't use named arguments: pass them in order", .{}), loc);
+        return error.NamedArgumentsOnValue;
     }
 
     pub fn cantInferSlot(self: *Self, slot: []const u8, identifier: []const u8, loc: Loc) CompileError {
@@ -910,6 +925,8 @@ pub const CompileError = error{
     TraitMethodNeedsErrorSet,
     SlotHasNoMethod,
     GenericNeedsCall,
+    BuiltinAsValue,
+    NamedArgumentsOnValue,
     CantInferSlot,
     ConflictingSlotTypes,
     InvalidSlotType,

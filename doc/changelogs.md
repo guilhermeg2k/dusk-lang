@@ -4,6 +4,9 @@
 
 Started v0.15 development: updated the CLI version to `0.15.0-devel`.
 
+### Features
+
+- Functions are values: `let f = add`, `apply(xs, double)`, `[add, sub]`, a struct field like `on_click: func() -> void`, or a function's return value. Function types are written `func(int, int) -> int`, with `mut` params (`func(mut []int) -> void`), a named error set (`func(string) -> ParseError!int`) and `?func() -> void` for a function that may be missing. A value fits a function type only when the param types, `mut` flags, return type and error set all match. Calls go through any expression: `f(1, 2)`, `button.on_click()`, `ops[0](1, 2)`, `pick(true)(7, 2)`, with positional arguments only (defaults and named arguments belong to the declaration). A generic function becomes a value when the expected type fills its slots (`let f: func(int) -> int = id`), and generic functions can take function params (`func twice[T](x: T, f: func(T) -> T) -> T`). `echo(f)` prints `<func add>`. New errors: `NamedArgumentsOnValue`, `BuiltinAsValue` (builtins can't be values yet: wrap them in a function), and `==`/`!=` on functions is `CantCompare`. Using a function as a value used to exit without a message
 ## v0.14 - Simon
 
 Started v0.14 development: updated the CLI version to `0.14.0-devel`.

@@ -24,7 +24,9 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
             const bytes = v.HeapValue.getParentPtr(v.Bytes, value.heap_obj).slice();
             writer.print("[", .{}) catch @panic("failed to print buffer bracket");
             for (bytes, 0..) |byte, i| {
-                if (i > 0) writer.print(", ", .{}) catch @panic("failed to print buffer separator");
+                if (i > 0) {
+                    writer.print(", ", .{}) catch @panic("failed to print buffer separator");
+                }
                 writer.print("{d}", .{byte}) catch @panic("failed to print buffer byte");
             }
             writer.print("]", .{}) catch @panic("failed to print buffer bracket");
@@ -40,7 +42,9 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
             const data = array.getDataPtr();
             writer.print("[", .{}) catch @panic("failed to print array bracket");
             for (0..array.len) |i| {
-                if (i > 0) writer.print(", ", .{}) catch @panic("failed to print array separator");
+                if (i > 0) {
+                    writer.print(", ", .{}) catch @panic("failed to print array separator");
+                }
                 printValue(writer, data[i], array.kind);
             }
             writer.print("]", .{}) catch @panic("failed to print array bracket");
@@ -62,6 +66,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 .array => printValue(writer, value, .array),
                 .@"struct" => printValue(writer, value, .@"struct"),
                 .@"union" => printValue(writer, value, .@"union"),
+                .closure => printValue(writer, value, .function),
             }
         },
         .@"struct" => {
@@ -72,7 +77,9 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 const s = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
                 writer.print("{{ ", .{}) catch @panic("failed to print struct brace");
                 for (0..s.field_count) |i| {
-                    if (i > 0) writer.print(", ", .{}) catch @panic("failed to print struct separator");
+                    if (i > 0) {
+                        writer.print(", ", .{}) catch @panic("failed to print struct separator");
+                    }
                     writer.print("{d}", .{s.get(i).int64}) catch @panic("failed to print struct field");
                 }
                 writer.print(" }}", .{}) catch @panic("failed to print struct brace");
@@ -85,6 +92,19 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
             } else {
                 writer.print("<union>", .{}) catch @panic("failed to print union");
             }
+        },
+        .function => {
+            const raw: u64 = @bitCast(value);
+            if (raw == 0) {
+                writer.print("null", .{}) catch @panic("failed to print null");
+                return;
+            }
+            const name = v.HeapValue.getParentPtr(v.Closure, value.heap_obj).function.name;
+            if (name.len == 0 or name[0] == '$') {
+                writer.print("<func>", .{}) catch @panic("failed to print function");
+                return;
+            }
+            writer.print("<func {s}>", .{name}) catch @panic("failed to print function");
         },
     }
 }

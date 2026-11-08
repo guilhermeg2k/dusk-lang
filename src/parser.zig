@@ -1566,6 +1566,14 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = arr_type.loc.end },
                 });
             },
+            .func_kw => {
+                const func_type = try self.parseFuncTypeAnnotation();
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .type = .{ .function = func_type },
+                    .is_nullable = is_nullable,
+                    .loc = .{ .start = tk.loc.start, .end = func_type.return_type.loc.end },
+                });
+            },
             else => {
                 return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
             },
@@ -1581,6 +1589,38 @@ pub const Parser = struct {
         }
         _ = try self.expect(.r_bracket);
         return args.toOwnedSlice(self.allocator);
+    }
+
+    fn parseFuncTypeAnnotation(self: *Self) CompileError!ast.FuncTypeAnnotation {
+        _ = try self.expect(.l_paren);
+        var params: std.ArrayList(ast.FuncTypeParam) = .empty;
+        while (self.peekCurrent().tag != .r_paren) {
+            const is_mut = self.match(.mut_kw);
+            try params.append(self.allocator, .{ .type = try self.parseTypeAnnotation(false), .is_mut = is_mut });
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_paren);
+        _ = try self.expect(.arrow);
+
+        if (self.peekCurrent().tag == .not) {
+            return self.err_reporter.invalidSyntax("a named error set before '!' (function types can't infer errors)", self.peekCurrent());
+        }
+        var return_type = try self.parseTypeAnnotation(false);
+        var error_set: ?[]const u8 = null;
+        if (self.peekCurrent().tag == .not) {
+            if (return_type.type != .@"struct" or return_type.is_nullable) {
+                return self.err_reporter.invalidSyntax("error set name before '!'", self.peekCurrent());
+            }
+            error_set = return_type.type.@"struct";
+            self.walk();
+            return_type = try self.parseTypeAnnotation(false);
+        }
+
+        return .{
+            .params = try params.toOwnedSlice(self.allocator),
+            .return_type = return_type,
+            .error_set = error_set,
+        };
     }
 
     fn match(self: *Self, tag: Tag) bool {

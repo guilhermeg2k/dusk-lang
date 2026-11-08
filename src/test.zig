@@ -2069,6 +2069,21 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
 }
 
+test "function values: named functions as values, function types and calls through values" {
+    try runCaseOutput("function-values.dsk", "null\n<func add>\nvalue: <func add>\n[<func add>, <func sub>]\n");
+    try runCase("gc-function-values.dsk");
+    try runCaseError("parser/function-type-inferred-error.dsk", error.ParserError);
+    try runCaseError("sema/function-value-compare.dsk", error.CantCompare);
+    try runCaseError("sema/function-value-named-args.dsk", error.NamedArgumentsOnValue);
+    try runCaseError("sema/function-value-builtin.dsk", error.BuiltinAsValue);
+    try runCaseError("sema/function-value-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/function-type-mut-primitive.dsk", error.PrimitiveParamsCantBeMutable);
+    try runCaseError("sema/function-value-nullable-call.dsk", error.NullableMustBeUnwrapped);
+    try runCaseError("sema/function-value-arg-count.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/function-value-mut-arg.dsk", error.NotMutable);
+    try runCaseError("sema/function-value-top-level.dsk", error.TopLevelLetNotConstant);
+}
+
 test "generics: calls fill the slots from the arguments and compile one copy per type" {
     try runCase("generics-calls.dsk");
     try runCaseError("sema/generic-conflicting-slots.dsk", error.InvalidType);

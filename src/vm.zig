@@ -550,6 +550,31 @@ pub const VM = struct {
                     }
                 },
 
+                .LOAD_FUNC => {
+                    stack[stack_base + inst.a] = .{ .heap_obj = @constCast(&self.program.static_closures[inst.bEx()].obj) };
+                },
+
+                .CALL_VALUE => {
+                    const closure = v.HeapValue.getParentPtr(v.Closure, stack[stack_base + inst.a].heap_obj);
+                    const func = closure.function;
+                    current_frame.cur_inst = cur_instruction;
+                    const new_offset = stack_base + inst.a + 1;
+                    const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
+                    if (is_stack_full) {
+                        return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+                    }
+                    self.frames[self.frame_count] = .{
+                        .function = func,
+                        .cur_inst = 0,
+                        .stack_offset = new_offset,
+                    };
+                    self.frame_count += 1;
+                    current_frame = &self.frames[self.frame_count - 1];
+                    cur_instruction = 0;
+                    instructions = func.kind.dusk.instructions;
+                    stack_base = new_offset;
+                },
+
                 .TAIL_CALL => {
                     const func = &self.program.functions[inst.bEx()];
                     const chunk = &func.kind.dusk;
@@ -637,7 +662,7 @@ pub const VM = struct {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, copy);
                     switch (array.kind) {
-                        .buffer, .@"struct", .array, .@"union", .nullable => {
+                        .buffer, .@"struct", .array, .@"union", .nullable, .function => {
                             for (array.getDataPtr()[0..array.len]) |*item| try self.deepCopySlot(item, &copies, &pending);
                         },
                         else => {},
@@ -670,7 +695,7 @@ pub const VM = struct {
     fn deepCopySlot(self: *Self, slot: *v.Value, copies: *std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue), pending: *std.ArrayList(*v.HeapValue)) !void {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
-        const is_immutable = current.kind == .string or current.kind == .null_box;
+        const is_immutable = current.kind == .string or current.kind == .null_box or current.kind == .closure;
         if (is_immutable) {
             slot.heap_obj = current;
             return;
@@ -807,7 +832,7 @@ pub const VM = struct {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
                     switch (array.kind) {
-                        .string, .buffer, .@"struct", .array, .@"union", .nullable => {
+                        .string, .buffer, .@"struct", .array, .@"union", .nullable, .function => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
                                 try self.copyHeapValue(new_alloc, item);
@@ -855,6 +880,7 @@ pub const VM = struct {
         const raw: u64 = @bitCast(value.*);
         if (raw == 0) return;
         if (self.program.string_pool.contains(value.heap_obj)) return;
+        if (v.Closure.isStatic(value.heap_obj)) return;
         const current = value.heap_obj.followRelocated();
 
         if (current.gc_forward) |fwd| {
@@ -878,6 +904,7 @@ pub const VM = struct {
             .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
             .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
             .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
+            .closure => &(try v.HeapValue.getParentPtr(v.Closure, obj_ptr).clone(allocator)).obj,
             .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
         };
     }
@@ -888,6 +915,7 @@ pub const VM = struct {
             .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
             .@"union" => v.Union.calc_size(),
             .null_box => v.NullBox.calc_size(),
+            .closure => v.Closure.calc_size(v.HeapValue.getParentPtr(v.Closure, ptr).capture_count),
             .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
         };
     }

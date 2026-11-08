@@ -217,6 +217,8 @@ pub const Value = struct {
         unary_op: UnaryOp,
 
         fn_call: FnCall,
+        func_ref: FuncRef,
+        call_value: CallValue,
         struct_init: StructInit,
         union_init: UnionInit,
         null_box_init: NullBoxInit,
@@ -269,6 +271,16 @@ pub const UnaryOp = struct {
 pub const FnCall = struct {
     fn_uid: usize,
     identifier: []const u8,
+    args: []const *Value,
+};
+
+pub const FuncRef = struct {
+    fn_uid: usize,
+    name: []const u8,
+};
+
+pub const CallValue = struct {
+    callee: *Value,
     args: []const *Value,
 };
 

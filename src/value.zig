@@ -3,6 +3,7 @@ const ir = @import("ir.zig");
 const RuntimeError = @import("error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const tt = @import("type_table.zig");
+const bc = @import("bytecode.zig");
 
 pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
 
@@ -31,6 +32,7 @@ const HeapValueType = enum(u8) {
     buffer,
     @"union",
     null_box,
+    closure,
 };
 
 pub const HeapValue = extern struct {
@@ -368,6 +370,37 @@ pub const NullBox = extern struct {
     }
 };
 
+pub const Closure = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    function: *const bc.Function,
+    capture_count: u32,
+
+    pub fn initStatic(function: *const bc.Function) Self {
+        return .{ .obj = .{ .kind = .closure }, .function = function, .capture_count = 0 };
+    }
+
+    pub fn isStatic(obj: *const HeapValue) bool {
+        return obj.kind == .closure and HeapValue.getParentPtr(Self, @constCast(obj)).capture_count == 0;
+    }
+
+    pub fn calc_size(capture_count: usize) usize {
+        return @sizeOf(Self) + capture_count * @sizeOf(Value);
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const size = Self.calc_size(self.capture_count);
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
+        return new_obj;
+    }
+};
+
 pub const TypedValue = struct {
     value: Value,
     type: ValueType,
@@ -398,10 +431,11 @@ pub const ValueType = enum(u8) {
     @"struct",
     @"union",
     nullable,
+    function,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .buffer, .array, .@"struct", .@"union", .nullable => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function => true,
             else => false,
         };
     }
@@ -422,6 +456,7 @@ pub const ValueType = enum(u8) {
             .array => .array,
             .@"struct" => .@"struct",
             .@"union" => .@"union",
+            .func_type => .function,
             .@"enum" => .int64,
             //note: void -> null
             .void => .null,
@@ -449,6 +484,7 @@ pub const TypedValueHashContext = struct {
             .nullable => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
+            .function => unreachable,
         }
         return hasher.final();
     }
@@ -465,6 +501,7 @@ pub const TypedValueHashContext = struct {
             .array => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
+            .function => unreachable,
         };
     }
 };

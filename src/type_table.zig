@@ -15,6 +15,7 @@ pub const TypeTable = struct {
     nullableTypeIdByTypeId: std.AutoHashMap(TypeId, TypeId),
     typeIdByNullableTypeId: std.AutoHashMap(TypeId, TypeId),
     anom_structs: std.StringHashMap(TypeId),
+    func_types: std.StringHashMap(TypeId),
     error_names: std.ArrayList([]const u8),
 
     pub fn init(alloc: std.mem.Allocator) !Self {
@@ -49,6 +50,7 @@ pub const TypeTable = struct {
             .nullableTypeIdByTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .typeIdByNullableTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .anom_structs = std.StringHashMap(TypeId).init(alloc),
+            .func_types = std.StringHashMap(TypeId).init(alloc),
             .error_names = .empty,
         };
     }
@@ -117,7 +119,9 @@ pub const TypeTable = struct {
         const t = self.getTypePtrById(id);
         if (t.is_nullable) {
             const base = self.typeIdByNullableTypeId.get(id) orelse id;
-            if (base != id) return std.fmt.allocPrint(allocator, "?{s}", .{try self.syntaxName(base, allocator)});
+            if (base != id) {
+                return std.fmt.allocPrint(allocator, "?{s}", .{try self.syntaxName(base, allocator)});
+            }
         }
         return switch (t.kind) {
             .float => "float",
@@ -132,6 +136,7 @@ pub const TypeTable = struct {
             .meta => "meta",
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
             .function => |f| f.identifier,
+            .func_type => |f| self.funcTypeText(f, allocator),
             .@"struct" => |s| s.identifier,
             .@"enum" => |e| e.identifier,
             .@"union" => |u| u.identifier,
@@ -157,6 +162,9 @@ pub const TypeTable = struct {
             .meta => "Meta Symbol",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
+            },
+            .func_type => |f| {
+                return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, try self.funcTypeText(f, allocator) });
             },
             .@"struct" => |s| {
                 if (std.mem.eql(u8, s.identifier, "@")) {
@@ -188,6 +196,30 @@ pub const TypeTable = struct {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
             },
         };
+    }
+
+    fn funcTypeText(self: *Self, func: FuncType, allocator: std.mem.Allocator) error{OutOfMemory}![]const u8 {
+        var text: std.ArrayList(u8) = .empty;
+        try text.appendSlice(allocator, "func(");
+        for (func.params, 0..) |param, i| {
+            if (i > 0) {
+                try text.appendSlice(allocator, ", ");
+            }
+            if (param.is_mut) {
+                try text.appendSlice(allocator, "mut ");
+            }
+            try text.appendSlice(allocator, try self.syntaxName(param.type_id, allocator));
+        }
+        try text.appendSlice(allocator, ") -> ");
+        const return_type = self.getTypePtrById(func.return_type_id);
+        if (return_type.kind == .error_union) {
+            const set = self.getTypePtrById(return_type.kind.error_union.error_set).kind.@"enum";
+            if (!set.error_set.?.is_inferred) {
+                try text.appendSlice(allocator, set.identifier);
+            }
+        }
+        try text.appendSlice(allocator, try self.syntaxName(func.return_type_id, allocator));
+        return text.toOwnedSlice(allocator);
     }
 
     pub fn isErrorSet(self: *Self, id: TypeId) bool {
@@ -251,6 +283,28 @@ pub const TypeTable = struct {
         const new_type_id: TypeId = @intCast(self.types.items.len - 1);
         try self.arrays.put(inner, new_type_id);
         return new_type_id;
+    }
+
+    pub fn getOrAddFuncType(self: *Self, func: FuncType) !TypeId {
+        var key: std.ArrayList(u8) = .empty;
+        for (func.params) |param| {
+            try key.print(self.allocator, "{s}{d},", .{ if (param.is_mut) "m" else "", param.type_id });
+        }
+        const return_type = self.getTypePtrById(func.return_type_id);
+        if (return_type.kind == .error_union) {
+            try key.print(self.allocator, "->{d}!{d}", .{ return_type.kind.error_union.error_set, return_type.kind.error_union.payload });
+        } else {
+            try key.print(self.allocator, "->{d}", .{func.return_type_id});
+        }
+
+        if (self.func_types.get(key.items)) |id| {
+            key.deinit(self.allocator);
+            return id;
+        }
+
+        const id = try self.addType(.{ .kind = .{ .func_type = func }, .is_nullable = false });
+        try self.func_types.put(try key.toOwnedSlice(self.allocator), id);
+        return id;
     }
 
     pub fn getAnonymoustStructSignature(self: *Self, anom_struct: *const Struct) ![]const u8 {
@@ -327,6 +381,16 @@ pub const Func = struct {
     uid: usize,
     params: []const TypedIdentifier,
     return_type_id: TypeId,
+};
+
+pub const FuncType = struct {
+    params: []const FuncTypeParam,
+    return_type_id: TypeId,
+};
+
+pub const FuncTypeParam = struct {
+    type_id: TypeId,
+    is_mut: bool,
 };
 
 pub const Enum = struct {
@@ -413,6 +477,7 @@ pub const Type = struct {
         meta,
 
         function: Func,
+        func_type: FuncType,
         array: TypeId,
         @"struct": Struct,
         @"enum": Enum,
