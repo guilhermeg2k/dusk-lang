@@ -509,6 +509,26 @@ pub const CompileErrorReporter = struct {
         return error.LambdaCallsItself;
     }
 
+    pub fn lambdaParamNeedsType(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't tell the type of lambda param '{s}': give it a type, or pass the lambda where a function type is expected", .{identifier}), loc);
+        return error.LambdaParamNeedsType;
+    }
+
+    pub fn wrongLambdaParamCount(self: *Self, found: usize, expected: usize, loc: Loc) CompileError {
+        const noun = if (found == 1) "param" else "params";
+        self.log(try allocPrint(self.allocator, "This lambda takes {d} {s}, but the function type it's used as takes {d}", .{ found, noun, expected }), loc);
+        return error.WrongLambdaParamCount;
+    }
+
+    pub fn lambdaParamMutDiffers(self: *Self, identifier: []const u8, is_expected_mut: bool, loc: Loc) CompileError {
+        const text = if (is_expected_mut)
+            try allocPrint(self.allocator, "Lambda param '{s}' needs 'mut': the function type it's used as takes it as 'mut'", .{identifier})
+        else
+            try allocPrint(self.allocator, "Lambda param '{s}' can't be 'mut': the function type it's used as doesn't take it as 'mut'", .{identifier});
+        self.log(text, loc);
+        return error.LambdaParamMutDiffers;
+    }
+
     pub fn tooManyCaptures(self: *Self, max: usize, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "A lambda can use at most {d} variables from the functions around it", .{max}), loc);
         return error.TooManyCaptures;
@@ -948,6 +968,9 @@ pub const CompileError = error{
     BuiltinAsValue,
     LambdaParamCantHaveDefault,
     TooManyCaptures,
+    LambdaParamNeedsType,
+    WrongLambdaParamCount,
+    LambdaParamMutDiffers,
     LambdaCallsItself,
     FieldAndMethodSameName,
     NamedArgumentsOnValue,

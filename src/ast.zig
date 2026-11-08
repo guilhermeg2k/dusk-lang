@@ -139,6 +139,7 @@ pub const TypeAnnotation = struct {
         array: *TypeAnnotation,
         type_self: void,
         function: FuncTypeAnnotation,
+        resolved: u64,
     },
 
     is_nullable: bool,
@@ -170,6 +171,9 @@ pub const TypeAnnotation = struct {
             },
             .type_self => {
                 return "@";
+            },
+            .resolved => {
+                return "inferred type";
             },
             .function => |func| {
                 var text: std.ArrayList(u8) = .empty;

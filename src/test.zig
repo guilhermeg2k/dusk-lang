@@ -2091,13 +2091,23 @@ test "lambdas: func(...) expressions" {
     try runCaseError("parser/lambda-block-without-return-type.dsk", error.ParserError);
     try runCaseError("parser/lambda-break-outer-loop.dsk", error.ParserError);
     try runCaseError("sema/lambda-param-default.dsk", error.LambdaParamCantHaveDefault);
-    try runCaseError("sema/lambda-param-without-type.dsk", error.InvalidParameterType);
+    try runCaseError("sema/lambda-param-without-type.dsk", error.LambdaParamNeedsType);
     try runCaseError("sema/lambda-calls-itself.dsk", error.LambdaCallsItself);
 }
 
 test "closures: lambdas capture variables of the functions around them" {
     try runCase("closures.dsk");
     try runCase("gc-closures.dsk");
+}
+
+test "lambdas: param types come from the expected function type" {
+    try runCase("lambda-param-inference.dsk");
+    try runCaseError("sema/lambda-param-no-context.dsk", error.LambdaParamNeedsType);
+    try runCaseError("sema/lambda-param-unfillable-slot.dsk", error.LambdaParamNeedsType);
+    try runCaseError("sema/lambda-param-count.dsk", error.WrongLambdaParamCount);
+    try runCaseError("sema/lambda-param-missing-mut.dsk", error.LambdaParamMutDiffers);
+    try runCaseError("sema/lambda-inferred-wrong-return.dsk", error.InvalidType);
+    try runCaseError("sema/lambda-annotated-param-mismatch.dsk", error.InvalidType);
 }
 
 test "generics: calls fill the slots from the arguments and compile one copy per type" {

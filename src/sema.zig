@@ -1429,13 +1429,25 @@ pub const SemaAnalyzer = struct {
         const bindings = try self.allocator.alloc(?tt.TypeId, func_stmt.slots.len);
         @memset(bindings, null);
 
+        var has_lambda_args = false;
         for (func_stmt.def.params, 0..) |param, param_index| {
             const annotation = param.type_annotation orelse continue;
             if (!mentionsSlot(annotation, func_stmt.slots) or areMentionedSlotsBound(annotation, func_stmt.slots, bindings)) continue;
             const arg_exp = argumentFor(fn_call, param_index, param.identifier) orelse continue;
+            if (arg_exp.data == .lambda) {
+                has_lambda_args = true;
+                continue;
+            }
             const value = try self.evalExpExpecting(arg_exp, null);
             try inferred_values.put(self.allocator, arg_exp, value);
             try self.inferSlots(annotation, value.type_id, func_stmt.slots, bindings, arg_exp.loc);
+        }
+        if (has_lambda_args) {
+            for (func_stmt.def.params, 0..) |param, param_index| {
+                const annotation = param.type_annotation orelse continue;
+                const arg_exp = argumentFor(fn_call, param_index, param.identifier) orelse continue;
+                try self.inferSlotsFromLambda(annotation, arg_exp, func_stmt.slots, bindings, inferred_values);
+            }
         }
         try self.inferSlotsFromExpectedType(func_stmt, expected_type, bindings, loc);
 
@@ -1444,6 +1456,57 @@ pub const SemaAnalyzer = struct {
             args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, func_stmt.identifier, loc);
         }
         return self.instantiateGenericFunction(index, args, loc);
+    }
+
+    fn inferSlotsFromLambda(
+        self: *Self,
+        annotation: *const ast.TypeAnnotation,
+        arg_exp: *const ast.ExpNode,
+        slots: []const ast.Slot,
+        bindings: []?tt.TypeId,
+        inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
+    ) CompileError!void {
+        if (arg_exp.data != .lambda) return;
+        if (areMentionedSlotsBound(annotation, slots, bindings)) return;
+        const hints = try self.lambdaHints(annotation, slots, bindings);
+        const value = try self.evalLambda(arg_exp, hints);
+        try self.exp_types.put(self.allocator, arg_exp, value.type_id);
+        try inferred_values.put(self.allocator, arg_exp, value);
+        try self.inferSlots(annotation, value.type_id, slots, bindings, arg_exp.loc);
+    }
+
+    fn lambdaHints(self: *Self, annotation: *const ast.TypeAnnotation, slots: []const ast.Slot, bindings: []const ?tt.TypeId) CompileError!?[]const ?tt.FuncTypeParam {
+        if (annotation.type != .function) {
+            return null;
+        }
+        const params = annotation.type.function.params;
+        const hints = try self.allocator.alloc(?tt.FuncTypeParam, params.len);
+        const saved_table = try self.enterBoundSlotScope(slots, bindings);
+        defer self.scope.symbol_table = saved_table;
+        for (params, hints) |param, *hint| {
+            hint.* = null;
+            if (!areMentionedSlotsBound(param.type, slots, bindings)) continue;
+            hint.* = .{ .type_id = try self.resolveTypeAnnotation(param.type, null), .is_mut = param.is_mut };
+        }
+        return hints;
+    }
+
+    fn enterBoundSlotScope(self: *Self, slots: []const ast.Slot, bindings: []const ?tt.TypeId) CompileError!*SymbolTable {
+        const saved_table = self.scope.symbol_table;
+        var root = saved_table;
+        while (root.parent) |parent| root = parent;
+        self.scope.symbol_table = root;
+        try self.scope.enter(self.scope.return_type_id);
+        for (slots, bindings) |slot, binding| {
+            const type_id = binding orelse continue;
+            try self.scope.symbol_table.put(.{
+                .identifier = slot.identifier,
+                .uid = self.scope.genUid(),
+                .type_id = type_id,
+                .kind = .{ .type_slot = {} },
+            });
+        }
+        return saved_table;
     }
 
     fn inferSlotsFromExpectedType(self: *Self, func_stmt: *const ast.FuncStmt, expected_type: ?tt.TypeId, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
@@ -1633,13 +1696,25 @@ pub const SemaAnalyzer = struct {
 
         switch (generic.def) {
             .@"struct" => |struct_def| {
+                var has_lambda_args = false;
                 for (struct_def.fields, 0..) |field, field_index| {
                     const annotation = field.type orelse continue;
                     if (!mentionsSlot(annotation, generic.slots) or areMentionedSlotsBound(annotation, generic.slots, bindings)) continue;
                     const arg_exp = argumentFor(fn_call, field_index, field.identifier) orelse continue;
+                    if (arg_exp.data == .lambda) {
+                        has_lambda_args = true;
+                        continue;
+                    }
                     const value = try self.evalExpExpecting(arg_exp, null);
                     try inferred_values.put(self.allocator, arg_exp, value);
                     try self.inferSlots(annotation, value.type_id, generic.slots, bindings, arg_exp.loc);
+                }
+                if (has_lambda_args) {
+                    for (struct_def.fields, 0..) |field, field_index| {
+                        const annotation = field.type orelse continue;
+                        const arg_exp = argumentFor(fn_call, field_index, field.identifier) orelse continue;
+                        try self.inferSlotsFromLambda(annotation, arg_exp, generic.slots, bindings, inferred_values);
+                    }
                 }
             },
             .@"union" => |union_def| {
@@ -1659,7 +1734,9 @@ pub const SemaAnalyzer = struct {
             if (self.copied_types.get(base_id)) |copy| {
                 if (copy.generic == index) {
                     for (bindings, copy.args) |*binding, arg| {
-                        if (binding.* == null) binding.* = arg;
+                        if (binding.* == null) {
+                            binding.* = arg;
+                        }
                     }
                 }
             }
@@ -3530,6 +3607,10 @@ pub const SemaAnalyzer = struct {
             if (exp.data == .array_literal and base_kind == .array) {
                 return self.evalArrayLiteral(exp, base_kind.array);
             }
+            const is_lambda_for_function_type = exp.data == .lambda and base_kind == .func_type;
+            if (is_lambda_for_function_type) {
+                return self.evalLambda(exp, try self.paramHints(base_kind.func_type));
+            }
             const is_name_for_function_type = exp.data == .identifier and base_kind == .func_type;
             if (is_name_for_function_type) {
                 if (self.scope.symbol_table.get(exp.data.identifier)) |symbol| {
@@ -3688,16 +3769,20 @@ pub const SemaAnalyzer = struct {
             .binary_exp => {
                 return self.evalBinaryExp(exp);
             },
-            .lambda => return self.evalLambda(exp),
+            .lambda => return self.evalLambda(exp, null),
         }
     }
 
-    fn evalLambda(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
-        const def = &exp.data.lambda;
-        for (def.params) |param| {
-            const default_value = param.default_value orelse continue;
-            return self.err_reporter.lambdaParamCantHaveDefault(param.identifier, default_value.loc);
+    fn paramHints(self: *Self, func_type: tt.FuncType) CompileError![]const ?tt.FuncTypeParam {
+        const hints = try self.allocator.alloc(?tt.FuncTypeParam, func_type.params.len);
+        for (func_type.params, hints) |param, *hint| {
+            hint.* = param;
         }
+        return hints;
+    }
+
+    fn evalLambda(self: *Self, exp: *const ast.ExpNode, hints: ?[]const ?tt.FuncTypeParam) CompileError!*ir.Value {
+        const def = try self.typedLambdaDef(exp, hints);
 
         try self.lambda_contexts.append(self.allocator, .{ .floor = self.scope.next_uid });
         const context_index = self.lambda_contexts.items.len - 1;
@@ -3731,6 +3816,42 @@ pub const SemaAnalyzer = struct {
             .data = .{ .make_closure = .{ .fn_uid = metadata.uid, .sources = sources } },
             .type_id = func_type_id,
         });
+    }
+
+    fn typedLambdaDef(self: *Self, exp: *const ast.ExpNode, hints: ?[]const ?tt.FuncTypeParam) CompileError!*const ast.FnDef {
+        const def = &exp.data.lambda;
+        for (def.params) |param| {
+            const default_value = param.default_value orelse continue;
+            return self.err_reporter.lambdaParamCantHaveDefault(param.identifier, default_value.loc);
+        }
+        const known = hints orelse {
+            for (def.params) |param| {
+                if (param.type_annotation == null) {
+                    return self.err_reporter.lambdaParamNeedsType(param.identifier, exp.loc);
+                }
+            }
+            return def;
+        };
+        if (known.len != def.params.len) {
+            return self.err_reporter.wrongLambdaParamCount(def.params.len, known.len, exp.loc);
+        }
+
+        const params = try self.allocator.alloc(ast.FnParam, def.params.len);
+        for (def.params, known, params) |param, hint, *typed| {
+            typed.* = param;
+            if (hint) |expected| {
+                if (expected.is_mut != param.is_mut) {
+                    return self.err_reporter.lambdaParamMutDiffers(param.identifier, expected.is_mut, exp.loc);
+                }
+            }
+            if (param.type_annotation != null) continue;
+            const expected = hint orelse return self.err_reporter.lambdaParamNeedsType(param.identifier, exp.loc);
+            typed.type_annotation = try ast.TypeAnnotation.init(self.allocator, .{ .type = .{ .resolved = expected.type_id }, .is_nullable = false });
+        }
+        const typed_def = try self.allocator.create(ast.FnDef);
+        typed_def.* = def.*;
+        typed_def.params = params;
+        return typed_def;
     }
 
     fn outerVariableContext(self: *Self, symbol: Symbol) ?usize {
@@ -5130,6 +5251,7 @@ pub const SemaAnalyzer = struct {
                 const type_id = try self.resolveFuncTypeAnnotation(func, current_defined_type_type_id, type_annotation.loc);
                 return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(type_id) else type_id;
             },
+            .resolved => |type_id| return type_id,
         }
     }
 
