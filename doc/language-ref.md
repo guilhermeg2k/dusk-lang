@@ -1318,7 +1318,7 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 | `index_of(list, item)` | `?int` | The position of the first item equal to `item`, or `null`. |
 | `contains(list, item)` | `bool` | Whether some item equals `item`. |
 
-`index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content.
+`index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content. Floats compare like `==`, so `nan` is never found and `-0.0` matches `0.0`.
 
 ```nim
 let mut stack = [1, 2, 3]
