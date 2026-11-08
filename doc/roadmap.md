@@ -2,11 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version 0.14 - Simon
-
-- Generics
-- Traits
-
 ## Version 0.15 - Fujiwara
 
 - Closures (& fn as anything (argument, item, etc))
