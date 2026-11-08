@@ -16,6 +16,7 @@ Started v0.15 development: updated the CLI version to `0.15.0-devel`.
 
 ### Fixes
 
+- Passing an array, struct or other heap value to a function that allocated a lot could crash the program, or leave the function changing a different copy than the caller's: the garbage collector copied arguments twice
 - A function or lambda that can fail, passed to a generic param like `f: func(T) -> U`, filled `U` with the failing type and reported the error inside the generic function's body (`in map[string, !int] ...: 'f' can fail`). It's now a `SlotCantFail` error at the call: `'U' can't be 'ConversionError!int': a slot can't hold a type that can fail`, pointing to error slots. A caught error value can still fill a slot (`id(e)`, `Box(item = e)`)
 - Types in compile errors name the error set of a failing type (`ConversionError!int`, `func(string) -> ConversionError!int` was already right) instead of only `!int`
 

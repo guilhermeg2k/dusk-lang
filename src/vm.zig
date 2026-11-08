@@ -857,13 +857,15 @@ pub const VM = struct {
         self.heap.gc_queue.clearRetainingCapacity();
 
         const active_frames = self.frames[0..self.frame_count];
-        for (active_frames) |frame| {
+        for (active_frames, 0..) |frame, frame_index| {
             const chunk = frame.function.kind.dusk;
             const cur_pc: u16 = @intCast(frame.cur_inst -| 1);
             const heap_map = util.binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
             const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
             const base = frame.stack_offset;
-            for (0..chunk.num_registers) |i| {
+            const is_top_frame = frame_index + 1 == active_frames.len;
+            const owned_registers = if (is_top_frame) chunk.num_registers else active_frames[frame_index + 1].stack_offset - base;
+            for (0..owned_registers) |i| {
                 const is_heap_value = bitmap & (@as(u256, 1) << @intCast(i)) != 0;
                 if (is_heap_value) {
                     try self.copyHeapValue(new_alloc, &self.stack[base + i]);

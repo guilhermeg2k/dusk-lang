@@ -2101,6 +2101,10 @@ test "closures: lambdas capture variables of the functions around them" {
     try runCase("gc-closures.dsk");
 }
 
+test "gc: heap values passed to functions that collect keep one identity" {
+    try runCase("gc-heap-arguments.dsk");
+}
+
 test "lambdas: param types come from the expected function type" {
     try runCase("lambda-param-inference.dsk");
     try runCase("lambda-branches.dsk");
