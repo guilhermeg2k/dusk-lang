@@ -1687,6 +1687,10 @@ test "runtime error: call depth exceeded" {
     try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
 }
 
+test "runtime error: a failed assert" {
+    try runCaseRuntimeError("assert-failed.dsk", error.AssertionFailed);
+}
+
 test "min" {
     try runCase("min.dsk");
 }

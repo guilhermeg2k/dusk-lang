@@ -44,6 +44,8 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 - A struct field with neither a type nor a default (`x` alone, or `static x = 1`, which reads as a field named `static`) is now a parser error, `expected ':' or '=' after field 'x'`, instead of crashing the compiler. Fields of inline nested structs are checked too
 - A function longer than 65,535 bytecode instructions crashed the compiler with `integer does not fit in destination type`; it's now a compile error asking to split it into smaller functions. This error and the "more than 255 registers" one now point at the function's line like other compile errors, and name the call that made a generic copy
 - A `when` with many cases (about 250 or more, each ending in `return`, or with values too spread out for a jump table) failed to compile with "uses more than 255 registers": each case kept the registers it used until the whole `when` ended
+- A failed `assert` crashed with an internal panic and a stack trace; it's now a runtime error (`error: assertion failed`, with the function it happened in)
+- Every compile and runtime error was printed a second time as a bare error name (followed by a stack trace in debug builds), and a missing file showed a raw `FileNotFound` with a stack trace. Errors now print once, a file that can't be read says why (`error: can't read 'x.dsk': file not found`), running `dusk` without a file prints its usage, and all of these exit with status 1
 
 ## v0.13 - Garou
 

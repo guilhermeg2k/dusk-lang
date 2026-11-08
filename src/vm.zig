@@ -84,17 +84,11 @@ pub const VM = struct {
     }
 
     fn reportWhere(self: *Self, failure: anyerror) void {
-        if (@import("builtin").is_test) return;
-        if (failure == error.OutOfMemory) std.debug.print("error: out of memory\n", .{});
+        if (failure == error.OutOfMemory) RuntimeErrorReporter.outOfMemory();
         if (self.frame_count == 0) return;
-        const function = self.frames[self.frame_count - 1].function.name;
-        const is_top_level = function.len > 0 and function[0] == '$';
-        if (self.failed_builtin) |builtin| {
-            if (is_top_level) return std.debug.print("  in builtin '{s}'\n", .{builtin});
-            return std.debug.print("  in builtin '{s}', called from function '{s}'\n", .{ builtin, function });
-        }
-        if (is_top_level) return;
-        std.debug.print("  in function '{s}'\n", .{function});
+        const name = self.frames[self.frame_count - 1].function.name;
+        const is_top_level = name.len > 0 and name[0] == '$';
+        RuntimeErrorReporter.where(if (is_top_level) null else name, self.failed_builtin);
     }
 
     noinline fn execute(self: *Self) !void {

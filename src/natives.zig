@@ -3,6 +3,7 @@ const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const format = @import("format.zig");
 const VM = @import("vm.zig").VM;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 
 const NativeResult = bc.NativeResult;
 
@@ -78,9 +79,7 @@ pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 pub fn assert(_: *VM, args: []v.Value) anyerror!NativeResult {
-    if (!args[0].bool) {
-        @panic("ASSERTION_FAILED");
-    }
+    if (!args[0].bool) return RuntimeErrorReporter.assertionFailed();
     return ok(.{ .null = {} });
 }
 

@@ -1,0 +1,8 @@
+func check(n: int) -> void
+    assert(n > 0)
+end
+
+func main() -> void
+    check(1)
+    check(-1)
+end

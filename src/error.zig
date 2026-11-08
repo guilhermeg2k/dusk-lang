@@ -935,6 +935,7 @@ pub const RuntimeError = error{
     DivisionOverflow,
     IntegerOverflow,
     FloatOutOfIntRange,
+    AssertionFailed,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -993,10 +994,46 @@ pub const RuntimeErrorReporter = struct {
         return report(RuntimeError.UnhandledError, "unhandled error {s}", .{error_name});
     }
 
+    pub noinline fn assertionFailed() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.AssertionFailed, "assertion failed", .{});
+    }
+
+    pub fn outOfMemory() void {
+        if (@import("builtin").is_test) return;
+        std.debug.print("error: out of memory\n", .{});
+    }
+
+    pub fn where(function: ?[]const u8, builtin: ?[]const u8) void {
+        if (@import("builtin").is_test) return;
+        if (builtin) |name| {
+            if (function) |caller| return std.debug.print("  in builtin '{s}', called from function '{s}'\n", .{ name, caller });
+            return std.debug.print("  in builtin '{s}'\n", .{name});
+        }
+        if (function) |name| std.debug.print("  in function '{s}'\n", .{name});
+    }
+
     fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {
         if (@import("builtin").is_test) return err;
         std.debug.print("error: " ++ fmt ++ "\n", args);
         return err;
+    }
+};
+
+pub const CliErrorReporter = struct {
+    pub fn usage() void {
+        std.debug.print("usage: dusk <file.dsk>\n       dusk --version\n", .{});
+    }
+
+    pub fn cantReadFile(path: []const u8, failure: anyerror) anyerror {
+        const reason = switch (failure) {
+            error.FileNotFound => "file not found",
+            error.AccessDenied, error.PermissionDenied => "permission denied",
+            error.IsDir => "it's a directory",
+            else => @errorName(failure),
+        };
+        std.debug.print("error: can't read '{s}': {s}\n", .{ path, reason });
+        return failure;
     }
 };
 
