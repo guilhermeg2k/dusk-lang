@@ -1,0 +1,59 @@
+func mark(mut log: []int, id: int, result: bool) -> bool
+    append(log, id)
+    return result
+end
+
+func main() -> void
+    let mut log: []int = []
+
+    assert(!(false and mark(log, 1, true)))
+    assert(len(log) == 0)
+
+    assert(true or mark(log, 2, false))
+    assert(len(log) == 0)
+
+    assert(true and mark(log, 3, true))
+    assert(len(log) == 1)
+    assert(log[0] == 3)
+
+    assert(false or mark(log, 4, true))
+    assert(len(log) == 2)
+    assert(log[1] == 4)
+
+    assert(!(true and mark(log, 5, false)))
+    assert(!(false or mark(log, 6, false)))
+    assert(len(log) == 4)
+
+    let both = mark(log, 7, false) and mark(log, 8, true) or mark(log, 9, true)
+    assert(both)
+    assert(len(log) == 6)
+    assert(log[4] == 7)
+    assert(log[5] == 9)
+
+    let mut flag = true
+    let other = false
+    flag = other and flag
+    assert(!flag)
+    flag = true
+    flag = other or flag
+    assert(flag)
+
+    let items = [1, 2, 3]
+    let mut i = 0
+    for i < len(items) and items[i] < 3 do
+        i = i + 1
+    end
+    assert(i == 2)
+
+    i = 5
+    let is_safe = i < len(items) and items[i] > 0
+    assert(!is_safe)
+
+    let check = func(n: int) -> bool
+        return n > 0 and mark(log, n, true)
+    end
+    assert(!check(0))
+    assert(len(log) == 6)
+    assert(check(10))
+    assert(len(log) == 7)
+end

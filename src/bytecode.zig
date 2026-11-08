@@ -1442,6 +1442,10 @@ pub const BytecodeGen = struct {
     }
 
     fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
+        if (bo.kind == .b_and or bo.kind == .b_or) {
+            return self.genShortCircuit(bo, target_reg);
+        }
+
         const left_reg = try self.genValue(bo.left, try self.consumeRegister());
         const right_reg = try self.genValue(bo.right, try self.consumeRegister());
         defer self.freeRegisterN(2);
@@ -1515,6 +1519,38 @@ pub const BytecodeGen = struct {
             .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => self.type_table.getPrimitive(.boolean),
             .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => self.type_table.getPrimitive(.boolean),
         };
+    }
+
+    fn genShortCircuit(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
+        const saved_next_free = self.next_free_register;
+        const result_reg = try self.consumeRegister();
+        const boolean = self.type_table.getPrimitive(.boolean);
+
+        _ = try self.genValue(bo.left, result_reg);
+        self.register_types[result_reg] = boolean;
+        const skip_right_idx = self.chunk_instructions.items.len;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = result_reg });
+
+        var jump_to_end_idx: ?usize = null;
+        if (bo.kind == .b_or) {
+            jump_to_end_idx = self.chunk_instructions.items.len;
+            try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+            self.chunk_instructions.items[skip_right_idx].putBEx(try self.currentPosition());
+        }
+
+        _ = try self.genValue(bo.right, result_reg);
+        self.register_types[result_reg] = boolean;
+
+        const end_position = try self.currentPosition();
+        if (jump_to_end_idx) |jump| {
+            self.chunk_instructions.items[jump].putAEx(end_position);
+        } else {
+            self.chunk_instructions.items[skip_right_idx].putBEx(end_position);
+        }
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_reg });
+        self.register_types[target_reg] = boolean;
+        self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn isIntegerType(self: *Self, type_id: tt.TypeId) bool {

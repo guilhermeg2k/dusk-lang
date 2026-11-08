@@ -2105,6 +2105,10 @@ test "gc: heap values passed to functions that collect keep one identity" {
     try runCase("gc-heap-arguments.dsk");
 }
 
+test "and / or skip the right side when the left side decides" {
+    try runCase("short-circuit.dsk");
+}
+
 test "lambdas: param types come from the expected function type" {
     try runCase("lambda-param-inference.dsk");
     try runCase("lambda-branches.dsk");

@@ -247,7 +247,8 @@ Jump targets are therefore 16 bits, which limits a function to 65,536 instructio
 |---|---|
 | `F_ADD`, `F_SUB`, `F_MULT`, `F_DIV`, `F_MOD` | float arithmetic (IEEE, no checks) |
 | `F_EQ` ... `F_GE`, `F_NEG` | float comparisons and negation |
-| `B_AND`, `B_OR`, `B_EQ`, `B_NEQ`, `B_NOT` | bool operations on two already evaluated registers (see 11.2: `and`/`or` don't short-circuit) |
+| `B_EQ`, `B_NEQ`, `B_NOT` | bool comparisons and negation |
+| `B_AND`, `B_OR` | bool operations on two registers. Codegen doesn't emit them anymore: `and`/`or` compile to jumps (6.7) |
 
 Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`genBinOp`).
 
@@ -338,6 +339,23 @@ When a `when` matches an int, byte, enum or union subject against at least 4 con
 ### 6.6 Loops
 
 `for cond do ... end` becomes: condition, `JUMP_IF_FALSE` to the exit, body, advancement (for loops with a step), and a `JUMP` back to the condition. `break` and `continue` emit a `JUMP` with a placeholder target, which is patched when the loop is closed: `break` goes to the exit and `continue` to the advancement.
+
+### 6.7 `and` and `or`
+
+`and` and `or` short-circuit (`genShortCircuit`). The left side goes into a fresh register, a jump skips the right side when the left side already decides the result, and the right side otherwise overwrites that register:
+
+```
+a and b                          a or b
+  <a> -> R[t]                      <a> -> R[t]
+  JUMP_IF_FALSE R[t] end           JUMP_IF_FALSE R[t] right
+  <b> -> R[t]                      JUMP end
+end:                             right:
+  LOAD R[target] R[t]              <b> -> R[t]
+                                 end:
+                                   LOAD R[target] R[t]
+```
+
+The fresh register matters for `flag = other and flag`: writing the left side straight into `flag`'s register would change `flag` before the right side reads it. Sema's own conditions (range checks in `when`, nullable `==`) are lowered the same way.
 
 ## 7. Calls, returns and errors
 
@@ -467,11 +485,13 @@ At collection time, for every frame:
 ```zig
 pc = frame.cur_inst - 1                // the instruction this frame is stopped at
 bitmap = binarySearch(chunk.heap_maps, pc) or 0
-for each register i with bit i set: copy stack[base + i]
+owned = top frame ? num_registers : next_frame.stack_offset - base
+for each register i < owned with bit i set: copy stack[base + i]
 ```
 
 - For caller frames, `cur_inst - 1` is their `CALL`.
 - For the running frame, it's the allocating instruction, because each such handler sets `current_frame.cur_inst = cur_instruction` before it can allocate.
+- **A caller frame only scans `R[0] .. R[a]`**, up to and including its call register. Its argument registers are the callee's parameters (section 4.2), so the callee scans them. If both frames scanned them, the second pass would copy the already-copied object again, and the parameter would end up pointing to a different object than the caller's variable. The call register stays with the caller, so the closure of a `CALL_VALUE` is kept alive. Natives don't push frames, so the arguments of a native call are scanned as part of the top frame.
 
 So the two rules for adding an allocating instruction are: **record a heap map in codegen, and set `cur_inst` in the VM before allocating.** If an instruction has no heap map, its frame gets bitmap `0` and none of its registers are kept alive.
 
@@ -512,9 +532,11 @@ Afterwards, the new arena becomes active and the threshold is updated. If the ol
 
 ## 11. Known issues and observations
 
-### 11.1 Bug: the GC copies call arguments twice
+### 11.1 Fixed: the GC copied call arguments twice
 
-The argument registers of a Dusk call are both the caller's `R[a+1 ..]` and the callee's parameters (section 4.2). The caller's heap map at the `CALL` still marks them as pointers, and so does the callee's. So during one collection the same slot is copied twice:
+Fixed in v0.15 (section 9.2); `test/success/gc-heap-arguments.dsk` covers it. It's kept here because the failure mode is worth knowing when changing frame layout or root scanning.
+
+The argument registers of a Dusk call are both the caller's `R[a+1 ..]` and the callee's parameters (section 4.2). Both heap maps mark them as pointers, so before the fix, one collection copied the same slot twice:
 
 1. The caller's pass copies object `O` to `N` and points the slot at `N`.
 2. The callee's pass sees `N`, which has no `gc_forward` yet, clones it again to `N2`, and sets `N.gc_forward = N2`.
@@ -537,11 +559,10 @@ func main() -> void
 end
 ```
 
-This segfaults in `copyHeapValue`. A fix in `collectGarbage`: for every frame except the top one, scan only `R[0] .. R[a]`, that is up to `next_frame.stack_offset - frame.stack_offset` registers. That covers the call register, so the closure of a `CALL_VALUE` stays alive, and leaves the arguments to the callee. Natives don't push frames, so their arguments are still scanned as part of the top frame. With that change, the program above prints `[1]` and mutations made through the parameter are visible to the caller.
+This segfaulted in `copyHeapValue`. Now each caller frame scans only up to its call register, so every slot has one owner and is copied once.
 
 ### 11.2 Observations
 
-- **`and` and `or` don't short-circuit.** Sema lowers them to `B_AND` and `B_OR`, so both sides always run: `false and side()` still calls `side()`. The language reference doesn't say either way. Lowering them to `JUMP_IF_FALSE` jumps would make them short-circuit.
 - **A missing heap map is silent.** If an instruction has no heap map, its frame gets bitmap `0` and its roots aren't kept. A debug assertion in `collectGarbage` when `binarySearch` finds nothing would catch codegen mistakes right away.
 - **Extra moves.** Codegen copies variables into temporaries before using them (`LOAD R[3] R[1]` before `I_LT R[2] R[3] R[4]`), and moves a call result through more than one register after a `try`. Reading variables in place in binary operations, or a small peephole pass, would remove many instructions.
 - **Repeated `CAPTURE_GET`.** A lambda reloads the same capture each time it uses it.

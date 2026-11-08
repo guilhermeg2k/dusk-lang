@@ -639,7 +639,7 @@ An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitiv
 
 ### Comparison and logic
 
-`==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool`, enums and errors. `and`, `or` and `!` work on `bool`.
+`==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool`, enums and errors. `and`, `or` and `!` work on `bool`. `and` and `or` only evaluate their right side when the left side doesn't decide the result: in `false and f()` and `true or f()`, `f` isn't called. So `i < len(items) and items[i] > 0` never reads past the end.
 
 `==` and `!=` only compare values of the same type: `true == 1`, `1 == "a"` and a `Point` with a `Size` are compile errors, since they could never be equal. Numbers are the exception: an `int`, `float` or `byte` compares with any other number (`1 == 1.0`). A nullable compares with `null` or with its inner type, and `x == null` is an error when `x` can't be null.
 
