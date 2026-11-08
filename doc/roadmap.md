@@ -2,16 +2,11 @@
 
 > This is a moving target and can change anytime
 
-## Version 0.14 - Simon
-
-- Meta structs
-- Generics
-
-## Version 0.15 - Enjin
+## Version 0.15 - Fujiwara
 
 - Closures (& fn as anything (argument, item, etc))
 
-## Version 0.16 - Fujiwara
+## Version 0.16 - Enjin
 
 - Coroutines
 

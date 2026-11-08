@@ -1,0 +1,18 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+trait Sized
+    func area(self: @) -> int
+end
+
+func f[T: Shape + Sized](x: T) -> void
+end
+
+func main() -> void
+end

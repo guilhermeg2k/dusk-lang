@@ -1,0 +1,8 @@
+func nest[T](x: T, n: int) -> int
+    if n == 0 then return 0 end
+    return nest([x], n - 1)
+end
+
+func main() -> void
+    let x = nest(1, 3)
+end

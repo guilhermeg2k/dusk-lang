@@ -1,0 +1,51 @@
+struct Obj
+    items: []int
+end
+
+struct Stack[T]
+    items: []T
+
+    func push(mut self: @, mut item: T) -> void
+        append(self.items, item)
+    end
+end
+
+func wrap(items: []int) -> Obj
+    return Obj(items = copy(items))
+end
+
+func main() -> void
+    let frozen = [1, 2]
+    let view = Obj(items = frozen)
+    assert(len(view.items) == 2)
+
+    let mut owned = Obj(items = copy(frozen))
+    append(owned.items, 3)
+    assert(len(frozen) == 2)
+    assert(len(owned.items) == 3)
+
+    let mut list = [1, 2]
+    let reader = list
+    append(list, 3)
+    assert(len(reader) == 3)
+
+    let count = 5
+    let mut total = count
+    total = total + 1
+    assert(total == 6)
+
+    let mut wrapped = wrap(frozen)
+    append(wrapped.items, 9)
+    assert(len(frozen) == 2)
+
+    let mut points: []Obj = []
+    let mut fresh = Obj(items = [7])
+    append(points, fresh)
+    append(points, Obj(items = [8]))
+    assert(len(points) == 2)
+
+    let mut first = Obj(items = [1])
+    let mut stack = Stack(items = [first])
+    stack.push(first)
+    assert(len(stack.items) == 2)
+end

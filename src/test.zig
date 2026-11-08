@@ -21,7 +21,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 6 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 9 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -48,6 +48,73 @@ test "string interpolation compiles to one STR_BUILD" {
     try testing.expectEqual(@as(usize, 1), snapshots);
     try testing.expectEqual(@as(usize, 1), chunk.build_recipes.len);
     try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
+}
+
+fn countOps(source: []const u8, function: []const u8, op: @import("bytecode.zig").OpCode) !usize {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compile(source);
+    const chunk = for (program.functions) |func| {
+        if (std.mem.eql(u8, func.name, function)) break func.kind.dusk;
+    } else return error.FunctionNotFound;
+    var count: usize = 0;
+    for (chunk.instructions) |inst| {
+        if (inst.op == op) count += 1;
+    }
+    return count;
+}
+
+test "when: dense cases compile to a jump table, sparse ones to compares" {
+    try runCaseOutput("when-jump-tables.dsk", "[10, 4, 21, 2, 1]\n[6, 9, 9, 0]\n[A, B, C, F, ?, ?]\n[0, 3, -2]\n[10, 40, 99, 99]\n[-1, 1, 2]\n[1, 2, 3, 4, 5]\n[110, 113, 199, 2, 4, 9]\n");
+    const dense = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 2 then out = 2 end 3 then out = 3 end 4 then out = 4 end else then out = 5 end end return out end func main() -> void end";
+    const sparse = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 100 then out = 2 end 3 then out = 3 end 4 then out = 4 end else then out = 5 end end return out end func main() -> void end";
+    const few = "func f(n: int) -> int let mut out = 0 when n 1 then out = 1 end 2 then out = 2 end else then out = 5 end end return out end func main() -> void end";
+    try testing.expectEqual(@as(usize, 1), try countOps(dense, "f", .JUMP_TABLE));
+    try testing.expectEqual(@as(usize, 0), try countOps(sparse, "f", .JUMP_TABLE));
+    try testing.expectEqual(@as(usize, 0), try countOps(few, "f", .JUMP_TABLE));
+}
+
+test "when: a nullable subject without a null case lowers else once" {
+    const source = "func f(n: ?int) -> void when n 1 then end 2 then end else then echo(7) end end end func main() -> void end";
+    try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
+}
+
+test "when: cases free their registers, with compares or a jump table" {
+    try runLongWhen(1000, "[0, 299, -1]\n");
+    try runLongWhen(1, "[0, 299, 5]\n");
+}
+
+fn runLongWhen(step: usize, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(allocator, "func f(x: int) -> int\n    when x\n");
+    for (0..300) |i| try source.print(allocator, "        {d} then return {d} end\n", .{ i * step, i });
+    try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    echo([f(0), f({d}), f(5)])\nend\n", .{299 * step});
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdout_writer = &output.writer, .io = testing.io };
+    try dusk.compileAndRun(source.items);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "arrays print their items after growing, and a one-item array grows" {
+    try runCaseOutput("array-growth-printing.dsk", "[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[a, b, c]\n");
+}
+
+test "tail calls: return try f(x) reuses the frame when the success types match" {
+    try runCase("tail-calls-failing.dsk");
+    const same = "error E\n Bad\nend\nfunc f(n: int) -> E!int\n if n == 0 then return E.Bad end\n return try f(n - 1)\nend\nfunc main() -> void\nend";
+    const boxed = "error E\n Bad\nend\nfunc g(n: int) -> E!int\n return n\nend\nfunc f(n: int) -> E!?int\n return try g(n)\nend\nfunc main() -> void\nend";
+    try testing.expectEqual(@as(usize, 1), try countOps(same, "f", .TAIL_CALL));
+    try testing.expectEqual(@as(usize, 0), try countOps(boxed, "f", .TAIL_CALL));
+}
+
+test "catch: a null fallback makes the result nullable when a nullable is expected" {
+    try runCase("catch-nullable-fallback.dsk");
+    try runCaseError("sema/catch-null-without-nullable.dsk", error.InvalidType);
 }
 
 test "string interpolation GC" {
@@ -280,6 +347,16 @@ test "string slice" {
     try runCaseRuntimeError("str-slice-unhandled.dsk", error.UnhandledError);
 }
 
+test "equality: only same types (or numbers) compare, strings and unions can't" {
+    try runCase("equality-rules.dsk");
+    try runCaseError("sema/compare-different-structs.dsk", error.CantCompare);
+    try runCaseError("sema/compare-bool-int.dsk", error.CantCompare);
+    try runCaseError("sema/compare-int-string.dsk", error.CantCompare);
+    try runCaseError("sema/compare-strings.dsk", error.CantCompare);
+    try runCaseError("sema/compare-unions.dsk", error.CantCompare);
+    try runCaseError("sema/compare-not-nullable-with-null.dsk", error.CantCompare);
+}
+
 test "string literal pool" {
     try runCaseOutput("string-literal-pool.dsk", "hello\nfield text\nstatic text\n[kept, kept, kept]\n");
 }
@@ -298,6 +375,17 @@ test "more than 65536 distinct string literals are rejected" {
     _ = try dusk.compile(source.items);
     try source.print(arena.allocator(), "func g() -> void\necho(\"one more\")\nend\n", .{});
     try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
+}
+
+test "functions over 65535 instructions are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(arena.allocator(), "func main() -> void\nend\nfunc big(x: int) -> int\nlet mut y = x\n");
+    for (0..20000) |_| try source.appendSlice(arena.allocator(), "if y > 5 then y = y - 1 end\n");
+    try source.appendSlice(arena.allocator(), "return y\nend\n");
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    try testing.expectError(error.FunctionTooLong, dusk.compile(source.items));
 }
 
 test "invalid string escapes are rejected" {
@@ -326,8 +414,10 @@ test "byte errors" {
     try runCaseError("sema/byte-cast-string.dsk", error.InvalidType);
     try runCaseError("sema/byte-arithmetic-assign.dsk", error.InvalidType);
     try runCaseError("sema/byte-when-case-out-of-range.dsk", error.ByteOutOfRange);
-    try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.ByteOutOfRange);
-    try runCaseRuntimeError("byte-cast-negative.dsk", error.ByteOutOfRange);
+    try runCaseRuntimeError("byte-cast-out-of-range.dsk", error.UnhandledError);
+    try runCaseRuntimeError("byte-cast-negative.dsk", error.UnhandledError);
+    try runCase("to-byte-errors.dsk");
+    try runCase("to-int.dsk");
 }
 
 test "buffer" {
@@ -356,7 +446,8 @@ test "buffer errors" {
     try runCaseError("sema/buffer-mut-param-immutable-arg.dsk", error.NotMutable);
     try runCaseRuntimeError("buffer-index-out-of-bounds.dsk", error.IndexOutOfBounds);
     try runCaseRuntimeError("buffer-store-negative-index.dsk", error.IndexOutOfBounds);
-    try runCaseRuntimeError("buffer-negative-size.dsk", error.NegativeBufferSize);
+    try runCaseRuntimeError("buffer-negative-size.dsk", error.UnhandledError);
+    try runCase("buffer-negative-size-error.dsk");
 }
 
 test "invalid byte literals are rejected" {
@@ -562,6 +653,7 @@ test "nested structs" {
 
 test "simple pipe" {
     try runCase("simple-pipe.dsk");
+    try runCase("errors-try-pipe.dsk");
 }
 
 test "float ints" {
@@ -788,12 +880,8 @@ test "sema error: append field path immutable" {
     try runCaseError("sema/append-field-path-immutable.dsk", error.NotMutable);
 }
 
-test "sema error: temporary field assign" {
-    try runCaseError("sema/temporary-field-assign.dsk", error.TemporaryNotMutable);
-}
-
-test "sema error: temporary mut method call" {
-    try runCaseError("sema/temporary-mut-method-call.dsk", error.TemporaryNotMutable);
+test "temporary values can be changed and chained" {
+    try runCase("temporary-changes.dsk");
 }
 
 test "mutable paths" {
@@ -1030,6 +1118,9 @@ test "syntax error: union missing end" {
 
 test "syntax error: anonymous struct missing end" {
     try runCaseError("parser/anon-struct-missing-end.dsk", error.ParserError);
+    try runCaseError("parser/struct-field-missing-type.dsk", error.ParserError);
+    try runCaseError("parser/nested-struct-field-missing-type.dsk", error.ParserError);
+    try runCaseError("parser/struct-static-keyword.dsk", error.ParserError);
 }
 
 test "syntax error: fn args mixed named positional" {
@@ -1046,6 +1137,7 @@ test "syntax error: anonymous init missing paren" {
 
 test "syntax error: pipe non fn call" {
     try runCaseError("parser/pipe-non-fn-call.dsk", error.ParserError);
+    try runCaseError("parser/pipe-try-non-call.dsk", error.ParserError);
 }
 
 test "syntax error: unknown type annotation" {
@@ -1548,8 +1640,21 @@ test "copy" {
     try runCase("copy.dsk");
 }
 
-test "sharing rules" {
-    try runCase("sharing-rules.dsk");
+test "values from non-mut names can't go into mutable places" {
+    try runCase("read-only-sources.dsk");
+    try runCaseError("sema/read-only-into-let-mut.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-constructor.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-append.dsk", error.NotMutable);
+    try runCaseError("sema/read-only-into-mut-param.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-field.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-assignment.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-capture-into-array.dsk", error.NotMutable);
+}
+
+test "generics: mut params on a bare slot" {
+    try runCase("generics-mut-slot-param.dsk");
+    try runCaseError("sema/generic-store-without-mut.dsk", error.NotMutable);
+    try runCaseError("sema/read-only-into-generic-mut-param.dsk", error.NotMutable);
 }
 
 test "tail calls" {
@@ -1560,72 +1665,30 @@ test "assignment reads its own target" {
     try runCase("assign-reads-target.dsk");
 }
 
+test "division: '//' and '%' by zero are runtime errors" {
+    try runCase("division-edges.dsk");
+    try runCaseRuntimeError("int-division-by-zero.dsk", error.DivisionByZero);
+    try runCaseRuntimeError("int-modulo-by-zero.dsk", error.DivisionByZero);
+    try runCaseRuntimeError("float-floor-division-by-zero.dsk", error.DivisionByZero);
+    try runCaseRuntimeError("int-division-overflow.dsk", error.DivisionOverflow);
+}
+
+test "integer overflow and float to int out of range are runtime errors" {
+    try runCase("integer-limits.dsk");
+    try runCaseRuntimeError("int-add-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("int-sub-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("int-mult-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("int-negate-overflow.dsk", error.IntegerOverflow);
+    try runCaseRuntimeError("float-to-int-out-of-range.dsk", error.FloatOutOfIntRange);
+    try runCaseRuntimeError("float-to-int-nan.dsk", error.FloatOutOfIntRange);
+}
+
 test "runtime error: call depth exceeded" {
     try runCaseRuntimeError("call-depth-exceeded.dsk", error.CallDepthExceeded);
 }
 
-test "sema error: let from mut used again" {
-    try runCaseError("sema/let-from-mut-used-again.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut from let used again" {
-    try runCaseError("sema/mut-from-let-used-again.dsk", error.NeedsCopy);
-}
-
-test "sema error: let from mut path used again" {
-    try runCaseError("sema/let-from-mut-path-used-again.dsk", error.NeedsCopy);
-}
-
-test "sema error: let from shared mut" {
-    try runCaseError("sema/let-from-shared-mut.dsk", error.NeedsCopy);
-}
-
-test "sema error: move inside loop" {
-    try runCaseError("sema/move-inside-loop.dsk", error.NeedsCopy);
-}
-
-test "sema error: return param" {
-    try runCaseError("sema/return-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: return param field" {
-    try runCaseError("sema/return-param-field.dsk", error.NeedsCopy);
-}
-
-test "sema error: return shared with param" {
-    try runCaseError("sema/return-shared-with-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut param from immutable param" {
-    try runCaseError("sema/mut-param-from-immutable-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut param from other mut param" {
-    try runCaseError("sema/mut-param-from-other-mut-param.dsk", error.NeedsCopy);
-}
-
-test "sema error: mut from immutable capture" {
-    try runCaseError("sema/mut-from-immutable-capture.dsk", error.NeedsCopy);
-}
-
-test "sema error: changed while read for" {
-    try runCaseError("sema/changed-while-read-for.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read if" {
-    try runCaseError("sema/changed-while-read-if.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read when" {
-    try runCaseError("sema/changed-while-read-when.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read mut arg" {
-    try runCaseError("sema/changed-while-read-mut-arg.dsk", error.ChangedWhileRead);
-}
-
-test "sema error: changed while read mut capture" {
-    try runCaseError("sema/changed-while-read-mut-capture.dsk", error.ChangedWhileRead);
+test "runtime error: a failed assert" {
+    try runCaseRuntimeError("assert-failed.dsk", error.AssertionFailed);
 }
 
 test "min" {
@@ -1798,6 +1861,11 @@ test "when-range-runtime-bound" {
 
 test "when-range-expression-bound" {
     try runCaseError("sema/when-range-expression-bound.dsk", error.WhenInvalidCase);
+}
+
+test "when: int cases can be constants, static fields and operators on them" {
+    try runCase("when-constant-cases.dsk");
+    try runCaseError("sema/when-case-overflow.dsk", error.WhenInvalidCase);
 }
 
 test "when-range-float-on-int" {
@@ -1976,11 +2044,123 @@ test "sema error: float cast of a string" {
     try runCaseError("sema/float-cast-string.dsk", error.InvalidType);
 }
 
+test "sema error: float cast of a slot that allows a string" {
+    try runCaseError("sema/float-cast-slot-string.dsk", error.InvalidType);
+}
+
 test "extern: only the prelude can declare extern functions" {
     try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsidePrelude);
     try runCaseError("sema/builtin-redefined.dsk", error.AlreadyDefined);
     try runCaseError("parser/extern-missing-return-type.dsk", error.ParserError);
     try runCaseError("parser/extern-missing-func.dsk", error.ParserError);
+}
+
+test "generics: generic functions are checked where they are written" {
+    try runCase("generics-definitions.dsk");
+    try runCaseError("parser/generic-empty-slots.dsk", error.ParserError);
+    try runCaseError("parser/generic-slot-trailing-comma.dsk", error.ParserError);
+    try runCaseError("parser/generic-slot-missing-comma.dsk", error.ParserError);
+    try runCaseError("sema/generic-slot-arithmetic.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
+    try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
+    try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
+    try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
+    try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
+}
+
+test "generics: calls fill the slots from the arguments and compile one copy per type" {
+    try runCase("generics-calls.dsk");
+    try runCaseError("sema/generic-conflicting-slots.dsk", error.InvalidType);
+    try runCaseError("sema/generic-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-cant-infer-empty-array.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-copy-too-deep.dsk", error.GenericCopyTooDeep);
+    try runCaseError("sema/generic-void-argument.dsk", error.InvalidSlotType);
+}
+
+test "generics: slots the arguments don't fill come from the expected type" {
+    try runCase("generics-expected-type.dsk");
+    try runCaseError("sema/generic-expected-type-mismatch.dsk", error.InvalidType);
+}
+
+test "generics: generic structs and unions" {
+    try runCase("generics-types.dsk");
+    try runCaseError("parser/generic-enum.dsk", error.ParserError);
+    try runCaseError("sema/generic-type-too-many-args.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-type-missing-args.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-args-on-plain-struct.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-union-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-struct-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-type-void-arg.dsk", error.InvalidSlotType);
+    try runCaseError("sema/generic-struct-method-arithmetic.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-type-duplicate-slot.dsk", error.AlreadyDefined);
+}
+
+test "generics: append and copy are generic prelude functions" {
+    try runCase("generics-prelude.dsk");
+    try runCaseError("sema/append-wrong-item-type.dsk", error.InvalidType);
+    try runCaseError("sema/append-int-into-strings.dsk", error.InvalidType);
+    try runCaseError("sema/generic-conflicting-slots-in-one-argument.dsk", error.ConflictingSlotTypes);
+    try runCaseError("sema/len-empty-literal.dsk", error.CantInferSlot);
+    try runCaseError("sema/len-not-array.dsk", error.InvalidType);
+}
+
+test "generics: type lists constrain a slot to primitives" {
+    try runCase("generics-type-lists.dsk");
+    try runCaseError("parser/generic-list-trailing-bar.dsk", error.ParserError);
+    try runCaseError("parser/trait-missing-eq.dsk", error.ParserError);
+    try runCaseError("sema/generic-list-doesnt-fit.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-list-annotation-doesnt-fit.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-list-slot-doesnt-fit.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-list-string-equality.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-list-operator-member.dsk", error.SlotOperatorNotAllowed);
+    try runCaseError("sema/generic-list-result-differs.dsk", error.SlotResultDiffers);
+    try runCaseError("sema/generic-list-literal-doesnt-fit.dsk", error.InvalidType);
+    try runCaseError("sema/generic-list-not-primitive.dsk", error.TypeListNotPrimitive);
+    try runCaseError("sema/generic-list-nullable-member.dsk", error.TypeListNotPrimitive);
+    try runCaseError("sema/trait-list-cycle.dsk", error.TraitRefersToItself);
+    try runCaseError("sema/trait-used-as-type.dsk", error.TraitUsedAsType);
+    try runCaseError("sema/trait-used-as-value.dsk", error.TraitUsedAsType);
+    try runCaseError("sema/trait-inside-function.dsk", error.DeclarationInsideFunction);
+}
+
+test "generics: traits constrain a slot to types with methods" {
+    try runCase("generics-traits.dsk");
+    try runCaseError("parser/trait-method-with-body.dsk", error.ParserError);
+    try runCaseError("parser/trait-method-slots.dsk", error.ParserError);
+    try runCaseError("sema/trait-missing-method.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-wrong-signature.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-mut-self-mismatch.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-field-doesnt-fit.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-unconstrained-slot-doesnt-fit.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/trait-mut-method-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/trait-slot-no-method.dsk", error.SlotHasNoMethod);
+    try runCaseError("sema/trait-with-type-list.dsk", error.TypeListWithTrait);
+    try runCaseError("sema/trait-in-type-list.dsk", error.TypeListWithTrait);
+    try runCaseError("sema/trait-clashing-methods.dsk", error.ClashingTraitMethods);
+    try runCaseError("sema/trait-parent-cycle.dsk", error.TraitRefersToItself);
+    try runCaseError("sema/trait-method-needs-self.dsk", error.TraitMethodNeedsSelf);
+    try runCaseError("sema/trait-method-inferred-errors.dsk", error.TraitMethodNeedsErrorSet);
+    try runCaseError("sema/trait-parent-not-trait.dsk", error.NotATrait);
+    try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
+}
+
+test "builtins: pop is a prelude function over an internal builtin" {
+    try runCase("array-pop.dsk");
+    try runCaseError("sema/internal-builtin.dsk", error.InternalBuiltin);
+}
+
+test "builtins: insert, remove and clear change arrays in place" {
+    try runCase("array-insert-remove.dsk");
+}
+
+test "builtins: reverse, slice, index_of and contains" {
+    try runCase("array-search-reverse-slice.dsk");
+    try runCaseError("sema/contains-struct.dsk", error.TypeDoesntFitSlot);
+}
+
+test "sema error: unknown return type is reported, not a crash" {
+    try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }
 
 test "prelude: every extern has a binding and every binding has an extern" {
@@ -1991,8 +2171,7 @@ test "prelude: every extern has a binding and every binding has an extern" {
     const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
     var extern_count: usize = 0;
     for (prelude.statements.items) |stmt| {
-        if (stmt.data != .func) continue;
-        try testing.expect(stmt.data.func.is_extern);
+        if (stmt.data != .func or !stmt.data.func.is_extern) continue;
         try testing.expect(bindings.has(stmt.data.func.identifier));
         extern_count += 1;
     }
@@ -2010,6 +2189,8 @@ test "prelude: builtin error ids match the natives constants" {
     try testing.expectEqualStrings("StringError.OutOfRange", program.error_names[natives.string_out_of_range_id]);
     try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
     try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
+    try testing.expectEqualStrings("ArrayError.Empty", program.error_names[natives.array_empty_id]);
+    try testing.expectEqualStrings("ArrayError.OutOfRange", program.error_names[natives.array_out_of_range_id]);
 }
 
 test "array index out of bounds is a runtime error" {

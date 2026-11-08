@@ -1,0 +1,7 @@
+func main() -> void
+    let failed = new_buffer(-3) catch e then
+        assert(e == BufferError.NegativeSize)
+        return
+    end
+    assert(false)
+end

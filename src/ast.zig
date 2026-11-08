@@ -17,6 +17,7 @@ pub const Statement = union(enum) {
     @"enum": EnumStmt,
     @"union": UnionStmt,
     error_set: ErrorSetStmt,
+    trait: TraitStmt,
     @"for": ForStmt,
     for_capture: ForCaptureStmt,
     assign: AssignStmt,
@@ -30,11 +31,19 @@ pub const FuncStmt = struct {
     identifier: []const u8,
     def: FnDef,
     is_extern: bool = false,
+    slots: []const Slot = &.{},
+};
+
+pub const Slot = struct {
+    identifier: []const u8,
+    constraint: []const []const *TypeAnnotation = &.{},
+    loc: err.Loc,
 };
 
 pub const StructStmt = struct {
     identifier: []const u8,
     def: Struct,
+    slots: []const Slot = &.{},
 };
 
 pub const EnumStmt = struct {
@@ -45,11 +54,19 @@ pub const EnumStmt = struct {
 pub const UnionStmt = struct {
     identifier: []const u8,
     def: UnionDef,
+    slots: []const Slot = &.{},
 };
 
 pub const ErrorSetStmt = struct {
     identifier: []const u8,
     variants: []const ErrorVariant,
+};
+
+pub const TraitStmt = struct {
+    identifier: []const u8,
+    type_list: []const *TypeAnnotation = &.{},
+    parents: []const *TypeAnnotation = &.{},
+    methods: []const StatementNode = &.{},
 };
 
 pub const ErrorVariant = struct {
@@ -124,6 +141,8 @@ pub const TypeAnnotation = struct {
     },
 
     is_nullable: bool,
+    args: []const *TypeAnnotation = &.{},
+    loc: err.Loc = .{ .start = 0, .end = 0 },
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
         const ptr = try allocator.create(Self);
@@ -172,9 +191,7 @@ pub const Exp = union(enum) {
     float_literal: f64,
     int_literal: i64,
     byte_literal: u8,
-    byte_cast: *ExpNode,
-    float_cast: *ExpNode,
-    buffer_new: *ExpNode,
+
     string_literal: []const u8,
     string_interpolation: []const *ExpNode,
     bool_literal: bool,

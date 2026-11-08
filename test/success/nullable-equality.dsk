@@ -80,7 +80,7 @@ func main() -> void
         let boxed: ?int = i
         let copy: ?int = i
         if boxed == copy and boxed == i and boxed != i + 1 then
-            matches += 1
+            matches = matches + 1
         end
     end
     assert(matches == 2000)

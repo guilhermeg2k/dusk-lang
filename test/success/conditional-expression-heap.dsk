@@ -20,9 +20,9 @@ func main() -> void
         end
 
         let pressure = [[index], [index + 1], [index + 2]]
-        total += values[0]
+        total = total + values[0]
         assert(len(pressure) == 3)
-        index += 1
+        index = index + 1
     end
 
     assert(total == 2251500)

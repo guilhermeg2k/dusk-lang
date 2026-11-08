@@ -115,12 +115,12 @@ func main() -> void
     for i < 200000 do
         let junk = ["garbage garbage garbage", "more garbage here"]
         if full.address?.country?.id: id then
-            total += id
+            total = total + id
         end
         if no_country.address?.country?.id: id then
-            total += id
+            total = total + id
         end
-        i += 1
+        i = i + 1
     end
     assert(total == 1000000)
 end

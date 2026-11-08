@@ -1,0 +1,23 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+struct Holder[T: Shape]
+    item: T
+end
+
+struct Scene
+    holder: Holder[Plain]
+end
+
+struct Plain
+    x: int
+end
+
+func main() -> void
+end

@@ -1,0 +1,5 @@
+func trailing[T,]() -> void
+end
+
+func main() -> void
+end

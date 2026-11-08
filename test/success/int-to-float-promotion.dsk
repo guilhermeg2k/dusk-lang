@@ -82,7 +82,7 @@ func main() -> !void
         let maybe: ?int = i
         let boxed: ?float = maybe
         let items: []float = [i, 1.5]
-        if boxed: value then total += value + items[0] end
+        if boxed: value then total = total + (value + items[0]) end
     end
     assert(total == 400020000.0)
 end

@@ -8,8 +8,8 @@ func main() -> void
     let mut count = 0
     for str_split(csv, "\n"): row do
         let fields = str_split(row, ",")
-        total += (str_to_int(fields[0]) catch 0) + (str_to_int(fields[1]) catch 0)
-        count += 1
+        total = total + ((str_to_int(fields[0]) catch 0) + (str_to_int(fields[1]) catch 0))
+        count = count + 1
     end
     echo(total + count)
 end

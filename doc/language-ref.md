@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.13 - Garou**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.14 - Simon**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -16,10 +16,11 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 8. [Operators](#8-operators)
 9. [Control Flow](#9-control-flow)
 10. [Functions](#10-functions)
-11. [Error Handling](#11-error-handling)
-12. [Built-in Functions](#12-built-in-functions)
-13. [Errors](#13-errors)
-14. [Known Limitations](#14-known-limitations)
+11. [Generics and Traits](#11-generics-and-traits)
+12. [Error Handling](#12-error-handling)
+13. [Built-in Functions](#13-built-in-functions)
+14. [Errors](#14-errors)
+15. [Known Limitations](#15-known-limitations)
 
 ## 1. Basics
 
@@ -57,7 +58,7 @@ let total = 1 #= explanation =# + 2
 
 **Hoisting**: functions, structs, enums, unions, error sets and [constants](#constants) can be used before they're defined. Other variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `trait`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -78,7 +79,7 @@ let mut y = 10
 y = 20
 ```
 
-A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and `for`, `if` and `when` captures. A temporary value, such as a function result, can't be changed: store it in a `let mut` variable first.
+A variable's mutability also covers everything reached through it: struct fields (at any depth), array items and buffer bytes. Changing any of them, directly, with `append` or by calling a `mut self` method, needs the variable to be `let mut`. The same goes for parameters (`self: @` included) and `for`, `if` and `when` captures. A value that isn't stored in a variable, such as a function result or a new struct, can be changed directly, so `mut self` methods chain: `b.add(1).add(2)` when `add` returns `self`.
 
 ```nim
 let p = Point(x = 1, y = 2)
@@ -88,75 +89,34 @@ let mut q = Point(x = 1, y = 2)
 q.x = 5
 ```
 
-A `let` value is never changed by anything: see [Sharing values](#sharing-values) for how the compiler keeps mutable variables from reaching it.
+`let` only stops changes made through that name: another variable that shares the value can still change it (see [Sharing values](#sharing-values)).
 
 ### Sharing values
 
-Arrays, buffers, structs and unions (and their nullables) are shared when assigned: `let mut b = a` makes `b` and `a` the same array. Mutable values can share freely, like in Python. Values that can't change (`let` variables, parameters without `mut`, captures without `mut`) can share with each other too. What the compiler doesn't allow is a mutable variable and an immutable one sharing a value, since a change through one would show through the other:
+Arrays, buffers, structs and unions (and their nullables) are shared when assigned or passed: `let b = a` makes `b` and `a` the same array, so a change through one shows through the other. This also holds between a `let mut` variable and a `let` one. Use `copy(x)` for an independent value:
 
 ```nim
-let mut list = [1, 2]
-let frozen = list          # error: 'list' is mutable, so a let can't share it ('list' is used again below)
-append(list, 3)
-
 let mut items = [1, 2]
-let snapshot = copy(items) # fine: copy(x) returns a deep copy
+let view = items
+let snapshot = copy(items)
 append(items, 3)
+echo(view)       # [1, 2, 3]
+echo(snapshot)   # [1, 2]
 ```
 
-This applies to every place a value is stored: `let`, assignment, `append`, constructor arguments, array items, and values coming out of `if`, `when`, `orelse` and `catch`. Strings and primitives are always safe to share.
+Strings and primitives can't be changed in place, so sharing them never shows.
 
-**Moves.** A local variable that doesn't share its value with anything else and isn't used again moves for free, so building a value and then keeping it as a `let` needs no copy:
+A value read through a name that can't change it (a `let` variable, a parameter or capture without `mut`, `self` in a method without `mut self`, or a field or item reached through one of them) can't go into a mutable place: a `let mut` variable, an assignment to one or to its fields and items, or a `mut` argument (`append` and `insert` take the stored item as `mut`). Constructors, array literals and `if`, `when`, `orelse` and `catch` results count as the values they hold. Otherwise the value could change without any `mut` on its own name:
 
 ```nim
-let mut squares: []int = []
-for 0..9: i do append(squares, i * i) end
-let result = squares       # fine: 'squares' isn't used again, so its value moves
-
-let template = [0, 0, 0]
-let mut board = template   # fine the other way too
+let frozen = [1, 2]
+let mut z = frozen                      # error: 'frozen' can't change, so it can't go into a mutable value
+let mut x = Obj(items = frozen)         # error, same reason
+let view = Obj(items = frozen)          # fine: nothing changes through 'view'
+let mut owned = Obj(items = copy(frozen))   # fine
 ```
 
-The value needs `copy` when the variable is used again later, when it may share data with another variable, or when the move is inside a loop and the variable is declared outside it. Fields and items of a local can move under the same conditions (`let first = rows[0]` when `rows` isn't used again). The error names the reason.
-
-**Functions.** A function can only return values that don't share data with its parameters, and can only store into a `mut` parameter values that don't come from its other parameters. New values, locals built inside the function and copies are fine:
-
-```nim
-func build(n: int) -> [][]int
-    let mut out: [][]int = []
-    for 0..n: i do append(out, [i]) end
-    return out                  # fine: built here
-end
-
-func first(rows: [][]int) -> []int
-    return rows[0]              # error: 'rows[0]' belongs to the caller: return copy(rows[0])
-end
-
-struct Bag
-    items: [][]int
-
-    func add(mut self: @, item: []int) -> void
-        append(self.items, copy(item))   # 'item' belongs to the caller, so it's copied
-    end
-end
-```
-
-A `mut` parameter can share data with the function's own locals, so a method can link the same new value in two places (a list's `tail` and the previous node's `next`).
-
-**Captures.** A capture without `mut` reads its value. While it's in use (inside its block), the variable it came from can't change: assignments, `append`, passing it as a `mut` argument, `mut self` calls and `mut` captures of it are errors. Use a `mut` capture to change things inside the block, or change them after it:
-
-```nim
-let mut players = [Player(hp = 10)]
-for players: p do
-    echo(p.hp)                 # fine: reading
-    players[0].hp = 0          # error: 'players' can't change while capture 'p' reads from it
-end
-for players: mut p do
-    p.hp = 0                   # fine
-end
-```
-
-Changes made through a different mutable variable that shares the same value aren't caught by this check.
+New values (literals, constructors of new values, call results and `copy(x)`) can go anywhere. The other way around is fine too: a `let` can share a `let mut` value, and sees its changes.
 
 ### Constants
 
@@ -185,13 +145,13 @@ Any other value (a `let mut`, an array, a struct, a value computed by a call) is
 | `byte`   | Unsigned 8-bit value (`0` to `255`)           | `'a'`, `'\n'`, `65` |
 | `float`  | 64-bit floating-point number                  | `3.14`, `-0.5`      |
 | `string` | Text in double quotes                         | `"Hello"`           |
-| `buffer` | Fixed-size block of mutable bytes             | `buffer(16)`        |
+| `buffer` | Fixed-size block of mutable bytes             | `new_buffer(16)`        |
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
-Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `float(x)` converts an `int` or `byte` explicitly (`echo(float(count))`).
+Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `to_float(x)` converts an `int` or `byte` explicitly (`echo(to_float(count))`).
 
-A `float` never converts to `int` (use `//`), a `byte` only converts to `float` with `float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
+A `float` never converts to `int` automatically (use `to_int(x)`, which truncates and can fail), a `byte` only converts to `float` with `to_float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
 
 Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing closing quotes are compile errors. The runtime stores the UTF-8 bytes with an explicit byte length, so embedded NUL characters are preserved.
 
@@ -237,7 +197,7 @@ A `byte` holds one value from `0` to `255`. A byte literal is one ASCII characte
 let comma = ','
 let a: byte = 65           # an int constant that fits converts to byte
 let n = 200
-let b = byte(n)            # converting an int variable is checked at run time
+let b = to_byte(n) catch 0 # fails with ConversionError.Overflow outside 0..255
 let digit = '7' - '0'      # arithmetic on bytes gives an int: 7
 let code: int = comma      # a byte converts to int automatically
 
@@ -248,17 +208,17 @@ when comma
 end
 ```
 
-- An int constant outside `0..255` (`let b: byte = 300`, `byte(-1)`) is a compile error. `byte(x)` with an int variable outside that range stops the program with a runtime error.
-- An int variable never converts to `byte` implicitly: use `byte(x)`. So `b += 1` on a `byte` variable is an error, because `b + 1` is an `int`.
+- An int constant outside `0..255` (`let b: byte = 300`) is a compile error. `to_byte(x)` returns `ConversionError!byte` and fails with `ConversionError.Overflow` outside that range, so it needs `try` or `catch`.
+- An int variable never converts to `byte` implicitly: use `to_byte(x)`. So `b = b + 1` on a `byte` variable is an error, because `b + 1` is an `int`.
 - Bytes work as `when` subjects with literal and range cases (an `else` is required), as array indexes and as range-loop bounds.
 - `?byte` works like `?int`. A `[]byte` is a regular array, using as much memory per item as `[]int`.
 
 ### Buffers
 
-A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `buffer(n)` creates one with `n` zero bytes; its size never changes.
+A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `new_buffer(n)` creates one with `n` zero bytes (`n` can be `0`); its size never changes. It returns `BufferError!buffer`, failing with `BufferError.NegativeSize` for a negative `n`, so the call needs `try` or `catch`.
 
 ```nim
-let mut data = buffer(4)
+let mut data = try new_buffer(4)  # in a function that can fail (-> !T)
 data[0] = 'h'                     # writes take a byte
 data[1] = 105
 let first = data[0]               # reads give a byte
@@ -273,10 +233,10 @@ let bytes = buffer_from("olá")    # [111, 108, 195, 161]
 let text = string_from(bytes) catch "not UTF-8"
 ```
 
-- The type is written `buffer`: `let mut data: buffer = buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
-- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer, or a negative size in `buffer(n)`, stops the program with a runtime error.
+- The type is written `buffer`: `let mut data: buffer = try new_buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
+- Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer stops the program with a runtime error.
 - `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
-- `==` on buffers compares identity, like strings today.
+- `==` on buffers compares identity: a buffer is only equal to itself.
 
 ### Multiline strings
 
@@ -563,7 +523,7 @@ end
 echo(Shape(square = 3).area())
 ```
 
-- `==` on unions compares identity, not contents.
+- `==` and `!=` can't compare unions: check the variant with `when` or `if u.variant: value then ... end`.
 - `echo` on a union prints `<union>`.
 
 ## 7. Nullables
@@ -580,7 +540,7 @@ count = null
 
 A nullable can't be used directly as its inner type. Unwrap it first.
 
-`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?string`, `?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`.
+`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`. `?string` can only be compared with `null`.
 
 ### Capture
 
@@ -675,17 +635,21 @@ Use parentheses to change the order.
 
 An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitives) for the other places an `int` becomes a `float`).
 
+`%` takes the sign of the right side (`7 % -2` is `-1`, `-7 % 2` is `1`), while `//` truncates toward zero (`-7 // 2` is `-3`). `//` turns `float` sides into `int`s first. An `int` `//` or `%` by `0` stops the program with a runtime error. So does any `int` result that doesn't fit in 64 bits (`9223372036854775807 + 1`, the smallest `int` `// -1` or negated), and a `float` side of `//` that's `nan`, infinite or outside the `int` range. `/` by `0` follows floating point: `1 / 0` is `inf`, and `%` with `float` sides gives `nan` for a `0` right side.
+
 ### Comparison and logic
 
-`==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool` and enums. `and`, `or` and `!` work on `bool`.
+`==`, `!=`, `<`, `<=`, `>`, `>=` compare numbers. `==` and `!=` also work on `bool`, enums and errors. `and`, `or` and `!` work on `bool`.
 
-On arrays, structs, unions and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet.
+`==` and `!=` only compare values of the same type: `true == 1`, `1 == "a"` and a `Point` with a `Size` are compile errors, since they could never be equal. Numbers are the exception: an `int`, `float` or `byte` compares with any other number (`1 == 1.0`). A nullable compares with `null` or with its inner type, and `x == null` is an error when `x` can't be null.
 
-`==` on strings compares identity, not text. Literals with the same text are the same string, so `"dusk" == "dusk"` is `true`, but a string built at run time (for example with interpolation) is never equal to a literal. Use `str_equal(a, b)` to compare text.
+On arrays, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions can't be compared with `==`.
+
+`==` and `!=` can't compare strings: use `str_equal(a, b)` to compare their text.
 
 ### Assignment
 
-`=` assigns, and `+=` and `-=` add or subtract in place. There are no other compound operators (`*=`, `/=`).
+`=` assigns. There are no compound assignment operators: write `x = x + 1`, not `x += 1`.
 
 ## 9. Control Flow
 
@@ -760,12 +724,12 @@ Rules:
 
 - Enum and union cases must cover every variant, and `null` for a nullable subject, unless there's an `else`. An `else` that can never run is an error.
 - `int`, `byte`, `float` and `string` subjects always need an `else`, even if ranges appear to cover every value.
-- Int cases can be literals (`1`, `-1`) or inclusive ranges (`1..5`). A case can combine them (`1..5, 8, 10..12 then ... end`). Range bounds must be int literals.
+- Int cases can be values known at compile time or inclusive ranges of them (`1..5`): literals (`1`, `-1`), [constants](#constants), static fields (`Grid.SIZE`) and `+`, `-`, `*`, `//`, `%` on them (`LOW + 1`, `-Grid.SIZE`). A case can combine them (`1..5, 8, LOW..HIGH then ... end`). Variables and calls aren't allowed, and a case value that overflows or divides by zero is a compile error.
 - Float cases must be inclusive ranges (`0.0..1.0`), not individual values. Bounds must be finite numeric literals; int bounds are promoted to float. NaN and infinities reach `else`.
 - A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).
 - A value or variant can only appear in one case.
-- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `str_equal`, not by reference like `==`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
+- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `str_equal`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
 
 Range matching uses the same rules in statements and expressions:
@@ -835,7 +799,7 @@ Rules:
 let mut i = 0
 for i < 5 do
     echo(i)
-    i += 1
+    i = i + 1
 end
 ```
 
@@ -875,7 +839,7 @@ Iteration advances by one. Equal endpoints produce one item; a start greater tha
 ```nim
 let mut n = 0
 for true do
-    n += 1
+    n = n + 1
     if n % 2 == 0 then
         continue
     end
@@ -947,6 +911,22 @@ echo(scale(factor = 5, x = 1))   # 5
 
 Parameters are immutable. Arrays, buffers, structs and unions can be taken as `mut` to change the caller's value through them: items, fields, `append`, and union payloads through `mut` captures. The argument must then be mutable: a `let mut` variable or a field or item of one (`grow(config.items)`), or a new value such as `[1, 2]`. Primitive, string and enum parameters can't be `mut`.
 
+A generic `T` parameter can be `mut` too (`mut item: T`). The argument then has to be mutable only when `T` is filled with an array, buffer, struct or union; an `int`, string or enum goes through as is. A function that stores a `T` argument somewhere mutable, like `append`, needs it as `mut`, since the stored value could be changed through that place later:
+
+```nim
+func push[T](mut list: []T, mut item: T) -> void
+    append(list, item)
+end
+
+let n = 3
+let frozen = [1, 2]
+let mut numbers: []int = []
+let mut lists: [][]int = []
+push(numbers, n)        # fine: an int can't be changed
+push(lists, frozen)     # error: 'frozen' is not mutable
+push(lists, [1, 2])     # fine: a new value
+```
+
 A `mut` parameter can't be reassigned (`list = []` is an error): the new value would only change the local name, not the caller's variable. To replace a value, return the new one and assign it at the call site, or change it through a `mut self` method on a struct that holds it.
 
 ```nim
@@ -973,6 +953,16 @@ let result = 2
 assert(result == false)
 ```
 
+The right side can also be a `try` call: `x |> try f()` calls `f(x)` and passes its error up, so a chain of failing steps reads left to right:
+
+```nim
+func run(text: string) -> ParseError!int
+    return try parse(text) |> try half() |> add(1)
+end
+```
+
+`try` binds tighter than `|>`, so `try x |> f()` means `(try x) |> f()`. To `try` the result of a whole pipe, write `x |> try f()` or `try (x |> f())`.
+
 ### Scope
 
 A function can see its parameters, its own variables, other functions and types, static fields and top-level [constants](#constants). It can't see the variables of other functions, including `main`: state a function reads or changes must be passed to it, with `mut` to change it. Default values (field and parameter defaults) can only use constants.
@@ -985,7 +975,7 @@ struct Stats
 end
 
 func bump(mut stats: Stats) -> void
-    if stats.count < LIMIT then stats.count += 1 end
+    if stats.count < LIMIT then stats.count = stats.count + 1 end
 end
 
 func main() -> void
@@ -997,7 +987,161 @@ end
 
 Functions can be called before they are declared.
 
-## 11. Error Handling
+## 11. Generics and Traits
+
+A **type slot** is a placeholder for a type, written in brackets after a function, struct or union name. Each use fills the slots with real types, and the compiler makes one copy of the declaration per set of types.
+
+```nim
+func first[T](xs: []T) -> T
+    return xs[0]
+end
+
+echo(first([1, 2]))         # first[int]
+echo(first(["a", "b"]))     # first[string]
+```
+
+### Filling slots
+
+A call fills its slots from the arguments. The first argument that mentions a slot fills it, and the others must convert to that type: `both(2.5, 1)` makes `T` a `float`, while `both(1, 2.5)` is an error at `2.5`.
+
+Slots the arguments leave open come from the type the result is expected to have: a variable's annotation, a return type, a parameter or a field.
+
+```nim
+func empty[T]() -> []T
+    return []
+end
+
+let xs: []int = empty()     # empty[int]
+```
+
+A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There's no way to write the types in a call, like `empty[int]()`. A generic function can only be called, not used as a value.
+
+### Generic structs and unions
+
+Structs and unions take slots too. In types they're written with their arguments, `Stack[int]`. When building one, the slots come from the field or variant values, or from the expected type.
+
+```nim
+struct Stack[T]
+    items: []T
+
+    func push(mut self: @, mut item: T) -> void
+        append(self.items, item)
+    end
+end
+
+union Result[T, E]
+    ok: T
+    err: E
+end
+
+let mut numbers = Stack(items = [1, 2])          # Stack[int]
+numbers.push(3)
+let mut names: Stack[string] = @(items = [])
+let parsed: Result[int, string] = @(ok = 42)
+```
+
+Each filled type is its own type: a `Stack[int]` isn't a `Stack[float]`. Recursive types work (`next: ?Node[T]`), and static fields are shared by every copy (`Stack.MAX`).
+
+### Checked where written
+
+A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `echo`, `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value; it can be `mut` (see [Mutable parameters](#mutable-parameters)).
+
+Each copy is checked again with its real types. An error there names the copy and the call that made it:
+
+```
+error: in first[[]int] (created at line 7): ...
+```
+
+### Type lists
+
+A slot can be limited to some primitives with `|`. Members are `int`, `float`, `byte`, `string` and `bool`. A `trait` with `=` names a list, and lists can include other named lists.
+
+```nim
+trait Number = int | float
+trait Scalar = Number | string | bool
+
+func sum[T: Number](xs: []T) -> T
+    let mut total: T = 0
+    for xs: x do
+        total = total + x
+    end
+    return total
+end
+
+echo(sum([1, 2, 3]))        # 6
+echo(sum([0.5, 1.5]))       # 2
+sum(["a"])                  # error: 'string' doesn't fit T: Number
+```
+
+Each operator on `T` is checked for every member with the usual rules. It's allowed when every member supports it, and its type is:
+
+- the type every member gives, if they all give the same one: `x / 2` is a `float`, `a < b` a `bool`
+- otherwise `T`, when each member gives itself back: `a + b` on `int | float`
+- otherwise an error: on `byte | float`, `a + b` gives `int` for `byte` and `float` for `float`
+
+A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` need a list without `string`, since strings can't be compared with `==` (use `str_equal`). `x == null` works on any `?T`.
+
+### Traits
+
+A trait lists methods a type must have. Its methods are signatures without a body, take `self: @` or `mut self: @` first, and `@` stands for the type that fits the trait. `[T: Shape]` lets the generic code call them.
+
+```nim
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+struct Circle
+    r: float
+
+    func area(self: @) -> float
+        return 3.14 * self.r * self.r
+    end
+
+    func scale(mut self: @, by: float) -> void
+        self.r = self.r * by
+    end
+end
+
+func total_area[T: Shape](shapes: []T) -> float
+    let mut total = 0.0
+    for shapes: s do
+        total = total + s.area()
+    end
+    return total
+end
+
+func grow[T: Shape](mut shape: T) -> void
+    shape.scale(2.0)
+end
+```
+
+A struct, enum or union fits a trait when it has each of its methods with the same parameter types and return type (parameter names don't matter). A plain `self` method can stand in for a `mut self` one, not the other way around. There's no `implements` declaration: the check happens where a type fills the slot, in a call, a field or an annotation.
+
+```
+error: 'Plain' doesn't fit T: Shape: it has no method 'area'
+error: 'Wrong' doesn't fit T: Shape: its 'area' is (self: Wrong) -> int, the trait wants (self: Wrong) -> float
+```
+
+`+` combines traits, when declaring one or in a constraint. A trait that only combines others has an empty body.
+
+```nim
+trait Named
+    func name(self: @) -> string
+end
+
+trait Item: Shape + Named end
+
+func describe[T: Shape + Named](x: T) -> string
+    return "${x.name()}: ${x.area()}"
+end
+```
+
+Two traits can share a method if its signature is the same; different signatures are an error. A trait method that can fail names its error set (`func parse(self: @) -> ParseError!int`), and calls to it on `T` use `try` and `catch` as usual. A type list can't be combined with a trait (`Number + Shape`), since primitives have no methods.
+
+Traits only exist at compile time: a trait isn't a type, so `let s: Shape = ...` is an error. To keep different types in one array, use a [union](#6-unions).
+
+## 12. Error Handling
 
 A function that can fail says so in its return type. Errors are values: the caller has to handle them, and nothing is thrown or unwound.
 
@@ -1065,6 +1209,16 @@ let n = parse_digit(-1) catch 0
 let m = parse_digit(-1) catch parse_digit(2) catch 0
 ```
 
+When the result goes where a nullable is expected (a typed `let`, an assignment, an argument or a `return`), the fallback can be `null`: the success value becomes a `?T` too.
+
+```nim
+let digit: ?int = parse_digit(-1) catch null
+
+func first_or_null[T](mut items: []T) -> ?T
+    return pop(items) catch null
+end
+```
+
 `call catch e then ... end` runs a block with the error bound to `e`. When the result is used (`let`, assignment, argument, `return`), the block must leave with `return`, `break` or `continue`. Used as a statement, or for an `E!void` call, it can just end.
 
 ```nim
@@ -1111,9 +1265,20 @@ end
 
 ### Runtime errors
 
-Errors are for failures the program expects. A failed `assert`, an index out of bounds, a negative `buffer(n)` size, a `byte(x)` outside `0..255` or more than 100,000 nested calls still stops the program and can't be caught.
+Errors are for failures the program expects. A failed `assert`, an index out of bounds, an integer `//` or `%` by `0`, an `int` result that doesn't fit in 64 bits, a `float` side of `//` outside the `int` range or more than 100,000 nested calls still stops the program and can't be caught.
 
-## 12. Built-in Functions
+The message names the function that was running, and the builtin when the failure happened inside one:
+
+```
+error: index 5 is out of bounds for array of length 2
+  in function 'pick'
+error: out of memory
+  in builtin 'str_repeat', called from function 'grow'
+```
+
+There are no line numbers yet.
+
+## 13. Built-in Functions
 
 `T` means any type.
 
@@ -1123,8 +1288,12 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 | `assert`      | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
 | `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
 | `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
+| `new_buffer`  | `new_buffer(size: int) -> BufferError!buffer`     | Returns a new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size. |
+| `to_byte`     | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
+| `to_float`    | `to_float(value: int \| byte \| float) -> float` | Converts an `int`, `byte` or `float` to `float`. Also takes a `T` whose type list only has `int`, `byte` and `float` (`[T: int \| float]`). |
+| `to_int`      | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
-| `append`      | `append(list: []T, item: T) -> void`              | Adds an item to the end of a mutable array.                                          |
+| `append`      | `append(mut list: []T, mut item: T) -> void`      | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
@@ -1132,6 +1301,32 @@ Errors are for failures the program expects. A failed `assert`, an index out of 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, and structs as raw values.
 
 `copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
+
+### Array functions
+
+Functions that change an array take it as `mut`, and the ones that can fail return an error union, handled with `try` or `catch`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
+| `pop_or_null(mut list)` | `?T` | Removes the last item and returns it, or `null` on an empty array. |
+| `insert(mut list, index, mut item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
+| `remove(mut list, index)` | `ArrayError!T` | Removes the item at `index`, moving the later items down, and returns it. Fails with `ArrayError.OutOfRange` outside the array. |
+| `clear(mut list)` | `void` | Removes every item. |
+| `reverse(mut list)` | `void` | Reverses the items in place. |
+| `slice(list, start, stop)` | `ArrayError![]T` | A new array with the items from `start` up to, not including, `stop`. The items are copies, so changing the slice never changes `list`. Fails with `ArrayError.OutOfRange` for a negative bound, `start > stop` or `stop > len(list)`. |
+| `index_of(list, item)` | `?int` | The position of the first item equal to `item`, or `null`. |
+| `contains(list, item)` | `bool` | Whether some item equals `item`. |
+
+`index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content. Floats compare like `==`, so `nan` is never found and `-0.0` matches `0.0`.
+
+```nim
+let mut stack = [1, 2, 3]
+for true do
+    let item = pop(stack) catch _ then break end
+    echo(item)   # 3, 2, 1
+end
+```
 
 ### String functions
 
@@ -1161,7 +1356,7 @@ Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`,
 | `str_to_int(text)`                     | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `str_to_float(text)`                   | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 
-**Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Two builtin error sets exist, and their names can't be used for other error sets:
+**Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Four builtin error sets exist (`ArrayError` is described with the [array functions](#array-functions)), and their names can't be used for other error sets:
 
 | Error | When |
 | :---- | :--- |
@@ -1169,7 +1364,8 @@ Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`,
 | `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
 | `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
-| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, or a float too large to represent. |
+| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, a float too large to represent, a `to_byte` value outside `0..255`, or a `to_int` value that's `nan`, infinite or outside the `int` range. |
+| `BufferError.NegativeSize` | `new_buffer` with a negative size. |
 
 ```nim
 let line = "  name = Dusk, age = 13  "
@@ -1196,7 +1392,7 @@ echo(describe_age("abc"))    # not a number
 
 Optional parameters follow the usual call rule: a call is all positional or all named, so write `str_equal(a, b, true)` or `str_equal(a = x, b = y, ignore_case = true)`.
 
-## 13. Errors
+## 14. Errors
 
 Compile errors point to the line and column of the problem:
 
@@ -1206,19 +1402,21 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, a `byte(x)` out of range, too many nested calls, an error returned from `main`) stop the program. For errors a program can handle, see [Error Handling](#11-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, an integer division by `0`, an `int` overflow, too many nested calls, an error returned from `main`; see [Runtime errors](#runtime-errors)) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
-## 14. Known Limitations
+## 15. Known Limitations
 
-These are known gaps in v0.13. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.14. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
-- **Call depth**: at most 100,000 nested calls. Going deeper stops the program with a runtime error. A call returned directly (`return f(x)`, also in a `void` function) is a tail call: it reuses the current call instead of nesting, so tail-recursive functions can run any number of steps. Calls whose result is an error union (`E!T`) aren't tail calls.
-- **Strings**: `==` compares identity (use `str_equal` for text). Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
+- **Function size**: a function can compile to at most 65,535 bytecode instructions. Going over is a compile error; split the code into smaller functions.
+- **Call depth**: at most 100,000 nested calls. Going deeper stops the program with a runtime error. A call returned directly (`return f(x)`, also in a `void` function) is a tail call: it reuses the current call instead of nesting, so tail-recursive functions can run any number of steps. In a function that can fail, `return try f(x)` is a tail call too when `f` succeeds with the same type (a `-> E!?int` function returning `try` of an `E!int` call isn't, since the result is converted first).
+- **Strings**: Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
-- **Compound assignment**: only `+=` and `-=`.
-- **`append`**: the item isn't checked against the array's item type yet, so a value of the wrong type (including an `int` into a `[]float`) is stored as is. Make sure the item has the array's item type.
-- **Sharing values**: a method that keeps an argument (`append(self.items, item)`) must `copy` it, since the caller may have passed a `let` value. A collection built in a loop that also reuses a temporary (`append(batches, current); current = []`) can need `copy` to become a `let`, although it's safe; returning it from a function works. A reassignable cursor over a read-only linked structure (`let mut cur = self.root`) needs `copy`: walk it with a tail-recursive helper instead.
+- **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`.
 - **Union size**: a union can have at most 256 variants.
+- **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
+- **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).
+- **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

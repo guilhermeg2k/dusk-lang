@@ -1,0 +1,42 @@
+func first[T](xs: []T) -> T
+    return xs[0]
+end
+
+func swap[T](mut xs: []T, i: int, j: int) -> void
+    let tmp = xs[i]
+    xs[i] = xs[j]
+    xs[j] = tmp
+end
+
+func count[T](xs: []T) -> int
+    return len(xs)
+end
+
+func maybe_first[T](xs: []T) -> ?T
+    if len(xs) == 0 then return null end
+    return xs[0]
+end
+
+func grow[T](mut xs: []T, item: T) -> void
+    append(xs, item)
+end
+
+func describe[T](x: T) -> string
+    return "value: $x"
+end
+
+func rows[T](xs: [][]T) -> int
+    return len(xs)
+end
+
+func pick[A, B](a: A, b: B, is_first: bool) -> bool
+    return is_first
+end
+
+func main() -> void
+    assert(count_ints([1, 2, 3]) == 3)
+end
+
+func count_ints(xs: []int) -> int
+    return len(xs)
+end

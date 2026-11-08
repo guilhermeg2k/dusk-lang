@@ -12,7 +12,7 @@ func main() -> void
     for i < 100000 do
         let fx: float = i * 1.0
         append(particles, @(x = fx, y = i * 2.0, vx = 0.5, vy = -0.5))
-        i += 1
+        i = i + 1
     end
 
     let mut step: int = 0
@@ -21,9 +21,9 @@ func main() -> void
         for j < 100000 do
             particles[j].x = particles[j].x + particles[j].vx
             particles[j].y = particles[j].y + particles[j].vy
-            j += 1
+            j = j + 1
         end
-        step += 1
+        step = step + 1
     end
 
     echo(particles[49999].x)

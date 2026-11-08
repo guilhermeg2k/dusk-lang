@@ -1,6 +1,5 @@
-let start = 1
-
 func main() -> void
+    let start = 1
     when 3
         start..5 then
         end

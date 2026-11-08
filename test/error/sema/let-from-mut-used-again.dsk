@@ -1,5 +1,0 @@
-func main() -> void
-    let mut list = [1]
-    let frozen = list
-    append(list, 2)
-end

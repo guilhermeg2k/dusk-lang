@@ -1,0 +1,7 @@
+func f[T: int | float]() -> T
+    let x: T = 2.5
+    return x
+end
+
+func main() -> void
+end

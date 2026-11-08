@@ -76,16 +76,16 @@ func count(list: []int) -> int
     let mut empties = 0
     for i < len(list) do
         let value = parse(list[i]) catch e then
-            i += 1
+            i = i + 1
             when e
                 ParseError.Empty then
-                    empties += 1
+                    empties = empties + 1
                     continue
                 end
                 else then break end
             end
         end
-        i += 1
+        i = i + 1
     end
     return empties
 end

@@ -1,0 +1,5 @@
+func none[]() -> void
+end
+
+func main() -> void
+end

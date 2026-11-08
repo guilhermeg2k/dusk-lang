@@ -1,0 +1,9 @@
+func push[T](mut array: []T, value: T) -> void
+    append(array, value)
+end
+
+func main() -> void
+    let mut lists: [][]int = []
+    let mut fresh = [1]
+    push(lists, fresh)
+end

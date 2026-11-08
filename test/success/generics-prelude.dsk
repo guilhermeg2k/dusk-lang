@@ -1,0 +1,60 @@
+struct Point
+    x: int
+end
+
+struct Stack[T]
+    items: []T
+
+    func push(mut self: @, item: T) -> void
+        append(self.items, item)
+    end
+end
+
+struct Bag[T]
+    items: []T
+    first: T
+end
+
+func both[T](a: T, b: T) -> T
+    return b
+end
+
+func main() -> void
+    let mut points: []Point = []
+    append(points, @(x = 1))
+    assert(points[0].x == 1)
+
+    let mut rows: [][]int = []
+    append(rows, [])
+    append(rows, [1, 2])
+    assert(len(rows[1]) == 2)
+
+    let mut prices: []float = []
+    append(prices, 1)
+    assert(prices[0] == 1.0)
+
+    let mut maybe: []?int = []
+    append(maybe, null)
+    append(maybe, 3)
+    assert(maybe[0] == null)
+    assert(maybe[1] == 3)
+
+    let mut floats: Stack[float] = @(items = [])
+    floats.push(2)
+    assert(floats.items[0] == 2.0)
+
+    let b = Bag(items = [1.5], first = 2)
+    assert(b.first == 2.0)
+
+    assert(both(2.5, 1) == 1.0)
+
+    let mut original = [[1], [2]]
+    let snapshot = copy(original)
+    append(original[0], 9)
+    assert(len(snapshot[0]) == 1)
+    assert(copy(5) == 5)
+    assert(len([1, 2]) == 2)
+    assert(len([[1], [2, 3]]) == 2)
+    let no_names: []string = []
+    assert(len(no_names) == 0)
+end

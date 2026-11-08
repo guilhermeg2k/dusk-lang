@@ -1,4 +1,4 @@
-func main() -> void
-    let mut b = buffer(2)
+func main() -> !void
+    let mut b = try new_buffer(2)
     b[-1] = 1
 end

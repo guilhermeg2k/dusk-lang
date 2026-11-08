@@ -9,7 +9,7 @@ union Shape
     circle: int
 end
 
-func main() -> void
+func main() -> !void
     let mut grid = [[1, 2], [3]]
     let mut grid_copy = copy(grid)
     grid_copy[0][0] = 9
@@ -44,7 +44,7 @@ func main() -> void
     if shape_copy.poly: mut points then points[0] = 7 end
     if shape.poly: points then assert(points[0] == 1) else assert(false) end
 
-    let mut bytes = buffer(2)
+    let mut bytes = try new_buffer(2)
     let mut bytes_copy = copy(bytes)
     bytes_copy[0] = 'z'
     assert(bytes[0] == 0)

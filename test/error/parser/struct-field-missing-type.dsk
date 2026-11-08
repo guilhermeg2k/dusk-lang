@@ -1,0 +1,7 @@
+struct A
+    x
+end
+
+func main() -> void
+    let a = A()
+end

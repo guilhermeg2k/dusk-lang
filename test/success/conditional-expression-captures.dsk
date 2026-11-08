@@ -3,7 +3,7 @@ struct Counter
 end
 
 func next_value(mut counter: Counter) -> ?int
-    counter.calls += 1
+    counter.calls = counter.calls + 1
     return counter.calls
 end
 
@@ -28,7 +28,7 @@ func main() -> void
 
     let mut boxed: ?Box = Box(value = 4)
     let mutable_capture = if boxed: mut b then
-        b.value += 1
+        b.value = b.value + 1
         b.value
     else
         0

@@ -94,12 +94,12 @@ func main() -> void
 
     let mut total = 0
     for 0..2: i do
-        total += WIDTH
+        total = total + WIDTH
     end
     assert(total == 240)
 
     let mut width = WIDTH
-    width += 1
+    width = width + 1
     assert(width == 81)
     assert(WIDTH == 80)
 

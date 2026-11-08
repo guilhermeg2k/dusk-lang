@@ -1,0 +1,5 @@
+func pad[T](a: T, b: T = 0) -> void
+end
+
+func main() -> void
+end

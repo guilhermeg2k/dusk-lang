@@ -1,0 +1,5 @@
+trait A = B | int
+trait B = A
+
+func main() -> void
+end

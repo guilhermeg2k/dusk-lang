@@ -1,5 +1,5 @@
 let n = 256
 
-func main() -> void
-    let b = byte(n)
+func main() -> !void
+    let b = try to_byte(n)
 end

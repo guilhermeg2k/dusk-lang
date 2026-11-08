@@ -1,0 +1,4 @@
+func main() -> void
+    let n = 5
+    let same = n == null
+end

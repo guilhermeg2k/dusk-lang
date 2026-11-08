@@ -1,8 +1,0 @@
-func main() -> void
-    let mut rows = [[1]]
-    for rows: row do
-        for rows: mut other do
-            append(other, 1)
-        end
-    end
-end

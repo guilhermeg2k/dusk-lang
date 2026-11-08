@@ -1,0 +1,9 @@
+union U
+    n: int
+    s: string
+end
+
+func main() -> void
+    let a = U(n = 1)
+    let same = a == a
+end

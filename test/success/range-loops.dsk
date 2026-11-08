@@ -6,7 +6,7 @@ func main() -> void
 
     for 1..5: value, index do
         assert(value == index + 1)
-        total += value
+        total = total + value
     end
 
     assert(total == 15)
@@ -14,7 +14,7 @@ func main() -> void
     for 3..3: value, index do
         assert(value == 3)
         assert(index == 0)
-        total += value
+        total = total + value
     end
 
     for 5..1: value do
@@ -23,27 +23,27 @@ func main() -> void
 
     for -3..(-1): value, index do
         assert(value == index - 3)
-        total += value
+        total = total + value
     end
 
     assert(total == 12)
 
     for 1 + 1..2 * 2: value do
-        total += value
+        total = total + value
     end
 
     assert(total == 21)
 
     for (1..2): _, index do
-        total += index
+        total = total + index
     end
 
     for 1..2: value, _ do
-        total += value
+        total = total + value
     end
 
     for 1..2: _, _ do
-        total += 1
+        total = total + 1
     end
 
     assert(total == 27)

@@ -1,0 +1,14 @@
+struct Item
+    n: int
+end
+
+struct Bag
+    items: []Item
+
+    func add(mut self: @, item: Item) -> void
+        append(self.items, item)
+    end
+end
+
+func main() -> void
+end

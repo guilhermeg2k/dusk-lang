@@ -3,6 +3,7 @@ const bc = @import("bytecode.zig");
 const v = @import("value.zig");
 const format = @import("format.zig");
 const VM = @import("vm.zig").VM;
+const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 
 const NativeResult = bc.NativeResult;
 
@@ -11,6 +12,8 @@ pub const conversion_overflow_id: i64 = 2;
 pub const string_out_of_range_id: i64 = 3;
 pub const string_negative_count_id: i64 = 4;
 pub const string_invalid_utf8_id: i64 = 5;
+pub const array_empty_id: i64 = 6;
+pub const array_out_of_range_id: i64 = 7;
 
 const ascii_whitespace = " \t\n\r\x0b\x0c";
 
@@ -18,17 +21,29 @@ const ConversionError = error{ Invalid, Overflow };
 
 pub const Binding = union(enum) {
     native: bc.NativeFnPtr,
-    @"inline": @FieldType(bc.InlineFn, "gen"),
+    intrinsic: Intrinsic,
 };
+
+pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy };
 
 pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
-    .{ "len", Binding{ .@"inline" = &arrayLenGen } },
-    .{ "str_len", Binding{ .@"inline" = &bytesLenGen } },
-    .{ "buffer_len", Binding{ .@"inline" = &bytesLenGen } },
-    .{ "append", Binding{ .@"inline" = &appendGen } },
-    .{ "copy", Binding{ .@"inline" = &copyGen } },
+    .{ "len", Binding{ .intrinsic = .array_len } },
+    .{ "__array_pop", Binding{ .intrinsic = .array_pop } },
+    .{ "__array_insert", Binding{ .native = &arrayInsert } },
+    .{ "__array_remove", Binding{ .native = &arrayRemove } },
+    .{ "clear", Binding{ .native = &arrayClear } },
+    .{ "index_of", Binding{ .native = &arrayIndexOf } },
+    .{ "contains", Binding{ .native = &arrayContains } },
+    .{ "str_len", Binding{ .intrinsic = .bytes_len } },
+    .{ "buffer_len", Binding{ .intrinsic = .bytes_len } },
+    .{ "__new_buffer", Binding{ .intrinsic = .new_buffer } },
+    .{ "__to_byte", Binding{ .intrinsic = .to_byte } },
+    .{ "__to_int", Binding{ .intrinsic = .to_int } },
+    .{ "to_float", Binding{ .intrinsic = .to_float } },
+    .{ "append", Binding{ .intrinsic = .append } },
+    .{ "copy", Binding{ .intrinsic = .copy } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
     .{ "string_from", Binding{ .native = &stringFrom } },
     .{ "str_equal", Binding{ .native = &strEqual } },
@@ -64,9 +79,7 @@ pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 pub fn assert(_: *VM, args: []v.Value) anyerror!NativeResult {
-    if (!args[0].bool) {
-        @panic("ASSERTION_FAILED");
-    }
+    if (!args[0].bool) return RuntimeErrorReporter.assertionFailed();
     return ok(.{ .null = {} });
 }
 
@@ -109,6 +122,66 @@ pub fn strConcat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     @memcpy(data[0..left_len], bytesArg(args, 0));
     @memcpy(data[left_len..], bytesArg(args, 1));
     return stringResult(result);
+}
+
+pub fn arrayInsert(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var array = arrayArg(args, 0);
+    if (array.needsResize()) array = try vm.growArray(&args[0]);
+    const index: usize = @intCast(args[1].int64);
+    const items = array.getDataPtr();
+    std.mem.copyBackwards(v.Value, items[index + 1 .. array.len + 1], items[index..array.len]);
+    items[index] = args[2];
+    array.len += 1;
+    return ok(.{ .null = {} });
+}
+
+pub fn arrayRemove(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const array = arrayArg(args, 0);
+    const index: usize = @intCast(args[1].int64);
+    const items = array.getDataPtr();
+    const removed = items[index];
+    std.mem.copyForwards(v.Value, items[index .. array.len - 1], items[index + 1 .. array.len]);
+    array.len -= 1;
+    return ok(removed);
+}
+
+pub fn arrayClear(_: *VM, args: []v.Value) anyerror!NativeResult {
+    arrayArg(args, 0).len = 0;
+    return ok(.{ .null = {} });
+}
+
+pub fn arrayIndexOf(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const index = findItem(args) orelse return ok(v.NULL_VALUE);
+    return ok(try vm.boxInt(@intCast(index)));
+}
+
+pub fn arrayContains(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return ok(.{ .bool = findItem(args) != null });
+}
+
+fn findItem(args: []v.Value) ?usize {
+    const array = arrayArg(args, 0);
+    const items = array.getDataPtr()[0..array.len];
+    for (items, 0..) |item, i| {
+        if (isSameItem(array.kind, item, args[1])) return i;
+    }
+    return null;
+}
+
+fn isSameItem(kind: v.ValueType, left: v.Value, right: v.Value) bool {
+    return switch (kind) {
+        .int64 => left.int64 == right.int64,
+        .float64 => left.float64 == right.float64,
+        .bool => left.bool == right.bool,
+        .string => std.mem.eql(u8, v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).slice(), v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).slice()),
+        else => left.heap_obj == right.heap_obj,
+    };
+}
+
+fn arrayArg(args: []v.Value, index: usize) *v.Array {
+    const current = args[index].heap_obj.followRelocated();
+    args[index].heap_obj = current;
+    return v.HeapValue.getParentPtr(v.Array, current);
 }
 
 pub fn strJoin(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -273,30 +346,6 @@ pub fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var offset: usize = 0;
     while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
     return stringResult(result);
-}
-
-fn arrayLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_LEN, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn bytesLenGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .BYTES_LEN, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn appendGen(_: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .ARRAY_APPEND, .a = arg_start_reg, .b = arg_start_reg + 1 });
-    return try list.toOwnedSlice(alloc);
-}
-
-fn copyGen(target_reg: u8, arg_start_reg: u8, alloc: std.mem.Allocator) ![]const bc.Instruction {
-    var list: std.ArrayList(bc.Instruction) = .empty;
-    try list.append(alloc, .{ .op = .DEEP_COPY, .a = target_reg, .b = arg_start_reg });
-    return try list.toOwnedSlice(alloc);
 }
 
 fn ok(value: v.Value) NativeResult {

@@ -1,0 +1,10 @@
+func id[T](x: T) -> int
+    return 1
+end
+
+func nothing() -> void
+end
+
+func main() -> void
+    let x = id(nothing())
+end

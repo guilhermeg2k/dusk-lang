@@ -1,0 +1,4 @@
+func main() -> void
+    let mut ints: []int = []
+    append(ints, 2.5)
+end

@@ -9,6 +9,7 @@ const Lexer = lexer.Lexer;
 const Parser = parser.Parser;
 const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
+const CliErrorReporter = @import("error.zig").CliErrorReporter;
 
 pub const prelude_src = @embedFile("prelude.dsk");
 
@@ -28,7 +29,9 @@ pub const Dusk = struct {
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
         const cwd = std.Io.Dir.cwd();
-        const input_file_content = try cwd.readFileAlloc(self.io, file_path, self.allocator, .unlimited);
+        const input_file_content = cwd.readFileAlloc(self.io, file_path, self.allocator, .unlimited) catch |failure| {
+            return CliErrorReporter.cantReadFile(file_path, failure);
+        };
         defer self.allocator.free(input_file_content);
         _ = try self.compileAndRun(input_file_content);
     }

@@ -6,7 +6,7 @@ func main() -> void
         let line = "item $i: value=${i * 3} tag=$name"
         let fields = str_split(line, " ")
         let joined = str_join(fields, ",")
-        total += str_len(line) + len(fields) + str_len(joined)
+        total = total + (str_len(line) + len(fields) + str_len(joined))
     end
     echo(total)
 end

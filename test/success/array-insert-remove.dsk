@@ -1,0 +1,45 @@
+struct Point
+    x: int
+end
+
+func fill(mut xs: []int, n: int) -> void
+    for 1..n: i do
+        insert(xs, 0, i) catch _ then return end
+    end
+end
+
+func main() -> void
+    let mut xs = [1, 2, 4]
+    insert(xs, 2, 3) catch _ then assert(false) end
+    insert(xs, 0, 0) catch _ then assert(false) end
+    insert(xs, len(xs), 5) catch _ then assert(false) end
+    for 0..5: i do assert(xs[i] == i) end
+    insert(xs, 7, 9) catch e then assert(e == ArrayError.OutOfRange) end
+    insert(xs, -1, 9) catch e then assert(e == ArrayError.OutOfRange) end
+    let r = remove(xs, 0) catch 99
+    assert(r == 0)
+    assert(len(xs) == 5)
+    assert(xs[0] == 1)
+    let last = remove(xs, 4) catch 99
+    assert(last == 5)
+    let none = remove(xs, 4) catch 99
+    assert(none == 99)
+    clear(xs)
+    assert(len(xs) == 0)
+    fill(xs, 1000)
+    assert(len(xs) == 1000)
+    assert(xs[0] == 1000)
+    assert(xs[999] == 1)
+    let mut points: []Point = []
+    for 1..200: i do
+        insert(points, 0, Point(x = i)) catch _ then assert(false) end
+        let mut garbage = [[i], [i, i]]
+    end
+    assert(len(points) == 200)
+    assert(points[0].x == 200)
+    let p = remove(points, 0) catch Point(x = -1)
+    assert(p.x == 200)
+    let mut names = ["b"]
+    insert(names, 0, "a") catch _ then assert(false) end
+    assert(str_equal(names[0], "a"))
+end

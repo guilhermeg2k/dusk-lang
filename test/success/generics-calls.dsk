@@ -1,0 +1,98 @@
+func first[T](xs: []T) -> T
+    return xs[0]
+end
+
+func sum_all[T](xs: []T, start: T, add_fn: bool) -> int
+    return len(xs)
+end
+
+func swap[T](mut xs: []T, i: int, j: int) -> void
+    let tmp = xs[i]
+    xs[i] = xs[j]
+    xs[j] = tmp
+end
+
+func reversed[T](xs: []T) -> []T
+    let mut out: []T = []
+    let mut i = len(xs) - 1
+    for i >= 0 do
+        append(out, xs[i])
+        i = i - 1
+    end
+    return out
+end
+
+func second[T](xs: []T) -> T
+    return first(reversed(xs))
+end
+
+func maybe_first[T](xs: []T) -> ?T
+    if len(xs) == 0 then return null end
+    return xs[0]
+end
+
+func count_down[T](x: T, n: int) -> int
+    if n == 0 then return 0 end
+    return 1 + count_down(x, n - 1)
+end
+
+func depth[T](xs: [][]T) -> int
+    return len(xs) * 10 + len(xs[0])
+end
+
+func pick[A, B](a: A, b: B) -> B
+    return b
+end
+
+func describe[T](x: T) -> string
+    return "<$x>"
+end
+
+func parse_first[T](xs: []T, text: string) -> !int
+    let n = try str_to_int(text)
+    return n + len(xs)
+end
+
+func main() -> void
+    assert(first([1, 2, 3]) == 1)
+    assert(str_equal(first(["a", "b"]), "a"))
+    assert(first([1.5, 2.5]) == 1.5)
+    let mut nums = [1, 2, 3]
+    swap(nums, 0, 2)
+    assert(nums[0] == 3)
+    assert(reversed([1, 2, 3])[0] == 3)
+    assert(second([1, 2, 3]) == 3)
+    assert((maybe_first([7]) orelse 0) == 7)
+    let empty: []int = []
+    assert(maybe_first(empty) == null)
+    assert(count_down("x", 5) == 5)
+    assert(depth([[1, 2], [3, 4]]) == 22)
+    assert(str_equal(pick(1, "b"), "b"))
+    assert(str_equal(describe(42), "<42>"))
+    assert(str_equal(describe([1, 2]), "<[1, 2]>"))
+    assert(first(xs = [9]) == 9)
+    assert((parse_first([1, 2], "40") catch 0) == 42)
+    assert((parse_first(["a"], "x") catch -1) == -1)
+    assert(outer([5, 6]) == 5)
+    assert(str_equal(outer(["z"]), "z"))
+    assert(is_even("a", 10))
+    assert(is_odd(1.5, 7))
+end
+
+func outer[T](xs: []T) -> T
+    return inner(xs)
+end
+
+func inner[T](xs: []T) -> T
+    return xs[0]
+end
+
+func is_even[T](x: T, n: int) -> bool
+    if n == 0 then return true end
+    return is_odd(x, n - 1)
+end
+
+func is_odd[T](x: T, n: int) -> bool
+    if n == 0 then return false end
+    return is_even(x, n - 1)
+end

@@ -1,6 +1,7 @@
 const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
 const TypedIdentifier = @import("type_table.zig").TypedIdentifier;
+const err = @import("error.zig");
 
 pub const Program = struct {
     instructions: Block,
@@ -15,6 +16,7 @@ pub const Block = []const Instruction;
 pub const Instruction = union(enum) {
     store_var: StoreVar,
     branch_if: BranchIf,
+    when: When,
     block: Block,
     loop: Loop,
     return_stmt: ReturnStmt,
@@ -78,6 +80,13 @@ pub const Func = struct {
     params: []const FuncParam,
     body: Block,
     return_type: TypeId,
+    origin: ?FuncOrigin = null,
+};
+
+pub const FuncOrigin = struct {
+    src: []const u8,
+    loc: err.Loc,
+    copy_context: ?err.CopyContext,
 };
 
 pub const FuncParam = struct {
@@ -125,6 +134,25 @@ pub const BranchIf = struct {
     else_block: Block,
 };
 
+pub const When = struct {
+    null_check: ?*Value = null,
+    null_body: ?Block = null,
+    cases: []const WhenCase,
+    table: ?JumpTable = null,
+    default_block: Block,
+};
+
+pub const WhenCase = struct {
+    condition: *Value,
+    body: Block,
+};
+
+pub const JumpTable = struct {
+    subject: *Value,
+    min: i64,
+    case_by_offset: []const ?usize,
+};
+
 pub const Loop = struct {
     advancement: Block = &.{},
     condition: ?*Value,
@@ -150,6 +178,7 @@ pub const CatchCall = struct {
         value: *Value,
         block: CatchBlock,
     },
+    is_success_boxed: bool = false,
 };
 
 pub const CatchBlock = struct {
@@ -198,7 +227,6 @@ pub const Value = struct {
         block_value: BlockValue,
         int_to_float: *Value,
         array_length: *Value,
-        buffer_new: *Value,
         bytes_length: *Value,
     },
 

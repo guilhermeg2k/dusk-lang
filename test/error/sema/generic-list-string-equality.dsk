@@ -1,0 +1,6 @@
+func same[T: int | string](a: T, b: T) -> bool
+    return a == b
+end
+
+func main() -> void
+end

@@ -1,0 +1,50 @@
+enum Color
+    Red
+    Blue
+end
+
+error E
+    Bad
+end
+
+struct P
+    x: int
+end
+
+func fail() -> E!int
+    return E.Bad
+end
+
+func main() -> !void
+    assert(1 == 1.0)
+    let small: byte = 'a'
+    assert(small == 97)
+    assert(true != false)
+    assert(Color.Red != Color.Blue)
+    let a = P(x = 1)
+    let b = a
+    assert(a == b)
+    assert(a != P(x = 1))
+    let xs = [1]
+    assert(xs == xs)
+    assert(xs != [1])
+    let maybe: ?P = a
+    assert(maybe == a)
+    let nothing: ?P = null
+    assert(nothing == null)
+    let text: ?string = null
+    assert(text == null)
+    let number: ?int = 3
+    assert(number == 3)
+    check_error()
+    let data = try new_buffer(2)
+    assert(data == data)
+end
+
+func check_error() -> void
+    let failure = fail() catch e then
+        assert(e == E.Bad)
+        return
+    end
+    assert(false)
+end

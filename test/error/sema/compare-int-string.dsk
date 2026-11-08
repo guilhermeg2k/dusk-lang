@@ -1,0 +1,3 @@
+func main() -> void
+    let same = 1 == "a"
+end

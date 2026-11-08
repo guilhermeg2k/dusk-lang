@@ -13,7 +13,7 @@ let is_first = true
 func main() -> void
     let mut grid = [[1, 2], [3, 4]]
     grid[0][1] = 5
-    grid[1][0] += 10
+    grid[1][0] = grid[1][0] + 10
     assert(grid[0][1] == 5)
     assert(grid[1][0] == 13)
 

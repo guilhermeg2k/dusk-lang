@@ -4,6 +4,7 @@ const v = @import("value.zig");
 const tt = @import("type_table.zig");
 const VM = @import("vm.zig").VM;
 const natives = @import("natives.zig");
+const err = @import("error.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -23,13 +24,14 @@ pub const BytecodeGen = struct {
 
     string_texts: std.ArrayList([]const u8),
     chunk_build_recipes: std.ArrayList([]const v.ValueType) = .empty,
+    chunk_jump_tables: std.ArrayList(JumpTable) = .empty,
     string_id_by_text: std.StringHashMap(u16),
 
     chunk_instructions: std.ArrayList(Instruction),
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
-    inline_functions_by_uid: std.AutoHashMap(usize, InlineFn),
+    intrinsic_by_uid: std.AutoHashMap(usize, natives.Intrinsic),
     native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
 
@@ -40,6 +42,8 @@ pub const BytecodeGen = struct {
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     current_function_name: []const u8 = "",
+    current_function_loc: ?err.Loc = null,
+    err_reporter: err.CompileErrorReporter,
     extern_count: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
@@ -59,7 +63,7 @@ pub const BytecodeGen = struct {
             .loop_stack = .empty,
             .break_patches = .empty,
             .continue_patches = .empty,
-            .inline_functions_by_uid = std.AutoHashMap(usize, InlineFn).init(alloc),
+            .intrinsic_by_uid = std.AutoHashMap(usize, natives.Intrinsic).init(alloc),
             .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
@@ -68,6 +72,7 @@ pub const BytecodeGen = struct {
             .union_descriptors = .empty,
             .type_id_to_union_descriptor_idx = std.AutoHashMap(tt.TypeId, u16).init(alloc),
             .union_tag_by_type_id = std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)).init(alloc),
+            .err_reporter = .{ .src = "", .allocator = alloc },
         };
     }
 
@@ -143,6 +148,7 @@ pub const BytecodeGen = struct {
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
+        self.enterFunction("$main", null);
         self.next_free_register = 0;
         self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -167,7 +173,7 @@ pub const BytecodeGen = struct {
     }
 
     fn genFunction(self: *Self, func: ir.Func) !Function {
-        self.current_function_name = func.identifier;
+        self.enterFunction(func.identifier, func.origin);
         self.next_free_register = @intCast(func.params.len);
         self.peak_register = @intCast(func.params.len);
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -185,6 +191,13 @@ pub const BytecodeGen = struct {
         };
     }
 
+    fn enterFunction(self: *Self, name: []const u8, origin: ?ir.FuncOrigin) void {
+        self.current_function_name = name;
+        self.current_function_loc = if (origin) |known| known.loc else null;
+        self.err_reporter.src = if (origin) |known| known.src else "";
+        self.err_reporter.copy_context = if (origin) |known| known.copy_context else null;
+    }
+
     fn genFunctionChunk(self: *Self, func: ir.Func) !Chunk {
         defer {
             self.chunk_instructions = .empty;
@@ -192,6 +205,7 @@ pub const BytecodeGen = struct {
             self.chunk_constants_types = .empty;
             self.chunk_heap_maps = .empty;
             self.chunk_build_recipes = .empty;
+            self.chunk_jump_tables = .empty;
             self.const_id_by_value.clearRetainingCapacity();
         }
 
@@ -202,6 +216,7 @@ pub const BytecodeGen = struct {
                 try self.chunk_instructions.append(self.allocator, Instruction{ .op = .RETURN });
             }
         }
+        _ = try self.currentPosition();
 
         const chunk = Chunk{
             .num_registers = self.peak_register,
@@ -211,6 +226,7 @@ pub const BytecodeGen = struct {
             .shadow_types = try self.chunk_constants_types.toOwnedSlice(self.allocator),
             .heap_maps = try self.chunk_heap_maps.toOwnedSlice(self.allocator),
             .build_recipes = try self.chunk_build_recipes.toOwnedSlice(self.allocator),
+            .jump_tables = try self.chunk_jump_tables.toOwnedSlice(self.allocator),
         };
 
         // chunk.disasamble();
@@ -232,6 +248,9 @@ pub const BytecodeGen = struct {
                 },
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
+                },
+                .when => |when| {
+                    try self.genWhen(when);
                 },
                 .block => |instructions| {
                     const saved_next_free = self.next_free_register;
@@ -307,7 +326,7 @@ pub const BytecodeGen = struct {
             } else false,
             .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
             .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,
-            .union_tag, .union_payload, .int_to_float, .array_length, .buffer_new, .bytes_length => |inner| readsVariable(inner, uid),
+            .union_tag, .union_payload, .int_to_float, .array_length, .bytes_length => |inner| readsVariable(inner, uid),
             .try_call, .catch_call, .block_value => true,
             .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null => false,
         };
@@ -339,24 +358,97 @@ pub const BytecodeGen = struct {
 
             try self.chunk_instructions.append(self.allocator, jump_pass_else);
             const jump_pass_else_idx = self.chunk_instructions.items.len - 1;
-            const jump_into_else_position = self.chunk_instructions.items.len;
+            const jump_into_else_position = try self.currentPosition();
 
             try self.genInstructionBlock(ifStmt.else_block);
-            const jump_pass_else_position = self.chunk_instructions.items.len;
+            const jump_pass_else_position = try self.currentPosition();
 
-            self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
-            self.chunk_instructions.items[jump_pass_else_idx].putAEx(@intCast(jump_pass_else_position));
+            self.chunk_instructions.items[jump_into_else_idx].putBEx(jump_into_else_position);
+            self.chunk_instructions.items[jump_pass_else_idx].putAEx(jump_pass_else_position);
         } else {
-            const jump_into_else_position = self.chunk_instructions.items.len;
-            self.chunk_instructions.items[jump_into_else_idx].putBEx(@intCast(jump_into_else_position));
+            const jump_into_else_position = try self.currentPosition();
+            self.chunk_instructions.items[jump_into_else_idx].putBEx(jump_into_else_position);
         }
 
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
+    fn genWhen(self: *Self, when: ir.When) !void {
+        const saved_next_free = self.next_free_register;
+        var end_jumps: std.ArrayList(usize) = .empty;
+        defer end_jumps.deinit(self.allocator);
+
+        var null_jump: ?usize = null;
+        if (when.null_check) |condition| {
+            const condition_reg = try self.genValue(condition, try self.consumeRegister());
+            try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
+            null_jump = self.chunk_instructions.items.len - 1;
+        }
+
+        var case_positions: []u16 = &.{};
+        defer self.allocator.free(case_positions);
+        var table_index: usize = undefined;
+        if (when.table) |table| {
+            case_positions = try self.allocator.alloc(u16, when.cases.len);
+            const subject_reg = try self.genValue(table.subject, try self.consumeRegister());
+            table_index = self.chunk_jump_tables.items.len;
+            try self.chunk_jump_tables.append(self.allocator, undefined);
+            var table_inst = Instruction{ .op = .JUMP_TABLE, .a = subject_reg };
+            table_inst.putBEx(@intCast(table_index));
+            try self.chunk_instructions.append(self.allocator, table_inst);
+
+            for (when.cases, 0..) |case, i| {
+                case_positions[i] = try self.currentPosition();
+                const case_next_free = self.next_free_register;
+                try self.genInstructionBlock(case.body);
+                self.freeRegisterN(self.next_free_register - case_next_free);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+                try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
+            }
+        } else {
+            for (when.cases) |case| {
+                const case_next_free = self.next_free_register;
+                const condition_reg = try self.genValue(case.condition, try self.consumeRegister());
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
+                const next_case_jump = self.chunk_instructions.items.len - 1;
+                self.freeRegisterN(self.next_free_register - case_next_free);
+                try self.genInstructionBlock(case.body);
+                self.freeRegisterN(self.next_free_register - case_next_free);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+                try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
+                self.chunk_instructions.items[next_case_jump].putBEx(try self.currentPosition());
+            }
+        }
+
+        const default_position = try self.currentPosition();
+        try self.genInstructionBlock(when.default_block);
+        if (when.table) |table| {
+            const target_offsets = try self.allocator.alloc(u16, table.case_by_offset.len);
+            for (table.case_by_offset, target_offsets) |case_index, *target| {
+                target.* = if (case_index) |index| case_positions[index] else default_position;
+            }
+            self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .target_offsets = target_offsets, .default = default_position };
+        }
+
+        if (null_jump) |jump| {
+            var null_position = default_position;
+            if (when.null_body) |body| {
+                try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+                try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
+                null_position = try self.currentPosition();
+                try self.genInstructionBlock(body);
+            }
+            self.chunk_instructions.items[jump].putBEx(null_position);
+        }
+
+        const end_position = try self.currentPosition();
+        for (end_jumps.items) |jump| self.chunk_instructions.items[jump].putAEx(end_position);
+        self.freeRegisterN(self.next_free_register - saved_next_free);
+    }
+
     fn genLoop(self: *Self, loopStmt: ir.Loop) !void {
         const saved_next_free = self.next_free_register;
-        const loop_begin_idx = self.chunk_instructions.items.len;
+        const loop_begin_position = try self.currentPosition();
 
         try self.pushLoopCtx();
 
@@ -375,10 +467,10 @@ pub const BytecodeGen = struct {
 
         try self.genInstructionBlock(loopStmt.do_block);
 
-        const advancement_begin = self.chunk_instructions.items.len;
+        const advancement_begin = try self.currentPosition();
         const context = self.loop_stack.items[self.loop_stack.items.len - 1];
         for (self.continue_patches.items[context.first_continue_patch_index..]) |patch_index| {
-            self.chunk_instructions.items[patch_index].putAEx(@intCast(advancement_begin));
+            self.chunk_instructions.items[patch_index].putAEx(advancement_begin);
         }
         self.continue_patches.shrinkRetainingCapacity(context.first_continue_patch_index);
         try self.genInstructionBlock(loopStmt.advancement);
@@ -387,12 +479,12 @@ pub const BytecodeGen = struct {
             .op = .JUMP,
         };
 
-        jump_to_begin.putAEx(@intCast(loop_begin_idx));
+        jump_to_begin.putAEx(loop_begin_position);
 
         try self.chunk_instructions.append(self.allocator, jump_to_begin);
-        const jump_pass_loop_position = self.chunk_instructions.items.len;
+        const jump_pass_loop_position = try self.currentPosition();
 
-        self.chunk_instructions.items[jump_if_false_idx].putBEx(@intCast(jump_pass_loop_position));
+        self.chunk_instructions.items[jump_if_false_idx].putBEx(jump_pass_loop_position);
 
         try self.popLoopCtx();
 
@@ -418,9 +510,9 @@ pub const BytecodeGen = struct {
 
     fn popLoopCtx(self: *Self) !void {
         const ctx = self.loop_stack.pop() orelse unreachable;
-        const loop_end = self.chunk_instructions.items.len;
+        const loop_end = try self.currentPosition();
         for (self.break_patches.items[ctx.first_break_patch_index..]) |patch_index| {
-            self.chunk_instructions.items[patch_index].putAEx(@intCast(loop_end));
+            self.chunk_instructions.items[patch_index].putAEx(loop_end);
         }
         self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_index);
     }
@@ -433,10 +525,9 @@ pub const BytecodeGen = struct {
                 try self.native_params_by_uid.put(ext.uid, ext.params);
                 break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
             },
-            .@"inline" => |gen| blk: {
-                const inl = InlineFn{ .gen = gen, .num_args = num_args };
-                try self.inline_functions_by_uid.put(ext.uid, inl);
-                break :blk .{ .@"inline" = inl };
+            .intrinsic => |intrinsic| blk: {
+                try self.intrinsic_by_uid.put(ext.uid, intrinsic);
+                break :blk .{ .intrinsic = intrinsic };
             },
         };
         return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
@@ -485,8 +576,8 @@ pub const BytecodeGen = struct {
             _ = try self.genValue(arg, try self.consumeRegister());
         }
 
-        if (self.inline_functions_by_uid.get(fc.fn_uid)) |inl| {
-            try self.genInlineCall(inl, fc, value, target_reg);
+        if (self.intrinsic_by_uid.get(fc.fn_uid)) |intrinsic| {
+            try self.genIntrinsicCall(intrinsic, fc, value, target_reg);
             return;
         }
 
@@ -506,23 +597,40 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = value.type_id;
     }
 
-    fn genInlineCall(self: *Self, inl: InlineFn, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
-        const instructions = try inl.gen(target_reg, target_reg + 1, self.allocator);
-        defer self.allocator.free(instructions);
-        try self.chunk_instructions.appendSlice(self.allocator, instructions);
-        for (instructions, 0..) |inl_inst, j| {
-            if (inl_inst.op.canTriggerGc()) {
-                const pc: u16 = @intCast(self.chunk_instructions.items.len - instructions.len + j);
-                try self.recordHeapMapAt(pc);
-            }
+    fn genIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+        const arg = target_reg + 1;
+        switch (intrinsic) {
+            .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),
+            .array_pop => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_POP, .a = target_reg, .b = arg }),
+            .bytes_len => try self.appendIntrinsicInstruction(.{ .op = .BYTES_LEN, .a = target_reg, .b = arg }),
+            .new_buffer => try self.appendIntrinsicInstruction(.{ .op = .BYTES_NEW, .a = target_reg, .b = arg }),
+            .to_byte => try self.appendIntrinsicInstruction(.{ .op = .I_TO_BYTE, .a = target_reg, .b = arg }),
+            .to_int => {
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+                try self.appendIntrinsicInstruction(.{ .op = .F_TO_I, .a = target_reg });
+            },
+            .to_float => {
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+                const is_float_arg = fc.args[0].type_id == self.type_table.getPrimitive(.float);
+                if (!is_float_arg) try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+            },
+            .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
+            .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
         }
         self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
     }
 
+    fn appendIntrinsicInstruction(self: *Self, instruction: Instruction) !void {
+        try self.chunk_instructions.append(self.allocator, instruction);
+        if (instruction.op.canTriggerGc()) try self.recordHeapMap();
+    }
+
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
         if (return_stmt.value) |value| {
-            if (self.tailCallIndex(value)) |fn_index| return self.genTailCall(value.data.fn_call, fn_index);
+            if (self.tailCallOf(value)) |call| {
+                if (self.tailCallIndex(call)) |fn_index| return self.genTailCall(call.data.fn_call, fn_index);
+            }
         }
 
         const return_value_register = if (return_stmt.value) |val|
@@ -538,9 +646,14 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, inst);
     }
 
+    fn tailCallOf(self: *Self, value: *const ir.Value) ?*const ir.Value {
+        if (value.data == .try_call) return if (value.data.try_call.is_top_level) null else value.data.try_call.call;
+        if (self.type_table.isErrorUnion(value.type_id)) return null;
+        return value;
+    }
+
     fn tailCallIndex(self: *Self, value: *const ir.Value) ?u16 {
         if (value.data != .fn_call) return null;
-        if (self.type_table.isErrorUnion(value.type_id)) return null;
         const fn_index = self.fn_index_by_uid.get(value.data.fn_call.fn_uid) orelse return null;
         if (fn_index < self.extern_count) return null;
         return fn_index;
@@ -656,10 +769,6 @@ pub const BytecodeGen = struct {
             .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
             .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
             .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
-            .buffer_new => |size| {
-                try self.genUnaryOpcode(.BYTES_NEW, size, value.type_id, target_reg);
-                try self.recordHeapMap();
-            },
         }
 
         return target_reg;
@@ -750,7 +859,7 @@ pub const BytecodeGen = struct {
             .c = number_register,
         });
         try self.recordHeapMap();
-        self.chunk_instructions.items[null_jump_index].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[null_jump_index].putBEx(try self.currentPosition());
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
@@ -774,6 +883,7 @@ pub const BytecodeGen = struct {
             .catch_call => |cc| switch (cc.fallback) {
                 .value => |fallback| {
                     _ = try self.genValue(fallback, call_reg);
+                    if (cc.is_success_boxed) return self.genBoxedCatchJoin(error_union.payload, value, call_reg, target_reg, jump_ok_idx);
                 },
                 .block => |block| {
                     const saved_next_free = self.next_free_register;
@@ -785,7 +895,27 @@ pub const BytecodeGen = struct {
             },
         }
 
-        self.chunk_instructions.items[jump_ok_idx].putAEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genBoxedCatchJoin(self: *Self, payload: tt.TypeId, value: *const ir.Value, call_reg: u8, target_reg: u8, jump_ok_idx: usize) !void {
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+        const jump_join_idx = self.chunk_instructions.items.len - 1;
+
+        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
+        self.register_types[call_reg] = payload;
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = call_reg,
+            .b = @intFromEnum(v.ValueType.fromTypeId(self.type_table, payload)),
+            .c = call_reg,
+        });
+        try self.recordHeapMap();
+
+        self.chunk_instructions.items[jump_join_idx].putAEx(try self.currentPosition());
+        self.register_types[call_reg] = value.type_id;
         try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
         self.register_types[target_reg] = value.type_id;
     }
@@ -903,7 +1033,7 @@ pub const BytecodeGen = struct {
             else => unreachable,
         }
 
-        self.chunk_instructions.items[jump_idx].putBEx(@intCast(self.chunk_instructions.items.len));
+        self.chunk_instructions.items[jump_idx].putBEx(try self.currentPosition());
         self.register_types[target_reg] = value.type_id;
     }
 
@@ -1032,26 +1162,6 @@ pub const BytecodeGen = struct {
         try self.recordHeapMap();
     }
 
-    fn genArrayPop(self: *Self, array_reg: u8, target_reg: u8) !void {
-        const pop_inst = Instruction{
-            .op = .ARRAY_POP,
-            .a = target_reg,
-            .b = array_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, pop_inst);
-    }
-
-    fn genArrayLen(self: *Self, array_reg: u8, target_reg: u8) !void {
-        const len_inst = Instruction{
-            .op = .ARRAY_LEN,
-            .a = target_reg,
-            .b = array_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, len_inst);
-    }
-
     fn genStructInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
         const @"struct" = value.data.struct_init;
         const desc_id = try self.getOrCreateStructDescriptor(value);
@@ -1144,7 +1254,7 @@ pub const BytecodeGen = struct {
         if (!result.found_existing) {
             if (self.string_texts.items.len > std.math.maxInt(u16)) {
                 _ = self.string_id_by_text.remove(s);
-                return self.tooManyStrings();
+                return self.err_reporter.tooManyStrings();
             }
             result.value_ptr.* = @intCast(self.string_texts.items.len);
             try self.string_texts.append(self.allocator, s);
@@ -1159,13 +1269,6 @@ pub const BytecodeGen = struct {
 
         load_string.putBEx(string_id);
         try self.chunk_instructions.append(self.allocator, load_string);
-    }
-
-    fn tooManyStrings(self: *Self) BytecodeError {
-        _ = self;
-        if (@import("builtin").is_test) return BytecodeError.TooManyStrings;
-        std.debug.print("error: the program has more than 65536 different string literals\n", .{});
-        return BytecodeError.TooManyStrings;
     }
 
     fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
@@ -1271,11 +1374,10 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn tooManyRegisters(self: *Self) BytecodeError {
-        if (@import("builtin").is_test) return BytecodeError.TooManyRegisters;
-        const hint = "uses more than 255 registers at once (variables and temporaries); split it into smaller functions";
-        std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
-        return BytecodeError.TooManyRegisters;
+    fn currentPosition(self: *Self) BytecodeError!u16 {
+        const position = self.chunk_instructions.items.len;
+        if (position <= std.math.maxInt(u16)) return @intCast(position);
+        return self.err_reporter.functionTooLong(self.current_function_name, self.current_function_loc);
     }
 
     fn freeRegister(self: *Self) void {
@@ -1291,7 +1393,7 @@ pub const BytecodeGen = struct {
     }
 
     fn consumeRegister(self: *Self) !u8 {
-        if (self.next_free_register == std.math.maxInt(u8)) return self.tooManyRegisters();
+        if (self.next_free_register == std.math.maxInt(u8)) return self.err_reporter.tooManyRegisters(self.current_function_name, self.current_function_loc);
         const id = self.next_free_register;
         self.next_free_register += 1;
         self.peak_register = @max(self.peak_register, self.next_free_register);
@@ -1310,7 +1412,7 @@ pub const BytecodeGen = struct {
     }
 
     fn recordHeapMap(self: *Self) !void {
-        try self.recordHeapMapAt(@intCast(self.chunk_instructions.items.len - 1));
+        try self.recordHeapMapAt(try self.currentPosition() - 1);
     }
 
     fn recordHeapMapAt(self: *Self, pc: u16) !void {
@@ -1506,21 +1608,22 @@ pub const NativeFn = struct {
     num_args: u8,
 };
 
-pub const InlineFn = struct {
-    gen: *const fn (target_reg: u8, arg_start_reg: u8, std.mem.Allocator) anyerror![]const Instruction,
-    num_args: u8,
-};
-
 pub const FunctionKind = union(enum) {
     dusk: Chunk,
     native: NativeFn,
-    @"inline": InlineFn,
+    intrinsic: natives.Intrinsic,
 };
 
 pub const Function = struct {
     uid: usize,
     name: []const u8,
     kind: FunctionKind,
+};
+
+pub const JumpTable = struct {
+    min: i64,
+    target_offsets: []const u16,
+    default: u16,
 };
 
 pub const Chunk = struct {
@@ -1533,6 +1636,7 @@ pub const Chunk = struct {
     shadow_types: []v.ValueType,
     heap_maps: []const HeapMap,
     build_recipes: []const []const v.ValueType,
+    jump_tables: []const JumpTable = &.{},
 
     pub fn disasamble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
@@ -1603,6 +1707,7 @@ pub const Chunk = struct {
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
+            .JUMP_TABLE => std.debug.print("R[{d}] T[{d}]", .{ inst.a, inst.bEx() }),
             .ARRAY_LOAD,
             .ARRAY_STORE,
             .BYTES_GET,
@@ -1744,6 +1849,7 @@ pub const OpCode = enum(u8) {
 
     JUMP,
     JUMP_IF_FALSE,
+    JUMP_TABLE,
 
     pub fn canFail(self: Self) bool {
         return self == .CALL;
@@ -1814,7 +1920,7 @@ pub const OpCode = enum(u8) {
     }
 };
 
-const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings };
+const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings, FunctionTooLong };
 
 const FailingCallHandler = union(enum) {
     try_call: ir.TryCall,

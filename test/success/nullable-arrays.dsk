@@ -91,7 +91,7 @@ func main() -> void
             append(many, [i])
             append(many, null)
         end
-        i += 1
+        i = i + 1
     end
     if keep: k then
         assert(k[1] == 7)

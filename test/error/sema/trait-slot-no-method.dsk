@@ -1,0 +1,15 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+func perimeter[T: Shape](x: T) -> float
+    return x.perimeter()
+end
+
+func main() -> void
+end

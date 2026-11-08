@@ -20,6 +20,7 @@ pub const Lexer = struct {
         .{ "enum", Tag.enum_kw },
         .{ "union", Tag.union_kw },
         .{ "error", Tag.error_kw },
+        .{ "trait", Tag.trait_kw },
         .{ "if", Tag.if_kw },
         .{ "else", Tag.else_kw },
         .{ "elif", Tag.elif_kw },
@@ -119,13 +120,10 @@ pub const Lexer = struct {
                     return Token.init(Tag.comma, self.cur_index, self.cur_index);
                 },
                 '+' => {
-                    return self.readComplexSymbol('=', Tag.plus_eq, Tag.plus);
+                    return Token.init(Tag.plus, self.cur_index, self.cur_index);
                 },
                 '-' => {
-                    if (self.peekNext() == '>') {
-                        return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
-                    }
-                    return self.readComplexSymbol('=', Tag.minus_eq, Tag.minus);
+                    return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
                 },
                 '@' => {
                     return Token.init(Tag.at, self.cur_index, self.cur_index);
@@ -158,7 +156,7 @@ pub const Lexer = struct {
                     return self.readComplexSymbol('=', Tag.not_eq, Tag.not);
                 },
                 '|' => {
-                    return self.readComplexSymbol('>', Tag.pipe, Tag.err);
+                    return self.readComplexSymbol('>', Tag.pipe, Tag.bar);
                 },
                 'a'...'z', 'A'...'Z', '_' => {
                     return self.readWord();
@@ -454,6 +452,7 @@ pub const Tag = enum {
     enum_kw,
     union_kw,
     error_kw,
+    trait_kw,
     if_kw,
     else_kw,
     elif_kw,
@@ -482,8 +481,6 @@ pub const Tag = enum {
     null_literal,
     eq,
     double_eq,
-    plus_eq,
-    minus_eq,
     not,
     not_eq,
     colon,
@@ -511,6 +508,7 @@ pub const Tag = enum {
     double_slash,
     percent,
     pipe,
+    bar,
     eof,
     err,
 };

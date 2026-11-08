@@ -1,0 +1,5 @@
+trait A: B end
+trait B: A end
+
+func main() -> void
+end

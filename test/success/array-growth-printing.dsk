@@ -1,0 +1,20 @@
+func main() -> void
+    let mut numbers = [1]
+    for 0..9: i do
+        append(numbers, i)
+    end
+    echo(numbers)
+    echo("${numbers}")
+
+    let mut parts = str_split("a", ",")
+    for 0..20: i do
+        append(parts, "x")
+    end
+    assert(len(parts) == 22)
+    assert(str_equal(parts[0], "a"))
+    assert(str_equal(parts[21], "x"))
+    let mut short = str_split("a", ",")
+    append(short, "b")
+    append(short, "c")
+    echo(short)
+end

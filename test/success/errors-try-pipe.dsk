@@ -1,0 +1,32 @@
+error E
+    Bad
+end
+
+func parse(s: string) -> E!int
+    if str_equal(s, "x") then return E.Bad end
+    return 8
+end
+
+func half(n: int) -> E!int
+    if n % 2 != 0 then return E.Bad end
+    return n // 2
+end
+
+func add(n: int, m: int) -> int
+    return n + m
+end
+
+func run(s: string) -> E!int
+    return try parse(s) |> try half() |> try half() |> add(1)
+end
+
+func odd() -> E!int
+    return 3 |> try half()
+end
+
+func main() -> void
+    assert((run("8") catch -1) == 3)
+    assert((run("x") catch -1) == -1)
+    assert((odd() catch -1) == -1)
+    assert((4 |> half() catch 0) == 2)
+end

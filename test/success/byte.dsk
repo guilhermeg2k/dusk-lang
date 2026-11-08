@@ -16,9 +16,9 @@ func next(x: byte) -> int
     return x + 1
 end
 
-func main() -> void
+func main() -> !void
     assert(a == c)
-    let d = byte(n)
+    let d = try to_byte(n)
     assert(d == 200)
     assert(e == 119)
     assert(f == 120)
@@ -26,7 +26,7 @@ func main() -> void
     assert(c / 2 == 59.5)
     assert(c < 200.5)
     assert(-c == -119)
-    assert(byte(c) == c)
+    assert(try to_byte(c) == c)
     echo(c)
     echo("c=$c newline=${'\n'}")
     echo(kind('q'))
@@ -40,10 +40,10 @@ func main() -> void
     let items: []byte = ['a', 98, '\'', '\\', '"', '\u{41}', '\0', '\t', '\r', '$']
     echo(items)
     let numbers = [10, 20, 30]
-    assert(numbers[byte(1)] == 20)
+    assert(numbers[try to_byte(1)] == 20)
     let mut total = 0
     for 'a'..'c': i do
-        total += i
+        total = total + i
     end
     assert(total == 294)
     assert(next(255) == 256)

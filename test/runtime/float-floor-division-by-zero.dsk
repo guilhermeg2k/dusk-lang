@@ -1,0 +1,4 @@
+func main() -> void
+    let zero = 0.0
+    echo(7.5 // zero)
+end

@@ -4,13 +4,13 @@ struct Bounds
 end
 
 func start(mut bounds: Bounds) -> int
-    bounds.calls += 1
+    bounds.calls = bounds.calls + 1
     assert(bounds.calls == 1)
     return 1
 end
 
 func stop(mut bounds: Bounds) -> int
-    bounds.calls += 1
+    bounds.calls = bounds.calls + 1
     assert(bounds.calls == 2)
     return bounds.upper
 end
@@ -22,7 +22,7 @@ func main() -> void
 
     for start(bounds)..stop(bounds): value do
         bounds.upper = 100
-        total += value
+        total = total + value
     end
 
     assert(total == 6)
@@ -41,7 +41,7 @@ func main() -> void
     for 0..999: value do
         let pressure = [[value], [value + 1]]
         assert(pressure[0][0] == value)
-        visits += 1
+        visits = visits + 1
     end
 
     assert(visits == 1000)

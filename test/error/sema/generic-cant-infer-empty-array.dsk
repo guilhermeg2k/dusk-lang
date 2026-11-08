@@ -1,0 +1,7 @@
+func first[T](xs: []T) -> T
+    return xs[0]
+end
+
+func main() -> void
+    let x = first([])
+end

@@ -1,4 +1,4 @@
-func main() -> void
-    let b = buffer(1)
+func main() -> !void
+    let b = try new_buffer(1)
     let s: string = b
 end

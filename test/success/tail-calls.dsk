@@ -60,7 +60,7 @@ struct Counter
 
     func add_until(mut self: @, n: int) -> int
         if n == 0 then return self.total end
-        self.total += n
+        self.total = self.total + n
         return self.add_until(n - 1)
     end
 end

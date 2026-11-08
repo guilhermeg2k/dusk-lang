@@ -1,0 +1,6 @@
+func name[T](a: T) -> void
+    let x = T
+end
+
+func main() -> void
+end

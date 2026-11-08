@@ -17,7 +17,7 @@ func first_open(ids: []int) -> int
     let mut i = 0
     for i < len(ids) do
         let handle = open(ids[i]) catch e then
-            i += 1
+            i = i + 1
             continue
         end
         return handle
@@ -33,11 +33,11 @@ func count_until_denied(ids: []int) -> int
             if e == IoError.Denied then
                 break
             end
-            i += 1
+            i = i + 1
             continue
         end
-        opened += 1
-        i += 1
+        opened = opened + 1
+        i = i + 1
     end
     return opened
 end
@@ -77,10 +77,10 @@ func main() -> void
     let mut log_errors = 0
 
     open(0) catch e then
-        log_errors += 1
+        log_errors = log_errors + 1
     end
     open(7) catch e then
-        log_errors += 1
+        log_errors = log_errors + 1
     end
     assert(log_errors == 1)
 

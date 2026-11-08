@@ -38,7 +38,7 @@ func main() -> !void
     let mut digits = 0
     for "a1b22": b do
         if b >= '0' and b <= '9' then
-            digits += 1
+            digits = digits + 1
         end
     end
     assert(digits == 3)

@@ -1,0 +1,7 @@
+func one[T](a: T) -> T
+    let x: T = 1
+    return x
+end
+
+func main() -> void
+end

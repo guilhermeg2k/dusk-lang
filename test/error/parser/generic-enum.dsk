@@ -1,0 +1,6 @@
+enum Kind[T]
+    A
+end
+
+func main() -> void
+end

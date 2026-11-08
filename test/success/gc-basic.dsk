@@ -5,7 +5,7 @@ func main() -> void
     for i < 100000 do
         let trash = [1, 2, 3, i]
         let trash_struct = @(x = i, y = i * 2)
-        i += 1
+        i = i + 1
     end
 
     assert(i == 100000)

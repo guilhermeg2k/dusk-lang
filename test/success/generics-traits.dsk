@@ -1,0 +1,166 @@
+trait Shape
+    func area(self: @) -> float
+    func scale(mut self: @, by: float) -> void
+end
+
+trait Named
+    func name(self: @) -> string
+end
+
+trait Item: Shape + Named end
+
+trait Comparable
+    func less(self: @, other: @) -> bool
+end
+
+struct Circle
+    r: float
+
+    func area(self: @) -> float
+        return 3.0 * self.r * self.r
+    end
+
+    func scale(mut self: @, by: float) -> void
+        self.r = self.r * by
+    end
+
+    func name(self: @) -> string
+        return "circle"
+    end
+end
+
+struct Square
+    side: float
+
+    func area(self: @) -> float
+        return self.side * self.side
+    end
+
+    func scale(self: @, by: float) -> void
+    end
+
+    func name(self: @) -> string
+        return "square"
+    end
+end
+
+enum Size
+    Small
+    Big
+
+    func less(self: @, other: @) -> bool
+        return self == Size.Small and other == Size.Big
+    end
+end
+
+func total[T: Shape](xs: []T) -> float
+    let mut sum = 0.0
+    for xs: x do sum = sum + x.area() end
+    return sum
+end
+
+func grow[T: Shape](mut x: T) -> void
+    x.scale(2.0)
+end
+
+func describe[T: Item](x: T) -> string
+    return "${x.name()} ${x.area()}"
+end
+
+func smallest[T: Comparable](xs: []T) -> T
+    let mut best = xs[0]
+    for xs: x do
+        if x.less(best) then best = x end
+    end
+    return best
+end
+
+struct Box[T: Shape]
+    item: T
+
+    func area(self: @) -> float
+        return self.item.area()
+    end
+end
+
+func area_of[T: Shape](x: T) -> float
+    return x.area()
+end
+
+error ParseError
+    Empty
+end
+
+trait Left: Shape end
+trait Right: Shape end
+trait Both: Left + Right end
+
+trait Parser
+    func parse(self: @) -> ParseError!int
+end
+
+struct Text
+    value: string
+
+    func parse(self: @) -> ParseError!int
+        if str_len(self.value) == 0 then return ParseError.Empty end
+        return str_len(self.value)
+    end
+end
+
+union Figure
+    circle: float
+    square: float
+
+    func area(self: @) -> float
+        when self
+            circle: r then return 3.0 * r * r end
+            square: s then return s * s end
+        end
+    end
+
+    func scale(self: @, by: float) -> void
+    end
+end
+
+struct Holder[T: Shape]
+    item: T
+end
+
+func holder_area[T: Shape](b: Holder[T]) -> float
+    return b.item.area()
+end
+
+func both_area[T: Both](x: T) -> float
+    return x.area()
+end
+
+func parse_or[T: Parser](x: T, fallback: int) -> int
+    return x.parse() catch fallback
+end
+
+func parse_twice[T: Parser](x: T) -> ParseError!int
+    let n = try x.parse()
+    return n * 2
+end
+
+func main() -> void
+    let circles = [Circle(r = 1.0), Circle(r = 2.0)]
+    assert(total(circles) == 15.0)
+    assert(total([Square(side = 2.0)]) == 4.0)
+    let mut c = Circle(r = 1.0)
+    grow(c)
+    assert(c.r == 2.0)
+    assert(str_equal(describe(Square(side = 1.0)), "square 1"))
+    assert(smallest([Size.Big, Size.Small]) == Size.Small)
+    let b = Box(item = Circle(r = 1.0))
+    assert(b.area() == 3.0)
+    assert(area_of(b.item) == 3.0)
+    let f = Figure(square = 2.0)
+    assert(both_area(f) == 4.0)
+    assert(holder_area(Holder(item = Figure(circle = 1.0))) == 3.0)
+    assert(parse_or(Text(value = "abc"), 0) == 3)
+    assert(parse_or(Text(value = ""), 7) == 7)
+    let n = parse_twice(Text(value = "ab")) catch 0
+    assert(n == 4)
+end

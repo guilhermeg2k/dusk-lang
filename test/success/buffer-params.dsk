@@ -8,8 +8,8 @@ func first(b: buffer) -> byte
     return b[0]
 end
 
-func main() -> void
-    let mut data: buffer = buffer(4)
+func main() -> !void
+    let mut data: buffer = try new_buffer(4)
     fill(data, 'x')
     assert(first(data) == 'x')
     assert(data[3] == 'x')

@@ -1,0 +1,5 @@
+func main() -> void
+    let frozen = [1, 2]
+    let mut z: []int = []
+    z = if len(frozen) > 0 then frozen else [] end
+end

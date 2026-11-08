@@ -1,0 +1,57 @@
+error E
+    Bad
+end
+
+struct Point
+    x: int
+end
+
+func number(ok: bool) -> E!int
+    if ok then return 7 end
+    return E.Bad
+end
+
+func point(ok: bool) -> E!Point
+    if ok then return Point(x = 3) end
+    return E.Bad
+end
+
+func take[T](mut items: []T) -> ?T
+    return pop(items) catch null
+end
+
+func maybe_number(ok: bool) -> ?int
+    return number(ok) catch null
+end
+
+func main() -> void
+    let mut numbers = [1, 2]
+    assert((take(numbers) orelse 0) == 2)
+    assert((take(numbers) orelse 0) == 1)
+    assert(take(numbers) == null)
+
+    let mut names = ["a"]
+    assert(str_equal(take(names) orelse "", "a"))
+    assert(take(names) == null)
+
+    let found: ?int = number(true) catch null
+    let missing: ?int = number(false) catch null
+    assert(found == 7)
+    assert(missing == null)
+    assert(maybe_number(true) == 7)
+    assert(maybe_number(false) == null)
+
+    let near: ?Point = point(true) catch null
+    let far: ?Point = point(false) catch null
+    assert(near != null)
+    assert(far == null)
+    if near: p then assert(p.x == 3) end
+
+    let plain = number(false) catch 0
+    assert(plain == 0)
+
+    for 0..20000: i do
+        let boxed: ?int = number(i % 2 == 0) catch null
+        let trash = [i, i, i]
+    end
+end

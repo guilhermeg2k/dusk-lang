@@ -188,8 +188,8 @@ func main() -> void
     let mut total = 0
     let mut i = 0
     for i < len(shapes) do
-        total += shapes[i].area()
-        i += 1
+        total = total + shapes[i].area()
+        i = i + 1
     end
     assert(total == 16)
 end

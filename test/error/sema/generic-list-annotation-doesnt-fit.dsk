@@ -1,0 +1,7 @@
+struct Pair[T: int | float]
+    a: T
+end
+
+func main() -> void
+    let p: Pair[string] = Pair(a = "x")
+end

@@ -1,0 +1,4 @@
+func main() -> void
+    let huge = 10000000000000000000000.0
+    echo(huge // 1.0)
+end

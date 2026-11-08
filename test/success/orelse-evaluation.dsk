@@ -4,7 +4,7 @@ struct Calls
 end
 
 func source(mut calls: Calls, is_present: bool) -> ?int
-    calls.source += 1
+    calls.source = calls.source + 1
     return if is_present then
         5
     else
@@ -13,7 +13,7 @@ func source(mut calls: Calls, is_present: bool) -> ?int
 end
 
 func fallback(mut calls: Calls) -> int
-    calls.fallback += 1
+    calls.fallback = calls.fallback + 1
     return 9
 end
 

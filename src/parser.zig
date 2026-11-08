@@ -117,6 +117,13 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
+            .trait_kw => {
+                const trait_stmt = try self.parseTraitStmt();
+                return ast.StatementNode{
+                    .data = .{ .trait = trait_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
             .if_kw, .when_kw => {
                 return self.parseIdentifierStmt();
             },
@@ -182,22 +189,90 @@ pub const Parser = struct {
     fn parseFuncStmt(self: *Self) !ast.FuncStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const fn_def = try self.parseFnDef();
 
         return ast.FuncStmt{
             .identifier = identifier_token.value(self.src),
             .def = fn_def,
+            .slots = slots,
+        };
+    }
+
+    fn parseSlots(self: *Self) ![]const ast.Slot {
+        if (!self.match(.l_bracket)) return &.{};
+        var slots: std.ArrayList(ast.Slot) = .empty;
+        while (true) {
+            const slot_token = try self.expect(.identifier);
+            const constraint = if (self.match(.colon)) try self.parseConstraint() else &.{};
+            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .constraint = constraint, .loc = slot_token.loc });
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_bracket);
+        return slots.toOwnedSlice(self.allocator);
+    }
+
+    fn parseTypeList(self: *Self) ![]const *ast.TypeAnnotation {
+        var types: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        while (true) {
+            try types.append(self.allocator, try self.parseTypeAnnotation(false));
+            if (!self.match(.bar)) break;
+        }
+        return types.toOwnedSlice(self.allocator);
+    }
+
+    fn parseConstraint(self: *Self) ![]const []const *ast.TypeAnnotation {
+        var terms: std.ArrayList([]const *ast.TypeAnnotation) = .empty;
+        while (true) {
+            try terms.append(self.allocator, try self.parseTypeList());
+            if (!self.match(.plus)) break;
+        }
+        return terms.toOwnedSlice(self.allocator);
+    }
+
+    fn parseTraitStmt(self: *Self) !ast.TraitStmt {
+        self.walk();
+        const identifier_token = try self.expect(.identifier);
+        const identifier = identifier_token.value(self.src);
+        if (self.match(.eq)) return ast.TraitStmt{ .identifier = identifier, .type_list = try self.parseTypeList() };
+
+        var parents: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        if (self.match(.colon)) {
+            while (true) {
+                try parents.append(self.allocator, try self.parseTypeAnnotation(false));
+                if (!self.match(.plus)) break;
+            }
+        }
+
+        var methods: std.ArrayList(ast.StatementNode) = .empty;
+        while (!self.match(.end_kw)) {
+            const start = self.peekCurrent();
+            if (start.tag != .func_kw) return self.err_reporter.invalidSyntax("func or end", start);
+            self.walk();
+            const method = try self.parseFuncSignature(false);
+            try methods.append(self.allocator, .{
+                .data = .{ .func = method },
+                .loc = .{ .start = start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+            });
+        }
+
+        return ast.TraitStmt{
+            .identifier = identifier,
+            .parents = try parents.toOwnedSlice(self.allocator),
+            .methods = try methods.toOwnedSlice(self.allocator),
         };
     }
 
     fn parseStructStmt(self: *Self) !ast.StructStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const struct_def = try self.parseStructDef();
 
         return ast.StructStmt{
             .identifier = identifier_token.value(self.src),
             .def = struct_def,
+            .slots = slots,
         };
     }
 
@@ -215,11 +290,13 @@ pub const Parser = struct {
     fn parseUnionStmt(self: *Self) !ast.UnionStmt {
         self.walk();
         const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
         const union_def = try self.parseUnionDef();
 
         return ast.UnionStmt{
             .identifier = identifier_token.value(self.src),
             .def = union_def,
+            .slots = slots,
         };
     }
 
@@ -264,48 +341,6 @@ pub const Parser = struct {
                         .exp = assign_exp,
                     } },
                     .loc = .{ .start = expr.loc.start, .end = assign_exp.loc.end },
-                };
-            },
-
-            .plus_eq => {
-                self.walk();
-                const right_exp = try self.parseExp(0);
-                const bin_exp = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .binary_exp = .{
-                        .left = expr,
-                        .op = .add,
-                        .right = right_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = right_exp.loc.end },
-                });
-
-                return ast.StatementNode{
-                    .data = .{ .assign = .{
-                        .target = expr,
-                        .exp = bin_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = bin_exp.loc.end },
-                };
-            },
-
-            .minus_eq => {
-                self.walk();
-                const right_exp = try self.parseExp(0);
-                const bin_exp = try ast.ExpNode.init(self.allocator, .{
-                    .data = .{ .binary_exp = .{
-                        .left = expr,
-                        .op = .sub,
-                        .right = right_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = right_exp.loc.end },
-                });
-
-                return ast.StatementNode{
-                    .data = .{ .assign = .{
-                        .target = expr,
-                        .exp = bin_exp,
-                    } },
-                    .loc = .{ .start = expr.loc.start, .end = bin_exp.loc.end },
                 };
             },
 
@@ -493,6 +528,11 @@ pub const Parser = struct {
         }
 
         const has_initial_value = self.match(.eq);
+        if (!has_type_annotation and !has_initial_value) {
+            const expected = try std.fmt.allocPrint(self.allocator, "':' or '=' after field '{s}'", .{identifier});
+            return self.err_reporter.invalidSyntax(expected, self.peekCurrent());
+        }
+
         var value: ?*ast.ExpNode = null;
         if (has_initial_value) {
             value = try self.parseExp(0);
@@ -779,14 +819,21 @@ pub const Parser = struct {
     fn parseExternFuncStmt(self: *Self) CompileError!ast.FuncStmt {
         self.walk();
         _ = try self.expect(.func_kw);
+        var func_stmt = try self.parseFuncSignature(true);
+        func_stmt.is_extern = true;
+        return func_stmt;
+    }
+
+    fn parseFuncSignature(self: *Self, can_have_slots: bool) CompileError!ast.FuncStmt {
         const identifier_token = try self.expect(.identifier);
+        const slots = if (can_have_slots) try self.parseSlots() else &.{};
         const params = try self.parseFnParams();
         _ = try self.expect(.arrow);
         const result = try self.parseFnResult();
 
         return ast.FuncStmt{
             .identifier = identifier_token.value(self.src),
-            .is_extern = true,
+            .slots = slots,
             .def = .{
                 .params = params,
                 .body_block = .{ .statements = .empty },
@@ -963,9 +1010,6 @@ pub const Parser = struct {
             .string_literal,
             .multiline_string_literal,
             .byte_literal,
-            .byte_kw,
-            .float_kw,
-            .buffer_kw,
             .true_literal,
             .false_literal,
             .null_literal,
@@ -996,12 +1040,13 @@ pub const Parser = struct {
     fn parsePipeOperator(self: *Self, exp: *ast.ExpNode) !*ast.ExpNode {
         self.walk();
         const right = try self.parseExp(self.getBindingPower(.l_paren));
+        const call = if (right.data == .try_exp) right.data.try_exp.operand else right;
 
-        if (right.data != .fn_call) {
-            return self.err_reporter.invalidSyntax("function call after '->'", .{ .tag = .identifier, .loc = right.loc });
+        if (call.data != .fn_call) {
+            return self.err_reporter.invalidSyntax("function call or 'try' call after '|>'", .{ .tag = .identifier, .loc = right.loc });
         }
 
-        const old_args = right.data.fn_call.arguments;
+        const old_args = call.data.fn_call.arguments;
         var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
 
         new_args.appendAssumeCapacity(
@@ -1013,7 +1058,7 @@ pub const Parser = struct {
 
         new_args.appendSliceAssumeCapacity(old_args);
 
-        right.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
+        call.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
         return right;
     }
 
@@ -1328,19 +1373,7 @@ pub const Parser = struct {
             .byte_literal => {
                 return self.parseByteLiteral(tk);
             },
-            .byte_kw, .float_kw, .buffer_kw => {
-                _ = try self.expect(.l_paren);
-                const was_parsing_condition = self.leaveCondition();
-                defer self.is_parsing_condition = was_parsing_condition;
-                const operand = try self.parseExp(0);
-                const r_paren = try self.expect(.r_paren);
-                const data: ast.Exp = switch (tk.tag) {
-                    .byte_kw => .{ .byte_cast = operand },
-                    .float_kw => .{ .float_cast = operand },
-                    else => .{ .buffer_new = operand },
-                };
-                return ast.ExpNode.init(self.allocator, .{ .data = data, .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end } });
-            },
+
             .true_literal => {
                 return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });
             },
@@ -1505,11 +1538,17 @@ pub const Parser = struct {
             .string_kw, .buffer_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .primitive = tk.value(self.src) },
                 .is_nullable = is_nullable,
+                .loc = tk.loc,
             }),
-            .identifier => ast.TypeAnnotation.init(self.allocator, .{
-                .type = .{ .@"struct" = tk.value(self.src) },
-                .is_nullable = is_nullable,
-            }),
+            .identifier => {
+                const args = try self.parseTypeArgs();
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .type = .{ .@"struct" = tk.value(self.src) },
+                    .is_nullable = is_nullable,
+                    .args = args,
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
             .struct_kw => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .anonymous_struct = try self.parseAnonymousStructDef() },
                 .is_nullable = is_nullable,
@@ -1524,12 +1563,24 @@ pub const Parser = struct {
                 return ast.TypeAnnotation.init(self.allocator, .{
                     .type = .{ .array = arr_type },
                     .is_nullable = is_nullable,
+                    .loc = .{ .start = tk.loc.start, .end = arr_type.loc.end },
                 });
             },
             else => {
                 return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
             },
         };
+    }
+
+    fn parseTypeArgs(self: *Self) CompileError![]const *ast.TypeAnnotation {
+        if (!self.match(.l_bracket)) return &.{};
+        var args: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        while (true) {
+            try args.append(self.allocator, try self.parseTypeAnnotation(false));
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_bracket);
+        return args.toOwnedSlice(self.allocator);
     }
 
     fn match(self: *Self, tag: Tag) bool {

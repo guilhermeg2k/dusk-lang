@@ -5,6 +5,7 @@ pub const CompileErrorReporter = struct {
 
     src: []const u8,
     allocator: std.mem.Allocator,
+    copy_context: ?CopyContext = null,
 
     const LINE_MAX_CHAR_COUNT = 256;
     const padding = " " ** LINE_MAX_CHAR_COUNT;
@@ -150,10 +151,6 @@ pub const CompileErrorReporter = struct {
         return error.NotMutable;
     }
 
-    pub fn temporaryNotMutable(self: *Self, loc: Loc) CompileError {
-        self.log("A temporary value can't be changed; store it in a 'let mut' variable first", loc);
-        return error.TemporaryNotMutable;
-    }
 
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
@@ -316,6 +313,26 @@ pub const CompileErrorReporter = struct {
         return error.WhenDuplicateCase;
     }
 
+    pub fn cantCompareTypes(self: *Self, op: []const u8, left: []const u8, right: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare '{s}' with '{s}': values of different types are never equal", .{ op, left, right }), loc);
+        return error.CantCompare;
+    }
+
+    pub fn cantCompareWithNull(self: *Self, op: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare '{s}' with null: only nullable values can be null", .{ op, type_name }), loc);
+        return error.CantCompare;
+    }
+
+    pub fn cantCompareStrings(self: *Self, op: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare strings: use str_equal(a, b) to compare their text", .{op}), loc);
+        return error.CantCompare;
+    }
+
+    pub fn cantCompareUnions(self: *Self, op: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare unions: check the variant with 'when' or 'if u.variant: value then ... end'", .{op}), loc);
+        return error.CantCompare;
+    }
+
     pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) CompileError {
         self.log(msg, loc);
         return error.WhenInvalidCase;
@@ -375,6 +392,130 @@ pub const CompileErrorReporter = struct {
     pub fn externOutsidePrelude(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'extern func {s}' is only allowed in the prelude", .{identifier}), loc);
         return error.ExternOutsidePrelude;
+    }
+
+    pub fn slotParamCantHaveDefault(self: *Self, param: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Parameter '{s}' uses a type slot, so it can't have a default value", .{param}), loc);
+        return error.SlotParamCantHaveDefault;
+    }
+
+    pub fn slotOperatorNotAllowed(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on type slot '{s}': it needs a type list constraint", .{ operator, slot }), loc);
+        return error.SlotOperatorNotAllowed;
+    }
+
+    pub fn slotOperatorNotAllowedOn(self: *Self, operator: []const u8, slot: []const u8, member: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': '{s}' doesn't support it", .{ operator, slot, member }), loc);
+        return error.SlotOperatorNotAllowed;
+    }
+
+    pub fn slotStringEquality(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': on a string it would compare pointers. Use str_equal", .{ operator, slot }), loc);
+        return error.SlotOperatorNotAllowed;
+    }
+
+    pub fn slotResultDiffers(self: *Self, operator: []const u8, first_member: []const u8, first_result: []const u8, second_member: []const u8, second_result: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' has no single result type here: it gives '{s}' for '{s}' and '{s}' for '{s}'", .{ operator, first_result, first_member, second_result, second_member }), loc);
+        return error.SlotResultDiffers;
+    }
+
+    pub fn typeDoesntFitSlot(self: *Self, type_name: []const u8, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} doesn't fit {s}", .{ type_name, slot }), loc);
+        return error.TypeDoesntFitSlot;
+    }
+
+    pub fn typeListNotPrimitive(self: *Self, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Type lists only hold int, float, byte, string and bool, found '{s}'", .{type_name}), loc);
+        return error.TypeListNotPrimitive;
+    }
+
+    pub fn traitRefersToItself(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Trait '{s}' refers to itself", .{identifier}), loc);
+        return error.TraitRefersToItself;
+    }
+
+    pub fn doesntFitTrait(self: *Self, type_name: []const u8, slot: []const u8, reason: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} doesn't fit {s}: {s}", .{ type_name, slot, reason }), loc);
+        return error.DoesntFitTrait;
+    }
+
+    pub fn typeListWithTrait(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' mixes a type list with another constraint: '+' only joins traits with methods, and primitives have no methods", .{identifier}), loc);
+        return error.TypeListWithTrait;
+    }
+
+    pub fn notATrait(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't a trait", .{identifier}), loc);
+        return error.NotATrait;
+    }
+
+    pub fn clashingTraitMethods(self: *Self, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Method '{s}' comes from two traits with different signatures", .{method}), loc);
+        return error.ClashingTraitMethods;
+    }
+
+    pub fn traitMethodNeedsSelf(self: *Self, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Trait method '{s}' must take 'self: @' or 'mut self: @' first", .{method}), loc);
+        return error.TraitMethodNeedsSelf;
+    }
+
+    pub fn traitMethodNeedsErrorSet(self: *Self, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Trait method '{s}' needs a named error set, like 'ParseError!int'", .{method}), loc);
+        return error.TraitMethodNeedsErrorSet;
+    }
+
+    pub fn slotHasNoMethod(self: *Self, slot: []const u8, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' has no method '{s}': its constraint doesn't list it", .{ slot, method }), loc);
+        return error.SlotHasNoMethod;
+    }
+
+    pub fn traitUsedAsType(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a trait: it can only constrain a type slot, like [T: {s}]", .{ identifier, identifier }), loc);
+        return error.TraitUsedAsType;
+    }
+
+    pub fn internalBuiltin(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is internal to the prelude and can't be used directly", .{identifier}), loc);
+        return error.InternalBuiltin;
+    }
+
+    pub fn slotUsedAsValue(self: *Self, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a type slot, not a value", .{slot}), loc);
+        return error.SlotUsedAsValue;
+    }
+
+    pub fn genericNeedsCall(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Generic function '{s}' can only be called, not used as a value", .{identifier}), loc);
+        return error.GenericNeedsCall;
+    }
+
+    pub fn cantInferSlot(self: *Self, slot: []const u8, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't work out '{s}' for '{s}': pass it through an argument or give the result a type", .{ slot, identifier }), loc);
+        return error.CantInferSlot;
+    }
+
+    pub fn conflictingSlotTypes(self: *Self, slot: []const u8, first: []const u8, second: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't be both '{s}' and '{s}'", .{ slot, first, second }), loc);
+        return error.ConflictingSlotTypes;
+    }
+
+    pub fn invalidSlotType(self: *Self, slot: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't be '{s}'", .{ slot, type_name }), loc);
+        return error.InvalidSlotType;
+    }
+
+    pub fn wrongSlotCount(self: *Self, identifier: []const u8, expected: usize, found: usize, loc: Loc) CompileError {
+        if (expected == 0) {
+            self.log(try allocPrint(self.allocator, "'{s}' isn't generic, so it takes no type arguments", .{identifier}), loc);
+            return error.WrongSlotCount;
+        }
+        self.log(try allocPrint(self.allocator, "'{s}' takes {d} type argument(s), found {d}", .{ identifier, expected, found }), loc);
+        return error.WrongSlotCount;
+    }
+
+    pub fn genericCopyTooDeep(self: *Self, name: []const u8, max_depth: usize, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' needs copies nested more than {d} deep: it probably calls itself with a bigger type each time", .{ name, max_depth }), loc);
+        return error.GenericCopyTooDeep;
     }
 
     pub fn missingMain(self: *Self) CompileError {
@@ -478,21 +619,12 @@ pub const CompileErrorReporter = struct {
         return error.PrimitiveParamsCantBeMutable;
     }
 
-    pub fn needsCopy(self: *Self, message: []const u8, loc: Loc) CompileError {
-        self.log(message, loc);
-        return error.NeedsCopy;
-    }
-
-    pub fn changedWhileRead(self: *Self, target: []const u8, capture: []const u8, capture_line: usize, loc: Loc) CompileError {
+    pub fn readOnlyIntoMutable(self: *Self, text: []const u8, loc: Loc) CompileError {
         self.log(
-            try allocPrint(
-                self.allocator,
-                "'{s}' can't change while capture '{s}' (line {d}) reads from it: make the capture mut, or change it after that block",
-                .{ target, capture, capture_line },
-            ),
+            try allocPrint(self.allocator, "'{s}' can't change, so it can't go into a mutable value: use copy({s}), or make it mutable", .{ text, text }),
             loc,
         );
-        return error.ChangedWhileRead;
+        return error.ReadOnlyIntoMutable;
     }
 
     pub fn primitiveCaptureCantBeMutable(self: *Self, name: []const u8, loc: Loc) CompileError {
@@ -563,8 +695,44 @@ pub const CompileErrorReporter = struct {
         return error.InvalidParameterType;
     }
 
-    pub fn log(self: *Self, msg: []const u8, loc: Loc) void {
+    pub fn tooManyRegisters(self: *Self, function: []const u8, loc: ?Loc) error{ OutOfMemory, TooManyRegisters } {
+        self.logAt(
+            try allocPrint(
+                self.allocator,
+                "function '{s}' uses more than 255 registers at once (variables and temporaries); split it into smaller functions",
+                .{function},
+            ),
+            loc,
+        );
+        return error.TooManyRegisters;
+    }
+
+    pub fn functionTooLong(self: *Self, function: []const u8, loc: ?Loc) error{ OutOfMemory, FunctionTooLong } {
+        self.logAt(
+            try allocPrint(
+                self.allocator,
+                "function '{s}' is too long (more than 65535 bytecode instructions); split it into smaller functions",
+                .{function},
+            ),
+            loc,
+        );
+        return error.FunctionTooLong;
+    }
+
+    pub fn tooManyStrings(self: *Self) error{TooManyStrings} {
+        self.logAt("the program has more than 65536 different string literals", null);
+        return error.TooManyStrings;
+    }
+
+    fn logAt(self: *Self, message: []const u8, loc: ?Loc) void {
+        if (loc) |known| return self.log(message, known);
         if (@import("builtin").is_test) return;
+        std.debug.print("error: {s}\n", .{self.withCopyContext(message)});
+    }
+
+    pub fn log(self: *Self, message: []const u8, loc: Loc) void {
+        if (@import("builtin").is_test) return;
+        const msg = self.withCopyContext(message);
 
         const exactLoc = self.findExactLoc(loc.start);
         const start_col = 6 + loc.start - exactLoc.line.start;
@@ -610,6 +778,15 @@ pub const CompileErrorReporter = struct {
                 error_loc_marker[0..error_loc_marker_len],
             },
         );
+    }
+
+    fn withCopyContext(self: *Self, message: []const u8) []const u8 {
+        const context = self.copy_context orelse return message;
+        const saved_src = self.src;
+        self.src = context.call_src;
+        const line = self.findExactLoc(context.call_loc.start).line.count;
+        self.src = saved_src;
+        return allocPrint(self.allocator, "in {s} (created at line {d}): {s}", .{ context.name, line, message }) catch message;
     }
 
     fn findExactLoc(self: *Self, loc: usize) ExactLoc {
@@ -658,6 +835,12 @@ const ExactLoc = struct { line: struct {
     end: usize,
 }, col: usize };
 
+pub const CopyContext = struct {
+    name: []const u8,
+    call_loc: Loc,
+    call_src: []const u8,
+};
+
 pub const CompileError = error{
     OutOfMemory,
     UnableToFindLoc,
@@ -677,7 +860,7 @@ pub const CompileError = error{
     AlreadyDefined,
     NotDefined,
     NotMutable,
-    TemporaryNotMutable,
+    ReadOnlyIntoMutable,
     UnwrappedCantBeMutable,
     SelfOutsideStruct,
     InvalidStructField,
@@ -693,14 +876,13 @@ pub const CompileError = error{
     InvalidUnionMember,
     InvalidUnionFunction,
     PrimitiveCaptureCantBeMutable,
-    NeedsCopy,
-    ChangedWhileRead,
     MutBorrowCantBeReassigned,
     TooManyUnionVariants,
     WhenNotExhaustive,
     WhenUselessElse,
     WhenDuplicateCase,
     WhenInvalidCase,
+    CantCompare,
     UnhandledError,
     TryOutsideFailingFunction,
     NotAFailingCall,
@@ -711,6 +893,28 @@ pub const CompileError = error{
     MissingMain,
     DeclarationInsideFunction,
     ExternOutsidePrelude,
+    SlotParamCantHaveDefault,
+    SlotOperatorNotAllowed,
+    SlotUsedAsValue,
+    InternalBuiltin,
+    SlotResultDiffers,
+    TypeDoesntFitSlot,
+    TypeListNotPrimitive,
+    TraitRefersToItself,
+    TraitUsedAsType,
+    DoesntFitTrait,
+    TypeListWithTrait,
+    NotATrait,
+    ClashingTraitMethods,
+    TraitMethodNeedsSelf,
+    TraitMethodNeedsErrorSet,
+    SlotHasNoMethod,
+    GenericNeedsCall,
+    CantInferSlot,
+    ConflictingSlotTypes,
+    InvalidSlotType,
+    GenericCopyTooDeep,
+    WrongSlotCount,
     InvalidMainSignature,
     StaticFieldCantBeMutable,
     StaticFieldNotConstant,
@@ -727,6 +931,11 @@ pub const RuntimeError = error{
     NegativeBufferSize,
     UnhandledError,
     CallDepthExceeded,
+    DivisionByZero,
+    DivisionOverflow,
+    IntegerOverflow,
+    FloatOutOfIntRange,
+    AssertionFailed,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -755,15 +964,76 @@ pub const RuntimeErrorReporter = struct {
         return report(RuntimeError.CallDepthExceeded, "call depth exceeded: more than {d} nested calls", .{max_depth});
     }
 
+    pub noinline fn divisionByZero(operator: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.DivisionByZero, "integer division by zero ('{s}' with a right side of 0)", .{operator});
+    }
+
+    pub noinline fn divisionOverflow(dividend: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.DivisionOverflow, "integer overflow: {d} // -1 doesn't fit in an int", .{dividend});
+    }
+
+    pub noinline fn integerOverflow(operator: []const u8, left: i64, right: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.IntegerOverflow, "integer overflow: {d} {s} {d} doesn't fit in an int", .{ left, operator, right });
+    }
+
+    pub noinline fn negationOverflow(operand: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.IntegerOverflow, "integer overflow: -({d}) doesn't fit in an int", .{operand});
+    }
+
+    pub noinline fn floatOutOfIntRange(value: f64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.FloatOutOfIntRange, "{d} doesn't fit in an int", .{value});
+    }
+
     pub noinline fn unhandledError(error_name: []const u8) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.UnhandledError, "unhandled error {s}", .{error_name});
+    }
+
+    pub noinline fn assertionFailed() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.AssertionFailed, "assertion failed", .{});
+    }
+
+    pub fn outOfMemory() void {
+        if (@import("builtin").is_test) return;
+        std.debug.print("error: out of memory\n", .{});
+    }
+
+    pub fn where(function: ?[]const u8, builtin: ?[]const u8) void {
+        if (@import("builtin").is_test) return;
+        if (builtin) |name| {
+            if (function) |caller| return std.debug.print("  in builtin '{s}', called from function '{s}'\n", .{ name, caller });
+            return std.debug.print("  in builtin '{s}'\n", .{name});
+        }
+        if (function) |name| std.debug.print("  in function '{s}'\n", .{name});
     }
 
     fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {
         if (@import("builtin").is_test) return err;
         std.debug.print("error: " ++ fmt ++ "\n", args);
         return err;
+    }
+};
+
+pub const CliErrorReporter = struct {
+    pub fn usage() void {
+        std.debug.print("usage: dusk <file.dsk>\n       dusk --version\n", .{});
+    }
+
+    pub fn cantReadFile(path: []const u8, failure: anyerror) anyerror {
+        const reason = switch (failure) {
+            error.FileNotFound => "file not found",
+            error.AccessDenied, error.PermissionDenied => "permission denied",
+            error.IsDir => "it's a directory",
+            else => @errorName(failure),
+        };
+        std.debug.print("error: can't read '{s}': {s}\n", .{ path, reason });
+        return failure;
     }
 };
 

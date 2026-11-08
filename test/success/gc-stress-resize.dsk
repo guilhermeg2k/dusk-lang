@@ -8,7 +8,7 @@ func main() -> void
     for i < 50000 do
         append(growing, i)
         let noise = [i, i + 1, i + 2, i + 3]
-        i += 1
+        i = i + 1
     end
 
     assert(len(growing) == 50000)

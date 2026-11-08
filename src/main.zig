@@ -3,6 +3,7 @@ const dusk = @import("dusk.zig");
 const Dusk = dusk.Dusk;
 
 const build_zon = @import("build_zon");
+const CliErrorReporter = @import("error.zig").CliErrorReporter;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
@@ -20,11 +21,14 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (args.len < 2) {
-        std.log.err("Invalid number of arguments\n", .{});
-        return;
+        CliErrorReporter.usage();
+        std.process.exit(1);
     }
 
     const file_name = args[1];
     var dusk_c = Dusk{ .allocator = allocator, .stdout_writer = stdout_writer, .io = init.io };
-    try dusk_c.runFile(file_name);
+    dusk_c.runFile(file_name) catch {
+        stdout_writer.flush() catch {};
+        std.process.exit(1);
+    };
 }

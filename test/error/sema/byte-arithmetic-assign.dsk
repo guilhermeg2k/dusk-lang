@@ -1,4 +1,4 @@
 func main() -> void
     let mut b: byte = 'a'
-    b += 1
+    b = b + 1
 end
