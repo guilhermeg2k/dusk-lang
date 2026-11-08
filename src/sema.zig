@@ -835,6 +835,11 @@ pub const SemaAnalyzer = struct {
         }
 
         const methods = try self.createMethodSignatures(struct_def.funcs, struct_symbol);
+        for (struct_def.funcs) |func_node| {
+            const name = func_node.data.func.identifier;
+            if (!fields.contains(name)) continue;
+            return self.err_reporter.fieldAndMethodSameName(name, struct_symbol.identifier, func_node.loc);
+        }
 
         var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
         for (fields_in_order.items, 0..) |field, i| {

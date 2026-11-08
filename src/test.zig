@@ -2082,6 +2082,8 @@ test "function values: named functions as values, function types and calls throu
     try runCaseError("sema/function-value-arg-count.dsk", error.InvalidNumberOfArgs);
     try runCaseError("sema/function-value-mut-arg.dsk", error.NotMutable);
     try runCaseError("sema/function-value-top-level.dsk", error.TopLevelLetNotConstant);
+    try runCaseError("sema/struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
+    try runCaseError("sema/generic-struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
 }
 
 test "generics: calls fill the slots from the arguments and compile one copy per type" {

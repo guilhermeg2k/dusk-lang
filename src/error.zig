@@ -494,6 +494,11 @@ pub const CompileErrorReporter = struct {
         return error.GenericNeedsCall;
     }
 
+    pub fn fieldAndMethodSameName(self: *Self, name: []const u8, struct_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is both a field and a method of '{s}': rename one of them", .{ name, struct_name }), loc);
+        return error.FieldAndMethodSameName;
+    }
+
     pub fn builtinAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Builtin '{s}' can't be used as a value: call it from a function and use that function instead", .{identifier}), loc);
         return error.BuiltinAsValue;
@@ -926,6 +931,7 @@ pub const CompileError = error{
     SlotHasNoMethod,
     GenericNeedsCall,
     BuiltinAsValue,
+    FieldAndMethodSameName,
     NamedArgumentsOnValue,
     CantInferSlot,
     ConflictingSlotTypes,
