@@ -3862,104 +3862,19 @@ pub const SemaAnalyzer = struct {
             },
             .indexed => |indexed| {
                 const target = try self.evalExp(indexed.target);
-                const target_type_id = target.type_id;
-                const target_type_ptr = self.type_table.getTypePtrById(target_type_id);
-
-                if (target_type_ptr.kind == .slot) {
-                    const fn_name = indexed.index.data.identifier;
-                    const fn_type_id = self.methodOf(target_type_id, fn_name) orelse return self.err_reporter.slotHasNoMethod(target_type_ptr.kind.slot.identifier, fn_name, exp.loc);
-                    const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-                    if (self.shouldAutoBindSelf(target)) {
-                        if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
-                        try fn_call_arguments_values.append(self.allocator, target);
-                    }
-                    params = fn_metadata.params;
-                    return_type = fn_metadata.return_type_id;
-                    uid = fn_metadata.uid;
-                    fn_identifier = fn_name;
-                } else if (target_type_ptr.kind != .@"struct" and target_type_ptr.kind != .@"enum" and target_type_ptr.kind != .@"union") {
-                    return self.err_reporter.invalidType(
-                        "a defined type such as struct/enums or union",
-                        try self.type_table.name(target_type_id, self.allocator),
-                        exp.loc,
-                    );
-                }
-
                 const fn_name = indexed.index.data.identifier;
-
-                switch (target_type_ptr.kind) {
-                    .@"struct" => |s| {
-                        const fn_type_id = s.methods.get(fn_name) orelse {
-                            return self.err_reporter.invalidStructFunction(
-                                s.identifier,
-                                fn_name,
-                                exp.loc,
-                            );
-                        };
-
-                        const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-
-                        if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
-                            if (self.shouldAutoBindSelf(target)) {
-                                if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
-                                try fn_call_arguments_values.append(self.allocator, target);
-                            }
-                        }
-
-                        params = fn_metadata.params;
-                        return_type = fn_metadata.return_type_id;
-                        uid = fn_metadata.uid;
-                        fn_identifier = fn_name;
-                    },
-                    .@"enum" => |e| {
-                        const fn_type_id = e.methods.get(fn_name) orelse {
-                            return self.err_reporter.invalidEnumFunction(
-                                e.identifier,
-                                fn_name,
-                                exp.loc,
-                            );
-                        };
-
-                        const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-
-                        if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
-                            if (self.shouldAutoBindSelf(target)) {
-                                if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
-                                try fn_call_arguments_values.append(self.allocator, target);
-                            }
-                        }
-
-                        params = fn_metadata.params;
-                        return_type = fn_metadata.return_type_id;
-                        uid = fn_metadata.uid;
-                        fn_identifier = fn_name;
-                    },
-                    .@"union" => |u| {
-                        const fn_type_id = u.methods.get(fn_name) orelse {
-                            return self.err_reporter.invalidUnionFunction(
-                                u.identifier,
-                                fn_name,
-                                exp.loc,
-                            );
-                        };
-
-                        const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-
-                        if (fn_metadata.params.len > 0 and target_type_id == fn_metadata.params[0].type_id) {
-                            if (self.shouldAutoBindSelf(target)) {
-                                if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
-                                try fn_call_arguments_values.append(self.allocator, target);
-                            }
-                        }
-
-                        params = fn_metadata.params;
-                        return_type = fn_metadata.return_type_id;
-                        uid = fn_metadata.uid;
-                        fn_identifier = fn_name;
-                    },
-                    .slot => {},
-                    else => unreachable,
+                const fn_type_id = try self.methodOrError(target.type_id, fn_name, exp.loc);
+                const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
+                const is_slot = self.type_table.getTypePtrById(target.type_id).kind == .slot;
+                const takes_self = is_slot or (fn_metadata.params.len > 0 and target.type_id == fn_metadata.params[0].type_id);
+                if (takes_self and self.shouldAutoBindSelf(target)) {
+                    if (fn_metadata.params[0].is_mut) try self.ensureMutable(indexed.target);
+                    try fn_call_arguments_values.append(self.allocator, target);
                 }
+                params = fn_metadata.params;
+                return_type = fn_metadata.return_type_id;
+                uid = fn_metadata.uid;
+                fn_identifier = fn_name;
             },
             else => unreachable,
         }
@@ -4082,6 +3997,21 @@ pub const SemaAnalyzer = struct {
                 return try self.evalCopyCall(copy_uid, symbol.identifier, argument);
             },
             .array_len, .array_pop, .bytes_len, .new_buffer, .to_byte, .to_int, .append => null,
+        };
+    }
+
+    fn methodOrError(self: *Self, type_id: tt.TypeId, name: []const u8, loc: err.Loc) CompileError!tt.TypeId {
+        if (self.methodOf(type_id, name)) |method| return method;
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .@"struct" => |s| self.err_reporter.invalidStructFunction(s.identifier, name, loc),
+            .@"enum" => |e| self.err_reporter.invalidEnumFunction(e.identifier, name, loc),
+            .@"union" => |u| self.err_reporter.invalidUnionFunction(u.identifier, name, loc),
+            .slot => |slot| self.err_reporter.slotHasNoMethod(slot.identifier, name, loc),
+            else => self.err_reporter.invalidType(
+                "a defined type such as struct/enums or union",
+                try self.type_table.name(type_id, self.allocator),
+                loc,
+            ),
         };
     }
 
