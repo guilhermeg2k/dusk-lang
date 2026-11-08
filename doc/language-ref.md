@@ -1182,7 +1182,7 @@ A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There'
 
 Lambda arguments are checked after the other arguments: their parameters take their types from the slots filled so far, and their result can fill the rest (see [Lambdas](#lambdas)).
 
-A slot can't be `void` or a type that can fail. Passing `parse`, which returns `ConversionError!int`, for `f: func(T) -> U` is an error at the call (`'U' can't be 'ConversionError!int'`), and so is a lambda that uses `try`. A caught error value fills a slot like any other value (`id(e)` after `catch e then`).
+A slot can't be `void` or a type that can fail. Passing `parse`, which returns `ConversionError!int`, for `f: func(T) -> U` is an error at the call (`'U' can't be 'ConversionError!int'`), and so is a lambda that uses `try`: take the errors through an [error slot](#error-slots) instead. A caught error value fills a slot like any other value (`id(e)` after `catch e then`).
 
 ### Generic structs and unions
 
@@ -1248,6 +1248,61 @@ Each operator on `T` is checked for every member with the usual rules. It's allo
 - otherwise an error: on `byte | float`, `a + b` gives `int` for `byte` and `float` for `float`
 
 A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` need a list without `string`, since strings can't be compared with `==` (use `str_equal`). `x == null` works on any `?T`.
+
+### Error slots
+
+A slot marked `: error` holds an error set. Written before `!`, it lets a generic function take functions that can fail and pass their errors on:
+
+```nim
+func map[T, U, E: error](items: []T, f: func(T) -> E!U) -> E![]U
+    let mut out: []U = []
+    for items: item do
+        append(out, try f(item))
+    end
+    return out
+end
+
+echo(map(["a", "bbb"], func(s) -> return str_len(s)))    # [1, 3]
+echo(try map(["1", "2"], parse))                         # [1, 2]
+echo(map(["1", "x"], parse) catch [])                    # []
+```
+
+`E` takes the error set of the function passed in: `ConversionError` for `parse`. When that function can't fail, `E` is `none`, the error set with no errors, and `none!U` is just `U`: that `map` can't fail, so its call takes no `try`, and inside it `try f(item)` is a plain call.
+
+- A slot written before `!` must be marked: `func run[T, E](f: func() -> E!T)` is an error.
+- Only error sets fill an error slot (`'E' is an error slot, so it must be an error set, not 'int'`), and `none` only fills error slots.
+- A function with an error slot fails only with `E`: `try str_to_int(s)` in its body is an error (`'ConversionError.Invalid' is not in error E`). Catch other errors there.
+- Two functions passed for the same `E` must fail with the same set. One that can't fail doesn't fit where another one fills `E` with `ConversionError`.
+
+`catch e then` on a call that fails with `E` gives `e` the type `E`. It can be returned, passed on, stored (`?E`, `[]E`) or printed, but not matched with `when`, since its errors depend on the call:
+
+```nim
+func first_error[T, E: error](items: []T, f: func(T) -> E!int) -> ?E
+    for items: item do
+        f(item) catch e then
+            return e
+        end
+    end
+    return null
+end
+```
+
+Structs and unions take error slots too, for a function kept in a field. `none` can be written in a type to say the function can't fail:
+
+```nim
+struct Task[T, E: error]
+    run: func() -> E!T
+
+    func go(self: @) -> E!T
+        return try self.run()
+    end
+end
+
+let later = Task(run = func() -> return try parse("8"))
+echo(try later.go())                                # 8
+let ready: Task[int, none] = @(run = func() -> return 1)
+echo(ready.go())                                    # 1
+```
 
 ### Traits
 

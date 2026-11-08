@@ -1,0 +1,6 @@
+struct Task[T, E: error]
+    run: func() -> E!T
+end
+func main() -> void
+    let t: Task[int, int] = @(run = func() -> return 1)
+end

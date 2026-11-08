@@ -2120,6 +2120,20 @@ test "lambdas: return types come from the body" {
     try runCaseError("parser/func-block-without-return-type.dsk", error.ParserError);
 }
 
+test "generics: error slots take the errors of failing callbacks" {
+    try runCase("error-slots.dsk");
+    try runCaseError("sema/error-slot-not-marked.dsk", error.SlotNotMarkedError);
+    try runCaseError("sema/error-slot-not-error-set.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/error-slot-struct-not-error-set.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/error-slot-when.dsk", error.CantMatchSlotErrors);
+    try runCaseError("sema/error-slot-conflict.dsk", error.InvalidType);
+    try runCaseError("sema/error-slot-none-conflict.dsk", error.InvalidType);
+    try runCaseError("sema/error-slot-other-error.dsk", error.ErrorNotInSet);
+    try runCaseError("sema/slot-none.dsk", error.InvalidSlotType);
+    try runCaseError("sema/error-slot-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/error-slot-try-none.dsk", error.NotAFailingCall);
+}
+
 test "generics: a slot can hold an error value but not a type that can fail" {
     try runCase("generic-error-values.dsk");
     try runCaseError("sema/slot-failing-function.dsk", error.SlotCantFail);

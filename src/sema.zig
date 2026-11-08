@@ -13,6 +13,7 @@ pub const SemaAnalyzer = struct {
     const Self = @This();
     const max_copy_depth = 64;
     const lambda_name = "$lambda";
+    const none_error_set_name = "none";
     const max_captures = 255;
 
     allocator: std.mem.Allocator,
@@ -47,7 +48,9 @@ pub const SemaAnalyzer = struct {
     pending_copies: std.ArrayList(PendingCopy) = .empty,
     copy_depth: usize = 0,
     is_lowering_copy: bool = false,
+    has_none_error_slot: bool = false,
     is_checking_opaque: bool = false,
+    none_error_set: tt.TypeId = undefined,
     lambda_contexts: std.ArrayList(LambdaContext) = .empty,
     boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     lambda_binding: ?[]const u8 = null,
@@ -72,6 +75,7 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn analyze(self: *Self, prelude: *const ast.Root, prelude_src: []const u8, root: *const ast.Root, src: []const u8) !ir.Program {
+        try self.declareNoneErrorSet();
         try self.loadPrelude(prelude, prelude_src);
 
         self.src = src;
@@ -96,6 +100,16 @@ pub const SemaAnalyzer = struct {
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
         };
+    }
+
+    fn declareNoneErrorSet(self: *Self) !void {
+        self.none_error_set = try self.createErrorSet(none_error_set_name, .none);
+        try self.scope.symbol_table.put(.{
+            .identifier = none_error_set_name,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = self.none_error_set } },
+        });
     }
 
     fn loadPrelude(self: *Self, prelude: *const ast.Root, src: []const u8) !void {
@@ -221,7 +235,7 @@ pub const SemaAnalyzer = struct {
             is_changed = false;
             for (self.error_edges.items) |edge| {
                 const to_set = self.errorSetOf(edge.to);
-                if (!to_set.is_inferred) continue;
+                if (to_set.kind != .inferred) continue;
                 for (self.errorSetOf(edge.from).ids.keys()) |id| {
                     if (to_set.has(id)) continue;
                     try to_set.ids.put(self.allocator, id, {});
@@ -232,7 +246,7 @@ pub const SemaAnalyzer = struct {
 
         for (self.error_edges.items) |edge| {
             const to_set = self.errorSetOf(edge.to);
-            if (to_set.is_inferred) continue;
+            if (to_set.kind == .inferred) continue;
             for (self.errorSetOf(edge.from).ids.keys()) |id| {
                 if (to_set.has(id)) continue;
                 return self.err_reporter.errorNotInSet(
@@ -286,7 +300,7 @@ pub const SemaAnalyzer = struct {
         var variants: std.StringHashMap(i64) = .init(self.allocator);
         const variants_in_order = try self.allocator.alloc([]const u8, stmt.variants.len);
         const error_set = try self.allocator.create(tt.ErrorSet);
-        error_set.* = .{ .is_inferred = false };
+        error_set.* = .{ .kind = .declared };
 
         for (stmt.variants, 0..) |variant, i| {
             if (variants.contains(variant.identifier)) {
@@ -320,14 +334,14 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createInferredErrorSet(self: *Self, fn_name: []const u8) !tt.TypeId {
+    fn createErrorSet(self: *Self, identifier: []const u8, kind: tt.ErrorSet.Kind) !tt.TypeId {
         const error_set = try self.allocator.create(tt.ErrorSet);
-        error_set.* = .{ .is_inferred = true };
+        error_set.* = .{ .kind = kind };
 
         return self.type_table.addType(.{
             .kind = .{
                 .@"enum" = .{
-                    .identifier = fn_name,
+                    .identifier = identifier,
                     .variants = .init(self.allocator),
                     .static_fields = .init(self.allocator),
                     .methods = .init(self.allocator),
@@ -340,11 +354,17 @@ pub const SemaAnalyzer = struct {
 
     fn resolveFnErrorSet(self: *Self, fn_error_set: ast.FnErrorSet, fn_name: []const u8) !tt.TypeId {
         switch (fn_error_set) {
-            .inferred => return self.createInferredErrorSet(fn_name),
+            .inferred => return self.createErrorSet(fn_name, .inferred),
             .named => |named| {
                 const symbol = self.scope.symbol_table.getOrError(named.identifier) catch {
                     return self.err_reporter.typeNotDefined(named.identifier, named.loc);
                 };
+                if (symbol.kind == .type_slot) {
+                    if (!self.type_table.isErrorSet(symbol.type_id)) {
+                        return self.err_reporter.slotNotMarkedError(named.identifier, named.loc);
+                    }
+                    return symbol.type_id;
+                }
                 if (symbol.kind != .defined_type or !self.type_table.isErrorSet(symbol.kind.defined_type.blueprint_type_id)) {
                     return self.err_reporter.notAnErrorSet(named.identifier, named.loc);
                 }
@@ -364,7 +384,7 @@ pub const SemaAnalyzer = struct {
         const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
         const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
         if (!self.type_table.isErrorSet(from_base) or !self.type_table.isErrorSet(to_base)) return false;
-        if (!self.errorSetOf(from_base).is_inferred or self.errorSetOf(to_base).is_inferred) return false;
+        if (self.errorSetOf(from_base).kind != .inferred or self.errorSetOf(to_base).kind == .inferred) return false;
 
         try self.addErrorEdge(from_base, to_base, loc);
         return true;
@@ -388,7 +408,7 @@ pub const SemaAnalyzer = struct {
         const payload_base = self.type_table.typeIdByNullableTypeId.get(payload) orelse payload;
         if (!self.type_table.isErrorSet(payload_base)) return;
         const error_set = self.errorSetOf(error_set_type_id);
-        if (error_set.is_inferred) return;
+        if (error_set.kind == .inferred) return;
         for (self.errorSetOf(payload_base).ids.keys()) |id| {
             if (!error_set.has(id)) continue;
             return self.err_reporter.payloadSharesErrors(
@@ -998,10 +1018,7 @@ pub const SemaAnalyzer = struct {
             const fn_name = self.type_table.getTypePtrById(fn_symbol.type_id).kind.function.identifier;
             const error_set_type_id = try self.resolveFnErrorSet(fn_error_set, fn_name);
             try self.checkPayloadErrorOverlap(error_set_type_id, return_type_id, loc);
-            return_type_id = try self.type_table.addType(.{
-                .kind = .{ .error_union = .{ .error_set = error_set_type_id, .payload = return_type_id } },
-                .is_nullable = false,
-            });
+            return_type_id = try self.errorUnionType(error_set_type_id, return_type_id);
         }
 
         //restore main scope
@@ -1208,7 +1225,8 @@ pub const SemaAnalyzer = struct {
         }
 
         const call = try self.evalFnCall(exp, null);
-        if (!self.type_table.isErrorUnion(call.type_id)) {
+        const is_failing = self.type_table.isErrorUnion(call.type_id);
+        if (!is_failing and !self.has_none_error_slot) {
             return self.err_reporter.notAFailingCall(keyword, exp.loc);
         }
 
@@ -1217,6 +1235,7 @@ pub const SemaAnalyzer = struct {
 
     fn evalTry(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
         const call = try self.evalFailingCall(exp.data.try_exp.operand, "try");
+        if (!self.type_table.isErrorUnion(call.type_id)) return call;
         const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
         const is_top_level = self.fn_depth == 0;
 
@@ -1239,6 +1258,7 @@ pub const SemaAnalyzer = struct {
     fn evalCatch(self: *Self, exp: *const ast.ExpNode, is_statement: bool, expected_type_id: ?tt.TypeId) CompileError!*ir.Value {
         const catch_exp = exp.data.catch_exp;
         const call = try self.evalFailingCall(catch_exp.operand, "catch");
+        if (!self.type_table.isErrorUnion(call.type_id)) return call;
         const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
         const payload = error_union.payload;
 
@@ -1490,7 +1510,7 @@ pub const SemaAnalyzer = struct {
             if (!areMentionedSlotsBound(param.type, slots, bindings)) continue;
             hint.* = .{ .type_id = try self.resolveTypeAnnotation(param.type, null), .is_mut = param.is_mut };
         }
-        const is_return_known = areMentionedSlotsBound(func.return_type, slots, bindings);
+        const is_return_known = isErrorSetBound(func.error_set, slots, bindings) and areMentionedSlotsBound(func.return_type, slots, bindings);
         const return_type_id = if (is_return_known) try self.resolveFuncReturnType(func, null, loc) else null;
         return .{ .params = hints, .return_type_id = return_type_id };
     }
@@ -1571,25 +1591,7 @@ pub const SemaAnalyzer = struct {
                     }
                     return;
                 };
-                if (kind == .dynamic or kind == .null) return;
-                if (kind == .void) {
-                    return self.err_reporter.invalidSlotType(name, try self.type_table.name(type_id, self.allocator), loc);
-                }
-                if (kind == .error_union) {
-                    return self.err_reporter.slotCantFail(name, try self.type_table.syntaxName(type_id, self.allocator), loc);
-                }
-                const bound = bindings[slot_index] orelse {
-                    try self.checkSlotFits(slots[slot_index], type_id, loc);
-                    bindings[slot_index] = type_id;
-                    return;
-                };
-                if (bound == type_id or self.canConvertTo(type_id, bound)) return;
-                return self.err_reporter.conflictingSlotTypes(
-                    name,
-                    try self.type_table.syntaxName(bound, self.allocator),
-                    try self.type_table.syntaxName(type_id, self.allocator),
-                    loc,
-                );
+                try self.bindSlot(slots, bindings, slot_index, type_id, loc);
             },
             .array => |inner| {
                 if (kind == .dynamic or kind == .null) return;
@@ -1605,12 +1607,50 @@ pub const SemaAnalyzer = struct {
                     try self.inferSlots(param.type, arg_param.type_id, slots, bindings, loc);
                 }
                 const return_type = self.type_table.getTypePtrById(kind.func_type.return_type_id);
-                const are_both_failing = func.error_set != null and return_type.kind == .error_union;
+                const is_arg_failing = return_type.kind == .error_union;
+                if (slotIndex(func.error_set, slots)) |set_slot| {
+                    const arg_set = if (is_arg_failing) return_type.kind.error_union.error_set else self.none_error_set;
+                    try self.bindSlot(slots, bindings, set_slot, arg_set, loc);
+                }
+                const are_both_failing = func.error_set != null and is_arg_failing;
                 const arg_return = if (are_both_failing) return_type.kind.error_union.payload else kind.func_type.return_type_id;
                 try self.inferSlots(func.return_type, arg_return, slots, bindings, loc);
             },
             else => {},
         }
+    }
+
+    fn bindSlot(self: *Self, slots: []const ast.Slot, bindings: []?tt.TypeId, slot_index: usize, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const slot = slots[slot_index];
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        if (kind == .dynamic or kind == .null) return;
+        if (kind == .void) {
+            return self.err_reporter.invalidSlotType(slot.identifier, try self.type_table.name(type_id, self.allocator), loc);
+        }
+        if (kind == .error_union) {
+            return self.err_reporter.slotCantFail(slot.identifier, try self.type_table.syntaxName(type_id, self.allocator), loc);
+        }
+        const bound = bindings[slot_index] orelse {
+            try self.checkSlotFits(slot, type_id, loc);
+            bindings[slot_index] = type_id;
+            return;
+        };
+        if (bound == type_id) return;
+        if (!slot.is_error_set and self.canConvertTo(type_id, bound)) return;
+        return self.err_reporter.conflictingSlotTypes(
+            slot.identifier,
+            try self.type_table.syntaxName(bound, self.allocator),
+            try self.type_table.syntaxName(type_id, self.allocator),
+            loc,
+        );
+    }
+
+    fn slotIndex(name: ?[]const u8, slots: []const ast.Slot) ?usize {
+        const identifier = name orelse return null;
+        for (slots, 0..) |slot, i| {
+            if (std.mem.eql(u8, slot.identifier, identifier)) return i;
+        }
+        return null;
     }
 
     fn instantiateGenericFunction(self: *Self, index: usize, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
@@ -1839,8 +1879,10 @@ pub const SemaAnalyzer = struct {
             .depth = self.copy_depth,
             .copy_context = self.err_reporter.copy_context,
             .is_lowering_copy = self.is_lowering_copy,
+            .has_none_error_slot = self.has_none_error_slot,
         };
         self.copy_depth = copy.depth;
+        self.has_none_error_slot = std.mem.indexOfScalar(tt.TypeId, copy.args, self.none_error_set) != null;
         self.err_reporter.copy_context = .{ .name = copy.symbol.identifier, .call_loc = copy.call_loc, .call_src = copy.call_src };
         self.is_lowering_copy = true;
         return saved;
@@ -1851,6 +1893,7 @@ pub const SemaAnalyzer = struct {
         self.copy_depth = saved.depth;
         self.err_reporter.copy_context = saved.copy_context;
         self.is_lowering_copy = saved.is_lowering_copy;
+        self.has_none_error_slot = saved.has_none_error_slot;
     }
 
     fn enterSlotScope(self: *Self, slots: []const ast.Slot, args: []const tt.TypeId) CompileError!*SymbolTable {
@@ -1871,6 +1914,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn addSlotType(self: *Self, slot: ast.Slot) CompileError!tt.TypeId {
+        if (slot.is_error_set) {
+            return self.createErrorSet(slot.identifier, .slot);
+        }
         const constraint = try self.resolveConstraint(slot);
         const slot_type_id = try self.type_table.addType(.{ .kind = .{ .slot = .{ .identifier = slot.identifier, .type_list = constraint.type_list } }, .is_nullable = false });
         if (constraint.methods.len == 0) return slot_type_id;
@@ -2062,6 +2108,13 @@ pub const SemaAnalyzer = struct {
     }
 
     fn checkSlotFits(self: *Self, slot: ast.Slot, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const is_error_set = self.type_table.isErrorSet(type_id) and !self.type_table.getTypePtrById(type_id).is_nullable;
+        if (slot.is_error_set and !is_error_set) {
+            return self.err_reporter.slotNeedsErrorSet(slot.identifier, try self.type_table.syntaxName(type_id, self.allocator), loc);
+        }
+        if (!slot.is_error_set and type_id == self.none_error_set) {
+            return self.err_reporter.invalidSlotType(slot.identifier, none_error_set_name, loc);
+        }
         if (slot.constraint.len == 0) return;
         const constraint = try self.resolveConstraint(slot);
         if (constraint.type_list.len > 0) {
@@ -2184,17 +2237,14 @@ pub const SemaAnalyzer = struct {
         const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
         return switch (self.type_table.getTypePtrById(base_id).kind) {
             .slot => true,
+            .@"enum" => |e| e.error_set != null and e.error_set.?.kind == .slot,
             .array => |inner| self.typeContainsSlot(inner),
+            .error_union => |eu| self.typeContainsSlot(eu.error_set) or self.typeContainsSlot(eu.payload),
             .func_type => |func| for (func.params) |param| {
                 if (self.typeContainsSlot(param.type_id)) break true;
-            } else self.typeContainsSlot(self.payloadType(func.return_type_id)),
+            } else self.typeContainsSlot(func.return_type_id),
             else => false,
         };
-    }
-
-    fn payloadType(self: *Self, type_id: tt.TypeId) tt.TypeId {
-        const type_ptr = self.type_table.getTypePtrById(type_id);
-        return if (type_ptr.kind == .error_union) type_ptr.kind.error_union.payload else type_id;
     }
 
     fn areMentionedSlotsBound(annotation: *const ast.TypeAnnotation, slots: []const ast.Slot, bindings: []const ?tt.TypeId) bool {
@@ -2207,7 +2257,7 @@ pub const SemaAnalyzer = struct {
             .array => |inner| areMentionedSlotsBound(inner, slots, bindings),
             .function => |func| for (func.params) |param| {
                 if (!areMentionedSlotsBound(param.type, slots, bindings)) break false;
-            } else areMentionedSlotsBound(func.return_type, slots, bindings),
+            } else isErrorSetBound(func.error_set, slots, bindings) and areMentionedSlotsBound(func.return_type, slots, bindings),
             else => true,
         };
     }
@@ -2222,9 +2272,14 @@ pub const SemaAnalyzer = struct {
             .array => |inner| mentionsSlot(inner, slots),
             .function => |func| for (func.params) |param| {
                 if (mentionsSlot(param.type, slots)) break true;
-            } else mentionsSlot(func.return_type, slots),
+            } else slotIndex(func.error_set, slots) != null or mentionsSlot(func.return_type, slots),
             else => false,
         };
+    }
+
+    fn isErrorSetBound(error_set: ?[]const u8, slots: []const ast.Slot, bindings: []const ?tt.TypeId) bool {
+        const slot_index = slotIndex(error_set, slots) orelse return true;
+        return bindings[slot_index] != null;
     }
 
     fn visitStructStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
@@ -2492,6 +2547,10 @@ pub const SemaAnalyzer = struct {
             .int, .byte, .float, .string, .@"enum", .@"union" => {},
             else => return self.err_reporter.invalidType("int, byte, float, string, enum or union", type_name, exp.loc),
         }
+        const is_slot_error_set = self.type_table.isErrorSet(base_type) and self.errorSetOf(base_type).kind == .slot;
+        if (is_slot_error_set) {
+            return self.err_reporter.cantMatchSlotErrors(base_kind.@"enum".identifier, exp.loc);
+        }
 
         return .{
             .value = value,
@@ -2655,7 +2714,7 @@ pub const SemaAnalyzer = struct {
         const when_stmt = exp.data.when_exp;
         const when_loc: err.Loc = .{ .start = exp.loc.start, .end = when_stmt.subject.loc.end };
 
-        if (self.type_table.isErrorSet(subject.base_type) and self.errorSetOf(subject.base_type).is_inferred) {
+        if (self.type_table.isErrorSet(subject.base_type) and self.errorSetOf(subject.base_type).kind == .inferred) {
             try self.pending_when_checks.append(self.allocator, .{
                 .when_stmt = when_stmt,
                 .values = prongs.values,
@@ -2813,7 +2872,7 @@ pub const SemaAnalyzer = struct {
         }
 
         const set = self.errorSetOf(expected_type);
-        if (!set.is_inferred and !set.has(value.data.i_int)) {
+        if (set.kind != .inferred and !set.has(value.data.i_int)) {
             return self.err_reporter.errorNotInSet(
                 self.type_table.error_names.items[@intCast(value.data.i_int)],
                 try self.type_table.name(expected_type, self.allocator),
@@ -3406,7 +3465,7 @@ pub const SemaAnalyzer = struct {
         if (self.lambda_contexts.items[context_index].error_set) |error_set| {
             return error_set;
         }
-        const error_set = try self.createInferredErrorSet(lambda_name);
+        const error_set = try self.createErrorSet(lambda_name, .inferred);
         self.lambda_contexts.items[context_index].error_set = error_set;
         return error_set;
     }
@@ -3415,10 +3474,7 @@ pub const SemaAnalyzer = struct {
         const context = self.lambda_contexts.items[context_index];
         const payload = context.return_payload orelse self.type_table.getPrimitive(.void);
         const error_set = context.error_set orelse return payload;
-        return self.type_table.addType(.{
-            .kind = .{ .error_union = .{ .error_set = error_set, .payload = payload } },
-            .is_nullable = false,
-        });
+        return self.errorUnionType(error_set, payload);
     }
 
     fn visitFailingReturnStmt(self: *Self, stmt: *const ast.StatementNode) CompileError!ir.Instruction {
@@ -3446,7 +3502,7 @@ pub const SemaAnalyzer = struct {
             const target_set = self.errorSetOf(error_union.error_set);
 
             if (value.data == .i_int) {
-                if (target_set.is_inferred) {
+                if (target_set.kind == .inferred) {
                     try target_set.ids.put(self.allocator, value.data.i_int, {});
                 } else if (!target_set.has(value.data.i_int)) {
                     return self.err_reporter.errorNotInSet(
@@ -5371,8 +5427,13 @@ pub const SemaAnalyzer = struct {
         const payload = try self.resolveTypeAnnotation(func.return_type, current_defined_type_type_id);
         const set_name = func.error_set orelse return payload;
         const error_set_type_id = try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .loc = loc } }, "");
+        return self.errorUnionType(error_set_type_id, payload);
+    }
+
+    fn errorUnionType(self: *Self, error_set: tt.TypeId, payload: tt.TypeId) CompileError!tt.TypeId {
+        if (self.errorSetOf(error_set).kind == .none) return payload;
         return self.type_table.addType(.{
-            .kind = .{ .error_union = .{ .error_set = error_set_type_id, .payload = payload } },
+            .kind = .{ .error_union = .{ .error_set = error_set, .payload = payload } },
             .is_nullable = false,
         });
     }
@@ -5636,6 +5697,7 @@ const CopyLowering = struct {
     depth: usize,
     copy_context: ?err.CopyContext,
     is_lowering_copy: bool,
+    has_none_error_slot: bool,
 };
 
 const GenericCopy = struct {

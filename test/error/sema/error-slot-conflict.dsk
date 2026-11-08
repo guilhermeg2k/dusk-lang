@@ -1,0 +1,12 @@
+func parse(s: string) -> ConversionError!int
+    return try str_to_int(s)
+end
+func pop_last(xs: []int) -> ArrayError!int
+    return 1
+end
+func both[E: error](f: func(string) -> E!int, g: func([]int) -> E!int) -> E!int
+    return try f("1")
+end
+func main() -> !void
+    let x = try both(parse, pop_last)
+end

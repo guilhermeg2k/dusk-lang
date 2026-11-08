@@ -1,0 +1,6 @@
+func run[E: error](f: func() -> E!int) -> E!int
+    let n = try str_to_int("1")
+    return try f()
+end
+func main() -> void
+end

@@ -1,0 +1,6 @@
+func make[E: error]() -> E!int
+    return 1
+end
+func main() -> void
+    let x = make()
+end

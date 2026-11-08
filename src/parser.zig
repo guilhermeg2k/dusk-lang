@@ -203,13 +203,23 @@ pub const Parser = struct {
         if (!self.match(.l_bracket)) return &.{};
         var slots: std.ArrayList(ast.Slot) = .empty;
         while (true) {
-            const slot_token = try self.expect(.identifier);
-            const constraint = if (self.match(.colon)) try self.parseConstraint() else &.{};
-            try slots.append(self.allocator, .{ .identifier = slot_token.value(self.src), .constraint = constraint, .loc = slot_token.loc });
+            try slots.append(self.allocator, try self.parseSlot());
             if (!self.match(.comma)) break;
         }
         _ = try self.expect(.r_bracket);
         return slots.toOwnedSlice(self.allocator);
+    }
+
+    fn parseSlot(self: *Self) !ast.Slot {
+        const slot_token = try self.expect(.identifier);
+        const identifier = slot_token.value(self.src);
+        if (!self.match(.colon)) {
+            return .{ .identifier = identifier, .loc = slot_token.loc };
+        }
+        if (self.match(.error_kw)) {
+            return .{ .identifier = identifier, .is_error_set = true, .loc = slot_token.loc };
+        }
+        return .{ .identifier = identifier, .constraint = try self.parseConstraint(), .loc = slot_token.loc };
     }
 
     fn parseTypeList(self: *Self) ![]const *ast.TypeAnnotation {

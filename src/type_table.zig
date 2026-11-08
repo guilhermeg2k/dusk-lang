@@ -88,7 +88,7 @@ pub const TypeTable = struct {
         if (self.isErrorSet(from) and self.isErrorSet(to)) {
             const from_set = type_from.kind.@"enum".error_set.?;
             const to_set = type_to.kind.@"enum".error_set.?;
-            if (from_set.is_inferred or to_set.is_inferred) return false;
+            if (from_set.kind == .inferred or to_set.kind == .inferred) return false;
             return from_set.isSubsetOf(to_set);
         }
 
@@ -177,7 +177,7 @@ pub const TypeTable = struct {
             },
             .@"enum" => |e| {
                 if (e.error_set) |set| {
-                    if (set.is_inferred) {
+                    if (set.kind == .inferred) {
                         return std.fmt.allocPrint(allocator, "{s}error set of '{s}'", .{ prefix, e.identifier });
                     }
                     return std.fmt.allocPrint(allocator, "{s}error {s}", .{ prefix, e.identifier });
@@ -186,7 +186,7 @@ pub const TypeTable = struct {
             },
             .error_union => |eu| {
                 const set = self.getTypePtrById(eu.error_set).kind.@"enum";
-                const set_name = if (set.error_set.?.is_inferred) "" else set.identifier;
+                const set_name = if (set.error_set.?.kind == .inferred) "" else set.identifier;
                 return std.fmt.allocPrint(allocator, "{s}!{s}", .{ set_name, try self.name(eu.payload, allocator) });
             },
             .@"union" => |u| {
@@ -220,7 +220,7 @@ pub const TypeTable = struct {
 
     fn errorSetSyntaxName(self: *Self, error_set: TypeId) []const u8 {
         const set = self.getTypePtrById(error_set).kind.@"enum";
-        return if (set.error_set.?.is_inferred) "" else set.identifier;
+        return if (set.error_set.?.kind == .inferred) "" else set.identifier;
     }
 
     pub fn isErrorSet(self: *Self, id: TypeId) bool {
@@ -405,8 +405,10 @@ pub const Enum = struct {
 };
 
 pub const ErrorSet = struct {
-    is_inferred: bool,
+    kind: Kind,
     ids: std.AutoArrayHashMapUnmanaged(i64, void) = .empty,
+
+    pub const Kind = enum { declared, inferred, slot, none };
 
     pub fn has(self: *const ErrorSet, id: i64) bool {
         return self.ids.contains(id);

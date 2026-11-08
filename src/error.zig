@@ -565,8 +565,23 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn slotCantFail(self: *Self, slot: []const u8, type_name: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' can't be '{s}': a slot can't hold a type that can fail. Pass a value or function that doesn't fail, or handle its errors first", .{ slot, type_name }), loc);
+        self.log(try allocPrint(self.allocator, "'{s}' can't be '{s}': a slot can't hold a type that can fail. Handle the errors first, or take them through an error slot ('E: error' with 'E!{s}')", .{ slot, type_name, slot }), loc);
         return error.SlotCantFail;
+    }
+
+    pub fn slotNotMarkedError(self: *Self, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' comes before '!', so it must be an error slot: write it as '{s}: error' in the brackets", .{ slot, slot }), loc);
+        return error.SlotNotMarkedError;
+    }
+
+    pub fn slotNeedsErrorSet(self: *Self, slot: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is an error slot, so it must be an error set, not '{s}'", .{ slot, type_name }), loc);
+        return error.SlotNeedsErrorSet;
+    }
+
+    pub fn cantMatchSlotErrors(self: *Self, slot: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't match the cases of '{s}': its errors depend on the call. Return it, pass it on or store it instead", .{slot}), loc);
+        return error.CantMatchSlotErrors;
     }
 
     pub fn wrongSlotCount(self: *Self, identifier: []const u8, expected: usize, found: usize, loc: Loc) CompileError {
@@ -981,6 +996,9 @@ pub const CompileError = error{
     LambdaParamNeedsType,
     LambdaReturnsDiffer,
     SlotCantFail,
+    SlotNotMarkedError,
+    SlotNeedsErrorSet,
+    CantMatchSlotErrors,
     WrongLambdaParamCount,
     LambdaParamMutDiffers,
     LambdaCallsItself,

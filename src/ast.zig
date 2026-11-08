@@ -37,6 +37,7 @@ pub const FuncStmt = struct {
 pub const Slot = struct {
     identifier: []const u8,
     constraint: []const []const *TypeAnnotation = &.{},
+    is_error_set: bool = false,
     loc: err.Loc,
 };
 
