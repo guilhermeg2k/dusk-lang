@@ -84,7 +84,9 @@ pub const VM = struct {
     }
 
     fn reportWhere(self: *Self, failure: anyerror) void {
-        if (failure == error.OutOfMemory) RuntimeErrorReporter.outOfMemory();
+        if (failure == error.OutOfMemory) {
+            RuntimeErrorReporter.outOfMemory();
+        }
         if (self.frame_count == 0) return;
         const name = self.frames[self.frame_count - 1].function.name;
         const is_top_level = name.len > 0 and name[0] == '$';
@@ -182,14 +184,18 @@ pub const VM = struct {
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
-                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) {
+                        return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = bytes.getDataPtr()[@intCast(index)] };
                 },
 
                 .BYTES_SET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.a].heap_obj);
                     const index = stack[stack_base + inst.b].int64;
-                    if (index < 0 or index >= bytes.len) return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
+                    if (index < 0 or index >= bytes.len) {
+                        return RuntimeErrorReporter.indexOutOfBounds(index, bytes.len);
+                    }
                     bytes.getDataPtr()[@intCast(index)] = @intCast(stack[stack_base + inst.c].int64);
                 },
 
@@ -287,33 +293,45 @@ pub const VM = struct {
 
                 .I_ADD => {
                     const result = @addWithOverflow(stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
-                    if (result[1] != 0) return RuntimeErrorReporter.integerOverflow("+", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    if (result[1] != 0) {
+                        return RuntimeErrorReporter.integerOverflow("+", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = result[0] };
                 },
 
                 .I_SUB => {
                     const result = @subWithOverflow(stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
-                    if (result[1] != 0) return RuntimeErrorReporter.integerOverflow("-", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    if (result[1] != 0) {
+                        return RuntimeErrorReporter.integerOverflow("-", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = result[0] };
                 },
 
                 .I_MULT => {
                     const result = @mulWithOverflow(stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
-                    if (result[1] != 0) return RuntimeErrorReporter.integerOverflow("*", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    if (result[1] != 0) {
+                        return RuntimeErrorReporter.integerOverflow("*", stack[stack_base + inst.b].int64, stack[stack_base + inst.c].int64);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = result[0] };
                 },
 
                 .TRUNC_DIV => {
                     const dividend = stack[stack_base + inst.b].int64;
                     const divisor = stack[stack_base + inst.c].int64;
-                    if (divisor == 0) return RuntimeErrorReporter.divisionByZero("//");
-                    if (divisor == -1 and dividend == std.math.minInt(i64)) return RuntimeErrorReporter.divisionOverflow(dividend);
+                    if (divisor == 0) {
+                        return RuntimeErrorReporter.divisionByZero("//");
+                    }
+                    if (divisor == -1 and dividend == std.math.minInt(i64)) {
+                        return RuntimeErrorReporter.divisionOverflow(dividend);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = @divTrunc(dividend, divisor) };
                 },
 
                 .I_MOD => {
                     const divisor = stack[stack_base + inst.c].int64;
-                    if (divisor == 0) return RuntimeErrorReporter.divisionByZero("%");
+                    if (divisor == 0) {
+                        return RuntimeErrorReporter.divisionByZero("%");
+                    }
                     if (divisor == -1) {
                         stack[stack_base + inst.a] = .{ .int64 = 0 };
                         continue;
@@ -359,7 +377,9 @@ pub const VM = struct {
 
                 .I_NEG => {
                     const operand = stack[stack_base + inst.b].int64;
-                    if (operand == std.math.minInt(i64)) return RuntimeErrorReporter.negationOverflow(operand);
+                    if (operand == std.math.minInt(i64)) {
+                        return RuntimeErrorReporter.negationOverflow(operand);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = -operand };
                 },
 
@@ -468,7 +488,9 @@ pub const VM = struct {
 
                 .I_TO_BYTE => {
                     const number = stack[stack_base + inst.b].int64;
-                    if (number < 0 or number > 255) return RuntimeErrorReporter.byteOutOfRange(number);
+                    if (number < 0 or number > 255) {
+                        return RuntimeErrorReporter.byteOutOfRange(number);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = number };
                 },
 
@@ -481,7 +503,9 @@ pub const VM = struct {
                 .F_TO_I => {
                     const truncated = @trunc(stack[stack_base + inst.a].float64);
                     const is_in_range = truncated >= -0x1p63 and truncated < 0x1p63;
-                    if (!is_in_range) return RuntimeErrorReporter.floatOutOfIntRange(stack[stack_base + inst.a].float64);
+                    if (!is_in_range) {
+                        return RuntimeErrorReporter.floatOutOfIntRange(stack[stack_base + inst.a].float64);
+                    }
                     stack[stack_base + inst.a] = .{ .int64 = @intFromFloat(truncated) };
                 },
 
@@ -491,7 +515,9 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
-                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+                            if (self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len) {
+                                return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+                            }
                             self.frames[self.frame_count] = .{
                                 .function = func,
                                 .cur_inst = 0,
@@ -511,7 +537,9 @@ pub const VM = struct {
                                 return failure;
                             };
                             stack[stack_base + inst.a] = result.value;
-                            if (result.has_failed) cur_instruction += 1;
+                            if (result.has_failed) {
+                                cur_instruction += 1;
+                            }
                         },
                         .intrinsic => unreachable,
                     }
@@ -543,7 +571,9 @@ pub const VM = struct {
                     cur_instruction = table.default;
                     if (value < table.min) continue;
                     const offset = @as(u64, @bitCast(value)) -% @as(u64, @bitCast(table.min));
-                    if (offset < table.target_offsets.len) cur_instruction = table.target_offsets[@intCast(offset)];
+                    if (offset < table.target_offsets.len) {
+                        cur_instruction = table.target_offsets[@intCast(offset)];
+                    }
                 },
 
                 .RETURN => {
@@ -574,7 +604,9 @@ pub const VM = struct {
     }
 
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
-        if (len < 0) return RuntimeErrorReporter.negativeBufferSize(len);
+        if (len < 0) {
+            return RuntimeErrorReporter.negativeBufferSize(len);
+        }
         const size = v.Bytes.calc_size(@intCast(len));
         try self.maybeCollectGarbage(size);
         const bytes = try v.Bytes.initZeroed(self.getCurrentHeapAllocator(), @intCast(len), .buffer);
@@ -583,7 +615,9 @@ pub const VM = struct {
     }
 
     noinline fn deepCopy(self: *Self, source_index: usize) !v.Value {
-        if (@as(u64, @bitCast(self.stack[source_index])) == 0) return self.stack[source_index];
+        if (@as(u64, @bitCast(self.stack[source_index])) == 0) {
+            return self.stack[source_index];
+        }
         try self.maybeCollectGarbage(heapObjectSize(self.stack[source_index].heap_obj));
 
         var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
@@ -609,14 +643,18 @@ pub const VM = struct {
                     const desc = self.program.struct_descriptors[s.descriptor_id];
                     const fields = s.getDataPtr()[0..s.field_count];
                     for (0..s.field_count) |i| {
-                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(i)) != 0) try self.deepCopySlot(&fields[i], &copies, &pending);
+                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
+                            try self.deepCopySlot(&fields[i], &copies, &pending);
+                        }
                     }
                 },
                 .@"union" => {
                     const u = v.HeapValue.getParentPtr(v.Union, copy);
                     if (u.active_tag == v.Union.NO_TAG) continue;
                     const desc = self.program.union_descriptors[u.descriptor_id];
-                    if (desc.heap_bitmap & (@as(u256, 1) << @intCast(u.active_tag)) != 0) try self.deepCopySlot(&u.getDataPtr()[0], &copies, &pending);
+                    if (desc.heap_bitmap & (@as(u256, 1) << @intCast(u.active_tag)) != 0) {
+                        try self.deepCopySlot(&u.getDataPtr()[0], &copies, &pending);
+                    }
                 },
                 else => {},
             }
@@ -638,7 +676,9 @@ pub const VM = struct {
         const copy = try cloneHeapObj(self.getCurrentHeapAllocator(), current);
         self.increaseHeapAllocationCount(heapObjectSize(copy));
         try copies.put(self.allocator, current, copy);
-        if (copy.kind != .buffer) try pending.append(self.allocator, copy);
+        if (copy.kind != .buffer) {
+            try pending.append(self.allocator, copy);
+        }
         slot.heap_obj = copy;
     }
 
@@ -700,7 +740,9 @@ pub const VM = struct {
     fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
         const ptr = stack[stack_base + reg_idx].heap_obj;
         const current = ptr.followRelocated();
-        if (current != ptr) stack[stack_base + reg_idx].heap_obj = current;
+        if (current != ptr) {
+            stack[stack_base + reg_idx].heap_obj = current;
+        }
         return v.HeapValue.getParentPtr(v.Array, current);
     }
 
