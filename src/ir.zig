@@ -15,7 +15,7 @@ pub const Block = []const Instruction;
 pub const Instruction = union(enum) {
     store_var: StoreVar,
     branch_if: BranchIf,
-    match: Match,
+    when: When,
     block: Block,
     loop: Loop,
     return_stmt: ReturnStmt,
@@ -126,15 +126,15 @@ pub const BranchIf = struct {
     else_block: Block,
 };
 
-pub const Match = struct {
+pub const When = struct {
     null_check: ?*Value = null,
     null_body: ?Block = null,
-    cases: []const MatchCase,
+    cases: []const WhenCase,
     table: ?JumpTable = null,
     default_block: Block,
 };
 
-pub const MatchCase = struct {
+pub const WhenCase = struct {
     condition: *Value,
     body: Block,
 };

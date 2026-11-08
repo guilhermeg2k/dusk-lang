@@ -1100,8 +1100,8 @@ pub const SemaAnalyzer = struct {
                     if (doesValueExit(branch.condition, query)) return true;
                     if (branch.else_block.len > 0 and doesBlockExit(branch.then_block, query) and doesBlockExit(branch.else_block, query)) return true;
                 },
-                .match => |match| {
-                    if (doesMatchExit(match, query)) return true;
+                .when => |when| {
+                    if (doesWhenExit(when, query)) return true;
                 },
                 .block => |scoped| {
                     if (doesBlockExit(scoped, query)) return true;
@@ -1112,12 +1112,12 @@ pub const SemaAnalyzer = struct {
         return false;
     }
 
-    fn doesMatchExit(match: ir.Match, query: ExitQuery) bool {
-        if (!doesBlockExit(match.default_block, query)) return false;
-        if (match.null_body) |body| {
+    fn doesWhenExit(when: ir.When, query: ExitQuery) bool {
+        if (!doesBlockExit(when.default_block, query)) return false;
+        if (when.null_body) |body| {
             if (!doesBlockExit(body, query)) return false;
         }
-        for (match.cases) |case| {
+        for (when.cases) |case| {
             if (!doesBlockExit(case.body, query)) return false;
         }
         return true;
@@ -2243,7 +2243,7 @@ pub const SemaAnalyzer = struct {
         const refs = try self.storeWhenSubject(&instructions, subject);
 
         const unconditional_prong_idx = if (when_stmt.else_block == null) findUnconditionalProng(when_stmt.prongs) else null;
-        var cases: std.ArrayList(ir.MatchCase) = .empty;
+        var cases: std.ArrayList(ir.WhenCase) = .empty;
         const case_of_prong = try self.allocator.alloc(?usize, when_stmt.prongs.len);
         @memset(case_of_prong, null);
         var default_block: ir.Block = &.{};
@@ -2272,7 +2272,7 @@ pub const SemaAnalyzer = struct {
             .type_id = self.type_table.getPrimitive(.boolean),
         }) else null;
 
-        try instructions.append(self.allocator, .{ .match = .{
+        try instructions.append(self.allocator, .{ .when = .{
             .null_check = null_check,
             .null_body = null_body,
             .cases = try cases.toOwnedSlice(self.allocator),

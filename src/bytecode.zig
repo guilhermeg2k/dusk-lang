@@ -237,8 +237,8 @@ pub const BytecodeGen = struct {
                 .branch_if => |stmt| {
                     try self.genBranchIf(stmt);
                 },
-                .match => |match| {
-                    try self.genMatch(match);
+                .when => |when| {
+                    try self.genWhen(when);
                 },
                 .block => |instructions| {
                     const saved_next_free = self.next_free_register;
@@ -361,20 +361,20 @@ pub const BytecodeGen = struct {
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
-    fn genMatch(self: *Self, match: ir.Match) !void {
+    fn genWhen(self: *Self, when: ir.When) !void {
         const saved_next_free = self.next_free_register;
         var end_jumps: std.ArrayList(usize) = .empty;
         defer end_jumps.deinit(self.allocator);
 
         var null_jump: ?usize = null;
-        if (match.null_check) |condition| {
+        if (when.null_check) |condition| {
             const condition_reg = try self.genValue(condition, try self.consumeRegister());
             try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
             null_jump = self.chunk_instructions.items.len - 1;
         }
 
         var default_position: u16 = undefined;
-        if (match.table) |table| {
+        if (when.table) |table| {
             const subject_reg = try self.genValue(table.subject, try self.consumeRegister());
             const table_index = self.chunk_jump_tables.items.len;
             try self.chunk_jump_tables.append(self.allocator, undefined);
@@ -382,15 +382,15 @@ pub const BytecodeGen = struct {
             table_inst.putBEx(@intCast(table_index));
             try self.chunk_instructions.append(self.allocator, table_inst);
 
-            const case_positions = try self.allocator.alloc(u16, match.cases.len);
-            for (match.cases, 0..) |case, i| {
+            const case_positions = try self.allocator.alloc(u16, when.cases.len);
+            for (when.cases, 0..) |case, i| {
                 case_positions[i] = try self.currentPosition();
                 try self.genInstructionBlock(case.body);
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
             }
             default_position = try self.currentPosition();
-            try self.genInstructionBlock(match.default_block);
+            try self.genInstructionBlock(when.default_block);
 
             const targets = try self.allocator.alloc(u16, table.case_by_offset.len);
             for (table.case_by_offset, targets) |case_index, *target| {
@@ -398,7 +398,7 @@ pub const BytecodeGen = struct {
             }
             self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .targets = targets, .default = default_position };
         } else {
-            for (match.cases) |case| {
+            for (when.cases) |case| {
                 const condition_reg = try self.genValue(case.condition, try self.consumeRegister());
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
                 const next_case_jump = self.chunk_instructions.items.len - 1;
@@ -408,12 +408,12 @@ pub const BytecodeGen = struct {
                 self.chunk_instructions.items[next_case_jump].putBEx(try self.currentPosition());
             }
             default_position = try self.currentPosition();
-            try self.genInstructionBlock(match.default_block);
+            try self.genInstructionBlock(when.default_block);
         }
 
         if (null_jump) |jump| {
             var null_position = default_position;
-            if (match.null_body) |body| {
+            if (when.null_body) |body| {
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
                 null_position = try self.currentPosition();
