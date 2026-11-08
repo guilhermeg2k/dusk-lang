@@ -423,11 +423,11 @@ pub const BytecodeGen = struct {
         const default_position = try self.currentPosition();
         try self.genInstructionBlock(when.default_block);
         if (when.table) |table| {
-            const targets = try self.allocator.alloc(u16, table.case_by_offset.len);
-            for (table.case_by_offset, targets) |case_index, *target| {
+            const target_offsets = try self.allocator.alloc(u16, table.case_by_offset.len);
+            for (table.case_by_offset, target_offsets) |case_index, *target| {
                 target.* = if (case_index) |index| case_positions[index] else default_position;
             }
-            self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .targets = targets, .default = default_position };
+            self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .target_offsets = target_offsets, .default = default_position };
         }
 
         if (null_jump) |jump| {
@@ -1622,7 +1622,7 @@ pub const Function = struct {
 
 pub const JumpTable = struct {
     min: i64,
-    targets: []const u16,
+    target_offsets: []const u16,
     default: u16,
 };
 

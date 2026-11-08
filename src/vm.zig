@@ -543,7 +543,7 @@ pub const VM = struct {
                     cur_instruction = table.default;
                     if (value < table.min) continue;
                     const offset = @as(u64, @bitCast(value)) -% @as(u64, @bitCast(table.min));
-                    if (offset < table.targets.len) cur_instruction = table.targets[@intCast(offset)];
+                    if (offset < table.target_offsets.len) cur_instruction = table.target_offsets[@intCast(offset)];
                 },
 
                 .RETURN => {
