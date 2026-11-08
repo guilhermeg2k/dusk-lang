@@ -1,12 +1,8 @@
-struct P
-    x: int
-
-    func make() -> int
-        return 1
-    end
+union U
+    a: int
 end
 
-let MAKER = P.make
+let MAKER = U.a
 
 func main() -> void
 end

@@ -1050,7 +1050,7 @@ end
 echo(apply(func(a: int, b: int) -> return a * b, 6, 7))    # 42
 ```
 
-Where a function type is expected (an annotation, a parameter, a field, an array item, a return value), the lambda's parameters can leave out their types and take them from that function type. A `mut` parameter is still written `mut`, matching the function type:
+Where a function type is expected (an annotation, a parameter, a field, an array item, a return value, the fallback of `orelse` on a `?func(...)`), the lambda's parameters can leave out their types and take them from that function type. A `mut` parameter is still written `mut`, matching the function type:
 
 ```nim
 let double: func(int) -> int = func(x) -> return x * 2

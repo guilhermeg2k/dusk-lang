@@ -1286,6 +1286,7 @@ test "sema error: constant assign" {
 
 test "sema error: constant invalid type" {
     try runCaseError("sema/constant-invalid-type.dsk", error.InvalidConstantType);
+    try runCaseError("sema/method-as-value-constant.dsk", error.MethodAsValue);
 }
 
 test "sema error: static field not constant" {
@@ -2082,6 +2083,7 @@ test "function values: named functions as values, function types and calls throu
     try runCaseError("sema/function-value-arg-count.dsk", error.InvalidNumberOfArgs);
     try runCaseError("sema/function-value-mut-arg.dsk", error.NotMutable);
     try runCaseError("sema/function-value-top-level.dsk", error.TopLevelLetNotConstant);
+    try runCaseError("sema/method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
     try runCaseError("sema/generic-struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
 }
@@ -2101,6 +2103,7 @@ test "closures: lambdas capture variables of the functions around them" {
 
 test "lambdas: param types come from the expected function type" {
     try runCase("lambda-param-inference.dsk");
+    try runCase("lambda-branches.dsk");
     try runCaseError("sema/lambda-param-no-context.dsk", error.LambdaParamNeedsType);
     try runCaseError("sema/lambda-param-unfillable-slot.dsk", error.LambdaParamNeedsType);
     try runCaseError("sema/lambda-param-count.dsk", error.WrongLambdaParamCount);

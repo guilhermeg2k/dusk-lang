@@ -73,6 +73,8 @@ pub const Parser = struct {
                 };
             },
             .func_kw => {
+                const is_lambda_branch = self.branch_depth > 0 and self.peekNext().tag == .l_paren;
+                if (is_lambda_branch) return self.parseIdentifierStmt();
                 const func_stmt_value = try self.parseFuncStmt();
                 return ast.StatementNode{
                     .data = .{ .func = func_stmt_value },

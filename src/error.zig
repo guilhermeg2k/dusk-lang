@@ -539,6 +539,11 @@ pub const CompileErrorReporter = struct {
         return error.TooManyCaptures;
     }
 
+    pub fn methodAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Method '{s}' can't be used as a value yet: wrap the call in a lambda instead, like 'func() -> return x.{s}()'", .{ identifier, identifier }), loc);
+        return error.MethodAsValue;
+    }
+
     pub fn builtinAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Builtin '{s}' can't be used as a value: call it from a function and use that function instead", .{identifier}), loc);
         return error.BuiltinAsValue;
@@ -991,6 +996,7 @@ pub const CompileError = error{
     SlotHasNoMethod,
     GenericNeedsCall,
     BuiltinAsValue,
+    MethodAsValue,
     LambdaParamCantHaveDefault,
     TooManyCaptures,
     LambdaParamNeedsType,

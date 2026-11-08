@@ -3590,7 +3590,7 @@ pub const SemaAnalyzer = struct {
     fn orelseFallbackContext(self: *Self, payload_type: tt.TypeId, inherited_context: ?tt.TypeId) ?tt.TypeId {
         if (inherited_context) |context| return context;
         return switch (self.type_table.getTypePtrById(payload_type).kind) {
-            .@"struct", .@"union", .array => payload_type,
+            .@"struct", .@"union", .array, .func_type => payload_type,
             else => null,
         };
     }
@@ -3712,7 +3712,7 @@ pub const SemaAnalyzer = struct {
     fn evalExpWithContext(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) CompileError!*ir.Value {
         if (expected_type != null) return self.evalExpExpecting(exp, expected_type);
         if (isConditional(exp)) return self.evalConditionalWithContext(exp, null, context_type);
-        const needs_context = isAnonymousInit(exp) or exp.data == .array_literal;
+        const needs_context = isAnonymousInit(exp) or exp.data == .array_literal or exp.data == .lambda;
         return self.evalExpExpecting(exp, if (needs_context) context_type else null);
     }
 
@@ -4546,9 +4546,10 @@ pub const SemaAnalyzer = struct {
                         }
                         if (field_member == null) {
                             if (static_field_member) |constant| return constant.default_value.?;
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
 
-                        const field_type_id = if (field_member) |f| f.type_id else if (static_field_member) |sf| sf.type_id else method_member.?;
+                        const field_type_id = field_member.?.type_id;
                         const result_type = if (is_nullable) try self.type_table.getOrAddNullable(field_type_id) else field_type_id;
 
                         return ir.Value.init(self.allocator, .{
