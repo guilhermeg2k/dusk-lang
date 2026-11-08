@@ -945,15 +945,7 @@ pub const SemaAnalyzer = struct {
 
                 if (param.default_value) |default_value| {
                     const value = try self.evalExpExpecting(default_value, param_type_id);
-                    param_default_value = value;
-                    const value_type_id = value.type_id;
-                    if (!try self.canCoerce(value_type_id, param_type_id, param.default_value.?.loc)) {
-                        return self.err_reporter.invalidType(
-                            try self.type_table.name(param_type_id, self.allocator),
-                            try self.type_table.name(value_type_id, self.allocator),
-                            param.default_value.?.loc,
-                        );
-                    }
+                    param_default_value = try self.coerceValue(value, param_type_id, default_value.loc);
                 }
             } else {
                 if (param.default_value) |default_value| {
@@ -2865,7 +2857,6 @@ pub const SemaAnalyzer = struct {
                 else
                     null;
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, expected_type_id);
-                const assignment_value_type = assignment_value.type_id;
 
                 const is_static_target = self.definedTypeOf(index_exp.target) != null;
                 if (!is_static_target) {
@@ -2873,119 +2864,8 @@ pub const SemaAnalyzer = struct {
                     try self.ensureNotReadOnlySource(assign_stmt.exp);
                 }
 
-                var field_maybe_nullable_type_id: tt.TypeId = undefined;
-
-                switch (self.type_table.getTypePtrById(target_type).kind) {
-                    .buffer => {
-                        field_maybe_nullable_type_id = indexed_target.type_id;
-                        if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
-                            return self.err_reporter.invalidType("byte", try self.type_table.name(assignment_value_type, self.allocator), assign_stmt.exp.loc);
-                        }
-                    },
-                    .array => {
-                        field_maybe_nullable_type_id = self.type_table.getTypePtrById(target_type).kind.array;
-                        if (!try self.canCoerce(assignment_value_type, field_maybe_nullable_type_id, assign_stmt.exp.loc)) {
-                            return self.err_reporter.invalidType(
-                                try self.type_table.name(field_maybe_nullable_type_id, self.allocator),
-                                try self.type_table.name(assignment_value_type, self.allocator),
-                                assign_stmt.exp.loc,
-                            );
-                        }
-                    },
-                    .@"struct" => {
-                        const struct_type_ptr = self.type_table.getTypePtrById(target_type);
-                        const struct_def = &struct_type_ptr.kind.@"struct";
-
-                        if (!is_static_target) {
-                            const field = struct_def.fields.get(index_exp.index.data.identifier) orelse return self.err_reporter.invalidStructField(
-                                struct_def.identifier,
-                                index_exp.index.data.identifier,
-                                index_exp.index.loc,
-                            );
-
-                            field_maybe_nullable_type_id = field.type_id;
-
-                            if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
-                                return self.err_reporter.invalidType(
-                                    try self.type_table.name(field.type_id, self.allocator),
-                                    try self.type_table.name(assignment_value_type, self.allocator),
-                                    assign_stmt.exp.loc,
-                                );
-                            }
-                        } else {
-                            const field = struct_def.static_fields.get(index_exp.index.data.identifier) orelse return self.err_reporter.invalidStaticStructField(
-                                struct_def.identifier,
-                                index_exp.index.data.identifier,
-                                index_exp.index.loc,
-                            );
-
-                            field_maybe_nullable_type_id = field.type_id;
-
-                            if (!field.is_mut) {
-                                return self.err_reporter.notMutable(field.identifier, index_exp.index.loc);
-                            }
-
-                            if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
-                                return self.err_reporter.invalidType(
-                                    try self.type_table.name(field.type_id, self.allocator),
-                                    try self.type_table.name(assignment_value_type, self.allocator),
-                                    assign_stmt.exp.loc,
-                                );
-                            }
-                        }
-                    },
-                    .@"enum" => {
-                        const enum_type_ptr = self.type_table.getTypePtrById(target_type);
-                        const enum_def = &enum_type_ptr.kind.@"enum";
-                        const field = enum_def.static_fields.get(index_exp.index.data.identifier) orelse return self.err_reporter.notMutable(
-                            index_exp.index.data.identifier,
-                            index_exp.index.loc,
-                        );
-
-                        field_maybe_nullable_type_id = field.type_id;
-
-                        if (!field.is_mut) {
-                            return self.err_reporter.notMutable(field.identifier, index_exp.index.loc);
-                        }
-
-                        if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
-                            return self.err_reporter.invalidType(
-                                try self.type_table.name(field.type_id, self.allocator),
-                                try self.type_table.name(assignment_value_type, self.allocator),
-                                assign_stmt.exp.loc,
-                            );
-                        }
-                    },
-                    .@"union" => {
-                        const union_def = &self.type_table.getTypePtrById(target_type).kind.@"union";
-                        const member_name = index_exp.index.data.identifier;
-
-                        // variants can't be assigned in place, a new union must be built instead
-                        const field = union_def.static_fields.get(member_name) orelse {
-                            if (union_def.variants.contains(member_name)) {
-                                return self.err_reporter.notMutable(member_name, index_exp.index.loc);
-                            }
-                            return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, index_exp.index.loc);
-                        };
-
-                        field_maybe_nullable_type_id = field.type_id;
-
-                        if (!field.is_mut) {
-                            return self.err_reporter.notMutable(field.identifier, index_exp.index.loc);
-                        }
-
-                        if (!try self.canCoerce(assignment_value_type, field.type_id, assign_stmt.exp.loc)) {
-                            return self.err_reporter.invalidType(
-                                try self.type_table.name(field.type_id, self.allocator),
-                                try self.type_table.name(assignment_value_type, self.allocator),
-                                assign_stmt.exp.loc,
-                            );
-                        }
-                    },
-                    else => unreachable,
-                }
-
-                const boxed_value = try self.boxForTarget(assignment_value, field_maybe_nullable_type_id);
+                const destination_type = try self.assignedFieldType(target_type, index_exp, indexed_target.type_id, is_static_target);
+                const boxed_value = try self.coerceValue(assignment_value, destination_type, assign_stmt.exp.loc);
 
                 return ir.Instruction{
                     .update_indexed = .{
@@ -3002,6 +2882,33 @@ pub const SemaAnalyzer = struct {
                 );
             },
         }
+    }
+
+    fn assignedFieldType(self: *Self, target_type: tt.TypeId, index_exp: ast.IndexedExp, indexed_type: tt.TypeId, is_static_target: bool) CompileError!tt.TypeId {
+        switch (self.type_table.getTypePtrById(target_type).kind) {
+            .buffer => return indexed_type,
+            .array => |inner| return inner,
+            else => {},
+        }
+        const member_name = index_exp.index.data.identifier;
+        const member_loc = index_exp.index.loc;
+        const field = switch (self.type_table.getTypePtrById(target_type).kind) {
+            .@"struct" => |struct_def| static: {
+                if (!is_static_target) {
+                    const field = struct_def.fields.get(member_name) orelse return self.err_reporter.invalidStructField(struct_def.identifier, member_name, member_loc);
+                    return field.type_id;
+                }
+                break :static struct_def.static_fields.get(member_name) orelse return self.err_reporter.invalidStaticStructField(struct_def.identifier, member_name, member_loc);
+            },
+            .@"enum" => |enum_def| enum_def.static_fields.get(member_name) orelse return self.err_reporter.notMutable(member_name, member_loc),
+            .@"union" => |union_def| union_def.static_fields.get(member_name) orelse {
+                if (union_def.variants.contains(member_name)) return self.err_reporter.notMutable(member_name, member_loc);
+                return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, member_loc);
+            },
+            else => unreachable,
+        };
+        if (!field.is_mut) return self.err_reporter.notMutable(field.identifier, member_loc);
+        return field.type_id;
     }
 
     fn visitForStmt(self: *Self, stmt: *const ast.StatementNode) CompileError!ir.Instruction {
@@ -3924,12 +3831,9 @@ pub const SemaAnalyzer = struct {
             }
 
             if (arg_exp) |_exp| {
-                const fn_call_arg_value = inferred_values.get(_exp) orelse try self.evalExpExpecting(_exp, param.type_id);
-                const arg_type = fn_call_arg_value.type_id;
-
-                if (!try self.canCoerce(arg_type, param.type_id, _exp.loc)) {
-                    return self.err_reporter.invalidType(try self.type_table.name(param.type_id, self.allocator), try self.type_table.name(arg_type, self.allocator), _exp.loc);
-                }
+                const evaluated = inferred_values.get(_exp) orelse try self.evalExpExpecting(_exp, param.type_id);
+                const arg_type = evaluated.type_id;
+                const fn_call_arg_value = try self.coerceValue(evaluated, param.type_id, _exp.loc);
 
                 const arg_type_ptr = self.type_table.getTypePtrById(arg_type);
                 if (arg_type_ptr.kind == .array and self.type_table.getTypePtrById(arg_type_ptr.kind.array).kind == .dynamic) {
@@ -3942,14 +3846,10 @@ pub const SemaAnalyzer = struct {
                 if (param.is_mut) try self.ensureNotReadOnlySource(_exp);
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
             } else if (param.default_value) |value| {
-                try fn_call_arguments_values.append(self.allocator, value);
+                try fn_call_arguments_values.append(self.allocator, try self.boxForTarget(value, param.type_id));
             } else {
                 return self.err_reporter.missingArgument(param.identifier, exp.loc);
             }
-        }
-
-        for (params, fn_call_arguments_values.items) |param, *argument| {
-            argument.* = try self.boxForTarget(argument.*, param.type_id);
         }
 
         if (is_struct_init) {
