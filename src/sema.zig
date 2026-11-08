@@ -768,9 +768,7 @@ pub const SemaAnalyzer = struct {
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
 
-        var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
         var variants: std.StringHashMap(i64) = .init(self.allocator);
-        var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
         const variants_in_order = try self.allocator.alloc([]const u8, enum_def.variants.len);
 
@@ -783,18 +781,9 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".variants = variants;
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".variants_in_order = variants_in_order;
 
-        for (enum_def.static_fields) |field| {
-            const enum_field = try self.createStaticField(field, blueprint_type_id);
-            try static_fields.put(field.identifier, enum_field);
-        }
+        const static_fields = try self.createStaticFields(enum_def.static_fields, blueprint_type_id);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".static_fields = static_fields;
-
-        for (enum_def.funcs) |func_stmt| {
-            const func = func_stmt.data.func;
-            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
-            try self.fulfillFuncType(fn_symbol, &func.def, enum_symbol, func_stmt.loc);
-            try methods.put(func.identifier, fn_symbol.type_id);
-        }
+        const methods = try self.createMethodSignatures(enum_def.funcs, enum_symbol);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".methods = methods;
     }
 
@@ -805,9 +794,7 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.tooManyUnionVariants(union_symbol.identifier, tt.Union.MAX_VARIANTS, loc);
         }
 
-        var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
         var variants: std.StringHashMap(tt.TypeId) = .init(self.allocator);
-        var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
         const variants_in_order = try self.allocator.alloc([]const u8, union_def.variants.len);
         for (union_def.variants, 0..) |variant, i| {
@@ -818,20 +805,9 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".variants = variants;
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".variants_in_order = variants_in_order;
 
-        for (union_def.static_fields) |field| {
-            const enum_field = try self.createStaticField(field, blueprint_type_id);
-            try static_fields.put(field.identifier, enum_field);
-        }
-
+        const static_fields = try self.createStaticFields(union_def.static_fields, blueprint_type_id);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".static_fields = static_fields;
-
-        for (union_def.funcs) |func_stmt| {
-            const func = func_stmt.data.func;
-            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
-            try self.fulfillFuncType(fn_symbol, &func.def, union_symbol, func_stmt.loc);
-            try methods.put(func.identifier, fn_symbol.type_id);
-        }
-
+        const methods = try self.createMethodSignatures(union_def.funcs, union_symbol);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".methods = methods;
     }
 
@@ -839,13 +815,7 @@ pub const SemaAnalyzer = struct {
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
-        var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
-        var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
-
-        for (struct_def.static_fields) |field| {
-            const struct_field = try self.createStaticField(field, blueprint_type_id);
-            try static_fields.put(field.identifier, struct_field);
-        }
+        const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
 
         for (struct_def.fields) |field| {
             const struct_field = try self.createField(field, blueprint_type_id);
@@ -856,13 +826,7 @@ pub const SemaAnalyzer = struct {
             try fields.put(field.identifier, struct_field);
         }
 
-        for (struct_def.funcs) |func_node| {
-            //note: maybe this is not optimal because we only need the fn metadata
-            const func = func_node.data.func;
-            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
-            try self.fulfillFuncType(fn_symbol, &func.def, struct_symbol, func_node.loc);
-            try methods.put(func.identifier, fn_symbol.type_id);
-        }
+        const methods = try self.createMethodSignatures(struct_def.funcs, struct_symbol);
 
         var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
         for (fields_in_order.items, 0..) |field, i| {
@@ -875,6 +839,23 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.@"struct".fields = fields;
         struct_type_ptr.kind.@"struct".static_fields = static_fields;
         struct_type_ptr.kind.@"struct".methods = methods;
+    }
+
+    fn createStaticFields(self: *Self, fields: []const ast.Field, owner_type_id: tt.TypeId) CompileError!std.StringHashMap(tt.TypedIdentifier) {
+        var static_fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
+        for (fields) |field| try static_fields.put(field.identifier, try self.createStaticField(field, owner_type_id));
+        return static_fields;
+    }
+
+    fn createMethodSignatures(self: *Self, funcs: []const ast.StatementNode, owner_symbol: Symbol) CompileError!std.StringHashMap(tt.TypeId) {
+        var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
+        for (funcs) |func_node| {
+            const func = func_node.data.func;
+            const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
+            try self.fulfillFuncType(fn_symbol, &func.def, owner_symbol, func_node.loc);
+            try methods.put(func.identifier, fn_symbol.type_id);
+        }
+        return methods;
     }
 
     fn createStaticField(self: *Self, field: ast.Field, current_struct_type_id: tt.TypeId) CompileError!tt.TypedIdentifier {
@@ -2114,15 +2095,7 @@ pub const SemaAnalyzer = struct {
         const enum_symbol = try self.scope.symbol_table.getOrError(enum_stmt.identifier);
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
         const enum_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum";
-        var funcs: std.ArrayList(ir.Func) = .empty;
-
-        for (enum_stmt.def.funcs) |func_node| {
-            const func = func_node.data.func;
-            const fn_type_id = enum_def.methods.get(func.identifier) orelse continue;
-            const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, func.identifier, func_node.loc);
-            try funcs.append(self.allocator, fn_def);
-        }
+        const funcs = try self.lowerMethods(enum_stmt.def.funcs, enum_def.methods);
 
         try self.defined_types.append(self.allocator, .{
             .kind = .{
@@ -2131,7 +2104,7 @@ pub const SemaAnalyzer = struct {
                     .type_id = blueprint_type_id,
                     .identifier = enum_stmt.identifier,
                     .variants = enum_def.variants,
-                    .funcs = try funcs.toOwnedSlice(self.allocator),
+                    .funcs = funcs,
                 },
             },
         });
@@ -2152,16 +2125,7 @@ pub const SemaAnalyzer = struct {
     fn visitUnionDef(self: *Self, union_ast: *const ast.UnionDef, union_symbol: Symbol) CompileError!ir.DefinedType {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
         const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
-
-        var funcs: std.ArrayList(ir.Func) = .empty;
-
-        for (union_ast.funcs) |func_node| {
-            const func = func_node.data.func;
-            const fn_type_id = union_def.methods.get(func.identifier) orelse continue;
-            const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, func.identifier, func_node.loc);
-            try funcs.append(self.allocator, fn_def);
-        }
+        const funcs = try self.lowerMethods(union_ast.funcs, union_def.methods);
 
         return .{
             .kind = .{
@@ -2170,10 +2134,20 @@ pub const SemaAnalyzer = struct {
                     .type_id = blueprint_type_id,
                     .identifier = union_symbol.identifier,
                     .variants = union_def.variants,
-                    .funcs = try funcs.toOwnedSlice(self.allocator),
+                    .funcs = funcs,
                 },
             },
         };
+    }
+
+    fn lowerMethods(self: *Self, funcs: []const ast.StatementNode, methods: std.StringHashMap(tt.TypeId)) CompileError![]ir.Func {
+        const lowered = try self.allocator.alloc(ir.Func, funcs.len);
+        for (funcs, lowered) |func_node, *func| {
+            const func_stmt = func_node.data.func;
+            const fn_metadata = self.type_table.getTypePtrById(methods.get(func_stmt.identifier).?).kind.function;
+            func.* = try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, func_stmt.identifier, func_node.loc);
+        }
+        return lowered;
     }
 
     fn lowerIf(self: *Self, exp: *const ast.ExpNode, result: ?*BranchResult) CompileError!ir.Instruction {
@@ -3094,7 +3068,6 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(self.type_table.getPrimitive(.void));
         defer self.scope.exit(prev_return_type);
         var fields: std.ArrayList(ir.Field) = .empty;
-        var funcs: std.ArrayList(ir.Func) = .empty;
 
         for (struct_def.fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
@@ -3111,21 +3084,14 @@ pub const SemaAnalyzer = struct {
             );
         }
 
-        for (struct_def.funcs) |func_node| {
-            const func = func_node.data.func;
-            const fn_type_id = if (self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods.get(func.identifier)) |type_id| type_id else unreachable;
-            const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
-            const fn_name = func.identifier;
-            const fn_def = try self.visitFnDef(&func.def, fn_metadata.uid, fn_metadata, fn_name, func_node.loc);
-            try funcs.append(self.allocator, fn_def);
-        }
+        const funcs = try self.lowerMethods(struct_def.funcs, self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods);
 
         return ir.Struct{
             .uid = struct_symbol.uid,
             .type_id = blueprint_type_id,
             .identifier = identifier,
             .fields = try fields.toOwnedSlice(self.allocator),
-            .funcs = try funcs.toOwnedSlice(self.allocator),
+            .funcs = funcs,
         };
     }
 
