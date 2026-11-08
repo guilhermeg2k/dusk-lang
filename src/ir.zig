@@ -219,7 +219,6 @@ pub const Value = struct {
         block_value: BlockValue,
         int_to_float: *Value,
         array_length: *Value,
-
         bytes_length: *Value,
     },
 

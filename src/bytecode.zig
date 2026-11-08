@@ -373,17 +373,18 @@ pub const BytecodeGen = struct {
             null_jump = self.chunk_instructions.items.len - 1;
         }
 
-        var default_position: u16 = undefined;
+        var case_positions: []u16 = &.{};
+        defer self.allocator.free(case_positions);
+        var table_index: usize = undefined;
         if (when.table) |table| {
+            case_positions = try self.allocator.alloc(u16, when.cases.len);
             const subject_reg = try self.genValue(table.subject, try self.consumeRegister());
-            const table_index = self.chunk_jump_tables.items.len;
+            table_index = self.chunk_jump_tables.items.len;
             try self.chunk_jump_tables.append(self.allocator, undefined);
             var table_inst = Instruction{ .op = .JUMP_TABLE, .a = subject_reg };
             table_inst.putBEx(@intCast(table_index));
             try self.chunk_instructions.append(self.allocator, table_inst);
 
-            const case_positions = try self.allocator.alloc(u16, when.cases.len);
-            defer self.allocator.free(case_positions);
             for (when.cases, 0..) |case, i| {
                 case_positions[i] = try self.currentPosition();
                 const case_next_free = self.next_free_register;
@@ -392,14 +393,6 @@ pub const BytecodeGen = struct {
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
             }
-            default_position = try self.currentPosition();
-            try self.genInstructionBlock(when.default_block);
-
-            const targets = try self.allocator.alloc(u16, table.case_by_offset.len);
-            for (table.case_by_offset, targets) |case_index, *target| {
-                target.* = if (case_index) |index| case_positions[index] else default_position;
-            }
-            self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .targets = targets, .default = default_position };
         } else {
             for (when.cases) |case| {
                 const case_next_free = self.next_free_register;
@@ -413,8 +406,16 @@ pub const BytecodeGen = struct {
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
                 self.chunk_instructions.items[next_case_jump].putBEx(try self.currentPosition());
             }
-            default_position = try self.currentPosition();
-            try self.genInstructionBlock(when.default_block);
+        }
+
+        const default_position = try self.currentPosition();
+        try self.genInstructionBlock(when.default_block);
+        if (when.table) |table| {
+            const targets = try self.allocator.alloc(u16, table.case_by_offset.len);
+            for (table.case_by_offset, targets) |case_index, *target| {
+                target.* = if (case_index) |index| case_positions[index] else default_position;
+            }
+            self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .targets = targets, .default = default_position };
         }
 
         if (null_jump) |jump| {
@@ -755,7 +756,6 @@ pub const BytecodeGen = struct {
             .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
             .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
             .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
-
         }
 
         return target_reg;
@@ -1147,16 +1147,6 @@ pub const BytecodeGen = struct {
         };
         try self.chunk_instructions.append(self.allocator, append_inst);
         try self.recordHeapMap();
-    }
-
-    fn genArrayLen(self: *Self, array_reg: u8, target_reg: u8) !void {
-        const len_inst = Instruction{
-            .op = .ARRAY_LEN,
-            .a = target_reg,
-            .b = array_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, len_inst);
     }
 
     fn genStructInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
