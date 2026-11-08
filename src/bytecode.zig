@@ -4,6 +4,7 @@ const v = @import("value.zig");
 const tt = @import("type_table.zig");
 const VM = @import("vm.zig").VM;
 const natives = @import("natives.zig");
+const err = @import("error.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -41,6 +42,7 @@ pub const BytecodeGen = struct {
     type_id_to_union_descriptor_idx: std.AutoHashMap(tt.TypeId, u16),
     union_tag_by_type_id: std.AutoHashMap(tt.TypeId, std.StringHashMap(u16)),
     current_function_name: []const u8 = "",
+    current_function_origin: ?ir.FuncOrigin = null,
     extern_count: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
@@ -144,6 +146,8 @@ pub const BytecodeGen = struct {
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !Function {
+        self.current_function_name = "$main";
+        self.current_function_origin = null;
         self.next_free_register = 0;
         self.peak_register = 0;
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -169,6 +173,7 @@ pub const BytecodeGen = struct {
 
     fn genFunction(self: *Self, func: ir.Func) !Function {
         self.current_function_name = func.identifier;
+        self.current_function_origin = func.origin;
         self.next_free_register = @intCast(func.params.len);
         self.peak_register = @intCast(func.params.len);
         self.var_register_id_by_uid.clearRetainingCapacity();
@@ -1370,9 +1375,7 @@ pub const BytecodeGen = struct {
     }
 
     fn tooManyRegisters(self: *Self) BytecodeError {
-        if (@import("builtin").is_test) return BytecodeError.TooManyRegisters;
-        const hint = "uses more than 255 registers at once (variables and temporaries); split it into smaller functions";
-        std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
+        self.logFunctionError("uses more than 255 registers at once (variables and temporaries); split it into smaller functions");
         return BytecodeError.TooManyRegisters;
     }
 
@@ -1383,10 +1386,19 @@ pub const BytecodeGen = struct {
     }
 
     fn functionTooLong(self: *Self) BytecodeError {
-        if (@import("builtin").is_test) return BytecodeError.FunctionTooLong;
-        const hint = "is too long (more than 65535 bytecode instructions); split it into smaller functions";
-        std.debug.print("error: function '{s}' {s}\n", .{ self.current_function_name, hint });
+        self.logFunctionError("is too long (more than 65535 bytecode instructions); split it into smaller functions");
         return BytecodeError.FunctionTooLong;
+    }
+
+    fn logFunctionError(self: *Self, hint: []const u8) void {
+        if (@import("builtin").is_test) return;
+        const message = std.fmt.allocPrint(self.allocator, "function '{s}' {s}", .{ self.current_function_name, hint }) catch hint;
+        const origin = self.current_function_origin orelse {
+            std.debug.print("error: {s}\n", .{message});
+            return;
+        };
+        var reporter = err.CompileErrorReporter{ .src = origin.src, .allocator = self.allocator, .copy_context = origin.copy_context };
+        reporter.log(message, origin.loc);
     }
 
     fn freeRegister(self: *Self) void {

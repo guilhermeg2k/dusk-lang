@@ -42,7 +42,7 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 - `len([])` crashed the compiler; it's now a `CantInferSlot` error, since an empty literal gives no item type. Passing a non-array where a generic function takes `[]T` (`len(5)`, `first(5)`) reports `expected 'an array' found 'int'` instead of `CantInferSlot`
 - A function whose return type names an unknown type (`func f() -> Missing`) crashed the compiler; it's now an `Invalid type 'Missing'` error
 - A struct field with neither a type nor a default (`x` alone, or `static x = 1`, which reads as a field named `static`) is now a parser error, `expected ':' or '=' after field 'x'`, instead of crashing the compiler. Fields of inline nested structs are checked too
-- A function longer than 65,535 bytecode instructions crashed the compiler with `integer does not fit in destination type`; it's now a compile error asking to split it into smaller functions
+- A function longer than 65,535 bytecode instructions crashed the compiler with `integer does not fit in destination type`; it's now a compile error asking to split it into smaller functions. This error and the "more than 255 registers" one now point at the function's line like other compile errors, and name the call that made a generic copy
 - A `when` with many cases (about 250 or more, each ending in `return`, or with values too spread out for a jump table) failed to compile with "uses more than 255 registers": each case kept the registers it used until the whole `when` ended
 
 ## v0.13 - Garou

@@ -1,6 +1,7 @@
 const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
 const TypedIdentifier = @import("type_table.zig").TypedIdentifier;
+const err = @import("error.zig");
 
 pub const Program = struct {
     instructions: Block,
@@ -79,6 +80,13 @@ pub const Func = struct {
     params: []const FuncParam,
     body: Block,
     return_type: TypeId,
+    origin: ?FuncOrigin = null,
+};
+
+pub const FuncOrigin = struct {
+    src: []const u8,
+    loc: err.Loc,
+    copy_context: ?err.CopyContext,
 };
 
 pub const FuncParam = struct {

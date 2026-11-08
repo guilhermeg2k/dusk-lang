@@ -3152,6 +3152,7 @@ pub const SemaAnalyzer = struct {
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = metadata.return_type_id,
             .body = body.block,
+            .origin = .{ .src = self.src, .loc = loc, .copy_context = self.err_reporter.copy_context },
         };
     }
 
