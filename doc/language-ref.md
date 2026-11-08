@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.14 - Simon (in development)**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.14 - Simon**. Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -58,7 +58,7 @@ let total = 1 #= explanation =# + 2
 
 **Hoisting**: functions, structs, enums, unions, error sets and [constants](#constants) can be used before they're defined. Other variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `trait`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -1406,7 +1406,7 @@ The program doesn't run if it has a compile error. Runtime errors (a failed `ass
 
 ## 15. Known Limitations
 
-These are known gaps in v0.14 development. Most are planned in the [roadmap](roadmap.md).
+These are known gaps in v0.14. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Function size**: a function can compile to at most 65,535 bytecode instructions. Going over is a compile error; split the code into smaller functions.

@@ -1,6 +1,6 @@
 # Changelogs
 
-## v0.14 - Simon (in development)
+## v0.14 - Simon
 
 Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 
