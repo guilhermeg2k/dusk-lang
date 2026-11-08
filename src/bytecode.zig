@@ -599,7 +599,8 @@ pub const BytecodeGen = struct {
             },
             .to_float => {
                 try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
-                try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+                const is_float_arg = fc.args[0].type_id == self.type_table.getPrimitive(.float);
+                if (!is_float_arg) try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
             },
             .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
             .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
