@@ -1,0 +1,41 @@
+struct Point
+    x: int
+end
+
+func push[T](mut array: []T, mut value: T) -> void
+    append(array, value)
+end
+
+func front(mut numbers: []int, n: int) -> ArrayError!void
+    try insert(numbers, 0, n)
+end
+
+func main() -> void
+    let n = 3
+    let s = "hi"
+    let mut numbers: []int = []
+    let mut texts: []string = []
+    append(numbers, n)
+    push(numbers, n)
+    front(numbers, 1) catch _ then assert(false) end
+    push(texts, s)
+    append(texts, s)
+    assert(len(numbers) == 3)
+    assert(numbers[0] == 1)
+    assert(len(texts) == 2)
+
+    let mut lists: [][]int = []
+    let mut fresh = [7]
+    push(lists, fresh)
+    push(lists, [8])
+    append(lists, [9])
+    lists[0][0] = 70
+    assert(fresh[0] == 70)
+    assert(len(lists) == 3)
+
+    let mut points: []Point = []
+    let mut p = Point(x = 1)
+    push(points, p)
+    push(points, Point(x = 2))
+    assert(points[1].x == 2)
+end

@@ -106,7 +106,7 @@ echo(snapshot)   # [1, 2]
 
 Strings and primitives can't be changed in place, so sharing them never shows.
 
-A value read through a name that can't change it (a `let` variable, a parameter or capture without `mut`, `self` in a method without `mut self`, or a field or item reached through one of them) can't go into a mutable place: a `let mut` variable, an assignment to one or to its fields and items, `append` and `insert`, or a `mut` argument. Constructors, array literals and `if`, `when`, `orelse` and `catch` results count as the values they hold. Otherwise the value could change without any `mut` on its own name:
+A value read through a name that can't change it (a `let` variable, a parameter or capture without `mut`, `self` in a method without `mut self`, or a field or item reached through one of them) can't go into a mutable place: a `let mut` variable, an assignment to one or to its fields and items, or a `mut` argument (`append` and `insert` take the stored item as `mut`). Constructors, array literals and `if`, `when`, `orelse` and `catch` results count as the values they hold. Otherwise the value could change without any `mut` on its own name:
 
 ```nim
 let frozen = [1, 2]
@@ -911,6 +911,22 @@ echo(scale(factor = 5, x = 1))   # 5
 
 Parameters are immutable. Arrays, buffers, structs and unions can be taken as `mut` to change the caller's value through them: items, fields, `append`, and union payloads through `mut` captures. The argument must then be mutable: a `let mut` variable or a field or item of one (`grow(config.items)`), or a new value such as `[1, 2]`. Primitive, string and enum parameters can't be `mut`.
 
+A generic `T` parameter can be `mut` too (`mut item: T`). The argument then has to be mutable only when `T` is filled with an array, buffer, struct or union; an `int`, string or enum goes through as is. A function that stores a `T` argument somewhere mutable, like `append`, needs it as `mut`, since the stored value could be changed through that place later:
+
+```nim
+func push[T](mut list: []T, mut item: T) -> void
+    append(list, item)
+end
+
+let n = 3
+let frozen = [1, 2]
+let mut numbers: []int = []
+let mut lists: [][]int = []
+push(numbers, n)        # fine: an int can't be changed
+push(lists, frozen)     # error: 'frozen' is not mutable
+push(lists, [1, 2])     # fine: a new value
+```
+
 A `mut` parameter can't be reassigned (`list = []` is an error): the new value would only change the local name, not the caller's variable. To replace a value, return the new one and assign it at the call site, or change it through a `mut self` method on a struct that holds it.
 
 ```nim
@@ -1008,7 +1024,7 @@ Structs and unions take slots too. In types they're written with their arguments
 struct Stack[T]
     items: []T
 
-    func push(mut self: @, item: T) -> void
+    func push(mut self: @, mut item: T) -> void
         append(self.items, item)
     end
 end
@@ -1028,7 +1044,7 @@ Each filled type is its own type: a `Stack[int]` isn't a `Stack[float]`. Recursi
 
 ### Checked where written
 
-A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `echo`, `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value or be `mut` without a trait constraint.
+A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `echo`, `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value; it can be `mut` (see [Mutable parameters](#mutable-parameters)).
 
 Each copy is checked again with its real types. An error there names the copy and the call that made it:
 
@@ -1277,7 +1293,7 @@ There are no line numbers yet.
 | `to_float`    | `to_float(value: int) -> float`                   | Converts an `int`, `byte` or `float` to `float`.                                     |
 | `to_int`      | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
-| `append`      | `append(mut list: []T, item: T) -> void`          | Adds an item to the end of a mutable array.                                          |
+| `append`      | `append(mut list: []T, mut item: T) -> void`      | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
@@ -1294,7 +1310,7 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 | :------- | :------ | :---------- |
 | `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
 | `pop_or_null(mut list)` | `?T` | Removes the last item and returns it, or `null` on an empty array. |
-| `insert(mut list, index, item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
+| `insert(mut list, index, mut item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
 | `remove(mut list, index)` | `ArrayError!T` | Removes the item at `index`, moving the later items down, and returns it. Fails with `ArrayError.OutOfRange` outside the array. |
 | `clear(mut list)` | `void` | Removes every item. |
 | `reverse(mut list)` | `void` | Reverses the items in place. |
@@ -1399,7 +1415,7 @@ These are known gaps in v0.14 development. Most are planned in the [roadmap](roa
 - **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
-- **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`. Generic code storing a bare `T` (`append(self.items, item)` with `item: T`) isn't checked either.
+- **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`.
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
 - **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).

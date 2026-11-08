@@ -399,11 +399,6 @@ pub const CompileErrorReporter = struct {
         return error.SlotParamCantHaveDefault;
     }
 
-    pub fn slotParamCantBeMutable(self: *Self, param: []const u8, slot: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Parameter '{s}' can't be mut: '{s}' has no trait constraint, so it may be a primitive", .{ param, slot }), loc);
-        return error.SlotParamCantBeMutable;
-    }
-
     pub fn slotOperatorNotAllowed(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on type slot '{s}': it needs a type list constraint", .{ operator, slot }), loc);
         return error.SlotOperatorNotAllowed;
@@ -864,7 +859,6 @@ pub const CompileError = error{
     DeclarationInsideFunction,
     ExternOutsidePrelude,
     SlotParamCantHaveDefault,
-    SlotParamCantBeMutable,
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
     InternalBuiltin,

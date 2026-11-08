@@ -5,7 +5,7 @@ end
 struct Stack[T]
     items: []T
 
-    func push(mut self: @, item: T) -> void
+    func push(mut self: @, mut item: T) -> void
         append(self.items, item)
     end
 end

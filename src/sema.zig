@@ -3222,11 +3222,8 @@ pub const SemaAnalyzer = struct {
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
-            const param_kind = self.type_table.getTypePtrById(param.type_id).kind;
-            if (param.is_mut and param_kind == .slot and param_kind.slot.methods.len == 0) {
-                return self.err_reporter.slotParamCantBeMutable(param.identifier, try self.type_table.name(param.type_id, self.allocator), loc);
-            }
-            if (param.is_mut and !self.canBeMutable(param.type_id)) {
+            const is_checked_mut = param.is_mut and self.err_reporter.copy_context == null and !self.isSlotType(param.type_id);
+            if (is_checked_mut and !self.canBeMutable(param.type_id)) {
                 return self.err_reporter.primitiveParamsCantBeMutable(loc);
             }
 
@@ -3994,10 +3991,10 @@ pub const SemaAnalyzer = struct {
                     fn_call_arg_value.type_id = param.type_id;
                 }
 
-                if (param.is_mut and (_exp.data == .identifier or _exp.data == .indexed)) {
+                if (param.is_mut and self.isChangeableType(arg_type) and (_exp.data == .identifier or _exp.data == .indexed)) {
                     try self.ensureMutable(_exp);
                 }
-                if (param.is_mut or isStoredArgument(fn_call, param.identifier)) try self.ensureNotReadOnlySource(_exp);
+                if (param.is_mut) try self.ensureNotReadOnlySource(_exp);
                 try fn_call_arguments_values.append(self.allocator, fn_call_arg_value);
             } else if (param.default_value) |value| {
                 try fn_call_arguments_values.append(self.allocator, value);
@@ -4447,13 +4444,6 @@ pub const SemaAnalyzer = struct {
         if (call.target.data != .identifier) return false;
         const symbol = self.scope.symbol_table.get(call.target.data.identifier) orelse return false;
         return symbol.kind == .defined_type or symbol.kind == .generic_type;
-    }
-
-    fn isStoredArgument(fn_call: ast.FnCall, param_name: []const u8) bool {
-        if (fn_call.target.data != .identifier) return false;
-        const name = fn_call.target.data.identifier;
-        const is_storing = std.mem.eql(u8, name, "append") or std.mem.eql(u8, name, "insert");
-        return is_storing and std.mem.eql(u8, param_name, "value");
     }
 
     fn ensureMutable(self: *Self, exp: *const ast.ExpNode) CompileError!void {

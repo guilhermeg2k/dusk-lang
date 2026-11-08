@@ -1624,11 +1624,17 @@ test "values from non-mut names can't go into mutable places" {
     try runCase("read-only-sources.dsk");
     try runCaseError("sema/read-only-into-let-mut.dsk", error.ReadOnlyIntoMutable);
     try runCaseError("sema/read-only-into-constructor.dsk", error.ReadOnlyIntoMutable);
-    try runCaseError("sema/read-only-into-append.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-into-append.dsk", error.NotMutable);
     try runCaseError("sema/read-only-into-mut-param.dsk", error.ReadOnlyIntoMutable);
     try runCaseError("sema/read-only-into-field.dsk", error.ReadOnlyIntoMutable);
     try runCaseError("sema/read-only-into-assignment.dsk", error.ReadOnlyIntoMutable);
-    try runCaseError("sema/read-only-capture-into-array.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/read-only-capture-into-array.dsk", error.NotMutable);
+}
+
+test "generics: mut params on a bare slot" {
+    try runCase("generics-mut-slot-param.dsk");
+    try runCaseError("sema/generic-store-without-mut.dsk", error.NotMutable);
+    try runCaseError("sema/read-only-into-generic-mut-param.dsk", error.NotMutable);
 }
 
 test "tail calls" {
@@ -2029,7 +2035,6 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-slot-arithmetic.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
-    try runCaseError("sema/generic-slot-mut-param.dsk", error.SlotParamCantBeMutable);
     try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);

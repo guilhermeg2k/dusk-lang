@@ -32,6 +32,7 @@ Started v0.14 development: updated the CLI version to `0.14.0-devel`.
 - `pop_or_null(mut list) -> ?T` removes and returns the last item, or `null` on an empty array
 - Temporary values can be changed: function results and new values can call `mut self` methods and have their fields and items assigned, so a `mut self` method that returns `self` chains (`b.add(1).add(2)`). The `TemporaryNotMutable` error is gone
 - Removed the `+=` and `-=` operators. Write `x = x + 1` and `x = x - 1`; `x += 1` is now a syntax error
+- Breaking: a generic `T` parameter can be `mut` without a trait constraint (`mut item: T`). The argument must be mutable only when `T` is filled with an array, buffer, struct or union. `append` and `insert` now take their item as `mut`, so generic code that stores a non-`mut` `T` argument (`append(self.items, item)` with `item: T`) is an error where `T` can be changed, closing a gap where such code could change a value read through a non-`mut` name. Storing a read-only value with `append` now reports `'x' is not mutable`
 
 ### Fixes
 

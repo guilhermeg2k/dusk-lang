@@ -1,5 +1,0 @@
-func change[T](mut a: T) -> void
-end
-
-func main() -> void
-end

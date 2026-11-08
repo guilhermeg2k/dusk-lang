@@ -19,7 +19,7 @@ error BufferError
 end
 
 extern func echo(msgs: dynamic) -> void
-extern func append[T](mut array: []T, value: T) -> void
+extern func append[T](mut array: []T, mut value: T) -> void
 extern func len[T](array: []T) -> int
 extern func __array_pop[T](mut array: []T) -> T
 extern func __array_insert[T](mut array: []T, index: int, value: T) -> void
@@ -67,7 +67,7 @@ func pop_or_null[T](mut arr: []T) -> ?T
     return pop(arr) catch null
 end
 
-func insert[T](mut array: []T, index: int, value: T) -> ArrayError!void
+func insert[T](mut array: []T, index: int, mut value: T) -> ArrayError!void
     if index < 0 or index > len(array) then return ArrayError.OutOfRange end
     __array_insert(array, index, value)
 end
