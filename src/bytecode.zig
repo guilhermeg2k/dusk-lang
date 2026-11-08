@@ -383,9 +383,12 @@ pub const BytecodeGen = struct {
             try self.chunk_instructions.append(self.allocator, table_inst);
 
             const case_positions = try self.allocator.alloc(u16, when.cases.len);
+            defer self.allocator.free(case_positions);
             for (when.cases, 0..) |case, i| {
                 case_positions[i] = try self.currentPosition();
+                const case_next_free = self.next_free_register;
                 try self.genInstructionBlock(case.body);
+                self.freeRegisterN(self.next_free_register - case_next_free);
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
             }
@@ -399,10 +402,13 @@ pub const BytecodeGen = struct {
             self.chunk_jump_tables.items[table_index] = .{ .min = table.min, .targets = targets, .default = default_position };
         } else {
             for (when.cases) |case| {
+                const case_next_free = self.next_free_register;
                 const condition_reg = try self.genValue(case.condition, try self.consumeRegister());
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_reg });
                 const next_case_jump = self.chunk_instructions.items.len - 1;
+                self.freeRegisterN(self.next_free_register - case_next_free);
                 try self.genInstructionBlock(case.body);
+                self.freeRegisterN(self.next_free_register - case_next_free);
                 try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
                 try end_jumps.append(self.allocator, self.chunk_instructions.items.len - 1);
                 self.chunk_instructions.items[next_case_jump].putBEx(try self.currentPosition());

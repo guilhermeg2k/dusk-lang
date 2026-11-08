@@ -80,6 +80,26 @@ test "when: a nullable subject without a null case lowers else once" {
     try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
 }
 
+test "when: cases free their registers, with compares or a jump table" {
+    try runLongWhen(1000, "[0, 299, -1]\n");
+    try runLongWhen(1, "[0, 299, 5]\n");
+}
+
+fn runLongWhen(step: usize, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var source: std.ArrayList(u8) = .empty;
+    try source.appendSlice(allocator, "func f(x: int) -> int\n    when x\n");
+    for (0..300) |i| try source.print(allocator, "        {d} then return {d} end\n", .{ i * step, i });
+    try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    echo([f(0), f({d}), f(5)])\nend\n", .{299 * step});
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdout_writer = &output.writer, .io = testing.io };
+    try dusk.compileAndRun(source.items);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
 test "arrays print their items after growing, and a one-item array grows" {
     try runCaseOutput("array-growth-printing.dsk", "[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]\n[a, b, c]\n");
 }
