@@ -1,5 +1,9 @@
 # Changelogs
 
+## v0.15 - Fujiwara
+
+Started v0.15 development: updated the CLI version to `0.15.0-devel`.
+
 ## v0.14 - Simon
 
 Started v0.14 development: updated the CLI version to `0.14.0-devel`.
