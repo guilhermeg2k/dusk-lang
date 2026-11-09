@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.15 - Fujiwara** (in development). Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.15 - Enjin'** (in development). Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
