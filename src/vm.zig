@@ -5,6 +5,7 @@ const util = @import("util.zig");
 const RuntimeError = @import("error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
+const TaskState = @import("scheduler.zig").TaskState;
 
 pub const VM = struct {
     const Self = @This();
@@ -14,7 +15,9 @@ pub const VM = struct {
     const MAX_FRAME_REGISTERS = 256;
 
     allocator: std.mem.Allocator,
+    task_allocator: std.mem.Allocator,
     program: *const bc.Program,
+    current_task: ?*TaskState = null,
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
@@ -26,6 +29,7 @@ pub const VM = struct {
     pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
             .allocator = std.heap.page_allocator,
+            .task_allocator = std.heap.c_allocator,
             .frames = &.{},
             .frame_count = 0,
             .program = program,
@@ -72,15 +76,34 @@ pub const VM = struct {
     }
 
     pub noinline fn run(self: *Self) !void {
-        self.frames = try self.allocUntouched(CallFrame, MAX_CALL_DEPTH);
-        defer self.freeUntouched(CallFrame, self.frames);
-        self.stack = try self.allocUntouched(v.Value, STACK_SLOTS);
-        defer self.freeUntouched(v.Value, self.stack);
-        self.initMainFrame();
+        const main_closure: *v.Closure = @constCast(&self.program.static_closures[self.program.main_func_index]);
+        const main_task = try TaskState.create(self.task_allocator, main_closure);
+        defer main_task.destroy(self.task_allocator);
+        self.enterTask(main_task);
         self.execute() catch |failure| {
             self.reportWhere(failure);
+            self.leaveTask(main_task);
             return failure;
         };
+        self.leaveTask(main_task);
+    }
+
+    fn enterTask(self: *Self, task: *TaskState) void {
+        self.current_task = task;
+        self.stack = task.stack;
+        self.frames = task.frames;
+        self.frame_count = task.frame_count;
+        task.status = .running;
+    }
+
+    fn leaveTask(self: *Self, task: *TaskState) void {
+        task.stack = self.stack;
+        task.frames = self.frames;
+        task.frame_count = self.frame_count;
+        if (self.frame_count == 0) {
+            task.status = .done;
+        }
+        self.current_task = null;
     }
 
     fn reportWhere(self: *Self, failure: anyerror) void {
@@ -94,11 +117,11 @@ pub const VM = struct {
     }
 
     noinline fn execute(self: *Self) !void {
-        const stack = self.stack[0..];
+        var stack = self.stack;
         var current_frame = &self.frames[self.frame_count - 1];
-        var cur_instruction: usize = 0;
+        var cur_instruction: usize = current_frame.cur_inst;
         var instructions = current_frame.function.kind.dusk.instructions;
-        var stack_base: usize = 0;
+        var stack_base: usize = current_frame.stack_offset;
 
         if (instructions.len == 0) {
             return;
@@ -521,7 +544,7 @@ pub const VM = struct {
                             const new_offset = stack_base + inst.a + 1;
                             const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
                             if (is_stack_full) {
-                                return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+                                stack = try self.growForCall(new_offset);
                             }
                             self.frames[self.frame_count] = .{
                                 .function = func,
@@ -584,7 +607,7 @@ pub const VM = struct {
                     const new_offset = stack_base + inst.a + 1;
                     const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
                     if (is_stack_full) {
-                        return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+                        stack = try self.growForCall(new_offset);
                     }
                     self.frames[self.frame_count] = .{
                         .function = func,
@@ -631,8 +654,8 @@ pub const VM = struct {
 
                 .RETURN => {
                     self.frame_count -= 1;
-                    if (self.frame_count == 0) break;
                     stack[stack_base - 1] = stack[stack_base + inst.a];
+                    if (self.frame_count == 0) break;
                     current_frame = &self.frames[self.frame_count - 1];
                     cur_instruction = current_frame.cur_inst;
                     instructions = current_frame.function.kind.dusk.instructions;
@@ -642,6 +665,10 @@ pub const VM = struct {
                 .RETURN_ERR => {
                     self.frame_count -= 1;
                     stack[stack_base - 1] = stack[stack_base + inst.a];
+                    if (self.frame_count == 0) {
+                        self.current_task.?.has_failed = true;
+                        break;
+                    }
                     current_frame = &self.frames[self.frame_count - 1];
                     cur_instruction = current_frame.cur_inst + 1;
                     instructions = current_frame.function.kind.dusk.instructions;
@@ -774,24 +801,25 @@ pub const VM = struct {
         return .{ .heap_obj = &box.obj };
     }
 
-    fn allocUntouched(self: *Self, comptime T: type, count: usize) ![]T {
-        const bytes = self.allocator.rawAlloc(@sizeOf(T) * count, .of(T), @returnAddress()) orelse return error.OutOfMemory;
-        const items: [*]T = @ptrCast(@alignCast(bytes));
-        return items[0..count];
-    }
-
-    fn freeUntouched(self: *Self, comptime T: type, items: []T) void {
-        const bytes: [*]u8 = @ptrCast(items.ptr);
-        self.allocator.rawFree(bytes[0 .. @sizeOf(T) * items.len], .of(T), @returnAddress());
-    }
-
-    fn initMainFrame(self: *Self) void {
-        self.frames[0] = CallFrame{
-            .function = &self.program.functions[self.program.main_func_index],
-            .cur_inst = 0,
-            .stack_offset = 0,
-        };
-        self.frame_count = 1;
+    noinline fn growForCall(self: *Self, new_offset: usize) ![]v.Value {
+        if (self.frame_count == self.frames.len) {
+            if (self.frames.len == MAX_CALL_DEPTH) {
+                return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+            }
+            const new_len = @min(self.frames.len * 2, MAX_CALL_DEPTH);
+            self.frames = try self.task_allocator.realloc(self.frames, new_len);
+        }
+        const needed_slots = new_offset + MAX_FRAME_REGISTERS;
+        if (needed_slots > self.stack.len) {
+            if (needed_slots > STACK_SLOTS) {
+                return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
+            }
+            const old_len = self.stack.len;
+            const new_len = @min(@max(old_len * 2, needed_slots), STACK_SLOTS);
+            self.stack = try self.task_allocator.realloc(self.stack, new_len);
+            @memset(self.stack[old_len..], v.NULL_VALUE);
+        }
+        return self.stack;
     }
 
     noinline fn loadUnionVariant(self: *Self, stack: []v.Value, stack_base: usize, target_reg: u8, union_reg: u8, tag: u16) !void {
@@ -997,7 +1025,7 @@ const Heap = struct {
     threshold: usize,
 };
 
-const CallFrame = struct {
+pub const CallFrame = struct {
     function: *const bc.Function,
     cur_inst: usize,
     stack_offset: usize,
