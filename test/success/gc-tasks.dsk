@@ -1,0 +1,92 @@
+struct Point
+    x: int
+    y: int
+end
+
+func churn(rounds: int) -> void
+    let mut i = 0
+    for i < rounds do
+        let tmp = [i, i, i, i]
+        i = i + 1
+    end
+end
+
+func depth(n: int) -> int
+    if n == 0 then return 0 end
+    let tmp = [n, n]
+    let below = depth(n - 1)
+    return below + tmp[0] - n + 1
+end
+
+func make_array(n: int) -> []int
+    let mut items: []int = []
+    let mut i = 0
+    for i < n do
+        append(items, i)
+        i = i + 1
+    end
+    return items
+end
+
+func main() -> void
+    let mut tasks: []Task[[]int] = []
+    let mut i = 0
+    for i < 2000 do
+        let n = i % 10
+        append(tasks, spawn(func()
+            let local = make_array(n)
+            sleep(0)
+            churn(50)
+            return local
+        end))
+        i = i + 1
+    end
+    churn(20000)
+    let mut total = 0
+    for tasks: t, index do
+        let items = await(t)
+        assert(len(items) == index % 10)
+        total = total + len(items)
+    end
+    assert(total == 9000)
+
+    let mut holders: []Task[string] = []
+    let mut j = 0
+    for j < 500 do
+        let held = make_array(5)
+        let name = "task ${j}"
+        let waited = spawn(func() -> return [name])
+        append(holders, spawn(func()
+            let names = await(waited)
+            churn(100)
+            return "${names[0]} ${len(held)}"
+        end))
+        j = j + 1
+    end
+    churn(20000)
+    assert(str_equal(await(holders[499]), "task 499 5"))
+    assert(str_equal(await(holders[0]), "task 0 5"))
+
+    let points = spawn(func() -> return Point(x = 1, y = 2))
+    let adder = spawn(func()
+        let offset = 10
+        return func(x: int) -> return x + offset
+    end)
+    churn(20000)
+    let point = await(points)
+    let add = await(adder)
+    assert(point.y == 2)
+    assert(add(5) == 15)
+
+    let mut k = 0
+    for k < 1000 do
+        spawn(func()
+            churn(20)
+        end)
+        k = k + 1
+    end
+
+    let deep = spawn(func() -> return depth(20000))
+    churn(20000)
+    assert(await(deep) == 20000)
+end

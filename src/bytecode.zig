@@ -1811,7 +1811,7 @@ pub const Program = struct {
     error_names: []const []const u8,
 };
 
-pub const NativeResult = struct { value: v.Value, has_failed: bool = false };
+pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
 
 pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
 

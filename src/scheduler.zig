@@ -10,17 +10,95 @@ pub const Scheduler = struct {
 
     allocator: std.mem.Allocator,
     tasks: std.ArrayList(*TaskState) = .empty,
+    ready: std.ArrayList(*TaskState) = .empty,
+    ready_head: usize = 0,
 
     pub fn spawn(self: *Self, entry: *v.Closure, result_kind: v.ValueType) !*TaskState {
         try self.tasks.ensureUnusedCapacity(self.allocator, 1);
         const task = try TaskState.create(self.allocator, entry, result_kind);
+        errdefer task.destroy(self.allocator);
+        try self.makeReady(task);
         self.tasks.appendAssumeCapacity(task);
         return task;
+    }
+
+    pub fn makeReady(self: *Self, task: *TaskState) !void {
+        const is_mostly_consumed = self.ready_head > 0 and self.ready_head * 2 >= self.ready.items.len;
+        if (is_mostly_consumed) {
+            const remaining = self.ready.items.len - self.ready_head;
+            std.mem.copyForwards(*TaskState, self.ready.items[0..remaining], self.ready.items[self.ready_head..]);
+            self.ready.shrinkRetainingCapacity(remaining);
+            self.ready_head = 0;
+        }
+        try self.ready.append(self.allocator, task);
+        task.status = .ready;
+    }
+
+    pub fn popReady(self: *Self) ?*TaskState {
+        if (self.ready_head == self.ready.items.len) return null;
+        const task = self.ready.items[self.ready_head];
+        self.ready_head += 1;
+        return task;
+    }
+
+    pub fn deliver(self: *Self, task: *TaskState, delivery: Delivery) !void {
+        task.pending = delivery;
+        try self.makeReady(task);
+    }
+
+    pub fn park(task: *TaskState) void {
+        task.status = .parked;
+    }
+
+    pub fn finish(self: *Self, task: *TaskState) !void {
+        task.result = task.stack[0];
+        task.freeStack(self.allocator);
+        task.status = .done;
+        const delivery = Delivery{ .value = task.result, .kind = task.result_kind, .has_failed = task.has_failed };
+        for (task.waiters.items) |waiter| {
+            try self.deliver(waiter, delivery);
+        }
+        task.waiters.clearAndFree(self.allocator);
+    }
+
+    pub fn hasUnfinished(self: *const Self) bool {
+        for (self.tasks.items) |task| {
+            if (task.status != .done) return true;
+        }
+        return false;
+    }
+
+    pub fn unmarkAll(self: *Self) void {
+        for (self.tasks.items) |task| task.is_marked = false;
+    }
+
+    pub fn sweep(self: *Self) void {
+        var index: usize = 0;
+        while (index < self.tasks.items.len) {
+            const task = self.tasks.items[index];
+            if (!task.canBeFreed()) {
+                index += 1;
+                continue;
+            }
+            task.destroy(self.allocator);
+            _ = self.tasks.swapRemove(index);
+        }
     }
 
     pub fn deinit(self: *Self) void {
         for (self.tasks.items) |task| task.destroy(self.allocator);
         self.tasks.deinit(self.allocator);
+        self.ready.deinit(self.allocator);
+    }
+};
+
+pub const Delivery = struct {
+    value: v.Value,
+    kind: v.ValueType,
+    has_failed: bool = false,
+
+    pub fn isHeapValue(self: Delivery) bool {
+        return !self.has_failed and self.kind.isHeapType();
     }
 };
 
@@ -34,7 +112,12 @@ pub const TaskState = struct {
     frame_count: usize,
     status: Status = .ready,
     has_failed: bool = false,
+    is_awaited: bool = false,
+    is_marked: bool = false,
+    result: v.Value = v.NULL_VALUE,
     result_kind: v.ValueType,
+    pending: ?Delivery = null,
+    waiters: std.ArrayList(*TaskState) = .empty,
 
     pub fn create(allocator: std.mem.Allocator, entry: *v.Closure, result_kind: v.ValueType) !*Self {
         const stack = try allocator.alloc(v.Value, INITIAL_STACK_SLOTS);
@@ -51,9 +134,29 @@ pub const TaskState = struct {
         return task;
     }
 
-    pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn hasResultHeapValue(self: *const Self) bool {
+        return self.status == .done and !self.has_failed and self.result_kind.isHeapType();
+    }
+
+    pub fn hasUnhandledFailure(self: *const Self) bool {
+        return self.status == .done and self.has_failed and !self.is_awaited;
+    }
+
+    fn canBeFreed(self: *const Self) bool {
+        return self.status == .done and !self.is_marked and !self.hasUnhandledFailure();
+    }
+
+    fn freeStack(self: *Self, allocator: std.mem.Allocator) void {
         allocator.free(self.stack);
         allocator.free(self.frames);
+        self.stack = &.{};
+        self.frames = &.{};
+        self.frame_count = 0;
+    }
+
+    pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+        self.freeStack(allocator);
+        self.waiters.deinit(allocator);
         allocator.destroy(self);
     }
 };

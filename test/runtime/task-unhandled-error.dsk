@@ -1,0 +1,5 @@
+func main() -> void
+    let mut kept: []Task[int, ConversionError] = []
+    append(kept, spawn(func() -> return try str_to_int("x")))
+    echo("main done")
+end

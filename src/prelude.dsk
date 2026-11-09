@@ -44,6 +44,8 @@ extern func str_to_int(text: string) -> ConversionError!int
 extern func str_to_float(text: string) -> ConversionError!float
 extern func copy[T](value: T) -> T
 extern func spawn[T, E: error](body: func() -> E!T) -> Task[T, E]
+extern func await[T, E: error](task: Task[T, E]) -> E!T
+extern func sleep(ms: int) -> void
 extern func str_find(text: string, needle: string) -> ?int
 extern func str_contains(text: string, needle: string) -> bool
 extern func str_starts_with(text: string, prefix: string) -> bool

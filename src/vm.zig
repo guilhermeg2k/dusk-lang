@@ -81,14 +81,35 @@ pub const VM = struct {
 
     pub noinline fn run(self: *Self) !void {
         const main_closure: *v.Closure = @constCast(&self.program.static_closures[self.program.main_func_index]);
-        const main_task = try self.scheduler.spawn(main_closure, .null);
-        self.enterTask(main_task);
-        self.execute() catch |failure| {
+        _ = try self.scheduler.spawn(main_closure, .null);
+        self.runScheduler() catch |failure| {
             self.reportWhere(failure);
-            self.leaveTask(main_task);
+            self.saveCurrentTask();
             return failure;
         };
-        self.leaveTask(main_task);
+    }
+
+    fn runScheduler(self: *Self) !void {
+        while (true) {
+            if (self.scheduler.popReady()) |task| {
+                try self.runTask(task);
+                continue;
+            }
+            if (self.scheduler.hasUnfinished()) {
+                return RuntimeErrorReporter.allTasksWaiting();
+            }
+            break;
+        }
+        try self.reportUnhandledTaskErrors();
+    }
+
+    fn runTask(self: *Self, task: *TaskState) !void {
+        self.enterTask(task);
+        try self.execute();
+        self.leaveTask();
+        if (task.frame_count == 0) {
+            try self.scheduler.finish(task);
+        }
     }
 
     fn enterTask(self: *Self, task: *TaskState) void {
@@ -97,16 +118,36 @@ pub const VM = struct {
         self.frames = task.frames;
         self.frame_count = task.frame_count;
         task.status = .running;
+        const delivery = task.pending orelse return;
+        task.pending = null;
+        const frame = &task.frames[task.frame_count - 1];
+        const call = frame.function.kind.dusk.instructions[frame.cur_inst - 1];
+        task.stack[frame.stack_offset + call.a] = delivery.value;
+        if (delivery.has_failed) {
+            frame.cur_inst += 1;
+        }
     }
 
-    fn leaveTask(self: *Self, task: *TaskState) void {
+    fn leaveTask(self: *Self) void {
+        self.saveCurrentTask();
+        self.current_task = null;
+        self.frame_count = 0;
+    }
+
+    fn saveCurrentTask(self: *Self) void {
+        const task = self.current_task orelse return;
         task.stack = self.stack;
         task.frames = self.frames;
         task.frame_count = self.frame_count;
-        if (self.frame_count == 0) {
-            task.status = .done;
+    }
+
+    fn reportUnhandledTaskErrors(self: *Self) !void {
+        var failure: ?anyerror = null;
+        for (self.scheduler.tasks.items) |task| {
+            if (!task.hasUnhandledFailure()) continue;
+            failure = RuntimeErrorReporter.unhandledTaskError(self.program.error_names[@intCast(task.result.int64)]);
         }
-        self.current_task = null;
+        if (failure) |found| return found;
     }
 
     fn reportWhere(self: *Self, failure: anyerror) void {
@@ -572,6 +613,7 @@ pub const VM = struct {
                                 self.failed_builtin = func.name;
                                 return failure;
                             };
+                            if (result.is_parked) return;
                             stack[stack_base + inst.a] = result.value;
                             if (result.has_failed) {
                                 cur_instruction += 1;
@@ -902,21 +944,10 @@ pub const VM = struct {
         self.heap.object_count = 0;
         self.heap.gc_queue.clearRetainingCapacity();
 
-        const active_frames = self.frames[0..self.frame_count];
-        for (active_frames, 0..) |frame, frame_index| {
-            const chunk = frame.function.kind.dusk;
-            const cur_pc: u16 = @intCast(frame.cur_inst -| 1);
-            const heap_map = util.binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
-            const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
-            const base = frame.stack_offset;
-            const is_top_frame = frame_index + 1 == active_frames.len;
-            const owned_registers = if (is_top_frame) chunk.num_registers else active_frames[frame_index + 1].stack_offset - base;
-            for (0..owned_registers) |i| {
-                const is_heap_value = bitmap & (@as(u256, 1) << @intCast(i)) != 0;
-                if (is_heap_value) {
-                    try self.copyHeapValue(new_alloc, &self.stack[base + i]);
-                }
-            }
+        self.saveCurrentTask();
+        self.scheduler.unmarkAll();
+        for (self.scheduler.tasks.items) |task| {
+            try self.copyTaskRoots(new_alloc, task);
         }
 
         while (self.heap.gc_queue.items.len > 0) {
@@ -958,6 +989,13 @@ pub const VM = struct {
                         try self.copyHeapValue(new_alloc, &cell.value);
                     }
                 },
+                .task => {
+                    const state = v.HeapValue.getParentPtr(v.Task, obj).state;
+                    state.is_marked = true;
+                    if (state.hasResultHeapValue()) {
+                        try self.copyHeapValue(new_alloc, &state.result);
+                    }
+                },
                 .@"union" => {
                     const u = v.HeapValue.getParentPtr(v.Union, obj);
                     if (u.active_tag != v.Union.NO_TAG) {
@@ -972,6 +1010,7 @@ pub const VM = struct {
             }
         }
 
+        self.scheduler.sweep();
         self.heap.active = inactive;
         self.heap.threshold = @max(self.heap.allocated * 2, MIN_GC_THRESHOLD);
 
@@ -980,6 +1019,33 @@ pub const VM = struct {
             _ = self.heap.arenas[old_idx].reset(.{ .retain_with_limit = self.heap.threshold });
             self.heap.gc_queue.clearAndFree(self.allocator);
             try self.heap.gc_queue.ensureTotalCapacity(self.allocator, self.heap.object_count);
+        }
+    }
+
+    fn copyTaskRoots(self: *Self, new_alloc: std.mem.Allocator, task: *TaskState) !void {
+        if (task.pending) |*delivery| {
+            if (delivery.isHeapValue()) {
+                try self.copyHeapValue(new_alloc, &delivery.value);
+            }
+        }
+        if (task.status == .done) return;
+        try self.copyHeapValue(new_alloc, &task.stack[0]);
+        const active_frames = task.frames[0..task.frame_count];
+        for (active_frames, 0..) |frame, frame_index| {
+            if (frame.cur_inst == 0) continue;
+            const chunk = frame.function.kind.dusk;
+            const cur_pc: u16 = @intCast(frame.cur_inst - 1);
+            const heap_map = util.binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
+            const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
+            const base = frame.stack_offset;
+            const is_top_frame = frame_index + 1 == active_frames.len;
+            const owned_registers = if (is_top_frame) chunk.num_registers else active_frames[frame_index + 1].stack_offset - base;
+            for (0..owned_registers) |i| {
+                const is_heap_value = bitmap & (@as(u256, 1) << @intCast(i)) != 0;
+                if (is_heap_value) {
+                    try self.copyHeapValue(new_alloc, &task.stack[base + i]);
+                }
+            }
         }
     }
 

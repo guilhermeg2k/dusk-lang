@@ -1230,10 +1230,19 @@ pub const SemaAnalyzer = struct {
             .catch_exp => try self.evalCatch(expression_stmt, true, null),
             else => return self.err_reporter.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc),
         };
+        if (self.isFailingTask(value.type_id)) {
+            return self.err_reporter.unawaitedTaskCanFail(expression_stmt.loc);
+        }
 
         return ir.Instruction{
             .expression_stmt = .{ .value = value },
         };
+    }
+
+    fn isFailingTask(self: *Self, type_id: tt.TypeId) bool {
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        if (kind != .task) return false;
+        return self.errorSetOf(kind.task.error_set).kind != .none;
     }
 
     fn evalHandledCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {

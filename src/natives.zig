@@ -4,6 +4,7 @@ const v = @import("value.zig");
 const format = @import("format.zig");
 const VM = @import("vm.zig").VM;
 const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
+const Scheduler = @import("scheduler.zig").Scheduler;
 
 const NativeResult = bc.NativeResult;
 
@@ -45,6 +46,8 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "append", Binding{ .intrinsic = .append } },
     .{ "copy", Binding{ .intrinsic = .copy } },
     .{ "spawn", Binding{ .intrinsic = .task_spawn } },
+    .{ "await", Binding{ .native = &taskAwait } },
+    .{ "sleep", Binding{ .native = &taskSleep } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
     .{ "string_from", Binding{ .native = &stringFrom } },
     .{ "str_equal", Binding{ .native = &strEqual } },
@@ -82,6 +85,35 @@ pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
 pub fn assert(_: *VM, args: []v.Value) anyerror!NativeResult {
     if (!args[0].bool) return RuntimeErrorReporter.assertionFailed();
     return ok(.{ .null = {} });
+}
+
+pub fn taskAwait(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const target = v.HeapValue.getParentPtr(v.Task, args[0].heap_obj).state;
+    target.is_awaited = true;
+    if (target.status == .done) {
+        return .{ .value = target.result, .has_failed = target.has_failed };
+    }
+    const current = vm.current_task.?;
+    if (target == current) {
+        return RuntimeErrorReporter.taskAwaitsItself();
+    }
+    try target.waiters.append(vm.scheduler.allocator, current);
+    Scheduler.park(current);
+    return parked();
+}
+
+pub fn taskSleep(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const ms = args[0].int64;
+    if (ms < 0) {
+        return RuntimeErrorReporter.negativeSleep(ms);
+    }
+    const current = vm.current_task.?;
+    try vm.scheduler.deliver(current, .{ .value = v.NULL_VALUE, .kind = .null });
+    return parked();
+}
+
+fn parked() NativeResult {
+    return .{ .value = v.NULL_VALUE, .is_parked = true };
 }
 
 pub fn bufferFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {

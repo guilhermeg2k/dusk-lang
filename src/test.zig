@@ -2125,6 +2125,17 @@ test "tasks: Task[T, E] types from spawn" {
     try runCaseError("sema/task-name-taken.dsk", error.AlreadyDefined);
     try runCaseError("sema/task-error-not-in-set.dsk", error.ErrorNotInSet);
     try runCaseError("sema/task-payload-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/unawaited-task-can-fail.dsk", error.UnawaitedTaskCanFail);
+}
+
+test "tasks: spawn, await and sleep(0) on the scheduler" {
+    try runCaseOutput("tasks.dsk", "<task>\n<task done>\nmain ends\nafter main\n");
+    try runCase("gc-tasks.dsk");
+    try runCaseRuntimeError("task-awaits-itself.dsk", error.TaskAwaitsItself);
+    try runCaseRuntimeError("tasks-all-waiting.dsk", error.AllTasksWaiting);
+    try runCaseRuntimeError("task-unhandled-error.dsk", error.UnhandledTaskError);
+    try runCaseRuntimeError("sleep-negative.dsk", error.NegativeSleep);
+    try runCaseRuntimeError("task-runtime-error.dsk", error.ArrayOutOfBounds);
 }
 
 test "closures: lambdas capture variables of the functions around them" {

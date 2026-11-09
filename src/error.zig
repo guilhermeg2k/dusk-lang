@@ -338,6 +338,11 @@ pub const CompileErrorReporter = struct {
         return error.CantCompare;
     }
 
+    pub fn unawaitedTaskCanFail(self: *Self, loc: Loc) CompileError {
+        self.log("this task's result isn't used, so it can't fail: handle its errors inside it with catch", loc);
+        return error.UnawaitedTaskCanFail;
+    }
+
     pub fn taskNeedsSpawn(self: *Self, loc: Loc) CompileError {
         self.log("'Task' can't be created directly: start a task with 'spawn'", loc);
         return error.TaskNeedsSpawn;
@@ -979,6 +984,7 @@ pub const CompileError = error{
     WhenInvalidCase,
     CantCompare,
     TaskNeedsSpawn,
+    UnawaitedTaskCanFail,
     UnhandledError,
     TryOutsideFailingFunction,
     NotAFailingCall,
@@ -1047,6 +1053,10 @@ pub const RuntimeError = error{
     IntegerOverflow,
     FloatOutOfIntRange,
     AssertionFailed,
+    TaskAwaitsItself,
+    AllTasksWaiting,
+    NegativeSleep,
+    UnhandledTaskError,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -1103,6 +1113,26 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn unhandledError(error_name: []const u8) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.UnhandledError, "unhandled error {s}", .{error_name});
+    }
+
+    pub noinline fn taskAwaitsItself() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.TaskAwaitsItself, "a task can't await itself", .{});
+    }
+
+    pub noinline fn allTasksWaiting() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.AllTasksWaiting, "all tasks are waiting: nothing can wake them up", .{});
+    }
+
+    pub noinline fn negativeSleep(ms: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.NegativeSleep, "sleep time can't be negative: {d}", .{ms});
+    }
+
+    pub noinline fn unhandledTaskError(error_name: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.UnhandledTaskError, "unhandled error in task: {s}", .{error_name});
     }
 
     pub noinline fn assertionFailed() RuntimeError {
