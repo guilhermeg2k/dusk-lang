@@ -153,7 +153,7 @@ Notes:
 
 ### 4.1 Memory
 
-Each task (section 11), `$main` included, has its own value stack and frame array, allocated outside the GC heap with `VM.task_allocator` (the C allocator):
+Each task (section 11), `$main` included, has its own value stack and frame array, allocated outside the GC heap with the scheduler's allocator (the C allocator):
 
 - **The value stack** starts at `INITIAL_STACK_SLOTS = 1024` values (8 KB) and grows up to `STACK_SLOTS = 4_000_000`.
 - **The frames** start at `INITIAL_FRAMES = 32` `CallFrame`s and grow up to `MAX_CALL_DEPTH = 100_000`.

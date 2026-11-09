@@ -17,7 +17,6 @@ pub const VM = struct {
     const MAX_FRAME_REGISTERS = 256;
 
     allocator: std.mem.Allocator,
-    task_allocator: std.mem.Allocator,
     program: *const bc.Program,
     current_task: ?*TaskState = null,
     scheduler: Scheduler,
@@ -33,7 +32,6 @@ pub const VM = struct {
     pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
             .allocator = std.heap.page_allocator,
-            .task_allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
             .event_loop = .{ .allocator = std.heap.c_allocator },
             .frames = &.{},
@@ -881,7 +879,7 @@ pub const VM = struct {
                 return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
             }
             const new_len = @min(self.frames.len * 2, MAX_CALL_DEPTH);
-            self.frames = try self.task_allocator.realloc(self.frames, new_len);
+            self.frames = try self.scheduler.allocator.realloc(self.frames, new_len);
         }
         const needed_slots = new_offset + MAX_FRAME_REGISTERS;
         if (needed_slots > self.stack.len) {
@@ -890,7 +888,7 @@ pub const VM = struct {
             }
             const old_len = self.stack.len;
             const new_len = @min(@max(old_len * 2, needed_slots), STACK_SLOTS);
-            self.stack = try self.task_allocator.realloc(self.stack, new_len);
+            self.stack = try self.scheduler.allocator.realloc(self.stack, new_len);
             @memset(self.stack[old_len..], v.NULL_VALUE);
         }
         return self.stack;
