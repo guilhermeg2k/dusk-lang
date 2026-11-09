@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
 const Lexer = @import("lexer.zig").Lexer;
+const uv = @import("uv");
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -13,6 +14,25 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
     try dusk.compileAndRun(source);
     try testing.expectEqualStrings(expected, output.written());
+}
+
+test "libuv: a timer fires once" {
+    const State = struct {
+        var fire_count: usize = 0;
+        fn onTimer(_: [*c]uv.uv_timer_t) callconv(.c) void {
+            fire_count += 1;
+        }
+    };
+    var loop: uv.uv_loop_t = undefined;
+    try testing.expectEqual(0, uv.uv_loop_init(&loop));
+    var timer: uv.uv_timer_t = undefined;
+    try testing.expectEqual(0, uv.uv_timer_init(&loop, &timer));
+    try testing.expectEqual(0, uv.uv_timer_start(&timer, State.onTimer, 5, 0));
+    _ = uv.uv_run(&loop, uv.UV_RUN_DEFAULT);
+    try testing.expectEqual(1, State.fire_count);
+    uv.uv_close(@ptrCast(&timer), null);
+    _ = uv.uv_run(&loop, uv.UV_RUN_DEFAULT);
+    try testing.expectEqual(0, uv.uv_loop_close(&loop));
 }
 
 test "string interpolation" {
