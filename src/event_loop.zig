@@ -14,7 +14,7 @@ pub const EventLoop = struct {
     failure: ?anyerror = null,
 
     pub fn startTimer(self: *Self, tasks: *scheduler.Scheduler, ms: u64, task: *scheduler.TaskState) !void {
-        const loop = try self.ensureStarted();
+        const loop = try self.ensureLoopStarted();
         const request = try self.allocator.create(TimerRequest);
         const timer_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer)) catch |failure| {
             self.allocator.destroy(request);
@@ -65,7 +65,7 @@ pub const EventLoop = struct {
         self.loop = null;
     }
 
-    fn ensureStarted(self: *Self) !*uv.Loop {
+    fn ensureLoopStarted(self: *Self) !*uv.Loop {
         if (self.loop) |loop| return loop;
         const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_loop_size());
         const loop: *uv.Loop = @ptrCast(memory.ptr);
