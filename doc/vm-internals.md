@@ -27,7 +27,7 @@ The source files involved:
 1. creates the first task, for `$main`, the function codegen builds from the top-level code (section 11),
 2. runs the scheduler loop: it runs ready tasks with `execute` until every task is done,
 3. reports failed tasks nobody awaited,
-4. on a runtime error, prints where it happened (`reportWhere`) and returns the error.
+4. on a runtime error, prints where it happened (`reportErrorLocation`) and returns the error.
 
 ## 2. The compiled program
 
@@ -184,7 +184,7 @@ This gives three properties:
 - `RETURN` writes the result to `stack[stack_base - 1]`, which is the caller's `R[a]`, exactly where the caller expects it.
 - For `CALL_VALUE`, `stack[stack_base - 1]` holds the closure being called for the whole call. That's how `CAPTURE_GET` finds its captures (section 8).
 
-Before pushing a frame, a call checks that a frame is free and that `new_offset + 256` slots still fit on the stack. Otherwise `growForCall` (a cold path) doubles the frames or the stack with `realloc`, zero-fills the new slots, and the handler reloads its `stack` local. Growing is safe because frames hold offsets, captured variables live in heap `Cell`s and natives never call back into Dusk: nothing keeps a pointer into a stack across a call. Past the limits it fails with "call depth exceeded".
+Before pushing a frame, a call checks that a frame is free and that `new_offset + 256` slots still fit on the stack. Otherwise `growCallStack` (a cold path) doubles the frames or the stack with `realloc`, zero-fills the new slots, and the handler reloads its `stack` local. Growing is safe because frames hold offsets, captured variables live in heap `Cell`s and natives never call back into Dusk: nothing keeps a pointer into a stack across a call. Past the limits it fails with "call depth exceeded".
 
 ### 4.3 Register allocation in codegen
 
@@ -457,7 +457,7 @@ A full example, from `let x = twice(3) catch 0` in `main`:
 
 ### 7.6 Runtime errors
 
-Problems such as a bad index, an overflow, division by zero, a failed `assert` or running out of call depth are not Dusk errors. The reporter prints the message (`RuntimeErrorReporter.*`) and returns a Zig error, which goes up through `execute` to `VM.run`. There, `reportWhere` adds the name of the running function (or the top level, for `$`-prefixed names) and the name of the failing builtin, if any. The program stops: nothing in Dusk can catch these.
+Problems such as a bad index, an overflow, division by zero, a failed `assert` or running out of call depth are not Dusk errors. The reporter prints the message (`RuntimeErrorReporter.*`) and returns a Zig error, which goes up through `execute` to `VM.run`. There, `reportErrorLocation` adds the name of the running function (or the top level, for `$`-prefixed names) and the name of the failing builtin, if any. The program stops: nothing in Dusk can catch these.
 
 ## 8. Closures and cells
 
@@ -596,7 +596,7 @@ run:
 
 A task waits by **parking inside a native call**. The native records who should wake it up, sets the task's status to `parked` and returns `NativeResult{ .is_parked = true }`. The `CALL` handler then returns from `execute`. The top frame already saved `cur_inst` just after the `CALL` (on the `JUMP` for a call that can fail), exactly as a caller frame does while it waits for a callee.
 
-To wake a task, `Scheduler.wake(task, result)` stores the result in `task.wake_result` and puts the task at the back of the ready queue. When the task is entered again, `enterTask` writes the value into the register of the `CALL` it parked in (`instructions[cur_inst - 1].a`), and moves `cur_inst` past the `JUMP` if the value is an error. That is the rule of `RETURN_ERR`, so `try`, `catch` and `catch e then` work on `await` with no new code.
+To wake a task, `Scheduler.wake(task, result)` stores the result in `task.wake_result` and puts the task at the back of the ready queue. When the task is entered again, `enterTask` calls `finishParkedCall`, which writes the value into the register of the `CALL` it parked in (`instructions[cur_inst - 1].a`), and moves `cur_inst` past the `JUMP` if the value is an error. That is the rule of `RETURN_ERR`, so `try`, `catch` and `catch e then` work on `await` with no new code.
 
 The value waits in `pending` instead of going straight into the register because other tasks run in between, and any of them can start a collection. The `CALL`'s target register isn't in its heap map (section 9.2), so a pointer written there early wouldn't be kept alive. `pending` is a GC root, and it's written into the register only at the switch, when nothing can collect.
 

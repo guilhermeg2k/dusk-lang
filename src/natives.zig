@@ -93,7 +93,7 @@ pub fn taskAwait(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (target.status == .done) {
         return .{ .value = target.result, .has_failed = target.has_failed };
     }
-    const current = vm.current_task.?;
+    const current = vm.running_task.?;
     if (target == current) {
         return RuntimeErrorReporter.taskAwaitsItself();
     }
@@ -107,7 +107,7 @@ pub fn taskSleep(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (ms < 0) {
         return RuntimeErrorReporter.negativeSleep(ms);
     }
-    const current = vm.current_task.?;
+    const current = vm.running_task.?;
     if (ms == 0) {
         try vm.scheduler.wake(current, .{ .value = v.NULL_VALUE, .kind = .null });
         return parked();

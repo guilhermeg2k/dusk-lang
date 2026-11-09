@@ -18,7 +18,7 @@ pub const VM = struct {
 
     allocator: std.mem.Allocator,
     program: *const bc.Program,
-    current_task: ?*TaskState = null,
+    running_task: ?*TaskState = null,
     scheduler: Scheduler,
     event_loop: EventLoop,
     frames: []CallFrame,
@@ -85,7 +85,7 @@ pub const VM = struct {
         const main_closure: *v.Closure = @constCast(&self.program.static_closures[self.program.main_func_index]);
         _ = try self.scheduler.spawn(main_closure, .null);
         self.runScheduler() catch |failure| {
-            self.reportWhere(failure);
+            self.reportErrorLocation(failure);
             self.saveCurrentTask();
             return failure;
         };
@@ -125,11 +125,15 @@ pub const VM = struct {
     }
 
     fn enterTask(self: *Self, task: *TaskState) void {
-        self.current_task = task;
+        self.running_task = task;
         self.stack = task.stack;
         self.frames = task.frames;
         self.frame_count = task.frame_count;
         task.status = .running;
+        finishParkedCall(task);
+    }
+
+    fn finishParkedCall(task: *TaskState) void {
         const wake_result = task.wake_result orelse return;
         task.wake_result = null;
         const frame = &task.frames[task.frame_count - 1];
@@ -142,12 +146,12 @@ pub const VM = struct {
 
     fn leaveTask(self: *Self) void {
         self.saveCurrentTask();
-        self.current_task = null;
+        self.running_task = null;
         self.frame_count = 0;
     }
 
     fn saveCurrentTask(self: *Self) void {
-        const task = self.current_task orelse return;
+        const task = self.running_task orelse return;
         task.stack = self.stack;
         task.frames = self.frames;
         task.frame_count = self.frame_count;
@@ -162,7 +166,7 @@ pub const VM = struct {
         if (failure) |found| return found;
     }
 
-    fn reportWhere(self: *Self, failure: anyerror) void {
+    fn reportErrorLocation(self: *Self, failure: anyerror) void {
         if (failure == error.OutOfMemory) {
             RuntimeErrorReporter.outOfMemory();
         }
@@ -605,7 +609,7 @@ pub const VM = struct {
                             const new_offset = stack_base + inst.a + 1;
                             const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
                             if (is_stack_full) {
-                                stack = try self.growForCall(new_offset);
+                                stack = try self.growCallStack(new_offset);
                             }
                             self.frames[self.frame_count] = .{
                                 .function = func,
@@ -669,7 +673,7 @@ pub const VM = struct {
                     const new_offset = stack_base + inst.a + 1;
                     const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
                     if (is_stack_full) {
-                        stack = try self.growForCall(new_offset);
+                        stack = try self.growCallStack(new_offset);
                     }
                     self.frames[self.frame_count] = .{
                         .function = func,
@@ -728,7 +732,7 @@ pub const VM = struct {
                     self.frame_count -= 1;
                     stack[stack_base - 1] = stack[stack_base + inst.a];
                     if (self.frame_count == 0) {
-                        self.current_task.?.has_failed = true;
+                        self.running_task.?.has_failed = true;
                         break;
                     }
                     current_frame = &self.frames[self.frame_count - 1];
@@ -873,7 +877,7 @@ pub const VM = struct {
         return .{ .heap_obj = &box.obj };
     }
 
-    noinline fn growForCall(self: *Self, new_offset: usize) ![]v.Value {
+    noinline fn growCallStack(self: *Self, new_offset: usize) ![]v.Value {
         if (self.frame_count == self.frames.len) {
             if (self.frames.len == MAX_CALL_DEPTH) {
                 return RuntimeErrorReporter.callDepthExceeded(MAX_CALL_DEPTH);
