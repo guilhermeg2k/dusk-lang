@@ -109,7 +109,7 @@ pub fn taskSleep(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     const current = vm.current_task.?;
     if (ms == 0) {
-        try vm.scheduler.deliver(current, .{ .value = v.NULL_VALUE, .kind = .null });
+        try vm.scheduler.wake(current, .{ .value = v.NULL_VALUE, .kind = .null });
         return parked();
     }
     try vm.event_loop.startTimer(&vm.scheduler, @intCast(ms), current);

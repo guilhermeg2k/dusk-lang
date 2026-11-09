@@ -1,6 +1,7 @@
 const std = @import("std");
 const uv = @import("uv.zig");
-const scheduler = @import("scheduler.zig");
+const Scheduler = @import("scheduler.zig").Scheduler;
+const TaskState = @import("scheduler.zig").TaskState;
 const v = @import("value.zig");
 
 const handle_alignment = std.mem.Alignment.@"16";
@@ -10,17 +11,17 @@ pub const EventLoop = struct {
 
     allocator: std.mem.Allocator,
     loop: ?*uv.Loop = null,
-    pending: usize = 0,
-    failure: ?anyerror = null,
+    pending_operations: usize = 0,
+    callback_failure: ?anyerror = null,
 
-    pub fn startTimer(self: *Self, tasks: *scheduler.Scheduler, ms: u64, task: *scheduler.TaskState) !void {
+    pub fn startTimer(self: *Self, scheduler: *Scheduler, ms: u64, task: *TaskState) !void {
         const loop = try self.ensureLoopStarted();
         const request = try self.allocator.create(TimerRequest);
         const timer_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer)) catch |failure| {
             self.allocator.destroy(request);
             return failure;
         };
-        request.* = .{ .event_loop = self, .tasks = tasks, .task = task, .timer_memory = timer_memory };
+        request.* = .{ .event_loop = self, .scheduler = scheduler, .task = task, .timer_memory = timer_memory };
         const timer = request.timer();
         if (uv.uv_timer_init(loop, timer) != 0) {
             self.allocator.free(timer_memory);
@@ -33,14 +34,14 @@ pub const EventLoop = struct {
             uv.uv_close(timer, onClose);
             return error.TimerFailed;
         }
-        self.pending += 1;
+        self.pending_operations += 1;
     }
 
-    pub fn hasPending(self: *const Self) bool {
-        return self.pending > 0;
+    pub fn hasPendingOperations(self: *const Self) bool {
+        return self.pending_operations > 0;
     }
 
-    pub fn waitOnce(self: *Self) !void {
+    pub fn waitForEvent(self: *Self) !void {
         return self.run(.once);
     }
 
@@ -51,14 +52,14 @@ pub const EventLoop = struct {
     fn run(self: *Self, mode: uv.RunMode) !void {
         const loop = self.loop orelse return;
         _ = uv.uv_run(loop, mode);
-        const failure = self.failure orelse return;
-        self.failure = null;
+        const failure = self.callback_failure orelse return;
+        self.callback_failure = null;
         return failure;
     }
 
     pub fn deinit(self: *Self) void {
         const loop = self.loop orelse return;
-        uv.uv_walk(loop, closeHandle, null);
+        uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
         _ = uv.uv_loop_close(loop);
         self.allocator.free(loopMemory(loop));
@@ -85,8 +86,8 @@ pub const EventLoop = struct {
 
 const TimerRequest = struct {
     event_loop: *EventLoop,
-    tasks: *scheduler.Scheduler,
-    task: *scheduler.TaskState,
+    scheduler: *Scheduler,
+    task: *TaskState,
     timer_memory: []align(16) u8,
 
     fn timer(self: *TimerRequest) *uv.Handle {
@@ -94,28 +95,28 @@ const TimerRequest = struct {
     }
 };
 
-fn requestOf(handle: *uv.Handle) *TimerRequest {
+fn timerRequestOf(handle: *uv.Handle) *TimerRequest {
     return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
 }
 
 fn onTimer(handle: *uv.Handle) callconv(.c) void {
-    const request = requestOf(handle);
+    const request = timerRequestOf(handle);
     const event_loop = request.event_loop;
-    event_loop.pending -= 1;
-    request.tasks.deliver(request.task, .{ .value = v.NULL_VALUE, .kind = .null }) catch |failure| {
-        event_loop.failure = failure;
+    event_loop.pending_operations -= 1;
+    request.scheduler.wake(request.task, .{ .value = v.NULL_VALUE, .kind = .null }) catch |failure| {
+        event_loop.callback_failure = failure;
     };
     uv.uv_close(handle, onClose);
 }
 
 fn onClose(handle: *uv.Handle) callconv(.c) void {
-    const request = requestOf(handle);
+    const request = timerRequestOf(handle);
     const allocator = request.event_loop.allocator;
     allocator.free(request.timer_memory);
     allocator.destroy(request);
 }
 
-fn closeHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
+fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
     if (uv.uv_is_closing(handle) != 0) return;
     uv.uv_close(handle, onClose);
 }

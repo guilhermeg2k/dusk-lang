@@ -495,7 +495,7 @@ HeapMap { pc: u16, bitmap: u256 }      // bit i set: R[i] holds a pointer at thi
 
 After emitting such an instruction, codegen calls `recordHeapMap()`. That computes the bitmap from `register_types` at that moment (`computeHeapBitmap`). The instructions that can allocate are listed in `OpCode.canTriggerGc`: array, struct, union and null box creation, `UNION_LOAD`, string building, `BYTES_NEW`, `DEEP_COPY`, `MAKE_CLOSURE`, `CELL_NEW`, `TASK_SPAWN`, and calls. Calls count because the callee, or a native, can allocate.
 
-The GC first saves the running task's stack and frames into its `TaskState`, then visits every task that isn't done (`copyTaskRoots`): its `stack[0]` (the entry closure), any value waiting to be delivered to it (section 11.3), and then, for every frame of that task:
+The GC first saves the running task's stack and frames into its `TaskState`, then visits every task that isn't done (`copyTaskRoots`): its `stack[0]` (the entry closure), its `wake_result` if one is waiting (section 11.3), and then, for every frame of that task:
 
 ```zig
 pc = frame.cur_inst - 1                // the instruction this frame is stopped at
@@ -559,7 +559,7 @@ TaskState {                     // src/scheduler.zig, outside the GC heap: its a
     status: ready | running | parked | done,
     has_failed, is_awaited, is_reachable,
     result: Value, result_kind: ValueType,   // set when done (result_kind: kind of T, from TASK_SPAWN)
-    pending: ?Delivery,                      // a value waiting to be written into the task (11.3)
+    wake_result: ?WakeResult,                // the parked CALL's result, waiting to be written (11.3)
     waiters: []*TaskState,                   // tasks parked in await on this one
 }
 
@@ -590,13 +590,13 @@ run:
 - The ready queue is first in, first out. `spawn` adds the new task at the back, so it runs after the tasks already waiting.
 - Ready tasks run in batches: the tasks ready when the batch starts. Polling the event loop between batches lets timers fire even while some task keeps giving way with `sleep(0)`, which would otherwise keep the queue full forever.
 - `enterTask` puts the task's stack and frames in `VM.stack`, `VM.frames` and `VM.frame_count`; `leaveTask` saves them back, since a call may have grown them. The error path saves them too.
-- `finish` copies `stack[0]` into `result`, frees the stack and frames, marks the task done, and delivers the result to every waiter.
+- `finish` copies `stack[0]` into `result`, frees the stack and frames, marks the task done, and wakes every waiter with the result.
 
-### 11.3 Parking and delivering
+### 11.3 Parking and waking
 
 A task waits by **parking inside a native call**. The native records who should wake it up, sets the task's status to `parked` and returns `NativeResult{ .is_parked = true }`. The `CALL` handler then returns from `execute`. The top frame already saved `cur_inst` just after the `CALL` (on the `JUMP` for a call that can fail), exactly as a caller frame does while it waits for a callee.
 
-To wake a task, `Scheduler.deliver(task, value)` stores the value in `task.pending` and puts the task at the back of the ready queue. When the task is entered again, `enterTask` writes the value into the register of the `CALL` it parked in (`instructions[cur_inst - 1].a`), and moves `cur_inst` past the `JUMP` if the value is an error. That is the rule of `RETURN_ERR`, so `try`, `catch` and `catch e then` work on `await` with no new code.
+To wake a task, `Scheduler.wake(task, result)` stores the result in `task.wake_result` and puts the task at the back of the ready queue. When the task is entered again, `enterTask` writes the value into the register of the `CALL` it parked in (`instructions[cur_inst - 1].a`), and moves `cur_inst` past the `JUMP` if the value is an error. That is the rule of `RETURN_ERR`, so `try`, `catch` and `catch e then` work on `await` with no new code.
 
 The value waits in `pending` instead of going straight into the register because other tasks run in between, and any of them can start a collection. The `CALL`'s target register isn't in its heap map (section 9.2), so a pointer written there early wouldn't be kept alive. `pending` is a GC root, and it's written into the register only at the switch, when nothing can collect.
 
@@ -604,13 +604,13 @@ The value waits in `pending` instead of going straight into the register because
 |---|---|
 | `await(t)` | Marks `t` as awaited. If `t` is done, returns its result (or fails with its error id) without parking. If `t` is the running task, a runtime error. Otherwise adds the running task to `t.waiters` and parks. |
 | `sleep(0)` | Delivers `void` to the running task right away (back of the queue) and parks. |
-| `sleep(ms)` | Starts a libuv timer for the running task and parks; the timer's callback delivers `void`. |
+| `sleep(ms)` | Starts a libuv timer for the running task and parks; the timer's callback wakes it with `void`. |
 
 `spawn` isn't a native: it is the `TASK_SPAWN R[a] R[b] K[c]` intrinsic, which creates the `TaskState` from the closure in `R[b]`, records `c` (the kind of `T`) as `result_kind`, queues it, and puts a new `Task` handle in `R[a]`.
 
 ### 11.4 The event loop
 
-`EventLoop` (`src/event_loop.zig`) is the only code that calls libuv. It creates its `uv_loop_t` on the first `sleep` with a time above 0, so programs that never sleep don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `deliver` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
+`EventLoop` (`src/event_loop.zig`) is the only code that calls libuv. It creates its `uv_loop_t` on the first `sleep` with a time above 0, so programs that never sleep don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
 
 libuv's structs differ per OS, so Dusk doesn't use their layout: `src/uv.zig` declares the functions it calls with opaque `Loop` and `Handle` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`). The handle's `data` (`uv_handle_set_data`) points back to the request. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
 

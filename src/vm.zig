@@ -98,16 +98,16 @@ pub const VM = struct {
                 for (0..batch) |_| {
                     try self.runTask(self.scheduler.popReady().?);
                 }
-                if (self.event_loop.hasPending()) {
+                if (self.event_loop.hasPendingOperations()) {
                     try self.event_loop.poll();
                 }
                 continue;
             }
-            if (self.event_loop.hasPending()) {
-                try self.event_loop.waitOnce();
+            if (self.event_loop.hasPendingOperations()) {
+                try self.event_loop.waitForEvent();
                 continue;
             }
-            if (self.scheduler.hasUnfinished()) {
+            if (self.scheduler.hasUnfinishedTasks()) {
                 return RuntimeErrorReporter.allTasksWaiting();
             }
             break;
@@ -130,12 +130,12 @@ pub const VM = struct {
         self.frames = task.frames;
         self.frame_count = task.frame_count;
         task.status = .running;
-        const delivery = task.pending orelse return;
-        task.pending = null;
+        const wake_result = task.wake_result orelse return;
+        task.wake_result = null;
         const frame = &task.frames[task.frame_count - 1];
         const call = frame.function.kind.dusk.instructions[frame.cur_inst - 1];
-        task.stack[frame.stack_offset + call.a] = delivery.value;
-        if (delivery.has_failed) {
+        task.stack[frame.stack_offset + call.a] = wake_result.value;
+        if (wake_result.has_failed) {
             frame.cur_inst += 1;
         }
     }
@@ -1004,7 +1004,7 @@ pub const VM = struct {
                 .task => {
                     const state = v.HeapValue.getParentPtr(v.Task, obj).state;
                     state.is_reachable = true;
-                    if (state.hasResultHeapValue()) {
+                    if (state.hasHeapResult()) {
                         try self.copyHeapValue(new_alloc, &state.result);
                     }
                 },
@@ -1035,9 +1035,9 @@ pub const VM = struct {
     }
 
     fn copyTaskRoots(self: *Self, new_alloc: std.mem.Allocator, task: *TaskState) !void {
-        if (task.pending) |*delivery| {
-            if (delivery.isHeapValue()) {
-                try self.copyHeapValue(new_alloc, &delivery.value);
+        if (task.wake_result) |*wake_result| {
+            if (wake_result.isHeapValue()) {
+                try self.copyHeapValue(new_alloc, &wake_result.value);
             }
         }
         if (task.status == .done) return;

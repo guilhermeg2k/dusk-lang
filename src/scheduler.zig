@@ -45,8 +45,8 @@ pub const Scheduler = struct {
         return task;
     }
 
-    pub fn deliver(self: *Self, task: *TaskState, delivery: Delivery) !void {
-        task.pending = delivery;
+    pub fn wake(self: *Self, task: *TaskState, wake_result: WakeResult) !void {
+        task.wake_result = wake_result;
         try self.makeReady(task);
     }
 
@@ -58,14 +58,14 @@ pub const Scheduler = struct {
         task.result = task.stack[0];
         task.freeStack(self.allocator);
         task.status = .done;
-        const delivery = Delivery{ .value = task.result, .kind = task.result_kind, .has_failed = task.has_failed };
+        const wake_result = WakeResult{ .value = task.result, .kind = task.result_kind, .has_failed = task.has_failed };
         for (task.waiters.items) |waiter| {
-            try self.deliver(waiter, delivery);
+            try self.wake(waiter, wake_result);
         }
         task.waiters.clearAndFree(self.allocator);
     }
 
-    pub fn hasUnfinished(self: *const Self) bool {
+    pub fn hasUnfinishedTasks(self: *const Self) bool {
         for (self.tasks.items) |task| {
             if (task.status != .done) return true;
         }
@@ -96,12 +96,12 @@ pub const Scheduler = struct {
     }
 };
 
-pub const Delivery = struct {
+pub const WakeResult = struct {
     value: v.Value,
     kind: v.ValueType,
     has_failed: bool = false,
 
-    pub fn isHeapValue(self: Delivery) bool {
+    pub fn isHeapValue(self: WakeResult) bool {
         return !self.has_failed and self.kind.isHeapType();
     }
 };
@@ -120,7 +120,7 @@ pub const TaskState = struct {
     is_reachable: bool = false,
     result: v.Value = v.NULL_VALUE,
     result_kind: v.ValueType,
-    pending: ?Delivery = null,
+    wake_result: ?WakeResult = null,
     waiters: std.ArrayList(*TaskState) = .empty,
 
     pub fn create(allocator: std.mem.Allocator, entry: *v.Closure, result_kind: v.ValueType) !*Self {
@@ -138,7 +138,7 @@ pub const TaskState = struct {
         return task;
     }
 
-    pub fn hasResultHeapValue(self: *const Self) bool {
+    pub fn hasHeapResult(self: *const Self) bool {
         return self.status == .done and !self.has_failed and self.result_kind.isHeapType();
     }
 
