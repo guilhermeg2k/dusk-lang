@@ -5,7 +5,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const libuv = addLibuv(b, target, optimize);
-    const uv_module = addUvModule(b, target, optimize);
 
     const exe = b.addExecutable(.{
         .name = "dusk",
@@ -17,7 +16,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     exe.root_module.linkLibrary(libuv);
-    exe.root_module.addImport("uv", uv_module);
 
     exe.root_module.addAnonymousImport("build_zon", .{
         .root_source_file = b.path("build.zig.zon"),
@@ -42,7 +40,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     tests.root_module.linkLibrary(libuv);
-    tests.root_module.addImport("uv", uv_module);
 
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run tests");
@@ -199,15 +196,4 @@ fn addUvUnixSources(module: *std.Build.Module, upstream: *std.Build.Dependency, 
     module.addCMacro("_FILE_OFFSET_BITS", "64");
     module.addCMacro("_LARGEFILE_SOURCE", "");
     module.addCSourceFiles(.{ .root = upstream.path("src"), .files = &uv_unix_sources, .flags = flags });
-}
-
-fn addUvModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
-    const upstream = b.dependency("libuv", .{});
-    const translate = b.addTranslateC(.{
-        .root_source_file = upstream.path("include/uv.h"),
-        .target = target,
-        .optimize = optimize,
-    });
-    translate.addIncludePath(upstream.path("include"));
-    return translate.createModule();
 }

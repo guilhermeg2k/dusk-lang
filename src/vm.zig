@@ -7,6 +7,7 @@ const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
 const TaskState = @import("scheduler.zig").TaskState;
 const Scheduler = @import("scheduler.zig").Scheduler;
+const EventLoop = @import("event_loop.zig").EventLoop;
 
 pub const VM = struct {
     const Self = @This();
@@ -20,6 +21,7 @@ pub const VM = struct {
     program: *const bc.Program,
     current_task: ?*TaskState = null,
     scheduler: Scheduler,
+    event_loop: EventLoop,
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
@@ -33,6 +35,7 @@ pub const VM = struct {
             .allocator = std.heap.page_allocator,
             .task_allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
+            .event_loop = .{ .allocator = std.heap.c_allocator },
             .frames = &.{},
             .frame_count = 0,
             .program = program,
@@ -51,6 +54,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *Self) void {
         self.scratch.deinit();
+        self.event_loop.deinit();
         self.scheduler.deinit();
         for (&self.heap.arenas) |*arena| arena.deinit();
     }
@@ -91,8 +95,18 @@ pub const VM = struct {
 
     fn runScheduler(self: *Self) !void {
         while (true) {
-            if (self.scheduler.popReady()) |task| {
-                try self.runTask(task);
+            const batch = self.scheduler.readyCount();
+            if (batch > 0) {
+                for (0..batch) |_| {
+                    try self.runTask(self.scheduler.popReady().?);
+                }
+                if (self.event_loop.hasPending()) {
+                    try self.event_loop.poll();
+                }
+                continue;
+            }
+            if (self.event_loop.hasPending()) {
+                try self.event_loop.waitOnce();
                 continue;
             }
             if (self.scheduler.hasUnfinished()) {

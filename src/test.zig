@@ -2,7 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
 const Lexer = @import("lexer.zig").Lexer;
-const uv = @import("uv");
+const uv = @import("uv.zig");
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -19,20 +19,24 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
 test "libuv: a timer fires once" {
     const State = struct {
         var fire_count: usize = 0;
-        fn onTimer(_: [*c]uv.uv_timer_t) callconv(.c) void {
+        fn onTimer(_: *uv.Handle) callconv(.c) void {
             fire_count += 1;
         }
     };
-    var loop: uv.uv_loop_t = undefined;
-    try testing.expectEqual(0, uv.uv_loop_init(&loop));
-    var timer: uv.uv_timer_t = undefined;
-    try testing.expectEqual(0, uv.uv_timer_init(&loop, &timer));
-    try testing.expectEqual(0, uv.uv_timer_start(&timer, State.onTimer, 5, 0));
-    _ = uv.uv_run(&loop, uv.UV_RUN_DEFAULT);
+    const loop_memory = try testing.allocator.alignedAlloc(u8, .@"16", uv.uv_loop_size());
+    defer testing.allocator.free(loop_memory);
+    const loop: *uv.Loop = @ptrCast(loop_memory.ptr);
+    try testing.expectEqual(0, uv.uv_loop_init(loop));
+    const timer_memory = try testing.allocator.alignedAlloc(u8, .@"16", uv.uv_handle_size(.timer));
+    defer testing.allocator.free(timer_memory);
+    const timer: *uv.Handle = @ptrCast(timer_memory.ptr);
+    try testing.expectEqual(0, uv.uv_timer_init(loop, timer));
+    try testing.expectEqual(0, uv.uv_timer_start(timer, State.onTimer, 5, 0));
+    _ = uv.uv_run(loop, .default);
     try testing.expectEqual(1, State.fire_count);
-    uv.uv_close(@ptrCast(&timer), null);
-    _ = uv.uv_run(&loop, uv.UV_RUN_DEFAULT);
-    try testing.expectEqual(0, uv.uv_loop_close(&loop));
+    uv.uv_close(timer, null);
+    _ = uv.uv_run(loop, .default);
+    try testing.expectEqual(0, uv.uv_loop_close(loop));
 }
 
 test "string interpolation" {
@@ -2136,6 +2140,11 @@ test "tasks: spawn, await and sleep(0) on the scheduler" {
     try runCaseRuntimeError("task-unhandled-error.dsk", error.UnhandledTaskError);
     try runCaseRuntimeError("sleep-negative.dsk", error.NegativeSleep);
     try runCaseRuntimeError("task-runtime-error.dsk", error.ArrayOutOfBounds);
+}
+
+test "tasks: sleep(ms) parks on libuv timers" {
+    try runCaseOutput("tasks-timers.dsk", "main ends\nlate task: 3\n");
+    try runCaseRuntimeError("task-error-pending-timer.dsk", error.ArrayOutOfBounds);
 }
 
 test "closures: lambdas capture variables of the functions around them" {

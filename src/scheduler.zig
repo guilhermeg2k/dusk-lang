@@ -34,6 +34,10 @@ pub const Scheduler = struct {
         task.status = .ready;
     }
 
+    pub fn readyCount(self: *const Self) usize {
+        return self.ready.items.len - self.ready_head;
+    }
+
     pub fn popReady(self: *Self) ?*TaskState {
         if (self.ready_head == self.ready.items.len) return null;
         const task = self.ready.items[self.ready_head];
