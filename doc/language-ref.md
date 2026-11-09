@@ -1290,7 +1290,7 @@ end
 Structs and unions take error slots too, for a function kept in a field. `none` can be written in a type to say the function can't fail:
 
 ```nim
-struct Task[T, E: error]
+struct Job[T, E: error]
     run: func() -> E!T
 
     func go(self: @) -> E!T
@@ -1298,9 +1298,9 @@ struct Task[T, E: error]
     end
 end
 
-let later = Task(run = func() -> return try parse("8"))
+let later = Job(run = func() -> return try parse("8"))
 echo(try later.go())                                # 8
-let ready: Task[int, none] = @(run = func() -> return 1)
+let ready: Job[int, none] = @(run = func() -> return 1)
 echo(ready.go())                                    # 1
 ```
 

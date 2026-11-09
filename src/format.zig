@@ -67,6 +67,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 .@"struct" => printValue(writer, value, .@"struct"),
                 .@"union" => printValue(writer, value, .@"union"),
                 .closure => printValue(writer, value, .function),
+                .task => printValue(writer, value, .task),
                 .cell => unreachable,
             }
         },
@@ -95,6 +96,16 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
             }
         },
         .cell => unreachable,
+        .task => {
+            const raw: u64 = @bitCast(value);
+            if (raw == 0) {
+                writer.print("null", .{}) catch @panic("failed to print null");
+                return;
+            }
+            const task = v.HeapValue.getParentPtr(v.Task, value.heap_obj);
+            const text = if (task.state.status == .done) "<task done>" else "<task>";
+            writer.print("{s}", .{text}) catch @panic("failed to print task");
+        },
         .function => {
             const raw: u64 = @bitCast(value);
             if (raw == 0) {

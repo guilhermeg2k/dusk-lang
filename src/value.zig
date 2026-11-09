@@ -4,6 +4,7 @@ const RuntimeError = @import("error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const tt = @import("type_table.zig");
 const bc = @import("bytecode.zig");
+const TaskState = @import("scheduler.zig").TaskState;
 
 pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
 
@@ -34,6 +35,7 @@ const HeapValueType = enum(u8) {
     null_box,
     closure,
     cell,
+    task,
 };
 
 pub const HeapValue = extern struct {
@@ -436,6 +438,27 @@ pub const Cell = extern struct {
     }
 };
 
+pub const Task = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    state: *TaskState,
+
+    pub fn init(allocator: std.mem.Allocator, state: *TaskState) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = .{ .obj = .{ .kind = .task }, .state = state };
+        return ptr;
+    }
+
+    pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
+        return Self.init(allocator, self.state);
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
+    }
+};
+
 pub const TypedValue = struct {
     value: Value,
     type: ValueType,
@@ -468,10 +491,11 @@ pub const ValueType = enum(u8) {
     nullable,
     function,
     cell,
+    task,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task => true,
             else => false,
         };
     }
@@ -493,6 +517,7 @@ pub const ValueType = enum(u8) {
             .@"struct" => .@"struct",
             .@"union" => .@"union",
             .func_type => .function,
+            .task => .task,
             .cell => .cell,
             .@"enum" => .int64,
             //note: void -> null
@@ -521,7 +546,7 @@ pub const TypedValueHashContext = struct {
             .nullable => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
-            .function, .cell => unreachable,
+            .function, .cell, .task => unreachable,
         }
         return hasher.final();
     }
@@ -538,7 +563,7 @@ pub const TypedValueHashContext = struct {
             .array => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
-            .function, .cell => unreachable,
+            .function, .cell, .task => unreachable,
         };
     }
 };

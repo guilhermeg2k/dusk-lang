@@ -42,7 +42,7 @@ func twice[T, E: error](items: []T, f: func(T) -> E!T) -> E![]T
     return try map(items, f)
 end
 
-struct Task[T, E: error]
+struct Job[T, E: error]
     run: func() -> E!T
 
     func go(self: @) -> E!T
@@ -88,12 +88,12 @@ func main() -> !void
     let parsed = twice(["7"], func(s) -> return s)
     assert(str_equal(parsed[0], "7"))
 
-    let task = Task(run = func() -> return 5)
+    let task = Job(run = func() -> return 5)
     assert(task.go() == 5)
-    let failing = Task(run = func() -> return try parse("8"))
+    let failing = Job(run = func() -> return try parse("8"))
     assert((try failing.go()) == 8)
-    let typed: Task[int, none] = @(run = func() -> return 1)
+    let typed: Job[int, none] = @(run = func() -> return 1)
     assert(typed.go() == 1)
-    let typed_failing: Task[int, ConversionError] = @(run = func() -> return try parse("x"))
+    let typed_failing: Job[int, ConversionError] = @(run = func() -> return try parse("x"))
     assert((typed_failing.go() catch -1) == -1)
 end

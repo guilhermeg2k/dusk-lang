@@ -745,6 +745,11 @@ pub const BytecodeGen = struct {
             },
             .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
             .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
+            .task_spawn => {
+                const payload = self.type_table.getTypePtrById(value.type_id).kind.task.payload;
+                const payload_kind = v.ValueType.fromTypeId(self.type_table, payload);
+                try self.appendIntrinsicInstruction(.{ .op = .TASK_SPAWN, .a = target_reg, .b = arg, .c = @intFromEnum(payload_kind) });
+            },
         }
         self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
@@ -1862,6 +1867,7 @@ pub const Chunk = struct {
                 .nullable => std.debug.print("<nullable:", .{}),
                 .function => std.debug.print("<func>", .{}),
                 .cell => std.debug.print("<cell>", .{}),
+                .task => std.debug.print("<task>", .{}),
                 .string, .buffer => unreachable,
             }
             std.debug.print("\n", .{});
@@ -1936,7 +1942,7 @@ pub const Chunk = struct {
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
             .STR_BUILD => std.debug.print("R[{d}] RECIPE[{d}]", .{ inst.a, inst.bEx() }),
-            .TO_STRING => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
+            .TO_STRING, .TASK_SPAWN => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
             .STRUCT_STORE => std.debug.print("R[{d}] F[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_LOAD => std.debug.print("R[{d}] R[{d}] F[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -2072,6 +2078,8 @@ pub const OpCode = enum(u8) {
     JUMP_IF_FALSE,
     JUMP_TABLE,
 
+    TASK_SPAWN,
+
     pub fn canFail(self: Self) bool {
         return self == .CALL or self == .CALL_VALUE;
     }
@@ -2092,6 +2100,7 @@ pub const OpCode = enum(u8) {
             .CALL_VALUE,
             .MAKE_CLOSURE,
             .CELL_NEW,
+            .TASK_SPAWN,
             => true,
             else => false,
         };

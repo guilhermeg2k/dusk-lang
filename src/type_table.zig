@@ -16,6 +16,7 @@ pub const TypeTable = struct {
     typeIdByNullableTypeId: std.AutoHashMap(TypeId, TypeId),
     anom_structs: std.StringHashMap(TypeId),
     func_types: std.StringHashMap(TypeId),
+    tasks: std.AutoHashMap(TaskType, TypeId),
     error_names: std.ArrayList([]const u8),
 
     pub fn init(alloc: std.mem.Allocator) !Self {
@@ -52,6 +53,7 @@ pub const TypeTable = struct {
             .typeIdByNullableTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
             .anom_structs = std.StringHashMap(TypeId).init(alloc),
             .func_types = std.StringHashMap(TypeId).init(alloc),
+            .tasks = std.AutoHashMap(TaskType, TypeId).init(alloc),
             .error_names = .empty,
         };
     }
@@ -139,6 +141,7 @@ pub const TypeTable = struct {
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
             .function => |f| f.identifier,
             .func_type => |f| self.funcTypeText(f, allocator),
+            .task => |task| self.taskTypeText(task, allocator),
             .@"struct" => |s| s.identifier,
             .@"enum" => |e| e.identifier,
             .@"union" => |u| u.identifier,
@@ -168,6 +171,9 @@ pub const TypeTable = struct {
             },
             .func_type => |f| {
                 return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, try self.funcTypeText(f, allocator) });
+            },
+            .task => |task| {
+                return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, try self.taskTypeText(task, allocator) });
             },
             .@"struct" => |s| {
                 if (std.mem.eql(u8, s.identifier, "@")) {
@@ -216,6 +222,11 @@ pub const TypeTable = struct {
         try text.appendSlice(allocator, ") -> ");
         try text.appendSlice(allocator, try self.syntaxName(func.return_type_id, allocator));
         return text.toOwnedSlice(allocator);
+    }
+
+    fn taskTypeText(self: *Self, task: TaskType, allocator: std.mem.Allocator) error{OutOfMemory}![]const u8 {
+        const set = self.getTypePtrById(task.error_set).kind.@"enum";
+        return std.fmt.allocPrint(allocator, "Task[{s}, {s}]", .{ try self.syntaxName(task.payload, allocator), set.identifier });
     }
 
     fn errorSetSyntaxName(self: *Self, error_set: TypeId) []const u8 {
@@ -308,6 +319,15 @@ pub const TypeTable = struct {
         return id;
     }
 
+    pub fn getOrAddTask(self: *Self, task: TaskType) !TypeId {
+        if (self.tasks.get(task)) |id| {
+            return id;
+        }
+        const id = try self.addType(.{ .kind = .{ .task = task }, .is_nullable = false });
+        try self.tasks.put(task, id);
+        return id;
+    }
+
     pub fn getAnonymoustStructSignature(self: *Self, anom_struct: *const Struct) ![]const u8 {
         var fields_in_order: std.ArrayList([]const u8) = .empty;
 
@@ -388,6 +408,11 @@ pub const Func = struct {
 pub const FuncType = struct {
     params: []const FuncTypeParam,
     return_type_id: TypeId,
+};
+
+pub const TaskType = struct {
+    payload: TypeId,
+    error_set: TypeId,
 };
 
 pub const FuncTypeParam = struct {
@@ -483,6 +508,7 @@ pub const Type = struct {
 
         function: Func,
         func_type: FuncType,
+        task: TaskType,
         array: TypeId,
         @"struct": Struct,
         @"enum": Enum,

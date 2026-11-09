@@ -338,6 +338,16 @@ pub const CompileErrorReporter = struct {
         return error.CantCompare;
     }
 
+    pub fn taskNeedsSpawn(self: *Self, loc: Loc) CompileError {
+        self.log("'Task' can't be created directly: start a task with 'spawn'", loc);
+        return error.TaskNeedsSpawn;
+    }
+
+    pub fn cantCompareTasks(self: *Self, op: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare tasks", .{op}), loc);
+        return error.CantCompare;
+    }
+
     pub fn whenInvalidCase(self: *Self, msg: []const u8, loc: Loc) CompileError {
         self.log(msg, loc);
         return error.WhenInvalidCase;
@@ -968,6 +978,7 @@ pub const CompileError = error{
     WhenDuplicateCase,
     WhenInvalidCase,
     CantCompare,
+    TaskNeedsSpawn,
     UnhandledError,
     TryOutsideFailingFunction,
     NotAFailingCall,

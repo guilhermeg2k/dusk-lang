@@ -2116,6 +2116,17 @@ test "lambdas: func(...) expressions" {
     try runCaseError("sema/lambda-calls-itself.dsk", error.LambdaCallsItself);
 }
 
+test "tasks: Task[T, E] types from spawn" {
+    try runCaseOutput("task-types.dsk", "<task> <task>\n");
+    try runCaseError("sema/task-compare.dsk", error.CantCompare);
+    try runCaseError("sema/task-needs-spawn.dsk", error.TaskNeedsSpawn);
+    try runCaseError("sema/task-wrong-slot-count.dsk", error.WrongSlotCount);
+    try runCaseError("sema/task-error-slot-not-set.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/task-name-taken.dsk", error.AlreadyDefined);
+    try runCaseError("sema/task-error-not-in-set.dsk", error.ErrorNotInSet);
+    try runCaseError("sema/task-payload-mismatch.dsk", error.InvalidType);
+}
+
 test "closures: lambdas capture variables of the functions around them" {
     try runCase("closures.dsk");
     try runCase("gc-closures.dsk");

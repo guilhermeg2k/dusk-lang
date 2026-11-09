@@ -14,6 +14,7 @@ pub const SemaAnalyzer = struct {
     const max_copy_depth = 64;
     const lambda_name = "$lambda";
     const none_error_set_name = "none";
+    const task_type_name = "Task";
     const max_captures = 255;
 
     allocator: std.mem.Allocator,
@@ -50,6 +51,7 @@ pub const SemaAnalyzer = struct {
     is_lowering_copy: bool = false,
     has_none_error_slot: bool = false,
     is_checking_opaque: bool = false,
+    can_bind_void_slots: bool = false,
     none_error_set: tt.TypeId = undefined,
     lambda_contexts: std.ArrayList(LambdaContext) = .empty,
     boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
@@ -76,6 +78,7 @@ pub const SemaAnalyzer = struct {
 
     pub fn analyze(self: *Self, prelude: *const ast.Root, prelude_src: []const u8, root: *const ast.Root, src: []const u8) !ir.Program {
         try self.declareNoneErrorSet();
+        try self.declareTaskType();
         try self.loadPrelude(prelude, prelude_src);
 
         self.src = src;
@@ -109,6 +112,15 @@ pub const SemaAnalyzer = struct {
             .uid = self.scope.genUid(),
             .type_id = self.type_table.getPrimitive(.meta),
             .kind = .{ .defined_type = .{ .blueprint_type_id = self.none_error_set } },
+        });
+    }
+
+    fn declareTaskType(self: *Self) !void {
+        try self.scope.symbol_table.put(.{
+            .identifier = task_type_name,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .task_type = {} },
         });
     }
 
@@ -383,11 +395,22 @@ pub const SemaAnalyzer = struct {
 
         const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
         const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
+        const from_kind = self.type_table.getTypePtrById(from_base).kind;
+        const to_kind = self.type_table.getTypePtrById(to_base).kind;
+        if (from_kind == .task and to_kind == .task) {
+            return self.canCoerceTask(from_kind.task, to_kind.task, loc);
+        }
         if (!self.type_table.isErrorSet(from_base) or !self.type_table.isErrorSet(to_base)) return false;
         if (self.errorSetOf(from_base).kind != .inferred or self.errorSetOf(to_base).kind == .inferred) return false;
 
         try self.addErrorEdge(from_base, to_base, loc);
         return true;
+    }
+
+    fn canCoerceTask(self: *Self, from: tt.TaskType, to: tt.TaskType, loc: err.Loc) CompileError!bool {
+        if (from.payload != to.payload) return false;
+        if (from.error_set == to.error_set) return true;
+        return self.canCoerce(from.error_set, to.error_set, loc);
     }
 
     fn canCoerceThroughTypeList(self: *Self, from: tt.TypeId, to: tt.TypeId) CompileError!bool {
@@ -1450,6 +1473,9 @@ pub const SemaAnalyzer = struct {
         const func_stmt = self.generic_functions.items[index].func_stmt;
         const bindings = try self.allocator.alloc(?tt.TypeId, func_stmt.slots.len);
         @memset(bindings, null);
+        const could_bind_void_slots = self.can_bind_void_slots;
+        self.can_bind_void_slots = self.generic_functions.items[index].extern_uid != null;
+        defer self.can_bind_void_slots = could_bind_void_slots;
 
         var has_lambda_args = false;
         for (func_stmt.def.params, 0..) |param, param_index| {
@@ -1578,6 +1604,14 @@ pub const SemaAnalyzer = struct {
         const kind = self.type_table.getTypePtrById(type_id).kind;
         switch (annotation.type) {
             .@"struct" => |name| {
+                const is_task_pair = kind == .task and std.mem.eql(u8, name, task_type_name) and annotation.args.len > 0;
+                if (is_task_pair) {
+                    try self.inferSlots(annotation.args[0], kind.task.payload, slots, bindings, loc);
+                    if (annotation.args.len > 1) {
+                        try self.inferSlots(annotation.args[1], kind.task.error_set, slots, bindings, loc);
+                    }
+                    return;
+                }
                 const slot_index = for (slots, 0..) |slot, i| {
                     if (std.mem.eql(u8, slot.identifier, name)) {
                         break i;
@@ -1624,7 +1658,7 @@ pub const SemaAnalyzer = struct {
         const slot = slots[slot_index];
         const kind = self.type_table.getTypePtrById(type_id).kind;
         if (kind == .dynamic or kind == .null) return;
-        if (kind == .void) {
+        if (kind == .void and !self.can_bind_void_slots) {
             return self.err_reporter.invalidSlotType(slot.identifier, try self.type_table.name(type_id, self.allocator), loc);
         }
         if (kind == .error_union) {
@@ -2240,6 +2274,7 @@ pub const SemaAnalyzer = struct {
             .@"enum" => |e| e.error_set != null and e.error_set.?.kind == .slot,
             .array => |inner| self.typeContainsSlot(inner),
             .error_union => |eu| self.typeContainsSlot(eu.error_set) or self.typeContainsSlot(eu.payload),
+            .task => |task| self.typeContainsSlot(task.payload) or self.typeContainsSlot(task.error_set),
             .func_type => |func| for (func.params) |param| {
                 if (self.typeContainsSlot(param.type_id)) break true;
             } else self.typeContainsSlot(func.return_type_id),
@@ -4170,6 +4205,7 @@ pub const SemaAnalyzer = struct {
                     },
                     .type_slot => return self.err_reporter.slotUsedAsValue(id, exp.loc),
                     .trait => return self.err_reporter.traitUsedAsType(id, exp.loc),
+                    .task_type => return self.err_reporter.taskNeedsSpawn(exp.loc),
                     .variable => {
                         const type_ptr = self.type_table.getTypePtrById(symbol.type_id);
                         if (type_ptr.kind == .func_type) {
@@ -4386,7 +4422,7 @@ pub const SemaAnalyzer = struct {
                 const copy_uid = self.generic_functions.items[symbol.kind.generic_function].extern_uid.?;
                 return try self.evalCopyCall(copy_uid, symbol.identifier, argument);
             },
-            .array_len, .array_pop, .bytes_len, .new_buffer, .to_byte, .to_int, .append => null,
+            .array_len, .array_pop, .bytes_len, .new_buffer, .to_byte, .to_int, .append, .task_spawn => null,
         };
     }
 
@@ -5137,6 +5173,9 @@ pub const SemaAnalyzer = struct {
         if (left_kind == .func_type and right_kind == .func_type) {
             return self.err_reporter.cantCompareFunctions(op_text, loc);
         }
+        if (left_kind == .task and right_kind == .task) {
+            return self.err_reporter.cantCompareTasks(op_text, loc);
+        }
         if (self.isTypeNumber(left_base) and self.isTypeNumber(right_base)) return;
         if (self.type_table.isErrorSet(left_base) and self.type_table.isErrorSet(right_base)) return;
         if (left_base == right_base) return;
@@ -5374,6 +5413,10 @@ pub const SemaAnalyzer = struct {
                     return self.type_table.getPrimitive(.dynamic);
                 }
                 const symbol = try self.scope.symbol_table.getOrError(struct_name);
+                if (symbol.kind == .task_type) {
+                    const task_type_id = try self.resolveTaskTypeAnnotation(type_annotation, current_defined_type_type_id);
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(task_type_id) else task_type_id;
+                }
                 if (symbol.kind != .generic_type and type_annotation.args.len > 0) {
                     return self.err_reporter.wrongSlotCount(struct_name, 0, type_annotation.args.len, type_annotation.loc);
                 }
@@ -5408,6 +5451,22 @@ pub const SemaAnalyzer = struct {
             },
             .resolved => |type_id| return type_id,
         }
+    }
+
+    fn resolveTaskTypeAnnotation(self: *Self, annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) CompileError!tt.TypeId {
+        const has_valid_slot_count = annotation.args.len == 1 or annotation.args.len == 2;
+        if (!has_valid_slot_count) {
+            return self.err_reporter.wrongSlotCount(task_type_name, 2, annotation.args.len, annotation.loc);
+        }
+        const payload = try self.resolveTypeAnnotation(@constCast(annotation.args[0]), current_defined_type_type_id);
+        if (annotation.args.len == 1) {
+            return self.type_table.getOrAddTask(.{ .payload = payload, .error_set = self.none_error_set });
+        }
+        const error_set = try self.resolveTypeAnnotation(@constCast(annotation.args[1]), current_defined_type_type_id);
+        if (!self.type_table.isErrorSet(error_set)) {
+            return self.err_reporter.slotNeedsErrorSet("E", try self.type_table.syntaxName(error_set, self.allocator), annotation.args[1].loc);
+        }
+        return self.type_table.getOrAddTask(.{ .payload = payload, .error_set = error_set });
     }
 
     fn resolveFuncTypeAnnotation(self: *Self, func: ast.FuncTypeAnnotation, current_defined_type_type_id: ?tt.TypeId, loc: err.Loc) CompileError!tt.TypeId {
@@ -5640,6 +5699,7 @@ pub const Symbol = struct {
         generic_type: usize,
         type_slot: void,
         trait: usize,
+        task_type: void,
     },
 };
 

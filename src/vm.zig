@@ -6,6 +6,7 @@ const RuntimeError = @import("error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
 const TaskState = @import("scheduler.zig").TaskState;
+const Scheduler = @import("scheduler.zig").Scheduler;
 
 pub const VM = struct {
     const Self = @This();
@@ -18,6 +19,7 @@ pub const VM = struct {
     task_allocator: std.mem.Allocator,
     program: *const bc.Program,
     current_task: ?*TaskState = null,
+    scheduler: Scheduler,
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
@@ -30,6 +32,7 @@ pub const VM = struct {
         return .{
             .allocator = std.heap.page_allocator,
             .task_allocator = std.heap.c_allocator,
+            .scheduler = .{ .allocator = std.heap.c_allocator },
             .frames = &.{},
             .frame_count = 0,
             .program = program,
@@ -48,6 +51,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *Self) void {
         self.scratch.deinit();
+        self.scheduler.deinit();
         for (&self.heap.arenas) |*arena| arena.deinit();
     }
 
@@ -77,8 +81,7 @@ pub const VM = struct {
 
     pub noinline fn run(self: *Self) !void {
         const main_closure: *v.Closure = @constCast(&self.program.static_closures[self.program.main_func_index]);
-        const main_task = try TaskState.create(self.task_allocator, main_closure);
-        defer main_task.destroy(self.task_allocator);
+        const main_task = try self.scheduler.spawn(main_closure, .null);
         self.enterTask(main_task);
         self.execute() catch |failure| {
             self.reportWhere(failure);
@@ -227,6 +230,11 @@ pub const VM = struct {
                 .DEEP_COPY => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.deepCopy(stack_base + inst.b);
+                },
+
+                .TASK_SPAWN => {
+                    current_frame.cur_inst = cur_instruction;
+                    try self.spawnTask(stack_base + inst.a, stack_base + inst.b, @enumFromInt(inst.c));
                 },
 
                 .ARRAY_POP => {
@@ -694,6 +702,16 @@ pub const VM = struct {
         self.stack[target_index] = .{ .heap_obj = &closure.obj };
     }
 
+    noinline fn spawnTask(self: *Self, target_index: usize, closure_index: usize, result_kind: v.ValueType) !void {
+        const size = v.Task.calc_size();
+        try self.maybeCollectGarbage(size);
+        const closure = v.HeapValue.getParentPtr(v.Closure, self.stack[closure_index].heap_obj);
+        const state = try self.scheduler.spawn(closure, result_kind);
+        const handle = try v.Task.init(self.getCurrentHeapAllocator(), state);
+        self.increaseHeapAllocationCount(size);
+        self.stack[target_index] = .{ .heap_obj = &handle.obj };
+    }
+
     noinline fn newCell(self: *Self, target_index: usize, source_index: usize, kind: v.ValueType) !void {
         const size = v.Cell.calc_size();
         try self.maybeCollectGarbage(size);
@@ -731,7 +749,7 @@ pub const VM = struct {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, copy);
                     switch (array.kind) {
-                        .buffer, .@"struct", .array, .@"union", .nullable, .function => {
+                        .buffer, .@"struct", .array, .@"union", .nullable, .function, .task => {
                             for (array.getDataPtr()[0..array.len]) |*item| try self.deepCopySlot(item, &copies, &pending);
                         },
                         else => {},
@@ -765,7 +783,7 @@ pub const VM = struct {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
         const is_immutable = switch (current.kind) {
-            .string, .null_box, .closure, .cell => true,
+            .string, .null_box, .closure, .cell, .task => true,
             else => false,
         };
         if (is_immutable) {
@@ -907,7 +925,7 @@ pub const VM = struct {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, obj);
                     switch (array.kind) {
-                        .string, .buffer, .@"struct", .array, .@"union", .nullable, .function => {
+                        .string, .buffer, .@"struct", .array, .@"union", .nullable, .function, .task => {
                             const items = array.getDataPtr()[0..array.len];
                             for (items) |*item| {
                                 try self.copyHeapValue(new_alloc, item);
@@ -995,6 +1013,7 @@ pub const VM = struct {
             .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
             .closure => &(try v.HeapValue.getParentPtr(v.Closure, obj_ptr).clone(allocator)).obj,
             .cell => &(try v.HeapValue.getParentPtr(v.Cell, obj_ptr).clone(allocator)).obj,
+            .task => &(try v.HeapValue.getParentPtr(v.Task, obj_ptr).clone(allocator)).obj,
             .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
         };
     }
@@ -1007,6 +1026,7 @@ pub const VM = struct {
             .null_box => v.NullBox.calc_size(),
             .closure => v.Closure.calc_size(v.HeapValue.getParentPtr(v.Closure, ptr).capture_count),
             .cell => v.Cell.calc_size(),
+            .task => v.Task.calc_size(),
             .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
         };
     }

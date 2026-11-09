@@ -24,7 +24,7 @@ pub const Binding = union(enum) {
     intrinsic: Intrinsic,
 };
 
-pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy };
+pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy, task_spawn };
 
 pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
@@ -44,6 +44,7 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "to_float", Binding{ .intrinsic = .to_float } },
     .{ "append", Binding{ .intrinsic = .append } },
     .{ "copy", Binding{ .intrinsic = .copy } },
+    .{ "spawn", Binding{ .intrinsic = .task_spawn } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
     .{ "string_from", Binding{ .native = &stringFrom } },
     .{ "str_equal", Binding{ .native = &strEqual } },
