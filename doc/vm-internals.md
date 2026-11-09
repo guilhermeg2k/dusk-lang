@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.15 (closures). The language itself is described in [language-ref.md](language-ref.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.15 (closures and tasks). The language itself is described in [language-ref.md](language-ref.md).
 
 The source files involved:
 
@@ -12,6 +12,9 @@ The source files involved:
 | `src/natives.zig` | Builtins written in Zig, and the intrinsics table |
 | `src/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/error.zig` | `RuntimeErrorReporter`, the runtime error messages |
+| `src/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
+| `src/event_loop.zig` | `EventLoop`, the only code that drives libuv (timers for `sleep`) |
+| `src/uv.zig` | The few libuv functions Dusk calls, declared by hand |
 
 ---
 
@@ -21,9 +24,9 @@ The source files involved:
 
 `Dusk.compileAndRun` then creates a `VM` and calls `VM.run`, which:
 
-1. reserves the value stack and the frame array (see section 4),
-2. pushes the frame for `$main`, the function codegen builds from the top-level code,
-3. runs `execute` until `$main` returns,
+1. creates the first task, for `$main`, the function codegen builds from the top-level code (section 11),
+2. runs the scheduler loop: it runs ready tasks with `execute` until every task is done,
+3. reports failed tasks nobody awaited,
 4. on a runtime error, prints where it happened (`reportWhere`) and returns the error.
 
 ## 2. The compiled program
@@ -103,6 +106,7 @@ How Dusk types map to values (`ValueType.fromTypeId`):
 | `?int`, `?float`, `?bool`, `?byte`, `?Enum` | pointer to `NullBox`, or `0` |
 | `?string`, `?[]T`, `?Struct`, ... | the pointer itself, or `0` |
 | `func(...) -> T` | pointer to `Closure` |
+| `Task[T, E]` | pointer to `Task` |
 | captured `let mut` (internal) | pointer to `Cell` |
 
 The few places that need a type at runtime carry it explicitly:
@@ -119,7 +123,7 @@ Every heap object starts with the same header:
 
 ```zig
 HeapValue = extern struct {
-    kind: HeapValueType,         // array, struct, string, buffer, union, null_box, closure, cell
+    kind: HeapValueType,         // array, struct, string, buffer, union, null_box, closure, cell, task
     gc_forward: ?*HeapValue,     // set during a GC: where this object was copied
     relocated: ?*HeapValue,      // set when an array grows: where it moved
 }
@@ -136,6 +140,7 @@ The header is 24 bytes. Each object type embeds it as its `obj` field, and code 
 | `NullBox` | `kind`, `value` | none | 40 |
 | `Closure` | `function`, `capture_count` | `capture_count` values | 40 + 8 × captures |
 | `Cell` | `kind`, `value` | none | 40 |
+| `Task` | `state` (a `*TaskState`, section 11) | none | 32 |
 
 Notes:
 
@@ -148,10 +153,12 @@ Notes:
 
 ### 4.1 Memory
 
-`VM.run` reserves two areas with `allocUntouched`, which takes memory from the page allocator without writing to it, so the OS only commits pages when they are first touched:
+Each task (section 11), `$main` included, has its own value stack and frame array, allocated outside the GC heap with `VM.task_allocator` (the C allocator):
 
-- **The value stack**: `STACK_SLOTS = 4_000_000` values (32 MB reserved).
-- **The frames**: `MAX_CALL_DEPTH = 100_000` `CallFrame`s.
+- **The value stack** starts at `INITIAL_STACK_SLOTS = 1024` values (8 KB) and grows up to `STACK_SLOTS = 4_000_000`.
+- **The frames** start at `INITIAL_FRAMES = 32` `CallFrame`s and grow up to `MAX_CALL_DEPTH = 100_000`.
+
+`VM.stack`, `VM.frames` and `VM.frame_count` are the running task's, swapped in and out by the scheduler, so the interpreter reads them without going through the task.
 
 ```zig
 CallFrame { function: *const Function, cur_inst: usize, stack_offset: usize }
@@ -177,7 +184,7 @@ This gives three properties:
 - `RETURN` writes the result to `stack[stack_base - 1]`, which is the caller's `R[a]`, exactly where the caller expects it.
 - For `CALL_VALUE`, `stack[stack_base - 1]` holds the closure being called for the whole call. That's how `CAPTURE_GET` finds its captures (section 8).
 
-Before pushing a frame, a call checks that a frame is free and that `new_offset + 256` slots still fit on the stack. Otherwise it fails with "call depth exceeded".
+Before pushing a frame, a call checks that a frame is free and that `new_offset + 256` slots still fit on the stack. Otherwise `growForCall` (a cold path) doubles the frames or the stack with `realloc`, zero-fills the new slots, and the handler reloads its `stack` local. Growing is safe because frames hold offsets, captured variables live in heap `Cell`s and natives never call back into Dusk: nothing keeps a pointer into a stack across a call. Past the limits it fails with "call depth exceeded".
 
 ### 4.3 Register allocation in codegen
 
@@ -197,6 +204,8 @@ cur_instruction    // index of the next instruction in `instructions`
 instructions       // current function's code
 stack_base         // current_frame.stack_offset
 ```
+
+`execute` runs one task. It starts from the top frame's saved `cur_inst` and `stack_offset`, so a task that parked continues where it stopped. It returns when the task's last frame returns or the task parks (section 11.3).
 
 Each iteration reads `instructions[cur_instruction]` and increments it before running the handler. So inside a handler `cur_instruction` already points at the next instruction, and that is the value calls save as the return point.
 
@@ -289,6 +298,8 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 
 **Closures**: `MAKE_CLOSURE`, `CAPTURE_GET`, `CELL_NEW`, `CELL_GET`, `CELL_SET`. See section 8.
 
+**Tasks**: `TASK_SPAWN R[a] R[b] K[c]` starts a task running the closure in `R[b]`, whose result has kind `c`, and puts its `Task` in `R[a]`. `await` and `sleep` are natives called with `CALL`. See section 11.
+
 **Calls and control flow**
 
 | Instruction | Effect |
@@ -378,9 +389,12 @@ CALL R[a] FN[i]          ; function i is a Dusk function
 RETURN R[a]
 ```
 
-1. Pop the frame. If it was `$main`, `execute` ends.
-2. `stack[stack_base - 1] = R[a]`, which is the caller's call register.
-3. Restore the caller's `instructions`, `stack_base`, and `cur_instruction = caller.cur_inst`.
+1. Pop the frame.
+2. `stack[stack_base - 1] = R[a]`, which is the caller's call register. For a task's first frame that is `stack[0]`, where the task keeps its result.
+3. If no frame is left, the task is done and `execute` ends.
+4. Otherwise restore the caller's `instructions`, `stack_base`, and `cur_instruction = caller.cur_inst`.
+
+`RETURN_ERR` does the same and, when no frame is left, marks the task as failed.
 
 ### 7.3 Natives and intrinsics
 
@@ -389,6 +403,7 @@ A **native** call doesn't push a frame:
 ```zig
 const args = stack[stack_base + a + 1 ..][0..num_args];
 const result = try native(vm, args);
+if (result.is_parked) return;               // the task waits (section 11.3)
 stack[stack_base + a] = result.value;
 if (result.has_failed) cur_instruction += 1;
 ```
@@ -478,9 +493,9 @@ Values have no runtime tag, so the GC can't tell by looking whether a register h
 HeapMap { pc: u16, bitmap: u256 }      // bit i set: R[i] holds a pointer at this instruction
 ```
 
-After emitting such an instruction, codegen calls `recordHeapMap()`. That computes the bitmap from `register_types` at that moment (`computeHeapBitmap`). The instructions that can allocate are listed in `OpCode.canTriggerGc`: array, struct, union and null box creation, `UNION_LOAD`, string building, `BYTES_NEW`, `DEEP_COPY`, `MAKE_CLOSURE`, `CELL_NEW`, and calls. Calls count because the callee, or a native, can allocate.
+After emitting such an instruction, codegen calls `recordHeapMap()`. That computes the bitmap from `register_types` at that moment (`computeHeapBitmap`). The instructions that can allocate are listed in `OpCode.canTriggerGc`: array, struct, union and null box creation, `UNION_LOAD`, string building, `BYTES_NEW`, `DEEP_COPY`, `MAKE_CLOSURE`, `CELL_NEW`, `TASK_SPAWN`, and calls. Calls count because the callee, or a native, can allocate.
 
-At collection time, for every frame:
+The GC first saves the running task's stack and frames into its `TaskState`, then visits every task that isn't done (`copyTaskRoots`): its `stack[0]` (the entry closure), any value waiting to be delivered to it (section 11.3), and then, for every frame of that task:
 
 ```zig
 pc = frame.cur_inst - 1                // the instruction this frame is stopped at
@@ -489,7 +504,8 @@ owned = top frame ? num_registers : next_frame.stack_offset - base
 for each register i < owned with bit i set: copy stack[base + i]
 ```
 
-- For caller frames, `cur_inst - 1` is their `CALL`.
+- For caller frames, `cur_inst - 1` is their `CALL`. For the top frame of a parked task, it is the native `CALL` it is waiting in.
+- A frame with `cur_inst == 0` hasn't started (a spawned task that never ran), so it has nothing to scan yet.
 - For the running frame, it's the allocating instruction, because each such handler sets `current_frame.cur_inst = cur_instruction` before it can allocate.
 - **A caller frame only scans `R[0] .. R[a]`**, up to and including its call register. Its argument registers are the callee's parameters (section 4.2), so the callee scans them. If both frames scanned them, the second pass would copy the already-copied object again, and the parameter would end up pointing to a different object than the caller's variable. The call register stays with the caller, so the closure of a `CALL_VALUE` is kept alive. Natives don't push frames, so the arguments of a native call are scanned as part of the top frame.
 
@@ -516,10 +532,11 @@ Then the GC empties `gc_queue`, which is used as a stack, so objects are visited
 | `Closure` | captures whose `capture_kinds` entry is a heap kind |
 | `Cell` | `value`, when `kind` is a heap kind |
 | `NullBox` | nothing (it only boxes primitives) |
+| `Task` | marks its `TaskState` as reached; when the task is done and succeeded with a heap value, its `result` |
 
 Clones are byte copies with `gc_forward` and `relocated` cleared.
 
-Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
+Then `Scheduler.sweep` frees every done task that no `Task` handle reached, except failed tasks nobody awaited, which are kept for the report at the end. Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
 
 ## 10. `copy(x)`: deep copy
 
@@ -530,9 +547,80 @@ Afterwards, the new arena becomes active and the threshold is updated. If the ol
 - **What is shared instead of cloned.** Strings, null boxes, closures and cells are treated as immutable or shared by design, so copies point to the same object.
 - **GC check.** `maybeCollectGarbage` runs once, at the start, for the size of the root object. The copies after that are allocated without checks, because the objects still waiting in the worklist aren't GC roots, so a collection in the middle would lose them.
 
-## 11. Known issues and observations
+## 11. Tasks
 
-### 11.1 Fixed: the GC copied call arguments twice
+What tasks mean in the language is described in the language reference (section 13). In the VM, a task is a function call with its own stack: the program runs one task at a time, and switching tasks means leaving `execute` and entering it again with another task's stack.
+
+### 11.1 Two objects per task
+
+```zig
+TaskState {                     // src/scheduler.zig, outside the GC heap: its address never changes
+    stack: []Value, frames: []CallFrame, frame_count,
+    status: ready | running | parked | done,
+    has_failed, is_awaited, is_marked,
+    result: Value, result_kind: ValueType,   // set when done (result_kind: kind of T, from TASK_SPAWN)
+    pending: ?Delivery,                      // a value waiting to be written into the task (11.3)
+    waiters: []*TaskState,                   // tasks parked in await on this one
+}
+
+Task { obj: HeapValue, state: *TaskState }   // src/value.zig: the Dusk value, in the GC heap
+```
+
+The GC moves objects, but the scheduler, waiter lists and libuv requests need pointers that stay valid, and stacks are large. So the Dusk value is a small `Task` handle that the GC copies like any object, and everything else lives in the `TaskState`, which never moves. `Scheduler.tasks` holds every `TaskState` that hasn't been freed.
+
+**Slot 0.** A task's stack starts with its entry closure in `stack[0]` and its first frame at `stack_offset = 1`. That is the layout `CALL_VALUE` makes (section 4.2), so `CAPTURE_GET` finds the lambda's captures at `stack[base - 1]`, and the final `RETURN` writes the result into `stack[0]`. `$main` is a task too, with its static closure in `stack[0]`.
+
+### 11.2 The scheduler loop
+
+```
+run:
+    spawn the $main task
+    loop:
+        batch = number of ready tasks
+        if batch > 0:
+            run each of them (enterTask, execute, leaveTask; finish the ones with no frame left)
+            if timers are pending: poll the event loop without blocking
+            continue
+        if timers are pending: block in the event loop until one fires; continue
+        if some task isn't done: runtime error "all tasks are waiting"
+        stop
+    report failed tasks nobody awaited
+```
+
+- The ready queue is first in, first out. `spawn` adds the new task at the back, so it runs after the tasks already waiting.
+- Ready tasks run in batches: the tasks ready when the batch starts. Polling the event loop between batches lets timers fire even while some task keeps giving way with `sleep(0)`, which would otherwise keep the queue full forever.
+- `enterTask` puts the task's stack and frames in `VM.stack`, `VM.frames` and `VM.frame_count`; `leaveTask` saves them back, since a call may have grown them. The error path saves them too.
+- `finish` copies `stack[0]` into `result`, frees the stack and frames, marks the task done, and delivers the result to every waiter.
+
+### 11.3 Parking and delivering
+
+A task waits by **parking inside a native call**. The native records who should wake it up, sets the task's status to `parked` and returns `NativeResult{ .is_parked = true }`. The `CALL` handler then returns from `execute`. The top frame already saved `cur_inst` just after the `CALL` (on the `JUMP` for a call that can fail), exactly as a caller frame does while it waits for a callee.
+
+To wake a task, `Scheduler.deliver(task, value)` stores the value in `task.pending` and puts the task at the back of the ready queue. When the task is entered again, `enterTask` writes the value into the register of the `CALL` it parked in (`instructions[cur_inst - 1].a`), and moves `cur_inst` past the `JUMP` if the value is an error. That is the rule of `RETURN_ERR`, so `try`, `catch` and `catch e then` work on `await` with no new code.
+
+The value waits in `pending` instead of going straight into the register because other tasks run in between, and any of them can start a collection. The `CALL`'s target register isn't in its heap map (section 9.2), so a pointer written there early wouldn't be kept alive. `pending` is a GC root, and it's written into the register only at the switch, when nothing can collect.
+
+| Native | What it does |
+|---|---|
+| `await(t)` | Marks `t` as awaited. If `t` is done, returns its result (or fails with its error id) without parking. If `t` is the running task, a runtime error. Otherwise adds the running task to `t.waiters` and parks. |
+| `sleep(0)` | Delivers `void` to the running task right away (back of the queue) and parks. |
+| `sleep(ms)` | Starts a libuv timer for the running task and parks; the timer's callback delivers `void`. |
+
+`spawn` isn't a native: it is the `TASK_SPAWN R[a] R[b] K[c]` intrinsic, which creates the `TaskState` from the closure in `R[b]`, records `c` (the kind of `T`) as `result_kind`, queues it, and puts a new `Task` handle in `R[a]`.
+
+### 11.4 The event loop
+
+`EventLoop` (`src/event_loop.zig`) is the only code that calls libuv. It creates its `uv_loop_t` on the first `sleep` with a time above 0, so programs that never sleep don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `deliver` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
+
+libuv's structs differ per OS, so Dusk doesn't use their layout: `src/uv.zig` declares the functions it calls with opaque `Loop` and `Handle` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`). The handle's `data` (`uv_handle_set_data`) points back to the request. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
+
+### 11.5 Freeing tasks
+
+A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by the sweep after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
+
+## 12. Known issues and observations
+
+### 12.1 Fixed: the GC copied call arguments twice
 
 Fixed in v0.15 (section 9.2); `test/success/gc-heap-arguments.dsk` covers it. It's kept here because the failure mode is worth knowing when changing frame layout or root scanning.
 
@@ -561,7 +649,7 @@ end
 
 This segfaulted in `copyHeapValue`. Now each caller frame scans only up to its call register, so every slot has one owner and is copied once.
 
-### 11.2 Observations
+### 12.2 Observations
 
 - **A missing heap map is silent.** If an instruction has no heap map, its frame gets bitmap `0` and its roots aren't kept. A debug assertion in `collectGarbage` when `binarySearch` finds nothing would catch codegen mistakes right away.
 - **Extra moves.** Codegen copies variables into temporaries before using them (`LOAD R[3] R[1]` before `I_LT R[2] R[3] R[4]`), and moves a call result through more than one register after a `try`. Reading variables in place in binary operations, or a small peephole pass, would remove many instructions.
@@ -571,4 +659,5 @@ This segfaulted in `copyHeapValue`. Now each caller frame scans only up to its c
 - **`copy` uses the page allocator.** `deepCopy`'s map and worklist use `VM.allocator`, which is `std.heap.page_allocator`. So each `copy` of a non-trivial value makes page-sized system allocations, which is costly in a loop.
 - **Union reads allocate.** Each `u.variant` read of an active primitive variant allocates a new `NullBox`.
 - **Struct printing.** `format.printValue` prints every struct field as an `int64`.
+- **Task stacks aren't reused.** Each `spawn` allocates a new stack and frame array, and a finished task frees them. A free list of default-size stacks would make spawning cheaper.
 - **`STORE_VAR` is dead.** It is still in `OpCode` and the disassembler, but nothing emits it and the VM has no handler.

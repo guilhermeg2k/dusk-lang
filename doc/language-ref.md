@@ -18,9 +18,10 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 10. [Functions](#10-functions)
 11. [Generics and Traits](#11-generics-and-traits)
 12. [Error Handling](#12-error-handling)
-13. [Built-in Functions](#13-built-in-functions)
-14. [Errors](#14-errors)
-15. [Known Limitations](#15-known-limitations)
+13. [Tasks](#13-tasks)
+14. [Built-in Functions](#14-built-in-functions)
+15. [Errors](#15-errors)
+16. [Known Limitations](#16-known-limitations)
 
 ## 1. Basics
 
@@ -1501,7 +1502,132 @@ error: out of memory
 
 There are no line numbers yet.
 
-## 13. Built-in Functions
+## 13. Tasks
+
+A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `sleep` pauses the running task:
+
+```nim
+func main() -> void
+    let answer = spawn(func() -> return 6 * 7)
+    echo("waiting")
+    echo(await(answer))   # 42
+end
+```
+
+| Function | Signature | Description |
+| :------- | :-------- | :---------- |
+| `spawn` | `spawn(body: func() -> E!T) -> Task[T, E]` | Starts a task that runs `body`. |
+| `await` | `await(task: Task[T, E]) -> E!T` | Waits until the task is done and returns its result, or fails with its error. |
+| `sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds. |
+
+### Running order
+
+All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `sleep(0)` gives the other ready tasks a turn:
+
+```nim
+func step(name: string) -> void
+    for 1..2: i do
+        echo("$name $i")
+        sleep(0)
+    end
+end
+
+func main() -> void
+    let a = spawn(func() -> return step("a"))
+    let b = spawn(func() -> return step("b"))
+    await(a)
+    await(b)
+end
+# a 1, b 1, a 2, b 2
+```
+
+Waiting doesn't change a function's type: `step` above is a plain `-> void` function that happens to call `sleep`, and any function can call `sleep` or `await`. While one task sleeps, the others run, so two tasks that each sleep 100 ms finish in about 100 ms, not 200:
+
+```nim
+func slow_double(x: int) -> int
+    sleep(100)
+    return x * 2
+end
+
+func main() -> void
+    let first = spawn(func() -> return slow_double(1))
+    let second = spawn(func() -> return slow_double(2))
+    echo(await(first) + await(second))   # 6, after about 100 ms
+end
+```
+
+A task that never waits keeps the others from running until it ends: put a `sleep(0)` in long loops that should share time.
+
+Lambdas given to `spawn` share the variables they use with the function around them, as any closure does. Values that tasks share change only while the task changing them runs, but any call that waits lets other tasks run in between:
+
+```nim
+func main() -> void
+    let mut count = 0
+    let counter = spawn(func()
+        for 1..3: _ do
+            count = count + 1
+            sleep(0)
+        end
+    end)
+    await(counter)
+    echo(count)   # 3
+end
+```
+
+### Task types
+
+`Task[T, E]` is a task that gives a `T` or fails with an error from `E`. `spawn` takes both from its function: `spawn(func() -> return 6 * 7)` is a `Task[int, none]`, and a body that returns nothing gives `Task[void, none]`. `Task[T]` is short for `Task[T, none]`, a task that can't fail, so its `await` takes no `try`. A task whose body can fail passes its errors to `await`:
+
+```nim
+func main() -> !void
+    let parsed = spawn(func() -> return try str_to_int("12"))   # Task[int, ConversionError]
+    echo(try await(parsed))                                    # 12
+
+    let bad = spawn(func() -> return try str_to_int("x"))
+    echo(await(bad) catch -1)                                  # -1
+
+    let mut tasks: []Task[int, ConversionError] = []
+    for ["1", "2", "3"]: text do
+        append(tasks, spawn(func() -> return try str_to_int(text)))
+    end
+    let mut total = 0
+    for tasks: t do
+        total = total + (await(t) catch 0)
+    end
+    echo(total)                                                # 6
+end
+```
+
+A task fits a `Task` type with the same `T` when every error it can fail with is in that type's error set, as for `try`. `await` can be called any number of times, from any number of tasks: once the task is done, it returns the same result right away.
+
+- A task whose result isn't used can't fail: `spawn(func() -> return try save(data))` as a statement is a compile error (`this task's result isn't used, so it can't fail`). Catch the errors inside it, or keep the task and `await` it.
+- A task that failed and was never awaited is reported when the program ends (`error: unhandled error in task: ConversionError.Invalid`), and the program exits with an error.
+- Tasks can be stored in arrays, fields and nullables (`?Task[int]`), and `echo` prints them as `<task>`, or `<task done>` once they are done. `copy` keeps the same task. Tasks can't be compared (`CantCompare`), and `Task(...)` can't create one (`TaskNeedsSpawn`): use `spawn`.
+
+### Program end
+
+The program ends when every task is done, so a task spawned near the end still finishes:
+
+```nim
+func main() -> void
+    spawn(func()
+        sleep(50)
+        echo("background work done")
+    end)
+    echo("top level done")
+end
+# top level done, then background work done
+```
+
+These stop the program like other runtime errors:
+
+- `await` on the running task itself.
+- Every unfinished task waiting for another one, with no `sleep` that could wake any of them (`all tasks are waiting: nothing can wake them up`).
+- `sleep` with a negative time.
+
+A runtime error in any task stops the whole program.
+
+## 14. Built-in Functions
 
 `T` means any type.
 
@@ -1518,10 +1644,13 @@ There are no line numbers yet.
 | `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
 | `append`      | `append(mut list: []T, mut item: T) -> void`      | Adds an item to the end of a mutable array.                                          |
 | `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
+| `spawn`       | `spawn(body: func() -> E!T) -> Task[T, E]`        | Starts a task (see [Tasks](#13-tasks)).                                              |
+| `await`       | `await(task: Task[T, E]) -> E!T`                  | Waits for a task's result.                                                           |
+| `sleep`       | `sleep(ms: int) -> void`                          | Pauses the running task for `ms` milliseconds.                                       |
 | `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
 | `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
 
-`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, functions as `<func name>` (`<func>` for a lambda), and structs as raw values.
+`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as raw values.
 
 `copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
@@ -1615,7 +1744,7 @@ echo(describe_age("abc"))    # not a number
 
 Optional parameters follow the usual call rule: a call is all positional or all named, so write `str_equal(a, b, true)` or `str_equal(a = x, b = y, ignore_case = true)`.
 
-## 14. Errors
+## 15. Errors
 
 Compile errors point to the line and column of the problem:
 
@@ -1625,9 +1754,9 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
                     ^~~~~~^
 ```
 
-The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, an integer division by `0`, an `int` overflow, too many nested calls, an error returned from `main`; see [Runtime errors](#runtime-errors)) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
+The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, an integer division by `0`, an `int` overflow, too many nested calls, an error returned from `main`, a task error nobody awaited; see [Runtime errors](#runtime-errors) and [Tasks](#13-tasks)) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
-## 15. Known Limitations
+## 16. Known Limitations
 
 These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 
@@ -1644,4 +1773,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).
 - **Function values**: builtins and methods can't be used as values (`let f = str_len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
+- **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `sleep`). `sleep` is the only builtin that waits on time: files and the network come later. A running task can't be stopped from outside.
 - **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
