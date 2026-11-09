@@ -532,11 +532,11 @@ Then the GC empties `gc_queue`, which is used as a stack, so objects are visited
 | `Closure` | captures whose `capture_kinds` entry is a heap kind |
 | `Cell` | `value`, when `kind` is a heap kind |
 | `NullBox` | nothing (it only boxes primitives) |
-| `Task` | marks its `TaskState` as reached; when the task is done and succeeded with a heap value, its `result` |
+| `Task` | sets `is_reachable` on its `TaskState`; when the task is done and succeeded with a heap value, its `result` |
 
 Clones are byte copies with `gc_forward` and `relocated` cleared.
 
-Then `Scheduler.sweep` frees every done task that no `Task` handle reached, except failed tasks nobody awaited, which are kept for the report at the end. Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
+Then `Scheduler.freeUnreachableTasks` frees every done task that no `Task` handle reached, except failed tasks nobody awaited, which are kept for the report at the end. Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
 
 ## 10. `copy(x)`: deep copy
 
@@ -557,7 +557,7 @@ What tasks mean in the language is described in the language reference (section 
 TaskState {                     // src/scheduler.zig, outside the GC heap: its address never changes
     stack: []Value, frames: []CallFrame, frame_count,
     status: ready | running | parked | done,
-    has_failed, is_awaited, is_marked,
+    has_failed, is_awaited, is_reachable,
     result: Value, result_kind: ValueType,   // set when done (result_kind: kind of T, from TASK_SPAWN)
     pending: ?Delivery,                      // a value waiting to be written into the task (11.3)
     waiters: []*TaskState,                   // tasks parked in await on this one
@@ -616,7 +616,7 @@ libuv's structs differ per OS, so Dusk doesn't use their layout: `src/uv.zig` de
 
 ### 11.5 Freeing tasks
 
-A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by the sweep after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
+A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 
 ## 12. Known issues and observations
 

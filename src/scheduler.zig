@@ -72,11 +72,11 @@ pub const Scheduler = struct {
         return false;
     }
 
-    pub fn unmarkAll(self: *Self) void {
-        for (self.tasks.items) |task| task.is_marked = false;
+    pub fn clearReachable(self: *Self) void {
+        for (self.tasks.items) |task| task.is_reachable = false;
     }
 
-    pub fn sweep(self: *Self) void {
+    pub fn freeUnreachableTasks(self: *Self) void {
         var index: usize = 0;
         while (index < self.tasks.items.len) {
             const task = self.tasks.items[index];
@@ -117,7 +117,7 @@ pub const TaskState = struct {
     status: Status = .ready,
     has_failed: bool = false,
     is_awaited: bool = false,
-    is_marked: bool = false,
+    is_reachable: bool = false,
     result: v.Value = v.NULL_VALUE,
     result_kind: v.ValueType,
     pending: ?Delivery = null,
@@ -147,7 +147,7 @@ pub const TaskState = struct {
     }
 
     fn canBeFreed(self: *const Self) bool {
-        return self.status == .done and !self.is_marked and !self.hasUnhandledFailure();
+        return self.status == .done and !self.is_reachable and !self.hasUnhandledFailure();
     }
 
     fn freeStack(self: *Self, allocator: std.mem.Allocator) void {

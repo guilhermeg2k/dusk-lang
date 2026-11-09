@@ -957,7 +957,7 @@ pub const VM = struct {
         self.heap.gc_queue.clearRetainingCapacity();
 
         self.saveCurrentTask();
-        self.scheduler.unmarkAll();
+        self.scheduler.clearReachable();
         for (self.scheduler.tasks.items) |task| {
             try self.copyTaskRoots(new_alloc, task);
         }
@@ -1003,7 +1003,7 @@ pub const VM = struct {
                 },
                 .task => {
                     const state = v.HeapValue.getParentPtr(v.Task, obj).state;
-                    state.is_marked = true;
+                    state.is_reachable = true;
                     if (state.hasResultHeapValue()) {
                         try self.copyHeapValue(new_alloc, &state.result);
                     }
@@ -1022,7 +1022,7 @@ pub const VM = struct {
             }
         }
 
-        self.scheduler.sweep();
+        self.scheduler.freeUnreachableTasks();
         self.heap.active = inactive;
         self.heap.threshold = @max(self.heap.allocated * 2, MIN_GC_THRESHOLD);
 
