@@ -2,7 +2,7 @@
 
 > This is a moving target and can change anytime
 
-## Version 0.15 - Enjin'
+## Version 0.15 - Enjin
 
 - Closures (& fn as anything (argument, item, etc))
 - Tasks: `spawn`, `await`, `sleep` (libuv timers)
