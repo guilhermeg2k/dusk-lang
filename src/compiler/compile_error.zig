@@ -247,6 +247,18 @@ pub const CompileErrorReporter = struct {
         return error.InvalidUnionMember;
     }
 
+    pub fn invalidStaticUnionField(self: *Self, union_name: []const u8, field: []const u8, loc: Loc) CompileError {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "'{s}' is not a static field of union '{s}'",
+                .{ field, union_name },
+            ),
+            loc,
+        );
+        return error.InvalidUnionMember;
+    }
+
     pub fn invalidUnionFunction(self: *Self, union_name: []const u8, function: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(

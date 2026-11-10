@@ -1,8 +1,12 @@
-union U
-    a: int
+enum Color
+    Red
+
+    func name(self: @) -> string
+        return "red"
+    end
 end
 
-let MAKER = U.a
+let MAKER = Color.name
 
 func main() -> void
 end

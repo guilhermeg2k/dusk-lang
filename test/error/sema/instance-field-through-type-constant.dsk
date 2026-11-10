@@ -1,0 +1,9 @@
+struct P
+    x: int
+end
+
+let MAKER = P.x
+
+func main() -> void
+    echo(MAKER)
+end

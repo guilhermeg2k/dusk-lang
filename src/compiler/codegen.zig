@@ -218,10 +218,10 @@ pub const BytecodeGen = struct {
 
         try self.genInstructionBlock(func.body);
 
-        if (self.chunk_instructions.getLastOrNull()) |last| {
-            if (last.op != .RETURN) {
-                try self.chunk_instructions.append(self.allocator, bc.Instruction{ .op = .RETURN });
-            }
+        const last = self.chunk_instructions.getLastOrNull();
+        const needs_final_return = last == null or last.?.op != .RETURN;
+        if (needs_final_return) {
+            try self.chunk_instructions.append(self.allocator, bc.Instruction{ .op = .RETURN });
         }
         _ = try self.currentPosition();
 

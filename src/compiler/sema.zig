@@ -4592,6 +4592,9 @@ pub const SemaAnalyzer = struct {
                             if (static_field_member) |constant| return constant.default_value.?;
                             return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
+                        if (self.definedTypeOf(indexed_exp.target) != null) {
+                            return self.err_reporter.invalidStaticStructField(struct_def.identifier, member_name, exp.loc);
+                        }
 
                         const field_type_id = field_member.?.type_id;
                         const result_type = if (is_nullable) try self.type_table.getOrAddNullable(field_type_id) else field_type_id;
@@ -4654,6 +4657,9 @@ pub const SemaAnalyzer = struct {
                 return switch (indexed_exp.index.data) {
                     .identifier => |member_name| {
                         if (union_def.static_fields.get(member_name)) |constant| return constant.default_value.?;
+                        if (self.definedTypeOf(indexed_exp.target) != null) {
+                            return self.err_reporter.invalidStaticUnionField(union_def.identifier, member_name, exp.loc);
+                        }
                         // reading a variant is always ?T: null when it isn't the active one
                         const result_type = if (union_def.variants.get(member_name)) |variant_type_id|
                             try self.type_table.getOrAddNullable(variant_type_id)

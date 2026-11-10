@@ -756,6 +756,15 @@ test "sema error: invalid static struct field" {
     try runCaseError("sema/invalid-static-struct-field.dsk", error.InvalidStructField);
 }
 
+test "sema error: instance field read through the type name" {
+    try runCaseError("sema/instance-field-through-type.dsk", error.InvalidStructField);
+    try runCaseError("sema/instance-field-through-type-constant.dsk", error.InvalidStructField);
+}
+
+test "sema error: union variant read through the type name" {
+    try runCaseError("sema/union-variant-through-type.dsk", error.InvalidUnionMember);
+}
+
 test "sema error: cant infer array literal type" {
     try runCaseError("sema/cant-infer-array-literal-type.dsk", error.CantInferArrayLiteralType);
 }
@@ -2154,6 +2163,10 @@ test "closures: lambdas capture variables of the functions around them" {
 
 test "gc: heap values passed to functions that collect keep one identity" {
     try runCase("gc-heap-arguments.dsk");
+}
+
+test "functions with empty bodies return" {
+    try runCase("empty-function-bodies.dsk");
 }
 
 test "and / or skip the right side when the left side decides" {
