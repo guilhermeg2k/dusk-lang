@@ -1,5 +1,4 @@
 const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
 const ast = @import("ast.zig");
 const err = @import("compile_error.zig");
 const std = @import("std");
