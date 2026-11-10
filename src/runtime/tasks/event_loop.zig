@@ -23,6 +23,22 @@ pub const EventLoop = struct {
         self.loop = null;
     }
 
+    pub fn poll(self: *Self) !void {
+        return self.run(.nowait);
+    }
+
+    pub fn waitForEvent(self: *Self) !void {
+        return self.run(.once);
+    }
+
+    fn run(self: *Self, mode: uv.RunMode) !void {
+        const loop = self.loop orelse return;
+        _ = uv.uv_run(loop, mode);
+        const failure = self.callback_failure orelse return;
+        self.callback_failure = null;
+        return failure;
+    }
+
     fn loopMemory(loop: *uv.Loop) []align(16) u8 {
         const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
         return bytes[0..uv.uv_loop_size()];
@@ -65,22 +81,6 @@ pub const EventLoop = struct {
 
     pub fn hasPendingOperations(self: *const Self) bool {
         return self.pending_operations > 0;
-    }
-
-    pub fn poll(self: *Self) !void {
-        return self.run(.nowait);
-    }
-
-    fn run(self: *Self, mode: uv.RunMode) !void {
-        const loop = self.loop orelse return;
-        _ = uv.uv_run(loop, mode);
-        const failure = self.callback_failure orelse return;
-        self.callback_failure = null;
-        return failure;
-    }
-
-    pub fn waitForEvent(self: *Self) !void {
-        return self.run(.once);
     }
 };
 

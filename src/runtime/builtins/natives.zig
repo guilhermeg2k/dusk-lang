@@ -353,11 +353,11 @@ pub fn strReplace(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 pub fn strUpper(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return changedCase(vm, args, true);
+    return copyWithCase(vm, args, true);
 }
 
 pub fn strLower(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return changedCase(vm, args, false);
+    return copyWithCase(vm, args, false);
 }
 
 pub fn strSlice(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -497,15 +497,15 @@ fn isCharBoundary(text: []const u8, index: usize) bool {
     return text[index] & 0xC0 != 0x80;
 }
 
-fn changedCase(vm: *VM, args: []v.Value, is_upper: bool) anyerror!NativeResult {
+fn copyWithCase(vm: *VM, args: []v.Value, is_upper: bool) anyerror!NativeResult {
     const result = try vm.allocString(bytesArg(args, 0).len);
     const data = result.mutableSlice();
     @memcpy(data, bytesArg(args, 0));
-    changeCase(data, is_upper);
+    changeCaseInPlace(data, is_upper);
     return stringResult(result);
 }
 
-fn changeCase(data: []u8, is_upper: bool) void {
+fn changeCaseInPlace(data: []u8, is_upper: bool) void {
     var index: usize = 0;
     while (index < data.len) : (index += 1) {
         const byte = data[index];
@@ -514,11 +514,19 @@ fn changeCase(data: []u8, is_upper: bool) void {
             const second = data[index];
             const is_lower_latin = second >= 0xA0 and second <= 0xBE and second != 0xB7;
             const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
-            if (is_upper and is_lower_latin) data[index] = second - 0x20;
-            if (!is_upper and is_upper_latin) data[index] = second + 0x20;
+            if (is_upper and is_lower_latin) {
+                data[index] = second - 0x20;
+            }
+            if (!is_upper and is_upper_latin) {
+                data[index] = second + 0x20;
+            }
             continue;
         }
-        if (is_upper and std.ascii.isLower(byte)) data[index] = std.ascii.toUpper(byte);
-        if (!is_upper and std.ascii.isUpper(byte)) data[index] = std.ascii.toLower(byte);
+        if (is_upper and std.ascii.isLower(byte)) {
+            data[index] = std.ascii.toUpper(byte);
+        }
+        if (!is_upper and std.ascii.isUpper(byte)) {
+            data[index] = std.ascii.toLower(byte);
+        }
     }
 }
