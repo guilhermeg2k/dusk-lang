@@ -1,5 +1,4 @@
 const std = @import("std");
-const bc = @import("../bytecode.zig");
 const v = @import("../value.zig");
 const format = @import("../format.zig");
 const VM = @import("../vm.zig").VM;
@@ -20,8 +19,10 @@ const ConversionError = error{ Invalid, Overflow };
 
 pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
 
+pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
+
 pub const Binding = union(enum) {
-    native: bc.NativeFnPtr,
+    native: NativeFnPtr,
     intrinsic: Intrinsic,
 };
 

@@ -1,6 +1,5 @@
 const std = @import("std");
 const v = @import("value.zig");
-const VM = @import("vm.zig").VM;
 const natives = @import("builtins/natives.zig");
 
 pub const UnionDescriptor = struct {
@@ -66,10 +65,8 @@ pub const Program = struct {
     error_names: []const []const u8,
 };
 
-pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!natives.NativeResult;
-
 pub const NativeFn = struct {
-    func: NativeFnPtr,
+    func: natives.NativeFnPtr,
     num_args: u8,
 };
 
