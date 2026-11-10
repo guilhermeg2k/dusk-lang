@@ -1,6 +1,6 @@
 const std = @import("std");
-const RuntimeError = @import("error.zig").RuntimeError;
-const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
+const RuntimeError = @import("runtime_error.zig").RuntimeError;
+const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const bc = @import("bytecode.zig");
 const TaskState = @import("scheduler.zig").TaskState;
 

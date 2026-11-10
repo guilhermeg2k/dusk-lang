@@ -1,5 +1,5 @@
 const util = @import("util.zig");
-const err = @import("error.zig");
+const err = @import("compile_error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
 const tt = @import("type_table.zig");

@@ -1,7 +1,7 @@
 const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
 const TypedIdentifier = @import("type_table.zig").TypedIdentifier;
-const err = @import("error.zig");
+const err = @import("compile_error.zig");
 
 pub const Program = struct {
     instructions: Block,

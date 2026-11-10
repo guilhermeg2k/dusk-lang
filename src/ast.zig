@@ -425,5 +425,5 @@ const Token = lex.Token;
 
 const lex = @import("lexer.zig");
 const parser = @import("parser.zig");
-const err = @import("error.zig");
+const err = @import("compile_error.zig");
 const std = @import("std");

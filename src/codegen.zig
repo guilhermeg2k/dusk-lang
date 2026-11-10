@@ -4,7 +4,7 @@ const v = @import("value.zig");
 const tt = @import("type_table.zig");
 const bc = @import("bytecode.zig");
 const natives = @import("natives.zig");
-const err = @import("error.zig");
+const err = @import("compile_error.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();

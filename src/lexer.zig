@@ -1,5 +1,5 @@
 const std = @import("std");
-const err = @import("error.zig");
+const err = @import("compile_error.zig");
 
 const LexerError = err.CompileError;
 

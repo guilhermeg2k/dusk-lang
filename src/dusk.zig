@@ -10,7 +10,7 @@ const Lexer = lexer.Lexer;
 const Parser = parser.Parser;
 const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
-const CliErrorReporter = @import("error.zig").CliErrorReporter;
+const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub const prelude_src = @embedFile("prelude.dsk");
 
