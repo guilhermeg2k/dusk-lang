@@ -1748,106 +1748,6 @@ pub const BytecodeGen = struct {
     }
 };
 
-const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings, FunctionTooLong };
-
-const FailingCallHandler = union(enum) {
-    try_call: ir.TryCall,
-    catch_call: ir.CatchCall,
-};
-
-const LoopContext = struct {
-    first_break_patch_index: usize,
-    first_continue_patch_index: usize,
-};
-
-fn opCodeFromUnaryOp(op: ir.UnaryOpKind) bc.OpCode {
-    return switch (op) {
-        .box_not_null => .NULL_BOX_NNULL,
-        .not => .B_NOT,
-        .i_neg => .I_NEG,
-        .f_neg => .F_NEG,
-        .to_byte => .I_TO_BYTE,
-    };
-}
-
-fn opCodeFromBinaryOp(op: ir.BinaryOpKind) bc.OpCode {
-    return switch (op) {
-        .i_add => .I_ADD,
-        .i_sub => .I_SUB,
-        .i_mult => .I_MULT,
-        .i_mod => .I_MOD,
-
-        .trunc_div => .TRUNC_DIV,
-
-        .i_cmp_eq => .I_EQ,
-        .i_cmp_neq => .I_NEQ,
-        .i_cmp_lt => .I_LT,
-        .i_cmp_le => .I_LE,
-        .i_cmp_ge => .I_GE,
-        .i_cmp_gt => .I_GT,
-
-        .f_add => .F_ADD,
-        .f_sub => .F_SUB,
-        .f_mult => .F_MULT,
-        .f_div => .F_DIV,
-        .f_mod => .F_MOD,
-
-        .f_cmp_eq => .F_EQ,
-        .f_cmp_neq => .F_NEQ,
-        .f_cmp_lt => .F_LT,
-        .f_cmp_le => .F_LE,
-        .f_cmp_ge => .F_GE,
-        .f_cmp_gt => .F_GT,
-
-        .b_and => .B_AND,
-        .b_or => .B_OR,
-        .b_cmp_eq => .B_EQ,
-        .b_cmp_neq => .B_NEQ,
-    };
-}
-
-fn typedValueFromIr(ir_value: *const ir.Value) TypedValue {
-    return switch (ir_value.data) {
-        .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
-        .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
-        .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
-        .i_string => unreachable,
-        .i_null, .i_void => TypedValue{ .value = v.NULL_VALUE, .type = .null },
-        .i_array => TypedValue{ .value = undefined, .type = .array },
-        else => unreachable,
-    };
-}
-
-fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueType {
-    const ty = type_table.getTypePtrById(type_id);
-
-    if (ty.is_nullable) {
-        return .nullable;
-    }
-
-    return switch (ty.kind) {
-        .int, .byte => .int64,
-        .float => .float64,
-        .boolean => .bool,
-        .string => .string,
-        .buffer => .buffer,
-        .array => .array,
-        .@"struct" => .@"struct",
-        .@"union" => .@"union",
-        .func_type => .function,
-        .task => .task,
-        .cell => .cell,
-        .@"enum" => .int64,
-        //note: void -> null
-        .void => .null,
-        .null => .null,
-        else => {
-            std.debug.print("{}", .{ty});
-            unreachable;
-        },
-    };
-}
-
 const TypedValue = struct {
     value: v.Value,
     type: v.ValueType,
@@ -1889,3 +1789,103 @@ const TypedValueHashContext = struct {
         };
     }
 };
+
+const LoopContext = struct {
+    first_break_patch_index: usize,
+    first_continue_patch_index: usize,
+};
+
+fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueType {
+    const ty = type_table.getTypePtrById(type_id);
+
+    if (ty.is_nullable) {
+        return .nullable;
+    }
+
+    return switch (ty.kind) {
+        .int, .byte => .int64,
+        .float => .float64,
+        .boolean => .bool,
+        .string => .string,
+        .buffer => .buffer,
+        .array => .array,
+        .@"struct" => .@"struct",
+        .@"union" => .@"union",
+        .func_type => .function,
+        .task => .task,
+        .cell => .cell,
+        .@"enum" => .int64,
+        //note: void -> null
+        .void => .null,
+        .null => .null,
+        else => {
+            std.debug.print("{}", .{ty});
+            unreachable;
+        },
+    };
+}
+
+fn typedValueFromIr(ir_value: *const ir.Value) TypedValue {
+    return switch (ir_value.data) {
+        .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
+        .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
+        .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
+        .i_string => unreachable,
+        .i_null, .i_void => TypedValue{ .value = v.NULL_VALUE, .type = .null },
+        .i_array => TypedValue{ .value = undefined, .type = .array },
+        else => unreachable,
+    };
+}
+
+const BytecodeError = error{ OutOfMemory, UndefinedVariable, TooManyRegisters, TooManyStrings, FunctionTooLong };
+
+const FailingCallHandler = union(enum) {
+    try_call: ir.TryCall,
+    catch_call: ir.CatchCall,
+};
+
+fn opCodeFromBinaryOp(op: ir.BinaryOpKind) bc.OpCode {
+    return switch (op) {
+        .i_add => .I_ADD,
+        .i_sub => .I_SUB,
+        .i_mult => .I_MULT,
+        .i_mod => .I_MOD,
+
+        .trunc_div => .TRUNC_DIV,
+
+        .i_cmp_eq => .I_EQ,
+        .i_cmp_neq => .I_NEQ,
+        .i_cmp_lt => .I_LT,
+        .i_cmp_le => .I_LE,
+        .i_cmp_ge => .I_GE,
+        .i_cmp_gt => .I_GT,
+
+        .f_add => .F_ADD,
+        .f_sub => .F_SUB,
+        .f_mult => .F_MULT,
+        .f_div => .F_DIV,
+        .f_mod => .F_MOD,
+
+        .f_cmp_eq => .F_EQ,
+        .f_cmp_neq => .F_NEQ,
+        .f_cmp_lt => .F_LT,
+        .f_cmp_le => .F_LE,
+        .f_cmp_ge => .F_GE,
+        .f_cmp_gt => .F_GT,
+
+        .b_and => .B_AND,
+        .b_or => .B_OR,
+        .b_cmp_eq => .B_EQ,
+        .b_cmp_neq => .B_NEQ,
+    };
+}
+
+fn opCodeFromUnaryOp(op: ir.UnaryOpKind) bc.OpCode {
+    return switch (op) {
+        .box_not_null => .NULL_BOX_NNULL,
+        .not => .B_NOT,
+        .i_neg => .I_NEG,
+        .f_neg => .F_NEG,
+        .to_byte => .I_TO_BYTE,
+    };
+}
