@@ -569,12 +569,16 @@ pub const VM = struct {
                         .native => |n| {
                             current_frame.cur_inst = cur_instruction;
                             const args = stack[stack_base + inst.a + 1 ..][0..n.num_args];
+
                             const result = n.func(self, args) catch |failure| {
                                 self.failed_builtin = func.name;
                                 return failure;
                             };
+
                             if (result.is_parked) return;
+
                             stack[stack_base + inst.a] = result.value;
+
                             if (result.has_failed) {
                                 cur_instruction += 1;
                             }
