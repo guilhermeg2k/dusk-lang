@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
-const Lexer = @import("lexer.zig").Lexer;
-const uv = @import("uv.zig");
+const Lexer = @import("compiler/lexer.zig").Lexer;
+const uv = @import("runtime/tasks/uv.zig");
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -74,7 +74,7 @@ test "string interpolation compiles to one STR_BUILD" {
     try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
 }
 
-fn countOps(source: []const u8, function: []const u8, op: @import("bytecode.zig").OpCode) !usize {
+fn countOps(source: []const u8, function: []const u8, op: @import("runtime/bytecode.zig").OpCode) !usize {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
@@ -191,7 +191,7 @@ test "multiline comments preserve tokens and locations" {
     var lexer = Lexer.init(testing.allocator, src);
     var tokens = try lexer.list();
     defer tokens.deinit(testing.allocator);
-    const Tag = @import("lexer.zig").Tag;
+    const Tag = @import("compiler/lexer.zig").Tag;
     const expected = [_]Tag{ .let_kw, .identifier, .eq, .int_literal, .plus, .int_literal, .eof };
     try testing.expectEqual(expected.len, tokens.items.len);
     for (expected, tokens.items) |tag, token| {
@@ -219,7 +219,7 @@ test "comments and whitespace at EOF" {
         var tokens = try lexer.list();
         defer tokens.deinit(testing.allocator);
         try testing.expectEqual(@as(usize, 1), tokens.items.len);
-        try testing.expectEqual(@import("lexer.zig").Tag.eof, tokens.items[0].tag);
+        try testing.expectEqual(@import("compiler/lexer.zig").Tag.eof, tokens.items[0].tag);
     }
 }
 
@@ -251,7 +251,7 @@ test "string escapes decode into UTF-8 literals" {
         const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
         var lexer = Lexer.init(arena.allocator(), source);
         const tokens = try lexer.list();
-        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
         const decoded = root.statements.items[0].data.let.value.data.string_literal;
         try testing.expectEqualStrings(case.expected, decoded);
@@ -278,7 +278,7 @@ test "multiline strings strip the closing indentation" {
         const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
         var lexer = Lexer.init(arena.allocator(), source);
         const tokens = try lexer.list();
-        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
         try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.data.string_literal);
     }
@@ -303,7 +303,7 @@ test "string constants outlive compilation and source storage" {
     try testing.expectEqual(@as(usize, 2), pool.values.len);
     try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
     try testing.expectEqualStrings("plain", pool.textAt(1));
-    var vm = @import("vm.zig").VM.init(&program, null);
+    var vm = @import("runtime/vm.zig").VM.init(&program, null);
     defer vm.deinit();
     try vm.run();
 }
@@ -2300,7 +2300,7 @@ test "prelude: every extern has a binding and every binding has an extern" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const dusk = @import("dusk.zig");
-    const bindings = @import("natives.zig").bindings;
+    const bindings = @import("runtime/builtins/natives.zig").bindings;
     const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
     var extern_count: usize = 0;
     for (prelude.statements.items) |stmt| {
@@ -2314,7 +2314,7 @@ test "prelude: every extern has a binding and every binding has an extern" {
 test "prelude: builtin error ids match the natives constants" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const natives = @import("natives.zig");
+    const natives = @import("runtime/builtins/natives.zig");
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     const program = try dusk.compile("func main() -> void\nend\n");
     try testing.expectEqualStrings("ConversionError.Invalid", program.error_names[natives.conversion_invalid_id]);

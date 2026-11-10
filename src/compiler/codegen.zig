@@ -1,9 +1,9 @@
 const std = @import("std");
 const ir = @import("ir.zig");
-const v = @import("value.zig");
+const v = @import("../runtime/value.zig");
 const tt = @import("type_table.zig");
-const bc = @import("bytecode.zig");
-const natives = @import("natives.zig");
+const bc = @import("../runtime/bytecode.zig");
+const natives = @import("../runtime/builtins/natives.zig");
 const err = @import("compile_error.zig");
 
 pub const BytecodeGen = struct {

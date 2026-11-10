@@ -1,10 +1,10 @@
 const std = @import("std");
-const bc = @import("bytecode.zig");
-const v = @import("value.zig");
-const format = @import("format.zig");
-const VM = @import("vm.zig").VM;
-const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
-const Scheduler = @import("scheduler.zig").Scheduler;
+const bc = @import("../bytecode.zig");
+const v = @import("../value.zig");
+const format = @import("../format.zig");
+const VM = @import("../vm.zig").VM;
+const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
+const Scheduler = @import("../tasks/scheduler.zig").Scheduler;
 
 const NativeResult = bc.NativeResult;
 

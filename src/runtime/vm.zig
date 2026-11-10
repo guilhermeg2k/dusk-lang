@@ -1,13 +1,13 @@
 const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
-const util = @import("util.zig");
+const util = @import("../util.zig");
 const RuntimeError = @import("runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
-const TaskState = @import("scheduler.zig").TaskState;
-const Scheduler = @import("scheduler.zig").Scheduler;
-const EventLoop = @import("event_loop.zig").EventLoop;
+const TaskState = @import("tasks/scheduler.zig").TaskState;
+const Scheduler = @import("tasks/scheduler.zig").Scheduler;
+const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 
 pub const VM = struct {
     const Self = @This();

@@ -1,10 +1,10 @@
 const std = @import("std");
-const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
-const sema = @import("sema.zig");
-const bc = @import("bytecode.zig");
-const codegen = @import("codegen.zig");
-const vm = @import("vm.zig");
+const lexer = @import("compiler/lexer.zig");
+const parser = @import("compiler/parser.zig");
+const sema = @import("compiler/sema.zig");
+const bc = @import("runtime/bytecode.zig");
+const codegen = @import("compiler/codegen.zig");
+const vm = @import("runtime/vm.zig");
 
 const Lexer = lexer.Lexer;
 const Parser = parser.Parser;
@@ -12,9 +12,9 @@ const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
-pub const prelude_src = @embedFile("prelude.dsk");
+pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
-pub fn parse(allocator: std.mem.Allocator, src: []const u8) !@import("ast.zig").Root {
+pub fn parse(allocator: std.mem.Allocator, src: []const u8) !@import("compiler/ast.zig").Root {
     var dusk_lexer = Lexer.init(allocator, src);
     const tokens = try dusk_lexer.list();
     var dusk_parser = Parser.init(allocator, src, tokens.items);

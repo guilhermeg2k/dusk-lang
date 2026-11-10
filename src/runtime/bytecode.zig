@@ -1,7 +1,7 @@
 const std = @import("std");
 const v = @import("value.zig");
 const VM = @import("vm.zig").VM;
-const natives = @import("natives.zig");
+const natives = @import("builtins/natives.zig");
 
 pub const UnionDescriptor = struct {
     heap_bitmap: u256,

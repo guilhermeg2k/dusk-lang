@@ -2,7 +2,7 @@ const std = @import("std");
 const uv = @import("uv.zig");
 const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
-const v = @import("value.zig");
+const v = @import("../value.zig");
 
 const handle_alignment = std.mem.Alignment.@"16";
 

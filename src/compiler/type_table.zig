@@ -1,5 +1,5 @@
 const std = @import("std");
-const util = @import("util.zig");
+const util = @import("../util.zig");
 const ir = @import("ir.zig");
 
 pub const TypeId = u64;

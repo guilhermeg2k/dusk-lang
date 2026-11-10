@@ -1,9 +1,9 @@
-const util = @import("util.zig");
+const util = @import("../util.zig");
 const err = @import("compile_error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
 const tt = @import("type_table.zig");
-const natives = @import("natives.zig");
+const natives = @import("../runtime/builtins/natives.zig");
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
 

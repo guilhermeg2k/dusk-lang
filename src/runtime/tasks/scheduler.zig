@@ -1,6 +1,6 @@
 const std = @import("std");
-const v = @import("value.zig");
-const CallFrame = @import("vm.zig").CallFrame;
+const v = @import("../value.zig");
+const CallFrame = @import("../vm.zig").CallFrame;
 
 pub const INITIAL_STACK_SLOTS = 1024;
 pub const INITIAL_FRAMES = 32;

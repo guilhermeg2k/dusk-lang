@@ -2,7 +2,7 @@ const std = @import("std");
 const RuntimeError = @import("runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const bc = @import("bytecode.zig");
-const TaskState = @import("scheduler.zig").TaskState;
+const TaskState = @import("tasks/scheduler.zig").TaskState;
 
 pub const NULL_VALUE: Value = @bitCast(@as(u64, 0));
 
