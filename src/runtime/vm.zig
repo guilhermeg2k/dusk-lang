@@ -16,18 +16,18 @@ pub const VM = struct {
     const STACK_SLOTS = 4_000_000;
     const MAX_FRAME_REGISTERS = 256;
 
-    allocator: std.mem.Allocator,
     program: *const bc.Program,
     running_task: ?*TaskState = null,
+    allocator: std.mem.Allocator,
+    scratch: std.Io.Writer.Allocating,
+    stdout: ?*std.Io.Writer,
+    stack: []v.Value,
+    heap: Heap,
     scheduler: Scheduler,
     event_loop: EventLoop,
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
-    stack: []v.Value,
-    heap: Heap,
-    scratch: std.Io.Writer.Allocating,
-    stdout: ?*std.Io.Writer,
 
     pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
@@ -49,30 +49,6 @@ pub const VM = struct {
         self.event_loop.deinit();
         self.scheduler.deinit();
         self.heap.deinit();
-    }
-
-    noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
-        self.scratch.clearRetainingCapacity();
-        format.printValue(&self.scratch.writer, value, kind);
-        const bytes = self.scratch.written();
-        const result = try self.allocString(bytes.len);
-        @memcpy(result.mutableSlice(), bytes);
-        return .{ .heap_obj = &result.obj };
-    }
-
-    noinline fn buildString(self: *Self, parts: []const v.Value, kinds: []const v.ValueType) !v.Value {
-        self.scratch.clearRetainingCapacity();
-        for (parts, kinds) |part, kind| {
-            if (kind == .string) {
-                try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
-                continue;
-            }
-            format.printValue(&self.scratch.writer, part, kind);
-        }
-        const bytes = self.scratch.written();
-        const result = try self.allocString(bytes.len);
-        @memcpy(result.mutableSlice(), bytes);
-        return .{ .heap_obj = &result.obj };
     }
 
     pub noinline fn run(self: *Self) !void {
@@ -136,38 +112,6 @@ pub const VM = struct {
         if (wake_result.has_failed) {
             frame.cur_inst += 1;
         }
-    }
-
-    fn leaveTask(self: *Self) void {
-        self.saveCurrentTask();
-        self.running_task = null;
-        self.frame_count = 0;
-    }
-
-    fn saveCurrentTask(self: *Self) void {
-        const task = self.running_task orelse return;
-        task.stack = self.stack;
-        task.frames = self.frames;
-        task.frame_count = self.frame_count;
-    }
-
-    fn reportUnhandledTaskErrors(self: *Self) !void {
-        var failure: ?anyerror = null;
-        for (self.scheduler.tasks.items) |task| {
-            if (!task.hasUnhandledFailure()) continue;
-            failure = RuntimeErrorReporter.unhandledTaskError(self.program.error_names[@intCast(task.result.int64)]);
-        }
-        if (failure) |found| return found;
-    }
-
-    fn reportErrorLocation(self: *Self, failure: anyerror) void {
-        if (failure == error.OutOfMemory) {
-            RuntimeErrorReporter.outOfMemory();
-        }
-        if (self.frame_count == 0) return;
-        const name = self.frames[self.frame_count - 1].function.name;
-        const is_top_level = name.len > 0 and name[0] == '$';
-        RuntimeErrorReporter.where(if (is_top_level) null else name, self.failed_builtin);
     }
 
     noinline fn execute(self: *Self) !void {
@@ -743,33 +687,79 @@ pub const VM = struct {
         }
     }
 
-    noinline fn makeClosure(self: *Self, target_index: usize, fn_index: u16) !void {
-        const function = &self.program.functions[fn_index];
-        const capture_count = function.kind.dusk.capture_kinds.len;
-        const size = v.Closure.calc_size(capture_count);
-        try self.maybeCollectGarbage(size);
-        const closure = try v.Closure.init(self.getCurrentHeapAllocator(), function, capture_count);
-        self.increaseHeapAllocationCount(size);
-        @memcpy(closure.captures(), self.stack[target_index + 1 ..][0..capture_count]);
-        self.stack[target_index] = .{ .heap_obj = &closure.obj };
+    noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
+        self.scratch.clearRetainingCapacity();
+        format.printValue(&self.scratch.writer, value, kind);
+        const bytes = self.scratch.written();
+        const result = try self.allocString(bytes.len);
+        @memcpy(result.mutableSlice(), bytes);
+        return .{ .heap_obj = &result.obj };
     }
 
-    noinline fn spawnTask(self: *Self, target_index: usize, closure_index: usize, result_kind: v.ValueType) !void {
-        const size = v.Task.calc_size();
+    pub fn allocString(self: *Self, len: usize) !*v.Bytes {
+        const size = v.Bytes.calc_size(len);
         try self.maybeCollectGarbage(size);
-        const closure = v.HeapValue.getParentPtr(v.Closure, self.stack[closure_index].heap_obj);
-        const state = try self.scheduler.spawn(closure, result_kind);
-        const handle = try v.Task.init(self.getCurrentHeapAllocator(), state);
+        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
         self.increaseHeapAllocationCount(size);
-        self.stack[target_index] = .{ .heap_obj = &handle.obj };
+        return result;
     }
 
-    noinline fn newCell(self: *Self, target_index: usize, source_index: usize, kind: v.ValueType) !void {
-        const size = v.Cell.calc_size();
-        try self.maybeCollectGarbage(size);
-        const cell = try v.Cell.init(self.getCurrentHeapAllocator(), self.stack[source_index], kind);
-        self.increaseHeapAllocationCount(size);
-        self.stack[target_index] = .{ .heap_obj = &cell.obj };
+    pub fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
+        if (!self.heap.needsCollection(bytes)) return;
+        self.saveCurrentTask();
+        try self.heap.collect(&self.scheduler, self.program);
+    }
+
+    fn saveCurrentTask(self: *Self) void {
+        const task = self.running_task orelse return;
+        task.stack = self.stack;
+        task.frames = self.frames;
+        task.frame_count = self.frame_count;
+    }
+
+    pub fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
+        return self.heap.allocator();
+    }
+
+    pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
+        self.heap.countAllocation(bytes);
+    }
+
+    noinline fn buildString(self: *Self, parts: []const v.Value, kinds: []const v.ValueType) !v.Value {
+        self.scratch.clearRetainingCapacity();
+        for (parts, kinds) |part, kind| {
+            if (kind == .string) {
+                try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
+                continue;
+            }
+            format.printValue(&self.scratch.writer, part, kind);
+        }
+        const bytes = self.scratch.written();
+        const result = try self.allocString(bytes.len);
+        @memcpy(result.mutableSlice(), bytes);
+        return .{ .heap_obj = &result.obj };
+    }
+
+    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
+        const ptr = stack[stack_base + reg_idx].heap_obj;
+        const current = ptr.followRelocated();
+        if (current != ptr) {
+            stack[stack_base + reg_idx].heap_obj = current;
+        }
+        return v.HeapValue.getParentPtr(v.Array, current);
+    }
+
+    pub fn growArray(self: *Self, slot: *v.Value) !*v.Array {
+        try self.maybeCollectGarbage(v.Array.calc_size(arrayInSlot(slot).calcNewCapacity()));
+        const array = try arrayInSlot(slot).resize(self.getCurrentHeapAllocator());
+        slot.heap_obj = &array.obj;
+        self.increaseHeapAllocationCount(v.Array.calc_size(array.capacity));
+        return array;
+    }
+
+    fn arrayInSlot(slot: *v.Value) *v.Array {
+        slot.heap_obj = slot.heap_obj.followRelocated();
+        return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
     }
 
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
@@ -855,20 +845,34 @@ pub const VM = struct {
         slot.heap_obj = copy;
     }
 
-    pub fn allocString(self: *Self, len: usize) !*v.Bytes {
-        const size = v.Bytes.calc_size(len);
+    noinline fn spawnTask(self: *Self, target_index: usize, closure_index: usize, result_kind: v.ValueType) !void {
+        const size = v.Task.calc_size();
         try self.maybeCollectGarbage(size);
-        const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
+        const closure = v.HeapValue.getParentPtr(v.Closure, self.stack[closure_index].heap_obj);
+        const state = try self.scheduler.spawn(closure, result_kind);
+        const handle = try v.Task.init(self.getCurrentHeapAllocator(), state);
         self.increaseHeapAllocationCount(size);
-        return result;
+        self.stack[target_index] = .{ .heap_obj = &handle.obj };
     }
 
-    pub fn boxInt(self: *Self, number: i64) !v.Value {
+    noinline fn loadUnionVariant(self: *Self, stack: []v.Value, stack_base: usize, target_reg: u8, union_reg: u8, tag: u16) !void {
+        var union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
+        const desc = self.program.union_descriptors[union_vl.descriptor_id];
+        const needs_box = desc.box_bitmap & (@as(u256, 1) << @intCast(tag)) != 0;
+
+        const can_load_unboxed = !needs_box or union_vl.active_tag != tag;
+        if (can_load_unboxed) {
+            stack[stack_base + target_reg] = union_vl.get(tag);
+            return;
+        }
+
         const size = v.NullBox.calc_size();
         try self.maybeCollectGarbage(size);
-        const box = try v.NullBox.init(self.getCurrentHeapAllocator(), .{ .int64 = number }, .int64);
+        union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
+
+        var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), union_vl.get(tag), desc.variant_kinds[tag]);
         self.increaseHeapAllocationCount(size);
-        return .{ .heap_obj = &box.obj };
+        stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
     }
 
     noinline fn growCallStack(self: *Self, new_offset: usize) ![]v.Value {
@@ -892,59 +896,55 @@ pub const VM = struct {
         return self.stack;
     }
 
-    noinline fn loadUnionVariant(self: *Self, stack: []v.Value, stack_base: usize, target_reg: u8, union_reg: u8, tag: u16) !void {
-        var union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
-        const desc = self.program.union_descriptors[union_vl.descriptor_id];
-        const needs_box = desc.box_bitmap & (@as(u256, 1) << @intCast(tag)) != 0;
+    noinline fn makeClosure(self: *Self, target_index: usize, fn_index: u16) !void {
+        const function = &self.program.functions[fn_index];
+        const capture_count = function.kind.dusk.capture_kinds.len;
+        const size = v.Closure.calc_size(capture_count);
+        try self.maybeCollectGarbage(size);
+        const closure = try v.Closure.init(self.getCurrentHeapAllocator(), function, capture_count);
+        self.increaseHeapAllocationCount(size);
+        @memcpy(closure.captures(), self.stack[target_index + 1 ..][0..capture_count]);
+        self.stack[target_index] = .{ .heap_obj = &closure.obj };
+    }
 
-        const can_load_unboxed = !needs_box or union_vl.active_tag != tag;
-        if (can_load_unboxed) {
-            stack[stack_base + target_reg] = union_vl.get(tag);
-            return;
+    noinline fn newCell(self: *Self, target_index: usize, source_index: usize, kind: v.ValueType) !void {
+        const size = v.Cell.calc_size();
+        try self.maybeCollectGarbage(size);
+        const cell = try v.Cell.init(self.getCurrentHeapAllocator(), self.stack[source_index], kind);
+        self.increaseHeapAllocationCount(size);
+        self.stack[target_index] = .{ .heap_obj = &cell.obj };
+    }
+
+    fn leaveTask(self: *Self) void {
+        self.saveCurrentTask();
+        self.running_task = null;
+        self.frame_count = 0;
+    }
+
+    fn reportUnhandledTaskErrors(self: *Self) !void {
+        var failure: ?anyerror = null;
+        for (self.scheduler.tasks.items) |task| {
+            if (!task.hasUnhandledFailure()) continue;
+            failure = RuntimeErrorReporter.unhandledTaskError(self.program.error_names[@intCast(task.result.int64)]);
         }
+        if (failure) |found| return found;
+    }
 
+    fn reportErrorLocation(self: *Self, failure: anyerror) void {
+        if (failure == error.OutOfMemory) {
+            RuntimeErrorReporter.outOfMemory();
+        }
+        if (self.frame_count == 0) return;
+        const name = self.frames[self.frame_count - 1].function.name;
+        const is_top_level = name.len > 0 and name[0] == '$';
+        RuntimeErrorReporter.where(if (is_top_level) null else name, self.failed_builtin);
+    }
+
+    pub fn boxInt(self: *Self, number: i64) !v.Value {
         const size = v.NullBox.calc_size();
         try self.maybeCollectGarbage(size);
-        union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
-
-        var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), union_vl.get(tag), desc.variant_kinds[tag]);
+        const box = try v.NullBox.init(self.getCurrentHeapAllocator(), .{ .int64 = number }, .int64);
         self.increaseHeapAllocationCount(size);
-        stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
-    }
-
-    fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
-        const ptr = stack[stack_base + reg_idx].heap_obj;
-        const current = ptr.followRelocated();
-        if (current != ptr) {
-            stack[stack_base + reg_idx].heap_obj = current;
-        }
-        return v.HeapValue.getParentPtr(v.Array, current);
-    }
-
-    pub fn growArray(self: *Self, slot: *v.Value) !*v.Array {
-        try self.maybeCollectGarbage(v.Array.calc_size(arrayInSlot(slot).calcNewCapacity()));
-        const array = try arrayInSlot(slot).resize(self.getCurrentHeapAllocator());
-        slot.heap_obj = &array.obj;
-        self.increaseHeapAllocationCount(v.Array.calc_size(array.capacity));
-        return array;
-    }
-
-    fn arrayInSlot(slot: *v.Value) *v.Array {
-        slot.heap_obj = slot.heap_obj.followRelocated();
-        return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
-    }
-
-    pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
-        self.heap.countAllocation(bytes);
-    }
-
-    pub fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
-        if (!self.heap.needsCollection(bytes)) return;
-        self.saveCurrentTask();
-        try self.heap.collect(&self.scheduler, self.program);
-    }
-
-    pub fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
-        return self.heap.allocator();
+        return .{ .heap_obj = &box.obj };
     }
 };
