@@ -1,5 +1,4 @@
 const std = @import("std");
-const util = @import("../util.zig");
 const ir = @import("ir.zig");
 
 pub const TypeId = u64;
@@ -336,7 +335,7 @@ pub const TypeTable = struct {
             try fields_in_order.append(self.allocator, key_ptr.*);
         }
 
-        std.mem.sort([]const u8, fields_in_order.items, {}, util.stringCompare);
+        std.mem.sort([]const u8, fields_in_order.items, {}, stringCompare);
 
         var buf: std.ArrayList(u8) = .empty;
         for (fields_in_order.items) |field| {
@@ -525,3 +524,7 @@ pub const Type = struct {
         return ptr;
     }
 };
+
+fn stringCompare(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}

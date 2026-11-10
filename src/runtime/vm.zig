@@ -1,7 +1,6 @@
 const std = @import("std");
 const bc = @import("bytecode.zig");
 const v = @import("value.zig");
-const util = @import("../util.zig");
 const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
 const TaskState = @import("tasks/scheduler.zig").TaskState;
@@ -1050,7 +1049,7 @@ pub const VM = struct {
             if (frame.cur_inst == 0) continue;
             const chunk = frame.function.kind.dusk;
             const cur_pc: u16 = @intCast(frame.cur_inst - 1);
-            const heap_map = util.binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
+            const heap_map = binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
             const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
             const base = frame.stack_offset;
             const is_top_frame = frame_index + 1 == active_frames.len;
@@ -1131,3 +1130,13 @@ pub const CallFrame = struct {
     cur_inst: usize,
     stack_offset: usize,
 };
+
+fn binarySearch(comptime T: type, comptime field: []const u8, items: []const T, key: anytype) ?T {
+    const K = @TypeOf(key);
+    const idx = std.sort.binarySearch(T, items, key, struct {
+        fn cmp(k: K, item: T) std.math.Order {
+            return std.math.order(k, @field(item, field));
+        }
+    }.cmp);
+    return if (idx) |i| items[i] else null;
+}
