@@ -8,6 +8,7 @@ const err = @import("compile_error.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
+    const max_build_parts = 32;
 
     allocator: std.mem.Allocator,
     type_table: *tt.TypeTable,
@@ -149,12 +150,32 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn copyErrorNames(self: *Self, error_names: []const []const u8) ![]const []const u8 {
-        const names = try self.allocator.alloc([]const u8, error_names.len);
-        for (error_names, 0..) |name, i| {
-            names[i] = try self.allocator.dupe(u8, name);
+    fn bindExtern(self: *Self, ext: ir.Extern) !bc.Function {
+        const binding = natives.bindings.get(ext.identifier) orelse @panic("extern without binding");
+        const num_args: u8 = @intCast(ext.params.len);
+        const kind: bc.FunctionKind = switch (binding) {
+            .native => |func| blk: {
+                try self.native_params_by_uid.put(ext.uid, ext.params);
+                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
+            },
+            .intrinsic => |intrinsic| blk: {
+                try self.intrinsic_by_uid.put(ext.uid, intrinsic);
+                break :blk .{ .intrinsic = intrinsic };
+            },
+        };
+        return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
+    }
+
+    fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
+        var count: u8 = 0;
+        for (params) |param| {
+            if (self.isDynamicParam(param)) count += 1;
         }
-        return names;
+        return count;
+    }
+
+    fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {
+        return param.type_id == self.type_table.getPrimitive(.dynamic);
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !bc.Function {
@@ -174,30 +195,6 @@ pub const BytecodeGen = struct {
                 .body = program.instructions,
                 .return_type = self.type_table.getPrimitive(.void),
             }) },
-        };
-    }
-
-    fn addFunction(self: *Self, funcs: *std.ArrayList(bc.Function), func: ir.Func) !void {
-        try self.fn_index_by_uid.put(func.uid, @intCast(funcs.items.len));
-        try funcs.append(self.allocator, try self.genFunction(func));
-    }
-
-    fn genFunction(self: *Self, func: ir.Func) !bc.Function {
-        self.enterFunction(func.identifier, func.origin);
-        self.next_free_register = @intCast(func.params.len);
-        self.peak_register = @intCast(func.params.len);
-        self.var_register_id_by_uid.clearRetainingCapacity();
-        @memset(&self.register_types, self.type_table.getPrimitive(.void));
-
-        for (func.params, 0..) |param, i| {
-            try self.var_register_id_by_uid.put(param.uid, @intCast(i));
-            self.register_types[i] = param.type_id;
-        }
-
-        return bc.Function{
-            .uid = func.uid,
-            .name = func.identifier,
-            .kind = .{ .dusk = try self.genFunctionChunk(func) },
         };
     }
 
@@ -243,14 +240,6 @@ pub const BytecodeGen = struct {
         // chunk.disassemble();
 
         return chunk;
-    }
-
-    fn captureKinds(self: *Self, captures: []const ir.Capture) ![]const v.ValueType {
-        const kinds = try self.allocator.alloc(v.ValueType, captures.len);
-        for (captures, kinds) |capture, *kind| {
-            kind.* = if (capture.is_boxed) .cell else valueTypeFromTypeId(self.type_table, capture.type_id);
-        }
-        return kinds;
     }
 
     fn genInstructionBlock(self: *Self, block: ir.Block) anyerror!void {
@@ -346,14 +335,998 @@ pub const BytecodeGen = struct {
         try self.bindVariable(store_var.uid, reg);
     }
 
-    fn genUpdateCapture(self: *Self, stmt: ir.UpdateCapture) !void {
-        const cell_reg = try self.consumeRegister();
+    fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) anyerror!u8 {
+        switch (value.data) {
+            .i_int, .i_float, .i_bool, .i_null, .i_void => {
+                try self.genLoadConst(typedValueFromIr(value), target_reg);
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .i_string => |s| {
+                try self.genLoadString(s, target_reg);
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .string_interpolation => |parts| try self.genStringBuild(parts, value.type_id, target_reg),
+
+            .indexed => |idx| {
+                try self.genIndexedLoad(idx, value, target_reg);
+            },
+
+            .identifier => |id| {
+                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse return BytecodeError.UndefinedVariable;
+                if (self.boxed_type_by_uid.get(id.uid)) |boxed_type| {
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = symbol_reg });
+                    self.register_types[target_reg] = boxed_type;
+                    return target_reg;
+                }
+
+                const inst = bc.Instruction{
+                    .op = .LOAD,
+                    .a = target_reg,
+                    .b = symbol_reg,
+                };
+
+                try self.chunk_instructions.append(self.allocator, inst);
+                self.register_types[target_reg] = self.register_types[symbol_reg];
+            },
+
+            .i_array => {
+                try self.genArrayInit(value, target_reg);
+            },
+
+            .struct_init => {
+                try self.genStructInit(value, target_reg);
+            },
+
+            .union_init => {
+                try self.genUnionInit(value, target_reg);
+            },
+
+            .null_box_init => {
+                try self.genNullBoxInit(value, target_reg);
+            },
+
+            .union_tag => |un| {
+                const union_reg = try self.genValue(un, try self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_TAG, .a = target_reg, .b = union_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .union_payload => |un| {
+                const union_reg = try self.genValue(un, try self.consumeRegister());
+                defer self.freeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_PAYLOAD, .a = target_reg, .b = union_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .binary_op => |bo| {
+                try self.genBinOp(bo, target_reg);
+            },
+
+            .unary_op => |uo| {
+                try self.genUnaryOp(uo, target_reg);
+            },
+
+            .fn_call => |fc| {
+                try self.genFnCall(fc, value, target_reg);
+            },
+
+            .func_ref => |func_ref| {
+                var load = bc.Instruction{ .op = .LOAD_FUNC, .a = target_reg };
+                load.putBEx(self.fn_index_by_uid.get(func_ref.fn_uid) orelse unreachable);
+                try self.chunk_instructions.append(self.allocator, load);
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .call_value => |cv| {
+                try self.genCallValue(cv, value, target_reg);
+            },
+
+            .make_closure => |closure| {
+                try self.genMakeClosure(closure, value, target_reg);
+            },
+
+            .capture_ref => |capture| {
+                try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = capture.index });
+                if (capture.is_boxed) {
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = target_reg });
+                }
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .capture_raw => |index| {
+                try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = index });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .var_box => |uid| {
+                const cell_reg = self.var_register_id_by_uid.get(uid) orelse return BytecodeError.UndefinedVariable;
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = cell_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+
+            .try_call => |tc| {
+                try self.genFailingCall(tc.call, value, target_reg, .{ .try_call = tc });
+            },
+
+            .catch_call => |cc| {
+                try self.genFailingCall(cc.call, value, target_reg, .{ .catch_call = cc });
+            },
+            .block_value => |block| {
+                const saved_variables = try self.var_register_id_by_uid.clone();
+                defer {
+                    self.var_register_id_by_uid.deinit();
+                    self.var_register_id_by_uid = saved_variables;
+                }
+                const saved_next_free = self.next_free_register;
+                const result_register = try self.consumeRegister();
+                try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, result_register);
+                self.register_types[result_register] = value.type_id;
+                try self.var_register_id_by_uid.put(block.result_uid, result_register);
+                try self.genInstructionBlock(block.instructions);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_register });
+                self.register_types[target_reg] = value.type_id;
+                self.freeRegisterN(self.next_free_register - saved_next_free);
+            },
+            .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
+            .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
+            .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
+        }
+
+        return target_reg;
+    }
+
+    fn genLoadConst(self: *Self, const_val: TypedValue, target_reg: u8) !void {
+        const result = try self.const_id_by_value.getOrPut(const_val);
+        if (!result.found_existing) {
+            result.value_ptr.* = @intCast(self.chunk_constants.items.len);
+            try self.chunk_constants.append(self.allocator, const_val.value);
+            try self.chunk_constants_types.append(self.allocator, const_val.type);
+        }
+
+        var load_const = bc.Instruction{
+            .op = .LOAD_CONST,
+            .a = target_reg,
+        };
+
+        load_const.putBEx(@intCast(result.value_ptr.*));
+
+        try self.chunk_instructions.append(self.allocator, load_const);
+    }
+
+    fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
+        const result = try self.string_id_by_text.getOrPut(s);
+        if (!result.found_existing) {
+            if (self.string_texts.items.len > std.math.maxInt(u16)) {
+                _ = self.string_id_by_text.remove(s);
+                return self.err_reporter.tooManyStrings();
+            }
+            result.value_ptr.* = @intCast(self.string_texts.items.len);
+            try self.string_texts.append(self.allocator, s);
+        }
+
+        const string_id = result.value_ptr.*;
+
+        var load_string = bc.Instruction{
+            .op = .LOAD_STRING,
+            .a = target_reg,
+        };
+
+        load_string.putBEx(string_id);
+        try self.chunk_instructions.append(self.allocator, load_string);
+    }
+
+    fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
+        const build_reg = try self.consumeRegister();
         defer self.freeRegister();
-        try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = cell_reg, .b = stmt.index });
-        self.register_types[cell_reg] = self.type_table.getPrimitive(.cell);
-        const value_reg = try self.genValue(stmt.value, try self.consumeRegister());
+        var kinds: std.ArrayList(v.ValueType) = .empty;
+        defer kinds.deinit(self.allocator);
+        var index: usize = 0;
+        var has_previous = false;
+        while (index < parts.len) {
+            const saved_next_free = self.next_free_register;
+            kinds.clearRetainingCapacity();
+            if (has_previous) {
+                const previous_reg = try self.consumeRegister();
+                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = previous_reg, .b = build_reg });
+                self.register_types[previous_reg] = result_type;
+                try kinds.append(self.allocator, .string);
+            }
+            while (index < parts.len and kinds.items.len < max_build_parts) : (index += 1) {
+                const part_reg = try self.genValue(parts[index], try self.consumeRegister());
+                const kind = valueTypeFromTypeId(self.type_table, parts[index].type_id);
+                if (!isFormattedLate(kind)) {
+                    try self.chunk_instructions.append(self.allocator, .{ .op = .TO_STRING, .a = part_reg, .b = part_reg, .c = @intFromEnum(kind) });
+                    try self.recordHeapMap();
+                    self.register_types[part_reg] = result_type;
+                    try kinds.append(self.allocator, .string);
+                    continue;
+                }
+                try kinds.append(self.allocator, kind);
+            }
+            var build = bc.Instruction{ .op = .STR_BUILD, .a = build_reg };
+            build.putBEx(@intCast(self.chunk_build_recipes.items.len));
+            try self.chunk_build_recipes.append(self.allocator, try self.allocator.dupe(v.ValueType, kinds.items));
+            try self.chunk_instructions.append(self.allocator, build);
+            try self.recordHeapMap();
+            self.register_types[build_reg] = result_type;
+            self.freeRegisterN(self.next_free_register - saved_next_free);
+            has_previous = true;
+        }
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = build_reg });
+        self.register_types[target_reg] = result_type;
+    }
+
+    fn consumeRegister(self: *Self) !u8 {
+        if (self.next_free_register == std.math.maxInt(u8)) return self.err_reporter.tooManyRegisters(self.current_function_name, self.current_function_loc);
+        const id = self.next_free_register;
+        self.next_free_register += 1;
+        self.peak_register = @max(self.peak_register, self.next_free_register);
+        return id;
+    }
+
+    fn freeRegister(self: *Self) void {
+        self.freeRegisterN(1);
+    }
+
+    fn freeRegisterN(self: *Self, n: usize) void {
+        const new_free: usize = @max(0, self.next_free_register - n);
+        for (new_free..self.next_free_register) |i| {
+            self.register_types[i] = self.type_table.getPrimitive(.void);
+        }
+        self.next_free_register = @intCast(new_free);
+    }
+
+    fn isFormattedLate(kind: v.ValueType) bool {
+        return switch (kind) {
+            .int64, .float64, .bool, .null, .string => true,
+            else => false,
+        };
+    }
+
+    fn recordHeapMap(self: *Self) !void {
+        try self.recordHeapMapAt(try self.currentPosition() - 1);
+    }
+
+    fn recordHeapMapAt(self: *Self, pc: u16) !void {
+        try self.chunk_heap_maps.append(self.allocator, .{
+            .pc = pc,
+            .bitmap = self.computeHeapBitmap(),
+        });
+    }
+
+    fn computeHeapBitmap(self: *Self) u256 {
+        var bitmap: u256 = 0;
+        for (0..self.peak_register) |i| {
+            const vt = valueTypeFromTypeId(self.type_table, self.register_types[i]);
+            if (vt.isHeapType()) {
+                bitmap |= @as(u256, 1) << @intCast(i);
+            }
+        }
+        return bitmap;
+    }
+
+    fn currentPosition(self: *Self) BytecodeError!u16 {
+        const position = self.chunk_instructions.items.len;
+        if (position <= std.math.maxInt(u16)) return @intCast(position);
+        return self.err_reporter.functionTooLong(self.current_function_name, self.current_function_loc);
+    }
+
+    fn genIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
+        const target_type = self.type_table.getTypePtrById(idx.target.type_id);
+
+        // sema only allows a nullable target through `?.`
+        if (target_type.is_nullable) {
+            const is_instance_member = switch (target_type.kind) {
+                .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
+                .@"union" => |u| u.variants.contains(idx.index.data.i_string),
+                else => false,
+            };
+            if (is_instance_member) {
+                return self.genNullableIndexedLoad(idx, value, target_reg);
+            }
+        }
+
+        switch (target_type.kind) {
+            .@"struct" => |@"struct"| {
+                const field_name = idx.index.data.i_string;
+                if (@"struct".field_index_by_name.get(field_name)) |field_index| {
+                    const struct_reg = try self.genValue(idx.target, try self.consumeRegister());
+                    defer self.freeRegister();
+
+                    try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
+                    self.register_types[target_reg] = value.type_id;
+                    return;
+                }
+                return BytecodeError.UndefinedVariable;
+            },
+            .@"enum" => return BytecodeError.UndefinedVariable,
+            .array => {
+                const array_reg = try self.genValue(idx.target, try self.consumeRegister());
+                defer self.freeRegister();
+                try self.genArrayLoad(target_reg, array_reg, idx.index);
+                self.register_types[target_reg] = value.type_id;
+            },
+            .buffer, .string => {
+                const buffer_reg = try self.genValue(idx.target, try self.consumeRegister());
+                const index_reg = try self.genValue(idx.index, try self.consumeRegister());
+                defer self.freeRegisterN(2);
+                try self.chunk_instructions.append(self.allocator, .{ .op = .BYTES_GET, .a = target_reg, .b = buffer_reg, .c = index_reg });
+                self.register_types[target_reg] = value.type_id;
+            },
+            .@"union" => |@"union"| {
+                const field_name = idx.index.data.i_string;
+
+                if (!@"union".variants.contains(field_name)) return BytecodeError.UndefinedVariable;
+
+                const union_reg = try self.genValue(idx.target, try self.consumeRegister());
+                defer self.freeRegister();
+
+                try self.genUnionLoad(target_reg, union_reg, idx.target.type_id, field_name);
+                self.register_types[target_reg] = value.type_id;
+            },
+            else => unreachable,
+        }
+    }
+
+    // Optional chaining (`target?.member`): the result is null when the target is null.
+    //   cond   = target != null
+    //   result = null
+    //   JUMP_IF_FALSE cond -> end
+    //   result = <member load>, boxed when the member is a non-nullable primitive
+    // end:
+    fn genNullableIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
+        const target_type = self.type_table.getTypePtrById(idx.target.type_id);
+        const member_name = idx.index.data.i_string;
+
+        const obj_reg = try self.genValue(idx.target, try self.consumeRegister());
+        const cond_reg = try self.consumeRegister();
+        defer self.freeRegisterN(2);
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_NNULL,
+            .a = cond_reg,
+            .b = obj_reg,
+        });
+        self.register_types[cond_reg] = self.type_table.getPrimitive(.boolean);
+
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+        self.register_types[target_reg] = value.type_id;
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = cond_reg });
+        const jump_idx = self.chunk_instructions.items.len - 1;
+
+        switch (target_type.kind) {
+            .@"struct" => |@"struct"| {
+                const field_index = @"struct".field_index_by_name.get(member_name) orelse unreachable;
+                const field_type_id = (@"struct".fields.get(member_name) orelse unreachable).type_id;
+                const field_kind = valueTypeFromTypeId(self.type_table, field_type_id);
+
+                if (field_kind.isHeapType()) {
+                    try self.genStructLoad(target_reg, obj_reg, @intCast(field_index));
+                } else {
+                    const raw_reg = try self.consumeRegister();
+                    defer self.freeRegister();
+
+                    try self.genStructLoad(raw_reg, obj_reg, @intCast(field_index));
+                    self.register_types[raw_reg] = field_type_id;
+
+                    try self.chunk_instructions.append(self.allocator, .{
+                        .op = .NULL_BOX_INIT,
+                        .a = target_reg,
+                        .b = @intFromEnum(field_kind),
+                        .c = raw_reg,
+                    });
+                    try self.recordHeapMap();
+                }
+            },
+            // UNION_LOAD already boxes primitive variants
+            .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, member_name),
+            else => unreachable,
+        }
+
+        self.chunk_instructions.items[jump_idx].putBEx(try self.currentPosition());
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genStructLoad(self: *Self, target_reg: u8, struct_reg: u8, field_index: u8) !void {
+        const struct_load = bc.Instruction{
+            .op = .STRUCT_LOAD,
+            .a = target_reg,
+            .b = struct_reg,
+            .c = field_index,
+        };
+        try self.chunk_instructions.append(self.allocator, struct_load);
+    }
+
+    fn genUnionLoad(self: *Self, target_reg: u8, union_reg: u8, union_type_id: tt.TypeId, variant_name: []const u8) !void {
+        const tag_index = try self.unionTagIndex(union_type_id, variant_name);
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .UNION_LOAD,
+            .a = target_reg,
+            .b = union_reg,
+            .c = @intCast(tag_index),
+        });
+        try self.recordHeapMap();
+    }
+
+    fn unionTagIndex(self: *Self, type_id: tt.TypeId, name: []const u8) !u16 {
+        _ = try self.getOrCreateUnionDescriptor(type_id);
+        const tag_map = self.union_tag_by_type_id.get(type_id).?;
+        return tag_map.get(name) orelse error.UnableToFindSlot;
+    }
+
+    fn getOrCreateUnionDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
+        if (self.type_id_to_union_descriptor_idx.get(type_id)) |id| return id;
+
+        const union_def = self.type_table.getTypePtrById(type_id).kind.@"union";
+
+        var tag_map = std.StringHashMap(u16).init(self.allocator);
+        var bitmap: u256 = 0;
+        var box_bitmap: u256 = 0;
+        const variant_kinds = try self.allocator.alloc(v.ValueType, union_def.variants.count());
+
+        for (union_def.variants_in_order, 0..) |variant_name, i| {
+            const tag: u16 = @intCast(i);
+            try tag_map.put(variant_name, tag);
+            const vt = valueTypeFromTypeId(self.type_table, union_def.variants.get(variant_name).?);
+            variant_kinds[tag] = vt;
+            if (vt.isHeapType()) {
+                bitmap |= @as(u256, 1) << @intCast(tag);
+            } else {
+                // reading a primitive variant yields ?T, which needs a null box
+                box_bitmap |= @as(u256, 1) << @intCast(tag);
+            }
+        }
+
+        const id: u16 = @intCast(self.union_descriptors.items.len);
+        try self.union_descriptors.append(self.allocator, .{
+            .heap_bitmap = bitmap,
+            .box_bitmap = box_bitmap,
+            .variant_kinds = variant_kinds,
+        });
+        try self.type_id_to_union_descriptor_idx.put(type_id, id);
+        try self.union_tag_by_type_id.put(type_id, tag_map);
+        return id;
+    }
+
+    fn genArrayLoad(self: *Self, target_reg: u8, array_reg: u8, index_value: *ir.Value) !void {
+        const index_reg = try self.genValue(index_value, try self.consumeRegister());
         defer self.freeRegister();
-        try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_SET, .a = cell_reg, .b = value_reg });
+
+        const load_inst = bc.Instruction{
+            .op = .ARRAY_LOAD,
+            .a = target_reg,
+            .b = array_reg,
+            .c = index_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, load_inst);
+    }
+
+    fn genArrayInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const array_type = self.type_table.getTypePtrById(value.type_id);
+        const array_inner_type_id = array_type.kind.array;
+
+        const init_inst = bc.Instruction{
+            .op = .ARRAY_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, array_inner_type_id)),
+            .c = @intCast(@min(@max(value.data.i_array.values.len, 8), 255)),
+        };
+
+        try self.chunk_instructions.append(self.allocator, init_inst);
+        try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
+
+        for (value.data.i_array.values) |vl| {
+            try self.genArrayAppend(vl, target_reg);
+        }
+    }
+
+    fn genArrayAppend(self: *Self, value: *const ir.Value, array_reg: u8) !void {
+        const v_reg = try self.genValue(value, try self.consumeRegister());
+        defer self.freeRegister();
+
+        const append_inst = bc.Instruction{
+            .op = .ARRAY_APPEND,
+            .a = array_reg,
+            .b = v_reg,
+        };
+        try self.chunk_instructions.append(self.allocator, append_inst);
+        try self.recordHeapMap();
+    }
+
+    fn genStructInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const @"struct" = value.data.struct_init;
+        const desc_id = try self.getOrCreateStructDescriptor(value);
+
+        var struct_init = bc.Instruction{
+            .op = .STRUCT_INIT,
+            .a = target_reg,
+        };
+        struct_init.putBEx(desc_id);
+
+        try self.chunk_instructions.append(self.allocator, struct_init);
+        try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
+
+        for (@"struct".values, 0..) |field_v, i| {
+            try self.genStructStore(target_reg, @intCast(i), field_v);
+        }
+    }
+
+    fn getOrCreateStructDescriptor(self: *Self, value: *const ir.Value) !u16 {
+        if (self.type_id_to_struct_descriptor_idx.get(value.type_id)) |id| return id;
+
+        const struct_data = value.data.struct_init;
+        const struct_def = self.type_table.getTypePtrById(value.type_id).kind.@"struct";
+        var bitmap: u256 = 0;
+        // use the declared field types, the init values may be null or not yet boxed
+        for (struct_data.keys, 0..) |key, i| {
+            const field = struct_def.fields.get(key) orelse unreachable;
+            const vt = valueTypeFromTypeId(self.type_table, field.type_id);
+            if (vt.isHeapType()) {
+                bitmap |= @as(u256, 1) << @intCast(i);
+            }
+        }
+
+        const id: u16 = @intCast(self.struct_descriptors.items.len);
+        try self.struct_descriptors.append(self.allocator, .{
+            .field_count = @intCast(struct_data.keys.len),
+            .heap_bitmap = bitmap,
+        });
+        try self.type_id_to_struct_descriptor_idx.put(value.type_id, id);
+        return id;
+    }
+
+    fn genStructStore(self: *Self, struct_reg: u8, field_index: u8, value: *const ir.Value) !void {
+        const struct_store = bc.Instruction{
+            .op = .STRUCT_STORE,
+            .a = struct_reg,
+            .b = field_index,
+            .c = try self.genValue(value, try self.consumeRegister()),
+        };
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, struct_store);
+    }
+
+    fn genUnionInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const union_init = value.data.union_init;
+        const desc_id = try self.getOrCreateUnionDescriptor(value.type_id);
+
+        var init_inst = bc.Instruction{ .op = .UNION_INIT, .a = target_reg };
+        init_inst.putBEx(desc_id);
+        try self.chunk_instructions.append(self.allocator, init_inst);
+        try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
+
+        if (union_init.tag) |tag_name| {
+            if (union_init.value) |payload| {
+                const tag_index = try self.unionTagIndex(value.type_id, tag_name);
+                const value_reg = try self.genValue(payload, try self.consumeRegister());
+                defer self.freeRegister();
+
+                try self.chunk_instructions.append(self.allocator, .{
+                    .op = .UNION_STORE,
+                    .a = target_reg,
+                    .b = @intCast(tag_index),
+                    .c = value_reg,
+                });
+            }
+        }
+    }
+
+    fn genNullBoxInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const null_box_init = value.data.null_box_init;
+
+        const val = null_box_init.value orelse {
+            try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+            self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
+            return;
+        };
+
+        const value_reg = try self.genValue(val, try self.consumeRegister());
+        defer self.freeRegister();
+
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, val.type_id)),
+            .c = value_reg,
+        });
+        try self.recordHeapMap();
+
+        // the ir value carries the inner type, but the register holds the box
+        self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
+    }
+
+    fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
+        if (bo.kind == .b_and or bo.kind == .b_or) {
+            return self.genShortCircuit(bo, target_reg);
+        }
+
+        const left_reg = try self.genValue(bo.left, try self.consumeRegister());
+        const right_reg = try self.genValue(bo.right, try self.consumeRegister());
+        defer self.freeRegisterN(2);
+
+        const op = opCodeFromBinaryOp(bo.kind);
+
+        const left_is_int = self.isIntegerType(bo.left.type_id);
+        const right_is_int = self.isIntegerType(bo.right.type_id);
+
+        switch (bo.kind) {
+            .f_add,
+            .f_sub,
+            .f_mult,
+            .f_div,
+            .f_mod,
+            .f_cmp_eq,
+            .f_cmp_neq,
+            .f_cmp_lt,
+            .f_cmp_le,
+            .f_cmp_gt,
+            .f_cmp_ge,
+            => {
+                if (left_is_int) {
+                    const left_to_float = bc.Instruction{
+                        .op = .I_TO_F,
+                        .a = left_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, left_to_float);
+                }
+
+                if (right_is_int) {
+                    const right_to_float = bc.Instruction{
+                        .op = .I_TO_F,
+                        .a = right_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, right_to_float);
+                }
+            },
+            .trunc_div => {
+                if (!left_is_int) {
+                    const left_to_int = bc.Instruction{
+                        .op = .F_TO_I,
+                        .a = left_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, left_to_int);
+                }
+
+                if (!right_is_int) {
+                    const right_to_int = bc.Instruction{
+                        .op = .F_TO_I,
+                        .a = right_reg,
+                    };
+                    try self.chunk_instructions.append(self.allocator, right_to_int);
+                }
+            },
+            else => {},
+        }
+
+        const bo_inst = bc.Instruction{
+            .op = op,
+            .a = target_reg,
+            .b = left_reg,
+            .c = right_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, bo_inst);
+        self.register_types[target_reg] = switch (bo.kind) {
+            .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => self.type_table.getPrimitive(.int),
+            .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => self.type_table.getPrimitive(.boolean),
+            .f_add, .f_sub, .f_mult, .f_div, .f_mod => self.type_table.getPrimitive(.float),
+            .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => self.type_table.getPrimitive(.boolean),
+            .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => self.type_table.getPrimitive(.boolean),
+        };
+    }
+
+    fn genShortCircuit(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
+        const saved_next_free = self.next_free_register;
+        const result_reg = try self.consumeRegister();
+        const boolean = self.type_table.getPrimitive(.boolean);
+
+        _ = try self.genValue(bo.left, result_reg);
+        self.register_types[result_reg] = boolean;
+        const skip_right_idx = self.chunk_instructions.items.len;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = result_reg });
+
+        var jump_to_end_idx: ?usize = null;
+        if (bo.kind == .b_or) {
+            jump_to_end_idx = self.chunk_instructions.items.len;
+            try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+            self.chunk_instructions.items[skip_right_idx].putBEx(try self.currentPosition());
+        }
+
+        _ = try self.genValue(bo.right, result_reg);
+        self.register_types[result_reg] = boolean;
+
+        const end_position = try self.currentPosition();
+        if (jump_to_end_idx) |jump| {
+            self.chunk_instructions.items[jump].putAEx(end_position);
+        } else {
+            self.chunk_instructions.items[skip_right_idx].putBEx(end_position);
+        }
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_reg });
+        self.register_types[target_reg] = boolean;
+        self.freeRegisterN(self.next_free_register - saved_next_free);
+    }
+
+    fn isIntegerType(self: *Self, type_id: tt.TypeId) bool {
+        const kind = self.type_table.getTypePtrById(type_id).kind;
+        return kind == .int or kind == .byte;
+    }
+
+    fn genUnaryOp(self: *Self, uo: ir.UnaryOp, target_reg: u8) !void {
+        const aux_reg = try self.genValue(uo.right, try self.consumeRegister());
+        defer self.freeRegister();
+
+        const op = opCodeFromUnaryOp(uo.kind);
+        const op_inst = bc.Instruction{
+            .op = op,
+            .a = target_reg,
+            .b = aux_reg,
+        };
+
+        try self.chunk_instructions.append(self.allocator, op_inst);
+
+        self.register_types[target_reg] = switch (uo.kind) {
+            .not => self.type_table.getPrimitive(.boolean),
+            .box_not_null => self.type_table.getPrimitive(.boolean),
+            .i_neg => self.type_table.getPrimitive(.int),
+            .f_neg => self.type_table.getPrimitive(.float),
+            .to_byte => self.type_table.getPrimitive(.byte),
+        };
+    }
+
+    fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const call_reg = try self.consumeRegister();
+            defer self.freeRegister();
+            try self.genFnCall(fc, value, call_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
+        for (fc.args) |arg| {
+            _ = try self.genValue(arg, try self.consumeRegister());
+        }
+
+        if (self.intrinsic_by_uid.get(fc.fn_uid)) |intrinsic| {
+            try self.genIntrinsicCall(intrinsic, fc, value, target_reg);
+            return;
+        }
+
+        const kind_count = try self.genArgKinds(fc);
+
+        var fn_call = bc.Instruction{
+            .op = .CALL,
+            .a = target_reg,
+        };
+
+        fn_call.putBEx(self.fn_index_by_uid.get(fc.fn_uid) orelse unreachable);
+
+        try self.chunk_instructions.append(self.allocator, fn_call);
+        try self.recordHeapMap();
+
+        self.freeRegisterN(fc.args.len + kind_count);
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+        const arg = target_reg + 1;
+        switch (intrinsic) {
+            .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),
+            .array_pop => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_POP, .a = target_reg, .b = arg }),
+            .bytes_len => try self.appendIntrinsicInstruction(.{ .op = .BYTES_LEN, .a = target_reg, .b = arg }),
+            .new_buffer => try self.appendIntrinsicInstruction(.{ .op = .BYTES_NEW, .a = target_reg, .b = arg }),
+            .to_byte => try self.appendIntrinsicInstruction(.{ .op = .I_TO_BYTE, .a = target_reg, .b = arg }),
+            .to_int => {
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+                try self.appendIntrinsicInstruction(.{ .op = .F_TO_I, .a = target_reg });
+            },
+            .to_float => {
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+                const is_float_arg = fc.args[0].type_id == self.type_table.getPrimitive(.float);
+                if (!is_float_arg) try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+            },
+            .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
+            .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
+            .task_spawn => {
+                const payload = self.type_table.getTypePtrById(value.type_id).kind.task.payload;
+                const payload_kind = valueTypeFromTypeId(self.type_table, payload);
+                try self.appendIntrinsicInstruction(.{ .op = .TASK_SPAWN, .a = target_reg, .b = arg, .c = @intFromEnum(payload_kind) });
+            },
+        }
+        self.freeRegisterN(fc.args.len);
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn appendIntrinsicInstruction(self: *Self, instruction: bc.Instruction) !void {
+        try self.chunk_instructions.append(self.allocator, instruction);
+        if (instruction.op.canTriggerGc()) try self.recordHeapMap();
+    }
+
+    fn genArgKinds(self: *Self, fc: ir.FnCall) !usize {
+        const params = self.native_params_by_uid.get(fc.fn_uid) orelse return 0;
+        var count: usize = 0;
+        for (params, fc.args) |param, arg| {
+            if (!self.isDynamicParam(param)) continue;
+            const kind_reg = try self.consumeRegister();
+            const kind_value = ir.Value{
+                .type_id = self.type_table.getPrimitive(.int),
+                .data = .{ .i_int = @intFromEnum(valueTypeFromTypeId(self.type_table, arg.type_id)) },
+            };
+            try self.genLoadConst(typedValueFromIr(&kind_value), kind_reg);
+            self.register_types[kind_reg] = self.type_table.getPrimitive(.int);
+            count += 1;
+        }
+        return count;
+    }
+
+    fn genCallValue(self: *Self, cv: ir.CallValue, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const call_reg = try self.consumeRegister();
+            defer self.freeRegister();
+            try self.genCallValue(cv, value, call_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
+        _ = try self.genValue(cv.callee, target_reg);
+        for (cv.args) |arg| {
+            _ = try self.genValue(arg, try self.consumeRegister());
+        }
+
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CALL_VALUE, .a = target_reg });
+        try self.recordHeapMap();
+
+        self.freeRegisterN(cv.args.len);
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genMakeClosure(self: *Self, closure: ir.MakeClosure, value: *const ir.Value, target_reg: u8) !void {
+        if (target_reg + 1 != self.next_free_register) {
+            const closure_reg = try self.consumeRegister();
+            defer self.freeRegister();
+            try self.genMakeClosure(closure, value, closure_reg);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = closure_reg });
+            self.register_types[target_reg] = value.type_id;
+            return;
+        }
+
+        for (closure.sources) |source| {
+            _ = try self.genValue(source, try self.consumeRegister());
+        }
+        var make = bc.Instruction{ .op = .MAKE_CLOSURE, .a = target_reg };
+        make.putBEx(self.fn_index_by_uid.get(closure.fn_uid) orelse unreachable);
+        try self.chunk_instructions.append(self.allocator, make);
+        try self.recordHeapMap();
+
+        self.freeRegisterN(closure.sources.len);
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genFailingCall(self: *Self, call: *const ir.Value, value: *const ir.Value, target_reg: u8, handler: FailingCallHandler) !void {
+        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
+        const call_reg = try self.consumeRegister();
+        defer self.freeRegister();
+
+        try self.genCall(call, call_reg);
+        self.register_types[call_reg] = error_union.error_set;
+
+        std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op.canFail());
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+        const jump_ok_idx = self.chunk_instructions.items.len - 1;
+
+        switch (handler) {
+            .try_call => |tc| {
+                const op: bc.OpCode = if (tc.is_top_level) .PANIC_ERR else .RETURN_ERR;
+                try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = call_reg });
+            },
+            .catch_call => |cc| switch (cc.fallback) {
+                .value => |fallback| {
+                    _ = try self.genValue(fallback, call_reg);
+                    if (cc.is_success_boxed) {
+                        return self.genBoxedCatchJoin(error_union.payload, value, call_reg, target_reg, jump_ok_idx);
+                    }
+                },
+                .block => |block| {
+                    const saved_next_free = self.next_free_register;
+                    try self.bindVariable(block.capture_uid, call_reg);
+                    try self.genInstructionBlock(block.instructions);
+                    self.freeRegisterN(self.next_free_register - saved_next_free);
+                    _ = try self.genVoidValue(call_reg);
+                },
+            },
+        }
+
+        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genCall(self: *Self, call: *const ir.Value, target_reg: u8) !void {
+        switch (call.data) {
+            .fn_call => |fc| try self.genFnCall(fc, call, target_reg),
+            .call_value => |cv| try self.genCallValue(cv, call, target_reg),
+            else => unreachable,
+        }
+    }
+
+    fn genBoxedCatchJoin(self: *Self, payload: tt.TypeId, value: *const ir.Value, call_reg: u8, target_reg: u8, jump_ok_idx: usize) !void {
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
+        const jump_join_idx = self.chunk_instructions.items.len - 1;
+
+        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
+        self.register_types[call_reg] = payload;
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = call_reg,
+            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, payload)),
+            .c = call_reg,
+        });
+        try self.recordHeapMap();
+
+        self.chunk_instructions.items[jump_join_idx].putAEx(try self.currentPosition());
+        self.register_types[call_reg] = value.type_id;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
+        self.register_types[target_reg] = value.type_id;
+    }
+
+    fn bindVariable(self: *Self, uid: usize, reg: u8) !void {
+        try self.var_register_id_by_uid.put(uid, reg);
+    }
+
+    fn genVoidValue(self: *Self, target_reg: u8) !u8 {
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+        self.register_types[target_reg] = self.type_table.getPrimitive(.void);
+        return target_reg;
+    }
+
+    fn genIntToFloat(self: *Self, operand: *const ir.Value, result_type: tt.TypeId, target_register: u8) !void {
+        if (!self.type_table.getTypePtrById(operand.type_id).is_nullable) {
+            _ = try self.genValue(operand, target_register);
+            try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = target_register });
+            self.register_types[target_register] = result_type;
+            return;
+        }
+        const saved_next_free = self.next_free_register;
+        const operand_register = try self.genValue(operand, try self.consumeRegister());
+        const condition_register = try self.consumeRegister();
+        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_register);
+        self.register_types[target_register] = result_type;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_NNULL, .a = condition_register, .b = operand_register });
+        self.register_types[condition_register] = self.type_table.getPrimitive(.boolean);
+        const null_jump_index = self.chunk_instructions.items.len;
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_register });
+        const number_register = try self.consumeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_UNWRAP, .a = number_register, .b = operand_register });
+        try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = number_register });
+        self.register_types[number_register] = self.type_table.getPrimitive(.float);
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_register,
+            .b = @intFromEnum(v.ValueType.float64),
+            .c = number_register,
+        });
+        try self.recordHeapMap();
+        self.chunk_instructions.items[null_jump_index].putBEx(try self.currentPosition());
+        self.freeRegisterN(self.next_free_register - saved_next_free);
+    }
+
+    fn genUnaryOpcode(self: *Self, op: bc.OpCode, operand: *const ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
+        const saved_next_free = self.next_free_register;
+        const operand_register = try self.genValue(operand, try self.consumeRegister());
+        try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = target_reg, .b = operand_register });
+        self.register_types[target_reg] = result_type;
+        self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
     fn isBuiltInSteps(value: *const ir.Value) bool {
@@ -407,10 +1380,6 @@ pub const BytecodeGen = struct {
             .try_call, .catch_call, .block_value => true,
             .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null, .func_ref => false,
         };
-    }
-
-    fn bindVariable(self: *Self, uid: usize, reg: u8) !void {
-        try self.var_register_id_by_uid.put(uid, reg);
     }
 
     fn genBranchIf(self: *Self, ifStmt: ir.BranchIf) !void {
@@ -568,21 +1537,17 @@ pub const BytecodeGen = struct {
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
-    fn genBreak(self: *Self) !void {
-        try self.break_patches.append(self.allocator, self.chunk_instructions.items.len);
-        try self.chunk_instructions.append(self.allocator, bc.Instruction{ .op = .JUMP });
-    }
-
-    fn genContinue(self: *Self) !void {
-        try self.continue_patches.append(self.allocator, self.chunk_instructions.items.len);
-        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
-    }
-
     fn pushLoopCtx(self: *Self) !void {
         try self.loop_stack.append(self.allocator, LoopContext{
             .first_break_patch_index = self.break_patches.items.len,
             .first_continue_patch_index = self.continue_patches.items.len,
         });
+    }
+
+    fn genTrueValue(self: *Self, target_reg: u8) !u8 {
+        try self.genLoadConst(.{ .value = .{ .bool = true }, .type = .bool }, target_reg);
+        self.register_types[target_reg] = self.type_table.getPrimitive(.boolean);
+        return target_reg;
     }
 
     fn popLoopCtx(self: *Self) !void {
@@ -592,172 +1557,6 @@ pub const BytecodeGen = struct {
             self.chunk_instructions.items[patch_index].putAEx(loop_end);
         }
         self.break_patches.shrinkRetainingCapacity(ctx.first_break_patch_index);
-    }
-
-    fn bindExtern(self: *Self, ext: ir.Extern) !bc.Function {
-        const binding = natives.bindings.get(ext.identifier) orelse @panic("extern without binding");
-        const num_args: u8 = @intCast(ext.params.len);
-        const kind: bc.FunctionKind = switch (binding) {
-            .native => |func| blk: {
-                try self.native_params_by_uid.put(ext.uid, ext.params);
-                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
-            },
-            .intrinsic => |intrinsic| blk: {
-                try self.intrinsic_by_uid.put(ext.uid, intrinsic);
-                break :blk .{ .intrinsic = intrinsic };
-            },
-        };
-        return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
-    }
-
-    fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {
-        return param.type_id == self.type_table.getPrimitive(.dynamic);
-    }
-
-    fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
-        var count: u8 = 0;
-        for (params) |param| {
-            if (self.isDynamicParam(param)) count += 1;
-        }
-        return count;
-    }
-
-    fn genArgKinds(self: *Self, fc: ir.FnCall) !usize {
-        const params = self.native_params_by_uid.get(fc.fn_uid) orelse return 0;
-        var count: usize = 0;
-        for (params, fc.args) |param, arg| {
-            if (!self.isDynamicParam(param)) continue;
-            const kind_reg = try self.consumeRegister();
-            const kind_value = ir.Value{
-                .type_id = self.type_table.getPrimitive(.int),
-                .data = .{ .i_int = @intFromEnum(valueTypeFromTypeId(self.type_table, arg.type_id)) },
-            };
-            try self.genLoadConst(typedValueFromIr(&kind_value), kind_reg);
-            self.register_types[kind_reg] = self.type_table.getPrimitive(.int);
-            count += 1;
-        }
-        return count;
-    }
-
-    fn genFnCall(self: *Self, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
-        if (target_reg + 1 != self.next_free_register) {
-            const call_reg = try self.consumeRegister();
-            defer self.freeRegister();
-            try self.genFnCall(fc, value, call_reg);
-            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
-            self.register_types[target_reg] = value.type_id;
-            return;
-        }
-
-        for (fc.args) |arg| {
-            _ = try self.genValue(arg, try self.consumeRegister());
-        }
-
-        if (self.intrinsic_by_uid.get(fc.fn_uid)) |intrinsic| {
-            try self.genIntrinsicCall(intrinsic, fc, value, target_reg);
-            return;
-        }
-
-        const kind_count = try self.genArgKinds(fc);
-
-        var fn_call = bc.Instruction{
-            .op = .CALL,
-            .a = target_reg,
-        };
-
-        fn_call.putBEx(self.fn_index_by_uid.get(fc.fn_uid) orelse unreachable);
-
-        try self.chunk_instructions.append(self.allocator, fn_call);
-        try self.recordHeapMap();
-
-        self.freeRegisterN(fc.args.len + kind_count);
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genCallValue(self: *Self, cv: ir.CallValue, value: *const ir.Value, target_reg: u8) !void {
-        if (target_reg + 1 != self.next_free_register) {
-            const call_reg = try self.consumeRegister();
-            defer self.freeRegister();
-            try self.genCallValue(cv, value, call_reg);
-            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
-            self.register_types[target_reg] = value.type_id;
-            return;
-        }
-
-        _ = try self.genValue(cv.callee, target_reg);
-        for (cv.args) |arg| {
-            _ = try self.genValue(arg, try self.consumeRegister());
-        }
-
-        try self.chunk_instructions.append(self.allocator, .{ .op = .CALL_VALUE, .a = target_reg });
-        try self.recordHeapMap();
-
-        self.freeRegisterN(cv.args.len);
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genMakeClosure(self: *Self, closure: ir.MakeClosure, value: *const ir.Value, target_reg: u8) !void {
-        if (target_reg + 1 != self.next_free_register) {
-            const closure_reg = try self.consumeRegister();
-            defer self.freeRegister();
-            try self.genMakeClosure(closure, value, closure_reg);
-            try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = closure_reg });
-            self.register_types[target_reg] = value.type_id;
-            return;
-        }
-
-        for (closure.sources) |source| {
-            _ = try self.genValue(source, try self.consumeRegister());
-        }
-        var make = bc.Instruction{ .op = .MAKE_CLOSURE, .a = target_reg };
-        make.putBEx(self.fn_index_by_uid.get(closure.fn_uid) orelse unreachable);
-        try self.chunk_instructions.append(self.allocator, make);
-        try self.recordHeapMap();
-
-        self.freeRegisterN(closure.sources.len);
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genCall(self: *Self, call: *const ir.Value, target_reg: u8) !void {
-        switch (call.data) {
-            .fn_call => |fc| try self.genFnCall(fc, call, target_reg),
-            .call_value => |cv| try self.genCallValue(cv, call, target_reg),
-            else => unreachable,
-        }
-    }
-
-    fn genIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
-        const arg = target_reg + 1;
-        switch (intrinsic) {
-            .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),
-            .array_pop => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_POP, .a = target_reg, .b = arg }),
-            .bytes_len => try self.appendIntrinsicInstruction(.{ .op = .BYTES_LEN, .a = target_reg, .b = arg }),
-            .new_buffer => try self.appendIntrinsicInstruction(.{ .op = .BYTES_NEW, .a = target_reg, .b = arg }),
-            .to_byte => try self.appendIntrinsicInstruction(.{ .op = .I_TO_BYTE, .a = target_reg, .b = arg }),
-            .to_int => {
-                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
-                try self.appendIntrinsicInstruction(.{ .op = .F_TO_I, .a = target_reg });
-            },
-            .to_float => {
-                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
-                const is_float_arg = fc.args[0].type_id == self.type_table.getPrimitive(.float);
-                if (!is_float_arg) try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
-            },
-            .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
-            .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
-            .task_spawn => {
-                const payload = self.type_table.getTypePtrById(value.type_id).kind.task.payload;
-                const payload_kind = valueTypeFromTypeId(self.type_table, payload);
-                try self.appendIntrinsicInstruction(.{ .op = .TASK_SPAWN, .a = target_reg, .b = arg, .c = @intFromEnum(payload_kind) });
-            },
-        }
-        self.freeRegisterN(fc.args.len);
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn appendIntrinsicInstruction(self: *Self, instruction: bc.Instruction) !void {
-        try self.chunk_instructions.append(self.allocator, instruction);
-        if (instruction.op.canTriggerGc()) try self.recordHeapMap();
     }
 
     fn genReturn(self: *Self, return_stmt: ir.ReturnStmt) !void {
@@ -802,477 +1601,6 @@ pub const BytecodeGen = struct {
         tail_call.putBEx(fn_index);
         try self.chunk_instructions.append(self.allocator, tail_call);
         self.freeRegisterN(fc.args.len + 1);
-    }
-
-    fn genValue(self: *Self, value: *const ir.Value, target_reg: u8) anyerror!u8 {
-        switch (value.data) {
-            .i_int, .i_float, .i_bool, .i_null, .i_void => {
-                try self.genLoadConst(typedValueFromIr(value), target_reg);
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .i_string => |s| {
-                try self.genLoadString(s, target_reg);
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .string_interpolation => |parts| try self.genStringBuild(parts, value.type_id, target_reg),
-
-            .indexed => |idx| {
-                try self.genIndexedLoad(idx, value, target_reg);
-            },
-
-            .identifier => |id| {
-                const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse return BytecodeError.UndefinedVariable;
-                if (self.boxed_type_by_uid.get(id.uid)) |boxed_type| {
-                    try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = symbol_reg });
-                    self.register_types[target_reg] = boxed_type;
-                    return target_reg;
-                }
-
-                const inst = bc.Instruction{
-                    .op = .LOAD,
-                    .a = target_reg,
-                    .b = symbol_reg,
-                };
-
-                try self.chunk_instructions.append(self.allocator, inst);
-                self.register_types[target_reg] = self.register_types[symbol_reg];
-            },
-
-            .i_array => {
-                try self.genArrayInit(value, target_reg);
-            },
-
-            .struct_init => {
-                try self.genStructInit(value, target_reg);
-            },
-
-            .union_init => {
-                try self.genUnionInit(value, target_reg);
-            },
-
-            .null_box_init => {
-                try self.genNullBoxInit(value, target_reg);
-            },
-
-            .union_tag => |un| {
-                const union_reg = try self.genValue(un, try self.consumeRegister());
-                defer self.freeRegister();
-                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_TAG, .a = target_reg, .b = union_reg });
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .union_payload => |un| {
-                const union_reg = try self.genValue(un, try self.consumeRegister());
-                defer self.freeRegister();
-                try self.chunk_instructions.append(self.allocator, .{ .op = .UNION_PAYLOAD, .a = target_reg, .b = union_reg });
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .binary_op => |bo| {
-                try self.genBinOp(bo, target_reg);
-            },
-
-            .unary_op => |uo| {
-                try self.genUnaryOp(uo, target_reg);
-            },
-
-            .fn_call => |fc| {
-                try self.genFnCall(fc, value, target_reg);
-            },
-
-            .func_ref => |func_ref| {
-                var load = bc.Instruction{ .op = .LOAD_FUNC, .a = target_reg };
-                load.putBEx(self.fn_index_by_uid.get(func_ref.fn_uid) orelse unreachable);
-                try self.chunk_instructions.append(self.allocator, load);
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .call_value => |cv| {
-                try self.genCallValue(cv, value, target_reg);
-            },
-
-            .make_closure => |closure| {
-                try self.genMakeClosure(closure, value, target_reg);
-            },
-
-            .capture_ref => |capture| {
-                try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = capture.index });
-                if (capture.is_boxed) {
-                    try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = target_reg });
-                }
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .capture_raw => |index| {
-                try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = index });
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .var_box => |uid| {
-                const cell_reg = self.var_register_id_by_uid.get(uid) orelse return BytecodeError.UndefinedVariable;
-                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = cell_reg });
-                self.register_types[target_reg] = value.type_id;
-            },
-
-            .try_call => |tc| {
-                try self.genFailingCall(tc.call, value, target_reg, .{ .try_call = tc });
-            },
-
-            .catch_call => |cc| {
-                try self.genFailingCall(cc.call, value, target_reg, .{ .catch_call = cc });
-            },
-            .block_value => |block| {
-                const saved_variables = try self.var_register_id_by_uid.clone();
-                defer {
-                    self.var_register_id_by_uid.deinit();
-                    self.var_register_id_by_uid = saved_variables;
-                }
-                const saved_next_free = self.next_free_register;
-                const result_register = try self.consumeRegister();
-                try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, result_register);
-                self.register_types[result_register] = value.type_id;
-                try self.var_register_id_by_uid.put(block.result_uid, result_register);
-                try self.genInstructionBlock(block.instructions);
-                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_register });
-                self.register_types[target_reg] = value.type_id;
-                self.freeRegisterN(self.next_free_register - saved_next_free);
-            },
-            .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
-            .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
-            .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
-        }
-
-        return target_reg;
-    }
-
-    const max_build_parts = 32;
-
-    fn isFormattedLate(kind: v.ValueType) bool {
-        return switch (kind) {
-            .int64, .float64, .bool, .null, .string => true,
-            else => false,
-        };
-    }
-
-    fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
-        const build_reg = try self.consumeRegister();
-        defer self.freeRegister();
-        var kinds: std.ArrayList(v.ValueType) = .empty;
-        defer kinds.deinit(self.allocator);
-        var index: usize = 0;
-        var has_previous = false;
-        while (index < parts.len) {
-            const saved_next_free = self.next_free_register;
-            kinds.clearRetainingCapacity();
-            if (has_previous) {
-                const previous_reg = try self.consumeRegister();
-                try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = previous_reg, .b = build_reg });
-                self.register_types[previous_reg] = result_type;
-                try kinds.append(self.allocator, .string);
-            }
-            while (index < parts.len and kinds.items.len < max_build_parts) : (index += 1) {
-                const part_reg = try self.genValue(parts[index], try self.consumeRegister());
-                const kind = valueTypeFromTypeId(self.type_table, parts[index].type_id);
-                if (!isFormattedLate(kind)) {
-                    try self.chunk_instructions.append(self.allocator, .{ .op = .TO_STRING, .a = part_reg, .b = part_reg, .c = @intFromEnum(kind) });
-                    try self.recordHeapMap();
-                    self.register_types[part_reg] = result_type;
-                    try kinds.append(self.allocator, .string);
-                    continue;
-                }
-                try kinds.append(self.allocator, kind);
-            }
-            var build = bc.Instruction{ .op = .STR_BUILD, .a = build_reg };
-            build.putBEx(@intCast(self.chunk_build_recipes.items.len));
-            try self.chunk_build_recipes.append(self.allocator, try self.allocator.dupe(v.ValueType, kinds.items));
-            try self.chunk_instructions.append(self.allocator, build);
-            try self.recordHeapMap();
-            self.register_types[build_reg] = result_type;
-            self.freeRegisterN(self.next_free_register - saved_next_free);
-            has_previous = true;
-        }
-        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = build_reg });
-        self.register_types[target_reg] = result_type;
-    }
-
-    fn genUnaryOpcode(self: *Self, op: bc.OpCode, operand: *const ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
-        const saved_next_free = self.next_free_register;
-        const operand_register = try self.genValue(operand, try self.consumeRegister());
-        try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = target_reg, .b = operand_register });
-        self.register_types[target_reg] = result_type;
-        self.freeRegisterN(self.next_free_register - saved_next_free);
-    }
-
-    fn genIntToFloat(self: *Self, operand: *const ir.Value, result_type: tt.TypeId, target_register: u8) !void {
-        if (!self.type_table.getTypePtrById(operand.type_id).is_nullable) {
-            _ = try self.genValue(operand, target_register);
-            try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = target_register });
-            self.register_types[target_register] = result_type;
-            return;
-        }
-        const saved_next_free = self.next_free_register;
-        const operand_register = try self.genValue(operand, try self.consumeRegister());
-        const condition_register = try self.consumeRegister();
-        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_register);
-        self.register_types[target_register] = result_type;
-        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_NNULL, .a = condition_register, .b = operand_register });
-        self.register_types[condition_register] = self.type_table.getPrimitive(.boolean);
-        const null_jump_index = self.chunk_instructions.items.len;
-        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = condition_register });
-        const number_register = try self.consumeRegister();
-        try self.chunk_instructions.append(self.allocator, .{ .op = .NULL_BOX_UNWRAP, .a = number_register, .b = operand_register });
-        try self.chunk_instructions.append(self.allocator, .{ .op = .I_TO_F, .a = number_register });
-        self.register_types[number_register] = self.type_table.getPrimitive(.float);
-        try self.chunk_instructions.append(self.allocator, .{
-            .op = .NULL_BOX_INIT,
-            .a = target_register,
-            .b = @intFromEnum(v.ValueType.float64),
-            .c = number_register,
-        });
-        try self.recordHeapMap();
-        self.chunk_instructions.items[null_jump_index].putBEx(try self.currentPosition());
-        self.freeRegisterN(self.next_free_register - saved_next_free);
-    }
-
-    fn genFailingCall(self: *Self, call: *const ir.Value, value: *const ir.Value, target_reg: u8, handler: FailingCallHandler) !void {
-        const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
-        const call_reg = try self.consumeRegister();
-        defer self.freeRegister();
-
-        try self.genCall(call, call_reg);
-        self.register_types[call_reg] = error_union.error_set;
-
-        std.debug.assert(self.chunk_instructions.items[self.chunk_instructions.items.len - 1].op.canFail());
-        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
-        const jump_ok_idx = self.chunk_instructions.items.len - 1;
-
-        switch (handler) {
-            .try_call => |tc| {
-                const op: bc.OpCode = if (tc.is_top_level) .PANIC_ERR else .RETURN_ERR;
-                try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = call_reg });
-            },
-            .catch_call => |cc| switch (cc.fallback) {
-                .value => |fallback| {
-                    _ = try self.genValue(fallback, call_reg);
-                    if (cc.is_success_boxed) {
-                        return self.genBoxedCatchJoin(error_union.payload, value, call_reg, target_reg, jump_ok_idx);
-                    }
-                },
-                .block => |block| {
-                    const saved_next_free = self.next_free_register;
-                    try self.bindVariable(block.capture_uid, call_reg);
-                    try self.genInstructionBlock(block.instructions);
-                    self.freeRegisterN(self.next_free_register - saved_next_free);
-                    _ = try self.genVoidValue(call_reg);
-                },
-            },
-        }
-
-        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
-        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genBoxedCatchJoin(self: *Self, payload: tt.TypeId, value: *const ir.Value, call_reg: u8, target_reg: u8, jump_ok_idx: usize) !void {
-        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
-        const jump_join_idx = self.chunk_instructions.items.len - 1;
-
-        self.chunk_instructions.items[jump_ok_idx].putAEx(try self.currentPosition());
-        self.register_types[call_reg] = payload;
-        try self.chunk_instructions.append(self.allocator, .{
-            .op = .NULL_BOX_INIT,
-            .a = call_reg,
-            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, payload)),
-            .c = call_reg,
-        });
-        try self.recordHeapMap();
-
-        self.chunk_instructions.items[jump_join_idx].putAEx(try self.currentPosition());
-        self.register_types[call_reg] = value.type_id;
-        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = call_reg });
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
-        const target_type = self.type_table.getTypePtrById(idx.target.type_id);
-
-        // sema only allows a nullable target through `?.`
-        if (target_type.is_nullable) {
-            const is_instance_member = switch (target_type.kind) {
-                .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
-                .@"union" => |u| u.variants.contains(idx.index.data.i_string),
-                else => false,
-            };
-            if (is_instance_member) {
-                return self.genNullableIndexedLoad(idx, value, target_reg);
-            }
-        }
-
-        switch (target_type.kind) {
-            .@"struct" => |@"struct"| {
-                const field_name = idx.index.data.i_string;
-                if (@"struct".field_index_by_name.get(field_name)) |field_index| {
-                    const struct_reg = try self.genValue(idx.target, try self.consumeRegister());
-                    defer self.freeRegister();
-
-                    try self.genStructLoad(target_reg, struct_reg, @intCast(field_index));
-                    self.register_types[target_reg] = value.type_id;
-                    return;
-                }
-                return BytecodeError.UndefinedVariable;
-            },
-            .@"enum" => return BytecodeError.UndefinedVariable,
-            .array => {
-                const array_reg = try self.genValue(idx.target, try self.consumeRegister());
-                defer self.freeRegister();
-                try self.genArrayLoad(target_reg, array_reg, idx.index);
-                self.register_types[target_reg] = value.type_id;
-            },
-            .buffer, .string => {
-                const buffer_reg = try self.genValue(idx.target, try self.consumeRegister());
-                const index_reg = try self.genValue(idx.index, try self.consumeRegister());
-                defer self.freeRegisterN(2);
-                try self.chunk_instructions.append(self.allocator, .{ .op = .BYTES_GET, .a = target_reg, .b = buffer_reg, .c = index_reg });
-                self.register_types[target_reg] = value.type_id;
-            },
-            .@"union" => |@"union"| {
-                const field_name = idx.index.data.i_string;
-
-                if (!@"union".variants.contains(field_name)) return BytecodeError.UndefinedVariable;
-
-                const union_reg = try self.genValue(idx.target, try self.consumeRegister());
-                defer self.freeRegister();
-
-                try self.genUnionLoad(target_reg, union_reg, idx.target.type_id, field_name);
-                self.register_types[target_reg] = value.type_id;
-            },
-            else => unreachable,
-        }
-    }
-
-    // Optional chaining (`target?.member`): the result is null when the target is null.
-    //   cond   = target != null
-    //   result = null
-    //   JUMP_IF_FALSE cond -> end
-    //   result = <member load>, boxed when the member is a non-nullable primitive
-    // end:
-    fn genNullableIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
-        const target_type = self.type_table.getTypePtrById(idx.target.type_id);
-        const member_name = idx.index.data.i_string;
-
-        const obj_reg = try self.genValue(idx.target, try self.consumeRegister());
-        const cond_reg = try self.consumeRegister();
-        defer self.freeRegisterN(2);
-
-        try self.chunk_instructions.append(self.allocator, .{
-            .op = .NULL_BOX_NNULL,
-            .a = cond_reg,
-            .b = obj_reg,
-        });
-        self.register_types[cond_reg] = self.type_table.getPrimitive(.boolean);
-
-        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
-        self.register_types[target_reg] = value.type_id;
-
-        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = cond_reg });
-        const jump_idx = self.chunk_instructions.items.len - 1;
-
-        switch (target_type.kind) {
-            .@"struct" => |@"struct"| {
-                const field_index = @"struct".field_index_by_name.get(member_name) orelse unreachable;
-                const field_type_id = (@"struct".fields.get(member_name) orelse unreachable).type_id;
-                const field_kind = valueTypeFromTypeId(self.type_table, field_type_id);
-
-                if (field_kind.isHeapType()) {
-                    try self.genStructLoad(target_reg, obj_reg, @intCast(field_index));
-                } else {
-                    const raw_reg = try self.consumeRegister();
-                    defer self.freeRegister();
-
-                    try self.genStructLoad(raw_reg, obj_reg, @intCast(field_index));
-                    self.register_types[raw_reg] = field_type_id;
-
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .NULL_BOX_INIT,
-                        .a = target_reg,
-                        .b = @intFromEnum(field_kind),
-                        .c = raw_reg,
-                    });
-                    try self.recordHeapMap();
-                }
-            },
-            // UNION_LOAD already boxes primitive variants
-            .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, member_name),
-            else => unreachable,
-        }
-
-        self.chunk_instructions.items[jump_idx].putBEx(try self.currentPosition());
-        self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genUnionLoad(self: *Self, target_reg: u8, union_reg: u8, union_type_id: tt.TypeId, variant_name: []const u8) !void {
-        const tag_index = try self.unionTagIndex(union_type_id, variant_name);
-
-        try self.chunk_instructions.append(self.allocator, .{
-            .op = .UNION_LOAD,
-            .a = target_reg,
-            .b = union_reg,
-            .c = @intCast(tag_index),
-        });
-        try self.recordHeapMap();
-    }
-
-    fn genArrayInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const array_type = self.type_table.getTypePtrById(value.type_id);
-        const array_inner_type_id = array_type.kind.array;
-
-        const init_inst = bc.Instruction{
-            .op = .ARRAY_INIT,
-            .a = target_reg,
-            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, array_inner_type_id)),
-            .c = @intCast(@min(@max(value.data.i_array.values.len, 8), 255)),
-        };
-
-        try self.chunk_instructions.append(self.allocator, init_inst);
-        try self.recordHeapMap();
-        self.register_types[target_reg] = value.type_id;
-
-        for (value.data.i_array.values) |vl| {
-            try self.genArrayAppend(vl, target_reg);
-        }
-    }
-
-    fn genArrayLoad(self: *Self, target_reg: u8, array_reg: u8, index_value: *ir.Value) !void {
-        const index_reg = try self.genValue(index_value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const load_inst = bc.Instruction{
-            .op = .ARRAY_LOAD,
-            .a = target_reg,
-            .b = array_reg,
-            .c = index_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, load_inst);
-    }
-
-    fn genArrayStore(self: *Self, array_reg: u8, index_value: *ir.Value, value: *ir.Value) !void {
-        const index_reg = try self.genValue(index_value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const value_reg = try self.genValue(value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const store_inst = bc.Instruction{
-            .op = .ARRAY_STORE,
-            .a = array_reg,
-            .b = index_reg,
-            .c = value_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, store_inst);
     }
 
     fn genUpdateArrayValue(self: *Self, stmt: ir.UpdateIndexed) !void {
@@ -1324,77 +1652,6 @@ pub const BytecodeGen = struct {
         }
     }
 
-    fn genArrayAppend(self: *Self, value: *const ir.Value, array_reg: u8) !void {
-        const v_reg = try self.genValue(value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const append_inst = bc.Instruction{
-            .op = .ARRAY_APPEND,
-            .a = array_reg,
-            .b = v_reg,
-        };
-        try self.chunk_instructions.append(self.allocator, append_inst);
-        try self.recordHeapMap();
-    }
-
-    fn genStructInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const @"struct" = value.data.struct_init;
-        const desc_id = try self.getOrCreateStructDescriptor(value);
-
-        var struct_init = bc.Instruction{
-            .op = .STRUCT_INIT,
-            .a = target_reg,
-        };
-        struct_init.putBEx(desc_id);
-
-        try self.chunk_instructions.append(self.allocator, struct_init);
-        try self.recordHeapMap();
-        self.register_types[target_reg] = value.type_id;
-
-        for (@"struct".values, 0..) |field_v, i| {
-            try self.genStructStore(target_reg, @intCast(i), field_v);
-        }
-    }
-
-    fn genStructStore(self: *Self, struct_reg: u8, field_index: u8, value: *const ir.Value) !void {
-        const struct_store = bc.Instruction{
-            .op = .STRUCT_STORE,
-            .a = struct_reg,
-            .b = field_index,
-            .c = try self.genValue(value, try self.consumeRegister()),
-        };
-        defer self.freeRegister();
-        try self.chunk_instructions.append(self.allocator, struct_store);
-    }
-
-    fn genStructLoad(self: *Self, target_reg: u8, struct_reg: u8, field_index: u8) !void {
-        const struct_load = bc.Instruction{
-            .op = .STRUCT_LOAD,
-            .a = target_reg,
-            .b = struct_reg,
-            .c = field_index,
-        };
-        try self.chunk_instructions.append(self.allocator, struct_load);
-    }
-
-    fn genLoadConst(self: *Self, const_val: TypedValue, target_reg: u8) !void {
-        const result = try self.const_id_by_value.getOrPut(const_val);
-        if (!result.found_existing) {
-            result.value_ptr.* = @intCast(self.chunk_constants.items.len);
-            try self.chunk_constants.append(self.allocator, const_val.value);
-            try self.chunk_constants_types.append(self.allocator, const_val.type);
-        }
-
-        var load_const = bc.Instruction{
-            .op = .LOAD_CONST,
-            .a = target_reg,
-        };
-
-        load_const.putBEx(@intCast(result.value_ptr.*));
-
-        try self.chunk_instructions.append(self.allocator, load_const);
-    }
-
     fn genUnwrapNullBox(self: *Self, stmt: ir.UnwrapNullBox, target_reg: u8) !u8 {
         const box_reg = try self.genValue(stmt.null_box, try self.consumeRegister());
         defer self.freeRegisterN(1);
@@ -1412,339 +1669,81 @@ pub const BytecodeGen = struct {
         return target_reg;
     }
 
-    fn genVoidValue(self: *Self, target_reg: u8) !u8 {
-        try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
-        self.register_types[target_reg] = self.type_table.getPrimitive(.void);
-        return target_reg;
+    fn genUpdateCapture(self: *Self, stmt: ir.UpdateCapture) !void {
+        const cell_reg = try self.consumeRegister();
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = cell_reg, .b = stmt.index });
+        self.register_types[cell_reg] = self.type_table.getPrimitive(.cell);
+        const value_reg = try self.genValue(stmt.value, try self.consumeRegister());
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_SET, .a = cell_reg, .b = value_reg });
     }
 
-    fn genTrueValue(self: *Self, target_reg: u8) !u8 {
-        try self.genLoadConst(.{ .value = .{ .bool = true }, .type = .bool }, target_reg);
-        self.register_types[target_reg] = self.type_table.getPrimitive(.boolean);
-        return target_reg;
+    fn genBreak(self: *Self) !void {
+        try self.break_patches.append(self.allocator, self.chunk_instructions.items.len);
+        try self.chunk_instructions.append(self.allocator, bc.Instruction{ .op = .JUMP });
     }
 
-    fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
-        const result = try self.string_id_by_text.getOrPut(s);
-        if (!result.found_existing) {
-            if (self.string_texts.items.len > std.math.maxInt(u16)) {
-                _ = self.string_id_by_text.remove(s);
-                return self.err_reporter.tooManyStrings();
-            }
-            result.value_ptr.* = @intCast(self.string_texts.items.len);
-            try self.string_texts.append(self.allocator, s);
-        }
-
-        const string_id = result.value_ptr.*;
-
-        var load_string = bc.Instruction{
-            .op = .LOAD_STRING,
-            .a = target_reg,
-        };
-
-        load_string.putBEx(string_id);
-        try self.chunk_instructions.append(self.allocator, load_string);
+    fn genContinue(self: *Self) !void {
+        try self.continue_patches.append(self.allocator, self.chunk_instructions.items.len);
+        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
     }
 
-    fn genBinOp(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
-        if (bo.kind == .b_and or bo.kind == .b_or) {
-            return self.genShortCircuit(bo, target_reg);
+    fn captureKinds(self: *Self, captures: []const ir.Capture) ![]const v.ValueType {
+        const kinds = try self.allocator.alloc(v.ValueType, captures.len);
+        for (captures, kinds) |capture, *kind| {
+            kind.* = if (capture.is_boxed) .cell else valueTypeFromTypeId(self.type_table, capture.type_id);
+        }
+        return kinds;
+    }
+
+    fn addFunction(self: *Self, funcs: *std.ArrayList(bc.Function), func: ir.Func) !void {
+        try self.fn_index_by_uid.put(func.uid, @intCast(funcs.items.len));
+        try funcs.append(self.allocator, try self.genFunction(func));
+    }
+
+    fn genFunction(self: *Self, func: ir.Func) !bc.Function {
+        self.enterFunction(func.identifier, func.origin);
+        self.next_free_register = @intCast(func.params.len);
+        self.peak_register = @intCast(func.params.len);
+        self.var_register_id_by_uid.clearRetainingCapacity();
+        @memset(&self.register_types, self.type_table.getPrimitive(.void));
+
+        for (func.params, 0..) |param, i| {
+            try self.var_register_id_by_uid.put(param.uid, @intCast(i));
+            self.register_types[i] = param.type_id;
         }
 
-        const left_reg = try self.genValue(bo.left, try self.consumeRegister());
-        const right_reg = try self.genValue(bo.right, try self.consumeRegister());
-        defer self.freeRegisterN(2);
-
-        const op = opCodeFromBinaryOp(bo.kind);
-
-        const left_is_int = self.isIntegerType(bo.left.type_id);
-        const right_is_int = self.isIntegerType(bo.right.type_id);
-
-        switch (bo.kind) {
-            .f_add,
-            .f_sub,
-            .f_mult,
-            .f_div,
-            .f_mod,
-            .f_cmp_eq,
-            .f_cmp_neq,
-            .f_cmp_lt,
-            .f_cmp_le,
-            .f_cmp_gt,
-            .f_cmp_ge,
-            => {
-                if (left_is_int) {
-                    const left_to_float = bc.Instruction{
-                        .op = .I_TO_F,
-                        .a = left_reg,
-                    };
-                    try self.chunk_instructions.append(self.allocator, left_to_float);
-                }
-
-                if (right_is_int) {
-                    const right_to_float = bc.Instruction{
-                        .op = .I_TO_F,
-                        .a = right_reg,
-                    };
-                    try self.chunk_instructions.append(self.allocator, right_to_float);
-                }
-            },
-            .trunc_div => {
-                if (!left_is_int) {
-                    const left_to_int = bc.Instruction{
-                        .op = .F_TO_I,
-                        .a = left_reg,
-                    };
-                    try self.chunk_instructions.append(self.allocator, left_to_int);
-                }
-
-                if (!right_is_int) {
-                    const right_to_int = bc.Instruction{
-                        .op = .F_TO_I,
-                        .a = right_reg,
-                    };
-                    try self.chunk_instructions.append(self.allocator, right_to_int);
-                }
-            },
-            else => {},
-        }
-
-        const bo_inst = bc.Instruction{
-            .op = op,
-            .a = target_reg,
-            .b = left_reg,
-            .c = right_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, bo_inst);
-        self.register_types[target_reg] = switch (bo.kind) {
-            .i_add, .i_sub, .i_mult, .i_mod, .trunc_div => self.type_table.getPrimitive(.int),
-            .i_cmp_eq, .i_cmp_neq, .i_cmp_lt, .i_cmp_le, .i_cmp_ge, .i_cmp_gt => self.type_table.getPrimitive(.boolean),
-            .f_add, .f_sub, .f_mult, .f_div, .f_mod => self.type_table.getPrimitive(.float),
-            .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => self.type_table.getPrimitive(.boolean),
-            .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => self.type_table.getPrimitive(.boolean),
+        return bc.Function{
+            .uid = func.uid,
+            .name = func.identifier,
+            .kind = .{ .dusk = try self.genFunctionChunk(func) },
         };
     }
 
-    fn genShortCircuit(self: *Self, bo: ir.BinaryOp, target_reg: u8) !void {
-        const saved_next_free = self.next_free_register;
-        const result_reg = try self.consumeRegister();
-        const boolean = self.type_table.getPrimitive(.boolean);
-
-        _ = try self.genValue(bo.left, result_reg);
-        self.register_types[result_reg] = boolean;
-        const skip_right_idx = self.chunk_instructions.items.len;
-        try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP_IF_FALSE, .a = result_reg });
-
-        var jump_to_end_idx: ?usize = null;
-        if (bo.kind == .b_or) {
-            jump_to_end_idx = self.chunk_instructions.items.len;
-            try self.chunk_instructions.append(self.allocator, .{ .op = .JUMP });
-            self.chunk_instructions.items[skip_right_idx].putBEx(try self.currentPosition());
+    fn copyErrorNames(self: *Self, error_names: []const []const u8) ![]const []const u8 {
+        const names = try self.allocator.alloc([]const u8, error_names.len);
+        for (error_names, 0..) |name, i| {
+            names[i] = try self.allocator.dupe(u8, name);
         }
-
-        _ = try self.genValue(bo.right, result_reg);
-        self.register_types[result_reg] = boolean;
-
-        const end_position = try self.currentPosition();
-        if (jump_to_end_idx) |jump| {
-            self.chunk_instructions.items[jump].putAEx(end_position);
-        } else {
-            self.chunk_instructions.items[skip_right_idx].putBEx(end_position);
-        }
-
-        try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = result_reg });
-        self.register_types[target_reg] = boolean;
-        self.freeRegisterN(self.next_free_register - saved_next_free);
+        return names;
     }
 
-    fn isIntegerType(self: *Self, type_id: tt.TypeId) bool {
-        const kind = self.type_table.getTypePtrById(type_id).kind;
-        return kind == .int or kind == .byte;
-    }
-
-    fn genUnaryOp(self: *Self, uo: ir.UnaryOp, target_reg: u8) !void {
-        const aux_reg = try self.genValue(uo.right, try self.consumeRegister());
+    fn genArrayStore(self: *Self, array_reg: u8, index_value: *ir.Value, value: *ir.Value) !void {
+        const index_reg = try self.genValue(index_value, try self.consumeRegister());
         defer self.freeRegister();
 
-        const op = opCodeFromUnaryOp(uo.kind);
-        const op_inst = bc.Instruction{
-            .op = op,
-            .a = target_reg,
-            .b = aux_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, op_inst);
-
-        self.register_types[target_reg] = switch (uo.kind) {
-            .not => self.type_table.getPrimitive(.boolean),
-            .box_not_null => self.type_table.getPrimitive(.boolean),
-            .i_neg => self.type_table.getPrimitive(.int),
-            .f_neg => self.type_table.getPrimitive(.float),
-            .to_byte => self.type_table.getPrimitive(.byte),
-        };
-    }
-
-    fn currentPosition(self: *Self) BytecodeError!u16 {
-        const position = self.chunk_instructions.items.len;
-        if (position <= std.math.maxInt(u16)) return @intCast(position);
-        return self.err_reporter.functionTooLong(self.current_function_name, self.current_function_loc);
-    }
-
-    fn freeRegister(self: *Self) void {
-        self.freeRegisterN(1);
-    }
-
-    fn freeRegisterN(self: *Self, n: usize) void {
-        const new_free: usize = @max(0, self.next_free_register - n);
-        for (new_free..self.next_free_register) |i| {
-            self.register_types[i] = self.type_table.getPrimitive(.void);
-        }
-        self.next_free_register = @intCast(new_free);
-    }
-
-    fn consumeRegister(self: *Self) !u8 {
-        if (self.next_free_register == std.math.maxInt(u8)) return self.err_reporter.tooManyRegisters(self.current_function_name, self.current_function_loc);
-        const id = self.next_free_register;
-        self.next_free_register += 1;
-        self.peak_register = @max(self.peak_register, self.next_free_register);
-        return id;
-    }
-
-    fn computeHeapBitmap(self: *Self) u256 {
-        var bitmap: u256 = 0;
-        for (0..self.peak_register) |i| {
-            const vt = valueTypeFromTypeId(self.type_table, self.register_types[i]);
-            if (vt.isHeapType()) {
-                bitmap |= @as(u256, 1) << @intCast(i);
-            }
-        }
-        return bitmap;
-    }
-
-    fn recordHeapMap(self: *Self) !void {
-        try self.recordHeapMapAt(try self.currentPosition() - 1);
-    }
-
-    fn recordHeapMapAt(self: *Self, pc: u16) !void {
-        try self.chunk_heap_maps.append(self.allocator, .{
-            .pc = pc,
-            .bitmap = self.computeHeapBitmap(),
-        });
-    }
-
-    fn getOrCreateStructDescriptor(self: *Self, value: *const ir.Value) !u16 {
-        if (self.type_id_to_struct_descriptor_idx.get(value.type_id)) |id| return id;
-
-        const struct_data = value.data.struct_init;
-        const struct_def = self.type_table.getTypePtrById(value.type_id).kind.@"struct";
-        var bitmap: u256 = 0;
-        // use the declared field types, the init values may be null or not yet boxed
-        for (struct_data.keys, 0..) |key, i| {
-            const field = struct_def.fields.get(key) orelse unreachable;
-            const vt = valueTypeFromTypeId(self.type_table, field.type_id);
-            if (vt.isHeapType()) {
-                bitmap |= @as(u256, 1) << @intCast(i);
-            }
-        }
-
-        const id: u16 = @intCast(self.struct_descriptors.items.len);
-        try self.struct_descriptors.append(self.allocator, .{
-            .field_count = @intCast(struct_data.keys.len),
-            .heap_bitmap = bitmap,
-        });
-        try self.type_id_to_struct_descriptor_idx.put(value.type_id, id);
-        return id;
-    }
-
-    fn genUnionInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const union_init = value.data.union_init;
-        const desc_id = try self.getOrCreateUnionDescriptor(value.type_id);
-
-        var init_inst = bc.Instruction{ .op = .UNION_INIT, .a = target_reg };
-        init_inst.putBEx(desc_id);
-        try self.chunk_instructions.append(self.allocator, init_inst);
-        try self.recordHeapMap();
-        self.register_types[target_reg] = value.type_id;
-
-        if (union_init.tag) |tag_name| {
-            if (union_init.value) |payload| {
-                const tag_index = try self.unionTagIndex(value.type_id, tag_name);
-                const value_reg = try self.genValue(payload, try self.consumeRegister());
-                defer self.freeRegister();
-
-                try self.chunk_instructions.append(self.allocator, .{
-                    .op = .UNION_STORE,
-                    .a = target_reg,
-                    .b = @intCast(tag_index),
-                    .c = value_reg,
-                });
-            }
-        }
-    }
-
-    fn getOrCreateUnionDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
-        if (self.type_id_to_union_descriptor_idx.get(type_id)) |id| return id;
-
-        const union_def = self.type_table.getTypePtrById(type_id).kind.@"union";
-
-        var tag_map = std.StringHashMap(u16).init(self.allocator);
-        var bitmap: u256 = 0;
-        var box_bitmap: u256 = 0;
-        const variant_kinds = try self.allocator.alloc(v.ValueType, union_def.variants.count());
-
-        for (union_def.variants_in_order, 0..) |variant_name, i| {
-            const tag: u16 = @intCast(i);
-            try tag_map.put(variant_name, tag);
-            const vt = valueTypeFromTypeId(self.type_table, union_def.variants.get(variant_name).?);
-            variant_kinds[tag] = vt;
-            if (vt.isHeapType()) {
-                bitmap |= @as(u256, 1) << @intCast(tag);
-            } else {
-                // reading a primitive variant yields ?T, which needs a null box
-                box_bitmap |= @as(u256, 1) << @intCast(tag);
-            }
-        }
-
-        const id: u16 = @intCast(self.union_descriptors.items.len);
-        try self.union_descriptors.append(self.allocator, .{
-            .heap_bitmap = bitmap,
-            .box_bitmap = box_bitmap,
-            .variant_kinds = variant_kinds,
-        });
-        try self.type_id_to_union_descriptor_idx.put(type_id, id);
-        try self.union_tag_by_type_id.put(type_id, tag_map);
-        return id;
-    }
-
-    fn unionTagIndex(self: *Self, type_id: tt.TypeId, name: []const u8) !u16 {
-        _ = try self.getOrCreateUnionDescriptor(type_id);
-        const tag_map = self.union_tag_by_type_id.get(type_id).?;
-        return tag_map.get(name) orelse error.UnableToFindSlot;
-    }
-
-    fn genNullBoxInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
-        const null_box_init = value.data.null_box_init;
-
-        const val = null_box_init.value orelse {
-            try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
-            self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
-            return;
-        };
-
-        const value_reg = try self.genValue(val, try self.consumeRegister());
+        const value_reg = try self.genValue(value, try self.consumeRegister());
         defer self.freeRegister();
 
-        try self.chunk_instructions.append(self.allocator, .{
-            .op = .NULL_BOX_INIT,
-            .a = target_reg,
-            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, val.type_id)),
+        const store_inst = bc.Instruction{
+            .op = .ARRAY_STORE,
+            .a = array_reg,
+            .b = index_reg,
             .c = value_reg,
-        });
-        try self.recordHeapMap();
+        };
 
-        // the ir value carries the inner type, but the register holds the box
-        self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
+        try self.chunk_instructions.append(self.allocator, store_inst);
     }
 };
 
