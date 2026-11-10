@@ -17,17 +17,6 @@ const ascii_whitespace = " \t\n\r\x0b\x0c";
 
 const ConversionError = error{ Invalid, Overflow };
 
-pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
-
-pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
-
-pub const Binding = union(enum) {
-    native: NativeFnPtr,
-    intrinsic: Intrinsic,
-};
-
-pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy, task_spawn };
-
 pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
@@ -72,6 +61,17 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "str_slice", Binding{ .native = &strSlice } },
     .{ "str_repeat", Binding{ .native = &strRepeat } },
 });
+
+pub const Binding = union(enum) {
+    native: NativeFnPtr,
+    intrinsic: Intrinsic,
+};
+
+pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
+
+pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
+
+pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy, task_spawn };
 
 pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const writer = vm.stdout orelse return ok(.{ .null = {} });
