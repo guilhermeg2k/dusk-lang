@@ -63,10 +63,10 @@ pub const VM = struct {
 
     fn runScheduler(self: *Self) !void {
         while (true) {
-            const batch = self.scheduler.readyCount();
+            const ready_task_count = self.scheduler.readyCount();
 
-            if (batch > 0) {
-                for (0..batch) |_| {
+            if (ready_task_count > 0) {
+                for (0..ready_task_count) |_| {
                     try self.runTask(self.scheduler.popReady().?);
                 }
                 if (self.event_loop.hasPendingOperations()) {

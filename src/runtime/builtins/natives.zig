@@ -70,7 +70,18 @@ pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResu
 
 pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
 
-pub const Intrinsic = enum { array_len, array_pop, bytes_len, new_buffer, to_byte, to_int, to_float, append, copy, task_spawn };
+pub const Intrinsic = enum {
+    array_len,
+    array_pop,
+    bytes_len,
+    new_buffer,
+    to_byte,
+    to_int,
+    to_float,
+    append,
+    copy,
+    task_spawn,
+};
 
 pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const writer = vm.stdout orelse return ok(.{ .null = {} });

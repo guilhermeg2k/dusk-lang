@@ -7,25 +7,25 @@
 - Closures (& fn as anything (argument, item, etc))
 - Tasks: `spawn`, `await`, `sleep` (libuv timers)
 
-## Version 0.18 - Youku
+## Version 0.16 - Shigeo
 
 - Modules
 - Privates~
-- Collections: Lists, Sets, HashMaps, Tuples
-
-## Version 0.19 - Shigeo
-
 - Libuv IO: files, TCP, DNS, processes (tasks wait on them like `sleep`)
-- Channels between tasks, cancelling a task, timeouts
+
+## Version 0.17 - Shigeo
+
+- Collections: Lists, Sets, HashMaps, Tuples
 
 ## Backlog
 
+- Files generation + caching (Each compilation step)
 - Code Formatter
 - Fuzz testing
 - Improve memory usage
 - Improve VM Performance
-- Files generation + caching (Each compilation step)
 - Improve int -> float promotion
 - Verify places where @panic should be used instead of unrecheable
 - Add more number notations
 - Generators (`yield`) on the task engine
+- Channels between tasks, cancelling a task, timeouts
