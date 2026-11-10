@@ -101,22 +101,28 @@ pub const RuntimeErrorReporter = struct {
     }
 
     pub fn outOfMemory() void {
-        if (@import("builtin").is_test) return;
-        std.debug.print("error: out of memory\n", .{});
+        print("error: out of memory\n", .{});
     }
 
     pub fn where(function: ?[]const u8, builtin: ?[]const u8) void {
-        if (@import("builtin").is_test) return;
         if (builtin) |name| {
-            if (function) |caller| return std.debug.print("  in builtin '{s}', called from function '{s}'\n", .{ name, caller });
-            return std.debug.print("  in builtin '{s}'\n", .{name});
+            if (function) |caller| {
+                return print("  in builtin '{s}', called from function '{s}'\n", .{ name, caller });
+            }
+            return print("  in builtin '{s}'\n", .{name});
         }
-        if (function) |name| std.debug.print("  in function '{s}'\n", .{name});
+        if (function) |name| {
+            print("  in function '{s}'\n", .{name});
+        }
     }
 
     fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {
-        if (@import("builtin").is_test) return err;
-        std.debug.print("error: " ++ fmt ++ "\n", args);
+        print("error: " ++ fmt ++ "\n", args);
         return err;
+    }
+
+    fn print(comptime fmt: []const u8, args: anytype) void {
+        if (@import("builtin").is_test) return;
+        std.debug.print(fmt, args);
     }
 };
