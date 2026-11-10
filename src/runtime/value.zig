@@ -456,12 +456,6 @@ pub const Task = extern struct {
     }
 };
 
-pub const TypedValue = struct {
-    value: Value,
-    type: ValueType,
-
-};
-
 pub const ValueType = enum(u8) {
     int64,
     float64,
@@ -483,44 +477,6 @@ pub const ValueType = enum(u8) {
         return switch (self) {
             .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task => true,
             else => false,
-        };
-    }
-
-};
-
-pub const TypedValueHashContext = struct {
-    pub fn hash(_: @This(), tv: TypedValue) u64 {
-        var hasher = std.hash.Wyhash.init(0);
-        const tag: u8 = @intFromEnum(tv.type);
-        hasher.update(std.mem.asBytes(&tag));
-        switch (tv.type) {
-            .int64 => hasher.update(std.mem.asBytes(&tv.value.int64)),
-            .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
-            .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
-            .null => {},
-            .string, .buffer => unreachable,
-            .array => unreachable,
-            .nullable => unreachable,
-            .@"struct" => unreachable,
-            .@"union" => unreachable,
-            .function, .cell, .task => unreachable,
-        }
-        return hasher.final();
-    }
-
-    pub fn eql(_: @This(), a: TypedValue, b: TypedValue) bool {
-        if (a.type != b.type) return false;
-        return switch (a.type) {
-            .int64 => a.value.int64 == b.value.int64,
-            .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
-            .bool => a.value.bool == b.value.bool,
-            .null => true,
-            .nullable => unreachable,
-            .string, .buffer => unreachable,
-            .array => unreachable,
-            .@"struct" => unreachable,
-            .@"union" => unreachable,
-            .function, .cell, .task => unreachable,
         };
     }
 };

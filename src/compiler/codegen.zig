@@ -20,7 +20,7 @@ pub const BytecodeGen = struct {
 
     chunk_constants: std.ArrayList(v.Value),
     chunk_constants_types: std.ArrayList(v.ValueType),
-    const_id_by_value: std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80),
+    const_id_by_value: std.HashMap(TypedValue, u32, TypedValueHashContext, 80),
 
     string_texts: std.ArrayList([]const u8),
     chunk_build_recipes: std.ArrayList([]const v.ValueType) = .empty,
@@ -58,7 +58,7 @@ pub const BytecodeGen = struct {
             .peak_register = 0,
             .chunk_constants = .empty,
             .chunk_constants_types = .empty,
-            .const_id_by_value = std.HashMap(v.TypedValue, u32, v.TypedValueHashContext, 80).init(alloc),
+            .const_id_by_value = std.HashMap(TypedValue, u32, TypedValueHashContext, 80).init(alloc),
             .string_texts = .empty,
             .string_id_by_text = std.StringHashMap(u16).init(alloc),
             .chunk_instructions = .empty,
@@ -1377,7 +1377,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, struct_load);
     }
 
-    fn genLoadConst(self: *Self, const_val: v.TypedValue, target_reg: u8) !void {
+    fn genLoadConst(self: *Self, const_val: TypedValue, target_reg: u8) !void {
         const result = try self.const_id_by_value.getOrPut(const_val);
         if (!result.found_existing) {
             result.value_ptr.* = @intCast(self.chunk_constants.items.len);
@@ -1806,14 +1806,14 @@ fn opCodeFromBinaryOp(op: ir.BinaryOpKind) bc.OpCode {
     };
 }
 
-fn typedValueFromIr(ir_value: *const ir.Value) v.TypedValue {
+fn typedValueFromIr(ir_value: *const ir.Value) TypedValue {
     return switch (ir_value.data) {
-        .i_int => |i| v.TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
-        .i_float => |f| v.TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
-        .i_bool => |b| v.TypedValue{ .value = .{ .bool = b }, .type = .bool },
+        .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
+        .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
+        .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
         .i_string => unreachable,
-        .i_null, .i_void => v.TypedValue{ .value = v.NULL_VALUE, .type = .null },
-        .i_array => v.TypedValue{ .value = undefined, .type = .array },
+        .i_null, .i_void => TypedValue{ .value = v.NULL_VALUE, .type = .null },
+        .i_array => TypedValue{ .value = undefined, .type = .array },
         else => unreachable,
     };
 }
@@ -1847,3 +1847,45 @@ fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueTyp
         },
     };
 }
+
+const TypedValue = struct {
+    value: v.Value,
+    type: v.ValueType,
+};
+
+const TypedValueHashContext = struct {
+    pub fn hash(_: @This(), tv: TypedValue) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const tag: u8 = @intFromEnum(tv.type);
+        hasher.update(std.mem.asBytes(&tag));
+        switch (tv.type) {
+            .int64 => hasher.update(std.mem.asBytes(&tv.value.int64)),
+            .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
+            .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
+            .null => {},
+            .string, .buffer => unreachable,
+            .array => unreachable,
+            .nullable => unreachable,
+            .@"struct" => unreachable,
+            .@"union" => unreachable,
+            .function, .cell, .task => unreachable,
+        }
+        return hasher.final();
+    }
+
+    pub fn eql(_: @This(), a: TypedValue, b: TypedValue) bool {
+        if (a.type != b.type) return false;
+        return switch (a.type) {
+            .int64 => a.value.int64 == b.value.int64,
+            .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
+            .bool => a.value.bool == b.value.bool,
+            .null => true,
+            .nullable => unreachable,
+            .string, .buffer => unreachable,
+            .array => unreachable,
+            .@"struct" => unreachable,
+            .@"union" => unreachable,
+            .function, .cell, .task => unreachable,
+        };
+    }
+};
