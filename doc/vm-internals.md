@@ -6,15 +6,19 @@ The source files involved:
 
 | File | What it holds |
 |---|---|
-| `src/bytecode.zig` | Code generation from IR (`BytecodeGen`), the compiled program format (`Program`, `Function`, `Chunk`), the instruction format and opcodes |
-| `src/vm.zig` | The interpreter (`VM.execute`), call frames, allocation helpers, the garbage collector, `copy` |
-| `src/value.zig` | `Value`, `ValueType` and every heap object layout |
-| `src/natives.zig` | Builtins written in Zig, and the intrinsics table |
-| `src/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
-| `src/error.zig` | `RuntimeErrorReporter`, the runtime error messages |
-| `src/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
-| `src/event_loop.zig` | `EventLoop`, the only code that drives libuv (timers for `sleep`) |
-| `src/uv.zig` | The few libuv functions Dusk calls, declared by hand |
+| `src/compiler/codegen.zig` | Code generation from IR (`BytecodeGen`) |
+| `src/runtime/bytecode.zig` | The compiled program format (`Program`, `Function`, `Chunk`), the instruction format and opcodes |
+| `src/runtime/vm.zig` | The interpreter (`VM.execute`), call frames, allocation helpers, the garbage collector, `copy` |
+| `src/runtime/value.zig` | `Value`, `ValueType` and every heap object layout |
+| `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
+| `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
+| `src/runtime/builtins/natives.zig` | Builtins written in Zig, and the intrinsics table |
+| `src/runtime/builtins/prelude.dsk` | The builtins' signatures, compiled before the user's file |
+| `src/runtime/tasks/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
+| `src/runtime/tasks/event_loop.zig` | `EventLoop`, the only code that drives libuv (timers for `sleep`) |
+| `src/runtime/tasks/uv.zig` | The few libuv functions Dusk calls, declared by hand |
+
+Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.
 
 ---
 
@@ -554,7 +558,7 @@ What tasks mean in the language is described in the language reference (section 
 ### 11.1 Two objects per task
 
 ```zig
-TaskState {                     // src/scheduler.zig, outside the GC heap: its address never changes
+TaskState {                     // src/runtime/tasks/scheduler.zig, outside the GC heap: its address never changes
     stack: []Value, frames: []CallFrame, frame_count,
     status: ready | running | parked | done,
     has_failed, is_awaited, is_reachable,
@@ -563,7 +567,7 @@ TaskState {                     // src/scheduler.zig, outside the GC heap: its a
     waiters: []*TaskState,                   // tasks parked in await on this one
 }
 
-Task { obj: HeapValue, state: *TaskState }   // src/value.zig: the Dusk value, in the GC heap
+Task { obj: HeapValue, state: *TaskState }   // src/runtime/value.zig: the Dusk value, in the GC heap
 ```
 
 The GC moves objects, but the scheduler, waiter lists and libuv requests need pointers that stay valid, and stacks are large. So the Dusk value is a small `Task` handle that the GC copies like any object, and everything else lives in the `TaskState`, which never moves. `Scheduler.tasks` holds every `TaskState` that hasn't been freed.
@@ -610,9 +614,9 @@ The value waits in `pending` instead of going straight into the register because
 
 ### 11.4 The event loop
 
-`EventLoop` (`src/event_loop.zig`) is the only code that calls libuv. It creates its `uv_loop_t` on the first `sleep` with a time above 0, so programs that never sleep don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
+`EventLoop` (`src/runtime/tasks/event_loop.zig`) is the only code that calls libuv. It creates its `uv_loop_t` on the first `sleep` with a time above 0, so programs that never sleep don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
 
-libuv's structs differ per OS, so Dusk doesn't use their layout: `src/uv.zig` declares the functions it calls with opaque `Loop` and `Handle` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`). The handle's `data` (`uv_handle_set_data`) points back to the request. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
+libuv's structs differ per OS, so Dusk doesn't use their layout: `src/runtime/tasks/uv.zig` declares the functions it calls with opaque `Loop` and `Handle` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`). The handle's `data` (`uv_handle_set_data`) points back to the request. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
 
 ### 11.5 Freeing tasks
 
