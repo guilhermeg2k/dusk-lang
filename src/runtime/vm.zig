@@ -5,6 +5,7 @@ const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
 const TaskState = @import("tasks/scheduler.zig").TaskState;
 const CallFrame = @import("tasks/scheduler.zig").CallFrame;
+const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const gc = @import("gc.zig");
@@ -104,11 +105,12 @@ pub const VM = struct {
         self.frames = task.frames;
         self.frame_count = task.frame_count;
         task.status = .running;
-        finishParkedCall(task);
+        if (task.wake_result) |wake_result| {
+            finishParkedCall(task, wake_result);
+        }
     }
 
-    fn finishParkedCall(task: *TaskState) void {
-        const wake_result = task.wake_result orelse return;
+    fn finishParkedCall(task: *TaskState, wake_result: WakeResult) void {
         task.wake_result = null;
         const frame = &task.frames[task.frame_count - 1];
         const call = frame.function.kind.dusk.instructions[frame.cur_inst - 1];
