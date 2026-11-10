@@ -1,6 +1,6 @@
 const std = @import("std");
 const v = @import("../value.zig");
-const CallFrame = @import("../vm.zig").CallFrame;
+const bc = @import("../bytecode.zig");
 
 pub const INITIAL_STACK_SLOTS = 1024;
 pub const INITIAL_FRAMES = 32;
@@ -163,4 +163,10 @@ pub const TaskState = struct {
         self.waiters.deinit(allocator);
         allocator.destroy(self);
     }
+};
+
+pub const CallFrame = struct {
+    function: *const bc.Function,
+    cur_inst: usize,
+    stack_offset: usize,
 };

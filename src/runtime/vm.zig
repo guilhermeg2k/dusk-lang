@@ -4,6 +4,7 @@ const v = @import("value.zig");
 const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
 const format = @import("format.zig");
 const TaskState = @import("tasks/scheduler.zig").TaskState;
+const CallFrame = @import("tasks/scheduler.zig").CallFrame;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 
@@ -1123,12 +1124,6 @@ const Heap = struct {
     object_count: usize = 0,
     allocated: usize = 0,
     threshold: usize,
-};
-
-pub const CallFrame = struct {
-    function: *const bc.Function,
-    cur_inst: usize,
-    stack_offset: usize,
 };
 
 fn binarySearch(comptime T: type, comptime field: []const u8, items: []const T, key: anytype) ?T {
