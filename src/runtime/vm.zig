@@ -63,7 +63,7 @@ pub const VM = struct {
 
     fn runScheduler(self: *Self) !void {
         while (true) {
-            const ready_task_count = self.scheduler.readyCount();
+            const ready_task_count = self.scheduler.countReadyTasks();
 
             if (ready_task_count > 0) {
                 for (0..ready_task_count) |_| {

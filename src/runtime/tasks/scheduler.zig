@@ -40,7 +40,7 @@ pub const Scheduler = struct {
         task.status = .ready;
     }
 
-    pub fn readyCount(self: *const Self) usize {
+    pub fn countReadyTasks(self: *const Self) usize {
         return self.ready.items.len - self.ready_head;
     }
 
