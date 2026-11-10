@@ -6,8 +6,6 @@ const VM = @import("../vm.zig").VM;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 const Scheduler = @import("../tasks/scheduler.zig").Scheduler;
 
-const NativeResult = bc.NativeResult;
-
 pub const conversion_invalid_id: i64 = 1;
 pub const conversion_overflow_id: i64 = 2;
 pub const string_out_of_range_id: i64 = 3;
@@ -19,6 +17,8 @@ pub const array_out_of_range_id: i64 = 7;
 const ascii_whitespace = " \t\n\r\x0b\x0c";
 
 const ConversionError = error{ Invalid, Overflow };
+
+pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
 
 pub const Binding = union(enum) {
     native: bc.NativeFnPtr,

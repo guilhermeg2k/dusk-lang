@@ -66,9 +66,7 @@ pub const Program = struct {
     error_names: []const []const u8,
 };
 
-pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
-
-pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
+pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!natives.NativeResult;
 
 pub const NativeFn = struct {
     func: NativeFnPtr,
