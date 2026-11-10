@@ -32,19 +32,6 @@ pub const Heap = struct {
         for (&self.arenas) |*arena| arena.deinit();
     }
 
-    pub fn allocator(self: *Self) std.mem.Allocator {
-        return self.arenas[self.active].allocator();
-    }
-
-    pub fn countAllocation(self: *Self, bytes: usize) void {
-        self.allocated += bytes;
-        self.object_count += 1;
-    }
-
-    pub fn needsCollection(self: *const Self, bytes: usize) bool {
-        return self.allocated + bytes > self.threshold;
-    }
-
     pub noinline fn collect(self: *Self, scheduler: *Scheduler, program: *const bc.Program) !void {
         const inactive: u1 = self.active ^ 1;
         _ = self.arenas[inactive].reset(.retain_capacity);
@@ -75,6 +62,19 @@ pub const Heap = struct {
         _ = self.arenas[old_idx].reset(.{ .retain_with_limit = self.threshold });
         self.gc_queue.clearAndFree(self.queue_allocator);
         try self.gc_queue.ensureTotalCapacity(self.queue_allocator, self.object_count);
+    }
+
+    pub fn needsCollection(self: *const Self, bytes: usize) bool {
+        return self.allocated + bytes > self.threshold;
+    }
+
+    pub fn allocator(self: *Self) std.mem.Allocator {
+        return self.arenas[self.active].allocator();
+    }
+
+    pub fn countAllocation(self: *Self, bytes: usize) void {
+        self.allocated += bytes;
+        self.object_count += 1;
     }
 };
 
@@ -110,6 +110,28 @@ const Collector = struct {
                 }
             }
         }
+    }
+
+    fn copyHeapValue(self: *Self, value: *v.Value) !void {
+        const raw: u64 = @bitCast(value.*);
+        if (raw == 0) return;
+        if (self.program.string_pool.contains(value.heap_obj)) return;
+        if (v.Closure.isStatic(value.heap_obj)) return;
+        const current = value.heap_obj.followRelocated();
+
+        if (current.gc_forward) |fwd| {
+            value.heap_obj = fwd;
+            return;
+        }
+        const new_ptr = try cloneHeapObj(self.to_space, current);
+        current.gc_forward = new_ptr;
+        value.heap_obj = new_ptr;
+        const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer;
+        if (has_references) {
+            try self.heap.gc_queue.append(self.heap.queue_allocator, new_ptr);
+        }
+        self.heap.object_count += 1;
+        self.heap.allocated += heapObjectSize(new_ptr);
     }
 
     fn copyChildren(self: *Self, obj: *v.HeapValue) !void {
@@ -169,29 +191,17 @@ const Collector = struct {
             else => {},
         }
     }
-
-    fn copyHeapValue(self: *Self, value: *v.Value) !void {
-        const raw: u64 = @bitCast(value.*);
-        if (raw == 0) return;
-        if (self.program.string_pool.contains(value.heap_obj)) return;
-        if (v.Closure.isStatic(value.heap_obj)) return;
-        const current = value.heap_obj.followRelocated();
-
-        if (current.gc_forward) |fwd| {
-            value.heap_obj = fwd;
-            return;
-        }
-        const new_ptr = try cloneHeapObj(self.to_space, current);
-        current.gc_forward = new_ptr;
-        value.heap_obj = new_ptr;
-        const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer;
-        if (has_references) {
-            try self.heap.gc_queue.append(self.heap.queue_allocator, new_ptr);
-        }
-        self.heap.object_count += 1;
-        self.heap.allocated += heapObjectSize(new_ptr);
-    }
 };
+
+fn binarySearch(comptime T: type, comptime field: []const u8, items: []const T, key: anytype) ?T {
+    const K = @TypeOf(key);
+    const idx = std.sort.binarySearch(T, items, key, struct {
+        fn cmp(k: K, item: T) std.math.Order {
+            return std.math.order(k, @field(item, field));
+        }
+    }.cmp);
+    return if (idx) |i| items[i] else null;
+}
 
 pub fn cloneHeapObj(allocator: std.mem.Allocator, obj_ptr: *v.HeapValue) !*v.HeapValue {
     return switch (obj_ptr.kind) {
@@ -217,14 +227,4 @@ pub fn heapObjectSize(ptr: *v.HeapValue) usize {
         .task => v.Task.calc_size(),
         .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
     };
-}
-
-fn binarySearch(comptime T: type, comptime field: []const u8, items: []const T, key: anytype) ?T {
-    const K = @TypeOf(key);
-    const idx = std.sort.binarySearch(T, items, key, struct {
-        fn cmp(k: K, item: T) std.math.Order {
-            return std.math.order(k, @field(item, field));
-        }
-    }.cmp);
-    return if (idx) |i| items[i] else null;
 }
