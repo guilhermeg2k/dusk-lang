@@ -64,6 +64,7 @@ pub const VM = struct {
     fn runScheduler(self: *Self) !void {
         while (true) {
             const batch = self.scheduler.readyCount();
+
             if (batch > 0) {
                 for (0..batch) |_| {
                     try self.runTask(self.scheduler.popReady().?);
@@ -73,13 +74,16 @@ pub const VM = struct {
                 }
                 continue;
             }
+
             if (self.event_loop.hasPendingOperations()) {
                 try self.event_loop.waitForEvent();
                 continue;
             }
+
             if (self.scheduler.hasUnfinishedTasks()) {
                 return RuntimeErrorReporter.allTasksWaiting();
             }
+
             break;
         }
         try self.reportUnhandledTaskErrors();
