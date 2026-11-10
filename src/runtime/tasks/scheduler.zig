@@ -13,6 +13,12 @@ pub const Scheduler = struct {
     ready: std.ArrayList(*TaskState) = .empty,
     ready_head: usize = 0,
 
+    pub fn deinit(self: *Self) void {
+        for (self.tasks.items) |task| task.destroy(self.allocator);
+        self.tasks.deinit(self.allocator);
+        self.ready.deinit(self.allocator);
+    }
+
     pub fn spawn(self: *Self, entry: *v.Closure, result_kind: v.ValueType) !*TaskState {
         try self.tasks.ensureUnusedCapacity(self.allocator, 1);
         const task = try TaskState.create(self.allocator, entry, result_kind);
@@ -88,22 +94,6 @@ pub const Scheduler = struct {
             _ = self.tasks.swapRemove(index);
         }
     }
-
-    pub fn deinit(self: *Self) void {
-        for (self.tasks.items) |task| task.destroy(self.allocator);
-        self.tasks.deinit(self.allocator);
-        self.ready.deinit(self.allocator);
-    }
-};
-
-pub const WakeResult = struct {
-    value: v.Value,
-    kind: v.ValueType,
-    has_failed: bool = false,
-
-    pub fn isHeapValue(self: WakeResult) bool {
-        return !self.has_failed and self.kind.isHeapType();
-    }
 };
 
 pub const TaskState = struct {
@@ -138,6 +128,20 @@ pub const TaskState = struct {
         return task;
     }
 
+    pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+        self.freeStack(allocator);
+        self.waiters.deinit(allocator);
+        allocator.destroy(self);
+    }
+
+    fn freeStack(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.stack);
+        allocator.free(self.frames);
+        self.stack = &.{};
+        self.frames = &.{};
+        self.frame_count = 0;
+    }
+
     pub fn hasHeapResult(self: *const Self) bool {
         return self.status == .done and !self.has_failed and self.result_kind.isHeapType();
     }
@@ -149,24 +153,20 @@ pub const TaskState = struct {
     fn canBeFreed(self: *const Self) bool {
         return self.status == .done and !self.is_reachable and !self.hasUnhandledFailure();
     }
-
-    fn freeStack(self: *Self, allocator: std.mem.Allocator) void {
-        allocator.free(self.stack);
-        allocator.free(self.frames);
-        self.stack = &.{};
-        self.frames = &.{};
-        self.frame_count = 0;
-    }
-
-    pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
-        self.freeStack(allocator);
-        self.waiters.deinit(allocator);
-        allocator.destroy(self);
-    }
 };
 
 pub const CallFrame = struct {
     function: *const bc.Function,
     cur_inst: usize,
     stack_offset: usize,
+};
+
+pub const WakeResult = struct {
+    value: v.Value,
+    kind: v.ValueType,
+    has_failed: bool = false,
+
+    pub fn isHeapValue(self: WakeResult) bool {
+        return !self.has_failed and self.kind.isHeapType();
+    }
 };
