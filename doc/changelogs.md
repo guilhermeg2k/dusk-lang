@@ -25,6 +25,7 @@ Started v0.15 development: updated the CLI version to `0.15.0-devel`.
 - Types in compile errors name the error set of a failing type (`ConversionError!int`, `func(string) -> ConversionError!int` was already right) instead of only `!int`
 - A function with an empty body (`func reset() -> void` followed by `end`) crashed the program when called: it now just returns
 - Reading an instance field through the type name (`P.x`) crashed the compiler or exited without a message. It's now an `InvalidStructField` error, `'x' is not a static field of struct 'P'`. Reading a union variant through the type (`U.a`) gives `'a' is not a static field of union 'U'`
+- Using an enum or union method as a value (`let f = color.name`, `Color.name`) exited without a message. It's now a `MethodAsValue` error, like struct methods
 
 ## v0.14 - Simon
 

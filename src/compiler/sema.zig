@@ -4629,21 +4629,8 @@ pub const SemaAnalyzer = struct {
 
                         if (enum_def.static_fields.get(member_name)) |constant| return constant.default_value.?;
 
-                        if (enum_def.methods.get(member_name)) |method_type_id| {
-                            const result_type = if (is_nullable) try self.type_table.getOrAddNullable(method_type_id) else method_type_id;
-
-                            return ir.Value.init(self.allocator, .{
-                                .data = .{
-                                    .indexed = .{
-                                        .target = target,
-                                        .index = try ir.Value.init(self.allocator, .{
-                                            .data = .{ .i_string = member_name },
-                                            .type_id = self.type_table.getPrimitive(.string),
-                                        }),
-                                    },
-                                },
-                                .type_id = result_type,
-                            });
+                        if (enum_def.methods.contains(member_name)) {
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
 
                         return self.err_reporter.invalidEnumVariant(enum_def.identifier, member_name, exp.loc);
@@ -4661,16 +4648,13 @@ pub const SemaAnalyzer = struct {
                             return self.err_reporter.invalidStaticUnionField(union_def.identifier, member_name, exp.loc);
                         }
                         // reading a variant is always ?T: null when it isn't the active one
-                        const result_type = if (union_def.variants.get(member_name)) |variant_type_id|
-                            try self.type_table.getOrAddNullable(variant_type_id)
-                        else blk: {
-                            const member_type_id = if (union_def.methods.get(member_name)) |method_type_id|
-                                method_type_id
-                            else
-                                return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, exp.loc);
-
-                            break :blk if (is_nullable) try self.type_table.getOrAddNullable(member_type_id) else member_type_id;
+                        if (union_def.methods.contains(member_name)) {
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
+                        const variant_type_id = union_def.variants.get(member_name) orelse {
+                            return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, exp.loc);
                         };
+                        const result_type = try self.type_table.getOrAddNullable(variant_type_id);
 
                         return ir.Value.init(self.allocator, .{
                             .data = .{
