@@ -7,10 +7,11 @@ const TaskState = @import("tasks/scheduler.zig").TaskState;
 const CallFrame = @import("tasks/scheduler.zig").CallFrame;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
+const gc = @import("gc.zig");
+const Heap = gc.Heap;
 
 pub const VM = struct {
     const Self = @This();
-    const MIN_GC_THRESHOLD = 1000000; //1MB
     const MAX_CALL_DEPTH = 100_000;
     const STACK_SLOTS = 4_000_000;
     const MAX_FRAME_REGISTERS = 256;
@@ -37,13 +38,7 @@ pub const VM = struct {
             .frame_count = 0,
             .program = program,
             .stack = &.{},
-            .heap = .{
-                .arenas = .{
-                    std.heap.ArenaAllocator.init(std.heap.page_allocator),
-                    std.heap.ArenaAllocator.init(std.heap.page_allocator),
-                },
-                .threshold = MIN_GC_THRESHOLD,
-            },
+            .heap = Heap.init(std.heap.page_allocator),
             .scratch = .init(std.heap.page_allocator),
             .stdout = stdout,
         };
@@ -53,7 +48,7 @@ pub const VM = struct {
         self.scratch.deinit();
         self.event_loop.deinit();
         self.scheduler.deinit();
-        for (&self.heap.arenas) |*arena| arena.deinit();
+        self.heap.deinit();
     }
 
     noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
@@ -792,7 +787,7 @@ pub const VM = struct {
         if (@as(u64, @bitCast(self.stack[source_index])) == 0) {
             return self.stack[source_index];
         }
-        try self.maybeCollectGarbage(heapObjectSize(self.stack[source_index].heap_obj));
+        try self.maybeCollectGarbage(gc.heapObjectSize(self.stack[source_index].heap_obj));
 
         var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
         defer copies.deinit(self.allocator);
@@ -851,8 +846,8 @@ pub const VM = struct {
             slot.heap_obj = copy;
             return;
         }
-        const copy = try cloneHeapObj(self.getCurrentHeapAllocator(), current);
-        self.increaseHeapAllocationCount(heapObjectSize(copy));
+        const copy = try gc.cloneHeapObj(self.getCurrentHeapAllocator(), current);
+        self.increaseHeapAllocationCount(gc.heapObjectSize(copy));
         try copies.put(self.allocator, current, copy);
         if (copy.kind != .buffer) {
             try pending.append(self.allocator, copy);
@@ -940,198 +935,16 @@ pub const VM = struct {
     }
 
     pub fn increaseHeapAllocationCount(self: *Self, bytes: usize) void {
-        self.heap.allocated += bytes;
-        self.heap.object_count += 1;
+        self.heap.countAllocation(bytes);
     }
 
     pub fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
-        if (self.heap.allocated + bytes > self.heap.threshold) {
-            try self.collectGarbage();
-        }
-    }
-
-    noinline fn collectGarbage(self: *Self) !void {
-        const inactive: u1 = self.heap.active ^ 1;
-        _ = self.heap.arenas[inactive].reset(.retain_capacity);
-        const new_alloc = self.heap.arenas[inactive].allocator();
-
-        self.heap.allocated = 0;
-        self.heap.object_count = 0;
-        self.heap.gc_queue.clearRetainingCapacity();
-
+        if (!self.heap.needsCollection(bytes)) return;
         self.saveCurrentTask();
-        self.scheduler.clearReachable();
-        for (self.scheduler.tasks.items) |task| {
-            try self.copyTaskRoots(new_alloc, task);
-        }
-
-        while (self.heap.gc_queue.items.len > 0) {
-            const obj = self.heap.gc_queue.pop().?;
-            switch (obj.kind) {
-                .array => {
-                    const array = v.HeapValue.getParentPtr(v.Array, obj);
-                    switch (array.kind) {
-                        .string, .buffer, .@"struct", .array, .@"union", .nullable, .function, .task => {
-                            const items = array.getDataPtr()[0..array.len];
-                            for (items) |*item| {
-                                try self.copyHeapValue(new_alloc, item);
-                            }
-                        },
-                        else => {},
-                    }
-                },
-                .@"struct" => {
-                    const s = v.HeapValue.getParentPtr(v.Struct, obj);
-                    const desc = self.program.struct_descriptors[s.descriptor_id];
-                    const fields = s.getDataPtr()[0..s.field_count];
-                    for (0..s.field_count) |i| {
-                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(i)) != 0) {
-                            try self.copyHeapValue(new_alloc, &fields[i]);
-                        }
-                    }
-                },
-                .closure => {
-                    const closure = v.HeapValue.getParentPtr(v.Closure, obj);
-                    const kinds = closure.function.kind.dusk.capture_kinds;
-                    for (closure.captures(), kinds) |*capture, kind| {
-                        if (!kind.isHeapType()) continue;
-                        try self.copyHeapValue(new_alloc, capture);
-                    }
-                },
-                .cell => {
-                    const cell = v.HeapValue.getParentPtr(v.Cell, obj);
-                    if (cell.kind.isHeapType()) {
-                        try self.copyHeapValue(new_alloc, &cell.value);
-                    }
-                },
-                .task => {
-                    const state = v.HeapValue.getParentPtr(v.Task, obj).state;
-                    state.is_reachable = true;
-                    if (state.hasHeapResult()) {
-                        try self.copyHeapValue(new_alloc, &state.result);
-                    }
-                },
-                .@"union" => {
-                    const u = v.HeapValue.getParentPtr(v.Union, obj);
-                    if (u.active_tag != v.Union.NO_TAG) {
-                        const desc = self.program.union_descriptors[u.descriptor_id];
-                        if (desc.heap_bitmap & (@as(u256, 1) << @intCast(u.active_tag)) != 0) {
-                            const slot = u.getDataPtr();
-                            try self.copyHeapValue(new_alloc, &slot[0]);
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-
-        self.scheduler.freeUnreachableTasks();
-        self.heap.active = inactive;
-        self.heap.threshold = @max(self.heap.allocated * 2, MIN_GC_THRESHOLD);
-
-        const old_idx: u1 = self.heap.active ^ 1;
-        if (self.heap.arenas[old_idx].queryCapacity() > self.heap.threshold) {
-            _ = self.heap.arenas[old_idx].reset(.{ .retain_with_limit = self.heap.threshold });
-            self.heap.gc_queue.clearAndFree(self.allocator);
-            try self.heap.gc_queue.ensureTotalCapacity(self.allocator, self.heap.object_count);
-        }
-    }
-
-    fn copyTaskRoots(self: *Self, new_alloc: std.mem.Allocator, task: *TaskState) !void {
-        if (task.wake_result) |*wake_result| {
-            if (wake_result.isHeapValue()) {
-                try self.copyHeapValue(new_alloc, &wake_result.value);
-            }
-        }
-        if (task.status == .done) return;
-        try self.copyHeapValue(new_alloc, &task.stack[0]);
-        const active_frames = task.frames[0..task.frame_count];
-        for (active_frames, 0..) |frame, frame_index| {
-            if (frame.cur_inst == 0) continue;
-            const chunk = frame.function.kind.dusk;
-            const cur_pc: u16 = @intCast(frame.cur_inst - 1);
-            const heap_map = binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
-            const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
-            const base = frame.stack_offset;
-            const is_top_frame = frame_index + 1 == active_frames.len;
-            const owned_registers = if (is_top_frame) chunk.num_registers else active_frames[frame_index + 1].stack_offset - base;
-            for (0..owned_registers) |i| {
-                const is_heap_value = bitmap & (@as(u256, 1) << @intCast(i)) != 0;
-                if (is_heap_value) {
-                    try self.copyHeapValue(new_alloc, &task.stack[base + i]);
-                }
-            }
-        }
-    }
-
-    fn copyHeapValue(self: *Self, new_alloc: std.mem.Allocator, value: *v.Value) !void {
-        const raw: u64 = @bitCast(value.*);
-        if (raw == 0) return;
-        if (self.program.string_pool.contains(value.heap_obj)) return;
-        if (v.Closure.isStatic(value.heap_obj)) return;
-        const current = value.heap_obj.followRelocated();
-
-        if (current.gc_forward) |fwd| {
-            value.heap_obj = fwd;
-        } else {
-            const new_ptr = try cloneHeapObj(new_alloc, current);
-            current.gc_forward = new_ptr;
-            value.heap_obj = new_ptr;
-            const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer;
-            if (has_references) {
-                try self.heap.gc_queue.append(self.allocator, new_ptr);
-            }
-            self.heap.object_count += 1;
-            self.heap.allocated += heapObjectSize(new_ptr);
-        }
-    }
-
-    fn cloneHeapObj(allocator: std.mem.Allocator, obj_ptr: *v.HeapValue) !*v.HeapValue {
-        return switch (obj_ptr.kind) {
-            .array => &(try v.HeapValue.getParentPtr(v.Array, obj_ptr).clone(allocator)).obj,
-            .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
-            .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
-            .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
-            .closure => &(try v.HeapValue.getParentPtr(v.Closure, obj_ptr).clone(allocator)).obj,
-            .cell => &(try v.HeapValue.getParentPtr(v.Cell, obj_ptr).clone(allocator)).obj,
-            .task => &(try v.HeapValue.getParentPtr(v.Task, obj_ptr).clone(allocator)).obj,
-            .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
-        };
-    }
-
-    fn heapObjectSize(ptr: *v.HeapValue) usize {
-        return switch (ptr.kind) {
-            .array => v.Array.calc_size(v.HeapValue.getParentPtr(v.Array, ptr).capacity),
-            .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
-            .@"union" => v.Union.calc_size(),
-            .null_box => v.NullBox.calc_size(),
-            .closure => v.Closure.calc_size(v.HeapValue.getParentPtr(v.Closure, ptr).capture_count),
-            .cell => v.Cell.calc_size(),
-            .task => v.Task.calc_size(),
-            .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
-        };
+        try self.heap.collect(&self.scheduler, self.program);
     }
 
     pub fn getCurrentHeapAllocator(self: *Self) std.mem.Allocator {
-        return self.heap.arenas[self.heap.active].allocator();
+        return self.heap.allocator();
     }
 };
-
-const Heap = struct {
-    arenas: [2]std.heap.ArenaAllocator,
-    active: u1 = 0,
-    gc_queue: std.ArrayList(*v.HeapValue) = .empty,
-    object_count: usize = 0,
-    allocated: usize = 0,
-    threshold: usize,
-};
-
-fn binarySearch(comptime T: type, comptime field: []const u8, items: []const T, key: anytype) ?T {
-    const K = @TypeOf(key);
-    const idx = std.sort.binarySearch(T, items, key, struct {
-        fn cmp(k: K, item: T) std.math.Order {
-            return std.math.order(k, @field(item, field));
-        }
-    }.cmp);
-    return if (idx) |i| items[i] else null;
-}
