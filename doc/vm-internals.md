@@ -8,7 +8,8 @@ The source files involved:
 |---|---|
 | `src/compiler/codegen.zig` | Code generation from IR (`BytecodeGen`) |
 | `src/runtime/bytecode.zig` | The compiled program format (`Program`, `Function`, `Chunk`), the instruction format and opcodes |
-| `src/runtime/vm.zig` | The interpreter (`VM.execute`), call frames, allocation helpers, the garbage collector, `copy` |
+| `src/runtime/vm.zig` | The interpreter (`VM.execute`), allocation helpers, `copy` |
+| `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
 | `src/runtime/value.zig` | `Value`, `ValueType` and every heap object layout |
 | `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
@@ -213,7 +214,7 @@ stack_base         // current_frame.stack_offset
 
 Each iteration reads `instructions[cur_instruction]` and increments it before running the handler. So inside a handler `cur_instruction` already points at the next instruction, and that is the value calls save as the return point.
 
-Slow paths are `noinline` helpers: `makeClosure`, `newCell`, `newBuffer`, `deepCopy`, `toString`, `buildString`, `loadUnionVariant`, `collectGarbage`. Error reporters are `noinline` with `@branchHint(.cold)`. That keeps `execute` small. Performance is very sensitive to the machine code layout of this loop, so even unrelated edits to it can move benchmarks noticeably.
+Slow paths are `noinline` helpers: `makeClosure`, `newCell`, `newBuffer`, `deepCopy`, `toString`, `buildString`, `loadUnionVariant`, and `Heap.collect` in `gc.zig`. Error reporters are `noinline` with `@branchHint(.cold)`. That keeps `execute` small. Performance is very sensitive to the machine code layout of this loop, so even unrelated edits to it can move benchmarks noticeably.
 
 ### 5.1 Instruction format
 
@@ -477,7 +478,7 @@ What closures mean in the language is described in the language reference. For t
 
 ### 9.1 Design
 
-The heap uses two arenas (`Heap.arenas`), and only one is active at a time. All objects are allocated with a bump allocator from the active arena (`getCurrentHeapAllocator`). A collection copies every live object into the other arena, switches arenas, and resets the old one in one step. Nothing is freed object by object.
+The GC lives in `src/runtime/gc.zig`. The heap uses two arenas (`Heap.arenas`), and only one is active at a time. All objects are allocated with a bump allocator from the active arena (`getCurrentHeapAllocator`). A collection copies every live object into the other arena, switches arenas, and resets the old one in one step. Nothing is freed object by object.
 
 Allocation sites follow one pattern:
 
@@ -487,7 +488,7 @@ const obj = try T.init(self.getCurrentHeapAllocator(), ...);
 self.increaseHeapAllocationCount(size);
 ```
 
-`maybeCollectGarbage` collects when `allocated + size > threshold`. After a collection, `threshold = max(2 × live bytes, 1 MB)`. So the heap can grow to about twice the live data before the next collection.
+`maybeCollectGarbage` asks `Heap.needsCollection`, and when `allocated + size > threshold` it saves the running task's stack and calls `Heap.collect`. After a collection, `threshold = max(2 × live bytes, 1 MB)`. So the heap can grow to about twice the live data before the next collection.
 
 ### 9.2 Roots: heap maps
 
@@ -499,7 +500,7 @@ HeapMap { pc: u16, bitmap: u256 }      // bit i set: R[i] holds a pointer at thi
 
 After emitting such an instruction, codegen calls `recordHeapMap()`. That computes the bitmap from `register_types` at that moment (`computeHeapBitmap`). The instructions that can allocate are listed in `OpCode.canTriggerGc`: array, struct, union and null box creation, `UNION_LOAD`, string building, `BYTES_NEW`, `DEEP_COPY`, `MAKE_CLOSURE`, `CELL_NEW`, `TASK_SPAWN`, and calls. Calls count because the callee, or a native, can allocate.
 
-The GC first saves the running task's stack and frames into its `TaskState`, then visits every task that isn't done (`copyTaskRoots`): its `stack[0]` (the entry closure), its `wake_result` if one is waiting (section 11.3), and then, for every frame of that task:
+`Heap.collect` builds a `Collector` for one collection (the heap, the program and the new arena). The running task's stack and frames are already saved into its `TaskState`. It visits every task that isn't done (`copyTaskRoots`): its `stack[0]` (the entry closure), its `wake_result` if one is waiting (section 11.3), and then, for every frame of that task:
 
 ```zig
 pc = frame.cur_inst - 1                // the instruction this frame is stopped at
@@ -655,7 +656,7 @@ This segfaulted in `copyHeapValue`. Now each caller frame scans only up to its c
 
 ### 12.2 Observations
 
-- **A missing heap map is silent.** If an instruction has no heap map, its frame gets bitmap `0` and its roots aren't kept. A debug assertion in `collectGarbage` when `binarySearch` finds nothing would catch codegen mistakes right away.
+- **A missing heap map is silent.** If an instruction has no heap map, its frame gets bitmap `0` and its roots aren't kept. A debug assertion in `Collector.copyTaskRoots` when `binarySearch` finds nothing would catch codegen mistakes right away.
 - **Extra moves.** Codegen copies variables into temporaries before using them (`LOAD R[3] R[1]` before `I_LT R[2] R[3] R[4]`), and moves a call result through more than one register after a `try`. Reading variables in place in binary operations, or a small peephole pass, would remove many instructions.
 - **Repeated `CAPTURE_GET`.** A lambda reloads the same capture each time it uses it.
 - **The header is 24 bytes.** Only arrays use `relocated`, but every object pays for it. Moving it into `Array`, or reusing `gc_forward` for it, would make every object 8 bytes smaller.
