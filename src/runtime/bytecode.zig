@@ -106,7 +106,7 @@ pub const Chunk = struct {
     jump_tables: []const JumpTable = &.{},
     capture_kinds: []const v.ValueType = &.{},
 
-    pub fn disasamble(self: *const Self) void {
+    pub fn disassemble(self: *const Self) void {
         std.debug.print("\n== constants ({d}) ==\n", .{self.constants.len});
         for (self.constants, 0..) |constant, i| {
             const ty = self.shadow_types[i];

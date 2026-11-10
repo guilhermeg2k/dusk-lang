@@ -240,7 +240,7 @@ pub const BytecodeGen = struct {
             .capture_kinds = try self.captureKinds(func.captures),
         };
 
-        // chunk.disasamble();
+        // chunk.disassemble();
 
         return chunk;
     }
