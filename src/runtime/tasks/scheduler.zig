@@ -56,10 +56,6 @@ pub const Scheduler = struct {
         try self.makeReady(task);
     }
 
-    pub fn park(task: *TaskState) void {
-        task.status = .parked;
-    }
-
     pub fn finish(self: *Self, task: *TaskState) !void {
         task.result = task.stack[0];
         task.freeStack(self.allocator);
@@ -140,6 +136,10 @@ pub const TaskState = struct {
         self.stack = &.{};
         self.frames = &.{};
         self.frame_count = 0;
+    }
+
+    pub fn park(self: *Self) void {
+        self.status = .parked;
     }
 
     pub fn hasHeapResult(self: *const Self) bool {

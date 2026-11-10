@@ -3,7 +3,6 @@ const v = @import("../value.zig");
 const format = @import("../format.zig");
 const VM = @import("../vm.zig").VM;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
-const Scheduler = @import("../tasks/scheduler.zig").Scheduler;
 
 pub const conversion_invalid_id: i64 = 1;
 pub const conversion_overflow_id: i64 = 2;
@@ -99,7 +98,7 @@ pub fn taskAwait(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return RuntimeErrorReporter.taskAwaitsItself();
     }
     try target.waiters.append(vm.scheduler.allocator, current);
-    Scheduler.park(current);
+    current.park();
     return parked();
 }
 
@@ -114,7 +113,7 @@ pub fn taskSleep(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return parked();
     }
     try vm.event_loop.startTimer(&vm.scheduler, @intCast(ms), current);
-    Scheduler.park(current);
+    current.park();
     return parked();
 }
 
