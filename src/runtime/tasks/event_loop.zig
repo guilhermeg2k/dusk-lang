@@ -14,6 +14,20 @@ pub const EventLoop = struct {
     pending_operations: usize = 0,
     callback_failure: ?anyerror = null,
 
+    pub fn deinit(self: *Self) void {
+        const loop = self.loop orelse return;
+        uv.uv_walk(loop, closeLeftoverHandle, null);
+        _ = uv.uv_run(loop, .default);
+        _ = uv.uv_loop_close(loop);
+        self.allocator.free(loopMemory(loop));
+        self.loop = null;
+    }
+
+    fn loopMemory(loop: *uv.Loop) []align(16) u8 {
+        const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
+        return bytes[0..uv.uv_loop_size()];
+    }
+
     pub fn startTimer(self: *Self, scheduler: *Scheduler, ms: u64, task: *TaskState) !void {
         const loop = try self.ensureLoopStarted();
         const request = try self.allocator.create(TimerRequest);
@@ -37,12 +51,20 @@ pub const EventLoop = struct {
         self.pending_operations += 1;
     }
 
-    pub fn hasPendingOperations(self: *const Self) bool {
-        return self.pending_operations > 0;
+    fn ensureLoopStarted(self: *Self) !*uv.Loop {
+        if (self.loop) |loop| return loop;
+        const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_loop_size());
+        const loop: *uv.Loop = @ptrCast(memory.ptr);
+        if (uv.uv_loop_init(loop) != 0) {
+            self.allocator.free(memory);
+            return error.EventLoopFailed;
+        }
+        self.loop = loop;
+        return loop;
     }
 
-    pub fn waitForEvent(self: *Self) !void {
-        return self.run(.once);
+    pub fn hasPendingOperations(self: *const Self) bool {
+        return self.pending_operations > 0;
     }
 
     pub fn poll(self: *Self) !void {
@@ -57,32 +79,26 @@ pub const EventLoop = struct {
         return failure;
     }
 
-    pub fn deinit(self: *Self) void {
-        const loop = self.loop orelse return;
-        uv.uv_walk(loop, closeLeftoverHandle, null);
-        _ = uv.uv_run(loop, .default);
-        _ = uv.uv_loop_close(loop);
-        self.allocator.free(loopMemory(loop));
-        self.loop = null;
-    }
-
-    fn ensureLoopStarted(self: *Self) !*uv.Loop {
-        if (self.loop) |loop| return loop;
-        const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_loop_size());
-        const loop: *uv.Loop = @ptrCast(memory.ptr);
-        if (uv.uv_loop_init(loop) != 0) {
-            self.allocator.free(memory);
-            return error.EventLoopFailed;
-        }
-        self.loop = loop;
-        return loop;
-    }
-
-    fn loopMemory(loop: *uv.Loop) []align(16) u8 {
-        const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
-        return bytes[0..uv.uv_loop_size()];
+    pub fn waitForEvent(self: *Self) !void {
+        return self.run(.once);
     }
 };
+
+fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
+    if (uv.uv_is_closing(handle) != 0) return;
+    uv.uv_close(handle, onClose);
+}
+
+fn onClose(handle: *uv.Handle) callconv(.c) void {
+    const request = timerRequestOf(handle);
+    const allocator = request.event_loop.allocator;
+    allocator.free(request.timer_memory);
+    allocator.destroy(request);
+}
+
+fn timerRequestOf(handle: *uv.Handle) *TimerRequest {
+    return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
+}
 
 const TimerRequest = struct {
     event_loop: *EventLoop,
@@ -95,10 +111,6 @@ const TimerRequest = struct {
     }
 };
 
-fn timerRequestOf(handle: *uv.Handle) *TimerRequest {
-    return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
-}
-
 fn onTimer(handle: *uv.Handle) callconv(.c) void {
     const request = timerRequestOf(handle);
     const event_loop = request.event_loop;
@@ -106,17 +118,5 @@ fn onTimer(handle: *uv.Handle) callconv(.c) void {
     request.scheduler.wake(request.task, .{ .value = v.NULL_VALUE, .kind = .null }) catch |failure| {
         event_loop.callback_failure = failure;
     };
-    uv.uv_close(handle, onClose);
-}
-
-fn onClose(handle: *uv.Handle) callconv(.c) void {
-    const request = timerRequestOf(handle);
-    const allocator = request.event_loop.allocator;
-    allocator.free(request.timer_memory);
-    allocator.destroy(request);
-}
-
-fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
-    if (uv.uv_is_closing(handle) != 0) return;
     uv.uv_close(handle, onClose);
 }
