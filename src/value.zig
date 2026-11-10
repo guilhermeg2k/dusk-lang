@@ -1,8 +1,6 @@
 const std = @import("std");
-const ir = @import("ir.zig");
 const RuntimeError = @import("error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("error.zig").RuntimeErrorReporter;
-const tt = @import("type_table.zig");
 const bc = @import("bytecode.zig");
 const TaskState = @import("scheduler.zig").TaskState;
 
@@ -463,17 +461,6 @@ pub const TypedValue = struct {
     value: Value,
     type: ValueType,
 
-    pub fn from_ir_value(ir_value: *const ir.Value) TypedValue {
-        return switch (ir_value.data) {
-            .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
-            .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
-            .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
-            .i_string => unreachable,
-            .i_null, .i_void => TypedValue{ .value = NULL_VALUE, .type = .null },
-            .i_array => TypedValue{ .value = undefined, .type = .array },
-            else => unreachable,
-        };
-    }
 };
 
 pub const ValueType = enum(u8) {
@@ -500,35 +487,6 @@ pub const ValueType = enum(u8) {
         };
     }
 
-    pub fn fromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) ValueType {
-        const ty = type_table.getTypePtrById(type_id);
-
-        if (ty.is_nullable) {
-            return .nullable;
-        }
-
-        return switch (ty.kind) {
-            .int, .byte => .int64,
-            .float => .float64,
-            .boolean => .bool,
-            .string => .string,
-            .buffer => .buffer,
-            .array => .array,
-            .@"struct" => .@"struct",
-            .@"union" => .@"union",
-            .func_type => .function,
-            .task => .task,
-            .cell => .cell,
-            .@"enum" => .int64,
-            //note: void -> null
-            .void => .null,
-            .null => .null,
-            else => {
-                std.debug.print("{}", .{ty});
-                unreachable;
-            },
-        };
-    }
 };
 
 pub const TypedValueHashContext = struct {

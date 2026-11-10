@@ -3,6 +3,7 @@ const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const sema = @import("sema.zig");
 const bc = @import("bytecode.zig");
+const codegen = @import("codegen.zig");
 const vm = @import("vm.zig");
 
 const Lexer = lexer.Lexer;
@@ -48,7 +49,7 @@ pub const Dusk = struct {
         var sema_analyzer = try SemaAnalyzer.init(allocator);
         const ir = try sema_analyzer.analyze(&prelude_ast, prelude_src, &ast, src);
 
-        var Bytecodegen = bc.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
+        var Bytecodegen = codegen.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
 
         return try Bytecodegen.generate(&ir);
     }
