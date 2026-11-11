@@ -42,6 +42,8 @@ pub const Lexer = struct {
         .{ "then", Tag.then_kw },
         .{ "do", Tag.do_kw },
         .{ "end", Tag.end_kw },
+        .{ "import", Tag.import_kw },
+        .{ "as", Tag.as_kw },
     });
 
     allocator: std.mem.Allocator,
@@ -114,7 +116,10 @@ pub const Lexer = struct {
                     return Token.init(Tag.r_bracket, self.cur_index, self.cur_index);
                 },
                 ':' => {
-                    return Token.init(Tag.colon, self.cur_index, self.cur_index);
+                    return self.readComplexSymbol(':', Tag.double_colon, Tag.colon);
+                },
+                '~' => {
+                    return Token.init(Tag.tilde, self.cur_index, self.cur_index);
                 },
                 ',' => {
                     return Token.init(Tag.comma, self.cur_index, self.cur_index);
@@ -471,6 +476,8 @@ pub const Tag = enum {
     then_kw,
     do_kw,
     end_kw,
+    import_kw,
+    as_kw,
     string_literal,
     multiline_string_literal,
     byte_literal,
@@ -484,6 +491,8 @@ pub const Tag = enum {
     not,
     not_eq,
     colon,
+    double_colon,
+    tilde,
     comma,
     lt,
     le,

@@ -2171,6 +2171,28 @@ test "functions with empty bodies return" {
     try runCase("empty-function-bodies.dsk");
 }
 
+test "modules: imports and :: parse, but modules aren't supported yet" {
+    try runCaseError("sema/modules-not-supported-import.dsk", error.ModulesNotSupported);
+    try runCaseError("sema/modules-not-supported-member.dsk", error.ModulesNotSupported);
+    try runCaseError("sema/modules-not-supported-type-keyword.dsk", error.ModulesNotSupported);
+    try runCaseError("sema/modules-not-supported-type.dsk", error.ModulesNotSupported);
+    try runCaseError("sema/modules-not-supported-error-set.dsk", error.ModulesNotSupported);
+}
+
+test "modules: imports come first in the file" {
+    try runCaseError("parser/import-after-declaration.dsk", error.ParserError);
+    try runCaseError("parser/import-inside-function.dsk", error.ParserError);
+    try runCaseError("parser/import-std-alone.dsk", error.ParserError);
+}
+
+test "visibility: ~ marks top-level declarations, fields and methods as file-only" {
+    try runCase("file-only.dsk");
+    try runCaseError("parser/file-only-local-variable.dsk", error.ParserError);
+    try runCaseError("parser/file-only-static-field.dsk", error.ParserError);
+    try runCaseError("parser/file-only-enum-variant.dsk", error.ParserError);
+    try runCaseError("parser/file-only-param.dsk", error.ParserError);
+}
+
 test "and / or skip the right side when the left side decides" {
     try runCase("short-circuit.dsk");
 }

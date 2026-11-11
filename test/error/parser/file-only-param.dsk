@@ -1,0 +1,4 @@
+func f(~x: int) -> void
+end
+func main() -> void
+end

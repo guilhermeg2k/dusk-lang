@@ -1,0 +1,3 @@
+func main() -> void
+    physics::step(1, 2)
+end

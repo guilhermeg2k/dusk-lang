@@ -83,6 +83,11 @@ pub const SemaAnalyzer = struct {
         self.src = src;
         self.err_reporter.src = src;
 
+        for (root.statements.items) |stmt| {
+            if (stmt.data == .import) {
+                return self.err_reporter.modulesNotSupported(stmt.data.import.path_loc);
+            }
+        }
         try self.hoistDeclarations(root);
         try self.checkTopLevelStatements(root);
 
@@ -201,7 +206,7 @@ pub const SemaAnalyzer = struct {
 
     fn isDeclaration(stmt: ast.Statement) bool {
         return switch (stmt) {
-            .func, .@"struct", .@"enum", .@"union", .error_set, .trait => true,
+            .import, .func, .@"struct", .@"enum", .@"union", .error_set, .trait => true,
             else => false,
         };
     }
@@ -367,6 +372,9 @@ pub const SemaAnalyzer = struct {
         switch (fn_error_set) {
             .inferred => return self.createErrorSet(fn_name, .inferred),
             .named => |named| {
+                if (named.module != null) {
+                    return self.err_reporter.modulesNotSupported(named.loc);
+                }
                 const symbol = self.scope.symbol_table.getOrError(named.identifier) catch {
                     return self.err_reporter.typeNotDefined(named.identifier, named.loc);
                 };
@@ -1072,7 +1080,7 @@ pub const SemaAnalyzer = struct {
                 .@"struct" => try self.visitStructStmt(&stmt),
                 .@"enum" => try self.visitEnumStmt(&stmt),
                 .@"union" => try self.visitUnionStmt(&stmt),
-                .error_set, .trait => null,
+                .import, .error_set, .trait => null,
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
                 .expression => try self.visitExpressionStmt(&stmt),
@@ -2019,7 +2027,10 @@ pub const SemaAnalyzer = struct {
     }
 
     fn traitIndexOf(self: *Self, annotation: *const ast.TypeAnnotation) ?usize {
-        if (annotation.type != .@"struct" or annotation.is_nullable or annotation.args.len > 0) return null;
+        const is_plain_name = annotation.type == .@"struct" and annotation.module == null and !annotation.is_nullable and annotation.args.len == 0;
+        if (!is_plain_name) {
+            return null;
+        }
         var root = self.scope.symbol_table;
         while (root.parent) |parent| root = parent;
         const symbol = root.get(annotation.type.@"struct") orelse return null;
@@ -3946,6 +3957,7 @@ pub const SemaAnalyzer = struct {
                 return self.evalBinaryExp(exp);
             },
             .lambda => return self.evalLambda(exp, null),
+            .module_member => return self.err_reporter.modulesNotSupported(exp.loc),
         }
     }
 
@@ -5391,6 +5403,9 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) !tt.TypeId {
+        if (type_annotation.module != null) {
+            return self.err_reporter.modulesNotSupported(type_annotation.loc);
+        }
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
                 if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
@@ -5484,7 +5499,7 @@ pub const SemaAnalyzer = struct {
     fn resolveFuncReturnType(self: *Self, func: ast.FuncTypeAnnotation, current_defined_type_type_id: ?tt.TypeId, loc: err.Loc) CompileError!tt.TypeId {
         const payload = try self.resolveTypeAnnotation(func.return_type, current_defined_type_type_id);
         const set_name = func.error_set orelse return payload;
-        const error_set_type_id = try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .loc = loc } }, "");
+        const error_set_type_id = try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .module = func.error_set_module, .loc = loc } }, "");
         return self.errorUnionType(error_set_type_id, payload);
     }
 
@@ -5497,7 +5512,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn namesSlot(self: *Self, annotation: *const ast.TypeAnnotation) bool {
-        if (annotation.type != .@"struct") {
+        if (annotation.type != .@"struct" or annotation.module != null) {
             return false;
         }
         const symbol = self.scope.symbol_table.get(annotation.type.@"struct") orelse return false;

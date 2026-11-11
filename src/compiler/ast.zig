@@ -11,6 +11,7 @@ pub const StatementNode = struct {
 };
 
 pub const Statement = union(enum) {
+    import: ImportStmt,
     let: LetStmt,
     func: FuncStmt,
     @"struct": StructStmt,
@@ -27,10 +28,31 @@ pub const Statement = union(enum) {
     @"continue": void,
 };
 
+pub const ImportStmt = struct {
+    source: ImportSource,
+    path: []const u8,
+    path_loc: err.Loc,
+    name: []const u8,
+    selected: []const ImportedName,
+};
+
+pub const ImportSource = enum {
+    std,
+    library,
+    project,
+};
+
+pub const ImportedName = struct {
+    identifier: []const u8,
+    name: []const u8,
+    loc: err.Loc,
+};
+
 pub const FuncStmt = struct {
     identifier: []const u8,
     def: FnDef,
     is_extern: bool = false,
+    is_file_only: bool = false,
     slots: []const Slot = &.{},
 };
 
@@ -44,27 +66,32 @@ pub const Slot = struct {
 pub const StructStmt = struct {
     identifier: []const u8,
     def: Struct,
+    is_file_only: bool = false,
     slots: []const Slot = &.{},
 };
 
 pub const EnumStmt = struct {
     identifier: []const u8,
     def: EnumDef,
+    is_file_only: bool = false,
 };
 
 pub const UnionStmt = struct {
     identifier: []const u8,
     def: UnionDef,
+    is_file_only: bool = false,
     slots: []const Slot = &.{},
 };
 
 pub const ErrorSetStmt = struct {
     identifier: []const u8,
     variants: []const ErrorVariant,
+    is_file_only: bool = false,
 };
 
 pub const TraitStmt = struct {
     identifier: []const u8,
+    is_file_only: bool = false,
     type_list: []const *TypeAnnotation = &.{},
     parents: []const *TypeAnnotation = &.{},
     methods: []const StatementNode = &.{},
@@ -78,6 +105,7 @@ pub const ErrorVariant = struct {
 pub const LetStmt = struct {
     identifier: []const u8,
     is_mut: bool,
+    is_file_only: bool = false,
     type_annotation: ?*TypeAnnotation,
     value: *ExpNode,
 };
@@ -144,6 +172,7 @@ pub const TypeAnnotation = struct {
     },
 
     is_nullable: bool,
+    module: ?[]const u8 = null,
     args: []const *TypeAnnotation = &.{},
     loc: err.Loc = .{ .start = 0, .end = 0 },
 
@@ -156,7 +185,7 @@ pub const TypeAnnotation = struct {
     pub fn value(self: *Self, alloc: std.mem.Allocator) ![]const u8 {
         return switch (self.type) {
             .primitive => |primitive_name| primitive_name,
-            .@"struct" => |struct_name| struct_name,
+            .@"struct" => |struct_name| if (self.module) |module| std.fmt.allocPrint(alloc, "{s}::{s}", .{ module, struct_name }) else struct_name,
             .anonymous_struct => |anom_struct| {
                 var field_list: std.ArrayList(u8) = .empty;
                 for (anom_struct.fields, 0..) |field, i| {
@@ -189,6 +218,9 @@ pub const TypeAnnotation = struct {
                     try text.appendSlice(alloc, try param.type.value(alloc));
                 }
                 try text.appendSlice(alloc, ") -> ");
+                if (func.error_set_module) |module| {
+                    try text.print(alloc, "{s}::", .{module});
+                }
                 if (func.error_set) |set| {
                     try text.print(alloc, "{s}!", .{set});
                 }
@@ -203,6 +235,7 @@ pub const FuncTypeAnnotation = struct {
     params: []const FuncTypeParam,
     return_type: *TypeAnnotation,
     error_set: ?[]const u8,
+    error_set_module: ?[]const u8 = null,
 };
 
 pub const FuncTypeParam = struct {
@@ -234,6 +267,7 @@ pub const Exp = union(enum) {
     string_interpolation: []const *ExpNode,
     bool_literal: bool,
     identifier: []const u8,
+    module_member: ModuleMember,
     anonymous_init: AnonymousInit,
     array_literal: ArrayLiteral,
     null_literal: void,
@@ -249,6 +283,11 @@ pub const Exp = union(enum) {
     when_exp: WhenStmt,
     range: Range,
     lambda: FnDef,
+};
+
+pub const ModuleMember = struct {
+    module: []const u8,
+    member: []const u8,
 };
 
 pub const Range = struct {
@@ -297,7 +336,7 @@ pub const FnDef = struct {
 
 pub const FnErrorSet = union(enum) {
     inferred: err.Loc,
-    named: struct { identifier: []const u8, loc: err.Loc },
+    named: struct { identifier: []const u8, module: ?[]const u8 = null, loc: err.Loc },
 };
 
 pub const FnParam = struct {
@@ -342,6 +381,7 @@ pub const Struct = struct {
 pub const Field = struct {
     identifier: []const u8,
     is_mut: bool,
+    is_file_only: bool = false,
     type: ?*TypeAnnotation,
     default_value: ?*ExpNode,
 };

@@ -1,0 +1,6 @@
+struct P
+    let ~MAX = 3
+    x: int
+end
+func main() -> void
+end

@@ -27,6 +27,26 @@ pub const CompileErrorReporter = struct {
         return CompileError.ParserError;
     }
 
+    pub fn modulesNotSupported(self: *Self, loc: Loc) CompileError {
+        self.log("Modules aren't supported yet", loc);
+        return error.ModulesNotSupported;
+    }
+
+    pub fn importNotAtTop(self: *Self, loc: Loc) CompileError {
+        self.log("Imports must come first in the file, before any other declaration", loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn stdNeedsModule(self: *Self, loc: Loc) CompileError {
+        self.log("'std' is the standard library, not a module: import one of its modules, like 'std/string'", loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn fileOnlyNotAllowed(self: *Self, reason: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'~' can't be used here: {s}", .{reason}), loc);
+        return CompileError.ParserError;
+    }
+
     pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
@@ -1011,6 +1031,7 @@ pub const CompileError = error{
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
     InternalBuiltin,
+    ModulesNotSupported,
     SlotResultDiffers,
     TypeDoesntFitSlot,
     TypeListNotPrimitive,
