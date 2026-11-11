@@ -68,6 +68,7 @@ pub const Program = struct {
 pub const NativeFn = struct {
     func: native.NativeFnPtr,
     num_args: u8,
+    error_base: i64 = 0,
 };
 
 pub const FunctionKind = union(enum) {

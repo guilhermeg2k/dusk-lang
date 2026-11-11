@@ -155,7 +155,7 @@ pub const BytecodeGen = struct {
         const kind: bc.FunctionKind = switch (ext.binding) {
             .native => |func| blk: {
                 try self.native_params_by_uid.put(ext.uid, ext.params);
-                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
+                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params), .error_base = ext.error_base } };
             },
             .intrinsic => |intrinsic| blk: {
                 try self.intrinsic_by_uid.put(ext.uid, intrinsic);

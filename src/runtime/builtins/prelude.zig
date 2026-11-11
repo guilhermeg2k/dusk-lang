@@ -12,17 +12,13 @@ const parked = native.parked;
 const stringResult = native.stringResult;
 const bytesArg = native.bytesArg;
 
-pub const conversion_invalid_id: i64 = 1;
-pub const conversion_overflow_id: i64 = 2;
-pub const string_out_of_range_id: i64 = 3;
-pub const string_negative_count_id: i64 = 4;
-pub const string_invalid_utf8_id: i64 = 5;
-pub const array_empty_id: i64 = 6;
-pub const array_out_of_range_id: i64 = 7;
+pub const ConversionError = enum { Invalid, Overflow };
+pub const StringError = enum { OutOfRange, NegativeCount, InvalidUtf8 };
+pub const error_sets = .{ ConversionError, StringError };
 
 const ascii_whitespace = " \t\n\r\x0b\x0c";
 
-const ConversionError = error{ Invalid, Overflow };
+const ParseFailure = error{ Invalid, Overflow };
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
@@ -108,7 +104,7 @@ pub fn bufferFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 pub fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
-    if (!std.unicode.utf8ValidateSlice(text)) return fail(string_invalid_utf8_id);
+    if (!std.unicode.utf8ValidateSlice(text)) return fail(StringError.InvalidUtf8);
     const result = try vm.allocString(text.len);
     @memcpy(result.mutableSlice(), bytesArg(args, 0));
     return stringResult(result);
@@ -265,14 +261,14 @@ pub fn strCount(_: *VM, args: []v.Value) anyerror!NativeResult {
 pub fn strByteAt(_: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const index = args[1].int64;
-    if (index < 0 or index >= text.len) return fail(string_out_of_range_id);
+    if (index < 0 or index >= text.len) return fail(StringError.OutOfRange);
     return ok(.{ .int64 = text[@intCast(index)] });
 }
 
 pub fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const wanted = args[1].int64;
-    if (wanted < 0) return fail(string_out_of_range_id);
+    if (wanted < 0) return fail(StringError.OutOfRange);
     var characters = Pieces{ .text = text, .separator = "" };
     var position: i64 = 0;
     while (characters.next()) |character| : (position += 1) {
@@ -282,7 +278,7 @@ pub fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
         @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..character.len]);
         return stringResult(result);
     }
-    return fail(string_out_of_range_id);
+    return fail(StringError.OutOfRange);
 }
 
 pub fn strTrim(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -342,10 +338,10 @@ pub fn strSlice(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const start = args[1].int64;
     const end = args[2].int64;
     const is_in_range = start >= 0 and start <= end and end <= text.len;
-    if (!is_in_range) return fail(string_out_of_range_id);
+    if (!is_in_range) return fail(StringError.OutOfRange);
     const start_index: usize = @intCast(start);
     const end_index: usize = @intCast(end);
-    if (!isCharBoundary(text, start_index) or !isCharBoundary(text, end_index)) return fail(string_out_of_range_id);
+    if (!isCharBoundary(text, start_index) or !isCharBoundary(text, end_index)) return fail(StringError.OutOfRange);
     const result = try vm.allocString(end_index - start_index);
     @memcpy(result.mutableSlice(), bytesArg(args, 0)[start_index..end_index]);
     return stringResult(result);
@@ -353,7 +349,7 @@ pub fn strSlice(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 pub fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const count = args[1].int64;
-    if (count < 0) return fail(string_negative_count_id);
+    if (count < 0) return fail(StringError.NegativeCount);
     const total = std.math.mul(usize, bytesArg(args, 0).len, @intCast(count)) catch return error.OutOfMemory;
     const result = try vm.allocString(total);
     const data = result.mutableSlice();
@@ -389,14 +385,14 @@ fn joinParts(parts_value: *v.Value) []const v.Value {
     return array.getDataPtr()[0..array.len];
 }
 
-fn conversionFailure(failure: ConversionError) NativeResult {
+fn conversionFailure(failure: ParseFailure) NativeResult {
     return fail(switch (failure) {
-        error.Invalid => conversion_invalid_id,
-        error.Overflow => conversion_overflow_id,
+        error.Invalid => ConversionError.Invalid,
+        error.Overflow => ConversionError.Overflow,
     });
 }
 
-fn parseIntText(text: []const u8) ConversionError!i64 {
+fn parseIntText(text: []const u8) ParseFailure!i64 {
     const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
     const digits_end = skipDigits(text, digits_start);
     if (digits_end == digits_start or digits_end != text.len) return error.Invalid;
@@ -406,7 +402,7 @@ fn parseIntText(text: []const u8) ConversionError!i64 {
     };
 }
 
-fn parseFloatText(text: []const u8) ConversionError!f64 {
+fn parseFloatText(text: []const u8) ParseFailure!f64 {
     const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
     var end = skipDigits(text, digits_start);
     if (end == digits_start) return error.Invalid;

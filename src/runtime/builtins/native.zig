@@ -30,8 +30,8 @@ pub fn ok(value: v.Value) NativeResult {
     return .{ .value = value };
 }
 
-pub fn fail(id: i64) NativeResult {
-    return .{ .value = .{ .int64 = id }, .has_failed = true };
+pub fn fail(variant: anytype) NativeResult {
+    return .{ .value = .{ .int64 = @intFromEnum(variant) }, .has_failed = true };
 }
 
 pub fn parked() NativeResult {

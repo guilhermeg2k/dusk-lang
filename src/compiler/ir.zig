@@ -76,6 +76,7 @@ pub const Extern = struct {
     identifier: []const u8,
     params: []const TypedIdentifier,
     binding: Binding,
+    error_base: i64 = 0,
 };
 
 pub const Func = struct {

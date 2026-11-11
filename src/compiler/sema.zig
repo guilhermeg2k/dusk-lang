@@ -222,8 +222,22 @@ pub const SemaAnalyzer = struct {
             }
             const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
             try self.extern_uids.put(self.allocator, func.uid, {});
-            try self.externs.append(self.allocator, .{ .uid = func.uid, .identifier = func.identifier, .params = func.params, .binding = binding });
+            try self.externs.append(self.allocator, .{
+                .uid = func.uid,
+                .identifier = func.identifier,
+                .params = func.params,
+                .binding = binding,
+                .error_base = self.declaredErrorBase(func.return_type_id),
+            });
         }
+    }
+
+    fn declaredErrorBase(self: *Self, return_type_id: tt.TypeId) i64 {
+        const return_type = self.type_table.getTypePtrById(return_type_id);
+        if (return_type.kind != .error_union) return 0;
+        const set = self.errorSetOf(return_type.kind.error_union.error_set);
+        if (set.kind != .declared) return 0;
+        return std.mem.min(i64, set.ids.keys());
     }
 
     fn genericExtern(self: *Self, index: usize, binding: native.Binding) CompileError!ir.Extern {

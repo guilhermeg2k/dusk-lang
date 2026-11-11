@@ -412,7 +412,10 @@ const args = stack[stack_base + a + 1 ..][0..num_args];
 const result = try native(vm, args);
 if (result.is_parked) return;               // the task waits (section 11.3)
 stack[stack_base + a] = result.value;
-if (result.has_failed) cur_instruction += 1;
+if (result.has_failed) {
+    stack[stack_base + a].int64 += error_base;
+    cur_instruction += 1;
+}
 ```
 
 - `args` points directly into the caller's registers. A native that allocates can trigger a GC, which moves objects and updates those stack slots. So natives size their whole result, allocate once, and only then reread their arguments from `args`.
@@ -443,7 +446,7 @@ LOAD       R[1] R[2]     ; success path
 
 - `RETURN R[a]` resumes the caller at `cur_inst`, which is the `JUMP`, so the success path runs.
 - `RETURN_ERR R[a]` resumes the caller at `cur_inst + 1`, skipping the `JUMP` and landing on the handler.
-- A native returns `fail(id)` (`has_failed = true`), and the VM skips the `JUMP` the same way.
+- A native returns `fail(Set.Variant)` (`has_failed = true`), and the VM skips the `JUMP` the same way. The native only knows the variant's position in its error set (a Zig enum mirroring the `.dsk` set); the compiler stores the set's first error id on the native (`error_base`) and the VM adds it. A native whose error comes from elsewhere (`await` passing on a task's error) has base 0 and returns the full id.
 - The handler depends on the form (`genFailingCall`):
   - `try` inside a function: `RETURN_ERR`.
   - `try` at the top level: `PANIC_ERR`, which ends the program with "unhandled error".

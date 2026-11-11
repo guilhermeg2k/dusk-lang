@@ -580,6 +580,7 @@ pub const VM = struct {
                             stack[stack_base + inst.a] = result.value;
 
                             if (result.has_failed) {
+                                stack[stack_base + inst.a].int64 += n.error_base;
                                 cur_instruction += 1;
                             }
                         },

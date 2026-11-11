@@ -2479,19 +2479,27 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
     try testing.expectEqual(bindings.keys().len, extern_count);
 }
 
-test "prelude: builtin error ids match the natives constants" {
+test "builtins: each native error enum matches its error set, names and order" {
+    const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.prelude_src, @import("runtime/builtins/prelude.zig").error_sets);
+}
+
+fn expectErrorEnumsMatchSets(source: []const u8, comptime error_sets: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const natives = @import("runtime/builtins/prelude.zig");
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
-    const program = try dusk.compile("func main() -> void\nend\n");
-    try testing.expectEqualStrings("ConversionError.Invalid", program.error_names[natives.conversion_invalid_id]);
-    try testing.expectEqualStrings("ConversionError.Overflow", program.error_names[natives.conversion_overflow_id]);
-    try testing.expectEqualStrings("StringError.OutOfRange", program.error_names[natives.string_out_of_range_id]);
-    try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
-    try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
-    try testing.expectEqualStrings("ArrayError.Empty", program.error_names[natives.array_empty_id]);
-    try testing.expectEqualStrings("ArrayError.OutOfRange", program.error_names[natives.array_out_of_range_id]);
+    const root = try @import("dusk.zig").parse(arena.allocator(), source);
+    inline for (error_sets) |ErrorEnum| {
+        const full_name = @typeName(ErrorEnum);
+        const name = full_name[(std.mem.lastIndexOfScalar(u8, full_name, '.') orelse 0) + 1 ..];
+        const set = for (root.statements.items) |stmt| {
+            if (stmt.data == .error_set and std.mem.eql(u8, stmt.data.error_set.identifier, name)) break stmt.data.error_set;
+        } else return error.ErrorSetNotDeclared;
+        const variants = std.meta.fieldNames(ErrorEnum);
+        try testing.expectEqual(variants.len, set.variants.len);
+        for (variants, set.variants) |variant, declared| {
+            try testing.expectEqualStrings(variant, declared.identifier);
+        }
+    }
 }
 
 test "array index out of bounds is a runtime error" {
