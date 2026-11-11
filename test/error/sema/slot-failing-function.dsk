@@ -1,3 +1,5 @@
+import std/array: append
+
 func map[T, U](items: []T, f: func(T) -> U) -> []U
     let mut out: []U = []
     for items: item do

@@ -1,3 +1,5 @@
+import std/array: len, append
+
 struct Calls
     count = 0
 end

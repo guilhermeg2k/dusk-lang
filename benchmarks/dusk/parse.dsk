@@ -1,3 +1,5 @@
+import std/array: append
+
 func main() -> void
     let mut rows: []string = []
     for 0..499999: i do

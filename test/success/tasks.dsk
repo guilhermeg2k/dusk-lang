@@ -1,4 +1,5 @@
 import std/task
+import std/array: len, append
 
 error FetchError
     NotFound

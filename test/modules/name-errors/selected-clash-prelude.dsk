@@ -1,4 +1,4 @@
-import @/shapes: area as len
+import @/shapes: area as echo
 
 func main() -> void
 

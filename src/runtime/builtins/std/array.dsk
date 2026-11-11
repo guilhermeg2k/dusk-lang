@@ -1,0 +1,55 @@
+error ArrayError
+    Empty
+    OutOfRange
+end
+
+extern func len[T](array: []T) -> int
+extern func append[T](mut array: []T, mut value: T) -> void
+extern func ~unchecked_pop[T](mut array: []T) -> T
+extern func ~unchecked_insert[T](mut array: []T, index: int, value: T) -> void
+extern func ~unchecked_remove[T](mut array: []T, index: int) -> T
+extern func clear[T](mut array: []T) -> void
+extern func index_of[T: int | float | byte | bool | string](array: []T, value: T) -> ?int
+extern func contains[T: int | float | byte | bool | string](array: []T, value: T) -> bool
+
+func pop[T](mut array: []T) -> ArrayError!T
+    if len(array) == 0 then return ArrayError.Empty end
+    return unchecked_pop(array)
+end
+
+func pop_or_null[T](mut arr: []T) -> ?T
+    return pop(arr) catch null
+end
+
+func insert[T](mut array: []T, index: int, mut value: T) -> ArrayError!void
+    if index < 0 or index > len(array) then return ArrayError.OutOfRange end
+    unchecked_insert(array, index, value)
+end
+
+func remove[T](mut array: []T, index: int) -> ArrayError!T
+    if index < 0 or index >= len(array) then return ArrayError.OutOfRange end
+    return unchecked_remove(array, index)
+end
+
+func reverse[T](mut array: []T) -> void
+    let mut low = 0
+    let mut high = len(array) - 1
+    for low < high do
+        let mut item = array[low]
+        array[low] = array[high]
+        array[high] = item
+        low = low + 1
+        high = high - 1
+    end
+end
+
+func slice[T](array: []T, start: int, stop: int) -> ArrayError![]T
+    if start < 0 or start > stop or stop > len(array) then return ArrayError.OutOfRange end
+    let mut out: []T = []
+    let mut i = start
+    for i < stop do
+        append(out, copy(array[i]))
+        i = i + 1
+    end
+    return out
+end

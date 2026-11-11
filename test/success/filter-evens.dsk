@@ -1,3 +1,5 @@
+import std/array: len, append
+
 func filter_evens(arr: []int) -> []int
     let mut result : []int = []
     let n: int = len(arr)

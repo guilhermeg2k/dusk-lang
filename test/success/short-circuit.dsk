@@ -1,3 +1,5 @@
+import std/array: len, append
+
 func mark(mut log: []int, id: int, result: bool) -> bool
     append(log, id)
     return result

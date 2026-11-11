@@ -1,4 +1,5 @@
 import std/task
+import std/array: len, append
 
 func pause_then(ms: int, label: string) -> string
     task::sleep(ms)

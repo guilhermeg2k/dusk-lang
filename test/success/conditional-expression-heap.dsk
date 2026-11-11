@@ -1,3 +1,5 @@
+import std/array: len
+
 union Item
     text: string
     values: []int

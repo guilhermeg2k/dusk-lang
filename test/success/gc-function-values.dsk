@@ -1,3 +1,5 @@
+import std/array: append
+
 func double(x: int) -> return x * 2
 func triple(x: int) -> return x * 3
 

@@ -1,4 +1,5 @@
 import @/geo/shapes
+import std/array: len
 
 func describe() -> string
     return "util"

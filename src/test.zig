@@ -47,7 +47,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 9 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 7 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -2298,6 +2298,11 @@ test "a generic function's copy prints its name after compiling" {
 
 test "std: sleep lives in std/task" {
     try runCaseError("sema/sleep-needs-import.dsk", error.NotDefined);
+}
+
+test "std: array functions live in std/array" {
+    try runCase("std-array-qualified.dsk");
+    try runCaseError("sema/len-needs-import.dsk", error.NotDefined);
 }
 
 test "unknown types in let annotations are reported" {

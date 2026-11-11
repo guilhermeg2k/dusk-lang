@@ -1,3 +1,5 @@
+import std/array: len
+
 # GC stress: function returning struct-with-array, called in a loop
 # tests that register_types is correctly reset across function compilations (Bug 2)
 struct Wrapper
