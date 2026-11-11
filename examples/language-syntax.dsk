@@ -293,9 +293,10 @@ end
 # An inline return infers the result type. Defaults can infer parameter types.
 func scale(value: int, factor = 2) -> return value * factor
 
+
 struct Player
-    name: string
-    points = 0
+     name: string
+     points = 0
 
     # @ means the type being defined. self receives the instance.
     func add_points(mut self: @, amount: int) -> void
@@ -367,3 +368,5 @@ func read_positive(value: int) -> string
     end
     return "value: $number"
 end
+
+

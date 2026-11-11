@@ -6,20 +6,16 @@
 
 - Closures (& fn as anything (argument, item, etc))
 - Tasks: `spawn`, `await`, `sleep` (libuv timers)
+- Modules
 
 ## Version 0.16 - Shigeo
-
-- Modules
-- Privates~
-- Libuv IO: files, TCP, DNS, processes (tasks wait on them like `sleep`)
-
-## Version 0.17 - Shigeo
-
+- Libuv IO: files, TCP, DNS, processes (tasks wait on them like `sleep`), http
 - Collections: Lists, Sets, HashMaps, Tuples
+
 
 ## Backlog
 
-- Files generation + caching (Each compilation step)
+- Bytecode file generation + caching (Each compilation step)
 - Code Formatter
 - Fuzz testing
 - Improve memory usage
@@ -29,3 +25,4 @@
 - Add more number notations
 - Generators (`yield`) on the task engine
 - Channels between tasks, cancelling a task, timeouts
+
