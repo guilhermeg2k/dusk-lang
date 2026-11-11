@@ -1,3 +1,5 @@
+import std/string
+
 error ParseError
     Odd
 end
@@ -35,8 +37,8 @@ func main() -> void
         end
         return "small"
     end
-    assert(str_equal(size(3), "big"))
-    assert(str_equal(size(1), "small"))
+    assert(string::equal(size(3), "big"))
+    assert(string::equal(size(1), "small"))
 
     assert(apply(func(a: int, b: int) -> return a * b, 6, 7) == 42)
     assert(twice(3, func(x: int) -> return x + 10) == 23)
@@ -69,12 +71,12 @@ func main() -> void
         assert(first_two(i) == if i > 2 then 2 else i end)
     end
 
-    assert(str_equal(same_twice("same"), "same"))
+    assert(string::equal(same_twice("same"), "same"))
 
     let fns: []func(int) -> int = [func(x: int) -> return x + 1, func(x: int) -> return x - 1]
     assert(fns[0](1) == 2)
     assert(fns[1](1) == 0)
 
     let b = Button(on_click = func() -> return "clicked")
-    assert(str_equal(b.on_click(), "clicked"))
+    assert(string::equal(b.on_click(), "clicked"))
 end

@@ -1,5 +1,6 @@
 import std/array: len
+import std/buffer
 
 func main() -> !void
-    echo(len(try new_buffer(2)))
+    echo(len(try buffer::new(2)))
 end

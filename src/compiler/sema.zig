@@ -3236,13 +3236,12 @@ pub const SemaAnalyzer = struct {
     }
 
     fn strEqual(self: *Self, left: *ir.Value, right: *ir.Value) !*ir.Value {
-        const symbol = self.prelude_module.root.symbols.get("str_equal").?;
+        const symbol = self.prelude_module.root.symbols.get("strings_equal").?;
         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
         const boolean_type = self.type_table.getPrimitive(.boolean);
-        const args = try self.allocator.alloc(*ir.Value, 3);
+        const args = try self.allocator.alloc(*ir.Value, 2);
         args[0] = left;
         args[1] = right;
-        args[2] = try ir.Value.init(self.allocator, .{ .data = .{ .i_bool = false }, .type_id = boolean_type });
         return ir.Value.init(self.allocator, .{
             .data = .{ .fn_call = .{ .fn_uid = func.uid, .identifier = symbol.identifier, .args = args } },
             .type_id = boolean_type,
@@ -5909,8 +5908,15 @@ const SymbolTable = struct {
         if (self.symbols.get(symbol.identifier)) |_| {
             return CompileError.SemaError;
         }
-        if (self.module != null and self.get(symbol.identifier) != null) {
-            return CompileError.SemaError;
+        if (self.module) |module| {
+            if (module.selected.contains(symbol.identifier)) {
+                return CompileError.SemaError;
+            }
+            const can_reuse_prelude_names = module.bindings != null;
+            const is_prelude_name = if (self.parent) |parent| parent.getPublic(symbol.identifier) != null else false;
+            if (is_prelude_name and !can_reuse_prelude_names) {
+                return CompileError.SemaError;
+            }
         }
 
         try self.symbols.put(symbol.identifier, symbol);

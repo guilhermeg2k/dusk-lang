@@ -1,4 +1,6 @@
+import std/string
+
 func main() -> void
-    let t = spawn(func() -> return try str_slice("abc", 0, 9))
+    let t = spawn(func() -> return try string::slice("abc", 0, 9))
     let u: Task[string, ConversionError] = t
 end

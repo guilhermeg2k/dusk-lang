@@ -1,4 +1,6 @@
+import std/buffer
+
 func main() -> !void
-    let b = try new_buffer(1)
+    let b = try buffer::new(1)
     let s: string = b
 end

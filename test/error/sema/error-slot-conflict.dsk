@@ -1,7 +1,8 @@
 import std/array: ArrayError
+import std/string
 
 func parse(s: string) -> ConversionError!int
-    return try str_to_int(s)
+    return try string::to_int(s)
 end
 func pop_last(xs: []int) -> ArrayError!int
     return 1

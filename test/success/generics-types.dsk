@@ -1,4 +1,5 @@
 import std/array: len, append
+import std/string
 
 struct Stack[T]
     let MAX = 10
@@ -90,7 +91,7 @@ func main() -> void
 
     let mut words: Stack[string] = @(items = [])
     words.push("a")
-    assert(str_equal(words.peek(), "a"))
+    assert(string::equal(words.peek(), "a"))
 
     let mut empty: Stack[float] = Stack(items = [])
     empty.push(1.5)
@@ -98,7 +99,7 @@ func main() -> void
 
     let p = Pair(left = 1, right = "x")
     assert(p.left == 1)
-    assert(str_equal(p.right, "x"))
+    assert(string::equal(p.right, "x"))
 
     let list = Node(value = 1, next = Node(value = 2, next = null))
     assert(length(list) == 2)
@@ -109,18 +110,18 @@ func main() -> void
         err: _ then assert(false) end
     end
     let bad = divide(1, 0)
-    if bad.err: message then assert(str_equal(message, "division by zero")) end
+    if bad.err: message then assert(string::equal(message, "division by zero")) end
 
     let explicit: Result[bool, int] = Result(ok = true)
     assert(explicit.ok orelse false)
     assert(Stack.MAX == 10)
     assert(LIMIT == 20)
-    assert(str_equal(Choice.NAME, "choice"))
+    assert(string::equal(Choice.NAME, "choice"))
     let b = wrap(5)
     assert(b.get() == 5)
     assert(len(b.listed()) == 1)
     let greeting = wrap("hi")
-    assert(str_equal(greeting.get(), "hi"))
+    assert(string::equal(greeting.get(), "hi"))
     let values = unwrap_all([wrap(1), wrap(2)])
     assert(values[1] == 2)
 end

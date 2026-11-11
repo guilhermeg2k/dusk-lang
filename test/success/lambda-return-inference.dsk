@@ -1,4 +1,5 @@
 import std/array: len, append
+import std/string
 
 error LookupError
     Missing
@@ -32,7 +33,7 @@ func main() -> !void
         return @(id = n, name = name)
     end)
     assert(people[2].id == 3)
-    assert(str_equal(people[2].name, "caio"))
+    assert(string::equal(people[2].name, "caio"))
 
     let double = func(x: int)
         return x * 2
@@ -51,9 +52,9 @@ func main() -> !void
         let name = try get(db, n)
         return name
     end
-    assert(str_equal(try lookup(2), "bia"))
+    assert(string::equal(try lookup(2), "bia"))
     let missing = lookup(9) catch "none"
-    assert(str_equal(missing, "none"))
+    assert(string::equal(missing, "none"))
 
     let check = func(n: int)
         if n < 0 then
@@ -74,7 +75,7 @@ func main() -> !void
         end
         return "pos"
     end
-    assert(str_equal(sign(-1), "neg"))
+    assert(string::equal(sign(-1), "neg"))
 
     let inline = func(x: int) -> return x + 1
     assert(inline(1) == 2)

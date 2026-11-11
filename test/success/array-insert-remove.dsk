@@ -1,4 +1,5 @@
 import std/array: len, insert, remove, clear, ArrayError
+import std/string
 
 struct Point
     x: int
@@ -43,5 +44,5 @@ func main() -> void
     assert(p.x == 200)
     let mut names = ["b"]
     insert(names, 0, "a") catch _ then assert(false) end
-    assert(str_equal(names[0], "a"))
+    assert(string::equal(names[0], "a"))
 end

@@ -1,15 +1,17 @@
 import std/array: len, append
+import std/string
+import std/buffer
 
 func main() -> !void
     let mut kept: []buffer = []
     let mut total = 0
     for 1..20000: i do
-        let mut data = try new_buffer(64)
+        let mut data = try buffer::new(64)
         data[0] = try to_byte(i % 256)
         data[63] = 7
-        let copy = buffer_from("payload number $i")
-        assert(str_len(try string_from(copy)) == buffer_len(copy))
-        total = total + buffer_len(copy)
+        let copy = buffer::from_string("payload number $i")
+        assert(string::len(try string::from_bytes(copy)) == buffer::len(copy))
+        total = total + buffer::len(copy)
         if i % 1000 == 0 then
             append(kept, data)
         end
@@ -18,7 +20,7 @@ func main() -> !void
     for kept: data, index do
         assert(data[0] == try to_byte(((index + 1) * 1000) % 256))
         assert(data[63] == 7)
-        assert(buffer_len(data) == 64)
+        assert(buffer::len(data) == 64)
     end
     echo(total)
 end

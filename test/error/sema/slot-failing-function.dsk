@@ -1,4 +1,5 @@
 import std/array: append
+import std/string
 
 func map[T, U](items: []T, f: func(T) -> U) -> []U
     let mut out: []U = []
@@ -9,7 +10,7 @@ func map[T, U](items: []T, f: func(T) -> U) -> []U
 end
 
 func parse(s: string) -> ConversionError!int
-    return try str_to_int(s)
+    return try string::to_int(s)
 end
 
 func main() -> !void

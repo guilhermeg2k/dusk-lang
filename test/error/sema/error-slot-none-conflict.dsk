@@ -1,5 +1,7 @@
+import std/string
+
 func parse(s: string) -> ConversionError!int
-    return try str_to_int(s)
+    return try string::to_int(s)
 end
 func one(s: string) -> int
     return 1

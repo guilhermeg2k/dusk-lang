@@ -47,7 +47,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 7 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 3 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -353,7 +353,6 @@ test "string indexing and loops" {
 
 test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
-    try runCaseError("sema/string-error-redefined.dsk", error.AlreadyDefined);
 }
 
 test "string transforms" {
@@ -2300,6 +2299,11 @@ test "std: sleep lives in std/task" {
     try runCaseError("sema/sleep-needs-import.dsk", error.NotDefined);
 }
 
+test "std: string and buffer functions live in std/string and std/buffer" {
+    try runCase("std-string-names.dsk");
+    try runCaseError("sema/std-name-clashes-prelude.dsk", error.AlreadyDefined);
+}
+
 test "std: array functions live in std/array" {
     try runCase("std-array-qualified.dsk");
     try runCaseError("sema/len-needs-import.dsk", error.NotDefined);
@@ -2486,19 +2490,26 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
-    try expectErrorEnumsMatchSets(dusk.prelude_src, @import("runtime/builtins/prelude.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
+}
+
+fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {
+    for (root.statements.items) |stmt| {
+        if (stmt.data == .error_set and std.mem.eql(u8, stmt.data.error_set.identifier, name)) return stmt.data.error_set;
+    }
+    return null;
 }
 
 fn expectErrorEnumsMatchSets(source: []const u8, comptime error_sets: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const root = try @import("dusk.zig").parse(arena.allocator(), source);
+    const dusk = @import("dusk.zig");
+    const module_root = try dusk.parse(arena.allocator(), source);
+    const prelude_root = try dusk.parse(arena.allocator(), dusk.prelude_src);
     inline for (error_sets) |ErrorEnum| {
         const full_name = @typeName(ErrorEnum);
         const name = full_name[(std.mem.lastIndexOfScalar(u8, full_name, '.') orelse 0) + 1 ..];
-        const set = for (root.statements.items) |stmt| {
-            if (stmt.data == .error_set and std.mem.eql(u8, stmt.data.error_set.identifier, name)) break stmt.data.error_set;
-        } else return error.ErrorSetNotDeclared;
+        const set = findErrorSet(module_root, name) orelse findErrorSet(prelude_root, name) orelse return error.ErrorSetNotDeclared;
         const variants = std.meta.fieldNames(ErrorEnum);
         try testing.expectEqual(variants.len, set.variants.len);
         for (variants, set.variants) |variant, declared| {

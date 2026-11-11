@@ -3,56 +3,15 @@ error ConversionError
     Overflow
 end
 
-error StringError
-    OutOfRange
-    NegativeCount
-    InvalidUtf8
-end
-
-error BufferError
-    NegativeSize
-end
-
 extern func echo(msgs: dynamic) -> void
-extern func str_len(text: string) -> int
-extern func buffer_len(data: buffer) -> int
-extern func ~unchecked_new_buffer(size: int) -> buffer
 extern func ~unchecked_to_byte(value: int) -> byte
 extern func ~unchecked_to_int(value: float) -> int
 extern func to_float[T: int | byte | float](value: T) -> float
 extern func assert(cond: bool) -> void
-extern func buffer_from(text: string) -> buffer
-extern func string_from(data: buffer) -> StringError!string
-extern func str_equal(a: string, b: string, ignore_case: bool = false) -> bool
-extern func str_char_count(text: string) -> int
-extern func str_concat(a: string, b: string) -> string
-extern func str_join(parts: []string, sep: string = "") -> string
-extern func str_to_int(text: string) -> ConversionError!int
-extern func str_to_float(text: string) -> ConversionError!float
 extern func copy[T](value: T) -> T
 extern func spawn[T, E: error](body: func() -> E!T) -> Task[T, E]
 extern func await[T, E: error](task: Task[T, E]) -> E!T
-extern func str_find(text: string, needle: string) -> ?int
-extern func str_contains(text: string, needle: string) -> bool
-extern func str_starts_with(text: string, prefix: string) -> bool
-extern func str_ends_with(text: string, suffix: string) -> bool
-extern func str_count(text: string, needle: string) -> int
-extern func str_byte_at(text: string, index: int) -> StringError!byte
-extern func str_char_at(text: string, index: int) -> StringError!string
-extern func str_trim(text: string) -> string
-extern func str_split(text: string, separator: string) -> []string
-extern func str_replace(text: string, old: string, new: string) -> string
-extern func str_upper(text: string) -> string
-extern func str_lower(text: string) -> string
-extern func str_slice(text: string, start: int, stop: int) -> StringError!string
-extern func str_repeat(text: string, count: int) -> StringError!string
-
-func new_buffer(size: int) -> BufferError!buffer
-    if size < 0 then
-        return BufferError.NegativeSize
-    end
-    return unchecked_new_buffer(size)
-end
+extern func ~strings_equal(a: string, b: string) -> bool
 
 func to_byte(value: int) -> ConversionError!byte
     if value < 0 or value > 255 then

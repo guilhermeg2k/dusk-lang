@@ -102,7 +102,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn stringIndexing(self: *Self, loc: Loc) CompileError {
-        self.log("Strings can't be indexed: use str_byte_at(s, i) or str_char_at(s, i)", loc);
+        self.log("Strings can't be indexed: use string::byte_at(s, i) or string::char_at(s, i) from std/string", loc);
         return error.InvalidIndexing;
     }
 
@@ -400,7 +400,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn cantCompareStrings(self: *Self, op: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' can't compare strings: use str_equal(a, b) to compare their text", .{op}), loc);
+        self.log(try allocPrint(self.allocator, "'{s}' can't compare strings: use string::equal(a, b) from std/string to compare their text", .{op}), loc);
         return error.CantCompare;
     }
 
@@ -511,7 +511,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn slotStringEquality(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': on a string it would compare pointers. Use str_equal", .{ operator, slot }), loc);
+        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': on a string it would compare pointers. Use string::equal from std/string", .{ operator, slot }), loc);
         return error.SlotOperatorNotAllowed;
     }
 

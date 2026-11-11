@@ -1,4 +1,5 @@
 import std/array: len, append, index_of, contains, reverse, slice, ArrayError
+import std/string
 
 struct Point
     x: int
@@ -34,7 +35,7 @@ func main() -> !void
     assert(len(grid[0]) == 1)
 
     let names = ["ada", "bob"]
-    let wanted = str_concat("b", "ob")
+    let wanted = string::concat("b", "ob")
     assert(contains(names, wanted))
     assert(!contains(names, "eve"))
     let at = index_of(names, wanted) orelse -1

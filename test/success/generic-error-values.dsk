@@ -1,4 +1,5 @@
 import std/array: len
+import std/string
 
 func id[T](x: T) -> T
     return x
@@ -7,7 +8,7 @@ struct Box[T]
     item: T
 end
 func main() -> void
-    str_to_int("x") catch e then
+    string::to_int("x") catch e then
         let same = id(e)
         let b = Box(item = e)
         let xs = [e]

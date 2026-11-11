@@ -1,4 +1,5 @@
 import std/array: len, append
+import std/string
 
 func main() -> void
     let mut numbers = [1]
@@ -8,14 +9,14 @@ func main() -> void
     echo(numbers)
     echo("${numbers}")
 
-    let mut parts = str_split("a", ",")
+    let mut parts = string::split("a", ",")
     for 0..20: i do
         append(parts, "x")
     end
     assert(len(parts) == 22)
-    assert(str_equal(parts[0], "a"))
-    assert(str_equal(parts[21], "x"))
-    let mut short = str_split("a", ",")
+    assert(string::equal(parts[0], "a"))
+    assert(string::equal(parts[21], "x"))
+    let mut short = string::split("a", ",")
     append(short, "b")
     append(short, "c")
     echo(short)

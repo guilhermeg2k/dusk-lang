@@ -1,5 +1,7 @@
+import std/buffer
+
 let n = -1
 
 func main() -> !void
-    let b = try new_buffer(n)
+    let b = try buffer::new(n)
 end

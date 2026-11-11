@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> !void
-    let x = try str_repeat("a", -1)
+    let x = try string::repeat("a", -1)
 end

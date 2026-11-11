@@ -1,3 +1,5 @@
+import std/string
+
 enum Color
     Red
     Blue
@@ -30,8 +32,8 @@ func main() -> void
     assert((no_failure orelse Failure.Invalid) == Failure.Invalid)
     let optional_text: ?string = text
     let no_text: ?string = null
-    assert(str_equal(optional_text orelse "other", text))
-    assert(str_equal(no_text orelse text, text))
+    assert(string::equal(optional_text orelse "other", text))
+    assert(string::equal(no_text orelse text, text))
     let original = Point(1)
     let point: ?Point = original
     let no_point: ?Point = null

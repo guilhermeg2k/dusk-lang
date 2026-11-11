@@ -1,4 +1,5 @@
 import std/array: len, append, remove
+import std/string
 
 let ~LIMIT = 3
 
@@ -46,7 +47,7 @@ func ~describe[T: Named](item: T) -> string
 end
 
 func ~parse(text: string) -> ParseError!int
-    if str_len(text) == 0 then
+    if string::len(text) == 0 then
         return ParseError.Empty
     end
     return 1
@@ -59,7 +60,7 @@ func main() -> void
     end
     assert(c.count == 5)
     assert(len(c.history) == LIMIT)
-    assert(str_equal(describe(c), "counter"))
+    assert(string::equal(describe(c), "counter"))
     assert((parse("") catch -1) == -1)
     let s: Shape = Shape(circle = 1.0)
     assert(s.circle != null)

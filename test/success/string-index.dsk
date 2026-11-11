@@ -1,8 +1,10 @@
+import std/string
+
 let word = "olá!"
 func byte_or_reason(text: string, index: int) -> string
-    let b = str_byte_at(text, index) catch e then
+    let b = string::byte_at(text, index) catch e then
         return when e
-            StringError.OutOfRange then "out of range" end
+            string::StringError.OutOfRange then "out of range" end
             else then "other" end
         end
     end
@@ -10,9 +12,9 @@ func byte_or_reason(text: string, index: int) -> string
 end
 
 func char_or_reason(text: string, index: int) -> string
-    let c = str_char_at(text, index) catch e then
+    let c = string::char_at(text, index) catch e then
         return when e
-            StringError.OutOfRange then "out of range" end
+            string::StringError.OutOfRange then "out of range" end
             else then "other" end
         end
     end
@@ -20,14 +22,14 @@ func char_or_reason(text: string, index: int) -> string
 end
 
 func main() -> !void
-    assert((try str_byte_at(word, 0)) == 'o')
-    assert((try str_byte_at(word, 2)) == 195)
-    assert((try str_byte_at(word, 3)) == 161)
-    assert((try str_byte_at(word, 4)) == '!')
-    assert(str_equal(try str_char_at(word, 0), "o"))
-    assert(str_equal(try str_char_at(word, 2), "á"))
-    assert(str_equal(try str_char_at(word, 3), "!"))
-    assert(str_equal(try str_char_at("🌙x", 1), "x"))
+    assert((try string::byte_at(word, 0)) == 'o')
+    assert((try string::byte_at(word, 2)) == 195)
+    assert((try string::byte_at(word, 3)) == 161)
+    assert((try string::byte_at(word, 4)) == '!')
+    assert(string::equal(try string::char_at(word, 0), "o"))
+    assert(string::equal(try string::char_at(word, 2), "á"))
+    assert(string::equal(try string::char_at(word, 3), "!"))
+    assert(string::equal(try string::char_at("🌙x", 1), "x"))
     echo(byte_or_reason(word, -1))
     echo(byte_or_reason(word, 5))
     echo(byte_or_reason(word, 1))

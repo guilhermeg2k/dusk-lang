@@ -1,4 +1,5 @@
 import std/array: len
+import std/string
 
 let name = "dusk"
 
@@ -6,9 +7,9 @@ func main() -> void
     let mut total = 0
     for 0..999999: i do
         let line = "item $i: value=${i * 3} tag=$name"
-        let fields = str_split(line, " ")
-        let joined = str_join(fields, ",")
-        total = total + (str_len(line) + len(fields) + str_len(joined))
+        let fields = string::split(line, " ")
+        let joined = string::join(fields, ",")
+        total = total + (string::len(line) + len(fields) + string::len(joined))
     end
     echo(total)
 end

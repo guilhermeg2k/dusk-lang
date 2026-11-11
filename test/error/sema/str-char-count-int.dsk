@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> void
-    echo(str_char_count(1))
+    echo(string::char_count(1))
 end

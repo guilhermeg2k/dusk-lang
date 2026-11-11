@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> void
-    let n = str_to_int("1")
+    let n = string::to_int("1")
 end

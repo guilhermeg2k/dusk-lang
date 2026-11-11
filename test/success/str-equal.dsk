@@ -1,34 +1,37 @@
+import std/string
+import std/buffer
+
 let name = "Dusk"
 
 func main() -> void
     let built = "${name}"
-    assert(str_equal(built, name))
-    assert(str_equal(name, "Dusk"))
-    assert(!str_equal(name, "dusk"))
-    assert(!str_equal(name, "Dus"))
-    assert(!str_equal("", "a"))
-    assert(str_equal("", "${""}"))
-    assert(str_equal("olá 🌙", "ol\u{E1} \u{1F319}"))
-    assert(str_equal(string_from(buffer_from("copy")) catch "", "copy"))
-    assert(name |> str_equal("Dusk"))
+    assert(string::equal(built, name))
+    assert(string::equal(name, "Dusk"))
+    assert(!string::equal(name, "dusk"))
+    assert(!string::equal(name, "Dus"))
+    assert(!string::equal("", "a"))
+    assert(string::equal("", "${""}"))
+    assert(string::equal("olá 🌙", "ol\u{E1} \u{1F319}"))
+    assert(string::equal(string::from_bytes(buffer::from_string("copy")) catch "", "copy"))
+    assert(name |> string::equal("Dusk"))
     let mut matches = 0
     for 1..20000: i do
         let text = "item $i"
-        if str_equal(text, "item 19999") then
+        if string::equal(text, "item 19999") then
             matches = matches + 1
         end
     end
     assert(matches == 1)
-    echo(str_equal("a", "a"))
-    echo(str_equal("a", "b"))
-    assert(str_equal(a = "José", b = "JOSÉ", ignore_case = true))
-    assert(str_equal("AÇÃO", "ação", true))
-    assert(!str_equal("José", "JOSÉ"))
-    assert(!str_equal("José", "JOSÉ", false))
-    assert(str_equal("Hello", "hELLO", true))
-    assert(!str_equal("Hello", "Hell", true))
-    assert(!str_equal("ß", "SS", true))
-    assert(!str_equal("×", "÷", true))
-    assert(!str_equal("Ω", "ω", true))
-    assert("Dusk" |> str_equal("DUSK", true))
+    echo(string::equal("a", "a"))
+    echo(string::equal("a", "b"))
+    assert(string::equal(a = "José", b = "JOSÉ", ignore_case = true))
+    assert(string::equal("AÇÃO", "ação", true))
+    assert(!string::equal("José", "JOSÉ"))
+    assert(!string::equal("José", "JOSÉ", false))
+    assert(string::equal("Hello", "hELLO", true))
+    assert(!string::equal("Hello", "Hell", true))
+    assert(!string::equal("ß", "SS", true))
+    assert(!string::equal("×", "÷", true))
+    assert(!string::equal("Ω", "ω", true))
+    assert("Dusk" |> string::equal("DUSK", true))
 end

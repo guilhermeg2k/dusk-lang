@@ -1,4 +1,5 @@
 import std/array: append
+import std/string
 
 func add(a: int, b: int) -> return a + b
 func id[T](x: T) -> T
@@ -9,5 +10,5 @@ func grow(mut xs: []int) -> void
 end
 
 func main() -> void
-    let f = str_len
+    let f = string::len
 end

@@ -13,6 +13,10 @@ pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
 pub const parse = modules.parse;
 
+pub fn stdSource(path: []const u8) []const u8 {
+    return @import("runtime/builtins/std.zig").find(path).?.source;
+}
+
 pub const EntryFile = struct {
     project_root: []const u8 = ".",
     module_path: []const u8 = "",
