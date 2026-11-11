@@ -5,6 +5,8 @@ const Parser = @import("parser.zig").Parser;
 const compile_error = @import("compile_error.zig");
 const CompileError = compile_error.CompileError;
 const CompileErrorReporter = compile_error.CompileErrorReporter;
+const std_library = @import("../runtime/builtins/std.zig");
+const BindingMap = @import("../runtime/builtins/native.zig").BindingMap;
 
 pub const ModuleLoader = struct {
     const Self = @This();
@@ -21,11 +23,12 @@ pub const ModuleLoader = struct {
     }
 
     pub fn load(self: *Self, entry_path: []const u8, entry_src: []const u8) CompileError![]const Module {
-        _ = try self.loadModule(entry_path, entry_src, null);
+        const path = try std.fmt.allocPrint(self.allocator, "@/{s}", .{entry_path});
+        _ = try self.loadModule(path, entry_src, null, null);
         return self.modules.items;
     }
 
-    fn loadModule(self: *Self, path: []const u8, src: []const u8, file_path: ?[]const u8) CompileError!usize {
+    fn loadModule(self: *Self, path: []const u8, src: []const u8, file_path: ?[]const u8, bindings: ?*const BindingMap) CompileError!usize {
         const root = try parseFile(self.allocator, src, file_path);
         var reporter = CompileErrorReporter{ .allocator = self.allocator, .src = src, .file_path = file_path };
 
@@ -42,6 +45,7 @@ pub const ModuleLoader = struct {
         try self.modules.append(self.allocator, .{
             .path = path,
             .file_path = file_path,
+            .bindings = bindings,
             .src = src,
             .root = root,
             .imports = try imports.toOwnedSlice(self.allocator),
@@ -51,20 +55,27 @@ pub const ModuleLoader = struct {
     }
 
     fn loadImport(self: *Self, import: ast.ImportStmt, reporter: *CompileErrorReporter) CompileError!usize {
-        switch (import.source) {
-            .library => return reporter.librariesNotSupported(import.path, import.path_loc),
-            .std => return reporter.unknownStdModule(import.path, import.path_loc),
-            .project => {},
+        if (import.source == .library) {
+            return reporter.librariesNotSupported(import.path, import.path_loc);
         }
-        if (self.loaded_paths.get(import.path)) |index| {
+        const std_module = if (import.source == .std) std_library.find(import.path) orelse {
+            return reporter.unknownStdModule(import.path, import.path_loc);
+        } else null;
+        const prefix = if (std_module != null) "std/" else "@/";
+        const path = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ prefix, import.path });
+        if (self.loaded_paths.get(path)) |index| {
             return index;
         }
-        if (self.isLoading(import.path)) {
-            return reporter.importCycle(try self.describeCycle(import.path), import.path_loc);
+        if (self.isLoading(path)) {
+            return reporter.importCycle(try self.describeCycle(path), import.path_loc);
+        }
+        if (std_module) |module| {
+            const file_path = try std.fmt.allocPrint(self.allocator, "{s}.dsk", .{path});
+            return self.loadModule(path, module.source, file_path, module.bindings);
         }
         const file_path = try self.projectFilePath(import.path);
-        const src = try self.readProjectFile(import, file_path, reporter);
-        return self.loadModule(import.path, src, file_path);
+        const src = try self.readProjectFile(path, file_path, import.path_loc, reporter);
+        return self.loadModule(path, src, file_path, null);
     }
 
     fn isLoading(self: *Self, path: []const u8) bool {
@@ -82,9 +93,9 @@ pub const ModuleLoader = struct {
                 is_in_cycle = true;
             }
             if (!is_in_cycle) continue;
-            try chain.print(self.allocator, "@/{s} -> ", .{loading});
+            try chain.print(self.allocator, "{s} -> ", .{loading});
         }
-        try chain.print(self.allocator, "@/{s}", .{path});
+        try chain.print(self.allocator, "{s}", .{path});
         return chain.toOwnedSlice(self.allocator);
     }
 
@@ -93,12 +104,12 @@ pub const ModuleLoader = struct {
         return std.fs.path.join(self.allocator, &.{ self.project_root, file_name });
     }
 
-    fn readProjectFile(self: *Self, import: ast.ImportStmt, file_path: []const u8, reporter: *CompileErrorReporter) CompileError![]const u8 {
+    fn readProjectFile(self: *Self, path: []const u8, file_path: []const u8, loc: compile_error.Loc, reporter: *CompileErrorReporter) CompileError![]const u8 {
         return std.Io.Dir.cwd().readFileAlloc(self.io, file_path, self.allocator, .unlimited) catch |failure| {
             if (failure == error.FileNotFound) {
-                return reporter.moduleNotFound(import.path, file_path, import.path_loc);
+                return reporter.moduleNotFound(path, file_path, loc);
             }
-            return reporter.cantReadModule(import.path, @errorName(failure), import.path_loc);
+            return reporter.cantReadModule(path, @errorName(failure), loc);
         };
     }
 };
@@ -106,6 +117,7 @@ pub const ModuleLoader = struct {
 pub const Module = struct {
     path: []const u8,
     file_path: ?[]const u8,
+    bindings: ?*const BindingMap,
     src: []const u8,
     root: ast.Root,
     imports: []const Import,

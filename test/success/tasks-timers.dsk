@@ -1,5 +1,7 @@
+import std/task
+
 func pause_then(ms: int, label: string) -> string
-    sleep(ms)
+    task::sleep(ms)
     return label
 end
 
@@ -7,7 +9,7 @@ func main() -> void
     let mut order: []int = []
     for [30, 10, 20]: ms do
         spawn(func()
-            sleep(ms)
+            task::sleep(ms)
             append(order, ms)
         end)
     end
@@ -23,17 +25,17 @@ func main() -> void
     let mut ticks = 0
     let ticker = spawn(func()
         for 1..3: _ do
-            sleep(2)
+            task::sleep(2)
             ticks = ticks + 1
         end
     end)
     for ticks < 3 do
-        sleep(0)
+        task::sleep(0)
     end
     await(ticker)
 
     spawn(func()
-        sleep(15)
+        task::sleep(15)
         echo("late task: ${len(order)}")
     end)
     echo("main ends")

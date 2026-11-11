@@ -2,6 +2,7 @@ const std = @import("std");
 const TypeId = @import("type_table.zig").TypeId;
 const TypedIdentifier = @import("type_table.zig").TypedIdentifier;
 const err = @import("compile_error.zig");
+const Binding = @import("../runtime/builtins/native.zig").Binding;
 
 pub const Program = struct {
     instructions: Block,
@@ -74,6 +75,7 @@ pub const Extern = struct {
     uid: usize,
     identifier: []const u8,
     params: []const TypedIdentifier,
+    binding: Binding,
 };
 
 pub const Func = struct {

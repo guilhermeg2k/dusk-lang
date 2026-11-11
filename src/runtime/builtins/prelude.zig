@@ -3,6 +3,14 @@ const v = @import("../value.zig");
 const format = @import("../format.zig");
 const VM = @import("../vm.zig").VM;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
+const native = @import("native.zig");
+const Binding = native.Binding;
+const NativeResult = native.NativeResult;
+const ok = native.ok;
+const fail = native.fail;
+const parked = native.parked;
+const stringResult = native.stringResult;
+const bytesArg = native.bytesArg;
 
 pub const conversion_invalid_id: i64 = 1;
 pub const conversion_overflow_id: i64 = 2;
@@ -16,7 +24,7 @@ const ascii_whitespace = " \t\n\r\x0b\x0c";
 
 const ConversionError = error{ Invalid, Overflow };
 
-pub const bindings = std.StaticStringMap(Binding).initComptime(.{
+pub const bindings = native.BindingMap.initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
     .{ "len", Binding{ .intrinsic = .array_len } },
@@ -36,7 +44,6 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "copy", Binding{ .intrinsic = .copy } },
     .{ "spawn", Binding{ .intrinsic = .task_spawn } },
     .{ "await", Binding{ .native = &taskAwait } },
-    .{ "sleep", Binding{ .native = &taskSleep } },
     .{ "buffer_from", Binding{ .native = &bufferFrom } },
     .{ "string_from", Binding{ .native = &stringFrom } },
     .{ "str_equal", Binding{ .native = &strEqual } },
@@ -60,28 +67,6 @@ pub const bindings = std.StaticStringMap(Binding).initComptime(.{
     .{ "str_slice", Binding{ .native = &strSlice } },
     .{ "str_repeat", Binding{ .native = &strRepeat } },
 });
-
-pub const Binding = union(enum) {
-    native: NativeFnPtr,
-    intrinsic: Intrinsic,
-};
-
-pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
-
-pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
-
-pub const Intrinsic = enum {
-    array_len,
-    array_pop,
-    bytes_len,
-    new_buffer,
-    to_byte,
-    to_int,
-    to_float,
-    append,
-    copy,
-    task_spawn,
-};
 
 pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const writer = vm.stdout orelse return ok(.{ .null = {} });
@@ -111,25 +96,6 @@ pub fn taskAwait(vm: *VM, args: []v.Value) anyerror!NativeResult {
     try target.waiters.append(vm.scheduler.allocator, current);
     current.park();
     return parked();
-}
-
-pub fn taskSleep(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const ms = args[0].int64;
-    if (ms < 0) {
-        return RuntimeErrorReporter.negativeSleep(ms);
-    }
-    const current = vm.running_task.?;
-    if (ms == 0) {
-        try vm.scheduler.wake(current, .{ .value = v.NULL_VALUE, .kind = .null });
-        return parked();
-    }
-    try vm.event_loop.startTimer(&vm.scheduler, @intCast(ms), current);
-    current.park();
-    return parked();
-}
-
-fn parked() NativeResult {
-    return .{ .value = v.NULL_VALUE, .is_parked = true };
 }
 
 pub fn bufferFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -395,22 +361,6 @@ pub fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var offset: usize = 0;
     while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
     return stringResult(result);
-}
-
-fn ok(value: v.Value) NativeResult {
-    return .{ .value = value };
-}
-
-fn fail(id: i64) NativeResult {
-    return .{ .value = .{ .int64 = id }, .has_failed = true };
-}
-
-fn stringResult(result: *v.Bytes) NativeResult {
-    return ok(.{ .heap_obj = &result.obj });
-}
-
-fn bytesArg(args: []const v.Value, index: usize) []const u8 {
-    return v.HeapValue.getParentPtr(v.Bytes, args[index].heap_obj).slice();
 }
 
 fn isEqualIgnoringCase(left: []const u8, right: []const u8) bool {

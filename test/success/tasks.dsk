@@ -1,9 +1,11 @@
+import std/task
+
 error FetchError
     NotFound
 end
 
 func fetch(id: int) -> FetchError!string
-    sleep(0)
+    task::sleep(0)
     if id < 0 then
         return FetchError.NotFound
     end
@@ -26,12 +28,12 @@ func main() -> void
     let mut log: []string = []
     let a = spawn(func()
         append(log, "a1")
-        sleep(0)
+        task::sleep(0)
         append(log, "a2")
     end)
     let b = spawn(func()
         append(log, "b1")
-        sleep(0)
+        task::sleep(0)
         append(log, "b2")
     end)
     append(log, "main")
@@ -45,7 +47,7 @@ func main() -> void
     assert(await(answer) == 42)
 
     let shared = spawn(func()
-        sleep(0)
+        task::sleep(0)
         return 7
     end)
     let mut seen: []int = []
@@ -89,7 +91,7 @@ func main() -> void
     echo("$done")
 
     spawn(func()
-        sleep(0)
+        task::sleep(0)
         echo("after main")
     end)
     echo("main ends")

@@ -13,7 +13,9 @@ The source files involved:
 | `src/runtime/value.zig` | `Value`, `ValueType` and every heap object layout |
 | `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
-| `src/runtime/builtins/natives.zig` | Builtins written in Zig, and the intrinsics table |
+| `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
+| `src/runtime/builtins/std.zig`, `std/*.zig` | Standard library registry and each module's natives |
+| `src/runtime/builtins/native.zig` | Shared native types (`Binding`, `NativeResult`, the `Intrinsic` table) and helpers |
 | `src/runtime/builtins/prelude.dsk` | The builtins' signatures, compiled before the user's file |
 | `src/runtime/tasks/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
 | `src/runtime/tasks/event_loop.zig` | `EventLoop`, the only code that drives libuv (timers for `sleep`) |

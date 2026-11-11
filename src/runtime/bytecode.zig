@@ -1,6 +1,6 @@
 const std = @import("std");
 const v = @import("value.zig");
-const natives = @import("builtins/natives.zig");
+const native = @import("builtins/native.zig");
 
 pub const UnionDescriptor = struct {
     heap_bitmap: u256,
@@ -66,14 +66,14 @@ pub const Program = struct {
 };
 
 pub const NativeFn = struct {
-    func: natives.NativeFnPtr,
+    func: native.NativeFnPtr,
     num_args: u8,
 };
 
 pub const FunctionKind = union(enum) {
     dusk: Chunk,
     native: NativeFn,
-    intrinsic: natives.Intrinsic,
+    intrinsic: native.Intrinsic,
 };
 
 pub const Function = struct {

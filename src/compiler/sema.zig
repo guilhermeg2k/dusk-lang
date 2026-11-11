@@ -3,7 +3,8 @@ const ir = @import("ir.zig");
 const ast = @import("ast.zig");
 const tt = @import("type_table.zig");
 const modules = @import("modules.zig");
-const natives = @import("../runtime/builtins/natives.zig");
+const native = @import("../runtime/builtins/native.zig");
+const prelude_bindings = &@import("../runtime/builtins/prelude.zig").bindings;
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
 
@@ -35,7 +36,7 @@ pub const SemaAnalyzer = struct {
     slot_modules: std.AutoHashMapUnmanaged(usize, *ModuleScope) = .empty,
     type_modules: std.AutoHashMapUnmanaged(tt.TypeId, *ModuleScope) = .empty,
     file_only_methods: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty,
-    intrinsic_by_uid: std.AutoHashMapUnmanaged(usize, natives.Intrinsic) = .empty,
+    intrinsic_by_uid: std.AutoHashMapUnmanaged(usize, native.Intrinsic) = .empty,
     extern_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
@@ -81,6 +82,7 @@ pub const SemaAnalyzer = struct {
 
     pub fn analyze(self: *Self, prelude: *const ast.Root, prelude_src: []const u8, loaded_modules: []const modules.Module) !ir.Program {
         self.prelude_module = try ModuleScope.create(self.allocator, "prelude", prelude_src, self.scope.symbol_table, true);
+        self.prelude_module.bindings = prelude_bindings;
         self.scope.symbol_table.module = self.prelude_module;
         _ = self.enterModuleContext(self.prelude_module);
         try self.declareNoneErrorSet();
@@ -92,6 +94,7 @@ pub const SemaAnalyzer = struct {
             const root_table = try SymbolTable.init(self.allocator, self.prelude_module.root, null);
             module_scopes[i] = try ModuleScope.create(self.allocator, module.path, module.src, root_table, false);
             module_scopes[i].file_path = module.file_path;
+            module_scopes[i].bindings = module.bindings;
             if (i + 1 < loaded_modules.len) {
                 module_scopes[i].qualifier = std.fs.path.basename(module.path);
             }
@@ -100,6 +103,7 @@ pub const SemaAnalyzer = struct {
             self.scope.symbol_table = root_table;
             try self.bindImports(module, module_scopes);
             try self.hoistDeclarations(&module.root);
+            try self.registerExterns(&module.root);
             try self.checkPublicSignatures(&module.root);
             try self.checkTopLevelStatements(&module.root);
             _ = try self.visitBlock(&module.root);
@@ -145,26 +149,7 @@ pub const SemaAnalyzer = struct {
 
     fn loadPrelude(self: *Self, prelude: *const ast.Root) !void {
         try self.hoistDeclarations(prelude);
-
-        for (prelude.statements.items) |stmt| {
-            if (stmt.data != .func) continue;
-            const symbol = try self.scope.symbol_table.getOrError(stmt.data.func.identifier);
-            if (!stmt.data.func.is_extern) continue;
-            if (natives.bindings.get(stmt.data.func.identifier)) |binding| {
-                if (binding == .intrinsic) {
-                    try self.intrinsic_by_uid.put(self.allocator, symbol.uid, binding.intrinsic);
-                }
-            }
-            if (symbol.kind == .generic_function) {
-                const generic_extern = try self.genericExtern(symbol.kind.generic_function);
-                try self.extern_uids.put(self.allocator, generic_extern.uid, {});
-                try self.externs.append(self.allocator, generic_extern);
-                continue;
-            }
-            const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
-            try self.extern_uids.put(self.allocator, func.uid, {});
-            try self.externs.append(self.allocator, .{ .uid = func.uid, .identifier = func.identifier, .params = func.params });
-        }
+        try self.registerExterns(prelude);
 
         for (prelude.statements.items) |*stmt| {
             if (stmt.data != .func or stmt.data.func.is_extern) continue;
@@ -217,7 +202,31 @@ pub const SemaAnalyzer = struct {
         self.err_reporter.imported_modules = self.module.imports.keys();
     }
 
-    fn genericExtern(self: *Self, index: usize) CompileError!ir.Extern {
+    fn registerExterns(self: *Self, root: *const ast.Root) !void {
+        const bindings = self.module.bindings orelse return;
+        for (root.statements.items) |stmt| {
+            if (stmt.data != .func or !stmt.data.func.is_extern) continue;
+            const func_stmt = stmt.data.func;
+            const symbol = try self.scope.symbol_table.getOrError(func_stmt.identifier);
+            const binding = bindings.get(func_stmt.identifier) orelse {
+                return self.err_reporter.externWithoutBinding(func_stmt.identifier, stmt.loc);
+            };
+            if (binding == .intrinsic) {
+                try self.intrinsic_by_uid.put(self.allocator, symbol.uid, binding.intrinsic);
+            }
+            if (symbol.kind == .generic_function) {
+                const generic_extern = try self.genericExtern(symbol.kind.generic_function, binding);
+                try self.extern_uids.put(self.allocator, generic_extern.uid, {});
+                try self.externs.append(self.allocator, generic_extern);
+                continue;
+            }
+            const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
+            try self.extern_uids.put(self.allocator, func.uid, {});
+            try self.externs.append(self.allocator, .{ .uid = func.uid, .identifier = func.identifier, .params = func.params, .binding = binding });
+        }
+    }
+
+    fn genericExtern(self: *Self, index: usize, binding: native.Binding) CompileError!ir.Extern {
         const generic = self.generic_functions.items[index];
         const args = try self.allocator.alloc(tt.TypeId, generic.func_stmt.slots.len);
         for (generic.func_stmt.slots, 0..) |slot, i| {
@@ -228,7 +237,7 @@ pub const SemaAnalyzer = struct {
         const symbol = try self.createEmptyFuncSymbol(generic.func_stmt.identifier);
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
-        return .{ .uid = generic.extern_uid.?, .identifier = generic.func_stmt.identifier, .params = func.params };
+        return .{ .uid = generic.extern_uid.?, .identifier = generic.func_stmt.identifier, .params = func.params, .binding = binding };
     }
 
     fn isDeclaration(stmt: ast.Statement) bool {
@@ -604,7 +613,9 @@ pub const SemaAnalyzer = struct {
                     }) catch return self.err_reporter.alreadyDefined(ts.identifier, stmt.loc);
                 },
                 .func => |fs| {
-                    if (fs.is_extern and !self.is_in_prelude) return self.err_reporter.externOutsidePrelude(fs.identifier, stmt.loc);
+                    if (fs.is_extern and self.module.bindings == null) {
+                        return self.err_reporter.externOutsideStd(fs.identifier, stmt.loc);
+                    }
                     if (fs.slots.len > 0) {
                         var symbol = try self.createGenericFuncSymbol(&stmt.data.func, stmt.loc);
                         symbol.is_file_only = fs.is_file_only;
@@ -1608,6 +1619,9 @@ pub const SemaAnalyzer = struct {
 
     fn visitFuncStmt(self: *Self, stmt: *const ast.StatementNode) !?ir.Instruction {
         const func_stmt = stmt.data.func;
+        if (func_stmt.is_extern) {
+            return null;
+        }
         const fn_symbol = self.scope.symbol_table.getOrError(func_stmt.identifier) catch {
             return self.err_reporter.notDefined(func_stmt.identifier, stmt.loc);
         };
@@ -4656,7 +4670,7 @@ pub const SemaAnalyzer = struct {
         return try self.checkCallee(value, exp.loc);
     }
 
-    fn evalIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, symbol: Symbol, fn_call: ast.FnCall) CompileError!?*ir.Value {
+    fn evalIntrinsicCall(self: *Self, intrinsic: native.Intrinsic, symbol: Symbol, fn_call: ast.FnCall) CompileError!?*ir.Value {
         if (fn_call.arguments.len != 1) return null;
         const argument = fn_call.arguments[0].exp;
         return switch (intrinsic) {
@@ -5926,6 +5940,7 @@ const ModuleScope = struct {
     is_prelude: bool,
     file_path: ?[]const u8 = null,
     qualifier: ?[]const u8 = null,
+    bindings: ?*const native.BindingMap = null,
     imports: std.StringArrayHashMapUnmanaged(*ModuleScope) = .empty,
     selected: std.StringHashMapUnmanaged(Symbol) = .empty,
     hidden_names: std.StringHashMapUnmanaged(void) = .empty,

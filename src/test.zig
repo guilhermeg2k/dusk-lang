@@ -2085,7 +2085,7 @@ test "sema error: float cast of a slot that allows a string" {
 }
 
 test "extern: only the prelude can declare extern functions" {
-    try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsidePrelude);
+    try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsideStd);
     try runCaseError("sema/builtin-redefined.dsk", error.AlreadyDefined);
     try runCaseError("parser/extern-missing-return-type.dsk", error.ParserError);
     try runCaseError("parser/extern-missing-func.dsk", error.ParserError);
@@ -2193,9 +2193,9 @@ test "modules: the loader parses each module once, dependencies first" {
     var loader = ModuleLoader.init(allocator, testing.io, "test/modules/shared-dependency");
     const loaded = try loader.load("main", src);
     try testing.expectEqual(@as(usize, 3), loaded.len);
-    try testing.expectEqualStrings("physics", loaded[0].path);
-    try testing.expectEqualStrings("ui/button", loaded[1].path);
-    try testing.expectEqualStrings("main", loaded[2].path);
+    try testing.expectEqualStrings("@/physics", loaded[0].path);
+    try testing.expectEqualStrings("@/ui/button", loaded[1].path);
+    try testing.expectEqualStrings("@/main", loaded[2].path);
     try testing.expectEqual(@as(usize, 0), loaded[1].imports[0].module_index);
     try testing.expectEqual(@as(usize, 0), loaded[2].imports[0].module_index);
     try testing.expectEqual(@as(usize, 1), loaded[2].imports[1].module_index);
@@ -2294,6 +2294,10 @@ fn runModuleCaseOutput(entry_file: []const u8, expected: []const u8) !void {
 
 test "a generic function's copy prints its name after compiling" {
     try runCaseOutput("generic-function-value-printing.dsk", "<func first[int]>\n");
+}
+
+test "std: sleep lives in std/task" {
+    try runCaseError("sema/sleep-needs-import.dsk", error.NotDefined);
 }
 
 test "unknown types in let annotations are reported" {
@@ -2454,14 +2458,20 @@ test "sema error: unknown return type is reported, not a crash" {
     try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }
 
-test "prelude: every extern has a binding and every binding has an extern" {
+test "builtins: every extern has a binding and every binding has an extern, per module" {
+    const dusk = @import("dusk.zig");
+    try expectExternsMatchBindings(dusk.prelude_src, &@import("runtime/builtins/prelude.zig").bindings);
+    for (@import("runtime/builtins/std.zig").modules) |module| {
+        try expectExternsMatchBindings(module.source, module.bindings);
+    }
+}
+
+fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runtime/builtins/native.zig").BindingMap) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const dusk = @import("dusk.zig");
-    const bindings = @import("runtime/builtins/natives.zig").bindings;
-    const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
+    const root = try @import("dusk.zig").parse(arena.allocator(), source);
     var extern_count: usize = 0;
-    for (prelude.statements.items) |stmt| {
+    for (root.statements.items) |stmt| {
         if (stmt.data != .func or !stmt.data.func.is_extern) continue;
         try testing.expect(bindings.has(stmt.data.func.identifier));
         extern_count += 1;
@@ -2472,7 +2482,7 @@ test "prelude: every extern has a binding and every binding has an extern" {
 test "prelude: builtin error ids match the natives constants" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const natives = @import("runtime/builtins/natives.zig");
+    const natives = @import("runtime/builtins/prelude.zig");
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
     const program = try dusk.compile("func main() -> void\nend\n");
     try testing.expectEqualStrings("ConversionError.Invalid", program.error_names[natives.conversion_invalid_id]);

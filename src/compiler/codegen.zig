@@ -3,7 +3,7 @@ const ir = @import("ir.zig");
 const v = @import("../runtime/value.zig");
 const tt = @import("type_table.zig");
 const bc = @import("../runtime/bytecode.zig");
-const natives = @import("../runtime/builtins/natives.zig");
+const native = @import("../runtime/builtins/native.zig");
 const err = @import("compile_error.zig");
 
 pub const BytecodeGen = struct {
@@ -32,7 +32,7 @@ pub const BytecodeGen = struct {
     loop_stack: std.ArrayList(LoopContext),
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
-    intrinsic_by_uid: std.AutoHashMap(usize, natives.Intrinsic),
+    intrinsic_by_uid: std.AutoHashMap(usize, native.Intrinsic),
     native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
     boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
@@ -66,7 +66,7 @@ pub const BytecodeGen = struct {
             .loop_stack = .empty,
             .break_patches = .empty,
             .continue_patches = .empty,
-            .intrinsic_by_uid = std.AutoHashMap(usize, natives.Intrinsic).init(alloc),
+            .intrinsic_by_uid = std.AutoHashMap(usize, native.Intrinsic).init(alloc),
             .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
@@ -151,9 +151,8 @@ pub const BytecodeGen = struct {
     }
 
     fn bindExtern(self: *Self, ext: ir.Extern) !bc.Function {
-        const binding = natives.bindings.get(ext.identifier) orelse @panic("extern without binding");
         const num_args: u8 = @intCast(ext.params.len);
-        const kind: bc.FunctionKind = switch (binding) {
+        const kind: bc.FunctionKind = switch (ext.binding) {
             .native => |func| blk: {
                 try self.native_params_by_uid.put(ext.uid, ext.params);
                 break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params) } };
@@ -1118,7 +1117,7 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = value.type_id;
     }
 
-    fn genIntrinsicCall(self: *Self, intrinsic: natives.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
+    fn genIntrinsicCall(self: *Self, intrinsic: native.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {
         const arg = target_reg + 1;
         switch (intrinsic) {
             .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),

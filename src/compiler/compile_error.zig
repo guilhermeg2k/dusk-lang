@@ -41,12 +41,12 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn moduleNotFound(self: *Self, path: []const u8, file_path: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Module '@/{s}' not found: there's no file '{s}'", .{ path, file_path }), loc);
+        self.log(try allocPrint(self.allocator, "Module '{s}' not found: there's no file '{s}'", .{ path, file_path }), loc);
         return error.ModuleNotFound;
     }
 
     pub fn cantReadModule(self: *Self, path: []const u8, reason: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Can't read module '@/{s}': {s}", .{ path, reason }), loc);
+        self.log(try allocPrint(self.allocator, "Can't read module '{s}': {s}", .{ path, reason }), loc);
         return error.CantReadModule;
     }
 
@@ -70,7 +70,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn notDefinedInModule(self: *Self, name: []const u8, module_path: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' isn't declared in module '@/{s}'", .{ name, module_path }), loc);
+        self.log(try allocPrint(self.allocator, "'{s}' isn't declared in module '{s}'", .{ name, module_path }), loc);
         return error.NotDefined;
     }
 
@@ -485,9 +485,14 @@ pub const CompileErrorReporter = struct {
         return error.DeclarationInsideFunction;
     }
 
-    pub fn externOutsidePrelude(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'extern func {s}' is only allowed in the prelude", .{identifier}), loc);
-        return error.ExternOutsidePrelude;
+    pub fn externOutsideStd(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'extern func {s}' is only allowed in the prelude and the standard library", .{identifier}), loc);
+        return error.ExternOutsideStd;
+    }
+
+    pub fn externWithoutBinding(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'extern func {s}' has no native implementation", .{identifier}), loc);
+        return error.ExternWithoutBinding;
     }
 
     pub fn slotParamCantHaveDefault(self: *Self, param: []const u8, loc: Loc) CompileError {
@@ -1087,7 +1092,8 @@ pub const CompileError = error{
     StatementOutsideMain,
     MissingMain,
     DeclarationInsideFunction,
-    ExternOutsidePrelude,
+    ExternOutsideStd,
+    ExternWithoutBinding,
     SlotParamCantHaveDefault,
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
