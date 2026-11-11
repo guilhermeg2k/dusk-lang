@@ -1,25 +1,29 @@
 const std = @import("std");
-const lexer = @import("compiler/lexer.zig");
-const parser = @import("compiler/parser.zig");
 const sema = @import("compiler/sema.zig");
+const modules = @import("compiler/modules.zig");
 const bc = @import("runtime/bytecode.zig");
 const codegen = @import("compiler/codegen.zig");
 const vm = @import("runtime/vm.zig");
 
-const Lexer = lexer.Lexer;
-const Parser = parser.Parser;
 const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
-pub fn parse(allocator: std.mem.Allocator, src: []const u8) !@import("compiler/ast.zig").Root {
-    var dusk_lexer = Lexer.init(allocator, src);
-    const tokens = try dusk_lexer.list();
-    var dusk_parser = Parser.init(allocator, src, tokens.items);
-    return dusk_parser.parse();
-}
+pub const parse = modules.parse;
+
+pub const EntryFile = struct {
+    project_root: []const u8 = ".",
+    module_path: []const u8 = "",
+
+    pub fn fromPath(file_path: []const u8) EntryFile {
+        return .{
+            .project_root = std.fs.path.dirname(file_path) orelse ".",
+            .module_path = std.fs.path.stem(file_path),
+        };
+    }
+};
 
 pub const Dusk = struct {
     const Self = @This();
@@ -34,20 +38,27 @@ pub const Dusk = struct {
             return CliErrorReporter.cantReadFile(file_path, failure);
         };
         defer self.allocator.free(input_file_content);
-        _ = try self.compileAndRun(input_file_content);
+        const program = try self.compileEntry(input_file_content, EntryFile.fromPath(file_path));
+        try self.runProgram(&program);
     }
 
     pub fn compile(self: *Self, src: []const u8) !bc.Program {
+        return self.compileEntry(src, .{});
+    }
+
+    pub fn compileEntry(self: *Self, src: []const u8, entry: EntryFile) !bc.Program {
         var compilation_pipeline_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer compilation_pipeline_arena.deinit();
 
         const allocator = compilation_pipeline_arena.allocator();
 
         const prelude_ast = try parse(allocator, prelude_src);
-        const ast = try parse(allocator, src);
+        var module_loader = modules.ModuleLoader.init(allocator, self.io, entry.project_root);
+        const loaded_modules = try module_loader.load(entry.module_path, src);
+        const entry_module = loaded_modules[loaded_modules.len - 1];
 
         var sema_analyzer = try SemaAnalyzer.init(allocator);
-        const ir = try sema_analyzer.analyze(&prelude_ast, prelude_src, &ast, src);
+        const ir = try sema_analyzer.analyze(&prelude_ast, prelude_src, &entry_module.root, entry_module.src);
 
         var Bytecodegen = codegen.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
 
@@ -56,7 +67,11 @@ pub const Dusk = struct {
 
     pub fn compileAndRun(self: *Self, src: []const u8) !void {
         const program = try self.compile(src);
-        var v = VM.init(&program, self.stdout_writer);
+        try self.runProgram(&program);
+    }
+
+    fn runProgram(self: *Self, program: *const bc.Program) !void {
+        var v = VM.init(program, self.stdout_writer);
         defer v.deinit();
         try v.run();
     }

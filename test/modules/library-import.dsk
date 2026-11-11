@@ -1,0 +1,4 @@
+import jsonc
+
+func main() -> void
+end

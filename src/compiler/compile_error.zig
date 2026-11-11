@@ -32,6 +32,31 @@ pub const CompileErrorReporter = struct {
         return error.ModulesNotSupported;
     }
 
+    pub fn librariesNotSupported(self: *Self, path: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't import '{s}': libraries aren't supported yet", .{path}), loc);
+        return error.LibrariesNotSupported;
+    }
+
+    pub fn unknownStdModule(self: *Self, path: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'std/{s}' isn't a standard library module", .{path}), loc);
+        return error.UnknownStdModule;
+    }
+
+    pub fn moduleNotFound(self: *Self, path: []const u8, file_path: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Module '@/{s}' not found: there's no file '{s}'", .{ path, file_path }), loc);
+        return error.ModuleNotFound;
+    }
+
+    pub fn cantReadModule(self: *Self, path: []const u8, reason: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't read module '@/{s}': {s}", .{ path, reason }), loc);
+        return error.CantReadModule;
+    }
+
+    pub fn importCycle(self: *Self, chain: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Import cycle: {s}", .{chain}), loc);
+        return error.ImportCycle;
+    }
+
     pub fn importNotAtTop(self: *Self, loc: Loc) CompileError {
         self.log("Imports must come first in the file, before any other declaration", loc);
         return CompileError.ParserError;
@@ -1032,6 +1057,11 @@ pub const CompileError = error{
     SlotUsedAsValue,
     InternalBuiltin,
     ModulesNotSupported,
+    LibrariesNotSupported,
+    UnknownStdModule,
+    ModuleNotFound,
+    CantReadModule,
+    ImportCycle,
     SlotResultDiffers,
     TypeDoesntFitSlot,
     TypeListNotPrimitive,

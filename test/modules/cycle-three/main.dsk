@@ -1,0 +1,4 @@
+import @/a
+
+func main() -> void
+end

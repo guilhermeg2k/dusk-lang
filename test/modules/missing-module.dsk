@@ -1,0 +1,4 @@
+import @/nowhere
+
+func main() -> void
+end

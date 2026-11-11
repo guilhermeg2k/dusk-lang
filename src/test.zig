@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
+const EntryFile = @import("dusk.zig").EntryFile;
+const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
 const Lexer = @import("compiler/lexer.zig").Lexer;
 const uv = @import("runtime/tasks/uv.zig");
 
@@ -2171,8 +2173,55 @@ test "functions with empty bodies return" {
     try runCase("empty-function-bodies.dsk");
 }
 
-test "modules: imports and :: parse, but modules aren't supported yet" {
-    try runCaseError("sema/modules-not-supported-import.dsk", error.ModulesNotSupported);
+test "modules: every import form parses" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "test/modules/import-forms.dsk", arena.allocator(), .unlimited);
+    const root = try @import("dusk.zig").parse(arena.allocator(), src);
+    var import_count: usize = 0;
+    for (root.statements.items) |stmt| {
+        if (stmt.data == .import) import_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 7), import_count);
+}
+
+test "modules: the loader parses each module once, dependencies first" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "test/modules/shared-dependency/main.dsk", allocator, .unlimited);
+    var loader = ModuleLoader.init(allocator, testing.io, "test/modules/shared-dependency");
+    const loaded = try loader.load("main", src);
+    try testing.expectEqual(@as(usize, 3), loaded.len);
+    try testing.expectEqualStrings("physics", loaded[0].path);
+    try testing.expectEqualStrings("ui/button", loaded[1].path);
+    try testing.expectEqualStrings("main", loaded[2].path);
+    try testing.expectEqual(@as(usize, 0), loaded[1].imports[0].module_index);
+    try testing.expectEqual(@as(usize, 0), loaded[2].imports[0].module_index);
+    try testing.expectEqual(@as(usize, 1), loaded[2].imports[1].module_index);
+}
+
+test "modules: loading errors" {
+    try runModuleCaseError("missing-module.dsk", error.ModuleNotFound);
+    try runModuleCaseError("missing-in-dependency/main.dsk", error.ModuleNotFound);
+    try runModuleCaseError("library-import.dsk", error.LibrariesNotSupported);
+    try runModuleCaseError("unknown-std-module.dsk", error.UnknownStdModule);
+    try runModuleCaseError("cycle-two/main.dsk", error.ImportCycle);
+    try runModuleCaseError("cycle-three/main.dsk", error.ImportCycle);
+    try runModuleCaseError("self-import/main.dsk", error.ImportCycle);
+}
+
+fn runModuleCaseError(entry_file: []const u8, expected: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    try testing.expectError(expected, dusk.compileEntry(src, EntryFile.fromPath(path)));
+}
+
+test "modules: imports and :: parse and load, but modules aren't supported yet" {
+    try runModuleCaseError("shared-dependency/main.dsk", error.ModulesNotSupported);
     try runCaseError("sema/modules-not-supported-member.dsk", error.ModulesNotSupported);
     try runCaseError("sema/modules-not-supported-type-keyword.dsk", error.ModulesNotSupported);
     try runCaseError("sema/modules-not-supported-type.dsk", error.ModulesNotSupported);
