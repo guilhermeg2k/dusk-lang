@@ -6,11 +6,12 @@
 
 - Closures (& fn as anything (argument, item, etc))
 - Tasks: `spawn`, `await`, `sleep` (libuv timers)
-- Modules
+- Modules and a standard library (`std/array`, `std/string`, `std/buffer`, `std/task`)
+- HashMaps: `map[K, V]`
 
 ## Version 0.16 - Shigeo
 - Libuv IO: files, TCP, DNS, processes (tasks wait on them like `sleep`), http
-- Collections: Lists, Sets, HashMaps, Tuples
+- Collections: Lists, Sets, Tuples
 
 
 ## Backlog

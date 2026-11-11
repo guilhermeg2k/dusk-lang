@@ -19,9 +19,10 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 11. [Generics and Traits](#11-generics-and-traits)
 12. [Error Handling](#12-error-handling)
 13. [Tasks](#13-tasks)
-14. [Built-in Functions](#14-built-in-functions)
-15. [Errors](#15-errors)
-16. [Known Limitations](#16-known-limitations)
+14. [Modules](#14-modules)
+15. [Prelude and Standard Library](#15-prelude-and-standard-library)
+16. [Errors](#16-errors)
+17. [Known Limitations](#17-known-limitations)
 
 ## 1. Basics
 
@@ -35,7 +36,7 @@ end
 
 The top level only holds declarations: functions, structs, enums, unions, error sets and [constants](#constants). Any other statement, a `let mut` or a `let` that isn't a constant at the top level is a compile error (`StatementOutsideMain`, `TopLevelLetNotConstant`). Functions and types are declared at the top level only, not inside a function (`DeclarationInsideFunction`).
 
-To keep them short, the examples in this reference show statements without the `main` around them.
+To keep them short, the examples in this reference show statements without the `main` around them. Examples that use the standard library (`len`, `append`, `string::split`, `task::sleep`, ...) leave out its imports too: `import std/array: len, append`, `import std/string` and so on (see [Modules](#14-modules)).
 
 **Comments** start with `#` and run to the end of the line.
 
@@ -59,7 +60,7 @@ let total = 1 #= explanation =# + 2
 
 **Hoisting**: functions, structs, enums, unions, error sets and [constants](#constants) can be used before they're defined. Other variables must be defined before use.
 
-**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `trait`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
+**Keywords**: `let`, `mut`, `func`, `return`, `struct`, `enum`, `union`, `error`, `trait`, `try`, `catch`, `extern`, `if`, `elif`, `else`, `when`, `for`, `break`, `continue`, `then`, `do`, `end`, `and`, `or`, `orelse`, `import`, `as`, `true`, `false`, `null`, `int`, `byte`, `float`, `string`, `buffer`, `bool`, `void`.
 
 ## 2. Variables
 
@@ -146,7 +147,7 @@ Any other value (a `let mut`, an array, a struct, a value computed by a call) is
 | `byte`   | Unsigned 8-bit value (`0` to `255`)           | `'a'`, `'\n'`, `65` |
 | `float`  | 64-bit floating-point number                  | `3.14`, `-0.5`      |
 | `string` | Text in double quotes                         | `"Hello"`           |
-| `buffer` | Fixed-size block of mutable bytes             | `new_buffer(16)`        |
+| `buffer` | Fixed-size block of mutable bytes             | `buffer::new(16)`        |
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
@@ -177,18 +178,18 @@ echo("Moon: \u{1F319}")
 echo("A literal backslash: \\")
 ```
 
-Strings can't be indexed with `s[i]`. Use `str_byte_at(s, i)` for the byte at a byte offset, or `str_char_at(s, i)` for the `i`-th character (see [String functions](#string-functions)). `for s: b, i do` loops over a string's bytes. Strings are immutable; use a buffer to change bytes.
+Strings can't be indexed with `s[i]`. Use `string::byte_at(s, i)` for the byte at a byte offset, or `string::char_at(s, i)` for the `i`-th character (see [String functions](#string-functions)). `for s: b, i do` loops over a string's bytes. Strings are immutable; use a buffer to change bytes.
 
 ```nim
 let word = "olá"
-echo(try str_byte_at(word, 0))   # 111 ('o')
-echo(try str_char_at(word, 2))   # á
+echo(try string::byte_at(word, 0))   # 111 ('o')
+echo(try string::char_at(word, 2))   # á
 for word: b, i do                # 4 bytes: "á" is two bytes in UTF-8
     echo("$i: $b")
 end
 ```
 
-A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. There is no `+` for strings: join text with interpolation (`"$a$b"`), `str_concat(a, b)` or `str_join(parts)`.
+A double-quoted string must end on the line where it starts: a line break inside it is a compile error. Use `\n` or a multiline string instead. Line breaks inside a `${ ... }` interpolation are allowed, because they belong to the expression. There is no `+` for strings: join text with interpolation (`"$a$b"`), `string::concat(a, b)` or `string::join(parts)`.
 
 ### Bytes
 
@@ -216,27 +217,27 @@ end
 
 ### Buffers
 
-A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `new_buffer(n)` creates one with `n` zero bytes (`n` can be `0`); its size never changes. It returns `BufferError!buffer`, failing with `BufferError.NegativeSize` for a negative `n`, so the call needs `try` or `catch`.
+A `buffer` is a fixed number of mutable bytes, stored packed (one byte per item, unlike `[]byte`). `buffer::new(n)` creates one with `n` zero bytes (`n` can be `0`); its size never changes. It returns `BufferError!buffer`, failing with `BufferError.NegativeSize` for a negative `n`, so the call needs `try` or `catch`.
 
 ```nim
-let mut data = try new_buffer(4)  # in a function that can fail (-> !T)
+let mut data = try buffer::new(4)  # in a function that can fail (-> !T)
 data[0] = 'h'                     # writes take a byte
 data[1] = 105
 let first = data[0]               # reads give a byte
-echo(buffer_len(data))            # 4
+echo(buffer::len(data))            # 4
 echo(data)                        # [104, 105, 0, 0]
 
 for data: b, i do
     echo("$i: $b")
 end
 
-let bytes = buffer_from("olá")    # [111, 108, 195, 161]
-let text = string_from(bytes) catch "not UTF-8"
+let bytes = buffer::from_string("olá")    # [111, 108, 195, 161]
+let text = string::from_bytes(bytes) catch "not UTF-8"
 ```
 
-- The type is written `buffer`: `let mut data: buffer = try new_buffer(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
+- The type is written `buffer`: `let mut data: buffer = try buffer::new(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
 - Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer stops the program with a runtime error.
-- `buffer_from(s)` copies a string's UTF-8 bytes into a new buffer. `string_from(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
+- `buffer::from_string(s)` copies a string's UTF-8 bytes into a new buffer. `string::from_bytes(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
 - `==` on buffers compares identity: a buffer is only equal to itself.
 
 ### Multiline strings
@@ -646,7 +647,7 @@ An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitiv
 
 On arrays, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions and functions can't be compared with `==`.
 
-`==` and `!=` can't compare strings: use `str_equal(a, b)` to compare their text.
+Strings compare by content: `name == "Dusk"` is true when `name` holds that text, wherever it was built. A `?string` compares with `null` or with a `string` (two nulls are equal, `null` is never equal to a string).
 
 ### Assignment
 
@@ -730,7 +731,7 @@ Rules:
 - A case range must start at or below its end. Ranges and individual cases cannot overlap, including within a comma-separated case. Inclusive ranges `0.0..1.0` and `1.0..2.0` overlap at `1.0`.
 - Enum cases use the full name (`Color.Red`).
 - A value or variant can only appear in one case.
-- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `str_equal`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
+- String cases must be string literals without interpolation (`"stop"`, `"\u{41}"`). They compare by content, like `==`. Two literals with the same text after escapes (`"A"` and `"\u{41}"`) are the same case.
 - `break`, `continue` and `return` in a case act on the enclosing loop or function.
 
 Range matching uses the same rules in statements and expressions:
@@ -1066,7 +1067,7 @@ func keep[T](items: []T, ok: func(T) -> bool) -> []T
 func map_to[T, U](items: []T, f: func(T) -> U) -> []U
 
 echo(keep([1, 5, 12], func(x) -> return x > 2))            # [5, 12]
-echo(map_to(["a", "bbb"], func(s) -> return str_len(s)))   # [1, 3]: U is int
+echo(map_to(["a", "bbb"], func(s) -> return string::len(s)))   # [1, 3]: U is int
 ```
 
 A lambda can also leave out its return type. Where a function type is expected, it takes the return type from it. Otherwise its body decides: every `return` must give the same type, and a lambda that never returns a value returns `void`. Using `try`, or returning an error, makes the lambda fail with the errors it can return, as `-> !T` does for a declaration:
@@ -1088,7 +1089,7 @@ echo(people[1].id)    # 2
 let sum_all = func(items: []string)
     let mut total = 0
     for items: item do
-        total = total + try str_to_int(item)
+        total = total + try string::to_int(item)
     end
     return total
 end
@@ -1248,7 +1249,7 @@ Each operator on `T` is checked for every member with the usual rules. It's allo
 - otherwise `T`, when each member gives itself back: `a + b` on `int | float`
 - otherwise an error: on `byte | float`, `a + b` gives `int` for `byte` and `float` for `float`
 
-A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` need a list without `string`, since strings can't be compared with `==` (use `str_equal`). `x == null` works on any `?T`.
+A value converts to or from `T` when it converts for every member: `let total: T = 0` works for `Number` (`0` fits `int` and `float`), `let x: T = 2.5` doesn't. `==` and `!=` on `T` compare each member like they do outside a generic (strings by content). `x == null` works on any `?T`.
 
 ### Error slots
 
@@ -1263,7 +1264,7 @@ func map[T, U, E: error](items: []T, f: func(T) -> E!U) -> E![]U
     return out
 end
 
-echo(map(["a", "bbb"], func(s) -> return str_len(s)))    # [1, 3]
+echo(map(["a", "bbb"], func(s) -> return string::len(s)))    # [1, 3]
 echo(try map(["1", "2"], parse))                         # [1, 2]
 echo(map(["1", "x"], parse) catch [])                    # []
 ```
@@ -1272,7 +1273,7 @@ echo(map(["1", "x"], parse) catch [])                    # []
 
 - A slot written before `!` must be marked: `func run[T, E](f: func() -> E!T)` is an error.
 - Only error sets fill an error slot (`'E' is an error slot, so it must be an error set, not 'int'`), and `none` only fills error slots.
-- A function with an error slot fails only with `E`: `try str_to_int(s)` in its body is an error (`'ConversionError.Invalid' is not in error E`). Catch other errors there.
+- A function with an error slot fails only with `E`: `try string::to_int(s)` in its body is an error (`'ConversionError.Invalid' is not in error E`). Catch other errors there.
 - Two functions passed for the same `E` must fail with the same set. One that can't fail doesn't fit where another one fills `E` with `ConversionError`.
 
 `catch e then` on a call that fails with `E` gives `e` the type `E`. It can be returned, passed on, stored (`?E`, `[]E`) or printed, but not matched with `when`, since its errors depend on the call:
@@ -1497,14 +1498,14 @@ The message names the function that was running, and the builtin when the failur
 error: index 5 is out of bounds for array of length 2
   in function 'pick'
 error: out of memory
-  in builtin 'str_repeat', called from function 'grow'
+  in builtin 'repeat', called from function 'grow'
 ```
 
 There are no line numbers yet.
 
 ## 13. Tasks
 
-A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `sleep` pauses the running task:
+A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import std/task`) pauses the running task:
 
 ```nim
 func main() -> void
@@ -1518,17 +1519,17 @@ end
 | :------- | :-------- | :---------- |
 | `spawn` | `spawn(body: func() -> E!T) -> Task[T, E]` | Starts a task that runs `body`. |
 | `await` | `await(task: Task[T, E]) -> E!T` | Waits until the task is done and returns its result, or fails with its error. |
-| `sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds. |
+| `task::sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds. In `std/task`. |
 
 ### Running order
 
-All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `sleep(0)` gives the other ready tasks a turn:
+All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `task::sleep(0)` gives the other ready tasks a turn:
 
 ```nim
 func step(name: string) -> void
     for 1..2: i do
         echo("$name $i")
-        sleep(0)
+        task::sleep(0)
     end
 end
 
@@ -1545,7 +1546,7 @@ Waiting doesn't change a function's type: `step` above is a plain `-> void` func
 
 ```nim
 func slow_double(x: int) -> int
-    sleep(100)
+    task::sleep(100)
     return x * 2
 end
 
@@ -1556,7 +1557,7 @@ func main() -> void
 end
 ```
 
-A task that never waits keeps the others from running until it ends: put a `sleep(0)` in long loops that should share time.
+A task that never waits keeps the others from running until it ends: put a `task::sleep(0)` in long loops that should share time.
 
 Lambdas given to `spawn` share the variables they use with the function around them, as any closure does. Values that tasks share change only while the task changing them runs, but any call that waits lets other tasks run in between:
 
@@ -1566,7 +1567,7 @@ func main() -> void
     let counter = spawn(func()
         for 1..3: _ do
             count = count + 1
-            sleep(0)
+            task::sleep(0)
         end
     end)
     await(counter)
@@ -1580,15 +1581,15 @@ end
 
 ```nim
 func main() -> !void
-    let parsed = spawn(func() -> return try str_to_int("12"))   # Task[int, ConversionError]
+    let parsed = spawn(func() -> return try string::to_int("12"))   # Task[int, ConversionError]
     echo(try await(parsed))                                    # 12
 
-    let bad = spawn(func() -> return try str_to_int("x"))
+    let bad = spawn(func() -> return try string::to_int("x"))
     echo(await(bad) catch -1)                                  # -1
 
     let mut tasks: []Task[int, ConversionError] = []
     for ["1", "2", "3"]: text do
-        append(tasks, spawn(func() -> return try str_to_int(text)))
+        append(tasks, spawn(func() -> return try string::to_int(text)))
     end
     let mut total = 0
     for tasks: t do
@@ -1611,7 +1612,7 @@ The program ends when every task is done, so a task spawned near the end still f
 ```nim
 func main() -> void
     spawn(func()
-        sleep(50)
+        task::sleep(50)
         echo("background work done")
     end)
     echo("top level done")
@@ -1627,39 +1628,122 @@ These stop the program like other runtime errors:
 
 A runtime error in any task stops the whole program.
 
-## 14. Built-in Functions
+## 14. Modules
+
+Each file is a module. A file uses other modules by importing them at the top, before any other declaration:
+
+```nim
+import @/physics                    # physics.dsk in this project
+import @/ui/button as btn           # ui/button.dsk, used as btn
+import @/ui/theme: dark, light      # also brings dark and light in as plain names
+import std/string                   # a standard library module
+import std/array: len, append
+import std/string: split as split_text,
+    trim
+```
+
+- `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`.
+- Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
+- A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
+
+### Using a module
+
+`::` reaches what a module declares: functions, types, constants and error sets.
+
+```nim
+let world = physics::World(gravity = 9.8)
+physics::step(world, 0.016)
+let bodies: []physics::Body = []
+let theme: ?btn::Theme = null
+let parts = string::split("a,b", ",")
+let color = physics::Color.Red
+let limit = physics::MAX_BODIES
+```
+
+The name before `::` is the last part of the path, or the name after `as`. It's only a module name: it never clashes with variables, functions or types, so a variable can be called `physics` in a file that imports `@/physics`. Using a module that isn't imported is a `ModuleNotImported` error.
+
+`: names` after the path also brings those names in as plain names, and `as` renames one. The module name still works, so `len(xs)` and `array::len(xs)` are the same after `import std/array: len`. A long list continues on the next line after a trailing comma.
+
+In a file, a name means one thing: a declaration, a selected name and a prelude builtin can't share a name, and two imports can't use the same module name (`AlreadyDefined`). Use `as` to rename one of them.
+
+`physics::x` only reaches what `physics.dsk` declares itself, not what it imported.
+
+### File-only declarations
+
+`~` before a name keeps it in its file. Without `~`, a declaration can be used by any file that imports the module.
+
+```nim
+let ~SCRATCH_SIZE = 256
+
+func step(world: mut World, dt: float) -> void
+    integrate(world, dt)
+end
+
+func ~integrate(world: mut World, dt: float) -> void
+end
+
+struct Counter
+    count: int = 0
+    ~history: []int = []
+
+    func increment(mut self: @) -> void
+        self.remember()
+        self.count = self.count + 1
+    end
+
+    func ~remember(mut self: @) -> void
+        append(self.history, self.count)
+    end
+end
+```
+
+- `~` goes on top-level functions, structs, enums, unions, error sets, traits and constants, and on fields and methods. Variants and static fields follow their type. It's only written where the name is declared.
+- From another file, a file-only name is a `NotVisible` error, through `::`, a selective import, a field read or write, or a method call. Inside its own file it works like any other name.
+- Another file can build a struct only through its public fields: a file-only field with a default value gets it, and a file-only field without one makes the struct impossible to build outside its file (`CantBuildOutsideModule`; give the file a function that builds it).
+- A public declaration can't mention a file-only type: a public function's parameters, return type and error set, a public field or static field, a public method, a union variant (`PrivateTypeInPublicSignature`). Mark both `~`, or neither.
+- A file-only method doesn't count for a trait outside its file.
+
+### Rules
+
+- Importing a module runs nothing: modules only hold declarations and constants.
+- Only the `main` of the file passed to `dusk` runs. Other modules can have one, and it's ignored when they're imported.
+- Modules can't import each other in a cycle (`ImportCycle`, with the chain: `@/a -> @/b -> @/a`).
+- A generic function or type from another module is checked in its own file: it can use that file's file-only helpers, and its copies are named after it (`util::first[int]`).
+- Traits match by shape, so a struct from one module fits a trait from another.
+- Compile errors in another file name it (`... at line 2 col 12 in ui/button.dsk`). Types from other modules are shown with their module (`struct shapes::Square`), and so are functions in runtime errors (`in function 'util::divide'`) and errors (`unhandled error util::ParseError.Empty`).
+
+## 15. Prelude and Standard Library
+
+The **prelude** is always available. Everything else is in the **standard library**, a set of modules imported with `std/`.
 
 `T` means any type.
 
-| Function      | Signature                                         | Description                                                                          |
-| :------------ | :------------------------------------------------ | :----------------------------------------------------------------------------------- |
-| `echo`        | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
-| `assert`      | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
-| `len`         | `len(list: []T) -> int`                           | Returns the number of items in an array.                                             |
-| `buffer_len`  | `buffer_len(data: buffer) -> int`                 | Returns the number of bytes in a buffer.                                             |
-| `new_buffer`  | `new_buffer(size: int) -> BufferError!buffer`     | Returns a new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size. |
-| `to_byte`     | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
-| `to_float`    | `to_float(value: int \| byte \| float) -> float` | Converts an `int`, `byte` or `float` to `float`. Also takes a `T` whose type list only has `int`, `byte` and `float` (`[T: int \| float]`). |
-| `to_int`      | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
-| `str_len`     | `str_len(text: string) -> int`                    | Returns the number of bytes in a string (UTF-8).                                     |
-| `append`      | `append(mut list: []T, mut item: T) -> void`      | Adds an item to the end of a mutable array.                                          |
-| `copy`        | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
-| `spawn`       | `spawn(body: func() -> E!T) -> Task[T, E]`        | Starts a task (see [Tasks](#13-tasks)).                                              |
-| `await`       | `await(task: Task[T, E]) -> E!T`                  | Waits for a task's result.                                                           |
-| `sleep`       | `sleep(ms: int) -> void`                          | Pauses the running task for `ms` milliseconds.                                       |
-| `buffer_from` | `buffer_from(text: string) -> buffer`             | Copies a string's bytes into a new buffer.                                           |
-| `string_from` | `string_from(data: buffer) -> StringError!string` | Copies a buffer into a new string; fails with `InvalidUtf8` if it isn't valid UTF-8. |
+| Function   | Signature                                         | Description                                                                          |
+| :--------- | :------------------------------------------------ | :----------------------------------------------------------------------------------- |
+| `echo`     | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
+| `assert`   | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
+| `copy`     | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
+| `to_byte`  | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
+| `to_float` | `to_float(value: int \| byte \| float) -> float` | Converts an `int`, `byte` or `float` to `float`. Also takes a `T` whose type list only has `int`, `byte` and `float` (`[T: int \| float]`). |
+| `to_int`   | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
+| `spawn`    | `spawn(body: func() -> E!T) -> Task[T, E]`        | Starts a task (see [Tasks](#13-tasks)).                                              |
+| `await`    | `await(task: Task[T, E]) -> E!T`                  | Waits for a task's result.                                                           |
+
+The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`).
 
 `echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as raw values.
 
 `copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
-### Array functions
+### std/array
 
-Functions that change an array take it as `mut`, and the ones that can fail return an error union, handled with `try` or `catch`.
+Functions that change an array take it as `mut`, and the ones that can fail return an error union, handled with `try` or `catch`. The module declares the error set `ArrayError` (`Empty`, `OutOfRange`).
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
+| `len(list)` | `int` | The number of items. |
+| `append(mut list, mut item)` | `void` | Adds an item to the end. |
 | `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
 | `pop_or_null(mut list)` | `?T` | Removes the last item and returns it, or `null` on an empty array. |
 | `insert(mut list, index, mut item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
@@ -1673,64 +1757,53 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 `index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content. Floats compare like `==`, so `nan` is never found and `-0.0` matches `0.0`.
 
 ```nim
-let mut stack = [1, 2, 3]
-for true do
-    let item = pop(stack) catch _ then break end
-    echo(item)   # 3, 2, 1
+import std/array: pop
+
+func main() -> void
+    let mut stack = [1, 2, 3]
+    for true do
+        let item = pop(stack) catch _ then break end
+        echo(item)   # 3, 2, 1
+    end
 end
 ```
 
-### String functions
+### std/string
 
-String functions are builtins starting with `str_`. They never change their argument: a function that produces text returns a new string. They work with pipes: `line |> str_trim()`.
+String functions never change their argument: a function that produces text returns a new string. They work with pipes: `line |> string::trim()`. The module declares the error set `StringError` (`OutOfRange`, `NegativeCount`, `InvalidUtf8`). Strings compare with `==` (see [Comparison and logic](#comparison-and-logic)).
 
-Positions are **byte offsets**, the same unit as `str_len(s)` and `str_byte_at`, so a position from `str_find` can be passed straight to `str_slice`. `str_char_count` and `str_char_at` are the only functions that count characters.
+Positions are **byte offsets**, the same unit as `string::len(s)` and `string::byte_at`, so a position from `string::find` can be passed straight to `string::slice`. `char_count` and `char_at` are the only functions that count characters.
 
-| Function                               | Returns                 | Description                                                                                                                                                       |
-| :------------------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `str_equal(a, b, ignore_case = false)` | `bool`                  | `true` when both strings have the same text. With `ignore_case`, ASCII and Latin-1 letters match regardless of case.                                              |
-| `str_char_count(text)`                 | `int`                   | Number of characters (Unicode code points).                                                                                                                       |
-| `str_concat(a, b)`                     | `string`                | `b` after `a`.                                                                                                                                                    |
-| `str_join(parts, sep = "")`            | `string`                | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array.                                                                       |
-| `str_byte_at(text, index)`             | `StringError!byte`      | The byte at byte offset `index`.                                                                                                                                  |
-| `str_char_at(text, index)`             | `StringError!string`    | The `index`-th character, as a one-character string (`str_char_at("olá", 2)` is `"á"`). Scans from the start.                                                     |
-| `str_find(text, needle)`               | `?int`                  | Byte offset of the first match, `null` if there is none or `needle` is empty.                                                                                     |
-| `str_contains(text, needle)`           | `bool`                  | Whether `needle` appears in `text`; `false` for an empty `needle`.                                                                                                |
-| `str_starts_with(text, prefix)`        | `bool`                  | Whether `text` starts with `prefix`; `false` for an empty `prefix`.                                                                                               |
-| `str_ends_with(text, suffix)`          | `bool`                  | Whether `text` ends with `suffix`; `false` for an empty `suffix`.                                                                                                 |
-| `str_count(text, needle)`              | `int`                   | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`.                                                                             |
-| `str_trim(text)`                       | `string`                | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends.                                                                               |
-| `str_upper(text)` / `str_lower(text)`  | `string`                | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged.                                                              |
-| `str_split(text, separator)`           | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
-| `str_replace(text, old, new)`          | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
-| `str_repeat(text, count)`              | `StringError!string`    | `text` repeated `count` times; `0` gives `""`.                                                                                                                    |
-| `str_slice(text, start, stop)`         | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `str_slice(s, 0, str_len(s))` is all of `s`.                                                                 |
-| `str_to_int(text)`                     | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
-| `str_to_float(text)`                   | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
+| Function                    | Returns                 | Description                                                                                                                                                       |
+| :-------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `len(text)`                 | `int`                   | Number of bytes (UTF-8).                                                                                                                                          |
+| `char_count(text)`          | `int`                   | Number of characters (Unicode code points).                                                                                                                       |
+| `concat(a, b)`              | `string`                | `b` after `a`.                                                                                                                                                    |
+| `join(parts, sep = "")`     | `string`                | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array.                                                                       |
+| `byte_at(text, index)`      | `StringError!byte`      | The byte at byte offset `index`.                                                                                                                                  |
+| `char_at(text, index)`      | `StringError!string`    | The `index`-th character, as a one-character string (`string::char_at("olá", 2)` is `"á"`). Scans from the start.                                                 |
+| `find(text, needle)`        | `?int`                  | Byte offset of the first match, `null` if there is none or `needle` is empty.                                                                                     |
+| `contains(text, needle)`    | `bool`                  | Whether `needle` appears in `text`; `false` for an empty `needle`.                                                                                                |
+| `starts_with(text, prefix)` | `bool`                  | Whether `text` starts with `prefix`; `false` for an empty `prefix`.                                                                                               |
+| `ends_with(text, suffix)`   | `bool`                  | Whether `text` ends with `suffix`; `false` for an empty `suffix`.                                                                                                 |
+| `count(text, needle)`       | `int`                   | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`.                                                                             |
+| `trim(text)`                | `string`                | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends.                                                                               |
+| `upper(text)` / `lower(text)` | `string`              | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged.                                                              |
+| `split(text, separator)`    | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. |
+| `replace(text, old, new)`   | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
+| `repeat(text, count)`       | `StringError!string`    | `text` repeated `count` times; `0` gives `""`.                                                                                                                    |
+| `slice(text, start, stop)`  | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `string::slice(s, 0, string::len(s))` is all of `s`.                                                         |
+| `to_int(text)`              | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
+| `to_float(text)`            | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
+| `from_bytes(data)`          | `StringError!string`    | Copies a buffer into a new string; fails with `StringError.InvalidUtf8` if it isn't valid UTF-8.                                                                  |
 
-**Errors.** Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Four builtin error sets exist (`ArrayError` is described with the [array functions](#array-functions)), and their names can't be used for other error sets:
-
-| Error | When |
-| :---- | :--- |
-| `StringError.OutOfRange` | `str_slice` with a negative bound, `start > stop`, `stop > str_len(text)`, or a bound inside a multi-byte character; `str_byte_at` / `str_char_at` with an index outside the string. |
-| `StringError.NegativeCount` | `str_repeat` with a negative `count`. |
-| `StringError.InvalidUtf8` | `string_from` with bytes that aren't valid UTF-8. |
-| `ConversionError.Invalid` | The text isn't a number. `str_to_int` accepts an optional `-` and digits; `str_to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
-| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, a float too large to represent, a `to_byte` value outside `0..255`, or a `to_int` value that's `nan`, infinite or outside the `int` range. |
-| `BufferError.NegativeSize` | `new_buffer` with a negative size. |
+`to_int` and `to_float` share their names with the prelude's conversions, so `import std/string: to_int` is an `AlreadyDefined` error: call them as `string::to_int`, or rename them (`import std/string: to_int as parse_int`).
 
 ```nim
-let line = "  name = Dusk, age = 13  "
-for str_split(str_trim(line), ","): field do
-    let pair = str_split(field, "=")
-    echo("${str_upper(str_trim(pair[0]))}: ${str_trim(pair[1])}")
-end
-
-let at = str_find(line, "=") orelse 0
-let name = str_slice(line, 0, at) catch ""
+import std/string
 
 func describe_age(text: string) -> string
-    let age = str_to_int(text) catch e then
+    let age = string::to_int(text) catch e then
         return when e
             ConversionError.Invalid then "not a number" end
             ConversionError.Overflow then "too big" end
@@ -1738,13 +1811,50 @@ func describe_age(text: string) -> string
     end
     return "age $age"
 end
-echo(describe_age("13"))     # age 13
-echo(describe_age("abc"))    # not a number
+
+func main() -> void
+    let line = "  name = Dusk, age = 13  "
+    for string::split(string::trim(line), ","): field do
+        let pair = string::split(field, "=")
+        echo("${string::upper(string::trim(pair[0]))}: ${string::trim(pair[1])}")
+    end
+    echo(describe_age("13"))     # age 13
+    echo(describe_age("abc"))    # not a number
+end
 ```
 
-Optional parameters follow the usual call rule: a call is all positional or all named, so write `str_equal(a, b, true)` or `str_equal(a = x, b = y, ignore_case = true)`.
+### std/buffer
 
-## 15. Errors
+| Function            | Returns              | Description                                                                                       |
+| :------------------ | :------------------- | :------------------------------------------------------------------------------------------------ |
+| `len(data)`         | `int`                | Number of bytes.                                                                                  |
+| `new(size)`         | `BufferError!buffer` | A new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size.     |
+| `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
+
+The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](#buffers).
+
+### std/task
+
+| Function    | Returns | Description                                                     |
+| :---------- | :------ | :-------------------------------------------------------------- |
+| `sleep(ms)` | `void`  | Pauses the running task for `ms` milliseconds (see [Tasks](#13-tasks)). |
+
+### Errors from builtins
+
+Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name.
+
+| Error | When |
+| :---- | :--- |
+| `ConversionError.Invalid` | The text isn't a number. `string::to_int` accepts an optional `-` and digits; `string::to_float` also accepts one `.` followed by digits. Spaces, `+`, `_`, exponents, hex, `inf` and `nan` are invalid. |
+| `ConversionError.Overflow` | An int that doesn't fit in 64 bits, a float too large to represent, a `to_byte` value outside `0..255`, or a `to_int` value that's `nan`, infinite or outside the `int` range. |
+| `ArrayError.Empty` | `pop` on an empty array. |
+| `ArrayError.OutOfRange` | `insert`, `remove` or `slice` outside the array. |
+| `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character; `string::byte_at` / `string::char_at` with an index outside the string. |
+| `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
+| `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
+| `BufferError.NegativeSize` | `buffer::new` with a negative size. |
+
+## 16. Errors
 
 Compile errors point to the line and column of the problem:
 
@@ -1756,22 +1866,23 @@ error: Invalid type: expected 'int' found 'string' at line 1 col 14
 
 The program doesn't run if it has a compile error. Runtime errors (a failed `assert`, an index out of bounds, an integer division by `0`, an `int` overflow, too many nested calls, an error returned from `main`, a task error nobody awaited; see [Runtime errors](#runtime-errors) and [Tasks](#13-tasks)) stop the program. For errors a program can handle, see [Error Handling](#12-error-handling).
 
-## 16. Known Limitations
+## 17. Known Limitations
 
 These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 
 - **Registers**: a function can have at most 255 variables and temporaries alive at once. Going over is a compile error; split the code into smaller functions.
 - **Function size**: a function can compile to at most 65,535 bytecode instructions. Going over is a compile error; split the code into smaller functions.
 - **Call depth**: at most 100,000 nested calls. Going deeper stops the program with a runtime error. A call returned directly (`return f(x)`, also in a `void` function) is a tail call: it reuses the current call instead of nesting, so tail-recursive functions can run any number of steps. In a function that can fail, `return try f(x)` is a tail call too when `f` succeeds with the same type (a `-> E!?int` function returning `try` of an `E!int` call isn't, since the result is converted first).
-- **Strings**: Positions are byte offsets; only `str_char_count` and `str_char_at` count characters (`str_char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only.
-- **Building strings in a loop**: `s = str_concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `str_join` once.
+- **Strings**: Positions are byte offsets; only `string::char_count` and `string::char_at` count characters (`char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only. There's no case-insensitive comparison: compare `string::lower(a) == string::lower(b)`.
+- **Building strings in a loop**: `s = string::concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `string::join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
 - **Printing**: `echo` doesn't print struct fields or union variants.
 - **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`.
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
-- **Builtin names**: a top-level function can't use the name of a builtin (`pop`, `insert`, `reverse`, ...).
-- **Function values**: builtins and methods can't be used as values (`let f = str_len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
+- **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`echo`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
+- **Modules**: libraries (`import jsonc`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
+- **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
-- **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `sleep`). `sleep` is the only builtin that waits on time: files and the network come later. A running task can't be stopped from outside.
+- **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`). `task::sleep` is the only builtin that waits on time: files and the network come later. A running task can't be stopped from outside.
 - **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
