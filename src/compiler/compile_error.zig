@@ -6,6 +6,8 @@ pub const CompileErrorReporter = struct {
     src: []const u8,
     allocator: std.mem.Allocator,
     copy_context: ?CopyContext = null,
+    file_path: ?[]const u8 = null,
+    imported_modules: []const []const u8 = &.{},
 
     const LINE_MAX_CHAR_COUNT = 256;
     const padding = " " ** LINE_MAX_CHAR_COUNT;
@@ -25,11 +27,6 @@ pub const CompileErrorReporter = struct {
             token.loc,
         );
         return CompileError.ParserError;
-    }
-
-    pub fn modulesNotSupported(self: *Self, loc: Loc) CompileError {
-        self.log("Modules aren't supported yet", loc);
-        return error.ModulesNotSupported;
     }
 
     pub fn librariesNotSupported(self: *Self, path: []const u8, loc: Loc) CompileError {
@@ -57,7 +54,22 @@ pub const CompileErrorReporter = struct {
         return error.ImportCycle;
     }
 
-    pub fn importNotAtTop(self: *Self, loc: Loc) CompileError {
+    fn checkModuleImported(self: *Self, name: []const u8, loc: Loc) CompileError!void {
+        const separator = std.mem.indexOf(u8, name, "::") orelse return;
+        const module = name[0..separator];
+        for (self.imported_modules) |imported| {
+            if (std.mem.eql(u8, imported, module)) return;
+        }
+        self.log(try allocPrint(self.allocator, "Module '{s}' isn't imported: add an import for it at the top of the file", .{module}), loc);
+        return error.ModuleNotImported;
+    }
+
+    pub fn notDefinedInModule(self: *Self, name: []const u8, module_path: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' isn't declared in module '@/{s}'", .{ name, module_path }), loc);
+        return error.NotDefined;
+    }
+
+        pub fn importNotAtTop(self: *Self, loc: Loc) CompileError {
         self.log("Imports must come first in the file, before any other declaration", loc);
         return CompileError.ParserError;
     }
@@ -150,6 +162,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn typeNotDefined(self: *Self, found: []const u8, loc: Loc) CompileError {
+        try self.checkModuleImported(found, loc);
         self.log(
             try allocPrint(self.allocator, "Invalid type '{s}'", .{found}),
             loc,
@@ -187,6 +200,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        try self.checkModuleImported(identifier, loc);
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
         return error.NotDefined;
     }
@@ -924,12 +938,14 @@ pub const CompileErrorReporter = struct {
             }
         }
 
+        const file_suffix = if (self.file_path) |path| allocPrint(self.allocator, " in {s}", .{path}) catch "" else "";
         std.log.err(
-            "{s} at line {d} col {d}\n--> {d}: {s}\n {s}",
+            "{s} at line {d} col {d}{s}\n--> {d}: {s}\n {s}",
             .{
                 msg,
                 exactLoc.line.count,
                 exactLoc.col,
+                file_suffix,
                 exactLoc.line.count,
                 std.mem.trimEnd(u8, self.src[@min(exactLoc.line.start, self.src.len)..@min(exactLoc.line.end + 1, self.src.len)], "\r\n"),
                 error_loc_marker[0..error_loc_marker_len],
@@ -1056,12 +1072,12 @@ pub const CompileError = error{
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
     InternalBuiltin,
-    ModulesNotSupported,
     LibrariesNotSupported,
     UnknownStdModule,
     ModuleNotFound,
     CantReadModule,
     ImportCycle,
+    ModuleNotImported,
     SlotResultDiffers,
     TypeDoesntFitSlot,
     TypeListNotPrimitive,

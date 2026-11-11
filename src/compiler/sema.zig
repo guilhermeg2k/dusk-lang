@@ -2,6 +2,7 @@ const err = @import("compile_error.zig");
 const ir = @import("ir.zig");
 const ast = @import("ast.zig");
 const tt = @import("type_table.zig");
+const modules = @import("modules.zig");
 const natives = @import("../runtime/builtins/natives.zig");
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
@@ -29,7 +30,9 @@ pub const SemaAnalyzer = struct {
 
     fn_depth: usize = 0,
     is_in_prelude: bool = false,
-    prelude_src: []const u8 = "",
+    module: *ModuleScope = undefined,
+    prelude_module: *ModuleScope = undefined,
+    slot_modules: std.AutoHashMapUnmanaged(usize, *ModuleScope) = .empty,
     internal_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     intrinsic_by_uid: std.AutoHashMapUnmanaged(usize, natives.Intrinsic) = .empty,
     extern_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
@@ -75,29 +78,39 @@ pub const SemaAnalyzer = struct {
         return self;
     }
 
-    pub fn analyze(self: *Self, prelude: *const ast.Root, prelude_src: []const u8, root: *const ast.Root, src: []const u8) !ir.Program {
+    pub fn analyze(self: *Self, prelude: *const ast.Root, prelude_src: []const u8, loaded_modules: []const modules.Module) !ir.Program {
+        self.prelude_module = try ModuleScope.create(self.allocator, "prelude", prelude_src, self.scope.symbol_table, true);
+        self.scope.symbol_table.module = self.prelude_module;
+        _ = self.enterModuleContext(self.prelude_module);
         try self.declareNoneErrorSet();
         try self.declareTaskType();
-        try self.loadPrelude(prelude, prelude_src);
+        try self.loadPrelude(prelude);
 
-        self.src = src;
-        self.err_reporter.src = src;
-
-        for (root.statements.items) |stmt| {
-            if (stmt.data == .import) {
-                return self.err_reporter.modulesNotSupported(stmt.data.import.path_loc);
+        const module_scopes = try self.allocator.alloc(*ModuleScope, loaded_modules.len);
+        for (loaded_modules, 0..) |*module, i| {
+            const root_table = try SymbolTable.init(self.allocator, self.prelude_module.root, null);
+            module_scopes[i] = try ModuleScope.create(self.allocator, module.path, module.src, root_table, false);
+            module_scopes[i].file_path = module.file_path;
+            if (i + 1 < loaded_modules.len) {
+                module_scopes[i].qualifier = std.fs.path.basename(module.path);
             }
+            root_table.module = module_scopes[i];
+            _ = self.enterModuleContext(module_scopes[i]);
+            self.scope.symbol_table = root_table;
+            try self.bindImports(module, module_scopes);
+            try self.hoistDeclarations(&module.root);
+            try self.checkTopLevelStatements(&module.root);
+            _ = try self.visitBlock(&module.root);
         }
-        try self.hoistDeclarations(root);
-        try self.checkTopLevelStatements(root);
-
-        _ = try self.visitBlock(root);
         try self.lowerPendingCopies();
         try self.resolveErrorEdges();
         try self.checkPendingWhens();
 
+        const entry = module_scopes[module_scopes.len - 1];
+        _ = self.enterModuleContext(entry);
+        self.scope.symbol_table = entry.root;
         const instructions = try self.allocator.alloc(ir.Instruction, 1);
-        instructions[0] = .{ .expression_stmt = .{ .value = try self.mainCall(root) } };
+        instructions[0] = .{ .expression_stmt = .{ .value = try self.mainCall(&loaded_modules[loaded_modules.len - 1].root) } };
 
         return .{
             .instructions = instructions,
@@ -128,13 +141,7 @@ pub const SemaAnalyzer = struct {
         });
     }
 
-    fn loadPrelude(self: *Self, prelude: *const ast.Root, src: []const u8) !void {
-        self.prelude_src = src;
-        self.src = src;
-        self.err_reporter.src = src;
-        self.is_in_prelude = true;
-        defer self.is_in_prelude = false;
-
+    fn loadPrelude(self: *Self, prelude: *const ast.Root) !void {
         try self.hoistDeclarations(prelude);
 
         for (prelude.statements.items) |stmt| {
@@ -175,19 +182,39 @@ pub const SemaAnalyzer = struct {
         return self.err_reporter.internalBuiltin(symbol.identifier, loc);
     }
 
-    fn enterPreludeContext(self: *Self, is_prelude: bool) PreludeContext {
-        const saved = PreludeContext{ .src = self.src, .is_in_prelude = self.is_in_prelude };
-        if (!is_prelude) return saved;
-        self.src = self.prelude_src;
-        self.err_reporter.src = self.prelude_src;
-        self.is_in_prelude = true;
+    fn enterModuleContext(self: *Self, module: *ModuleScope) *ModuleScope {
+        const saved = self.module;
+        self.module = module;
+        self.src = module.src;
+        self.err_reporter.src = module.src;
+        self.err_reporter.file_path = module.file_path;
+        self.err_reporter.imported_modules = module.imports.keys();
+        self.is_in_prelude = module.is_prelude;
         return saved;
     }
 
-    fn exitPreludeContext(self: *Self, saved: PreludeContext) void {
-        self.src = saved.src;
-        self.err_reporter.src = saved.src;
-        self.is_in_prelude = saved.is_in_prelude;
+    fn exitModuleContext(self: *Self, saved: *ModuleScope) void {
+        _ = self.enterModuleContext(saved);
+    }
+
+    fn bindImports(self: *Self, module: *const modules.Module, module_scopes: []const *ModuleScope) !void {
+        for (module.imports) |import| {
+            const target = module_scopes[import.module_index];
+            if (self.module.imports.contains(import.stmt.name)) {
+                return self.err_reporter.alreadyDefined(import.stmt.name, import.stmt.path_loc);
+            }
+            try self.module.imports.put(self.allocator, import.stmt.name, target);
+            for (import.stmt.selected) |selected| {
+                const symbol = target.root.symbols.get(selected.identifier) orelse {
+                    return self.err_reporter.notDefinedInModule(selected.identifier, target.path, selected.loc);
+                };
+                if (self.module.root.get(selected.name) != null) {
+                    return self.err_reporter.alreadyDefined(selected.name, selected.loc);
+                }
+                try self.module.selected.put(self.allocator, selected.name, symbol);
+            }
+        }
+        self.err_reporter.imported_modules = self.module.imports.keys();
     }
 
     fn genericExtern(self: *Self, index: usize) CompileError!ir.Extern {
@@ -265,6 +292,7 @@ pub const SemaAnalyzer = struct {
             if (to_set.kind == .inferred) continue;
             for (self.errorSetOf(edge.from).ids.keys()) |id| {
                 if (to_set.has(id)) continue;
+                _ = self.enterModuleContext(edge.module);
                 return self.err_reporter.errorNotInSet(
                     self.type_table.error_names.items[@intCast(id)],
                     try self.type_table.name(edge.to, self.allocator),
@@ -276,6 +304,7 @@ pub const SemaAnalyzer = struct {
 
     fn checkPendingWhens(self: *Self) !void {
         for (self.pending_when_checks.items) |check| {
+            _ = self.enterModuleContext(check.module);
             const set = self.errorSetOf(check.set_type_id);
             var seen: std.AutoHashMap(i64, void) = .init(self.allocator);
 
@@ -372,9 +401,6 @@ pub const SemaAnalyzer = struct {
         switch (fn_error_set) {
             .inferred => return self.createErrorSet(fn_name, .inferred),
             .named => |named| {
-                if (named.module != null) {
-                    return self.err_reporter.modulesNotSupported(named.loc);
-                }
                 const symbol = self.scope.symbol_table.getOrError(named.identifier) catch {
                     return self.err_reporter.typeNotDefined(named.identifier, named.loc);
                 };
@@ -451,7 +477,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn addErrorEdge(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !void {
-        try self.error_edges.append(self.allocator, .{ .from = from, .to = to, .loc = loc });
+        try self.error_edges.append(self.allocator, .{ .from = from, .to = to, .loc = loc, .module = self.module });
     }
 
     pub fn hoistDeclarations(self: *Self, root: *const ast.Root) !void {
@@ -467,10 +493,11 @@ pub const SemaAnalyzer = struct {
             switch (stmt.data) {
                 .error_set => |es| {
                     const symbol = try self.createErrorSetSymbol(&es);
+                    try self.qualifyTypeName(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .trait => |ts| {
-                    try self.traits.append(self.allocator, .{ .trait_stmt = &stmt.data.trait, .loc = stmt.loc });
+                    try self.traits.append(self.allocator, .{ .trait_stmt = &stmt.data.trait, .loc = stmt.loc, .module = self.module });
                     self.scope.symbol_table.put(.{
                         .identifier = ts.identifier,
                         .uid = self.scope.genUid(),
@@ -495,10 +522,12 @@ pub const SemaAnalyzer = struct {
                         continue;
                     }
                     const symbol = try self.createEmptyStructSymbol(ss.identifier);
+                    try self.qualifyTypeName(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
                 },
                 .@"enum" => |es| {
                     const symbol = try self.createEmptyEnumSymbol(es.identifier);
+                    try self.qualifyTypeName(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .@"union" => |un| {
@@ -508,6 +537,7 @@ pub const SemaAnalyzer = struct {
                         continue;
                     }
                     const symbol = try self.createEmptyUnionSymbol(un.identifier);
+                    try self.qualifyTypeName(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(un.identifier, stmt.loc);
                 },
                 else => {},
@@ -519,7 +549,7 @@ pub const SemaAnalyzer = struct {
             const let_stmt = stmt.data.let;
             if (!self.isConstantCandidate(let_stmt)) continue;
             const index = self.constants.items.len;
-            try self.constants.append(self.allocator, .{ .let_stmt = let_stmt, .loc = stmt.loc });
+            try self.constants.append(self.allocator, .{ .let_stmt = let_stmt, .loc = stmt.loc, .module = self.module });
             try self.constant_by_exp.put(self.allocator, let_stmt.value, index);
             self.scope.symbol_table.put(.{
                 .identifier = let_stmt.identifier,
@@ -604,11 +634,11 @@ pub const SemaAnalyzer = struct {
         const constant = self.constants.items[index];
         if (constant.is_resolving) return self.err_reporter.notDefined(constant.let_stmt.identifier, constant.loc);
         self.constants.items[index].is_resolving = true;
+        const saved_module = self.enterModuleContext(constant.module);
+        defer self.exitModuleContext(saved_module);
 
-        var root = self.scope.symbol_table;
-        while (root.parent) |parent| root = parent;
         const saved_table = self.scope.symbol_table;
-        self.scope.symbol_table = root;
+        self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
 
         const annotated_type_id = if (constant.let_stmt.type_annotation) |annotation| try self.resolveTypeAnnotation(annotation, null) else null;
@@ -629,13 +659,21 @@ pub const SemaAnalyzer = struct {
 
         self.constants.items[index].value = value;
         self.constants.items[index].is_resolving = false;
-        root.symbols.getPtr(constant.let_stmt.identifier).?.type_id = value.type_id;
+        self.module.root.symbols.getPtr(constant.let_stmt.identifier).?.type_id = value.type_id;
         return value;
     }
 
+    fn recordSlotModules(self: *Self, slots: []const ast.Slot) !void {
+        for (slots) |slot| {
+            if (slot.constraint.len == 0) continue;
+            try self.slot_modules.put(self.allocator, @intFromPtr(slot.constraint.ptr), self.module);
+        }
+    }
+
     fn createGenericTypeSymbol(self: *Self, identifier: []const u8, slots: []const ast.Slot, def: @FieldType(GenericType, "def"), loc: err.Loc) !Symbol {
+        try self.recordSlotModules(slots);
         const index = self.generic_types.items.len;
-        try self.generic_types.append(self.allocator, .{ .identifier = identifier, .slots = slots, .def = def, .loc = loc });
+        try self.generic_types.append(self.allocator, .{ .identifier = identifier, .slots = slots, .def = def, .loc = loc, .module = self.module });
         return Symbol{
             .identifier = identifier,
             .uid = self.scope.genUid(),
@@ -645,9 +683,10 @@ pub const SemaAnalyzer = struct {
     }
 
     fn createGenericFuncSymbol(self: *Self, func_stmt: *const ast.FuncStmt, loc: err.Loc) !Symbol {
+        try self.recordSlotModules(func_stmt.slots);
         const index = self.generic_functions.items.len;
         const extern_uid = if (func_stmt.is_extern) self.scope.genFnUid() else null;
-        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc, .extern_uid = extern_uid, .is_prelude = self.is_in_prelude });
+        try self.generic_functions.append(self.allocator, .{ .func_stmt = func_stmt, .loc = loc, .extern_uid = extern_uid, .module = self.module });
         return Symbol{
             .identifier = func_stmt.identifier,
             .uid = self.scope.genUid(),
@@ -677,6 +716,18 @@ pub const SemaAnalyzer = struct {
         });
 
         return symbol;
+    }
+
+    fn qualifyTypeName(self: *Self, symbol: Symbol, module: *ModuleScope) !void {
+        const module_name = module.qualifier orelse return;
+        const type_ptr = self.type_table.getTypePtrById(symbol.kind.defined_type.blueprint_type_id);
+        const identifier = switch (type_ptr.kind) {
+            .@"struct" => |*kind| &kind.identifier,
+            .@"enum" => |*kind| &kind.identifier,
+            .@"union" => |*kind| &kind.identifier,
+            else => return,
+        };
+        identifier.* = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_name, identifier.* });
     }
 
     fn createEmptyEnumSymbol(self: *Self, identifier: []const u8) !Symbol {
@@ -1559,9 +1610,7 @@ pub const SemaAnalyzer = struct {
 
     fn enterBoundSlotScope(self: *Self, slots: []const ast.Slot, bindings: []const ?tt.TypeId) CompileError!*SymbolTable {
         const saved_table = self.scope.symbol_table;
-        var root = saved_table;
-        while (root.parent) |parent| root = parent;
-        self.scope.symbol_table = root;
+        self.scope.symbol_table = self.module.root;
         try self.scope.enter(self.scope.return_type_id);
         for (slots, bindings) |slot, binding| {
             const type_id = binding orelse continue;
@@ -1635,7 +1684,7 @@ pub const SemaAnalyzer = struct {
                 } else {
                     const copy = self.copied_types.get(type_id) orelse return;
                     const generic = self.generic_types.items[copy.generic];
-                    if (!std.mem.eql(u8, generic.identifier, name) or annotation.args.len != copy.args.len) return;
+                    if (!namesDeclaration(name, generic.identifier) or annotation.args.len != copy.args.len) return;
                     for (annotation.args, copy.args) |arg_annotation, copied_arg| {
                         try self.inferSlots(arg_annotation, copied_arg, slots, bindings, loc);
                     }
@@ -1668,6 +1717,12 @@ pub const SemaAnalyzer = struct {
             },
             else => {},
         }
+    }
+
+    fn namesDeclaration(name: []const u8, identifier: []const u8) bool {
+        if (std.mem.eql(u8, name, identifier)) return true;
+        const separator = std.mem.lastIndexOf(u8, name, "::") orelse return false;
+        return std.mem.eql(u8, name[separator + 2 ..], identifier);
     }
 
     fn bindSlot(self: *Self, slots: []const ast.Slot, bindings: []?tt.TypeId, slot_index: usize, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
@@ -1720,12 +1775,12 @@ pub const SemaAnalyzer = struct {
         try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
         const copy_index = generic.copies.items.len - 1;
 
+        const saved_module = self.enterModuleContext(generic.module);
+        defer self.exitModuleContext(saved_module);
         const saved_table = try self.enterSlotScope(generic.func_stmt.slots, args);
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;
         defer self.scope.return_type_id = saved_return_type;
-        const saved_context = self.enterPreludeContext(generic.is_prelude);
-        defer self.exitPreludeContext(saved_context);
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
 
         if (generic.extern_uid) |extern_uid| {
@@ -1862,6 +1917,7 @@ pub const SemaAnalyzer = struct {
             .@"struct" => try self.createEmptyStructSymbol(name),
             .@"union" => try self.createEmptyUnionSymbol(name),
         };
+        try self.qualifyTypeName(symbol, generic.module);
         try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
         const copy_index = generic.copies.items.len - 1;
         try self.copied_types.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .generic = index, .args = args });
@@ -1885,6 +1941,8 @@ pub const SemaAnalyzer = struct {
     fn visitTypeCopy(self: *Self, index: usize, copy_index: usize) CompileError!ir.DefinedType {
         const generic = self.generic_types.items[index];
         const copy = generic.copies.items[copy_index];
+        const saved_module = self.enterModuleContext(generic.module);
+        defer self.exitModuleContext(saved_module);
         const saved_table = try self.enterSlotScope(generic.slots, copy.args);
         defer self.scope.symbol_table = saved_table;
         return switch (generic.def) {
@@ -1904,10 +1962,10 @@ pub const SemaAnalyzer = struct {
             const generic = self.generic_functions.items[pending.generic];
             const copy = generic.copies.items[pending.copy];
 
+            const saved_lowering = self.enterCopyLowering(copy, generic.module);
+            defer self.exitCopyLowering(saved_lowering);
             const saved_table = try self.enterSlotScope(generic.func_stmt.slots, copy.args);
             defer self.scope.symbol_table = saved_table;
-            const saved_lowering = self.enterCopyLowering(copy, generic.is_prelude);
-            defer self.exitCopyLowering(saved_lowering);
 
             const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
             const func = try self.visitFnDef(&generic.func_stmt.def, metadata.uid, metadata, null, generic.loc);
@@ -1917,15 +1975,16 @@ pub const SemaAnalyzer = struct {
     }
 
     fn lowerTypeCopy(self: *Self, pending: PendingCopy) CompileError!void {
-        const copy = self.generic_types.items[pending.generic].copies.items[pending.copy];
-        const saved_lowering = self.enterCopyLowering(copy, false);
+        const generic = self.generic_types.items[pending.generic];
+        const copy = generic.copies.items[pending.copy];
+        const saved_lowering = self.enterCopyLowering(copy, generic.module);
         defer self.exitCopyLowering(saved_lowering);
         try self.defined_types.append(self.allocator, try self.visitTypeCopy(pending.generic, pending.copy));
     }
 
-    fn enterCopyLowering(self: *Self, copy: GenericCopy, is_prelude: bool) CopyLowering {
+    fn enterCopyLowering(self: *Self, copy: GenericCopy, module: *ModuleScope) CopyLowering {
         const saved = CopyLowering{
-            .prelude = self.enterPreludeContext(is_prelude),
+            .module = self.enterModuleContext(module),
             .depth = self.copy_depth,
             .copy_context = self.err_reporter.copy_context,
             .is_lowering_copy = self.is_lowering_copy,
@@ -1939,7 +1998,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn exitCopyLowering(self: *Self, saved: CopyLowering) void {
-        self.exitPreludeContext(saved.prelude);
+        self.exitModuleContext(saved.module);
         self.copy_depth = saved.depth;
         self.err_reporter.copy_context = saved.copy_context;
         self.is_lowering_copy = saved.is_lowering_copy;
@@ -1948,9 +2007,7 @@ pub const SemaAnalyzer = struct {
 
     fn enterSlotScope(self: *Self, slots: []const ast.Slot, args: []const tt.TypeId) CompileError!*SymbolTable {
         const saved_table = self.scope.symbol_table;
-        var root = saved_table;
-        while (root.parent) |parent| root = parent;
-        self.scope.symbol_table = root;
+        self.scope.symbol_table = self.module.root;
         try self.scope.enter(self.scope.return_type_id);
         for (slots, args) |slot, arg| {
             try self.scope.symbol_table.put(.{
@@ -1980,6 +2037,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn resolveConstraint(self: *Self, slot: ast.Slot) CompileError!Constraint {
+        const slot_module = self.slot_modules.get(@intFromPtr(slot.constraint.ptr)) orelse self.module;
+        const saved_module = self.enterModuleContext(slot_module);
+        defer self.exitModuleContext(saved_module);
         var constraint = Constraint{};
         var methods: std.ArrayList(TraitMethod) = .empty;
         var list_count: usize = 0;
@@ -2002,10 +2062,8 @@ pub const SemaAnalyzer = struct {
     }
 
     fn resolveTypeList(self: *Self, annotations: []const *ast.TypeAnnotation) CompileError![]const tt.TypeId {
-        var root = self.scope.symbol_table;
-        while (root.parent) |parent| root = parent;
         const saved_table = self.scope.symbol_table;
-        self.scope.symbol_table = root;
+        self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
 
         var members: std.ArrayList(tt.TypeId) = .empty;
@@ -2027,13 +2085,11 @@ pub const SemaAnalyzer = struct {
     }
 
     fn traitIndexOf(self: *Self, annotation: *const ast.TypeAnnotation) ?usize {
-        const is_plain_name = annotation.type == .@"struct" and annotation.module == null and !annotation.is_nullable and annotation.args.len == 0;
+        const is_plain_name = annotation.type == .@"struct" and !annotation.is_nullable and annotation.args.len == 0;
         if (!is_plain_name) {
             return null;
         }
-        var root = self.scope.symbol_table;
-        while (root.parent) |parent| root = parent;
-        const symbol = root.get(annotation.type.@"struct") orelse return null;
+        const symbol = self.module.root.get(annotation.type.@"struct") orelse return null;
         if (symbol.kind != .trait) return null;
         return symbol.kind.trait;
     }
@@ -2053,6 +2109,8 @@ pub const SemaAnalyzer = struct {
         if (trait.constraint) |constraint| return constraint;
         if (trait.is_resolving) return self.err_reporter.traitRefersToItself(trait.trait_stmt.identifier, trait.loc);
         self.traits.items[index].is_resolving = true;
+        const saved_module = self.enterModuleContext(trait.module);
+        defer self.exitModuleContext(saved_module);
 
         var constraint = Constraint{};
         if (!self.isMethodTrait(index)) {
@@ -2069,7 +2127,7 @@ pub const SemaAnalyzer = struct {
             }
             var own: std.ArrayList(TraitMethod) = .empty;
             for (trait.trait_stmt.methods) |*method_node| {
-                const method = TraitMethod{ .func_stmt = &method_node.data.func, .loc = method_node.loc };
+                const method = TraitMethod{ .func_stmt = &method_node.data.func, .loc = method_node.loc, .module = trait.module };
                 try self.checkTraitMethod(method, own.items);
                 try own.append(self.allocator, method);
             }
@@ -2120,10 +2178,10 @@ pub const SemaAnalyzer = struct {
     }
 
     fn traitMethodType(self: *Self, method: TraitMethod, self_type: tt.TypeId) CompileError!tt.TypeId {
-        var root = self.scope.symbol_table;
-        while (root.parent) |parent| root = parent;
+        const saved_module = self.enterModuleContext(method.module);
+        defer self.exitModuleContext(saved_module);
         const saved_table = self.scope.symbol_table;
-        self.scope.symbol_table = root;
+        self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
 
         const saved_return_type = self.scope.return_type_id;
@@ -2775,6 +2833,7 @@ pub const SemaAnalyzer = struct {
                 .set_type_id = subject.base_type,
                 .is_null_missing = subject.is_nullable and !prongs.has_null_case,
                 .when_loc = when_loc,
+                .module = self.module,
             });
             return;
         }
@@ -3018,9 +3077,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn strEqual(self: *Self, left: *ir.Value, right: *ir.Value) !*ir.Value {
-        var root = self.scope.symbol_table;
-        while (root.parent) |parent| root = parent;
-        const symbol = root.symbols.get("str_equal").?;
+        const symbol = self.prelude_module.root.symbols.get("str_equal").?;
         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
         const boolean_type = self.type_table.getPrimitive(.boolean);
         const args = try self.allocator.alloc(*ir.Value, 3);
@@ -3957,7 +4014,6 @@ pub const SemaAnalyzer = struct {
                 return self.evalBinaryExp(exp);
             },
             .lambda => return self.evalLambda(exp, null),
-            .module_member => return self.err_reporter.modulesNotSupported(exp.loc),
         }
     }
 
@@ -5403,9 +5459,6 @@ pub const SemaAnalyzer = struct {
     }
 
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) !tt.TypeId {
-        if (type_annotation.module != null) {
-            return self.err_reporter.modulesNotSupported(type_annotation.loc);
-        }
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
                 if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
@@ -5425,7 +5478,9 @@ pub const SemaAnalyzer = struct {
                 if (self.is_in_prelude and std.mem.eql(u8, struct_name, "dynamic")) {
                     return self.type_table.getPrimitive(.dynamic);
                 }
-                const symbol = try self.scope.symbol_table.getOrError(struct_name);
+                const symbol = self.scope.symbol_table.get(struct_name) orelse {
+                    return self.err_reporter.typeNotDefined(struct_name, type_annotation.loc);
+                };
                 if (symbol.kind == .task_type) {
                     const task_type_id = try self.resolveTaskTypeAnnotation(type_annotation, current_defined_type_type_id);
                     return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(task_type_id) else task_type_id;
@@ -5499,7 +5554,7 @@ pub const SemaAnalyzer = struct {
     fn resolveFuncReturnType(self: *Self, func: ast.FuncTypeAnnotation, current_defined_type_type_id: ?tt.TypeId, loc: err.Loc) CompileError!tt.TypeId {
         const payload = try self.resolveTypeAnnotation(func.return_type, current_defined_type_type_id);
         const set_name = func.error_set orelse return payload;
-        const error_set_type_id = try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .module = func.error_set_module, .loc = loc } }, "");
+        const error_set_type_id = try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .loc = loc } }, "");
         return self.errorUnionType(error_set_type_id, payload);
     }
 
@@ -5512,9 +5567,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn namesSlot(self: *Self, annotation: *const ast.TypeAnnotation) bool {
-        if (annotation.type != .@"struct" or annotation.module != null) {
-            return false;
-        }
+        if (annotation.type != .@"struct") return false;
         const symbol = self.scope.symbol_table.get(annotation.type.@"struct") orelse return false;
         return symbol.kind == .type_slot;
     }
@@ -5590,6 +5643,7 @@ const ErrorEdge = struct {
     from: tt.TypeId,
     to: tt.TypeId,
     loc: err.Loc,
+    module: *ModuleScope,
 };
 
 const Scope = struct {
@@ -5640,6 +5694,7 @@ const SymbolTable = struct {
     allocator: std.mem.Allocator,
     parent: ?*SymbolTable,
     symbols: std.StringHashMap(Symbol),
+    module: ?*ModuleScope = null,
 
     pub fn init(allocator: std.mem.Allocator, parent: ?*SymbolTable, symbols: ?std.StringHashMap(Symbol)) !*Self {
         const ptr = try allocator.create(Self);
@@ -5655,6 +5710,9 @@ const SymbolTable = struct {
         if (self.symbols.get(symbol.identifier)) |_| {
             return CompileError.SemaError;
         }
+        if (self.module != null and self.get(symbol.identifier) != null) {
+            return CompileError.SemaError;
+        }
 
         try self.symbols.put(symbol.identifier, symbol);
     }
@@ -5665,6 +5723,10 @@ const SymbolTable = struct {
 
     fn get(self: *Self, identifier: []const u8) ?Symbol {
         if (self.symbols.get(identifier)) |s| return s;
+        if (self.module) |module| {
+            if (module.selected.get(identifier)) |s| return s;
+            if (module.getQualified(identifier)) |s| return s;
+        }
         if (self.parent) |parent| {
             return parent.get(identifier);
         }
@@ -5674,6 +5736,31 @@ const SymbolTable = struct {
     fn getOrError(self: *Self, id: []const u8) !Symbol {
         if (self.get(id)) |s| return s;
         return CompileError.SemaError;
+    }
+};
+
+const ModuleScope = struct {
+    const Self = @This();
+
+    path: []const u8,
+    src: []const u8,
+    root: *SymbolTable,
+    is_prelude: bool,
+    file_path: ?[]const u8 = null,
+    qualifier: ?[]const u8 = null,
+    imports: std.StringArrayHashMapUnmanaged(*ModuleScope) = .empty,
+    selected: std.StringHashMapUnmanaged(Symbol) = .empty,
+
+    fn create(allocator: std.mem.Allocator, path: []const u8, src: []const u8, root: *SymbolTable, is_prelude: bool) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = .{ .path = path, .src = src, .root = root, .is_prelude = is_prelude };
+        return ptr;
+    }
+
+    fn getQualified(self: *Self, identifier: []const u8) ?Symbol {
+        const separator = std.mem.indexOf(u8, identifier, "::") orelse return null;
+        const target = self.imports.get(identifier[0..separator]) orelse return null;
+        return target.root.symbols.get(identifier[separator + 2 ..]);
     }
 };
 
@@ -5687,6 +5774,7 @@ const ExitQuery = enum { returns, leaves_block };
 const Constant = struct {
     let_stmt: ast.LetStmt,
     loc: err.Loc,
+    module: *ModuleScope,
     value: ?*ir.Value = null,
     is_resolving: bool = false,
 };
@@ -5756,18 +5844,13 @@ const WhenSubject = struct {
 const GenericFunction = struct {
     func_stmt: *const ast.FuncStmt,
     loc: err.Loc,
-    is_prelude: bool = false,
+    module: *ModuleScope,
     extern_uid: ?usize = null,
     copies: std.ArrayList(GenericCopy) = .empty,
 };
 
-const PreludeContext = struct {
-    src: []const u8,
-    is_in_prelude: bool,
-};
-
 const CopyLowering = struct {
-    prelude: PreludeContext,
+    module: *ModuleScope,
     depth: usize,
     copy_context: ?err.CopyContext,
     is_lowering_copy: bool,
@@ -5790,6 +5873,7 @@ const GenericType = struct {
         @"union": *const ast.UnionDef,
     },
     loc: err.Loc,
+    module: *ModuleScope,
     copies: std.ArrayList(GenericCopy) = .empty,
     opaque_copy: ?Symbol = null,
 };
@@ -5797,6 +5881,7 @@ const GenericType = struct {
 const Trait = struct {
     trait_stmt: *const ast.TraitStmt,
     loc: err.Loc,
+    module: *ModuleScope,
     constraint: ?Constraint = null,
     is_resolving: bool = false,
 };
@@ -5809,6 +5894,7 @@ const Constraint = struct {
 const TraitMethod = struct {
     func_stmt: *const ast.FuncStmt,
     loc: err.Loc,
+    module: *ModuleScope,
 };
 
 const PendingTraitCheck = struct {
@@ -5858,6 +5944,7 @@ const PendingWhenCheck = struct {
     set_type_id: tt.TypeId,
     is_null_missing: bool,
     when_loc: err.Loc,
+    module: *ModuleScope,
 };
 
 const WhenRange = struct {

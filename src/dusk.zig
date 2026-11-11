@@ -55,10 +55,9 @@ pub const Dusk = struct {
         const prelude_ast = try parse(allocator, prelude_src);
         var module_loader = modules.ModuleLoader.init(allocator, self.io, entry.project_root);
         const loaded_modules = try module_loader.load(entry.module_path, src);
-        const entry_module = loaded_modules[loaded_modules.len - 1];
 
         var sema_analyzer = try SemaAnalyzer.init(allocator);
-        const ir = try sema_analyzer.analyze(&prelude_ast, prelude_src, &entry_module.root, entry_module.src);
+        const ir = try sema_analyzer.analyze(&prelude_ast, prelude_src, loaded_modules);
 
         var Bytecodegen = codegen.BytecodeGen.init(self.allocator, &sema_analyzer.type_table);
 
@@ -70,7 +69,7 @@ pub const Dusk = struct {
         try self.runProgram(&program);
     }
 
-    fn runProgram(self: *Self, program: *const bc.Program) !void {
+    pub fn runProgram(self: *Self, program: *const bc.Program) !void {
         var v = VM.init(program, self.stdout_writer);
         defer v.deinit();
         try v.run();

@@ -1020,7 +1020,7 @@ pub const Parser = struct {
             if (return_type.type != .@"struct" or return_type.is_nullable) {
                 return self.err_reporter.invalidSyntax("error set name before '!'", self.peekCurrent());
             }
-            error_set = .{ .named = .{ .identifier = return_type.type.@"struct", .module = return_type.module, .loc = tk.loc } };
+            error_set = .{ .named = .{ .identifier = return_type.type.@"struct", .loc = tk.loc } };
             self.walk();
             return_type = try self.parseTypeAnnotation(false);
         }
@@ -1611,9 +1611,13 @@ pub const Parser = struct {
         _ = try self.expect(.double_colon);
         const member_tk = try self.expect(.identifier);
         return ast.ExpNode.init(self.allocator, .{
-            .data = .{ .module_member = .{ .module = module_tk.value(self.src), .member = member_tk.value(self.src) } },
+            .data = .{ .identifier = try self.qualifiedName(module_tk, member_tk) },
             .loc = .{ .start = module_tk.loc.start, .end = member_tk.loc.end },
         });
+    }
+
+    fn qualifiedName(self: *Self, module_tk: Token, member_tk: Token) CompileError![]const u8 {
+        return std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_tk.value(self.src), member_tk.value(self.src) });
     }
 
     fn parsePostfix(self: *Self, left: *ast.ExpNode) CompileError!*ast.ExpNode {
@@ -1724,8 +1728,7 @@ pub const Parser = struct {
             const name_tk = try self.expect(.identifier);
             const args = try self.parseTypeArgs();
             return ast.TypeAnnotation.init(self.allocator, .{
-                .type = .{ .@"struct" = name_tk.value(self.src) },
-                .module = tk.value(self.src),
+                .type = .{ .@"struct" = try self.qualifiedName(tk, name_tk) },
                 .is_nullable = is_nullable,
                 .args = args,
                 .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
@@ -1805,13 +1808,11 @@ pub const Parser = struct {
         }
         var return_type = try self.parseTypeAnnotation(false);
         var error_set: ?[]const u8 = null;
-        var error_set_module: ?[]const u8 = null;
         if (self.peekCurrent().tag == .not) {
             if (return_type.type != .@"struct" or return_type.is_nullable) {
                 return self.err_reporter.invalidSyntax("error set name before '!'", self.peekCurrent());
             }
             error_set = return_type.type.@"struct";
-            error_set_module = return_type.module;
             self.walk();
             return_type = try self.parseTypeAnnotation(false);
         }
@@ -1820,7 +1821,6 @@ pub const Parser = struct {
             .params = try params.toOwnedSlice(self.allocator),
             .return_type = return_type,
             .error_set = error_set,
-            .error_set_module = error_set_module,
         };
     }
 

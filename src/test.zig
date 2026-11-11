@@ -2220,12 +2220,36 @@ fn runModuleCaseError(entry_file: []const u8, expected: anytype) !void {
     try testing.expectError(expected, dusk.compileEntry(src, EntryFile.fromPath(path)));
 }
 
-test "modules: imports and :: parse and load, but modules aren't supported yet" {
-    try runModuleCaseError("shared-dependency/main.dsk", error.ModulesNotSupported);
-    try runCaseError("sema/modules-not-supported-member.dsk", error.ModulesNotSupported);
-    try runCaseError("sema/modules-not-supported-type-keyword.dsk", error.ModulesNotSupported);
-    try runCaseError("sema/modules-not-supported-type.dsk", error.ModulesNotSupported);
-    try runCaseError("sema/modules-not-supported-error-set.dsk", error.ModulesNotSupported);
+test "modules: qualified names, selective imports and aliases across files" {
+    try runModuleCase("shared-dependency/main.dsk");
+    try runModuleCase("qualified-access/main.dsk");
+}
+
+fn runModuleCase(entry_file: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
+    try dusk.runProgram(&program);
+}
+
+test "modules: name errors across files" {
+    try runModuleCaseError("name-errors/unknown-member.dsk", error.NotDefined);
+    try runModuleCaseError("name-errors/unknown-type.dsk", error.UnknownType);
+    try runModuleCaseError("name-errors/not-imported.dsk", error.ModuleNotImported);
+    try runModuleCaseError("name-errors/selected-missing.dsk", error.NotDefined);
+    try runModuleCaseError("name-errors/selected-clash-local.dsk", error.AlreadyDefined);
+    try runModuleCaseError("name-errors/selected-clash-prelude.dsk", error.AlreadyDefined);
+    try runModuleCaseError("name-errors/import-name-clash.dsk", error.AlreadyDefined);
+    try runModuleCaseError("name-errors/no-reexport.dsk", error.NotDefined);
+    try runModuleCaseError("name-errors/error-in-module.dsk", error.InvalidReturnType);
+    try runModuleCaseError("name-errors/wrong-type.dsk", error.InvalidType);
+}
+
+test "unknown types in let annotations are reported" {
+    try runCaseError("sema/unknown-let-type.dsk", error.UnknownType);
 }
 
 test "modules: imports come first in the file" {

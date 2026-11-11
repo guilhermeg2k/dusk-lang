@@ -1,0 +1,3 @@
+func main() -> void
+    let s: ?Circle = null
+end

@@ -1,3 +1,0 @@
-func main() -> void
-    let parts = string::split("a,b", ",")
-end

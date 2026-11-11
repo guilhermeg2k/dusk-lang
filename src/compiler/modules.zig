@@ -21,13 +21,13 @@ pub const ModuleLoader = struct {
     }
 
     pub fn load(self: *Self, entry_path: []const u8, entry_src: []const u8) CompileError![]const Module {
-        _ = try self.loadModule(entry_path, entry_src);
+        _ = try self.loadModule(entry_path, entry_src, null);
         return self.modules.items;
     }
 
-    fn loadModule(self: *Self, path: []const u8, src: []const u8) CompileError!usize {
-        const root = try parse(self.allocator, src);
-        var reporter = CompileErrorReporter{ .allocator = self.allocator, .src = src };
+    fn loadModule(self: *Self, path: []const u8, src: []const u8, file_path: ?[]const u8) CompileError!usize {
+        const root = try parseFile(self.allocator, src, file_path);
+        var reporter = CompileErrorReporter{ .allocator = self.allocator, .src = src, .file_path = file_path };
 
         try self.loading_paths.append(self.allocator, path);
         var imports: std.ArrayList(Import) = .empty;
@@ -41,6 +41,7 @@ pub const ModuleLoader = struct {
         const index = self.modules.items.len;
         try self.modules.append(self.allocator, .{
             .path = path,
+            .file_path = file_path,
             .src = src,
             .root = root,
             .imports = try imports.toOwnedSlice(self.allocator),
@@ -61,8 +62,9 @@ pub const ModuleLoader = struct {
         if (self.isLoading(import.path)) {
             return reporter.importCycle(try self.describeCycle(import.path), import.path_loc);
         }
-        const src = try self.readProjectFile(import, reporter);
-        return self.loadModule(import.path, src);
+        const file_path = try self.projectFilePath(import.path);
+        const src = try self.readProjectFile(import, file_path, reporter);
+        return self.loadModule(import.path, src, file_path);
     }
 
     fn isLoading(self: *Self, path: []const u8) bool {
@@ -86,9 +88,12 @@ pub const ModuleLoader = struct {
         return chain.toOwnedSlice(self.allocator);
     }
 
-    fn readProjectFile(self: *Self, import: ast.ImportStmt, reporter: *CompileErrorReporter) CompileError![]const u8 {
-        const file_name = try std.fmt.allocPrint(self.allocator, "{s}.dsk", .{import.path});
-        const file_path = try std.fs.path.join(self.allocator, &.{ self.project_root, file_name });
+    fn projectFilePath(self: *Self, path: []const u8) CompileError![]const u8 {
+        const file_name = try std.fmt.allocPrint(self.allocator, "{s}.dsk", .{path});
+        return std.fs.path.join(self.allocator, &.{ self.project_root, file_name });
+    }
+
+    fn readProjectFile(self: *Self, import: ast.ImportStmt, file_path: []const u8, reporter: *CompileErrorReporter) CompileError![]const u8 {
         return std.Io.Dir.cwd().readFileAlloc(self.io, file_path, self.allocator, .unlimited) catch |failure| {
             if (failure == error.FileNotFound) {
                 return reporter.moduleNotFound(import.path, file_path, import.path_loc);
@@ -100,6 +105,7 @@ pub const ModuleLoader = struct {
 
 pub const Module = struct {
     path: []const u8,
+    file_path: ?[]const u8,
     src: []const u8,
     root: ast.Root,
     imports: []const Import,
@@ -111,8 +117,14 @@ pub const Import = struct {
 };
 
 pub fn parse(allocator: std.mem.Allocator, src: []const u8) CompileError!ast.Root {
+    return parseFile(allocator, src, null);
+}
+
+fn parseFile(allocator: std.mem.Allocator, src: []const u8, file_path: ?[]const u8) CompileError!ast.Root {
     var dusk_lexer = Lexer.init(allocator, src);
+    dusk_lexer.err_reporter.file_path = file_path;
     const tokens = try dusk_lexer.list();
     var dusk_parser = Parser.init(allocator, src, tokens.items);
+    dusk_parser.err_reporter.file_path = file_path;
     return dusk_parser.parse();
 }
