@@ -479,6 +479,7 @@ pub const TypedIdentifier = struct {
     identifier: []const u8,
     type_id: TypeId,
     is_mut: bool,
+    is_file_only: bool = false,
     default_value: ?*ir.Value,
 
     pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {

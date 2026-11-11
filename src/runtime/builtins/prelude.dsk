@@ -21,17 +21,17 @@ end
 extern func echo(msgs: dynamic) -> void
 extern func append[T](mut array: []T, mut value: T) -> void
 extern func len[T](array: []T) -> int
-extern func __array_pop[T](mut array: []T) -> T
-extern func __array_insert[T](mut array: []T, index: int, value: T) -> void
-extern func __array_remove[T](mut array: []T, index: int) -> T
+extern func ~unchecked_pop[T](mut array: []T) -> T
+extern func ~unchecked_insert[T](mut array: []T, index: int, value: T) -> void
+extern func ~unchecked_remove[T](mut array: []T, index: int) -> T
 extern func clear[T](mut array: []T) -> void
 extern func index_of[T: int | float | byte | bool | string](array: []T, value: T) -> ?int
 extern func contains[T: int | float | byte | bool | string](array: []T, value: T) -> bool
 extern func str_len(text: string) -> int
 extern func buffer_len(data: buffer) -> int
-extern func __new_buffer(size: int) -> buffer
-extern func __to_byte(value: int) -> byte
-extern func __to_int(value: float) -> int
+extern func ~unchecked_new_buffer(size: int) -> buffer
+extern func ~unchecked_to_byte(value: int) -> byte
+extern func ~unchecked_to_int(value: float) -> int
 extern func to_float[T: int | byte | float](value: T) -> float
 extern func assert(cond: bool) -> void
 extern func buffer_from(text: string) -> buffer
@@ -63,7 +63,7 @@ extern func str_repeat(text: string, count: int) -> StringError!string
 
 func pop[T](mut array: []T) -> ArrayError!T
     if len(array) == 0 then return ArrayError.Empty end
-    return __array_pop(array)
+    return unchecked_pop(array)
 end
 
 func pop_or_null[T](mut arr: []T) -> ?T
@@ -72,12 +72,12 @@ end
 
 func insert[T](mut array: []T, index: int, mut value: T) -> ArrayError!void
     if index < 0 or index > len(array) then return ArrayError.OutOfRange end
-    __array_insert(array, index, value)
+    unchecked_insert(array, index, value)
 end
 
 func remove[T](mut array: []T, index: int) -> ArrayError!T
     if index < 0 or index >= len(array) then return ArrayError.OutOfRange end
-    return __array_remove(array, index)
+    return unchecked_remove(array, index)
 end
 
 func reverse[T](mut array: []T) -> void
@@ -107,14 +107,14 @@ func new_buffer(size: int) -> BufferError!buffer
     if size < 0 then
         return BufferError.NegativeSize
     end
-    return __new_buffer(size)
+    return unchecked_new_buffer(size)
 end
 
 func to_byte(value: int) -> ConversionError!byte
     if value < 0 or value > 255 then
         return ConversionError.Overflow
     end
-    return __to_byte(value)
+    return unchecked_to_byte(value)
 end
 
 func to_int(value: float) -> ConversionError!int
@@ -122,5 +122,5 @@ func to_int(value: float) -> ConversionError!int
     if is_out_of_range then
         return ConversionError.Overflow
     end
-    return __to_int(value)
+    return unchecked_to_int(value)
 end

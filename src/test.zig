@@ -2248,6 +2248,31 @@ test "modules: name errors across files" {
     try runModuleCaseError("name-errors/wrong-type.dsk", error.InvalidType);
 }
 
+test "modules: '~' declarations and members stay in their file" {
+    try runModuleCase("visibility/main.dsk");
+    try runModuleCase("visibility/private-ok.dsk");
+    try runModuleCaseError("visibility/qualified-function.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/qualified-constant.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/selected.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/field-read.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/field-write.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/method-call.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/build-sets-field.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/build-without-default.dsk", error.CantBuildOutsideModule);
+    try runModuleCaseError("visibility/build-anonymous.dsk", error.CantBuildOutsideModule);
+    try runModuleCaseError("visibility/trait-fit.dsk", error.DoesntFitTrait);
+}
+
+test "modules: public declarations can't mention '~' types" {
+    try runModuleCaseError("visibility/private-param.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-return.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-field.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-error-set.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-variant.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-method.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-function-type.dsk", error.PrivateTypeInPublicSignature);
+}
+
 test "unknown types in let annotations are reported" {
     try runCaseError("sema/unknown-let-type.dsk", error.UnknownType);
 }
@@ -2388,9 +2413,9 @@ test "generics: traits constrain a slot to types with methods" {
     try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
 }
 
-test "builtins: pop is a prelude function over an internal builtin" {
+test "builtins: pop is a prelude function over a file-only builtin" {
     try runCase("array-pop.dsk");
-    try runCaseError("sema/internal-builtin.dsk", error.InternalBuiltin);
+    try runCaseError("sema/prelude-file-only.dsk", error.NotDefined);
 }
 
 test "builtins: insert, remove and clear change arrays in place" {

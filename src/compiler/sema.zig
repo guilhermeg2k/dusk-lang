@@ -33,7 +33,8 @@ pub const SemaAnalyzer = struct {
     module: *ModuleScope = undefined,
     prelude_module: *ModuleScope = undefined,
     slot_modules: std.AutoHashMapUnmanaged(usize, *ModuleScope) = .empty,
-    internal_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    type_modules: std.AutoHashMapUnmanaged(tt.TypeId, *ModuleScope) = .empty,
+    file_only_methods: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty,
     intrinsic_by_uid: std.AutoHashMapUnmanaged(usize, natives.Intrinsic) = .empty,
     extern_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
@@ -99,6 +100,7 @@ pub const SemaAnalyzer = struct {
             self.scope.symbol_table = root_table;
             try self.bindImports(module, module_scopes);
             try self.hoistDeclarations(&module.root);
+            try self.checkPublicSignatures(&module.root);
             try self.checkTopLevelStatements(&module.root);
             _ = try self.visitBlock(&module.root);
         }
@@ -147,9 +149,6 @@ pub const SemaAnalyzer = struct {
         for (prelude.statements.items) |stmt| {
             if (stmt.data != .func) continue;
             const symbol = try self.scope.symbol_table.getOrError(stmt.data.func.identifier);
-            if (isInternalName(stmt.data.func.identifier)) {
-                try self.internal_uids.put(self.allocator, symbol.uid, {});
-            }
             if (!stmt.data.func.is_extern) continue;
             if (natives.bindings.get(stmt.data.func.identifier)) |binding| {
                 if (binding == .intrinsic) {
@@ -173,15 +172,6 @@ pub const SemaAnalyzer = struct {
         }
     }
 
-    fn isInternalName(identifier: []const u8) bool {
-        return identifier.len > 2 and std.mem.startsWith(u8, identifier, "__");
-    }
-
-    fn checkNotInternal(self: *Self, symbol: Symbol, loc: err.Loc) CompileError!void {
-        if (self.is_in_prelude or !self.internal_uids.contains(symbol.uid)) return;
-        return self.err_reporter.internalBuiltin(symbol.identifier, loc);
-    }
-
     fn enterModuleContext(self: *Self, module: *ModuleScope) *ModuleScope {
         const saved = self.module;
         self.module = module;
@@ -189,6 +179,7 @@ pub const SemaAnalyzer = struct {
         self.err_reporter.src = module.src;
         self.err_reporter.file_path = module.file_path;
         self.err_reporter.imported_modules = module.imports.keys();
+        self.err_reporter.hidden_names = &module.hidden_names;
         self.is_in_prelude = module.is_prelude;
         return saved;
     }
@@ -204,10 +195,19 @@ pub const SemaAnalyzer = struct {
                 return self.err_reporter.alreadyDefined(import.stmt.name, import.stmt.path_loc);
             }
             try self.module.imports.put(self.allocator, import.stmt.name, target);
+            var target_symbols = target.root.symbols.iterator();
+            while (target_symbols.next()) |entry| {
+                if (!entry.value_ptr.is_file_only) continue;
+                const hidden_name = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ import.stmt.name, entry.key_ptr.* });
+                try self.module.hidden_names.put(self.allocator, hidden_name, {});
+            }
             for (import.stmt.selected) |selected| {
                 const symbol = target.root.symbols.get(selected.identifier) orelse {
                     return self.err_reporter.notDefinedInModule(selected.identifier, target.path, selected.loc);
                 };
+                if (symbol.is_file_only) {
+                    return self.err_reporter.notVisible(selected.identifier, selected.loc);
+                }
                 if (self.module.root.get(selected.name) != null) {
                     return self.err_reporter.alreadyDefined(selected.name, selected.loc);
                 }
@@ -236,6 +236,102 @@ pub const SemaAnalyzer = struct {
             .import, .func, .@"struct", .@"enum", .@"union", .error_set, .trait => true,
             else => false,
         };
+    }
+
+    fn checkPublicSignatures(self: *Self, root: *const ast.Root) !void {
+        for (root.statements.items) |stmt| {
+            switch (stmt.data) {
+                .func => |fs| {
+                    if (fs.is_file_only) continue;
+                    try self.checkPublicFnDef(fs.identifier, &fs.def);
+                },
+                .@"struct" => |ss| {
+                    if (ss.is_file_only) continue;
+                    try self.checkPublicFields(ss.def.fields);
+                    try self.checkPublicFields(ss.def.static_fields);
+                    try self.checkPublicMethods(ss.def.funcs);
+                },
+                .@"enum" => |es| {
+                    if (es.is_file_only) continue;
+                    try self.checkPublicFields(es.def.static_fields);
+                    try self.checkPublicMethods(es.def.funcs);
+                },
+                .@"union" => |un| {
+                    if (un.is_file_only) continue;
+                    for (un.def.variants) |variant| try self.checkPublicAnnotation(un.identifier, variant.type);
+                    try self.checkPublicFields(un.def.static_fields);
+                    try self.checkPublicMethods(un.def.funcs);
+                },
+                .trait => |ts| {
+                    if (ts.is_file_only) continue;
+                    try self.checkPublicMethods(ts.methods);
+                },
+                .let => |ls| {
+                    if (ls.is_file_only) continue;
+                    const annotation = ls.type_annotation orelse continue;
+                    try self.checkPublicAnnotation(ls.identifier, annotation);
+                },
+                else => {},
+            }
+        }
+    }
+
+    fn checkPublicFields(self: *Self, fields: []const ast.Field) CompileError!void {
+        for (fields) |field| {
+            if (field.is_file_only) continue;
+            const annotation = field.type orelse continue;
+            try self.checkPublicAnnotation(field.identifier, annotation);
+        }
+    }
+
+    fn checkPublicMethods(self: *Self, funcs: []const ast.StatementNode) CompileError!void {
+        for (funcs) |func_node| {
+            const func = func_node.data.func;
+            if (func.is_file_only) continue;
+            try self.checkPublicFnDef(func.identifier, &func.def);
+        }
+    }
+
+    fn checkPublicFnDef(self: *Self, declaration: []const u8, def: *const ast.FnDef) CompileError!void {
+        for (def.params) |param| {
+            const annotation = param.type_annotation orelse continue;
+            try self.checkPublicAnnotation(declaration, annotation);
+        }
+        if (def.return_type) |return_type| {
+            try self.checkPublicAnnotation(declaration, return_type);
+        }
+        const error_set = def.error_set orelse return;
+        if (error_set != .named) return;
+        if (self.isFileOnlyName(error_set.named.identifier)) {
+            return self.err_reporter.privateTypeInPublicSignature(error_set.named.identifier, declaration, error_set.named.loc);
+        }
+    }
+
+    fn checkPublicAnnotation(self: *Self, declaration: []const u8, annotation: *const ast.TypeAnnotation) CompileError!void {
+        switch (annotation.type) {
+            .@"struct" => |name| {
+                if (self.isFileOnlyName(name)) {
+                    return self.err_reporter.privateTypeInPublicSignature(name, declaration, annotation.loc);
+                }
+                for (annotation.args) |arg| try self.checkPublicAnnotation(declaration, arg);
+            },
+            .array => |inner| try self.checkPublicAnnotation(declaration, inner),
+            .anonymous_struct => |anonymous| try self.checkPublicFields(anonymous.fields),
+            .function => |func| {
+                for (func.params) |param| try self.checkPublicAnnotation(declaration, param.type);
+                try self.checkPublicAnnotation(declaration, func.return_type);
+                const set_name = func.error_set orelse return;
+                if (self.isFileOnlyName(set_name)) {
+                    return self.err_reporter.privateTypeInPublicSignature(set_name, declaration, annotation.loc);
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn isFileOnlyName(self: *Self, name: []const u8) bool {
+        const symbol = self.module.root.symbols.get(name) orelse return false;
+        return symbol.is_file_only;
     }
 
     fn checkTopLevelStatements(self: *Self, root: *const ast.Root) !void {
@@ -492,8 +588,9 @@ pub const SemaAnalyzer = struct {
         for (root.statements.items) |*stmt| {
             switch (stmt.data) {
                 .error_set => |es| {
-                    const symbol = try self.createErrorSetSymbol(&es);
-                    try self.qualifyTypeName(symbol, self.module);
+                    var symbol = try self.createErrorSetSymbol(&es);
+                    symbol.is_file_only = es.is_file_only;
+                    try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .trait => |ts| {
@@ -503,41 +600,49 @@ pub const SemaAnalyzer = struct {
                         .uid = self.scope.genUid(),
                         .type_id = self.type_table.getPrimitive(.meta),
                         .kind = .{ .trait = self.traits.items.len - 1 },
+                        .is_file_only = ts.is_file_only,
                     }) catch return self.err_reporter.alreadyDefined(ts.identifier, stmt.loc);
                 },
                 .func => |fs| {
                     if (fs.is_extern and !self.is_in_prelude) return self.err_reporter.externOutsidePrelude(fs.identifier, stmt.loc);
                     if (fs.slots.len > 0) {
-                        const symbol = try self.createGenericFuncSymbol(&stmt.data.func, stmt.loc);
+                        var symbol = try self.createGenericFuncSymbol(&stmt.data.func, stmt.loc);
+                        symbol.is_file_only = fs.is_file_only;
                         self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
                         continue;
                     }
-                    const symbol = try self.createEmptyFuncSymbol(fs.identifier);
+                    var symbol = try self.createEmptyFuncSymbol(fs.identifier);
+                    symbol.is_file_only = fs.is_file_only;
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
                 },
                 .@"struct" => |ss| {
                     if (ss.slots.len > 0) {
-                        const symbol = try self.createGenericTypeSymbol(ss.identifier, ss.slots, .{ .@"struct" = &stmt.data.@"struct".def }, stmt.loc);
+                        var symbol = try self.createGenericTypeSymbol(ss.identifier, ss.slots, .{ .@"struct" = &stmt.data.@"struct".def }, stmt.loc);
+                        symbol.is_file_only = ss.is_file_only;
                         self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
                         continue;
                     }
-                    const symbol = try self.createEmptyStructSymbol(ss.identifier);
-                    try self.qualifyTypeName(symbol, self.module);
+                    var symbol = try self.createEmptyStructSymbol(ss.identifier);
+                    symbol.is_file_only = ss.is_file_only;
+                    try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
                 },
                 .@"enum" => |es| {
-                    const symbol = try self.createEmptyEnumSymbol(es.identifier);
-                    try self.qualifyTypeName(symbol, self.module);
+                    var symbol = try self.createEmptyEnumSymbol(es.identifier);
+                    symbol.is_file_only = es.is_file_only;
+                    try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
                 },
                 .@"union" => |un| {
                     if (un.slots.len > 0) {
-                        const symbol = try self.createGenericTypeSymbol(un.identifier, un.slots, .{ .@"union" = &stmt.data.@"union".def }, stmt.loc);
+                        var symbol = try self.createGenericTypeSymbol(un.identifier, un.slots, .{ .@"union" = &stmt.data.@"union".def }, stmt.loc);
+                        symbol.is_file_only = un.is_file_only;
                         self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(un.identifier, stmt.loc);
                         continue;
                     }
-                    const symbol = try self.createEmptyUnionSymbol(un.identifier);
-                    try self.qualifyTypeName(symbol, self.module);
+                    var symbol = try self.createEmptyUnionSymbol(un.identifier);
+                    symbol.is_file_only = un.is_file_only;
+                    try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(un.identifier, stmt.loc);
                 },
                 else => {},
@@ -556,6 +661,7 @@ pub const SemaAnalyzer = struct {
                 .uid = self.scope.genUid(),
                 .type_id = self.type_table.getPrimitive(.void),
                 .kind = .{ .constant = index },
+                .is_file_only = let_stmt.is_file_only,
             }) catch return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
         }
 
@@ -718,7 +824,8 @@ pub const SemaAnalyzer = struct {
         return symbol;
     }
 
-    fn qualifyTypeName(self: *Self, symbol: Symbol, module: *ModuleScope) !void {
+    fn recordTypeModule(self: *Self, symbol: Symbol, module: *ModuleScope) !void {
+        try self.type_modules.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, module);
         const module_name = module.qualifier orelse return;
         const type_ptr = self.type_table.getTypePtrById(symbol.kind.defined_type.blueprint_type_id);
         const identifier = switch (type_ptr.kind) {
@@ -975,6 +1082,9 @@ pub const SemaAnalyzer = struct {
             const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
             try self.fulfillFuncType(fn_symbol, &func.def, owner_symbol, func_node.loc);
             try methods.put(func.identifier, fn_symbol.type_id);
+            if (func.is_file_only) {
+                try self.file_only_methods.put(self.allocator, fn_symbol.type_id, {});
+            }
         }
         return methods;
     }
@@ -1017,6 +1127,7 @@ pub const SemaAnalyzer = struct {
         return tt.TypedIdentifier{
             .identifier = field.identifier,
             .is_mut = field.is_mut,
+            .is_file_only = field.is_file_only,
             .type_id = field_type_id,
             .default_value = field_default_value,
         };
@@ -1917,7 +2028,7 @@ pub const SemaAnalyzer = struct {
             .@"struct" => try self.createEmptyStructSymbol(name),
             .@"union" => try self.createEmptyUnionSymbol(name),
         };
-        try self.qualifyTypeName(symbol, generic.module);
+        try self.recordTypeModule(symbol, generic.module);
         try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
         const copy_index = generic.copies.items.len - 1;
         try self.copied_types.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .generic = index, .args = args });
@@ -2247,6 +2358,11 @@ pub const SemaAnalyzer = struct {
             const reason = try allocPrint(self.allocator, "it has no method '{s}'", .{name});
             return self.err_reporter.doesntFitTrait(try self.fitTypeText(type_id), try self.constraintText(slot), reason, loc);
         };
+        const is_hidden_method = self.file_only_methods.contains(actual_type_id) and self.isOutsideTypeModule(type_id);
+        if (is_hidden_method) {
+            const reason = try allocPrint(self.allocator, "its '{s}' is file-only", .{name});
+            return self.err_reporter.doesntFitTrait(try self.fitTypeText(type_id), try self.constraintText(slot), reason, loc);
+        }
         const actual = self.type_table.getTypePtrById(actual_type_id).kind.function;
         if (self.doesMethodFit(required, actual)) return;
         const reason = try allocPrint(self.allocator, "its '{s}' is {s}, the trait wants {s}", .{ name, try self.signatureText(actual), try self.signatureText(required) });
@@ -3184,6 +3300,35 @@ pub const SemaAnalyzer = struct {
         }
     }
 
+    fn isOutsideTypeModule(self: *Self, type_id: tt.TypeId) bool {
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const module = self.type_modules.get(base) orelse return false;
+        return module != self.module;
+    }
+
+    fn checkMemberVisible(self: *Self, type_id: tt.TypeId, member: []const u8, is_file_only: bool, loc: err.Loc) CompileError!void {
+        if (!is_file_only) return;
+        if (!self.isOutsideTypeModule(type_id)) return;
+        return self.err_reporter.memberNotVisible(member, try self.type_table.syntaxName(type_id, self.allocator), loc);
+    }
+
+    fn checkStructBuildable(self: *Self, type_id: tt.TypeId, fields: []const tt.TypedIdentifier, loc: err.Loc) CompileError!void {
+        if (!self.isOutsideTypeModule(type_id)) return;
+        for (fields) |field| {
+            const is_unbuildable = field.is_file_only and field.default_value == null;
+            if (is_unbuildable) {
+                return self.err_reporter.cantBuildOutsideModule(try self.type_table.syntaxName(type_id, self.allocator), field.identifier, loc);
+            }
+        }
+    }
+
+    fn checkFieldArgument(self: *Self, type_id: tt.TypeId, field: tt.TypedIdentifier, argument: ?*ast.ExpNode) CompileError!void {
+        if (!field.is_file_only) return;
+        const operand = argument orelse return;
+        if (!self.isOutsideTypeModule(type_id)) return;
+        return self.err_reporter.memberNotVisible(field.identifier, try self.type_table.syntaxName(type_id, self.allocator), operand.loc);
+    }
+
     fn assignedFieldType(self: *Self, target_type: tt.TypeId, index_exp: ast.IndexedExp, indexed_type: tt.TypeId, is_static_target: bool) CompileError!tt.TypeId {
         switch (self.type_table.getTypePtrById(target_type).kind) {
             .buffer => return indexed_type,
@@ -3196,6 +3341,7 @@ pub const SemaAnalyzer = struct {
             .@"struct" => |struct_def| static: {
                 if (!is_static_target) {
                     const field = struct_def.fields.get(member_name) orelse return self.err_reporter.invalidStructField(struct_def.identifier, member_name, member_loc);
+                    try self.checkMemberVisible(target_type, member_name, field.is_file_only, member_loc);
                     return field.type_id;
                 }
                 break :static struct_def.static_fields.get(member_name) orelse return self.err_reporter.invalidStaticStructField(struct_def.identifier, member_name, member_loc);
@@ -3859,7 +4005,6 @@ pub const SemaAnalyzer = struct {
             if (is_name_for_function_type) {
                 if (self.scope.symbol_table.get(exp.data.identifier)) |symbol| {
                     if (symbol.kind == .generic_function) {
-                        try self.checkNotInternal(symbol, exp.loc);
                         return self.evalGenericFuncRef(exp, symbol.kind.generic_function, base_kind.func_type);
                     }
                 }
@@ -4212,7 +4357,6 @@ pub const SemaAnalyzer = struct {
                 const symbol = self.scope.symbol_table.getOrError(id) catch {
                     return self.notDefined(id, exp.loc);
                 };
-                try self.checkNotInternal(symbol, exp.loc);
 
                 fn_identifier = symbol.identifier;
 
@@ -4312,6 +4456,7 @@ pub const SemaAnalyzer = struct {
                     break :resolve;
                 }
                 const fn_type_id = try self.methodOrError(target.type_id, fn_name, exp.loc);
+                try self.checkMemberVisible(target.type_id, fn_name, self.file_only_methods.contains(fn_type_id), exp.loc);
                 const fn_metadata = self.type_table.getTypePtrById(fn_type_id).kind.function;
                 const is_slot = self.type_table.getTypePtrById(target.type_id).kind == .slot;
                 const takes_self = is_slot or (fn_metadata.params.len > 0 and target.type_id == fn_metadata.params[0].type_id);
@@ -4344,6 +4489,9 @@ pub const SemaAnalyzer = struct {
         }
 
         const call_args_len = fn_call.arguments.len;
+        if (is_struct_init) {
+            try self.checkStructBuildable(return_type, params, exp.loc);
+        }
 
         var required_params_len: usize = 0;
         for (params) |param| {
@@ -4385,6 +4533,9 @@ pub const SemaAnalyzer = struct {
             } else {
                 const index = if (has_first_argument_being_binded) i - 1 else i;
                 arg_exp = if (fn_call.arguments.len > index) fn_call.arguments[index].exp else null;
+            }
+            if (is_struct_init) {
+                try self.checkFieldArgument(return_type, param, arg_exp);
             }
 
             if (arg_exp) |_exp| {
@@ -4484,6 +4635,7 @@ pub const SemaAnalyzer = struct {
         if (self.type_table.getTypePtrById(field.type_id).kind != .func_type) {
             return null;
         }
+        try self.checkMemberVisible(owner.type_id, name, field.is_file_only, exp.loc);
         const value = try self.indexInto(exp, owner);
         try self.exp_types.put(self.allocator, exp, value.type_id);
         return try self.checkCallee(value, exp.loc);
@@ -4520,6 +4672,7 @@ pub const SemaAnalyzer = struct {
     fn evalExpectedStructInit(self: *Self, exp: *const ast.ExpNode, type_id: tt.TypeId) CompileError!*ir.Value {
         const structure = self.type_table.getTypePtrById(type_id).kind.@"struct";
         const initialization = exp.data.anonymous_init;
+        try self.checkStructBuildable(type_id, structure.fields_in_order, exp.loc);
         if (initialization.arguments.len > structure.fields_in_order.len) {
             return self.err_reporter.invalidNumberOfArgs(structure.fields_in_order.len, initialization.arguments.len, exp.loc);
         }
@@ -4542,6 +4695,7 @@ pub const SemaAnalyzer = struct {
                 initialization.arguments[index].exp
             else
                 null;
+            try self.checkFieldArgument(type_id, field, argument);
             const value = if (argument) |operand|
                 try self.evalExpExpecting(operand, field.type_id)
             else if (field.default_value) |default_value|
@@ -4656,6 +4810,9 @@ pub const SemaAnalyzer = struct {
                         if (field_member == null and static_field_member == null and method_member == null) {
                             return self.err_reporter.invalidStructField(struct_def.identifier, member_name, exp.loc);
                         }
+                        if (field_member) |field| {
+                            try self.checkMemberVisible(target_type, member_name, field.is_file_only, exp.loc);
+                        }
                         if (field_member == null) {
                             if (static_field_member) |constant| return constant.default_value.?;
                             return self.err_reporter.methodAsValue(member_name, exp.loc);
@@ -4752,7 +4909,6 @@ pub const SemaAnalyzer = struct {
         const id_symbol = self.scope.symbol_table.get(id);
 
         if (id_symbol) |symbol| {
-            try self.checkNotInternal(symbol, exp.loc);
             if (symbol.kind == .constant) {
                 return self.resolveConstant(symbol.kind.constant);
             }
@@ -5728,9 +5884,16 @@ const SymbolTable = struct {
             if (module.getQualified(identifier)) |s| return s;
         }
         if (self.parent) |parent| {
+            if (self.module != null) return parent.getPublic(identifier);
             return parent.get(identifier);
         }
         return null;
+    }
+
+    fn getPublic(self: *Self, identifier: []const u8) ?Symbol {
+        const symbol = self.get(identifier) orelse return null;
+        if (symbol.is_file_only) return null;
+        return symbol;
     }
 
     fn getOrError(self: *Self, id: []const u8) !Symbol {
@@ -5750,6 +5913,7 @@ const ModuleScope = struct {
     qualifier: ?[]const u8 = null,
     imports: std.StringArrayHashMapUnmanaged(*ModuleScope) = .empty,
     selected: std.StringHashMapUnmanaged(Symbol) = .empty,
+    hidden_names: std.StringHashMapUnmanaged(void) = .empty,
 
     fn create(allocator: std.mem.Allocator, path: []const u8, src: []const u8, root: *SymbolTable, is_prelude: bool) !*Self {
         const ptr = try allocator.create(Self);
@@ -5760,7 +5924,9 @@ const ModuleScope = struct {
     fn getQualified(self: *Self, identifier: []const u8) ?Symbol {
         const separator = std.mem.indexOf(u8, identifier, "::") orelse return null;
         const target = self.imports.get(identifier[0..separator]) orelse return null;
-        return target.root.symbols.get(identifier[separator + 2 ..]);
+        const symbol = target.root.symbols.get(identifier[separator + 2 ..]) orelse return null;
+        if (symbol.is_file_only) return null;
+        return symbol;
     }
 };
 
@@ -5785,6 +5951,7 @@ pub const Symbol = struct {
     uid: usize,
     identifier: []const u8,
     type_id: tt.TypeId,
+    is_file_only: bool = false,
 
     kind: union(enum) {
         variable: struct {

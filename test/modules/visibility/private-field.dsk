@@ -1,0 +1,10 @@
+struct ~Key
+    id: int
+end
+
+struct Door
+    keys: []Key
+end
+
+func main() -> void
+end

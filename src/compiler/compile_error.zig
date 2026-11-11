@@ -8,6 +8,7 @@ pub const CompileErrorReporter = struct {
     copy_context: ?CopyContext = null,
     file_path: ?[]const u8 = null,
     imported_modules: []const []const u8 = &.{},
+    hidden_names: ?*const std.StringHashMapUnmanaged(void) = null,
 
     const LINE_MAX_CHAR_COUNT = 256;
     const padding = " " ** LINE_MAX_CHAR_COUNT;
@@ -57,6 +58,10 @@ pub const CompileErrorReporter = struct {
     fn checkModuleImported(self: *Self, name: []const u8, loc: Loc) CompileError!void {
         const separator = std.mem.indexOf(u8, name, "::") orelse return;
         const module = name[0..separator];
+        const is_hidden = if (self.hidden_names) |hidden| hidden.contains(name) else false;
+        if (is_hidden) {
+            return self.notVisible(name, loc);
+        }
         for (self.imported_modules) |imported| {
             if (std.mem.eql(u8, imported, module)) return;
         }
@@ -565,9 +570,24 @@ pub const CompileErrorReporter = struct {
         return error.TraitUsedAsType;
     }
 
-    pub fn internalBuiltin(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' is internal to the prelude and can't be used directly", .{identifier}), loc);
-        return error.InternalBuiltin;
+    pub fn notVisible(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is file-only: it's declared with '~' and can only be used in its own file", .{name}), loc);
+        return error.NotVisible;
+    }
+
+    pub fn memberNotVisible(self: *Self, member: []const u8, type_name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a file-only member of '{s}': it can only be used in the file that declares '{s}'", .{ member, type_name, type_name }), loc);
+        return error.NotVisible;
+    }
+
+    pub fn cantBuildOutsideModule(self: *Self, type_name: []const u8, field: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Can't build '{s}' outside its file: its file-only field '{s}' has no default value", .{ type_name, field }), loc);
+        return error.CantBuildOutsideModule;
+    }
+
+    pub fn privateTypeInPublicSignature(self: *Self, type_name: []const u8, declaration: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is file-only, so the public '{s}' can't use it: mark '{s}' with '~' too, or remove the '~' from '{s}'", .{ type_name, declaration, declaration, type_name }), loc);
+        return error.PrivateTypeInPublicSignature;
     }
 
     pub fn slotUsedAsValue(self: *Self, slot: []const u8, loc: Loc) CompileError {
@@ -1071,7 +1091,9 @@ pub const CompileError = error{
     SlotParamCantHaveDefault,
     SlotOperatorNotAllowed,
     SlotUsedAsValue,
-    InternalBuiltin,
+    NotVisible,
+    CantBuildOutsideModule,
+    PrivateTypeInPublicSignature,
     LibrariesNotSupported,
     UnknownStdModule,
     ModuleNotFound,

@@ -1,0 +1,10 @@
+struct ~Key
+    id: int
+end
+
+struct Door
+    on_open: func(Key) -> void
+end
+
+func main() -> void
+end
