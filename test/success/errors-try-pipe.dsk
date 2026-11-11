@@ -1,11 +1,10 @@
-import std/string
 
 error E
     Bad
 end
 
 func parse(s: string) -> E!int
-    if string::equal(s, "x") then return E.Bad end
+    if (s == "x") then return E.Bad end
     return 8
 end
 

@@ -51,11 +51,11 @@ func main() -> void
         "dusk" then "hi ${name}" end
         else then "who?" end
     end
-    assert(string::equal(greeting, "hi dusk"))
+    assert(greeting == "hi dusk")
 
-    assert(string::equal(describe(null), "none"))
-    assert(string::equal(describe("a"), "letter a"))
-    assert(string::equal(describe("b"), "other"))
+    assert(describe(null) == "none")
+    assert(describe("a") == "letter a")
+    assert(describe("b") == "other")
 
     assert(describeNoNullCase(null) == 2)
     assert(describeNoNullCase("a") == 1)

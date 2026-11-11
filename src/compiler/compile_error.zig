@@ -399,11 +399,6 @@ pub const CompileErrorReporter = struct {
         return error.CantCompare;
     }
 
-    pub fn cantCompareStrings(self: *Self, op: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' can't compare strings: use string::equal(a, b) from std/string to compare their text", .{op}), loc);
-        return error.CantCompare;
-    }
-
     pub fn cantCompareUnions(self: *Self, op: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' can't compare unions: check the variant with 'when' or 'if u.variant: value then ... end'", .{op}), loc);
         return error.CantCompare;
@@ -507,11 +502,6 @@ pub const CompileErrorReporter = struct {
 
     pub fn slotOperatorNotAllowedOn(self: *Self, operator: []const u8, slot: []const u8, member: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': '{s}' doesn't support it", .{ operator, slot, member }), loc);
-        return error.SlotOperatorNotAllowed;
-    }
-
-    pub fn slotStringEquality(self: *Self, operator: []const u8, slot: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' isn't allowed on '{s}': on a string it would compare pointers. Use string::equal from std/string", .{ operator, slot }), loc);
         return error.SlotOperatorNotAllowed;
     }
 

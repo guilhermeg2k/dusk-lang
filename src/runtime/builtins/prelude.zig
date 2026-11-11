@@ -53,5 +53,10 @@ pub fn taskAwait(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn stringsEqual(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const left_is_null = @as(u64, @bitCast(args[0])) == 0;
+    const right_is_null = @as(u64, @bitCast(args[1])) == 0;
+    if (left_is_null or right_is_null) {
+        return ok(.{ .bool = left_is_null and right_is_null });
+    }
     return ok(.{ .bool = std.mem.eql(u8, bytesArg(args, 0), bytesArg(args, 1)) });
 }

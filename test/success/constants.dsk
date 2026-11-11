@@ -1,4 +1,3 @@
-import std/string
 
 enum Mode
     Fast
@@ -78,8 +77,8 @@ func main() -> void
     assert(HEIGHT == 60)
     assert(DOUBLE_WIDTH == 160)
     assert(scaled(2.0) == 3.0)
-    assert(string::equal(describe(), "dusk slow"))
-    assert(string::equal(describe(Mode.Fast, "x"), "x fast"))
+    assert(describe() == "dusk slow")
+    assert(describe(Mode.Fast, "x") == "x fast")
     assert(shadow() == 5)
     assert(NEWLINE == 10)
     assert(LETTER == 'a')
@@ -90,7 +89,7 @@ func main() -> void
     assert(screen.width == 80)
     assert(screen.debug == false)
     assert(screen.columns() == 40.5)
-    assert(string::equal(screen.title(), "dusk:80"))
+    assert(screen.title() == "dusk:80")
     assert(Shape(square = 3).perimeter() == 12)
     assert(Level.TOP == Level.High)
 

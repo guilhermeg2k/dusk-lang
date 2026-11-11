@@ -5396,6 +5396,15 @@ pub const SemaAnalyzer = struct {
 
                 try self.checkEquality(bin_exp.op, left_type, right_type, exp.loc);
 
+                if (self.areStringOperands(left_type, right_type)) {
+                    const are_equal = try self.strEqual(left_value, right_value);
+                    if (bin_exp.op == .eq) return are_equal;
+                    return ir.Value.init(self.allocator, .{
+                        .data = .{ .unary_op = .{ .kind = .not, .right = are_equal } },
+                        .type_id = self.type_table.getPrimitive(.boolean),
+                    });
+                }
+
                 if (self.isBoxedNullable(left_type) or self.isBoxedNullable(right_type)) {
                     return self.lowerNullableEquality(bin_exp.op, left_value, right_value, exp.loc);
                 }
@@ -5416,6 +5425,14 @@ pub const SemaAnalyzer = struct {
         });
     }
 
+    fn areStringOperands(self: *Self, left_type: tt.TypeId, right_type: tt.TypeId) bool {
+        const left_base = self.type_table.typeIdByNullableTypeId.get(left_type) orelse left_type;
+        const right_base = self.type_table.typeIdByNullableTypeId.get(right_type) orelse right_type;
+        const left_is_string = self.type_table.getTypePtrById(left_base).kind == .string;
+        const right_is_string = self.type_table.getTypePtrById(right_base).kind == .string;
+        return left_is_string and right_is_string;
+    }
+
     fn checkEquality(self: *Self, op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId, loc: err.Loc) CompileError!void {
         const op_text = binaryOpText(op);
         const left_base = self.type_table.typeIdByNullableTypeId.get(left_type) orelse left_type;
@@ -5427,9 +5444,6 @@ pub const SemaAnalyzer = struct {
             const other = if (left_kind == .null) right_type else left_type;
             if (self.type_table.getTypePtrById(other).is_nullable or self.type_table.getTypePtrById(other).kind == .null) return;
             return self.err_reporter.cantCompareWithNull(op_text, try self.type_table.name(other, self.allocator), loc);
-        }
-        if (left_kind == .string and right_kind == .string) {
-            return self.err_reporter.cantCompareStrings(op_text, loc);
         }
         if (left_kind == .@"union" and right_kind == .@"union") {
             return self.err_reporter.cantCompareUnions(op_text, loc);
@@ -5494,9 +5508,6 @@ pub const SemaAnalyzer = struct {
                 const right = try self.substituteSlot(right_type, right_member);
                 const slot_type = if (self.slotBase(left_type) != null) left_type else right_type;
                 const member = if (self.slotBase(left_type) != null) left_member else right_member;
-                if (is_equality and (self.isStringType(left) or self.isStringType(right))) {
-                    return self.err_reporter.slotStringEquality(op_text, try self.type_table.name(slot_type, self.allocator), loc);
-                }
                 const result = self.binaryOpType(op, left, right) orelse return self.err_reporter.slotOperatorNotAllowedOn(
                     op_text,
                     try self.type_table.name(slot_type, self.allocator),
@@ -5543,11 +5554,6 @@ pub const SemaAnalyzer = struct {
         if (self.slotBase(type_id) == null) return type_id;
         if (self.type_table.getTypePtrById(type_id).is_nullable) return self.type_table.getOrAddNullable(member);
         return member;
-    }
-
-    fn isStringType(self: *Self, type_id: tt.TypeId) bool {
-        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
-        return self.type_table.getTypePtrById(base_id).kind == .string;
     }
 
     fn binaryOpText(op: ast.BinaryOp) []const u8 {

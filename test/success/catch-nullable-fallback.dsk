@@ -1,5 +1,4 @@
 import std/array: pop
-import std/string
 
 error E
     Bad
@@ -34,7 +33,7 @@ func main() -> void
     assert(take(numbers) == null)
 
     let mut names = ["a"]
-    assert(string::equal(take(names) orelse "", "a"))
+    assert((take(names) orelse "") == "a")
     assert(take(names) == null)
 
     let found: ?int = number(true) catch null

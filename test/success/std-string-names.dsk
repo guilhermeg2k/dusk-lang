@@ -8,7 +8,7 @@ func main() -> !void
     let data = buffer::from_string("hi")
     assert(buffer::len(data) == 2)
     let text = try string::from_bytes(data)
-    assert(string::equal(text, "hi"))
+    assert(text == "hi")
     let empty = buffer::new(-1) catch e then
         when e
             buffer::BufferError.NegativeSize then return end

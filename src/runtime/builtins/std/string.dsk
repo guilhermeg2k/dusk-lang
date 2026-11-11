@@ -6,7 +6,6 @@ end
 
 extern func len(text: string) -> int
 extern func from_bytes(data: buffer) -> StringError!string
-extern func equal(a: string, b: string, ignore_case: bool = false) -> bool
 extern func char_count(text: string) -> int
 extern func concat(a: string, b: string) -> string
 extern func join(parts: []string, sep: string = "") -> string

@@ -1,6 +1,5 @@
 import std/task: sleep
 import std/array: len, append
-import std/string
 
 struct Point
     x: int
@@ -68,8 +67,8 @@ func main() -> void
         j = j + 1
     end
     churn(20000)
-    assert(string::equal(await(holders[499]), "task 499 5"))
-    assert(string::equal(await(holders[0]), "task 0 5"))
+    assert(await(holders[499]) == "task 499 5")
+    assert(await(holders[0]) == "task 0 5")
 
     let points = spawn(func() -> return Point(x = 1, y = 2))
     let adder = spawn(func()

@@ -60,7 +60,7 @@ func main() -> void
     end
     assert(c.count == 5)
     assert(len(c.history) == LIMIT)
-    assert(string::equal(describe(c), "counter"))
+    assert(describe(c) == "counter")
     assert((parse("") catch -1) == -1)
     let s: Shape = Shape(circle = 1.0)
     assert(s.circle != null)

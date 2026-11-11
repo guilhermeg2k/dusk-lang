@@ -14,8 +14,8 @@ func main() -> void
         append(parts, "x")
     end
     assert(len(parts) == 22)
-    assert(string::equal(parts[0], "a"))
-    assert(string::equal(parts[21], "x"))
+    assert(parts[0] == "a")
+    assert(parts[21] == "x")
     let mut short = string::split("a", ",")
     append(short, "b")
     append(short, "c")

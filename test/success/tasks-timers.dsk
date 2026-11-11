@@ -1,6 +1,5 @@
 import std/task
 import std/array: len, append
-import std/string
 
 func pause_then(ms: int, label: string) -> string
     task::sleep(ms)
@@ -18,8 +17,8 @@ func main() -> void
 
     let slow = spawn(func() -> return pause_then(25, "slow"))
     let fast = spawn(func() -> return pause_then(5, "fast"))
-    assert(string::equal(await(slow), "slow"))
-    assert(string::equal(await(fast), "fast"))
+    assert(await(slow) == "slow")
+    assert(await(fast) == "fast")
     assert(len(order) == 2)
     assert(order[0] == 10)
     assert(order[1] == 20)

@@ -72,9 +72,9 @@ func main() -> !void
         let name = try get(db, n)
         return @(id = n, name = name)
     end)
-    assert(string::equal(people[1].name, "bia"))
+    assert(people[1].name == "bia")
     let missing = map([1, 9], func(n) -> return try get(db, n)) catch ["none"]
-    assert(string::equal(missing[0], "none"))
+    assert(missing[0] == "none")
 
     let safe = map_or(["1", "x", "3"], parse, 0)
     assert(safe[1] == 0)
@@ -89,7 +89,7 @@ func main() -> !void
     let doubled = twice([1, 2], func(n) -> return n * 2)
     assert(doubled[1] == 4)
     let parsed = twice(["7"], func(s) -> return s)
-    assert(string::equal(parsed[0], "7"))
+    assert(parsed[0] == "7")
 
     let task = Job(run = func() -> return 5)
     assert(task.go() == 5)

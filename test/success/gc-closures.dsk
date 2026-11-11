@@ -1,5 +1,4 @@
 import std/array: len, append
-import std/string
 
 struct Point
     x: int
@@ -25,7 +24,7 @@ func main() -> void
     for 1..20000: i do
         last = build(i)
     end
-    assert(string::equal(last, "item20000 20000 50"))
+    assert(last == "item20000 20000 50")
 
     let mut fns: []func() -> string = []
     for 1..5000: i do
@@ -40,9 +39,9 @@ func main() -> void
     for 1..20000: i do
         append(garbage, [i, i, i, i])
     end
-    assert(string::equal(fns[0](), "label 1 2"))
-    assert(string::equal(fns[4999](), "label 5000 2"))
-    assert(string::equal(fns[4999](), "label 5000 3"))
+    assert(fns[0]() == "label 1 2")
+    assert(fns[4999]() == "label 5000 2")
+    assert(fns[4999]() == "label 5000 3")
 
     let mut count = 0
     let mut points: []Point = []

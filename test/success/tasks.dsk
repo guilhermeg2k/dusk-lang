@@ -41,7 +41,7 @@ func main() -> void
     append(log, "main")
     await(a)
     await(b)
-    assert(string::equal(join(log), "main,a1,b1,a2,b2"))
+    assert(join(log) == "main,a1,b1,a2,b2")
 
     let answer = spawn(func() -> return 42)
     let n: int = await(answer)
@@ -64,12 +64,12 @@ func main() -> void
     assert(len(seen) == 2)
     assert(seen[0] + seen[1] == 21)
 
-    assert(string::equal(fetch_both(1, 2) catch "failed", "item 1+item 2"))
-    assert(string::equal(fetch_both(1, -1) catch "failed", "failed"))
+    assert((fetch_both(1, 2) catch "failed") == "item 1+item 2")
+    assert((fetch_both(1, -1) catch "failed") == "failed")
 
     let failing = spawn(func() -> return try fetch(-3))
     let fallback = await(failing) catch "none"
-    assert(string::equal(fallback, "none"))
+    assert(fallback == "none")
     let mut caught = false
     await(failing) catch e then
         assert(e == FetchError.NotFound)
@@ -85,7 +85,7 @@ func main() -> void
     for results: t do
         append(texts, await(t) catch "?")
     end
-    assert(string::equal(join(texts), "item 1,item 2,item 3"))
+    assert(join(texts) == "item 1,item 2,item 3")
 
     let done = spawn(func() -> return 1)
     echo("$done")

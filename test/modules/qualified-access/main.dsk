@@ -1,6 +1,5 @@
 import @/util as u
 import @/geo/shapes: Square, Color as Paint, scale
-import std/string
 
 struct Circle
     radius: float
@@ -50,7 +49,7 @@ func main() -> void
     let boxed = shapes::Box(item = 7)
     let typed: shapes::Box[string] = shapes::Box(item = "x")
     assert(boxed.get() == 7)
-    assert(string::equal(typed.get(), "x"))
+    assert(typed.get() == "x")
 
     let shape: shapes::Shape = shapes::Shape(circle = 2.0)
     when shape
@@ -58,13 +57,13 @@ func main() -> void
         circle: r then assert(r == 2.0) end
     end
 
-    assert(string::equal(classify(0.5), "small"))
-    assert(string::equal(classify(500.0), "big"))
-    assert(string::equal(classify(5.0), "ok 5"))
+    assert(classify(0.5) == "small")
+    assert(classify(500.0) == "big")
+    assert(classify(5.0) == "ok 5")
 
-    assert(string::equal(describe(), "main"))
-    assert(string::equal(u::describe(), "util"))
-    assert(string::equal(shapes::describe(), "shapes"))
+    assert(describe() == "main")
+    assert(u::describe() == "util")
+    assert(shapes::describe() == "shapes")
 
     let f: func(float, float) -> float = shapes::scale
     assert(f(1.0, 2.0) == 2.0)

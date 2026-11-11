@@ -1,5 +1,4 @@
 import std/array: len
-import std/string
 
 trait Number = int | float
 trait Scalar = Number | string | bool
@@ -101,9 +100,9 @@ func main() -> void
     assert(add_bytes(1, 2) == 3)
     let empty: []float = []
     assert(first_or(empty, 1) == 1.0)
-    assert(string::equal(show(1), "<1>"))
-    assert(string::equal(show("hi"), "<hi>"))
-    assert(string::equal(show(true), "<true>"))
+    assert(show(1) == "<1>")
+    assert(show("hi") == "<hi>")
+    assert(show(true) == "<true>")
     let none: ?int = null
     assert(is_missing(none))
     let p = Pair(a = 1, b = 2)

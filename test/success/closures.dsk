@@ -1,5 +1,4 @@
 import std/array: len, append
-import std/string
 
 error Bad
     Nope
@@ -109,9 +108,9 @@ func main() -> void
         end
     end
     let inner = outer()
-    assert(string::equal(inner(), "a!"))
-    assert(string::equal(inner(), "a!!"))
-    assert(string::equal(name, "a!!"))
+    assert(inner() == "a!")
+    assert(inner() == "a!!")
+    assert(name == "a!!")
 
     let c = Counter(count = 1)
     let read = func() -> return c.count

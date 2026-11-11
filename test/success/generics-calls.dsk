@@ -58,7 +58,7 @@ end
 
 func main() -> void
     assert(first([1, 2, 3]) == 1)
-    assert(string::equal(first(["a", "b"]), "a"))
+    assert(first(["a", "b"]) == "a")
     assert(first([1.5, 2.5]) == 1.5)
     let mut nums = [1, 2, 3]
     swap(nums, 0, 2)
@@ -70,14 +70,14 @@ func main() -> void
     assert(maybe_first(empty) == null)
     assert(count_down("x", 5) == 5)
     assert(depth([[1, 2], [3, 4]]) == 22)
-    assert(string::equal(pick(1, "b"), "b"))
-    assert(string::equal(describe(42), "<42>"))
-    assert(string::equal(describe([1, 2]), "<[1, 2]>"))
+    assert(pick(1, "b") == "b")
+    assert(describe(42) == "<42>")
+    assert(describe([1, 2]) == "<[1, 2]>")
     assert(first(xs = [9]) == 9)
     assert((parse_first([1, 2], "40") catch 0) == 42)
     assert((parse_first(["a"], "x") catch -1) == -1)
     assert(outer([5, 6]) == 5)
-    assert(string::equal(outer(["z"]), "z"))
+    assert(outer(["z"]) == "z")
     assert(is_even("a", 10))
     assert(is_odd(1.5, 7))
 end

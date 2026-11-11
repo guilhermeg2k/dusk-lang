@@ -1,5 +1,4 @@
 import std/array: len, append
-import std/string
 
 error ParseError
     Odd
@@ -64,7 +63,7 @@ func main() -> void
     let g: func(int) -> int = id
     assert(g(41) == 41)
     let s: func(string) -> string = id
-    assert(string::equal(s("dusk"), "dusk"))
+    assert(s("dusk") == "dusk")
 
     let h: func(int) -> ParseError!int = half
     assert((h(8) catch -1) == 4)
@@ -89,5 +88,5 @@ func main() -> void
     assert(len(xs) == 2)
 
     assert(twice(1, inc) == 3)
-    assert(string::equal(twice("hi", shout), "hi!!"))
+    assert(twice("hi", shout) == "hi!!")
 end

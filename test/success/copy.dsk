@@ -1,5 +1,4 @@
 import std/array: len, append
-import std/string
 import std/buffer
 
 struct Node
@@ -68,7 +67,7 @@ func main() -> !void
     assert(boxed_copy[1] == null)
 
     assert(copy(5) == 5)
-    assert(string::equal(copy("text"), "text"))
+    assert(copy("text") == "text")
 
     let mut big: [][]int = []
     for 0..20000: i do

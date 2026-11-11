@@ -11,7 +11,7 @@ extern func assert(cond: bool) -> void
 extern func copy[T](value: T) -> T
 extern func spawn[T, E: error](body: func() -> E!T) -> Task[T, E]
 extern func await[T, E: error](task: Task[T, E]) -> E!T
-extern func ~strings_equal(a: string, b: string) -> bool
+extern func ~strings_equal(a: ?string, b: ?string) -> bool
 
 func to_byte(value: int) -> ConversionError!byte
     if value < 0 or value > 255 then

@@ -1,5 +1,4 @@
 import std/array: len, append
-import std/string
 import std/buffer
 
 func greeting() -> string
@@ -14,8 +13,8 @@ end
 let local = "hello"
 
 func main() -> !void
-    assert(string::equal(local, greeting()))
-    assert(string::equal("hello", "hello"))
+    assert(local == greeting())
+    assert("hello" == "hello")
     let mut kept: []string = []
     let holder = Holder(text = "field text")
     for 1..30000: i do
@@ -26,12 +25,12 @@ func main() -> !void
             append(kept, "kept")
         end
     end
-    assert(string::equal(local, greeting()))
-    assert(string::equal(holder.text, "field text"))
-    assert(string::equal(Holder.shared, "static text"))
+    assert(local == greeting())
+    assert(holder.text == "field text")
+    assert(Holder.shared == "static text")
     assert(len(kept) == 3)
     for kept: text do
-        assert(string::equal(text, "kept"))
+        assert(text == "kept")
     end
     echo(local)
     echo(holder.text)

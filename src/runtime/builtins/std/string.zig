@@ -19,7 +19,6 @@ const ParseFailure = error{ Invalid, Overflow };
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "len", Binding{ .intrinsic = .bytes_len } },
-    .{ "equal", Binding{ .native = &strEqual } },
     .{ "char_count", Binding{ .native = &strCharCount } },
     .{ "concat", Binding{ .native = &strConcat } },
     .{ "join", Binding{ .native = &strJoin } },
@@ -48,13 +47,6 @@ fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const result = try vm.allocString(text.len);
     @memcpy(result.mutableSlice(), bytesArg(args, 0));
     return stringResult(result);
-}
-
-fn strEqual(_: *VM, args: []v.Value) anyerror!NativeResult {
-    const left = v.HeapValue.getParentPtr(v.Bytes, args[0].heap_obj);
-    const right = v.HeapValue.getParentPtr(v.Bytes, args[1].heap_obj);
-    if (!args[2].bool) return ok(.{ .bool = left.eql(right) });
-    return ok(.{ .bool = isEqualIgnoringCase(left.slice(), right.slice()) });
 }
 
 fn strCharCount(_: *VM, args: []v.Value) anyerror!NativeResult {
@@ -237,26 +229,6 @@ fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var offset: usize = 0;
     while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
     return stringResult(result);
-}
-
-fn isEqualIgnoringCase(left: []const u8, right: []const u8) bool {
-    if (left.len != right.len) return false;
-    var index: usize = 0;
-    while (index < left.len) : (index += 1) {
-        const is_latin_pair = left[index] == 0xC3 and right[index] == 0xC3 and index + 1 < left.len;
-        if (is_latin_pair) {
-            index += 1;
-            if (lowerLatinByte(left[index]) != lowerLatinByte(right[index])) return false;
-            continue;
-        }
-        if (std.ascii.toLower(left[index]) != std.ascii.toLower(right[index])) return false;
-    }
-    return true;
-}
-
-fn lowerLatinByte(second: u8) u8 {
-    const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
-    return if (is_upper_latin) second + 0x20 else second;
 }
 
 fn joinParts(parts_value: *v.Value) []const v.Value {

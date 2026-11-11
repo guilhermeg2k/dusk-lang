@@ -1,6 +1,0 @@
-import std/string
-
-func main() -> void
-    let x: ?string = "a"
-    echo(string::equal(x, "a"))
-end

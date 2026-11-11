@@ -1,4 +1,3 @@
-import std/string
 
 struct Api
     let ip = "127.0.0.1"
@@ -19,10 +18,10 @@ end
 func main() -> void
     let api = Api("/me")
 
-    assert(string::equal(api.fetch(), "127.0.0.1"))
-    assert(string::equal(Api.fetch(api), "127.0.0.1"))
+    assert(api.fetch() == "127.0.0.1")
+    assert(Api.fetch(api) == "127.0.0.1")
     assert(Api.port == 8080)
     assert(api.port == 8080)
     assert(Api.secure == false)
-    assert(string::equal(api.url(), "127.0.0.1:8080/me"))
+    assert(api.url() == "127.0.0.1:8080/me")
 end

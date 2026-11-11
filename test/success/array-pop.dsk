@@ -1,5 +1,4 @@
 import std/array: len, pop, pop_or_null, ArrayError
-import std/string
 
 struct Point
     x: int
@@ -21,7 +20,7 @@ func main() -> void
     assert(e == 99)
     let mut names = ["a", "b"]
     let n = pop(names) catch "none"
-    assert(string::equal(n, "b"))
+    assert(n == "b")
     let mut points = [Point(x = 1)]
     let p = pop(points) catch Point(x = 0)
     assert(p.x == 1)
@@ -36,6 +35,6 @@ func main() -> void
     assert(pop_or_null(maybe) == 1)
     assert(pop_or_null(maybe) == null)
     let mut words = ["only"]
-    assert(string::equal(pop_or_null(words) orelse "", "only"))
+    assert((pop_or_null(words) orelse "") == "only")
     assert(pop_or_null(words) == null)
 end

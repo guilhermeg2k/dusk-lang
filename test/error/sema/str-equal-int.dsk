@@ -1,5 +1,0 @@
-import std/string
-
-func main() -> void
-    echo(string::equal("a", 1))
-end

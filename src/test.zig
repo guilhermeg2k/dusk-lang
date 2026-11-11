@@ -310,10 +310,9 @@ test "string constants outlive compilation and source storage" {
     try vm.run();
 }
 
-test "str_equal" {
-    try runCaseOutput("str-equal.dsk", "true\nfalse\n");
-    try runCaseError("sema/str-equal-nullable.dsk", error.InvalidType);
-    try runCaseError("sema/str-equal-int.dsk", error.InvalidType);
+test "strings compare by content with == and !=" {
+    try runCaseOutput("string-equality.dsk", "true\nfalse\n");
+    try runCaseError("sema/string-compare-int.dsk", error.CantCompare);
 }
 
 test "string length and char count" {
@@ -372,12 +371,11 @@ test "string slice" {
     try runCaseRuntimeError("str-slice-unhandled.dsk", error.UnhandledError);
 }
 
-test "equality: only same types (or numbers) compare, strings and unions can't" {
+test "equality: only same types (or numbers) compare, unions can't" {
     try runCase("equality-rules.dsk");
     try runCaseError("sema/compare-different-structs.dsk", error.CantCompare);
     try runCaseError("sema/compare-bool-int.dsk", error.CantCompare);
     try runCaseError("sema/compare-int-string.dsk", error.CantCompare);
-    try runCaseError("sema/compare-strings.dsk", error.CantCompare);
     try runCaseError("sema/compare-unions.dsk", error.CantCompare);
     try runCaseError("sema/compare-not-nullable-with-null.dsk", error.CantCompare);
 }
@@ -2416,7 +2414,6 @@ test "generics: type lists constrain a slot to primitives" {
     try runCaseError("sema/generic-list-doesnt-fit.dsk", error.TypeDoesntFitSlot);
     try runCaseError("sema/generic-list-annotation-doesnt-fit.dsk", error.TypeDoesntFitSlot);
     try runCaseError("sema/generic-list-slot-doesnt-fit.dsk", error.TypeDoesntFitSlot);
-    try runCaseError("sema/generic-list-string-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-list-operator-member.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-list-result-differs.dsk", error.SlotResultDiffers);
     try runCaseError("sema/generic-list-literal-doesnt-fit.dsk", error.InvalidType);

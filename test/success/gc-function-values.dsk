@@ -1,5 +1,4 @@
 import std/array: append
-import std/string
 
 func double(x: int) -> return x * 2
 func triple(x: int) -> return x * 3
@@ -29,5 +28,5 @@ func main() -> void
         total = total + op(1)
     end
     assert(total == 100000)
-    assert(string::equal(steps[19999].name, "double 20000"))
+    assert(steps[19999].name == "double 20000")
 end
