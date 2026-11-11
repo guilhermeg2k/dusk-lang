@@ -26,6 +26,7 @@ Started v0.15 development: updated the CLI version to `0.15.0-devel`.
 - A function with an empty body (`func reset() -> void` followed by `end`) crashed the program when called: it now just returns
 - Reading an instance field through the type name (`P.x`) crashed the compiler or exited without a message. It's now an `InvalidStructField` error, `'x' is not a static field of struct 'P'`. Reading a union variant through the type (`U.a`) gives `'a' is not a static field of union 'U'`
 - Using an enum or union method as a value (`let f = color.name`, `Color.name`) exited without a message. It's now a `MethodAsValue` error, like struct methods
+- Printing a generic function's copy used as a value (`let f: func([]int) -> int = first` then `echo(f)`) crashed the program, and so did a runtime error inside a generic function's copy: the copy's name was freed after compiling
 - An unknown type in a variable's annotation (`let s: ?Circle = null`) exited without a message. It's now an `UnknownType` error, `Invalid type 'Circle'`, like in parameters
 
 ## v0.14 - Simon

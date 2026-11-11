@@ -163,7 +163,7 @@ pub const BytecodeGen = struct {
                 break :blk .{ .intrinsic = intrinsic };
             },
         };
-        return .{ .uid = ext.uid, .name = ext.identifier, .kind = kind };
+        return .{ .uid = ext.uid, .name = try self.allocator.dupe(u8, ext.identifier), .kind = kind };
     }
 
     fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
@@ -1716,7 +1716,7 @@ pub const BytecodeGen = struct {
 
         return bc.Function{
             .uid = func.uid,
-            .name = func.identifier,
+            .name = try self.allocator.dupe(u8, func.identifier),
             .kind = .{ .dusk = try self.genFunctionChunk(func) },
         };
     }

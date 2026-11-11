@@ -2273,6 +2273,29 @@ test "modules: public declarations can't mention '~' types" {
     try runModuleCaseError("visibility/private-function-type.dsk", error.PrivateTypeInPublicSignature);
 }
 
+test "modules: functions and errors from other modules have qualified names at runtime" {
+    try runModuleCaseOutput("runtime-names/main.dsk", "<func util::double>\n<func util::first[int]>\na\n");
+    try testing.expectError(error.UnhandledError, runModuleCase("runtime-names/unhandled.dsk"));
+    try testing.expectError(error.DivisionByZero, runModuleCase("runtime-names/division.dsk"));
+}
+
+fn runModuleCaseOutput(entry_file: []const u8, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
+    try dusk.runProgram(&program);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "a generic function's copy prints its name after compiling" {
+    try runCaseOutput("generic-function-value-printing.dsk", "<func first[int]>\n");
+}
+
 test "unknown types in let annotations are reported" {
     try runCaseError("sema/unknown-let-type.dsk", error.UnknownType);
 }

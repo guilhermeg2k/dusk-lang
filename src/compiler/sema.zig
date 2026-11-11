@@ -447,7 +447,7 @@ pub const SemaAnalyzer = struct {
             if (variants.contains(variant.identifier)) {
                 return self.err_reporter.alreadyDefined(variant.identifier, variant.loc);
             }
-            const id = try self.type_table.addErrorName(stmt.identifier, variant.identifier);
+            const id = try self.type_table.addErrorName(try self.qualifiedName(self.module, stmt.identifier), variant.identifier);
             try variants.put(variant.identifier, id);
             try error_set.ids.put(self.allocator, id, {});
             variants_in_order[i] = variant.identifier;
@@ -613,6 +613,9 @@ pub const SemaAnalyzer = struct {
                     }
                     var symbol = try self.createEmptyFuncSymbol(fs.identifier);
                     symbol.is_file_only = fs.is_file_only;
+                    if (!fs.is_extern) {
+                        try self.qualifyFunctionName(symbol, self.module);
+                    }
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
                 },
                 .@"struct" => |ss| {
@@ -826,7 +829,6 @@ pub const SemaAnalyzer = struct {
 
     fn recordTypeModule(self: *Self, symbol: Symbol, module: *ModuleScope) !void {
         try self.type_modules.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, module);
-        const module_name = module.qualifier orelse return;
         const type_ptr = self.type_table.getTypePtrById(symbol.kind.defined_type.blueprint_type_id);
         const identifier = switch (type_ptr.kind) {
             .@"struct" => |*kind| &kind.identifier,
@@ -834,7 +836,17 @@ pub const SemaAnalyzer = struct {
             .@"union" => |*kind| &kind.identifier,
             else => return,
         };
-        identifier.* = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_name, identifier.* });
+        identifier.* = try self.qualifiedName(module, identifier.*);
+    }
+
+    fn qualifyFunctionName(self: *Self, symbol: Symbol, module: *ModuleScope) !void {
+        const func = &self.type_table.getTypePtrById(symbol.type_id).kind.function;
+        func.identifier = try self.qualifiedName(module, func.identifier);
+    }
+
+    fn qualifiedName(self: *Self, module: *ModuleScope, identifier: []const u8) ![]const u8 {
+        const module_name = module.qualifier orelse return identifier;
+        return std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_name, identifier });
     }
 
     fn createEmptyEnumSymbol(self: *Self, identifier: []const u8) !Symbol {
@@ -1883,6 +1895,9 @@ pub const SemaAnalyzer = struct {
         const name = try self.copyName(generic.func_stmt.identifier, args);
 
         const symbol = try self.createEmptyFuncSymbol(name);
+        if (generic.extern_uid == null) {
+            try self.qualifyFunctionName(symbol, generic.module);
+        }
         try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
         const copy_index = generic.copies.items.len - 1;
 
