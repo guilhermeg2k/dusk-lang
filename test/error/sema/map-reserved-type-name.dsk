@@ -1,0 +1,6 @@
+struct map
+    x: int
+end
+
+func main() -> void
+end

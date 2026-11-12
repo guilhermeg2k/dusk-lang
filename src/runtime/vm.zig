@@ -9,6 +9,7 @@ const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const gc = @import("gc.zig");
+const map = @import("map.zig");
 const Heap = gc.Heap;
 
 pub const VM = struct {
@@ -29,6 +30,7 @@ pub const VM = struct {
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
+    next_struct_identity: u32 = 1,
 
     pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
@@ -196,6 +198,16 @@ pub const VM = struct {
                 .ARRAY_LEN => {
                     const array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
                     stack[stack_base + inst.a] = .{ .int64 = @intCast(array.len) };
+                },
+
+                .MAP_INIT => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try map.newMap(self, @enumFromInt(inst.b), @enumFromInt(inst.c));
+                },
+
+                .MAP_SET => {
+                    current_frame.cur_inst = cur_instruction;
+                    try map.setEntry(self, stack_base + inst.a, stack_base + inst.b, stack_base + inst.c);
                 },
 
                 .BYTES_NEW => {

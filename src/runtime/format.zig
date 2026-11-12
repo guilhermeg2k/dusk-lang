@@ -68,7 +68,8 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
                 .@"union" => printValue(writer, value, .@"union"),
                 .closure => printValue(writer, value, .function),
                 .task => printValue(writer, value, .task),
-                .cell => unreachable,
+                .map => printValue(writer, value, .map),
+                .cell, .map_storage => unreachable,
             }
         },
         .@"struct" => {
@@ -96,6 +97,11 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) void 
             }
         },
         .cell => unreachable,
+        .map => {
+            const raw: u64 = @bitCast(value);
+            const text = if (raw == 0) "null" else "<map>";
+            writer.print("{s}", .{text}) catch @panic("failed to print map");
+        },
         .task => {
             const raw: u64 = @bitCast(value);
             if (raw == 0) {

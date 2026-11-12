@@ -1,0 +1,63 @@
+enum Color
+    Red
+    Green
+end
+
+struct Point
+    x: int
+    y: int
+end
+
+struct Scores
+    by_name: map[string, int] = {}
+end
+
+func same[K, V](m: map[K, V]) -> map[K, V]
+    return m
+end
+
+func keyed[K](key: K) -> map[K, int]
+    return {key: 1}
+end
+
+func empty_scores() -> map[string, int]
+    return {}
+end
+
+func take(m: map[string, int]) -> bool
+    return m == m
+end
+
+func main() -> void
+    let ages = {"ana": 31, "bob": 27}
+    let empty: map[string, int] = {}
+    let promoted = {1: 1, 2: 2.5}
+    let nested: map[int, map[int, string]] = {1: {1: "x"}, 2: {}}
+    let colors = {Color.Red: "red", Color.Green: "green"}
+    let p = Point(x = 1, y = 2)
+    let points = {p: "a", Point(x = 1, y = 2): "b"}
+    let flags = {true: 1, false: 0}
+    let letters = {'a': 1, 'b': 2}
+    let lists = {
+        "a": [1, 2],
+        "b": [],
+    }
+    let maybe: map[string, ?int] = {"a": null, "b": 1}
+    let missing: ?map[string, int] = null
+    let many: map[int, int] = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14, 15: 15, 16: 16, 17: 17}
+    let mut all: []map[string, int] = [{}, {"a": 1}]
+    let picked: map[string, int] = if ages == empty then {} else ages end
+
+    assert(ages == ages)
+    assert(ages != empty)
+    assert(same(ages) == ages)
+    assert(picked == ages)
+    assert(take({}))
+    assert(take({"x": 1}))
+    let by_color = keyed(Color.Green)
+    let by_point = keyed(p)
+    let scores = Scores()
+    let filled = Scores(by_name = {"x": 2})
+    echo(ages)
+    echo("${empty} ${missing}")
+end

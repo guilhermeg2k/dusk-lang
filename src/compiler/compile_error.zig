@@ -845,6 +845,26 @@ pub const CompileErrorReporter = struct {
         return error.CantInferArrayLiteralType;
     }
 
+    pub fn cantInferMapLiteralType(self: *Self, loc: Loc) CompileError {
+        self.log("Can't infer map literal type", loc);
+        return error.CantInferMapLiteralType;
+    }
+
+    pub fn invalidMapKey(self: *Self, found: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't be a map key: keys are int, byte, bool, string, enums or structs", .{found}), loc);
+        return error.InvalidMapKey;
+    }
+
+    pub fn duplicateMapKey(self: *Self, key: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Key {s} appears twice in this map literal", .{key}), loc);
+        return error.DuplicateMapKey;
+    }
+
+    pub fn reservedTypeName(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a built-in type, so a type can't be named '{s}'", .{ identifier, identifier }), loc);
+        return error.ReservedTypeName;
+    }
+
     pub fn unnecessaryOptionalChain(self: *Self, member: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
@@ -1135,6 +1155,10 @@ pub const CompileError = error{
     InvalidConstantType,
     CatchBlockMustLeave,
     NotAnErrorSet,
+    CantInferMapLiteralType,
+    InvalidMapKey,
+    DuplicateMapKey,
+    ReservedTypeName,
 };
 
 const std = @import("std");

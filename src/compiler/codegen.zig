@@ -374,6 +374,10 @@ pub const BytecodeGen = struct {
                 try self.genArrayInit(value, target_reg);
             },
 
+            .map_init => {
+                try self.genMapInit(value, target_reg);
+            },
+
             .struct_init => {
                 try self.genStructInit(value, target_reg);
             },
@@ -836,6 +840,31 @@ pub const BytecodeGen = struct {
             .b = v_reg,
         };
         try self.chunk_instructions.append(self.allocator, append_inst);
+        try self.recordHeapMap();
+    }
+
+    fn genMapInit(self: *Self, value: *const ir.Value, target_reg: u8) !void {
+        const map_type = self.type_table.getTypePtrById(value.type_id).kind.map;
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .MAP_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(valueTypeFromTypeId(self.type_table, map_type.key)),
+            .c = @intFromEnum(valueTypeFromTypeId(self.type_table, map_type.value)),
+        });
+        try self.recordHeapMap();
+        self.register_types[target_reg] = value.type_id;
+
+        const map_init = value.data.map_init;
+        for (map_init.keys, map_init.values) |key, entry_value| {
+            try self.genMapSet(target_reg, key, entry_value);
+        }
+    }
+
+    fn genMapSet(self: *Self, map_reg: u8, key: *const ir.Value, value: *const ir.Value) !void {
+        const key_reg = try self.genValue(key, try self.consumeRegister());
+        const value_reg = try self.genValue(value, try self.consumeRegister());
+        defer self.freeRegisterN(2);
+        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_SET, .a = map_reg, .b = key_reg, .c = value_reg });
         try self.recordHeapMap();
     }
 
@@ -1330,7 +1359,7 @@ pub const BytecodeGen = struct {
 
     fn isBuiltInSteps(value: *const ir.Value) bool {
         return switch (value.data) {
-            .struct_init, .i_array, .union_init, .block_value, .try_call, .catch_call => true,
+            .struct_init, .i_array, .map_init, .union_init, .block_value, .try_call, .catch_call => true,
             else => false,
         };
     }
@@ -1353,6 +1382,11 @@ pub const BytecodeGen = struct {
             } else false,
             .i_array => |array| for (array.values) |item| {
                 if (readsVariable(item, uid)) {
+                    break true;
+                }
+            } else false,
+            .map_init => |map| for (map.keys, map.values) |key, item| {
+                if (readsVariable(key, uid) or readsVariable(item, uid)) {
                     break true;
                 }
             } else false,
@@ -1766,7 +1800,7 @@ const TypedValueHashContext = struct {
             .nullable => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
-            .function, .cell, .task => unreachable,
+            .function, .cell, .task, .map => unreachable,
         }
         return hasher.final();
     }
@@ -1783,7 +1817,7 @@ const TypedValueHashContext = struct {
             .array => unreachable,
             .@"struct" => unreachable,
             .@"union" => unreachable,
-            .function, .cell, .task => unreachable,
+            .function, .cell, .task, .map => unreachable,
         };
     }
 };
@@ -1807,6 +1841,7 @@ fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueTyp
         .string => .string,
         .buffer => .buffer,
         .array => .array,
+        .map => .map,
         .@"struct" => .@"struct",
         .@"union" => .@"union",
         .func_type => .function,

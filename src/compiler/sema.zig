@@ -16,6 +16,7 @@ pub const SemaAnalyzer = struct {
     const lambda_name = "$lambda";
     const none_error_set_name = "none";
     const task_type_name = "Task";
+    const map_type_name = "map";
     const max_captures = 255;
 
     allocator: std.mem.Allocator,
@@ -609,6 +610,19 @@ pub const SemaAnalyzer = struct {
 
     fn hoistDeclarationsOf(self: *Self, root: *const ast.Root) !void {
         for (root.statements.items) |*stmt| {
+            const declared_type_name: ?[]const u8 = switch (stmt.data) {
+                .error_set => |es| es.identifier,
+                .trait => |ts| ts.identifier,
+                .@"struct" => |ss| ss.identifier,
+                .@"enum" => |es| es.identifier,
+                .@"union" => |un| un.identifier,
+                else => null,
+            };
+            if (declared_type_name) |name| {
+                if (std.mem.eql(u8, name, map_type_name)) {
+                    return self.err_reporter.reservedTypeName(name, stmt.loc);
+                }
+            }
             switch (stmt.data) {
                 .error_set => |es| {
                     var symbol = try self.createErrorSetSymbol(&es);
@@ -1407,6 +1421,7 @@ pub const SemaAnalyzer = struct {
             .fn_call => |call| doAnyValuesExit(call.args, query),
             .struct_init => |initialization| doAnyValuesExit(initialization.values, query),
             .i_array => |array| doAnyValuesExit(array.values, query),
+            .map_init => |map| doAnyValuesExit(map.keys, query) or doAnyValuesExit(map.values, query),
             .string_interpolation => |parts| doAnyValuesExit(parts, query),
             .union_init => |initialization| if (initialization.value) |operand| doesValueExit(operand, query) else false,
             .indexed => |indexed| doesValueExit(indexed.target, query) or doesValueExit(indexed.index, query),
@@ -1820,6 +1835,12 @@ pub const SemaAnalyzer = struct {
         const kind = self.type_table.getTypePtrById(type_id).kind;
         switch (annotation.type) {
             .@"struct" => |name| {
+                const is_map_pair = kind == .map and std.mem.eql(u8, name, map_type_name) and annotation.args.len == 2;
+                if (is_map_pair) {
+                    try self.inferSlots(annotation.args[0], kind.map.key, slots, bindings, loc);
+                    try self.inferSlots(annotation.args[1], kind.map.value, slots, bindings, loc);
+                    return;
+                }
                 const is_task_pair = kind == .task and std.mem.eql(u8, name, task_type_name) and annotation.args.len > 0;
                 if (is_task_pair) {
                     try self.inferSlots(annotation.args[0], kind.task.payload, slots, bindings, loc);
@@ -2509,6 +2530,7 @@ pub const SemaAnalyzer = struct {
             .slot => true,
             .@"enum" => |e| e.error_set != null and e.error_set.?.kind == .slot,
             .array => |inner| self.typeContainsSlot(inner),
+            .map => |m| self.typeContainsSlot(m.key) or self.typeContainsSlot(m.value),
             .error_union => |eu| self.typeContainsSlot(eu.error_set) or self.typeContainsSlot(eu.payload),
             .task => |task| self.typeContainsSlot(task.payload) or self.typeContainsSlot(task.error_set),
             .func_type => |func| for (func.params) |param| {
@@ -4011,7 +4033,7 @@ pub const SemaAnalyzer = struct {
     fn evalExpWithContext(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) CompileError!*ir.Value {
         if (expected_type != null) return self.evalExpExpecting(exp, expected_type);
         if (isConditional(exp)) return self.evalConditionalWithContext(exp, null, context_type);
-        const needs_context = isAnonymousInit(exp) or exp.data == .array_literal or exp.data == .lambda;
+        const needs_context = isAnonymousInit(exp) or exp.data == .array_literal or exp.data == .map_literal or exp.data == .lambda;
         return self.evalExpExpecting(exp, if (needs_context) context_type else null);
     }
 
@@ -4038,6 +4060,9 @@ pub const SemaAnalyzer = struct {
 
             if (exp.data == .array_literal and base_kind == .array) {
                 return self.evalArrayLiteral(exp, base_kind.array);
+            }
+            if (exp.data == .map_literal and base_kind == .map) {
+                return self.evalMapLiteral(exp, base_kind.map);
             }
             const is_lambda_for_function_type = exp.data == .lambda and base_kind == .func_type;
             if (is_lambda_for_function_type) {
@@ -4177,6 +4202,9 @@ pub const SemaAnalyzer = struct {
             },
             .array_literal => {
                 return self.evalArrayLiteral(exp, null);
+            },
+            .map_literal => {
+                return self.evalMapLiteral(exp, null);
             },
             .identifier => {
                 return self.evalIdentifier(exp);
@@ -5057,7 +5085,7 @@ pub const SemaAnalyzer = struct {
 
     fn canBeChangedThrough(self: *Self, type_id: tt.TypeId) bool {
         return switch (self.type_table.getTypePtrById(type_id).kind) {
-            .array, .buffer, .@"struct", .@"union" => true,
+            .array, .map, .buffer, .@"struct", .@"union" => true,
             else => false,
         };
     }
@@ -5125,6 +5153,7 @@ pub const SemaAnalyzer = struct {
                 return exp;
             },
             .array_literal => |literal| return self.firstReadOnlySource(literal.exps),
+            .map_literal => |literal| return self.firstReadOnlyMapEntry(literal.entries),
             .anonymous_init => |anonymous| return self.firstReadOnlyArgument(anonymous.arguments),
             .fn_call => |call| {
                 if (!self.isConstructorCall(call)) return null;
@@ -5151,6 +5180,14 @@ pub const SemaAnalyzer = struct {
     fn firstReadOnlySource(self: *Self, exps: []const *ast.ExpNode) ?*const ast.ExpNode {
         for (exps) |item| {
             if (self.readOnlySourceOf(item)) |source| return source;
+        }
+        return null;
+    }
+
+    fn firstReadOnlyMapEntry(self: *Self, entries: []const ast.MapEntry) ?*const ast.ExpNode {
+        for (entries) |entry| {
+            if (self.readOnlySourceOf(entry.key)) |source| return source;
+            if (self.readOnlySourceOf(entry.value)) |source| return source;
         }
         return null;
     }
@@ -5231,6 +5268,75 @@ pub const SemaAnalyzer = struct {
                 .type_id = array_type_id,
             },
         );
+    }
+
+    fn evalMapLiteral(self: *Self, exp: *const ast.ExpNode, expected: ?tt.MapType) !*ir.Value {
+        const entries = exp.data.map_literal.entries;
+        if (entries.len == 0 and expected == null) {
+            return self.err_reporter.cantInferMapLiteralType(exp.loc);
+        }
+        var key_type: ?tt.TypeId = if (expected) |map| map.key else null;
+        var value_type: ?tt.TypeId = if (expected) |map| map.value else null;
+        const keys = try self.allocator.alloc(*ir.Value, entries.len);
+        const values = try self.allocator.alloc(*ir.Value, entries.len);
+        const float_type = self.type_table.getPrimitive(.float);
+
+        for (entries, keys, values, 0..) |entry, *key, *value, i| {
+            const key_value = try self.evalExpExpecting(entry.key, key_type);
+            if (key_type == null) {
+                try self.checkMapKeyType(key_value.type_id, entry.key.loc);
+                key_type = key_value.type_id;
+            }
+            key.* = try self.coerceValue(key_value, key_type.?, entry.key.loc);
+
+            const entry_value = try self.evalExpExpecting(entry.value, value_type);
+            if (value_type == null) {
+                value_type = entry_value.type_id;
+            }
+            const needs_float_promotion = expected == null and value_type.? == self.type_table.getPrimitive(.int) and entry_value.type_id == float_type;
+            if (needs_float_promotion) {
+                value_type = float_type;
+                for (values[0..i]) |*previous| previous.* = try self.promoteToFloat(previous.*, float_type);
+            }
+            value.* = try self.coerceValue(entry_value, value_type.?, entry.value.loc);
+        }
+
+        try self.checkDuplicateMapKeys(entries, keys);
+        const map_type = try self.type_table.getOrAddMap(.{ .key = key_type.?, .value = value_type.? });
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .map_init = .{ .keys = keys, .values = values } },
+            .type_id = map_type,
+        });
+    }
+
+    fn checkMapKeyType(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const key_type = self.type_table.getTypePtrById(type_id);
+        const is_valid_key = !key_type.is_nullable and switch (key_type.kind) {
+            .int, .byte, .boolean, .string, .@"enum", .@"struct", .slot => true,
+            else => false,
+        };
+        if (!is_valid_key) {
+            return self.err_reporter.invalidMapKey(try self.type_table.syntaxName(type_id, self.allocator), loc);
+        }
+    }
+
+    fn checkDuplicateMapKeys(self: *Self, entries: []const ast.MapEntry, keys: []const *ir.Value) CompileError!void {
+        for (keys, 0..) |key, i| {
+            for (keys[0..i]) |previous| {
+                if (!areSameConstantKeys(key, previous)) continue;
+                const loc = entries[i].key.loc;
+                return self.err_reporter.duplicateMapKey(self.src[loc.start..@min(loc.end + 1, self.src.len)], loc);
+            }
+        }
+    }
+
+    fn areSameConstantKeys(a: *const ir.Value, b: *const ir.Value) bool {
+        return switch (a.data) {
+            .i_int => |number| b.data == .i_int and b.data.i_int == number,
+            .i_bool => |flag| b.data == .i_bool and b.data.i_bool == flag,
+            .i_string => |text| b.data == .i_string and std.mem.eql(u8, b.data.i_string, text),
+            else => false,
+        };
     }
 
     fn evalUnaryExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
@@ -5682,6 +5788,10 @@ pub const SemaAnalyzer = struct {
                 if (self.is_in_prelude and std.mem.eql(u8, struct_name, "dynamic")) {
                     return self.type_table.getPrimitive(.dynamic);
                 }
+                if (std.mem.eql(u8, struct_name, map_type_name)) {
+                    const map_type_id = try self.resolveMapTypeAnnotation(type_annotation, current_defined_type_type_id);
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(map_type_id) else map_type_id;
+                }
                 const symbol = self.scope.symbol_table.get(struct_name) orelse {
                     return self.err_reporter.typeNotDefined(struct_name, type_annotation.loc);
                 };
@@ -5723,6 +5833,16 @@ pub const SemaAnalyzer = struct {
             },
             .resolved => |type_id| return type_id,
         }
+    }
+
+    fn resolveMapTypeAnnotation(self: *Self, annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) CompileError!tt.TypeId {
+        if (annotation.args.len != 2) {
+            return self.err_reporter.wrongSlotCount(map_type_name, 2, annotation.args.len, annotation.loc);
+        }
+        const key = try self.resolveTypeAnnotation(@constCast(annotation.args[0]), current_defined_type_type_id);
+        try self.checkMapKeyType(key, annotation.args[0].loc);
+        const value = try self.resolveTypeAnnotation(@constCast(annotation.args[1]), current_defined_type_type_id);
+        return self.type_table.getOrAddMap(.{ .key = key, .value = value });
     }
 
     fn resolveTaskTypeAnnotation(self: *Self, annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) CompileError!tt.TypeId {

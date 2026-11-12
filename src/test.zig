@@ -310,6 +310,20 @@ test "string constants outlive compilation and source storage" {
     try vm.run();
 }
 
+test "maps: types and literals" {
+    try runCaseOutput("map-literals.dsk", "<map>\n<map> null\n");
+    try runCase("map-name-not-reserved.dsk");
+    try runCaseError("sema/map-invalid-key.dsk", error.InvalidMapKey);
+    try runCaseError("sema/map-nullable-key.dsk", error.InvalidMapKey);
+    try runCaseError("sema/map-generic-invalid-key.dsk", error.InvalidMapKey);
+    try runCaseError("sema/map-duplicate-key.dsk", error.DuplicateMapKey);
+    try runCaseError("sema/map-cant-infer-type.dsk", error.CantInferMapLiteralType);
+    try runCaseError("sema/map-reserved-type-name.dsk", error.ReservedTypeName);
+    try runCaseError("sema/map-wrong-slot-count.dsk", error.WrongSlotCount);
+    try runCaseError("sema/map-mixed-values.dsk", error.InvalidType);
+    try runCaseError("sema/map-no-value-coercion.dsk", error.InvalidType);
+}
+
 test "strings compare by content with == and !=" {
     try runCaseOutput("string-equality.dsk", "true\nfalse\n");
     try runCaseError("sema/string-compare-int.dsk", error.CantCompare);

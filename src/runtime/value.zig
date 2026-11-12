@@ -33,6 +33,8 @@ const HeapValueType = enum(u8) {
     closure,
     cell,
     task,
+    map,
+    map_storage,
 };
 
 pub const HeapValue = extern struct {
@@ -61,6 +63,7 @@ pub const Struct = extern struct {
     obj: HeapValue,
     descriptor_id: u16,
     field_count: u8,
+    identity: u32,
 
     pub fn init(allocator: std.mem.Allocator, field_size: u8, desc_id: u16) !*Self {
         const total_bytes = Self.calc_size(field_size);
@@ -74,6 +77,7 @@ pub const Struct = extern struct {
 
         struct_ptr.descriptor_id = desc_id;
         struct_ptr.field_count = field_size;
+        struct_ptr.identity = 0;
         @memset(struct_ptr.getDataPtr()[0..field_size], NULL_VALUE);
 
         return struct_ptr;
@@ -283,6 +287,124 @@ pub const Array = extern struct {
     }
 };
 
+pub const Map = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    key_type: ValueType,
+    value_type: ValueType,
+    next_seq: u32,
+    storage: Value,
+
+    pub fn init(allocator: std.mem.Allocator, key_type: ValueType, value_type: ValueType) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = .{ .obj = .{ .kind = .map }, .key_type = key_type, .value_type = value_type, .next_seq = 1, .storage = NULL_VALUE };
+        return ptr;
+    }
+
+    pub fn getStorage(self: *const Self) ?*MapStorage {
+        if (@as(u64, @bitCast(self.storage)) == 0) return null;
+        return HeapValue.getParentPtr(MapStorage, self.storage.heap_obj);
+    }
+
+    pub fn count(self: *const Self) usize {
+        const storage = self.getStorage() orelse return 0;
+        return storage.count;
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = self.*;
+        ptr.obj.gc_forward = null;
+        ptr.obj.relocated = null;
+        return ptr;
+    }
+};
+
+pub const MapEntry = extern struct {
+    pub const removed_bit: u32 = 1 << 31;
+
+    key: Value,
+    value: Value,
+    hash: u32,
+    seq: u32,
+
+    pub fn isRemoved(self: *const MapEntry) bool {
+        return self.hash & removed_bit != 0;
+    }
+};
+
+pub const MapStorage = extern struct {
+    const Self = @This();
+
+    pub const min_capacity: u32 = 8;
+
+    obj: HeapValue,
+    key_type: ValueType,
+    value_type: ValueType,
+    len: u32,
+    count: u32,
+    capacity: u32,
+    index_mask: u32,
+
+    pub fn init(allocator: std.mem.Allocator, key_type: ValueType, value_type: ValueType, capacity: u32) !*Self {
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(capacity));
+        const storage: *Self = @ptrCast(raw_memory.ptr);
+        storage.* = .{
+            .obj = .{ .kind = .map_storage },
+            .key_type = key_type,
+            .value_type = value_type,
+            .len = 0,
+            .count = 0,
+            .capacity = capacity,
+            .index_mask = indexSlotCount(capacity) - 1,
+        };
+        @memset(storage.index(), 0);
+        return storage;
+    }
+
+    pub fn entries(self: *const Self) []MapEntry {
+        const data_pointer: [*]MapEntry = @ptrCast(@as([*]Self, @ptrCast(@constCast(self))) + 1);
+        return data_pointer[0..self.capacity];
+    }
+
+    pub fn usedEntries(self: *const Self) []MapEntry {
+        return self.entries()[0..self.len];
+    }
+
+    pub fn index(self: *const Self) []u32 {
+        const after_entries: [*]u32 = @ptrCast(self.entries().ptr + self.capacity);
+        return after_entries[0 .. self.index_mask + 1];
+    }
+
+    pub fn isFull(self: *const Self) bool {
+        return self.len == self.capacity;
+    }
+
+    pub fn indexSlotCount(capacity: u32) u32 {
+        return std.math.ceilPowerOfTwoAssert(u32, capacity * 2);
+    }
+
+    pub fn calc_size(capacity: u32) usize {
+        return @sizeOf(Self) + @sizeOf(MapEntry) * @as(usize, capacity) + @sizeOf(u32) * @as(usize, indexSlotCount(capacity));
+    }
+
+    pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {
+        const size = Self.calc_size(self.capacity);
+        const old_bytes = @as([*]const u8, @ptrCast(self))[0..size];
+        const new_bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), size);
+        @memcpy(new_bytes, old_bytes);
+        const new_obj: *Self = @ptrCast(@alignCast(new_bytes.ptr));
+        new_obj.obj.gc_forward = null;
+        new_obj.obj.relocated = null;
+        return new_obj;
+    }
+};
+
 pub const Bytes = extern struct {
     const Self = @This();
 
@@ -472,10 +594,11 @@ pub const ValueType = enum(u8) {
     function,
     cell,
     task,
+    map,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task, .map => true,
             else => false,
         };
     }

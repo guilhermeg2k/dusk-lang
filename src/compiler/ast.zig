@@ -264,6 +264,7 @@ pub const Exp = union(enum) {
     identifier: []const u8,
     anonymous_init: AnonymousInit,
     array_literal: ArrayLiteral,
+    map_literal: MapLiteral,
     null_literal: void,
     fn_call: FnCall,
     indexed: IndexedExp,
@@ -303,6 +304,15 @@ pub const CatchExp = struct {
 
 pub const ArrayLiteral = struct {
     exps: []const *ExpNode,
+};
+
+pub const MapLiteral = struct {
+    entries: []const MapEntry,
+};
+
+pub const MapEntry = struct {
+    key: *ExpNode,
+    value: *ExpNode,
 };
 
 pub const UnaryExp = struct {

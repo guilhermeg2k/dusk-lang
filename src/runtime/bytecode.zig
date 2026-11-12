@@ -181,6 +181,7 @@ pub const Chunk = struct {
             .JUMP_TABLE => std.debug.print("R[{d}] T[{d}]", .{ inst.a, inst.bEx() }),
             .ARRAY_LOAD,
             .ARRAY_STORE,
+            .MAP_SET,
             .BYTES_GET,
             .BYTES_SET,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -192,6 +193,7 @@ pub const Chunk = struct {
             .DEEP_COPY,
             => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
             .ARRAY_INIT => std.debug.print("R[{d}] T[{d}] C[{d}]", .{ inst.a, inst.b, inst.c }),
+            .MAP_INIT => std.debug.print("R[{d}] T[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STR_BUILD => std.debug.print("R[{d}] RECIPE[{d}]", .{ inst.a, inst.bEx() }),
             .TO_STRING, .TASK_SPAWN => std.debug.print("R[{d}] R[{d}] T[{d}]", .{ inst.a, inst.b, inst.c }),
             .STRUCT_INIT => std.debug.print("R[{d}] N[{d}]", .{ inst.a, inst.b }),
@@ -254,6 +256,9 @@ pub const OpCode = enum(u8) {
     ARRAY_LEN,
     ARRAY_APPEND,
     ARRAY_POP,
+
+    MAP_INIT,
+    MAP_SET,
 
     BYTES_NEW,
     BYTES_LEN,
@@ -339,6 +344,8 @@ pub const OpCode = enum(u8) {
         return switch (self) {
             .ARRAY_INIT,
             .ARRAY_APPEND,
+            .MAP_INIT,
+            .MAP_SET,
             .STRUCT_INIT,
             .UNION_INIT,
             .UNION_LOAD,

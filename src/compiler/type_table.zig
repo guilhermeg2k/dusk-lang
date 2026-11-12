@@ -16,6 +16,7 @@ pub const TypeTable = struct {
     anom_structs: std.StringHashMap(TypeId),
     func_types: std.StringHashMap(TypeId),
     tasks: std.AutoHashMap(TaskType, TypeId),
+    maps: std.AutoHashMap(MapType, TypeId),
     error_names: std.ArrayList([]const u8),
 
     pub fn init(alloc: std.mem.Allocator) !Self {
@@ -53,6 +54,7 @@ pub const TypeTable = struct {
             .anom_structs = std.StringHashMap(TypeId).init(alloc),
             .func_types = std.StringHashMap(TypeId).init(alloc),
             .tasks = std.AutoHashMap(TaskType, TypeId).init(alloc),
+            .maps = std.AutoHashMap(MapType, TypeId).init(alloc),
             .error_names = .empty,
         };
     }
@@ -138,6 +140,7 @@ pub const TypeTable = struct {
             .meta => "meta",
             .cell => "cell",
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
+            .map => |m| std.fmt.allocPrint(allocator, "map[{s}, {s}]", .{ try self.syntaxName(m.key, allocator), try self.syntaxName(m.value, allocator) }),
             .function => |f| f.identifier,
             .func_type => |f| self.funcTypeText(f, allocator),
             .task => |task| self.taskTypeText(task, allocator),
@@ -202,6 +205,9 @@ pub const TypeTable = struct {
             },
             .array => |inner_id| {
                 return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
+            },
+            .map => |m| {
+                return std.fmt.allocPrint(allocator, "{s}map[{s}, {s}]", .{ prefix, try self.syntaxName(m.key, allocator), try self.syntaxName(m.value, allocator) });
             },
         };
     }
@@ -327,6 +333,15 @@ pub const TypeTable = struct {
         return id;
     }
 
+    pub fn getOrAddMap(self: *Self, map: MapType) !TypeId {
+        if (self.maps.get(map)) |id| {
+            return id;
+        }
+        const id = try self.addType(.{ .kind = .{ .map = map }, .is_nullable = false });
+        try self.maps.put(map, id);
+        return id;
+    }
+
     pub fn getAnonymoustStructSignature(self: *Self, anom_struct: *const Struct) ![]const u8 {
         var fields_in_order: std.ArrayList([]const u8) = .empty;
 
@@ -412,6 +427,11 @@ pub const FuncType = struct {
 pub const TaskType = struct {
     payload: TypeId,
     error_set: TypeId,
+};
+
+pub const MapType = struct {
+    key: TypeId,
+    value: TypeId,
 };
 
 pub const FuncTypeParam = struct {
@@ -510,6 +530,7 @@ pub const Type = struct {
         func_type: FuncType,
         task: TaskType,
         array: TypeId,
+        map: MapType,
         @"struct": Struct,
         @"enum": Enum,
         @"union": Union,

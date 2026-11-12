@@ -179,6 +179,19 @@ const Collector = struct {
                     try self.copyHeapValue(&state.result);
                 }
             },
+            .map => {
+                const map = v.HeapValue.getParentPtr(v.Map, obj);
+                try self.copyHeapValue(&map.storage);
+            },
+            .map_storage => {
+                const storage = v.HeapValue.getParentPtr(v.MapStorage, obj);
+                const has_heap_keys = storage.key_type.isHeapType();
+                const has_heap_values = storage.value_type.isHeapType();
+                for (storage.usedEntries()) |*entry| {
+                    if (has_heap_keys) try self.copyHeapValue(&entry.key);
+                    if (has_heap_values) try self.copyHeapValue(&entry.value);
+                }
+            },
             .@"union" => {
                 const u = v.HeapValue.getParentPtr(v.Union, obj);
                 if (u.active_tag == v.Union.NO_TAG) return;
@@ -212,6 +225,8 @@ pub fn cloneHeapObj(allocator: std.mem.Allocator, obj_ptr: *v.HeapValue) !*v.Hea
         .closure => &(try v.HeapValue.getParentPtr(v.Closure, obj_ptr).clone(allocator)).obj,
         .cell => &(try v.HeapValue.getParentPtr(v.Cell, obj_ptr).clone(allocator)).obj,
         .task => &(try v.HeapValue.getParentPtr(v.Task, obj_ptr).clone(allocator)).obj,
+        .map => &(try v.HeapValue.getParentPtr(v.Map, obj_ptr).clone(allocator)).obj,
+        .map_storage => &(try v.HeapValue.getParentPtr(v.MapStorage, obj_ptr).clone(allocator)).obj,
         .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
     };
 }
@@ -225,6 +240,8 @@ pub fn heapObjectSize(ptr: *v.HeapValue) usize {
         .closure => v.Closure.calc_size(v.HeapValue.getParentPtr(v.Closure, ptr).capture_count),
         .cell => v.Cell.calc_size(),
         .task => v.Task.calc_size(),
+        .map => v.Map.calc_size(),
+        .map_storage => v.MapStorage.calc_size(v.HeapValue.getParentPtr(v.MapStorage, ptr).capacity),
         .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
     };
 }

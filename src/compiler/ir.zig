@@ -225,6 +225,7 @@ pub const Value = struct {
         i_void: void,
         i_null: void,
         i_array: Array,
+        map_init: MapInit,
 
         identifier: struct { uid: usize, name: []const u8 },
         indexed: IndexedValue,
@@ -262,6 +263,7 @@ pub const Value = struct {
 };
 
 pub const Array = struct { values: []const *Value };
+pub const MapInit = struct { keys: []const *Value, values: []const *Value };
 
 pub const BinaryOp = struct {
     kind: BinaryOpKind,

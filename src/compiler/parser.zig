@@ -1078,6 +1078,26 @@ pub const Parser = struct {
         return ast.ArrayLiteral{ .exps = exps };
     }
 
+    fn parseMapLiteral(self: *Self, open_brace: Token) CompileError!*ast.ExpNode {
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+        var entries: std.ArrayList(ast.MapEntry) = .empty;
+
+        while (self.peekCurrent().tag != .r_brace) {
+            const key = try self.parseExp(0);
+            _ = try self.expect(.colon);
+            const value = try self.parseExp(0);
+            try entries.append(self.allocator, .{ .key = key, .value = value });
+            if (!self.match(.comma)) break;
+        }
+
+        const close_brace = try self.expect(.r_brace);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .map_literal = .{ .entries = try entries.toOwnedSlice(self.allocator) } },
+            .loc = .{ .start = open_brace.loc.start, .end = close_brace.loc.end },
+        });
+    }
+
     fn parseExpList(self: *Self) CompileError![]const *ast.ExpNode {
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
@@ -1163,6 +1183,7 @@ pub const Parser = struct {
             .null_literal,
             .l_paren,
             .l_bracket,
+            .l_brace,
             .not,
             .minus,
             .at,
@@ -1565,6 +1586,9 @@ pub const Parser = struct {
                         .loc = .{ .start = tk.loc.start, .end = arr_end },
                     },
                 );
+            },
+            .l_brace => {
+                return self.parseMapLiteral(tk);
             },
             .l_paren => {
                 const was_parsing_condition = self.leaveCondition();
