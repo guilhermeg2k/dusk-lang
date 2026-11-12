@@ -3530,9 +3530,10 @@ pub const SemaAnalyzer = struct {
         if (capture.source.data == .range) return self.visitForRangeStmt(stmt);
         const source = try self.evalExp(capture.source);
         const source_type = self.type_table.getTypePtrById(source.type_id);
+        if (!source_type.is_nullable and source_type.kind == .map) return self.visitForMapStmt(stmt, source);
         const is_buffer_source = !source_type.is_nullable and (source_type.kind == .buffer or source_type.kind == .string);
         const is_array_source = !source_type.is_nullable and source_type.kind == .array;
-        if (!is_array_source and !is_buffer_source) return self.err_reporter.invalidType("array, buffer or string", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
+        if (!is_array_source and !is_buffer_source) return self.err_reporter.invalidType("array, map, buffer or string", try self.type_table.name(source.type_id, self.allocator), capture.source.loc);
         const item_type = if (is_buffer_source) self.type_table.getPrimitive(.byte) else source_type.kind.array;
         if (capture.is_item_mut) {
             if (!self.canBeMutable(item_type)) return self.err_reporter.primitiveCaptureCantBeMutable(capture.item, stmt.loc);
@@ -3567,6 +3568,26 @@ pub const SemaAnalyzer = struct {
             .do_block = body,
             .advancement = advancement,
         } });
+        return instructions.toOwnedSlice(self.allocator);
+    }
+
+    fn visitForMapStmt(self: *Self, stmt: *const ast.StatementNode, source: *ir.Value) CompileError![]ir.Instruction {
+        const capture = stmt.data.for_capture;
+        const map_type = self.type_table.getTypePtrById(source.type_id).kind.map;
+        if (capture.is_item_mut) {
+            if (!self.canBeMutable(map_type.value)) return self.err_reporter.primitiveCaptureCantBeMutable(capture.item, stmt.loc);
+            if (self.findImmutablePlace(capture.source) != null) return self.err_reporter.unwrappedValueCantBeMutable(capture.item, stmt.loc);
+        }
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const source_reference = try self.storeTemporaryValue(&instructions, "loop source", source);
+        const start = try ir.Value.init(self.allocator, .{ .data = .{ .i_int = 0 }, .type_id = self.type_table.getPrimitive(.int) });
+        const cursor = try self.storeTemporaryValue(&instructions, "loop cursor", start);
+        const map_cursor = ir.MapCursor{ .map = source_reference, .cursor = cursor };
+        const has_entry = try ir.Value.init(self.allocator, .{ .data = .{ .map_advance = map_cursor }, .type_id = self.type_table.getPrimitive(.boolean) });
+        const value = try ir.Value.init(self.allocator, .{ .data = .{ .map_entry_value = map_cursor }, .type_id = map_type.value });
+        const key = try ir.Value.init(self.allocator, .{ .data = .{ .map_entry_key = map_cursor }, .type_id = map_type.key });
+        const body = try self.lowerCaptureLoopBody(capture, value, key, stmt.loc);
+        try instructions.append(self.allocator, .{ .loop = .{ .condition = has_entry, .do_block = body, .advancement = &.{} } });
         return instructions.toOwnedSlice(self.allocator);
     }
 

@@ -51,6 +51,61 @@ pub fn clear(map: *v.Map) void {
     @memset(storage.index(), 0);
 }
 
+pub fn advanceCursor(vm: *VM, map_index: usize, cursor_index: usize) v.Value {
+    const storage = mapAt(vm, map_index).getStorage() orelse return v.FALSE_VALUE;
+    const cursor = Cursor.unpack(vm.stack[cursor_index]);
+    const entries = storage.usedEntries();
+    var position = cursor.resumePosition(entries);
+    while (position < entries.len) : (position += 1) {
+        if (entries[position].isRemoved()) continue;
+        vm.stack[cursor_index] = Cursor.pack(.{ .next_position = position + 1, .seq = entries[position].seq });
+        return v.TRUE_VALUE;
+    }
+    return v.FALSE_VALUE;
+}
+
+pub fn entryAtCursor(vm: *VM, map_index: usize, cursor_index: usize) *v.MapEntry {
+    const storage = mapAt(vm, map_index).getStorage().?;
+    return &storage.entries()[Cursor.unpack(vm.stack[cursor_index]).next_position - 1];
+}
+
+const Cursor = struct {
+    next_position: u32,
+    seq: u32,
+
+    fn unpack(value: v.Value) Cursor {
+        const raw: u64 = @bitCast(value.int64);
+        return .{ .next_position = @truncate(raw), .seq = @truncate(raw >> 32) };
+    }
+
+    fn pack(cursor: Cursor) v.Value {
+        const raw = @as(u64, cursor.next_position) | (@as(u64, cursor.seq) << 32);
+        return .{ .int64 = @bitCast(raw) };
+    }
+
+    fn resumePosition(cursor: Cursor, entries: []const v.MapEntry) u32 {
+        if (cursor.next_position == 0) return 0;
+        const visited = cursor.next_position - 1;
+        const is_visited_in_place = visited < entries.len and entries[visited].seq == cursor.seq;
+        if (is_visited_in_place) return cursor.next_position;
+        return firstEntryAfter(entries, cursor.seq);
+    }
+
+    fn firstEntryAfter(entries: []const v.MapEntry, seq: u32) u32 {
+        var low: usize = 0;
+        var high: usize = entries.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (entries[middle].seq <= seq) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return @intCast(low);
+    }
+};
+
 pub fn findValue(vm: *VM, map: *v.Map, key: v.Value) ?v.Value {
     const entry = findEntry(map, key, hashKey(vm, map.key_type, key)) orelse return null;
     return entry.value;

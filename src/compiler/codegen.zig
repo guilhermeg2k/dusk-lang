@@ -479,6 +479,9 @@ pub const BytecodeGen = struct {
             .int_to_float => |operand| try self.genIntToFloat(operand, value.type_id, target_reg),
             .array_length => |array| try self.genUnaryOpcode(.ARRAY_LEN, array, value.type_id, target_reg),
             .bytes_length => |bytes| try self.genUnaryOpcode(.BYTES_LEN, bytes, value.type_id, target_reg),
+            .map_advance => |map_cursor| try self.genMapCursorOpcode(.MAP_NEXT, map_cursor, value.type_id, target_reg),
+            .map_entry_key => |map_cursor| try self.genMapCursorOpcode(.MAP_KEY_AT, map_cursor, value.type_id, target_reg),
+            .map_entry_value => |map_cursor| try self.genMapCursorOpcode(.MAP_VALUE_AT, map_cursor, value.type_id, target_reg),
         }
 
         return target_reg;
@@ -1390,6 +1393,15 @@ pub const BytecodeGen = struct {
         self.freeRegisterN(self.next_free_register - saved_next_free);
     }
 
+    fn genMapCursorOpcode(self: *Self, op: bc.OpCode, map_cursor: ir.MapCursor, result_type: tt.TypeId, target_reg: u8) !void {
+        const saved_next_free = self.next_free_register;
+        const map_register = try self.genValue(map_cursor.map, try self.consumeRegister());
+        const cursor_register = self.var_register_id_by_uid.get(map_cursor.cursor.data.identifier.uid).?;
+        try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = target_reg, .b = map_register, .c = cursor_register });
+        self.register_types[target_reg] = result_type;
+        self.freeRegisterN(self.next_free_register - saved_next_free);
+    }
+
     fn isBuiltInSteps(value: *const ir.Value) bool {
         return switch (value.data) {
             .struct_init, .i_array, .map_init, .union_init, .block_value, .try_call, .catch_call => true,
@@ -1443,6 +1455,7 @@ pub const BytecodeGen = struct {
             .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
             .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,
             .union_tag, .union_payload, .int_to_float, .array_length, .bytes_length => |inner| readsVariable(inner, uid),
+            .map_advance, .map_entry_key, .map_entry_value => |map_cursor| readsVariable(map_cursor.map, uid) or readsVariable(map_cursor.cursor, uid),
             .try_call, .catch_call, .block_value => true,
             .i_float, .i_int, .i_bool, .i_string, .i_void, .i_null, .func_ref => false,
         };

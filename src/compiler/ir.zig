@@ -252,6 +252,9 @@ pub const Value = struct {
         int_to_float: *Value,
         array_length: *Value,
         bytes_length: *Value,
+        map_advance: MapCursor,
+        map_entry_key: MapCursor,
+        map_entry_value: MapCursor,
     },
 
     type_id: TypeId,
@@ -274,6 +277,11 @@ pub const BinaryOp = struct {
 
 pub const NullBoxNNullOp = struct {
     value: *Value,
+};
+
+pub const MapCursor = struct {
+    map: *Value,
+    cursor: *Value,
 };
 
 pub const MapFind = struct {

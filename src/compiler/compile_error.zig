@@ -799,7 +799,7 @@ pub const CompileErrorReporter = struct {
 
     pub fn primitiveParamsCantBeMutable(self: *Self, loc: Loc) CompileError {
         self.log(
-            "Primitive params can't be mutable: only arrays, buffers, structs and unions can be changed through a mut param",
+            "Primitive params can't be mutable: only arrays, maps, buffers, structs and unions can be changed through a mut param",
             loc,
         );
         return error.PrimitiveParamsCantBeMutable;
@@ -817,7 +817,7 @@ pub const CompileErrorReporter = struct {
         self.log(
             try allocPrint(
                 self.allocator,
-                "Capture '{s}' can't be mut: only arrays, buffers, structs and unions can be changed through a mut capture",
+                "Capture '{s}' can't be mut: only arrays, maps, buffers, structs and unions can be changed through a mut capture",
                 .{name},
             ),
             loc,

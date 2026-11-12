@@ -341,6 +341,13 @@ test "maps: garbage collection and copy" {
     try runCase("map-copy.dsk");
 }
 
+test "maps: loops" {
+    try runCase("map-loops.dsk");
+    try runCaseError("sema/map-loop-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+    try runCaseError("sema/map-loop-nullable.dsk", error.InvalidType);
+    try runCaseError("sema/map-loop-mut-immutable.dsk", error.UnwrappedCantBeMutable);
+}
+
 test "strings compare by content with == and !=" {
     try runCaseOutput("string-equality.dsk", "true\nfalse\n");
     try runCaseError("sema/string-compare-int.dsk", error.CantCompare);

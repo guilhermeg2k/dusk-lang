@@ -219,6 +219,18 @@ pub const VM = struct {
                     map.findEntryInto(self, stack_base + inst.a, stack_base + inst.b, stack_base + inst.c);
                 },
 
+                .MAP_NEXT => {
+                    stack[stack_base + inst.a] = map.advanceCursor(self, stack_base + inst.b, stack_base + inst.c);
+                },
+
+                .MAP_KEY_AT => {
+                    stack[stack_base + inst.a] = map.entryAtCursor(self, stack_base + inst.b, stack_base + inst.c).key;
+                },
+
+                .MAP_VALUE_AT => {
+                    stack[stack_base + inst.a] = map.entryAtCursor(self, stack_base + inst.b, stack_base + inst.c).value;
+                },
+
                 .BYTES_NEW => {
                     current_frame.cur_inst = cur_instruction;
                     stack[stack_base + inst.a] = try self.newBuffer(stack[stack_base + inst.b].int64);
