@@ -11,6 +11,7 @@ The source files involved:
 | `src/runtime/vm.zig` | The interpreter (`VM.execute`), allocation helpers, `copy` |
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
 | `src/runtime/value.zig` | `Value`, `ValueType` and every heap object layout |
+| `src/runtime/map.zig` | Map lookups, inserts, removal, growth and loop cursors (section 6.8) |
 | `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
@@ -108,6 +109,7 @@ How Dusk types map to values (`ValueType.fromTypeId`):
 | `void`, `null` | `0` |
 | `string`, `buffer` | pointer to `Bytes` |
 | `[]T` | pointer to `Array` |
+| `map[K, V]` | pointer to `Map` |
 | struct | pointer to `Struct` |
 | union | pointer to `Union` |
 | `?int`, `?float`, `?bool`, `?byte`, `?Enum` | pointer to `NullBox`, or `0` |
@@ -118,6 +120,7 @@ How Dusk types map to values (`ValueType.fromTypeId`):
 
 The few places that need a type at runtime carry it explicitly:
 - `Array.kind`: the element kind, used for printing and GC tracing.
+- `Map.key_type` / `Map.value_type` (copied into `MapStorage`): how to hash and compare keys, and what the GC traces.
 - `NullBox.kind` and `Cell.kind`: the kind of the boxed value.
 - Struct and union descriptors.
 - `capture_kinds` for closures.
@@ -130,7 +133,7 @@ Every heap object starts with the same header:
 
 ```zig
 HeapValue = extern struct {
-    kind: HeapValueType,         // array, struct, string, buffer, union, null_box, closure, cell, task
+    kind: HeapValueType,         // array, struct, string, buffer, union, null_box, closure, cell, task, map, map_storage
     gc_forward: ?*HeapValue,     // set during a GC: where this object was copied
     relocated: ?*HeapValue,      // set when an array grows: where it moved
 }
@@ -142,17 +145,20 @@ The header is 24 bytes. Each object type embeds it as its `obj` field, and code 
 |---|---|---|---|
 | `Bytes` (string, buffer) | `len` | `len` bytes | 32 + len |
 | `Array` | `kind`, `len`, `capacity` | `capacity` values | 48 + 8 × capacity |
-| `Struct` | `descriptor_id`, `field_count` | `field_count` values | 32 + 8 × fields |
+| `Struct` | `descriptor_id`, `field_count`, `identity` | `field_count` values | 32 + 8 × fields |
 | `Union` | `descriptor_id`, `active_tag` | one value (the payload) | 40 |
 | `NullBox` | `kind`, `value` | none | 40 |
 | `Closure` | `function`, `capture_count` | `capture_count` values | 40 + 8 × captures |
 | `Cell` | `kind`, `value` | none | 40 |
 | `Task` | `state` (a `*TaskState`, section 11) | none | 32 |
+| `Map` | `key_type`, `value_type`, `next_seq`, `storage` | none | 40 |
+| `MapStorage` | `key_type`, `value_type`, `len`, `count`, `capacity`, `index_mask` | `capacity` entries, then the index | 48 + 24 × capacity + 4 × index slots |
 
 Notes:
 
 - **Strings and buffers** share `Bytes` and differ only in `kind`. Strings are immutable. Buffers are changed in place with `BYTES_SET`.
 - **Arrays** start with a capacity of at least 8 (`ARRAY_INIT` takes `max(len, 8)`, capped at 255 as an operand), and grow by 1.5× (`calcNewCapacity`). Growing allocates a new array and leaves `relocated` pointing to it in the old one (section 6.2).
+- **Maps** are two objects: a fixed `Map` header that values point to, and a `MapStorage` it owns (section 6.8).
 - **Unions** always hold one payload slot. `active_tag == NO_TAG` (`0xFFFF`) means no variant has been set.
 - **Static closures**: every function has a `Closure` with `capture_count == 0` in `Program.static_closures`, built when codegen finishes. They live outside the GC heap. `Closure.isStatic` identifies them, and the GC skips them.
 
@@ -289,6 +295,19 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | `ARRAY_POP R[a] R[b]` | remove and return the last element (`0` if empty; the prelude's `pop` checks first) |
 | `DEEP_COPY R[a] R[b]` | `copy(x)` (section 10) |
 
+**Maps** (section 6.8). They call `noinline` functions in `runtime/map.zig`.
+
+| Instruction | Effect |
+|---|---|
+| `MAP_INIT R[a] T[b] T[c]` | new empty map with key kind `b` and value kind `c` (the storage comes with the first entry) |
+| `MAP_GET R[a] R[b] R[c]` | `R[b][R[c]]` as `?V`: `0` when missing; a primitive value is put in a new `NullBox` |
+| `MAP_SET R[a] R[b] R[c]` | `R[a][R[b]] = R[c]`, growing the storage first if it is full |
+| `MAP_FIND R[a] R[b] R[c]` | `R[a]` = whether `R[c]` has an entry, `R[a+1]` = its raw value (`if m[k]: v` and `m[k] orelse d` with primitive values) |
+| `MAP_NEXT R[a] R[b] R[c]` | moves the loop cursor `R[c]` to the next live entry of `R[b]`; `R[a]` = whether there was one |
+| `MAP_KEY_AT R[a] R[b] R[c]`, `MAP_VALUE_AT R[a] R[b] R[c]` | key or value of the entry under cursor `R[c]` |
+
+`std/map` (`len`, `has`, `remove`, `keys`, `values`, `clear`) are natives called with `CALL`.
+
 **Structs, unions and nullables**
 
 | Instruction | Effect |
@@ -374,6 +393,23 @@ end:                             right:
 ```
 
 The fresh register matters for `flag = other and flag`: writing the left side straight into `flag`'s register would change `flag` before the right side reads it. Sema's own conditions (range checks in `when`, nullable `==`) are lowered the same way.
+
+### 6.8 Maps
+
+A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
+
+```zig
+MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 24 bytes
+```
+
+- **Index.** A power-of-two array of `u32`, at least twice the capacity, so it is at most half full. A slot holds `entry position + 1`, or `0` when empty. A lookup hashes the key and probes linearly from `hash & index_mask`.
+- **Hashing** (`hashKey`): ints, bytes and enums hash their `i64`; bools only `value.bool` (the other 7 bytes of a bool `Value` are undefined); strings `Wyhash` over their bytes; structs their `identity`. The result goes through `std.hash.int` and keeps 31 bits.
+- **Equality.** Ints by value, strings by length and bytes, structs by pointer. The GC updates both the stored key and the key being looked up, so pointer equality survives collections.
+- **Struct identity.** The copying GC moves structs, so a struct key can't hash its address. `Struct.identity` (a `u32` in the header padding, so structs didn't grow) is `0` until the struct is first hashed, then takes `vm.next_struct_identity`. GC clones keep it (byte copies). `copy` resets it on the copies. Wrapping the counter only makes buckets collide.
+- **Removal** sets the top bit of `hash`, clears the key and value (so the GC frees what they held), and leaves the index slot pointing at the dead entry so probe chains stay intact. It never allocates.
+- **Growth.** When `len == capacity`, `ensureRoomForEntry` allocates a new storage and copies the live entries in order, rebuilding the index: the same capacity when at least a quarter of the entries are removed (compaction), otherwise twice it. The first storage has 8 entries.
+- **Loops.** Each entry has a `seq` (insertion number, increasing along the entry array; `Map.next_seq` starts at 1). The loop cursor is one int register: the position after the visited entry (low 32 bits) and that entry's `seq` (high 32 bits). `MAP_NEXT` checks the visited entry is still at its position; if a compaction moved entries, it binary searches the first entry with a larger `seq`. Removed entries are skipped and appended ones are reached at the end. `seq` wraps after 4 billion inserts into one map; a loop running at that point could revisit entries.
+- **Reads without boxes.** `MAP_GET` boxes a primitive value because `m[k]` is a `?V`. Sema lowers `if m[k]: v` and `m[k] orelse d` (non-nullable map, primitive non-nullable `V`) to `ir.map_find`, which codegen turns into `MAP_FIND` with two consecutive registers bound to the found flag and the raw value.
 
 ## 7. Calls, returns and errors
 
@@ -543,6 +579,8 @@ Then the GC empties `gc_queue`, which is used as a stack, so objects are visited
 | `Cell` | `value`, when `kind` is a heap kind |
 | `NullBox` | nothing (it only boxes primitives) |
 | `Task` | sets `is_reachable` on its `TaskState`; when the task is done and succeeded with a heap value, its `result` |
+| `Map` | its `storage` |
+| `MapStorage` | keys when `key_type` is a heap kind, values when `value_type` is, for the `len` used entries (removed ones hold `0`) |
 
 Clones are byte copies with `gc_forward` and `relocated` cleared.
 
@@ -554,7 +592,7 @@ Then `Scheduler.freeUnreachableTasks` frees every done task that no `Task` handl
 
 - **Identity.** A map from original to copy ensures shared objects stay shared once, and cycles end.
 - **Order.** A worklist processes objects in the same order as GC tracing.
-- **What is shared instead of cloned.** Strings, null boxes, closures and cells are treated as immutable or shared by design, so copies point to the same object.
+- **What is shared instead of cloned.** Strings, null boxes, closures and cells are treated as immutable or shared by design, so copies point to the same object. Map keys are shared too: the copy clones the `Map` and its `MapStorage` and deep-copies only the values, so a struct key still finds its entry. Struct copies get `identity = 0`.
 - **GC check.** `maybeCollectGarbage` runs once, at the start, for the size of the root object. The copies after that are allocated without checks, because the objects still waiting in the worklist aren't GC roots, so a collection in the middle would lose them.
 
 ## 11. Tasks

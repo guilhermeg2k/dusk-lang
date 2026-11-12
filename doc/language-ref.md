@@ -296,6 +296,30 @@ append(empty, 4)
 
 Indexing starts at 0. Reading past the end is a runtime error. `append` needs a mutable array.
 
+### Maps
+
+A map stores values by key. The type is written `map[K, V]`, with `K` the key type and `V` the value type.
+
+```nim
+let ages = {"ana": 31, "bob": 27}
+let mut scores: map[string, int] = {}
+scores["ana"] = 10
+
+echo(ages["ana"])             # 31
+echo(ages["zoe"])             # null
+echo(ages["zoe"] orelse 0)    # 0
+```
+
+- Keys can be `int`, `byte`, `bool`, `string`, enums or structs. Strings match by content. Structs match by identity: the key is that exact struct, so two `Point(x = 1, y = 2)` built separately are two different keys, and so is a `copy` of a struct.
+- `{}` is an empty map. Like `[]`, it needs a written type: an annotation, a parameter, a field or a return type. Otherwise the entries decide: the first key and value give the types, and `int` values next to `float` ones become `float`s. The same constant key twice is a compile error.
+- `m[k]` reads a value. The result is always nullable (`?V`): `null` when the key is missing. Read it with `orelse`, `if m[k]: v then` or `map::has`. A map with nullable values can hold `null`, and only `map::has` tells that apart from a missing key.
+- `m[k] = v` adds an entry or replaces its value. It needs a mutable map, like changing an array.
+- `m?[k]` reads from a nullable map, so lookups chain: `grid[1]?[2]` on a `map[int, map[int, string]]`.
+- Entries keep the order they were added in, for loops, `map::keys` and `map::values`. Replacing a value keeps its place.
+- `==` compares identity, and `echo` prints `<map>`.
+
+The other map functions (`map::len`, `map::remove`, ...) are in [std/map](#stdmap). `map` is a built-in type name: a struct, enum or union can't be called `map`, but functions and variables can.
+
 ## 4. Structs
 
 A struct groups named fields and the functions that work on them.
@@ -542,7 +566,7 @@ count = null
 
 A nullable can't be used directly as its inner type. Unwrap it first.
 
-`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`. `?string` can only be compared with `null`.
+`==` and `!=` are the exception: nullable primitives and enums (`?int`, `?float`, `?bool`, `?byte`, `?Enum`) compare by value. `count == 5` is true when `count` holds `5`, two nulls are equal and `null` is never equal to a value. Other nullables (`?[]int`, `?Struct`) compare like their inner type: identity, with `null` equal only to `null`. `?string` compares by content (see [Comparison and logic](#comparison-and-logic)).
 
 ### Capture
 
@@ -556,7 +580,7 @@ else
 end
 ```
 
-`if value: mut name` captures the value so it can be changed through `name`: setting a field, an item or appending changes the original. It needs a mutable subject (a `let mut` variable or a path from one), and only works for arrays, buffers, structs and unions: a `mut` capture of a primitive, string or enum is an error. The capture itself can't be reassigned (`name = other` is an error), since that would only change the local name.
+`if value: mut name` captures the value so it can be changed through `name`: setting a field, an item or appending changes the original. It needs a mutable subject (a `let mut` variable or a path from one), and only works for arrays, maps, buffers, structs and unions: a `mut` capture of a primitive, string or enum is an error. The capture itself can't be reassigned (`name = other` is an error), since that would only change the local name.
 
 ### Nullable fallback
 
@@ -604,7 +628,9 @@ let user = User(country = null)
 echo(user.country?.name)   # null
 ```
 
-Using `?.` on a value that can't be null is an error.
+`?[` reads an item from a nullable array or map the same way: `maybe_items?[0]`, `grid[1]?[2]`.
+
+Using `?.` or `?[` on a value that can't be null is an error. Assigning through them (`user.country?.name = "x"`) is an error too: unwrap the value first with `if user.country: mut country then`.
 
 ## 8. Operators
 
@@ -645,7 +671,7 @@ An `int` mixed with a `float` is promoted to `float` (see [Primitives](#primitiv
 
 `==` and `!=` only compare values of the same type: `true == 1`, `1 == "a"` and a `Point` with a `Size` are compile errors, since they could never be equal. Numbers are the exception: an `int`, `float` or `byte` compares with any other number (`1 == 1.0`). A nullable compares with `null` or with its inner type, and `x == null` is an error when `x` can't be null.
 
-On arrays, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions and functions can't be compared with `==`.
+On arrays, maps, structs and buffers, `==` and `!=` compare identity: two separately built `[1, 2]` are not equal, and a value is equal to its `copy` only if it's the same object. There are no content-comparison functions for them yet. Unions and functions can't be compared with `==`.
 
 Strings compare by content: `name == "Dusk"` is true when `name` holds that text, wherever it was built. A `?string` compares with `null` or with a `string` (two nulls are equal, `null` is never equal to a string).
 
@@ -818,9 +844,20 @@ for items: item do
 end
 ```
 
-Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors. `for items: mut item do` makes the item capture mutable, so changes through it (fields, items, `append`) change the array's element. It needs a mutable source and items that are arrays, buffers, structs or unions, and the capture can't be reassigned. To replace elements, or to change items of other types, use a mutable source array and its index.
+Use `_` to ignore either capture, as in `for items: _, index do ... end`. Captures are immutable and visible only inside the loop body. They can shadow outer names, which become visible again after the loop. Assignments and mutations through a capture are errors. `for items: mut item do` makes the item capture mutable, so changes through it (fields, items, `append`) change the array's element. It needs a mutable source and items that are arrays, maps, buffers, structs or unions, and the capture can't be reassigned. To replace elements, or to change items of other types, use a mutable source array and its index.
 
 The source can be any expression returning a non-nullable array, buffer or string. Unwrap nullable values first. Buffers and strings are traversed byte by byte: the item is a `byte` and the index its byte offset. The loop evaluates the source and its length once, retains that array, and reads each item when its iteration begins. Empty arrays run zero iterations. Appended items are not visited; changes to upcoming elements are visible. Reassigning the source variable does not change the array being traversed. Heap values retain their ordinary shared identity; iteration does not clone them.
+
+Maps are traversed the same way, in the order their entries were added. The first capture is the value and the second the key:
+
+```nim
+let ages = {"ana": 31, "bob": 27}
+for ages: age, name do
+    echo("$name: $age")
+end
+```
+
+The map can change inside the loop: an entry removed before the loop reaches it is skipped, and an entry added during the loop is visited at the end. `mut` captures work as for arrays.
 
 A range keeps its lower and upper bounds separate. Ranges are supported directly in capture loops and `when` cases; they cannot be stored in variables, passed as arguments or returned as values yet.
 
@@ -1723,7 +1760,7 @@ The **prelude** is always available. Everything else is in the **standard librar
 | :--------- | :------------------------------------------------ | :----------------------------------------------------------------------------------- |
 | `echo`     | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
 | `assert`   | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
-| `copy`     | `copy(value: T) -> T`                             | Returns a deep copy of an array, buffer, struct or union (see below).                |
+| `copy`     | `copy(value: T) -> T`                             | Returns a deep copy of an array, map, buffer, struct or union (see below).           |
 | `to_byte`  | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
 | `to_float` | `to_float(value: int \| byte \| float) -> float` | Converts an `int`, `byte` or `float` to `float`. Also takes a `T` whose type list only has `int`, `byte` and `float` (`[T: int \| float]`). |
 | `to_int`   | `to_int(value: float) -> ConversionError!int`     | Converts a `float` to `int`, dropping the fraction toward zero (`-7.9` gives `-7`); fails with `ConversionError.Overflow` for `nan`, infinities and values outside the `int` range. |
@@ -1732,9 +1769,9 @@ The **prelude** is always available. Everything else is in the **standard librar
 
 The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`).
 
-`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as raw values.
+`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, maps as `<map>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as raw values.
 
-`copy(x)` copies everything reachable from `x`: nested arrays, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
+`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
 ### std/array
 
@@ -1765,6 +1802,39 @@ func main() -> void
         let item = pop(stack) catch _ then break end
         echo(item)   # 3, 2, 1
     end
+end
+```
+
+### std/map
+
+Reading and writing entries uses indexing (`m[k]`, `m[k] = v`, see [Maps](#maps)). Functions that change a map take it as `mut`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `len(m)` | `int` | The number of entries. |
+| `has(m, key)` | `bool` | Whether `key` has an entry, also when its value is `null`. |
+| `remove(mut m, key)` | `bool` | Removes the entry for `key`. Returns whether there was one. |
+| `keys(m)` | `[]K` | A new array with the keys, in insertion order. |
+| `values(m)` | `[]V` | A new array with the values, in insertion order. |
+| `clear(mut m)` | `void` | Removes every entry. |
+
+```nim
+import std/map
+
+func count_words(words: []string) -> map[string, int]
+    let mut counts: map[string, int] = {}
+    for words: word do
+        counts[word] = (counts[word] orelse 0) + 1
+    end
+    return counts
+end
+
+func main() -> void
+    let mut counts = count_words(["a", "b", "a"])
+    echo(counts["a"])                 # 2
+    map::remove(counts, "b")
+    echo(map::keys(counts))           # [a]
+    echo(map::len(counts))            # 1
 end
 ```
 
@@ -1880,6 +1950,7 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`.
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
+- **Maps**: keys can't be floats, nullables, arrays, maps, buffers, unions or functions, and struct keys match by identity only. There's no content comparison for maps (`==` is identity).
 - **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`echo`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
 - **Modules**: libraries (`import jsonc`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
 - **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.

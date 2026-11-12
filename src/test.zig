@@ -348,6 +348,12 @@ test "maps: loops" {
     try runCaseError("sema/map-loop-mut-immutable.dsk", error.UnwrappedCantBeMutable);
 }
 
+test "maps: std/map" {
+    try runCase("map-functions.dsk");
+    try runCaseError("sema/map-remove-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/map-has-wrong-key.dsk", error.InvalidType);
+}
+
 test "strings compare by content with == and !=" {
     try runCaseOutput("string-equality.dsk", "true\nfalse\n");
     try runCaseError("sema/string-compare-int.dsk", error.CantCompare);
