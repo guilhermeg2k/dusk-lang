@@ -336,6 +336,11 @@ test "maps: indexing" {
     try runCaseError("sema/map-nullable-index.dsk", error.NullableMustBeUnwrapped);
 }
 
+test "maps: garbage collection and copy" {
+    try runCase("gc-maps.dsk");
+    try runCase("map-copy.dsk");
+}
+
 test "strings compare by content with == and !=" {
     try runCaseOutput("string-equality.dsk", "true\nfalse\n");
     try runCaseError("sema/string-compare-int.dsk", error.CantCompare);

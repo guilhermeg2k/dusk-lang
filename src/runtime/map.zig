@@ -34,6 +34,23 @@ pub fn findEntryInto(vm: *VM, found_index: usize, map_index: usize, key_index: u
     vm.stack[found_index + 1] = value orelse v.NULL_VALUE;
 }
 
+pub fn removeEntry(vm: *VM, map: *v.Map, key: v.Value) bool {
+    const storage = map.getStorage() orelse return false;
+    const entry = findEntry(map, key, hashKey(vm, map.key_type, key)) orelse return false;
+    entry.hash |= v.MapEntry.removed_bit;
+    entry.key = v.NULL_VALUE;
+    entry.value = v.NULL_VALUE;
+    storage.count -= 1;
+    return true;
+}
+
+pub fn clear(map: *v.Map) void {
+    const storage = map.getStorage() orelse return;
+    storage.len = 0;
+    storage.count = 0;
+    @memset(storage.index(), 0);
+}
+
 pub fn findValue(vm: *VM, map: *v.Map, key: v.Value) ?v.Value {
     const entry = findEntry(map, key, hashKey(vm, map.key_type, key)) orelse return null;
     return entry.value;

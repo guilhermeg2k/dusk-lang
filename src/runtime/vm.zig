@@ -847,6 +847,12 @@ pub const VM = struct {
                         try self.deepCopySlot(&u.getDataPtr()[0], &copies, &pending);
                     }
                 },
+                .map => try self.deepCopySlot(&v.HeapValue.getParentPtr(v.Map, copy).storage, &copies, &pending),
+                .map_storage => {
+                    const storage = v.HeapValue.getParentPtr(v.MapStorage, copy);
+                    if (!storage.value_type.isHeapType()) continue;
+                    for (storage.usedEntries()) |*entry| try self.deepCopySlot(&entry.value, &copies, &pending);
+                },
                 else => {},
             }
         }
@@ -870,6 +876,9 @@ pub const VM = struct {
         }
         const copy = try gc.cloneHeapObj(self.getCurrentHeapAllocator(), current);
         self.increaseHeapAllocationCount(gc.heapObjectSize(copy));
+        if (copy.kind == .@"struct") {
+            v.HeapValue.getParentPtr(v.Struct, copy).identity = 0;
+        }
         try copies.put(self.allocator, current, copy);
         if (copy.kind != .buffer) {
             try pending.append(self.allocator, copy);
