@@ -860,6 +860,11 @@ pub const CompileErrorReporter = struct {
         return error.DuplicateMapKey;
     }
 
+    pub fn cantAssignThroughOptionalChain(self: *Self, loc: Loc) CompileError {
+        self.log("Can't assign through '?.' or '?[': unwrap the value first (if x: mut y)", loc);
+        return error.CantAssignThroughOptionalChain;
+    }
+
     pub fn reservedTypeName(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is a built-in type, so a type can't be named '{s}'", .{ identifier, identifier }), loc);
         return error.ReservedTypeName;
@@ -1159,6 +1164,7 @@ pub const CompileError = error{
     InvalidMapKey,
     DuplicateMapKey,
     ReservedTypeName,
+    CantAssignThroughOptionalChain,
 };
 
 const std = @import("std");

@@ -280,6 +280,9 @@ pub const BytecodeGen = struct {
                 .unwrap_null_box => |stmt| {
                     _ = try self.genUnwrapNullBox(stmt, try self.consumeRegister());
                 },
+                .map_find => |stmt| {
+                    try self.genMapFind(stmt);
+                },
                 .update_capture => |stmt| {
                     try self.genUpdateCapture(stmt);
                 },
@@ -625,6 +628,7 @@ pub const BytecodeGen = struct {
             const is_instance_member = switch (target_type.kind) {
                 .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
                 .@"union" => |u| u.variants.contains(idx.index.data.i_string),
+                .array, .map => true,
                 else => false,
             };
             if (is_instance_member) {
@@ -650,6 +654,12 @@ pub const BytecodeGen = struct {
                 const array_reg = try self.genValue(idx.target, try self.consumeRegister());
                 defer self.freeRegister();
                 try self.genArrayLoad(target_reg, array_reg, idx.index);
+                self.register_types[target_reg] = value.type_id;
+            },
+            .map => {
+                const map_reg = try self.genValue(idx.target, try self.consumeRegister());
+                defer self.freeRegister();
+                try self.genMapLoad(target_reg, map_reg, idx.index);
                 self.register_types[target_reg] = value.type_id;
             },
             .buffer, .string => {
@@ -682,7 +692,6 @@ pub const BytecodeGen = struct {
     // end:
     fn genNullableIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
         const target_type = self.type_table.getTypePtrById(idx.target.type_id);
-        const member_name = idx.index.data.i_string;
 
         const obj_reg = try self.genValue(idx.target, try self.consumeRegister());
         const cond_reg = try self.consumeRegister();
@@ -703,6 +712,7 @@ pub const BytecodeGen = struct {
 
         switch (target_type.kind) {
             .@"struct" => |@"struct"| {
+                const member_name = idx.index.data.i_string;
                 const field_index = @"struct".field_index_by_name.get(member_name) orelse unreachable;
                 const field_type_id = (@"struct".fields.get(member_name) orelse unreachable).type_id;
                 const field_kind = valueTypeFromTypeId(self.type_table, field_type_id);
@@ -712,26 +722,49 @@ pub const BytecodeGen = struct {
                 } else {
                     const raw_reg = try self.consumeRegister();
                     defer self.freeRegister();
-
                     try self.genStructLoad(raw_reg, obj_reg, @intCast(field_index));
                     self.register_types[raw_reg] = field_type_id;
-
-                    try self.chunk_instructions.append(self.allocator, .{
-                        .op = .NULL_BOX_INIT,
-                        .a = target_reg,
-                        .b = @intFromEnum(field_kind),
-                        .c = raw_reg,
-                    });
-                    try self.recordHeapMap();
+                    try self.genRegisterNullBox(target_reg, raw_reg, field_kind);
                 }
             },
+            .array => |item_type_id| {
+                const item_kind = valueTypeFromTypeId(self.type_table, item_type_id);
+
+                if (item_kind.isHeapType()) {
+                    try self.genArrayLoad(target_reg, obj_reg, idx.index);
+                } else {
+                    const raw_reg = try self.consumeRegister();
+                    defer self.freeRegister();
+                    try self.genArrayLoad(raw_reg, obj_reg, idx.index);
+                    self.register_types[raw_reg] = item_type_id;
+                    try self.genRegisterNullBox(target_reg, raw_reg, item_kind);
+                }
+            },
+            .map => try self.genMapLoad(target_reg, obj_reg, idx.index),
             // UNION_LOAD already boxes primitive variants
-            .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, member_name),
+            .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, idx.index.data.i_string),
             else => unreachable,
         }
 
         self.chunk_instructions.items[jump_idx].putBEx(try self.currentPosition());
         self.register_types[target_reg] = value.type_id;
+    }
+
+    fn genRegisterNullBox(self: *Self, target_reg: u8, raw_reg: u8, raw_kind: v.ValueType) !void {
+        try self.chunk_instructions.append(self.allocator, .{
+            .op = .NULL_BOX_INIT,
+            .a = target_reg,
+            .b = @intFromEnum(raw_kind),
+            .c = raw_reg,
+        });
+        try self.recordHeapMap();
+    }
+
+    fn genMapLoad(self: *Self, target_reg: u8, map_reg: u8, key: *ir.Value) !void {
+        const key_reg = try self.genValue(key, try self.consumeRegister());
+        defer self.freeRegister();
+        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_GET, .a = target_reg, .b = map_reg, .c = key_reg });
+        try self.recordHeapMap();
     }
 
     fn genStructLoad(self: *Self, target_reg: u8, struct_reg: u8, field_index: u8) !void {
@@ -1681,6 +1714,11 @@ pub const BytecodeGen = struct {
                 defer self.freeRegisterN(3);
                 try self.chunk_instructions.append(self.allocator, .{ .op = .BYTES_SET, .a = buffer_reg, .b = index_reg, .c = value_reg });
             },
+            .map => {
+                const map_reg = try self.genValue(indexed.target, try self.consumeRegister());
+                try self.genMapSet(map_reg, indexed.index, stmt.value);
+                self.freeRegister();
+            },
             else => unreachable,
         }
     }
@@ -1700,6 +1738,19 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = stmt.unwrapped.type_id;
 
         return target_reg;
+    }
+
+    fn genMapFind(self: *Self, stmt: ir.MapFind) !void {
+        const found_reg = try self.consumeRegister();
+        const value_reg = try self.consumeRegister();
+        const map_reg = try self.genValue(stmt.map, try self.consumeRegister());
+        const key_reg = try self.genValue(stmt.key, try self.consumeRegister());
+        self.freeRegisterN(2);
+        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_FIND, .a = found_reg, .b = map_reg, .c = key_reg });
+        self.register_types[found_reg] = self.type_table.getPrimitive(.boolean);
+        self.register_types[value_reg] = stmt.value_type;
+        try self.bindVariable(stmt.found_uid, found_reg);
+        try self.bindVariable(stmt.value_uid, value_reg);
     }
 
     fn genUpdateCapture(self: *Self, stmt: ir.UpdateCapture) !void {

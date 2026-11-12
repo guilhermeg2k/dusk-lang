@@ -205,9 +205,18 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = try map.newMap(self, @enumFromInt(inst.b), @enumFromInt(inst.c));
                 },
 
+                .MAP_GET => {
+                    current_frame.cur_inst = cur_instruction;
+                    stack[stack_base + inst.a] = try map.readEntry(self, stack_base + inst.b, stack_base + inst.c);
+                },
+
                 .MAP_SET => {
                     current_frame.cur_inst = cur_instruction;
                     try map.setEntry(self, stack_base + inst.a, stack_base + inst.b, stack_base + inst.c);
+                },
+
+                .MAP_FIND => {
+                    map.findEntryInto(self, stack_base + inst.a, stack_base + inst.b, stack_base + inst.c);
                 },
 
                 .BYTES_NEW => {

@@ -1,0 +1,4 @@
+func main() -> void
+    let m = {"a": 1}
+    let x = m[1]
+end

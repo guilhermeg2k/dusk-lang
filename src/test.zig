@@ -324,6 +324,18 @@ test "maps: types and literals" {
     try runCaseError("sema/map-no-value-coercion.dsk", error.InvalidType);
 }
 
+test "maps: indexing" {
+    try runCase("map-indexing.dsk");
+    try runCase("map-unboxed-reads.dsk");
+    try runCaseError("sema/map-write-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/map-write-immutable-param.dsk", error.NotMutable);
+    try runCaseError("sema/map-wrong-key-type.dsk", error.InvalidIndexing);
+    try runCaseError("sema/map-wrong-value-type.dsk", error.InvalidType);
+    try runCaseError("sema/map-assign-optional-index.dsk", error.CantAssignThroughOptionalChain);
+    try runCaseError("sema/assign-through-optional-chain.dsk", error.CantAssignThroughOptionalChain);
+    try runCaseError("sema/map-nullable-index.dsk", error.NullableMustBeUnwrapped);
+}
+
 test "strings compare by content with == and !=" {
     try runCaseOutput("string-equality.dsk", "true\nfalse\n");
     try runCaseError("sema/string-compare-int.dsk", error.CantCompare);

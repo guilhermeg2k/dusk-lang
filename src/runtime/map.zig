@@ -21,9 +21,30 @@ pub fn setEntry(vm: *VM, map_index: usize, key_index: usize, value_index: usize)
     appendEntry(map, map.getStorage().?, vm.stack[key_index], vm.stack[value_index], hash);
 }
 
+pub fn readEntry(vm: *VM, map_index: usize, key_index: usize) !v.Value {
+    const map = mapAt(vm, map_index);
+    const value = findValue(vm, map, vm.stack[key_index]) orelse return v.NULL_VALUE;
+    if (map.value_type.isHeapType() or map.value_type == .null) return value;
+    return boxValue(vm, value, map.value_type);
+}
+
+pub fn findEntryInto(vm: *VM, found_index: usize, map_index: usize, key_index: usize) void {
+    const value = findValue(vm, mapAt(vm, map_index), vm.stack[key_index]);
+    vm.stack[found_index] = if (value != null) v.TRUE_VALUE else v.FALSE_VALUE;
+    vm.stack[found_index + 1] = value orelse v.NULL_VALUE;
+}
+
 pub fn findValue(vm: *VM, map: *v.Map, key: v.Value) ?v.Value {
     const entry = findEntry(map, key, hashKey(vm, map.key_type, key)) orelse return null;
     return entry.value;
+}
+
+fn boxValue(vm: *VM, value: v.Value, kind: v.ValueType) !v.Value {
+    const size = v.NullBox.calc_size();
+    try vm.maybeCollectGarbage(size);
+    const box = try v.NullBox.init(vm.getCurrentHeapAllocator(), value, kind);
+    vm.increaseHeapAllocationCount(size);
+    return .{ .heap_obj = &box.obj };
 }
 
 fn mapAt(vm: *VM, index: usize) *v.Map {

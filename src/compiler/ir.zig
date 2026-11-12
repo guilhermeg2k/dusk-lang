@@ -26,6 +26,7 @@ pub const Instruction = union(enum) {
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
+    map_find: MapFind,
     update_capture: UpdateCapture,
     break_stmt: void,
     continue_stmt: void,
@@ -273,6 +274,14 @@ pub const BinaryOp = struct {
 
 pub const NullBoxNNullOp = struct {
     value: *Value,
+};
+
+pub const MapFind = struct {
+    map: *Value,
+    key: *Value,
+    found_uid: usize,
+    value_uid: usize,
+    value_type: TypeId,
 };
 
 pub const UnwrapNullBox = struct {

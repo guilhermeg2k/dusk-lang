@@ -1671,23 +1671,16 @@ pub const Parser = struct {
                     });
                 },
 
-                //arrays
                 .l_bracket => {
+                    node = try self.parseIndexAccess(node, false);
+                },
+                .question_mark => {
+                    if (self.peekNext().tag != .l_bracket) {
+                        is_done = true;
+                        continue;
+                    }
                     self.walk();
-
-                    const was_parsing_condition = self.leaveCondition();
-                    defer self.is_parsing_condition = was_parsing_condition;
-                    const index = try self.parseExp(0);
-                    const r_bracket = try self.expect(.r_bracket);
-
-                    node = try ast.ExpNode.init(self.allocator, .{
-                        .data = .{ .indexed = .{
-                            .target = node,
-                            .index = index,
-                            .is_nullable = false,
-                        } },
-                        .loc = .{ .start = node.loc.start, .end = r_bracket.loc.end },
-                    });
+                    node = try self.parseIndexAccess(node, true);
                 },
 
                 //struct field member access
@@ -1716,6 +1709,22 @@ pub const Parser = struct {
         }
 
         return node;
+    }
+
+    fn parseIndexAccess(self: *Self, target: *ast.ExpNode, is_nullable: bool) CompileError!*ast.ExpNode {
+        self.walk();
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+        const index = try self.parseExp(0);
+        const r_bracket = try self.expect(.r_bracket);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .indexed = .{
+                .target = target,
+                .index = index,
+                .is_nullable = is_nullable,
+            } },
+            .loc = .{ .start = target.loc.start, .end = r_bracket.loc.end },
+        });
     }
 
     fn getBindingPower(_: *const Self, tag: Tag) u8 {

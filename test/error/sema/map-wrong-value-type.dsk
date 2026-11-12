@@ -1,0 +1,4 @@
+func main() -> void
+    let mut m: map[string, int] = {}
+    m["k"] = "no"
+end

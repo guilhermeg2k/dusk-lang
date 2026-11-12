@@ -2681,17 +2681,6 @@ pub const SemaAnalyzer = struct {
         }
 
         var instructions: std.ArrayList(ir.Instruction) = .empty;
-        const subject_uid = self.scope.genUid();
-        try instructions.append(self.allocator, .{ .store_var = .{
-            .uid = subject_uid,
-            .identifier = "capture subject",
-            .type_id = subject.type_id,
-            .value = subject,
-        } });
-        const subject_ref = try ir.Value.init(self.allocator, .{
-            .data = .{ .identifier = .{ .uid = subject_uid, .name = "capture subject" } },
-            .type_id = subject.type_id,
-        });
         const captured_type_id = self.type_table.typeIdByNullableTypeId.get(subject.type_id).?;
         if (capture.identifier.is_mut and !self.canBeMutable(captured_type_id)) {
             return self.err_reporter.primitiveCaptureCantBeMutable(capture.identifier.name, exp.loc);
@@ -2702,9 +2691,13 @@ pub const SemaAnalyzer = struct {
             .type_id = captured_type_id,
             .kind = .{ .variable = .{ .is_mut = capture.identifier.is_mut, .is_borrowed = true } },
         };
+        const unboxed_read = try self.lowerUnboxedMapRead(&instructions, subject, captured_type_id);
+        const subject_ref = if (unboxed_read == null) try self.storeTemporaryValue(&instructions, "capture subject", subject) else subject;
         var then_instructions: std.ArrayList(ir.Instruction) = .empty;
         const captured_needs_unwrap = self.needsNullBox(subject.type_id, captured_type_id);
-        try then_instructions.append(self.allocator, if (captured_needs_unwrap)
+        try then_instructions.append(self.allocator, if (unboxed_read) |read|
+            .{ .store_var = .{ .uid = captured_symbol.uid, .identifier = captured_symbol.identifier, .type_id = captured_type_id, .value = read.value } }
+        else if (captured_needs_unwrap)
             .{ .unwrap_null_box = .{
                 .unwrapped = .{ .uid = captured_symbol.uid, .identifier = captured_symbol.identifier, .type_id = captured_type_id },
                 .null_box = subject_ref,
@@ -2718,7 +2711,7 @@ pub const SemaAnalyzer = struct {
             try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).block);
         }
         const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).block else &.{};
-        const condition = try ir.Value.init(self.allocator, .{
+        const condition = if (unboxed_read) |read| read.found else try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
             .type_id = self.type_table.getPrimitive(.boolean),
         });
@@ -3330,9 +3323,16 @@ pub const SemaAnalyzer = struct {
                 const target = try self.evalExp(index_exp.target);
                 const target_type = target.type_id;
                 const indexed_target = try self.indexInto(assign_stmt.target, target);
+                const map_value_type: ?tt.TypeId = switch (self.type_table.getTypePtrById(target_type).kind) {
+                    .map => |map_type| map_type.value,
+                    else => null,
+                };
+                if (index_exp.is_nullable) {
+                    return self.err_reporter.cantAssignThroughOptionalChain(assign_stmt.target.loc);
+                }
                 const target_base = self.type_table.typeIdByNullableTypeId.get(indexed_target.type_id) orelse indexed_target.type_id;
                 const is_float_target = target_base == self.type_table.getPrimitive(.float);
-                const expected_type_id = if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal or indexed_target.type_id == self.type_table.getPrimitive(.byte) or is_float_target)
+                const expected_type_id = map_value_type orelse if (isAnonymousInit(assign_stmt.exp) or isConditional(assign_stmt.exp) or assign_stmt.exp.data == .array_literal or indexed_target.type_id == self.type_table.getPrimitive(.byte) or is_float_target)
                     indexed_target.type_id
                 else
                     null;
@@ -3397,6 +3397,7 @@ pub const SemaAnalyzer = struct {
         switch (self.type_table.getTypePtrById(target_type).kind) {
             .buffer => return indexed_type,
             .array => |inner| return inner,
+            .map => |map_type| return map_type.value,
             else => {},
         }
         const member_name = index_exp.index.data.identifier;
@@ -3944,6 +3945,39 @@ pub const SemaAnalyzer = struct {
         return self.lowerOrelseBranch(operand, payload_type, fallback_instruction, &result, coalescing.operand.loc);
     }
 
+    const UnboxedMapRead = struct {
+        found: *ir.Value,
+        value: *ir.Value,
+    };
+
+    fn lowerUnboxedMapRead(self: *Self, instructions: *std.ArrayList(ir.Instruction), subject: *ir.Value, payload_type: tt.TypeId) CompileError!?UnboxedMapRead {
+        if (subject.data != .indexed) return null;
+        const target = subject.data.indexed.target;
+        const target_type = self.type_table.getTypePtrById(target.type_id);
+        if (target_type.is_nullable or target_type.kind != .map) return null;
+        if (self.type_table.getTypePtrById(target_type.kind.map.value).is_nullable) return null;
+        if (!self.needsNullBox(subject.type_id, payload_type)) return null;
+        const found_uid = self.scope.genUid();
+        const value_uid = self.scope.genUid();
+        try instructions.append(self.allocator, .{ .map_find = .{
+            .map = target,
+            .key = subject.data.indexed.index,
+            .found_uid = found_uid,
+            .value_uid = value_uid,
+            .value_type = payload_type,
+        } });
+        return .{
+            .found = try ir.Value.init(self.allocator, .{
+                .data = .{ .identifier = .{ .uid = found_uid, .name = "map key found" } },
+                .type_id = self.type_table.getPrimitive(.boolean),
+            }),
+            .value = try ir.Value.init(self.allocator, .{
+                .data = .{ .identifier = .{ .uid = value_uid, .name = "map value" } },
+                .type_id = payload_type,
+            }),
+        };
+    }
+
     fn unwrapNullableValue(self: *Self, instructions: *std.ArrayList(ir.Instruction), operand: *ir.Value, payload_type: tt.TypeId, name: []const u8) CompileError!*ir.Value {
         if (!self.needsNullBox(operand.type_id, payload_type)) {
             return ir.Value.init(self.allocator, .{ .data = operand.data, .type_id = payload_type });
@@ -3962,13 +3996,14 @@ pub const SemaAnalyzer = struct {
 
     fn lowerOrelseBranch(self: *Self, operand: *ir.Value, payload_type: tt.TypeId, fallback: ir.Instruction, result: *BranchResult, loc: err.Loc) CompileError!*ir.Value {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
-        const operand_reference = try self.storeTemporaryValue(&instructions, "orelse operand", operand);
         var selected_instructions: std.ArrayList(ir.Instruction) = .empty;
-        const selected = try self.unwrapNullableValue(&selected_instructions, operand_reference, payload_type, "orelse selected");
+        const unboxed_read = try self.lowerUnboxedMapRead(&instructions, operand, payload_type);
+        const operand_reference = if (unboxed_read == null) try self.storeTemporaryValue(&instructions, "orelse operand", operand) else operand;
+        const selected = if (unboxed_read) |read| read.value else try self.unwrapNullableValue(&selected_instructions, operand_reference, payload_type, "orelse selected");
         const fallback_instructions = try self.allocator.alloc(ir.Instruction, 1);
         fallback_instructions[0] = fallback;
         try selected_instructions.append(self.allocator, try self.storeBranchValue(selected, result, loc));
-        const condition = try ir.Value.init(self.allocator, .{
+        const condition = if (unboxed_read) |read| read.found else try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = operand_reference } },
             .type_id = self.type_table.getPrimitive(.boolean),
         });
@@ -4857,6 +4892,16 @@ pub const SemaAnalyzer = struct {
                     .type_id = result_type,
                 });
             },
+            .map => |map_type| {
+                const key = try self.evalExpExpecting(indexed_exp.index, map_type.key);
+                if (!try self.canCoerce(key.type_id, map_type.key, indexed_exp.index.loc)) {
+                    return self.err_reporter.invalidIndexing(try self.type_table.syntaxName(map_type.key, self.allocator), try self.type_table.syntaxName(key.type_id, self.allocator), indexed_exp.index.loc);
+                }
+                return ir.Value.init(self.allocator, .{
+                    .data = .{ .indexed = .{ .target = target, .index = try self.coerceValue(key, map_type.key, indexed_exp.index.loc) } },
+                    .type_id = try self.type_table.getOrAddNullable(map_type.value),
+                });
+            },
             .string => return self.err_reporter.stringIndexing(exp.loc),
             .buffer => {
                 if (is_nullable) return self.err_reporter.invalidType("buffer", try self.type_table.name(target_type, self.allocator), exp.loc);
@@ -5153,7 +5198,7 @@ pub const SemaAnalyzer = struct {
                 return exp;
             },
             .array_literal => |literal| return self.firstReadOnlySource(literal.exps),
-            .map_literal => |literal| return self.firstReadOnlyMapEntry(literal.entries),
+            .map_literal => |literal| return self.firstReadOnlyMapValue(literal.entries),
             .anonymous_init => |anonymous| return self.firstReadOnlyArgument(anonymous.arguments),
             .fn_call => |call| {
                 if (!self.isConstructorCall(call)) return null;
@@ -5184,9 +5229,8 @@ pub const SemaAnalyzer = struct {
         return null;
     }
 
-    fn firstReadOnlyMapEntry(self: *Self, entries: []const ast.MapEntry) ?*const ast.ExpNode {
+    fn firstReadOnlyMapValue(self: *Self, entries: []const ast.MapEntry) ?*const ast.ExpNode {
         for (entries) |entry| {
-            if (self.readOnlySourceOf(entry.key)) |source| return source;
             if (self.readOnlySourceOf(entry.value)) |source| return source;
         }
         return null;

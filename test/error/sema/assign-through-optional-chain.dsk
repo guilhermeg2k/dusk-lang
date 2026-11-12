@@ -1,0 +1,8 @@
+struct P
+    x: int
+end
+
+func main() -> void
+    let mut p: ?P = null
+    p?.x = 2
+end

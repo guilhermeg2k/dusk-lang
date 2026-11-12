@@ -181,7 +181,9 @@ pub const Chunk = struct {
             .JUMP_TABLE => std.debug.print("R[{d}] T[{d}]", .{ inst.a, inst.bEx() }),
             .ARRAY_LOAD,
             .ARRAY_STORE,
+            .MAP_GET,
             .MAP_SET,
+            .MAP_FIND,
             .BYTES_GET,
             .BYTES_SET,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -258,7 +260,9 @@ pub const OpCode = enum(u8) {
     ARRAY_POP,
 
     MAP_INIT,
+    MAP_GET,
     MAP_SET,
+    MAP_FIND,
 
     BYTES_NEW,
     BYTES_LEN,
@@ -345,6 +349,7 @@ pub const OpCode = enum(u8) {
             .ARRAY_INIT,
             .ARRAY_APPEND,
             .MAP_INIT,
+            .MAP_GET,
             .MAP_SET,
             .STRUCT_INIT,
             .UNION_INIT,

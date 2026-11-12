@@ -1,0 +1,43 @@
+enum Color
+    Red
+    Blue
+end
+
+func count_of(counts: map[string, int], name: string) -> int
+    return counts[name] orelse 0
+end
+
+func main() -> void
+    let counts = {"a": 2}
+    assert(count_of(counts, "a") == 2)
+    assert(count_of(counts, "b") == 0)
+    let mut hits = 0
+    if counts["a"]: n then
+        hits = hits + n
+    end
+    if counts["zz"]: n then
+        hits = hits + 100
+    else
+        hits = hits + 1
+    end
+    assert(hits == 3)
+    let maybe: map[string, ?int] = {"null": null, "one": 1}
+    assert((maybe["null"] orelse 7) == 7)
+    assert((maybe["one"] orelse 7) == 1)
+    assert((maybe["none"] orelse 7) == 7)
+    if maybe["null"]: x then
+        assert(false)
+    end
+    let floats = {"pi": 3.5}
+    assert((floats["pi"] orelse 0.0) == 3.5)
+    let flags = {"on": true}
+    assert(flags["on"] orelse false)
+    assert(!(flags["off"] orelse false))
+    let colors = {"sky": Color.Blue}
+    assert((colors["sky"] orelse Color.Red) == Color.Blue)
+    let names = {1: "one"}
+    assert((names[1] orelse "") == "one")
+    assert((names[2] orelse "none") == "none")
+    let doubled = (counts["a"] orelse 0) * 2
+    assert(doubled == 4)
+end
