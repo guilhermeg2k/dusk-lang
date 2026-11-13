@@ -1,6 +1,6 @@
 # Changelogs
 
-## v0.15 - Fujiwara
+## v0.15 - Enjin
 
 Started v0.15 development: updated the CLI version to `0.15.0-devel`.
 
