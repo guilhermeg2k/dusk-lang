@@ -106,7 +106,7 @@ fn strFind(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const needle = bytesArg(args, 1);
     if (needle.len == 0) return ok(v.NULL_VALUE);
     const index = std.mem.indexOf(u8, bytesArg(args, 0), needle) orelse return ok(v.NULL_VALUE);
-    return ok(try vm.boxInt(@intCast(index)));
+    return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
 }
 
 fn strContains(_: *VM, args: []v.Value) anyerror!NativeResult {

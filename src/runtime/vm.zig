@@ -9,7 +9,6 @@ const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const gc = @import("gc.zig");
-const map = @import("map.zig");
 const Heap = gc.Heap;
 
 pub const VM = struct {
@@ -30,7 +29,6 @@ pub const VM = struct {
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
-    next_struct_identity: u32 = 1,
 
     pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
         return .{
@@ -202,33 +200,36 @@ pub const VM = struct {
 
                 .MAP_INIT => {
                     current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try map.newMap(self, @enumFromInt(inst.b), @enumFromInt(inst.c));
+                    stack[stack_base + inst.a] = try self.newMap(@enumFromInt(inst.b), @enumFromInt(inst.c));
                 },
 
                 .MAP_GET => {
                     current_frame.cur_inst = cur_instruction;
-                    stack[stack_base + inst.a] = try map.readEntry(self, stack_base + inst.b, stack_base + inst.c);
+                    stack[stack_base + inst.a] = try self.readMapEntry(&stack[stack_base + inst.b], &stack[stack_base + inst.c]);
                 },
 
                 .MAP_SET => {
                     current_frame.cur_inst = cur_instruction;
-                    try map.setEntry(self, stack_base + inst.a, stack_base + inst.b, stack_base + inst.c);
+                    try self.setMapEntry(&stack[stack_base + inst.a], &stack[stack_base + inst.b], &stack[stack_base + inst.c]);
                 },
 
                 .MAP_FIND => {
-                    map.findEntryInto(self, stack_base + inst.a, stack_base + inst.b, stack_base + inst.c);
+                    const value = mapInSlot(&stack[stack_base + inst.b]).get(stack[stack_base + inst.c]);
+                    stack[stack_base + inst.a] = if (value != null) v.TRUE_VALUE else v.FALSE_VALUE;
+                    stack[stack_base + inst.a + 1] = value orelse v.NULL_VALUE;
                 },
 
                 .MAP_NEXT => {
-                    stack[stack_base + inst.a] = map.advanceCursor(self, stack_base + inst.b, stack_base + inst.c);
+                    const has_next = mapInSlot(&stack[stack_base + inst.b]).advanceCursor(&stack[stack_base + inst.c]);
+                    stack[stack_base + inst.a] = if (has_next) v.TRUE_VALUE else v.FALSE_VALUE;
                 },
 
                 .MAP_KEY_AT => {
-                    stack[stack_base + inst.a] = map.entryAtCursor(self, stack_base + inst.b, stack_base + inst.c).key;
+                    stack[stack_base + inst.a] = mapInSlot(&stack[stack_base + inst.b]).entryAtCursor(stack[stack_base + inst.c]).key;
                 },
 
                 .MAP_VALUE_AT => {
-                    stack[stack_base + inst.a] = map.entryAtCursor(self, stack_base + inst.b, stack_base + inst.c).value;
+                    stack[stack_base + inst.a] = mapInSlot(&stack[stack_base + inst.b]).entryAtCursor(stack[stack_base + inst.c]).value;
                 },
 
                 .BYTES_NEW => {
@@ -332,15 +333,8 @@ pub const VM = struct {
                 },
 
                 .NULL_BOX_INIT => {
-                    const size = v.NullBox.calc_size();
                     current_frame.cur_inst = cur_instruction;
-                    try self.maybeCollectGarbage(size);
-
-                    const value = self.stack[stack_base + inst.c];
-                    var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), value, @enumFromInt(inst.b));
-
-                    self.increaseHeapAllocationCount(size);
-                    stack[stack_base + inst.a] = .{ .heap_obj = &new_box.obj };
+                    stack[stack_base + inst.a] = try self.allocNullBox(stack[stack_base + inst.c], @enumFromInt(inst.b));
                 },
 
                 .NULL_BOX_UNWRAP => {
@@ -748,6 +742,14 @@ pub const VM = struct {
         return result;
     }
 
+    pub fn allocNullBox(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
+        const size = v.NullBox.calc_size();
+        try self.maybeCollectGarbage(size);
+        const box = try v.NullBox.init(self.getCurrentHeapAllocator(), value, kind);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &box.obj };
+    }
+
     pub fn maybeCollectGarbage(self: *Self, bytes: usize) !void {
         if (!self.heap.needsCollection(bytes)) return;
         self.saveCurrentTask();
@@ -804,6 +806,52 @@ pub const VM = struct {
     fn arrayInSlot(slot: *v.Value) *v.Array {
         slot.heap_obj = slot.heap_obj.followRelocated();
         return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
+    }
+
+    fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {
+        const size = v.Map.calc_size();
+        try self.maybeCollectGarbage(size);
+        const map = try v.Map.init(self.getCurrentHeapAllocator(), key_type, value_type);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &map.obj };
+    }
+
+    fn readMapEntry(self: *Self, map_slot: *const v.Value, key_slot: *const v.Value) !v.Value {
+        const map = mapInSlot(map_slot);
+        const value = map.get(key_slot.*) orelse return v.NULL_VALUE;
+        if (map.value_type.isHeapType() or map.value_type == .null) return value;
+        return self.allocNullBox(value, map.value_type);
+    }
+
+    fn setMapEntry(self: *Self, map_slot: *const v.Value, key_slot: *const v.Value, value_slot: *const v.Value) !void {
+        const hash = mapInSlot(map_slot).hashKey(key_slot.*);
+        if (mapInSlot(map_slot).find(key_slot.*, hash)) |entry| {
+            entry.value = value_slot.*;
+            return;
+        }
+        try self.ensureRoomForMapEntry(map_slot);
+        mapInSlot(map_slot).append(key_slot.*, value_slot.*, hash);
+    }
+
+    fn ensureRoomForMapEntry(self: *Self, map_slot: *const v.Value) !void {
+        const old_storage = mapInSlot(map_slot).getStorage();
+        if (old_storage) |storage| {
+            if (!storage.isFull()) return;
+        }
+        const capacity = if (old_storage) |storage| storage.nextCapacity() else v.MapStorage.min_capacity;
+        const size = v.MapStorage.calc_size(capacity);
+        try self.maybeCollectGarbage(size);
+        const map = mapInSlot(map_slot);
+        const storage = try v.MapStorage.init(self.getCurrentHeapAllocator(), map.key_type, map.value_type, capacity);
+        self.increaseHeapAllocationCount(size);
+        if (map.getStorage()) |previous| {
+            storage.copyLiveEntriesFrom(previous);
+        }
+        map.storage = .{ .heap_obj = &storage.obj };
+    }
+
+    fn mapInSlot(slot: *const v.Value) *v.Map {
+        return v.HeapValue.getParentPtr(v.Map, slot.heap_obj);
     }
 
     noinline fn newBuffer(self: *Self, len: i64) !v.Value {
@@ -919,13 +967,7 @@ pub const VM = struct {
             return;
         }
 
-        const size = v.NullBox.calc_size();
-        try self.maybeCollectGarbage(size);
-        union_vl = v.HeapValue.getParentPtr(v.Union, stack[stack_base + union_reg].heap_obj);
-
-        var new_box = try v.NullBox.init(self.getCurrentHeapAllocator(), union_vl.get(tag), desc.variant_kinds[tag]);
-        self.increaseHeapAllocationCount(size);
-        stack[stack_base + target_reg] = .{ .heap_obj = &new_box.obj };
+        stack[stack_base + target_reg] = try self.allocNullBox(union_vl.get(tag), desc.variant_kinds[tag]);
     }
 
     noinline fn growCallStack(self: *Self, new_offset: usize) ![]v.Value {
@@ -991,13 +1033,5 @@ pub const VM = struct {
         const name = self.frames[self.frame_count - 1].function.name;
         const is_top_level = name.len > 0 and name[0] == '$';
         RuntimeErrorReporter.where(if (is_top_level) null else name, self.failed_builtin);
-    }
-
-    pub fn boxInt(self: *Self, number: i64) !v.Value {
-        const size = v.NullBox.calc_size();
-        try self.maybeCollectGarbage(size);
-        const box = try v.NullBox.init(self.getCurrentHeapAllocator(), .{ .int64 = number }, .int64);
-        self.increaseHeapAllocationCount(size);
-        return .{ .heap_obj = &box.obj };
     }
 };

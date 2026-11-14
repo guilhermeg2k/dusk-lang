@@ -45,7 +45,7 @@ fn arrayClear(_: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn arrayIndexOf(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const index = findItem(args) orelse return ok(v.NULL_VALUE);
-    return ok(try vm.boxInt(@intCast(index)));
+    return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
 }
 
 fn arrayContains(_: *VM, args: []v.Value) anyerror!NativeResult {

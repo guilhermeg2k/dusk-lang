@@ -10,8 +10,7 @@ The source files involved:
 | `src/runtime/bytecode.zig` | The compiled program format (`Program`, `Function`, `Chunk`), the instruction format and opcodes |
 | `src/runtime/vm.zig` | The interpreter (`VM.execute`), allocation helpers, `copy` |
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
-| `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the operations that need no VM (array items, map entry lookup, insert, removal) |
-| `src/runtime/map.zig` | Map operations that need the VM: key hashing, allocation and growth, registers, loop cursors (section 6.8) |
+| `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the work on them that doesn't allocate (array items; map hashing, lookup, insert, removal and loop cursors, section 6.8) |
 | `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
@@ -295,7 +294,7 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | `ARRAY_POP R[a] R[b]` | remove and return the last element (`0` if empty; the prelude's `pop` checks first) |
 | `DEEP_COPY R[a] R[b]` | `copy(x)` (section 10) |
 
-**Maps** (section 6.8). They call functions in `runtime/map.zig`, which use the `Map` and `MapStorage` methods in `value.zig`.
+**Maps** (section 6.8). The handlers call `Map` methods (`value.zig`); the three that can allocate go through VM helpers (`newMap`, `readMapEntry`, `setMapEntry`).
 
 | Instruction | Effect |
 |---|---|
@@ -396,18 +395,18 @@ The fresh register matters for `flag = other and flag`: writing the left side st
 
 ### 6.8 Maps
 
-A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. Like arrays, the work on entries that needs no VM (`find`, `append`, `remove`, `clear`, `copyLiveEntriesFrom`, `nextCapacity`) are methods of `Map` and `MapStorage` in `value.zig`; `runtime/map.zig` adds what needs the VM: hashing (struct identity), allocation, registers and loop cursors. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
+A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. Like arrays, everything that doesn't allocate is a method of `Map` or `MapStorage` in `value.zig`; allocation (`newMap`, `ensureRoomForMapEntry`, boxing in `readMapEntry`) lives on the VM next to `growArray`. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
 
 ```zig
 MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 24 bytes
 ```
 
 - **Index.** A power-of-two array of `u32`, at least twice the capacity, so it is at most half full. A slot holds `entry position + 1`, or `0` when empty. A lookup hashes the key and probes linearly from `hash & index_mask`.
-- **Hashing** (`hashKey`): ints, bytes and enums hash their `i64`; bools only `value.bool` (the other 7 bytes of a bool `Value` are undefined); strings `Wyhash` over their bytes; structs their `identity`. The result goes through `std.hash.int` and keeps 31 bits.
+- **Hashing** (`Map.hashKey`): ints, bytes and enums hash their `i64`; bools only `value.bool` (the other 7 bytes of a bool `Value` are undefined); strings `Wyhash` over their bytes; structs their `identity`. The result goes through `std.hash.int` and keeps 31 bits.
 - **Equality.** Ints by value, strings by length and bytes, structs by pointer. The GC updates both the stored key and the key being looked up, so pointer equality survives collections.
-- **Struct identity.** The copying GC moves structs, so a struct key can't hash its address. `Struct.identity` (a `u32` in the header padding, so structs didn't grow) is `0` until the struct is first hashed, then takes `vm.next_struct_identity`. GC clones keep it (byte copies). `copy` resets it on the copies. Wrapping the counter only makes buckets collide.
+- **Struct identity.** The copying GC moves structs, so a struct key can't hash its address. `Struct.identity` (a `u32` in the header padding, so structs didn't grow) is `0` until the struct is first hashed, then takes the next value of a global counter (`Struct.ensureIdentity`). GC clones keep it (byte copies). `copy` resets it on the copies. Wrapping the counter only makes buckets collide.
 - **Removal** sets the top bit of `hash`, clears the key and value (so the GC frees what they held), and leaves the index slot pointing at the dead entry so probe chains stay intact. It never allocates.
-- **Growth.** When `len == capacity`, `ensureRoomForEntry` allocates a new storage and copies the live entries in order, rebuilding the index: the same capacity when at least a quarter of the entries are removed (compaction), otherwise twice it. The first storage has 8 entries.
+- **Growth.** When `len == capacity`, `VM.ensureRoomForMapEntry` allocates a new storage and copies the live entries in order, rebuilding the index: the same capacity when at least a quarter of the entries are removed (compaction), otherwise twice it. The first storage has 8 entries.
 - **Loops.** Each entry has a `seq` (insertion number, increasing along the entry array; `Map.next_seq` starts at 1). The loop cursor is one int register: the position after the visited entry (low 32 bits) and that entry's `seq` (high 32 bits). `MAP_NEXT` checks the visited entry is still at its position; if a compaction moved entries, it binary searches the first entry with a larger `seq`. Removed entries are skipped and appended ones are reached at the end. `seq` wraps after 4 billion inserts into one map; a loop running at that point could revisit entries.
 - **Reads without boxes.** `MAP_GET` boxes a primitive value because `m[k]` is a `?V`. Sema lowers `if m[k]: v` and `m[k] orelse d` (non-nullable map, primitive non-nullable `V`) to `ir.map_find`, which codegen turns into `MAP_FIND` with two consecutive registers bound to the found flag and the raw value.
 

@@ -60,6 +60,8 @@ pub const HeapValue = extern struct {
 pub const Struct = extern struct {
     const Self = @This();
 
+    var next_identity: u32 = 1;
+
     obj: HeapValue,
     descriptor_id: u16,
     field_count: u8,
@@ -91,6 +93,16 @@ pub const Struct = extern struct {
     pub fn set(self: *Self, i: usize, value: Value) void {
         const items = self.getDataPtr();
         items[i] = value;
+    }
+
+    pub fn ensureIdentity(self: *Self) u32 {
+        if (self.identity != 0) return self.identity;
+        self.identity = next_identity;
+        next_identity +%= 1;
+        if (next_identity == 0) {
+            next_identity = 1;
+        }
+        return self.identity;
     }
 
     pub fn getDataPtr(self: *const Self) [*]Value {
@@ -312,6 +324,22 @@ pub const Map = extern struct {
         return storage.count;
     }
 
+    pub fn get(self: *const Self, key: Value) ?Value {
+        const entry = self.find(key, self.hashKey(key)) orelse return null;
+        return entry.value;
+    }
+
+    pub fn hashKey(self: *const Self, key: Value) u32 {
+        const raw: u64 = switch (self.key_type) {
+            .int64 => @bitCast(key.int64),
+            .bool => @intFromBool(key.bool),
+            .string => std.hash.Wyhash.hash(0, HeapValue.getParentPtr(Bytes, key.heap_obj).slice()),
+            .@"struct" => HeapValue.getParentPtr(Struct, key.heap_obj).ensureIdentity(),
+            else => unreachable,
+        };
+        return @as(u32, @truncate(std.hash.int(raw))) & ~MapEntry.removed_bit;
+    }
+
     pub fn find(self: *const Self, key: Value, hash: u32) ?*MapEntry {
         const storage = self.getStorage() orelse return null;
         return storage.find(key, hash);
@@ -325,9 +353,9 @@ pub const Map = extern struct {
         }
     }
 
-    pub fn remove(self: *Self, key: Value, hash: u32) bool {
+    pub fn remove(self: *Self, key: Value) bool {
         const storage = self.getStorage() orelse return false;
-        const entry = storage.find(key, hash) orelse return false;
+        const entry = storage.find(key, self.hashKey(key)) orelse return false;
         entry.hash |= MapEntry.removed_bit;
         entry.key = NULL_VALUE;
         entry.value = NULL_VALUE;
@@ -340,6 +368,22 @@ pub const Map = extern struct {
         storage.len = 0;
         storage.count = 0;
         @memset(storage.index(), 0);
+    }
+
+    pub fn advanceCursor(self: *const Self, cursor: *Value) bool {
+        const storage = self.getStorage() orelse return false;
+        const used = storage.usedEntries();
+        var position = MapCursor.unpack(cursor.*).resumePosition(used);
+        while (position < used.len) : (position += 1) {
+            if (used[position].isRemoved()) continue;
+            cursor.* = MapCursor.pack(.{ .next_position = position + 1, .seq = used[position].seq });
+            return true;
+        }
+        return false;
+    }
+
+    pub fn entryAtCursor(self: *const Self, cursor: Value) *MapEntry {
+        return &self.getStorage().?.entries()[MapCursor.unpack(cursor).next_position - 1];
     }
 
     pub fn calc_size() usize {
@@ -482,6 +526,43 @@ pub const MapStorage = extern struct {
         new_obj.obj.gc_forward = null;
         new_obj.obj.relocated = null;
         return new_obj;
+    }
+};
+
+const MapCursor = struct {
+    next_position: u32,
+    seq: u32,
+
+    fn unpack(value: Value) MapCursor {
+        const raw: u64 = @bitCast(value.int64);
+        return .{ .next_position = @truncate(raw), .seq = @truncate(raw >> 32) };
+    }
+
+    fn pack(cursor: MapCursor) Value {
+        const raw = @as(u64, cursor.next_position) | (@as(u64, cursor.seq) << 32);
+        return .{ .int64 = @bitCast(raw) };
+    }
+
+    fn resumePosition(cursor: MapCursor, entries: []const MapEntry) u32 {
+        if (cursor.next_position == 0) return 0;
+        const visited = cursor.next_position - 1;
+        const is_visited_in_place = visited < entries.len and entries[visited].seq == cursor.seq;
+        if (is_visited_in_place) return cursor.next_position;
+        return firstEntryAfter(entries, cursor.seq);
+    }
+
+    fn firstEntryAfter(entries: []const MapEntry, seq: u32) u32 {
+        var low: usize = 0;
+        var high: usize = entries.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (entries[middle].seq <= seq) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return @intCast(low);
     }
 };
 
