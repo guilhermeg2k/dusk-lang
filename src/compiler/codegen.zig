@@ -543,7 +543,9 @@ pub const BytecodeGen = struct {
                 self.register_types[previous_reg] = result_type;
                 try kinds.append(self.allocator, .string);
             }
-            while (index < parts.len and kinds.items.len < max_str_build_parts) : (index += 1) {
+            while (index < parts.len) : (index += 1) {
+                const is_build_full = kinds.items.len == max_str_build_parts;
+                if (is_build_full) break;
                 const part_reg = try self.genValue(parts[index], try self.consumeRegister());
                 const kind = valueTypeFromTypeId(self.type_table, parts[index].type_id);
                 const needs_format_now = !isFormattedLate(kind);
