@@ -380,7 +380,7 @@ pub const Map = extern struct {
         const storage = self.getStorage() orelse return;
         storage.len = 0;
         storage.count = 0;
-        @memset(storage.index(), 0);
+        @memset(storage.entryIndexes(), 0);
     }
 
     pub fn advanceCursor(self: *const Self, cursor: *Value) bool {
@@ -436,7 +436,7 @@ pub const MapStorage = extern struct {
     len: u32,
     count: u32,
     capacity: u32,
-    index_mask: u32,
+    entry_index_mask: u32,
 
     pub fn init(allocator: std.mem.Allocator, key_type: ValueType, value_type: ValueType, capacity: u32) !*Self {
         const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(capacity));
@@ -448,18 +448,18 @@ pub const MapStorage = extern struct {
             .len = 0,
             .count = 0,
             .capacity = capacity,
-            .index_mask = indexSlotCount(capacity) - 1,
+            .entry_index_mask = entryIndexCount(capacity) - 1,
         };
-        @memset(storage.index(), 0);
+        @memset(storage.entryIndexes(), 0);
         return storage;
     }
 
     pub fn find(self: *const Self, key: Value, hash: u32) ?*MapEntry {
-        const slots = self.index();
+        const entry_indexes = self.entryIndexes();
         const stored = self.entries();
-        var slot = hash & self.index_mask;
-        while (slots[slot] != 0) : (slot = (slot + 1) & self.index_mask) {
-            const entry = &stored[slots[slot] - 1];
+        var slot = hash & self.entry_index_mask;
+        while (entry_indexes[slot] != 0) : (slot = (slot + 1) & self.entry_index_mask) {
+            const entry = &stored[entry_indexes[slot] - 1];
             const is_candidate = entry.hash == hash and !entry.isRemoved();
             if (is_candidate and self.areKeysEqual(entry.key, key)) {
                 return entry;
@@ -483,12 +483,12 @@ pub const MapStorage = extern struct {
         self.entries()[position] = entry;
         self.len += 1;
         self.count += 1;
-        const slots = self.index();
-        var slot = entry.hash & self.index_mask;
-        while (slots[slot] != 0) {
-            slot = (slot + 1) & self.index_mask;
+        const entry_indexes = self.entryIndexes();
+        var slot = entry.hash & self.entry_index_mask;
+        while (entry_indexes[slot] != 0) {
+            slot = (slot + 1) & self.entry_index_mask;
         }
-        slots[slot] = position + 1;
+        entry_indexes[slot] = position + 1;
     }
 
     pub fn copyLiveEntriesFrom(self: *Self, other: *const Self) void {
@@ -513,21 +513,21 @@ pub const MapStorage = extern struct {
         return self.entries()[0..self.len];
     }
 
-    pub fn index(self: *const Self) []u32 {
+    pub fn entryIndexes(self: *const Self) []u32 {
         const after_entries: [*]u32 = @ptrCast(self.entries().ptr + self.capacity);
-        return after_entries[0 .. self.index_mask + 1];
+        return after_entries[0 .. self.entry_index_mask + 1];
     }
 
     pub fn isFull(self: *const Self) bool {
         return self.len == self.capacity;
     }
 
-    pub fn indexSlotCount(capacity: u32) u32 {
+    pub fn entryIndexCount(capacity: u32) u32 {
         return std.math.ceilPowerOfTwoAssert(u32, capacity * 2);
     }
 
     pub fn calc_size(capacity: u32) usize {
-        return @sizeOf(Self) + @sizeOf(MapEntry) * @as(usize, capacity) + @sizeOf(u32) * @as(usize, indexSlotCount(capacity));
+        return @sizeOf(Self) + @sizeOf(MapEntry) * @as(usize, capacity) + @sizeOf(u32) * @as(usize, entryIndexCount(capacity));
     }
 
     pub fn clone(self: *const Self, allocator: std.mem.Allocator) !*Self {

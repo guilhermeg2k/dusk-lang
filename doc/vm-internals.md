@@ -151,7 +151,7 @@ The header is 24 bytes. Each object type embeds it as its `obj` field, and code 
 | `Cell` | `kind`, `value` | none | 40 |
 | `Task` | `state` (a `*TaskState`, section 11) | none | 32 |
 | `Map` | `key_type`, `value_type`, `next_seq`, `seed`, `storage` | none | 48 |
-| `MapStorage` | `key_type`, `value_type`, `len`, `count`, `capacity`, `index_mask` | `capacity` entries, then the index | 48 + 24 × capacity + 4 × index slots |
+| `MapStorage` | `key_type`, `value_type`, `len`, `count`, `capacity`, `entry_index_mask` | `capacity` entries, then the entry indexes | 48 + 24 × capacity + 4 × entry index slots |
 
 Notes:
 
@@ -401,7 +401,7 @@ A `Map` header never moves except in a GC, so growing a map doesn't need `reloca
 MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 24 bytes
 ```
 
-- **Index.** A power-of-two array of `u32`, at least twice the capacity, so it is at most half full. A slot holds `entry position + 1`, or `0` when empty. A lookup hashes the key and probes linearly from `hash & index_mask`.
+- **Entry indexes** (`entryIndexes()`). A power-of-two array of `u32`, at least twice the capacity, so it is at most half full. A slot holds `entry position + 1`, or `0` when empty. A lookup hashes the key and probes linearly from `hash & entry_index_mask`.
 - **Hashing** (`Map.hashKey`): ints, bytes and enums hash their `i64`; bools only `value.bool` (the other 7 bytes of a bool `Value` are undefined); strings `Wyhash` over their bytes, seeded with the map's seed; structs their `identity`. The result is xored with the map's seed, goes through `std.hash.int` and keeps 31 bits.
 - **Seeds.** Each map has its own random `seed` (from `Map.seed_generator`, a SplitMix64 that `Dusk.runProgram` starts from `io.random` through `Map.randomizeSeeds`), so colliding keys can't be computed ahead of time, and what collides in one map says nothing about another. A map gets a new seed when it becomes empty (`clear`, or `remove` of the last live entry): no live entry needs rehashing then, and tombstones never match. Growth keeps the seed, so it reuses the stored hashes. `copy` keeps the seed, since the copied index was built with it.
 - **Equality.** Ints by value, strings by length and bytes, structs by pointer. The GC updates both the stored key and the key being looked up, so pointer equality survives collections.
