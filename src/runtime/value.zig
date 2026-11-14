@@ -729,4 +729,11 @@ pub const ValueType = enum(u8) {
             else => false,
         };
     }
+
+    pub fn isImmutable(self: ValueType) bool {
+        return switch (self) {
+            .int64, .float64, .bool, .null, .string => true,
+            else => false,
+        };
+    }
 };

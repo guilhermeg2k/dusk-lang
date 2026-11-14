@@ -534,6 +534,7 @@ pub const BytecodeGen = struct {
         defer kinds.deinit(self.allocator);
         var index: usize = 0;
         var has_previous = false;
+
         while (index < parts.len) {
             const saved_next_free = self.next_free_register;
             kinds.clearRetainingCapacity();
@@ -543,12 +544,13 @@ pub const BytecodeGen = struct {
                 self.register_types[previous_reg] = result_type;
                 try kinds.append(self.allocator, .string);
             }
+
             while (index < parts.len) : (index += 1) {
                 const is_build_full = kinds.items.len == max_str_build_parts;
                 if (is_build_full) break;
                 const part_reg = try self.genValue(parts[index], try self.consumeRegister());
                 const kind = valueTypeFromTypeId(self.type_table, parts[index].type_id);
-                const needs_format_now = !isFormattedLate(kind);
+                const needs_format_now = !kind.isImmutable();
                 if (needs_format_now) {
                     try self.chunk_instructions.append(self.allocator, .{ .op = .TO_STRING, .a = part_reg, .b = part_reg, .c = @intFromEnum(kind) });
                     try self.recordHeapMap();
@@ -567,6 +569,7 @@ pub const BytecodeGen = struct {
             self.freeRegisterN(self.next_free_register - saved_next_free);
             has_previous = true;
         }
+
         try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = build_reg });
         self.register_types[target_reg] = result_type;
     }
@@ -589,13 +592,6 @@ pub const BytecodeGen = struct {
             self.register_types[i] = self.type_table.getPrimitive(.void);
         }
         self.next_free_register = @intCast(new_free);
-    }
-
-    fn isFormattedLate(kind: v.ValueType) bool {
-        return switch (kind) {
-            .int64, .float64, .bool, .null, .string => true,
-            else => false,
-        };
     }
 
     fn recordHeapMap(self: *Self) !void {
