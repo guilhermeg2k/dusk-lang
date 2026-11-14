@@ -59,7 +59,7 @@ pub const SemaAnalyzer = struct {
     can_bind_void_slots: bool = false,
     none_error_set: tt.TypeId = undefined,
     lambda_contexts: std.ArrayList(LambdaContext) = .empty,
-    boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     lambda_binding: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
@@ -122,7 +122,7 @@ pub const SemaAnalyzer = struct {
         return .{
             .instructions = instructions,
             .externs = try self.externs.toOwnedSlice(self.allocator),
-            .boxed_uids = self.boxed_uids,
+            .cell_var_uids = self.cell_var_uids,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
@@ -4320,7 +4320,7 @@ pub const SemaAnalyzer = struct {
         const capture_infos = try self.allocator.alloc(ir.Capture, captures.len);
         const sources = try self.allocator.alloc(*ir.Value, captures.len);
         for (captures, capture_infos, sources) |capture, *info, *source| {
-            info.* = .{ .type_id = capture.type_id, .is_boxed = capture.is_boxed };
+            info.* = .{ .type_id = capture.type_id, .is_cell = capture.is_cell };
             source.* = capture.source;
         }
         func.captures = capture_infos;
@@ -4412,24 +4412,24 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.tooManyCaptures(max_captures, loc);
         }
 
-        const is_boxed = symbol.kind.variable.is_mut and !symbol.kind.variable.is_borrowed;
+        const is_cell = symbol.kind.variable.is_mut and !symbol.kind.variable.is_borrowed;
         const is_parent_local = context_index == 0 or symbol.uid >= self.lambda_contexts.items[context_index - 1].floor;
         const cell_type = self.type_table.getPrimitive(.cell);
-        const raw_type = if (is_boxed) cell_type else symbol.type_id;
-        const source = if (is_parent_local and is_boxed)
+        const raw_type = if (is_cell) cell_type else symbol.type_id;
+        const source = if (is_parent_local and is_cell)
             try ir.Value.init(self.allocator, .{ .data = .{ .var_cell = symbol.uid }, .type_id = cell_type })
         else if (is_parent_local)
             try ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = symbol.uid, .name = symbol.identifier } }, .type_id = symbol.type_id })
         else
             try ir.Value.init(self.allocator, .{ .data = .{ .capture_raw = try self.resolveCapture(context_index - 1, symbol, loc) }, .type_id = raw_type });
 
-        if (is_boxed) {
-            try self.boxed_uids.put(self.allocator, symbol.uid, {});
+        if (is_cell) {
+            try self.cell_var_uids.put(self.allocator, symbol.uid, {});
         }
         try self.lambda_contexts.items[context_index].captures.append(self.allocator, .{
             .symbol_uid = symbol.uid,
             .type_id = symbol.type_id,
-            .is_boxed = is_boxed,
+            .is_cell = is_cell,
             .source = source,
         });
         return @intCast(count);
@@ -4439,7 +4439,7 @@ pub const SemaAnalyzer = struct {
         const index = try self.resolveCapture(context_index, symbol, loc);
         const capture = self.lambda_contexts.items[context_index].captures.items[index];
         return ir.Value.init(self.allocator, .{
-            .data = .{ .capture_ref = .{ .index = index, .is_boxed = capture.is_boxed } },
+            .data = .{ .capture_ref = .{ .index = index, .is_cell = capture.is_cell } },
             .type_id = symbol.type_id,
         });
     }
@@ -6235,7 +6235,7 @@ const TypedLambda = struct {
 const LambdaCapture = struct {
     symbol_uid: usize,
     type_id: tt.TypeId,
-    is_boxed: bool,
+    is_cell: bool,
     source: *ir.Value,
 };
 

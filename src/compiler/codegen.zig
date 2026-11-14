@@ -35,8 +35,8 @@ pub const BytecodeGen = struct {
     intrinsic_by_uid: std.AutoHashMap(usize, native.Intrinsic),
     native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
-    boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
-    boxed_type_by_uid: std.AutoHashMapUnmanaged(usize, tt.TypeId) = .empty,
+    cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    cell_type_by_uid: std.AutoHashMapUnmanaged(usize, tt.TypeId) = .empty,
 
     chunk_heap_maps: std.ArrayList(bc.HeapMap),
     struct_descriptors: std.ArrayList(bc.StructDescriptor),
@@ -82,7 +82,7 @@ pub const BytecodeGen = struct {
     pub fn generate(self: *Self, program: *const ir.Program) !bc.Program {
         var funcs: std.ArrayList(bc.Function) = .empty;
         self.extern_count = program.externs.len;
-        self.boxed_uids = program.boxed_uids;
+        self.cell_var_uids = program.cell_var_uids;
 
         for (program.externs) |ext| {
             try self.fn_index_by_uid.put(ext.uid, @intCast(funcs.items.len));
@@ -293,8 +293,8 @@ pub const BytecodeGen = struct {
     }
 
     fn genStoreVar(self: *Self, store_var: ir.StoreVar) !void {
-        if (self.boxed_uids.contains(store_var.uid)) {
-            return self.genStoreBoxedVar(store_var);
+        if (self.cell_var_uids.contains(store_var.uid)) {
+            return self.genStoreCellVar(store_var);
         }
         const register_idx = self.var_register_id_by_uid.get(store_var.uid);
         if (register_idx) |idx| {
@@ -315,7 +315,7 @@ pub const BytecodeGen = struct {
         try self.bindVariable(store_var.uid, reg_idx);
     }
 
-    fn genStoreBoxedVar(self: *Self, store_var: ir.StoreVar) !void {
+    fn genStoreCellVar(self: *Self, store_var: ir.StoreVar) !void {
         if (self.var_register_id_by_uid.get(store_var.uid)) |cell_reg| {
             const value_reg = try self.genValue(store_var.value, try self.consumeRegister());
             defer self.freeRegister();
@@ -333,7 +333,7 @@ pub const BytecodeGen = struct {
         });
         try self.recordHeapMap();
         self.register_types[reg] = self.type_table.getPrimitive(.cell);
-        try self.boxed_type_by_uid.put(self.allocator, store_var.uid, store_var.type_id);
+        try self.cell_type_by_uid.put(self.allocator, store_var.uid, store_var.type_id);
         try self.bindVariable(store_var.uid, reg);
     }
 
@@ -357,9 +357,9 @@ pub const BytecodeGen = struct {
 
             .identifier => |id| {
                 const symbol_reg = self.var_register_id_by_uid.get(id.uid) orelse return BytecodeError.UndefinedVariable;
-                if (self.boxed_type_by_uid.get(id.uid)) |boxed_type| {
+                if (self.cell_type_by_uid.get(id.uid)) |value_type| {
                     try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = symbol_reg });
-                    self.register_types[target_reg] = boxed_type;
+                    self.register_types[target_reg] = value_type;
                     return target_reg;
                 }
 
@@ -436,7 +436,7 @@ pub const BytecodeGen = struct {
 
             .capture_ref => |capture| {
                 try self.chunk_instructions.append(self.allocator, .{ .op = .CAPTURE_GET, .a = target_reg, .b = capture.index });
-                if (capture.is_boxed) {
+                if (capture.is_cell) {
                     try self.chunk_instructions.append(self.allocator, .{ .op = .CELL_GET, .a = target_reg, .b = target_reg });
                 }
                 self.register_types[target_reg] = value.type_id;
@@ -560,6 +560,7 @@ pub const BytecodeGen = struct {
                 }
                 try kinds.append(self.allocator, kind);
             }
+
             var build = bc.Instruction{ .op = .STR_BUILD, .a = build_reg };
             build.putBEx(@intCast(self.chunk_build_recipes.items.len));
             try self.chunk_build_recipes.append(self.allocator, try self.allocator.dupe(v.ValueType, kinds.items));
@@ -625,7 +626,6 @@ pub const BytecodeGen = struct {
     fn genIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
         const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
-        // sema only allows a nullable target through `?.`
         if (target_type.is_nullable) {
             const is_instance_member = switch (target_type.kind) {
                 .@"struct" => |s| s.field_index_by_name.contains(idx.index.data.i_string),
@@ -686,12 +686,6 @@ pub const BytecodeGen = struct {
         }
     }
 
-    // Optional chaining (`target?.member`): the result is null when the target is null.
-    //   cond   = target != null
-    //   result = null
-    //   JUMP_IF_FALSE cond -> end
-    //   result = <member load>, boxed when the member is a non-nullable primitive
-    // end:
     fn genNullableIndexedLoad(self: *Self, idx: ir.IndexedValue, value: *const ir.Value, target_reg: u8) !void {
         const target_type = self.type_table.getTypePtrById(idx.target.type_id);
 
@@ -742,8 +736,9 @@ pub const BytecodeGen = struct {
                     try self.genRegisterNullBox(target_reg, raw_reg, item_kind);
                 }
             },
+
             .map => try self.genMapLoad(target_reg, obj_reg, idx.index),
-            // UNION_LOAD already boxes primitive variants
+
             .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, idx.index.data.i_string),
             else => unreachable,
         }
@@ -928,7 +923,7 @@ pub const BytecodeGen = struct {
         const struct_data = value.data.struct_init;
         const struct_def = self.type_table.getTypePtrById(value.type_id).kind.@"struct";
         var bitmap: u256 = 0;
-        // use the declared field types, the init values may be null or not yet boxed
+
         for (struct_data.keys, 0..) |key, i| {
             const field = struct_def.fields.get(key) orelse unreachable;
             const vt = valueTypeFromTypeId(self.type_table, field.type_id);
@@ -1003,7 +998,6 @@ pub const BytecodeGen = struct {
         });
         try self.recordHeapMap();
 
-        // the ir value carries the inner type, but the register holds the box
         self.register_types[target_reg] = try self.type_table.getOrAddNullable(value.type_id);
     }
 
@@ -1788,7 +1782,7 @@ pub const BytecodeGen = struct {
     fn captureKinds(self: *Self, captures: []const ir.Capture) ![]const v.ValueType {
         const kinds = try self.allocator.alloc(v.ValueType, captures.len);
         for (captures, kinds) |capture, *kind| {
-            kind.* = if (capture.is_boxed) .cell else valueTypeFromTypeId(self.type_table, capture.type_id);
+            kind.* = if (capture.is_cell) .cell else valueTypeFromTypeId(self.type_table, capture.type_id);
         }
         return kinds;
     }

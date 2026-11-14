@@ -10,7 +10,7 @@ pub const Program = struct {
     functions: []const Func,
     defined_types: []const DefinedType,
     error_names: []const []const u8,
-    boxed_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
 };
 
 pub const Block = []const Instruction;
@@ -92,7 +92,7 @@ pub const Func = struct {
 
 pub const Capture = struct {
     type_id: TypeId,
-    is_boxed: bool,
+    is_cell: bool,
 };
 
 pub const UpdateCapture = struct {
@@ -325,7 +325,7 @@ pub const MakeClosure = struct {
 
 pub const CaptureRef = struct {
     index: u8,
-    is_boxed: bool,
+    is_cell: bool,
 };
 
 pub const CallValue = struct {
