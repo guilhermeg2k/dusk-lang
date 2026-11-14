@@ -12,7 +12,7 @@ const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
-pub const parse = modules.parse;
+pub const parse = modules.ModuleLoader.parse;
 
 pub fn stdSource(path: []const u8) []const u8 {
     return @import("runtime/builtins/std.zig").find(path).?.source;

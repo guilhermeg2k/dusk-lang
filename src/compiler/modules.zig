@@ -28,6 +28,10 @@ pub const ModuleLoader = struct {
         return self.modules.items;
     }
 
+    pub fn parse(allocator: std.mem.Allocator, src: []const u8) CompileError!ast.Root {
+        return parseFile(allocator, src, null);
+    }
+
     fn loadModule(self: *Self, path: []const u8, src: []const u8, file_path: ?[]const u8, bindings: ?*const BindingMap) CompileError!usize {
         const root = try parseFile(self.allocator, src, file_path);
         var reporter = CompileErrorReporter{ .allocator = self.allocator, .src = src, .file_path = file_path };
@@ -52,6 +56,15 @@ pub const ModuleLoader = struct {
         });
         try self.loaded_paths.put(self.allocator, path, index);
         return index;
+    }
+
+    fn parseFile(allocator: std.mem.Allocator, src: []const u8, file_path: ?[]const u8) CompileError!ast.Root {
+        var dusk_lexer = Lexer.init(allocator, src);
+        dusk_lexer.err_reporter.file_path = file_path;
+        const tokens = try dusk_lexer.list();
+        var dusk_parser = Parser.init(allocator, src, tokens.items);
+        dusk_parser.err_reporter.file_path = file_path;
+        return dusk_parser.parse();
     }
 
     fn loadImport(self: *Self, import: ast.ImportStmt, reporter: *CompileErrorReporter) CompileError!usize {
@@ -127,16 +140,3 @@ pub const Import = struct {
     stmt: ast.ImportStmt,
     module_index: usize,
 };
-
-pub fn parse(allocator: std.mem.Allocator, src: []const u8) CompileError!ast.Root {
-    return parseFile(allocator, src, null);
-}
-
-fn parseFile(allocator: std.mem.Allocator, src: []const u8, file_path: ?[]const u8) CompileError!ast.Root {
-    var dusk_lexer = Lexer.init(allocator, src);
-    dusk_lexer.err_reporter.file_path = file_path;
-    const tokens = try dusk_lexer.list();
-    var dusk_parser = Parser.init(allocator, src, tokens.items);
-    dusk_parser.err_reporter.file_path = file_path;
-    return dusk_parser.parse();
-}
