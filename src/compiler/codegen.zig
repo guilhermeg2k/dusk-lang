@@ -546,7 +546,8 @@ pub const BytecodeGen = struct {
             while (index < parts.len and kinds.items.len < max_str_build_parts) : (index += 1) {
                 const part_reg = try self.genValue(parts[index], try self.consumeRegister());
                 const kind = valueTypeFromTypeId(self.type_table, parts[index].type_id);
-                if (!isFormattedLate(kind)) {
+                const needs_format_now = !isFormattedLate(kind);
+                if (needs_format_now) {
                     try self.chunk_instructions.append(self.allocator, .{ .op = .TO_STRING, .a = part_reg, .b = part_reg, .c = @intFromEnum(kind) });
                     try self.recordHeapMap();
                     self.register_types[part_reg] = result_type;
