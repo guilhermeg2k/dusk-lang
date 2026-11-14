@@ -220,16 +220,20 @@ pub const VM = struct {
                 },
 
                 .MAP_NEXT => {
-                    const has_next = mapInSlot(&stack[stack_base + inst.b]).advanceCursor(&stack[stack_base + inst.c]);
+                    var cursor = MapCursor.unpack(stack[stack_base + inst.c]);
+                    const has_next = cursor.advance(mapInSlot(&stack[stack_base + inst.b]));
+                    stack[stack_base + inst.c] = cursor.pack();
                     stack[stack_base + inst.a] = if (has_next) v.TRUE_VALUE else v.FALSE_VALUE;
                 },
 
                 .MAP_KEY_AT => {
-                    stack[stack_base + inst.a] = mapInSlot(&stack[stack_base + inst.b]).entryAtCursor(stack[stack_base + inst.c]).key;
+                    const cursor = MapCursor.unpack(stack[stack_base + inst.c]);
+                    stack[stack_base + inst.a] = cursor.entryIn(mapInSlot(&stack[stack_base + inst.b])).key;
                 },
 
                 .MAP_VALUE_AT => {
-                    stack[stack_base + inst.a] = mapInSlot(&stack[stack_base + inst.b]).entryAtCursor(stack[stack_base + inst.c]).value;
+                    const cursor = MapCursor.unpack(stack[stack_base + inst.c]);
+                    stack[stack_base + inst.a] = cursor.entryIn(mapInSlot(&stack[stack_base + inst.b])).value;
                 },
 
                 .BYTES_NEW => {
@@ -1033,5 +1037,58 @@ pub const VM = struct {
         const name = self.frames[self.frame_count - 1].function.name;
         const is_top_level = name.len > 0 and name[0] == '$';
         RuntimeErrorReporter.where(if (is_top_level) null else name, self.failed_builtin);
+    }
+};
+
+const MapCursor = struct {
+    next_position: u32,
+    seq: u32,
+
+    fn unpack(value: v.Value) MapCursor {
+        const raw: u64 = @bitCast(value.int64);
+        return .{ .next_position = @truncate(raw), .seq = @truncate(raw >> 32) };
+    }
+
+    fn pack(self: MapCursor) v.Value {
+        const raw = @as(u64, self.next_position) | (@as(u64, self.seq) << 32);
+        return .{ .int64 = @bitCast(raw) };
+    }
+
+    fn advance(self: *MapCursor, map: *const v.Map) bool {
+        const storage = map.getStorage() orelse return false;
+        const used = storage.usedEntries();
+        var position = self.resumePosition(used);
+        while (position < used.len) : (position += 1) {
+            if (used[position].isRemoved()) continue;
+            self.* = .{ .next_position = position + 1, .seq = used[position].seq };
+            return true;
+        }
+        return false;
+    }
+
+    fn entryIn(self: MapCursor, map: *const v.Map) *v.MapEntry {
+        return &map.getStorage().?.entries()[self.next_position - 1];
+    }
+
+    fn resumePosition(self: MapCursor, entries: []const v.MapEntry) u32 {
+        if (self.next_position == 0) return 0;
+        const visited = self.next_position - 1;
+        const is_visited_in_place = visited < entries.len and entries[visited].seq == self.seq;
+        if (is_visited_in_place) return self.next_position;
+        return firstEntryAfter(entries, self.seq);
+    }
+
+    fn firstEntryAfter(entries: []const v.MapEntry, seq: u32) u32 {
+        var low: usize = 0;
+        var high: usize = entries.len;
+        while (low < high) {
+            const middle = low + (high - low) / 2;
+            if (entries[middle].seq <= seq) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return @intCast(low);
     }
 };

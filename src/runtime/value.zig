@@ -383,22 +383,6 @@ pub const Map = extern struct {
         @memset(storage.entryIndexes(), 0);
     }
 
-    pub fn advanceCursor(self: *const Self, cursor: *Value) bool {
-        const storage = self.getStorage() orelse return false;
-        const used = storage.usedEntries();
-        var position = MapCursor.unpack(cursor.*).resumePosition(used);
-        while (position < used.len) : (position += 1) {
-            if (used[position].isRemoved()) continue;
-            cursor.* = MapCursor.pack(.{ .next_position = position + 1, .seq = used[position].seq });
-            return true;
-        }
-        return false;
-    }
-
-    pub fn entryAtCursor(self: *const Self, cursor: Value) *MapEntry {
-        return &self.getStorage().?.entries()[MapCursor.unpack(cursor).next_position - 1];
-    }
-
     pub fn calc_size() usize {
         return @sizeOf(Self);
     }
@@ -539,43 +523,6 @@ pub const MapStorage = extern struct {
         new_obj.obj.gc_forward = null;
         new_obj.obj.relocated = null;
         return new_obj;
-    }
-};
-
-const MapCursor = struct {
-    next_position: u32,
-    seq: u32,
-
-    fn unpack(value: Value) MapCursor {
-        const raw: u64 = @bitCast(value.int64);
-        return .{ .next_position = @truncate(raw), .seq = @truncate(raw >> 32) };
-    }
-
-    fn pack(cursor: MapCursor) Value {
-        const raw = @as(u64, cursor.next_position) | (@as(u64, cursor.seq) << 32);
-        return .{ .int64 = @bitCast(raw) };
-    }
-
-    fn resumePosition(cursor: MapCursor, entries: []const MapEntry) u32 {
-        if (cursor.next_position == 0) return 0;
-        const visited = cursor.next_position - 1;
-        const is_visited_in_place = visited < entries.len and entries[visited].seq == cursor.seq;
-        if (is_visited_in_place) return cursor.next_position;
-        return firstEntryAfter(entries, cursor.seq);
-    }
-
-    fn firstEntryAfter(entries: []const MapEntry, seq: u32) u32 {
-        var low: usize = 0;
-        var high: usize = entries.len;
-        while (low < high) {
-            const middle = low + (high - low) / 2;
-            if (entries[middle].seq <= seq) {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        return @intCast(low);
     }
 };
 

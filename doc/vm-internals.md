@@ -10,7 +10,7 @@ The source files involved:
 | `src/runtime/bytecode.zig` | The compiled program format (`Program`, `Function`, `Chunk`), the instruction format and opcodes |
 | `src/runtime/vm.zig` | The interpreter (`VM.execute`), allocation helpers, `copy` |
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
-| `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the work on them that doesn't allocate (array items; map hashing, lookup, insert, removal and loop cursors, section 6.8) |
+| `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the work on them that doesn't allocate (array items; map hashing, lookup, insert and removal, section 6.8) |
 | `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
@@ -395,7 +395,7 @@ The fresh register matters for `flag = other and flag`: writing the left side st
 
 ### 6.8 Maps
 
-A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. Like arrays, everything that doesn't allocate is a method of `Map` or `MapStorage` in `value.zig`; allocation (`newMap`, `ensureRoomForMapEntry`, boxing in `readMapEntry`) lives on the VM next to `growArray`. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
+A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. Like arrays, the work on entries that doesn't allocate is a method of `Map` or `MapStorage` in `value.zig`; allocation (`newMap`, `ensureRoomForMapEntry`, boxing in `readMapEntry`) lives on the VM next to `growArray`, and the loop cursor (`MapCursor`) is in `vm.zig`. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
 
 ```zig
 MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 24 bytes
@@ -408,7 +408,7 @@ MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 2
 - **Struct identity.** The copying GC moves structs, so a struct key can't hash its address. `Struct.identity` (a `u32` in the header padding, so structs didn't grow) is `0` until the struct is first hashed, then takes the next value of a global counter (`Struct.ensureIdentity`). GC clones keep it (byte copies). `copy` resets it on the copies. Wrapping the counter only makes buckets collide.
 - **Removal** sets the top bit of `hash`, clears the key and value (so the GC frees what they held), and leaves the index slot pointing at the dead entry so probe chains stay intact. It never allocates.
 - **Growth.** When `len == capacity`, `VM.ensureRoomForMapEntry` allocates a new storage and copies the live entries in order, rebuilding the index: the same capacity when at least a quarter of the entries are removed (compaction), otherwise twice it. The first storage has 8 entries.
-- **Loops.** Each entry has a `seq` (insertion number, increasing along the entry array; `Map.next_seq` starts at 1). The loop cursor is one int register: the position after the visited entry (low 32 bits) and that entry's `seq` (high 32 bits). `MAP_NEXT` checks the visited entry is still at its position; if a compaction moved entries, it binary searches the first entry with a larger `seq`. Removed entries are skipped and appended ones are reached at the end. `seq` wraps after 4 billion inserts into one map; a loop running at that point could revisit entries.
+- **Loops.** Each entry has a `seq` (insertion number, increasing along the entry array; `Map.next_seq` starts at 1). The loop cursor is one int register: the position after the visited entry (low 32 bits) and that entry's `seq` (high 32 bits). The handlers unpack it into a `MapCursor` (`vm.zig`), call `advance(map)` or `entryIn(map)`, and pack it back. The cursor relies on `value.zig` keeping seqs increasing along the entries and never reused: `Map.append` stamps them, `copyLiveEntriesFrom` keeps their order, and `clear` doesn't reset `next_seq`. `MAP_NEXT` checks the visited entry is still at its position; if a compaction moved entries, it binary searches the first entry with a larger `seq`. Removed entries are skipped and appended ones are reached at the end. `seq` wraps after 4 billion inserts into one map; a loop running at that point could revisit entries.
 - **Reads without boxes.** `MAP_GET` boxes a primitive value because `m[k]` is a `?V`. Sema lowers `if m[k]: v` and `m[k] orelse d` (non-nullable map, primitive non-nullable `V`) to `ir.map_find`, which codegen turns into `MAP_FIND` with two consecutive registers bound to the found flag and the raw value.
 
 ## 7. Calls, returns and errors
