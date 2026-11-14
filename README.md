@@ -4,7 +4,7 @@
 
 # Dusk Programming Language
 
-A small/lightweight statically typed scripting language
+A general-purpose, statically typed language with its own runtime: a bytecode VM, garbage collection and lightweight tasks built in
 
 > 🚧 Very early work in progress 🚧
 
