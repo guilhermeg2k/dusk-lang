@@ -240,7 +240,7 @@ pub const Value = struct {
         make_closure: MakeClosure,
         capture_ref: CaptureRef,
         capture_raw: u8,
-        var_box: usize,
+        var_cell: usize,
         struct_init: StructInit,
         union_init: UnionInit,
         null_box_init: NullBoxInit,

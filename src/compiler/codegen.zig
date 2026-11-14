@@ -447,7 +447,7 @@ pub const BytecodeGen = struct {
                 self.register_types[target_reg] = value.type_id;
             },
 
-            .var_box => |uid| {
+            .var_cell => |uid| {
                 const cell_reg = self.var_register_id_by_uid.get(uid) orelse return BytecodeError.UndefinedVariable;
                 try self.chunk_instructions.append(self.allocator, .{ .op = .LOAD, .a = target_reg, .b = cell_reg });
                 self.register_types[target_reg] = value.type_id;
@@ -1450,7 +1450,7 @@ pub const BytecodeGen = struct {
                     break true;
                 }
             } else false,
-            .var_box => |box_uid| box_uid == uid,
+            .var_cell => |cell_uid| cell_uid == uid,
             .capture_ref, .capture_raw => false,
             .union_init => |union_init| if (union_init.value) |payload| readsVariable(payload, uid) else false,
             .null_box_init => |box| if (box.value) |inner| readsVariable(inner, uid) else false,

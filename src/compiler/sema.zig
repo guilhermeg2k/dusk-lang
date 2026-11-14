@@ -4417,7 +4417,7 @@ pub const SemaAnalyzer = struct {
         const cell_type = self.type_table.getPrimitive(.cell);
         const raw_type = if (is_boxed) cell_type else symbol.type_id;
         const source = if (is_parent_local and is_boxed)
-            try ir.Value.init(self.allocator, .{ .data = .{ .var_box = symbol.uid }, .type_id = cell_type })
+            try ir.Value.init(self.allocator, .{ .data = .{ .var_cell = symbol.uid }, .type_id = cell_type })
         else if (is_parent_local)
             try ir.Value.init(self.allocator, .{ .data = .{ .identifier = .{ .uid = symbol.uid, .name = symbol.identifier } }, .type_id = symbol.type_id })
         else
