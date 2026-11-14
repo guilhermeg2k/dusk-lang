@@ -620,19 +620,25 @@ pub const Closure = extern struct {
     function: *const bc.Function,
     capture_count: u32,
 
+    pub fn init(allocator: std.mem.Allocator, function: *const bc.Function, capture_count: usize) !*Self {
+        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(capture_count));
+        const closure: *Self = @ptrCast(raw_memory.ptr);
+
+        closure.* = .{
+            .obj = .{ .kind = .closure },
+            .function = function,
+            .capture_count = @intCast(capture_count),
+        };
+
+        return closure;
+    }
+
     pub fn initStatic(function: *const bc.Function) Self {
         return .{ .obj = .{ .kind = .closure }, .function = function, .capture_count = 0 };
     }
 
     pub fn isStatic(obj: *const HeapValue) bool {
         return obj.kind == .closure and HeapValue.getParentPtr(Self, @constCast(obj)).capture_count == 0;
-    }
-
-    pub fn init(allocator: std.mem.Allocator, function: *const bc.Function, capture_count: usize) !*Self {
-        const raw_memory = try allocator.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(Self)), Self.calc_size(capture_count));
-        const closure: *Self = @ptrCast(raw_memory.ptr);
-        closure.* = .{ .obj = .{ .kind = .closure }, .function = function, .capture_count = @intCast(capture_count) };
-        return closure;
     }
 
     pub fn captures(self: *Self) []Value {
