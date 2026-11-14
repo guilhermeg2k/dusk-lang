@@ -582,17 +582,7 @@ pub const VM = struct {
                         .dusk => {
                             current_frame.cur_inst = cur_instruction;
                             const new_offset = stack_base + inst.a + 1;
-                            const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
-                            if (is_stack_full) {
-                                stack = try self.growCallStack(new_offset);
-                            }
-                            self.frames[self.frame_count] = .{
-                                .function = func,
-                                .cur_inst = 0,
-                                .stack_offset = new_offset,
-                            };
-                            self.frame_count += 1;
-                            current_frame = &self.frames[self.frame_count - 1];
+                            current_frame = try self.pushFrame(func, new_offset, &stack);
                             cur_instruction = 0;
                             instructions = func.kind.dusk.instructions;
                             stack_base = new_offset;
@@ -651,17 +641,7 @@ pub const VM = struct {
                     const func = closure.function;
                     current_frame.cur_inst = cur_instruction;
                     const new_offset = stack_base + inst.a + 1;
-                    const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
-                    if (is_stack_full) {
-                        stack = try self.growCallStack(new_offset);
-                    }
-                    self.frames[self.frame_count] = .{
-                        .function = func,
-                        .cur_inst = 0,
-                        .stack_offset = new_offset,
-                    };
-                    self.frame_count += 1;
-                    current_frame = &self.frames[self.frame_count - 1];
+                    current_frame = try self.pushFrame(func, new_offset, &stack);
                     cur_instruction = 0;
                     instructions = func.kind.dusk.instructions;
                     stack_base = new_offset;
@@ -972,6 +952,20 @@ pub const VM = struct {
         }
 
         stack[stack_base + target_reg] = try self.allocNullBox(union_vl.get(tag), desc.variant_kinds[tag]);
+    }
+
+    inline fn pushFrame(self: *Self, func: *const bc.Function, new_offset: usize, stack: *[]v.Value) !*CallFrame {
+        const is_stack_full = self.frame_count == self.frames.len or new_offset + MAX_FRAME_REGISTERS > stack.len;
+        if (is_stack_full) {
+            stack.* = try self.growCallStack(new_offset);
+        }
+        self.frames[self.frame_count] = .{
+            .function = func,
+            .cur_inst = 0,
+            .stack_offset = new_offset,
+        };
+        self.frame_count += 1;
+        return &self.frames[self.frame_count - 1];
     }
 
     noinline fn growCallStack(self: *Self, new_offset: usize) ![]v.Value {
