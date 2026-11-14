@@ -10,8 +10,8 @@ The source files involved:
 | `src/runtime/bytecode.zig` | The compiled program format (`Program`, `Function`, `Chunk`), the instruction format and opcodes |
 | `src/runtime/vm.zig` | The interpreter (`VM.execute`), allocation helpers, `copy` |
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
-| `src/runtime/value.zig` | `Value`, `ValueType` and every heap object layout |
-| `src/runtime/map.zig` | Map lookups, inserts, removal, growth and loop cursors (section 6.8) |
+| `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the operations that need no VM (array items, map entry lookup, insert, removal) |
+| `src/runtime/map.zig` | Map operations that need the VM: key hashing, allocation and growth, registers, loop cursors (section 6.8) |
 | `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
@@ -295,7 +295,7 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | `ARRAY_POP R[a] R[b]` | remove and return the last element (`0` if empty; the prelude's `pop` checks first) |
 | `DEEP_COPY R[a] R[b]` | `copy(x)` (section 10) |
 
-**Maps** (section 6.8). They call `noinline` functions in `runtime/map.zig`.
+**Maps** (section 6.8). They call functions in `runtime/map.zig`, which use the `Map` and `MapStorage` methods in `value.zig`.
 
 | Instruction | Effect |
 |---|---|
@@ -396,7 +396,7 @@ The fresh register matters for `flag = other and flag`: writing the left side st
 
 ### 6.8 Maps
 
-A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
+A `Map` header never moves except in a GC, so growing a map doesn't need `relocated`: only its `storage` pointer changes. Like arrays, the work on entries that needs no VM (`find`, `append`, `remove`, `clear`, `copyLiveEntriesFrom`, `nextCapacity`) are methods of `Map` and `MapStorage` in `value.zig`; `runtime/map.zig` adds what needs the VM: hashing (struct identity), allocation, registers and loop cursors. `MapStorage` holds the entries in insertion order, followed by an open-addressing index:
 
 ```zig
 MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 24 bytes

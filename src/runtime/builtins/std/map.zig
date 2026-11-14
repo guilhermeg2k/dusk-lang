@@ -36,7 +36,7 @@ fn mapValues(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn mapClear(_: *VM, args: []v.Value) anyerror!NativeResult {
-    maps.clear(mapArg(args));
+    mapArg(args).clear();
     return ok(.{ .null = {} });
 }
 

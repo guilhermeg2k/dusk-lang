@@ -312,6 +312,36 @@ pub const Map = extern struct {
         return storage.count;
     }
 
+    pub fn find(self: *const Self, key: Value, hash: u32) ?*MapEntry {
+        const storage = self.getStorage() orelse return null;
+        return storage.find(key, hash);
+    }
+
+    pub fn append(self: *Self, key: Value, value: Value, hash: u32) void {
+        self.getStorage().?.append(.{ .key = key, .value = value, .hash = hash, .seq = self.next_seq });
+        self.next_seq +%= 1;
+        if (self.next_seq == 0) {
+            self.next_seq = 1;
+        }
+    }
+
+    pub fn remove(self: *Self, key: Value, hash: u32) bool {
+        const storage = self.getStorage() orelse return false;
+        const entry = storage.find(key, hash) orelse return false;
+        entry.hash |= MapEntry.removed_bit;
+        entry.key = NULL_VALUE;
+        entry.value = NULL_VALUE;
+        storage.count -= 1;
+        return true;
+    }
+
+    pub fn clear(self: *Self) void {
+        const storage = self.getStorage() orelse return;
+        storage.len = 0;
+        storage.count = 0;
+        @memset(storage.index(), 0);
+    }
+
     pub fn calc_size() usize {
         return @sizeOf(Self);
     }
@@ -365,6 +395,56 @@ pub const MapStorage = extern struct {
         };
         @memset(storage.index(), 0);
         return storage;
+    }
+
+    pub fn find(self: *const Self, key: Value, hash: u32) ?*MapEntry {
+        const slots = self.index();
+        const stored = self.entries();
+        var slot = hash & self.index_mask;
+        while (slots[slot] != 0) : (slot = (slot + 1) & self.index_mask) {
+            const entry = &stored[slots[slot] - 1];
+            const is_candidate = entry.hash == hash and !entry.isRemoved();
+            if (is_candidate and self.areKeysEqual(entry.key, key)) {
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    fn areKeysEqual(self: *const Self, a: Value, b: Value) bool {
+        return switch (self.key_type) {
+            .int64 => a.int64 == b.int64,
+            .bool => a.bool == b.bool,
+            .string => HeapValue.getParentPtr(Bytes, a.heap_obj).eql(HeapValue.getParentPtr(Bytes, b.heap_obj)),
+            .@"struct" => a.heap_obj == b.heap_obj,
+            else => unreachable,
+        };
+    }
+
+    pub fn append(self: *Self, entry: MapEntry) void {
+        const position = self.len;
+        self.entries()[position] = entry;
+        self.len += 1;
+        self.count += 1;
+        const slots = self.index();
+        var slot = entry.hash & self.index_mask;
+        while (slots[slot] != 0) {
+            slot = (slot + 1) & self.index_mask;
+        }
+        slots[slot] = position + 1;
+    }
+
+    pub fn copyLiveEntriesFrom(self: *Self, other: *const Self) void {
+        for (other.usedEntries()) |entry| {
+            if (entry.isRemoved()) continue;
+            self.append(entry);
+        }
+    }
+
+    pub fn nextCapacity(self: *const Self) u32 {
+        const removed = self.len - self.count;
+        const is_mostly_live = removed * 4 < self.len;
+        return if (is_mostly_live) self.capacity * 2 else self.capacity;
     }
 
     pub fn entries(self: *const Self) []MapEntry {
