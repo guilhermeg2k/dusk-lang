@@ -1,5 +1,5 @@
 <div align="center">
-<img src="https://github.com/guilhermeg2k/dusk-lang/blob/main/assets/logo.png" height="128px" alt="Dusk Logo">
+<img src="https://github.com/guilhermeg2k/dusk-lang/blob/dev/assets/logo.png" height="128px" alt="Dusk Logo">
 </div>
 
 # Dusk Programming Language
@@ -20,8 +20,8 @@ A general-purpose, statically typed language with its own runtime: a bytecode VM
 
 [AI Usage](doc/ai-disclaimer.md)
 
-[Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/main/doc/contributing.md)
+[Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/dev/doc/contributing.md)
 
-[License](https://github.com/guilhermeg2k/dusk-lang/blob/main/LICENSE)
+[License](https://github.com/guilhermeg2k/dusk-lang/blob/dev/LICENSE)
 
 Made by Guilherme (~\_^)
