@@ -8,7 +8,7 @@ const err = @import("compile_error.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
-    const max_build_parts = 32;
+    const max_str_build_parts = 32;
 
     allocator: std.mem.Allocator,
     type_table: *tt.TypeTable,
@@ -543,7 +543,7 @@ pub const BytecodeGen = struct {
                 self.register_types[previous_reg] = result_type;
                 try kinds.append(self.allocator, .string);
             }
-            while (index < parts.len and kinds.items.len < max_build_parts) : (index += 1) {
+            while (index < parts.len and kinds.items.len < max_str_build_parts) : (index += 1) {
                 const part_reg = try self.genValue(parts[index], try self.consumeRegister());
                 const kind = valueTypeFromTypeId(self.type_table, parts[index].type_id);
                 if (!isFormattedLate(kind)) {
