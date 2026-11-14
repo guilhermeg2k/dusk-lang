@@ -75,7 +75,7 @@ pub const Dusk = struct {
     }
 
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
-        Map.randomizeStringHashSeed(self.io);
+        Map.randomizeSeeds(self.io);
         var v = VM.init(program, self.stdout_writer);
         defer v.deinit();
         try v.run();

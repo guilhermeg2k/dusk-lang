@@ -132,6 +132,20 @@ func main() -> void
     end
     assert(steps == 1)
 
+    let mut emptied = {"a": 1, "b": 2, "c": 3}
+    assert(map::remove(emptied, "a"))
+    assert(map::remove(emptied, "b"))
+    assert(map::remove(emptied, "c"))
+    for 0..100: i do
+        emptied["key ${i}"] = i
+    end
+    emptied["b"] = 20
+    assert(map::len(emptied) == 102)
+    assert(emptied["b"] == 20)
+    assert(emptied["a"] == null)
+    assert(emptied["key 50"] == 50)
+    assert(map::keys(emptied)[0] == "key 0")
+
     let p = Point(x = 1)
     let mut by_point = {p: 1}
     assert(map::has(by_point, p))

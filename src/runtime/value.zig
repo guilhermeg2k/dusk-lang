@@ -302,22 +302,25 @@ pub const Array = extern struct {
 pub const Map = extern struct {
     const Self = @This();
 
-    var string_hash_seed: u64 = 0;
+    var seed_generator = std.Random.SplitMix64.init(0);
 
     obj: HeapValue,
     key_type: ValueType,
     value_type: ValueType,
     next_seq: u32,
+    seed: u64,
     storage: Value,
 
     pub fn init(allocator: std.mem.Allocator, key_type: ValueType, value_type: ValueType) !*Self {
         const ptr = try allocator.create(Self);
-        ptr.* = .{ .obj = .{ .kind = .map }, .key_type = key_type, .value_type = value_type, .next_seq = 1, .storage = NULL_VALUE };
+        ptr.* = .{ .obj = .{ .kind = .map }, .key_type = key_type, .value_type = value_type, .next_seq = 1, .seed = seed_generator.next(), .storage = NULL_VALUE };
         return ptr;
     }
 
-    pub fn randomizeStringHashSeed(io: std.Io) void {
-        io.random(std.mem.asBytes(&string_hash_seed));
+    pub fn randomizeSeeds(io: std.Io) void {
+        var random_start: u64 = undefined;
+        io.random(std.mem.asBytes(&random_start));
+        seed_generator = .init(random_start);
     }
 
     pub fn getStorage(self: *const Self) ?*MapStorage {
@@ -339,11 +342,11 @@ pub const Map = extern struct {
         const raw: u64 = switch (self.key_type) {
             .int64 => @bitCast(key.int64),
             .bool => @intFromBool(key.bool),
-            .string => std.hash.Wyhash.hash(string_hash_seed, HeapValue.getParentPtr(Bytes, key.heap_obj).slice()),
+            .string => std.hash.Wyhash.hash(self.seed, HeapValue.getParentPtr(Bytes, key.heap_obj).slice()),
             .@"struct" => HeapValue.getParentPtr(Struct, key.heap_obj).ensureIdentity(),
             else => unreachable,
         };
-        return @as(u32, @truncate(std.hash.int(raw))) & ~MapEntry.removed_bit;
+        return @as(u32, @truncate(std.hash.int(raw ^ self.seed))) & ~MapEntry.removed_bit;
     }
 
     pub fn find(self: *const Self, key: Value, hash: u32) ?*MapEntry {
@@ -366,10 +369,14 @@ pub const Map = extern struct {
         entry.key = NULL_VALUE;
         entry.value = NULL_VALUE;
         storage.count -= 1;
+        if (storage.count == 0) {
+            self.seed = seed_generator.next();
+        }
         return true;
     }
 
     pub fn clear(self: *Self) void {
+        self.seed = seed_generator.next();
         const storage = self.getStorage() orelse return;
         storage.len = 0;
         storage.count = 0;

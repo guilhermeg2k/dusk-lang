@@ -150,7 +150,7 @@ The header is 24 bytes. Each object type embeds it as its `obj` field, and code 
 | `Closure` | `function`, `capture_count` | `capture_count` values | 40 + 8 × captures |
 | `Cell` | `kind`, `value` | none | 40 |
 | `Task` | `state` (a `*TaskState`, section 11) | none | 32 |
-| `Map` | `key_type`, `value_type`, `next_seq`, `storage` | none | 40 |
+| `Map` | `key_type`, `value_type`, `next_seq`, `seed`, `storage` | none | 48 |
 | `MapStorage` | `key_type`, `value_type`, `len`, `count`, `capacity`, `index_mask` | `capacity` entries, then the index | 48 + 24 × capacity + 4 × index slots |
 
 Notes:
@@ -402,7 +402,8 @@ MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 2
 ```
 
 - **Index.** A power-of-two array of `u32`, at least twice the capacity, so it is at most half full. A slot holds `entry position + 1`, or `0` when empty. A lookup hashes the key and probes linearly from `hash & index_mask`.
-- **Hashing** (`Map.hashKey`): ints, bytes and enums hash their `i64`; bools only `value.bool` (the other 7 bytes of a bool `Value` are undefined); strings `Wyhash` over their bytes, seeded with a random number per process (`Map.randomizeStringHashSeed`, called by `Dusk.runProgram`) so colliding keys can't be computed ahead of time; structs their `identity`. The result goes through `std.hash.int` and keeps 31 bits.
+- **Hashing** (`Map.hashKey`): ints, bytes and enums hash their `i64`; bools only `value.bool` (the other 7 bytes of a bool `Value` are undefined); strings `Wyhash` over their bytes, seeded with the map's seed; structs their `identity`. The result is xored with the map's seed, goes through `std.hash.int` and keeps 31 bits.
+- **Seeds.** Each map has its own random `seed` (from `Map.seed_generator`, a SplitMix64 that `Dusk.runProgram` starts from `io.random` through `Map.randomizeSeeds`), so colliding keys can't be computed ahead of time, and what collides in one map says nothing about another. A map gets a new seed when it becomes empty (`clear`, or `remove` of the last live entry): no live entry needs rehashing then, and tombstones never match. Growth keeps the seed, so it reuses the stored hashes. `copy` keeps the seed, since the copied index was built with it.
 - **Equality.** Ints by value, strings by length and bytes, structs by pointer. The GC updates both the stored key and the key being looked up, so pointer equality survives collections.
 - **Struct identity.** The copying GC moves structs, so a struct key can't hash its address. `Struct.identity` (a `u32` in the header padding, so structs didn't grow) is `0` until the struct is first hashed, then takes the next value of a global counter (`Struct.ensureIdentity`). GC clones keep it (byte copies). `copy` resets it on the copies. Wrapping the counter only makes buckets collide.
 - **Removal** sets the top bit of `hash`, clears the key and value (so the GC frees what they held), and leaves the index slot pointing at the dead entry so probe chains stay intact. It never allocates.
