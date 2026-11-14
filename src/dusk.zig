@@ -7,6 +7,7 @@ const vm = @import("runtime/vm.zig");
 
 const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
+const Map = @import("runtime/value.zig").Map;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
@@ -74,6 +75,7 @@ pub const Dusk = struct {
     }
 
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
+        Map.randomizeStringHashSeed(self.io);
         var v = VM.init(program, self.stdout_writer);
         defer v.deinit();
         try v.run();

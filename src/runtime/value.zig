@@ -302,6 +302,8 @@ pub const Array = extern struct {
 pub const Map = extern struct {
     const Self = @This();
 
+    var string_hash_seed: u64 = 0;
+
     obj: HeapValue,
     key_type: ValueType,
     value_type: ValueType,
@@ -312,6 +314,10 @@ pub const Map = extern struct {
         const ptr = try allocator.create(Self);
         ptr.* = .{ .obj = .{ .kind = .map }, .key_type = key_type, .value_type = value_type, .next_seq = 1, .storage = NULL_VALUE };
         return ptr;
+    }
+
+    pub fn randomizeStringHashSeed(io: std.Io) void {
+        io.random(std.mem.asBytes(&string_hash_seed));
     }
 
     pub fn getStorage(self: *const Self) ?*MapStorage {
@@ -333,7 +339,7 @@ pub const Map = extern struct {
         const raw: u64 = switch (self.key_type) {
             .int64 => @bitCast(key.int64),
             .bool => @intFromBool(key.bool),
-            .string => std.hash.Wyhash.hash(0, HeapValue.getParentPtr(Bytes, key.heap_obj).slice()),
+            .string => std.hash.Wyhash.hash(string_hash_seed, HeapValue.getParentPtr(Bytes, key.heap_obj).slice()),
             .@"struct" => HeapValue.getParentPtr(Struct, key.heap_obj).ensureIdentity(),
             else => unreachable,
         };
