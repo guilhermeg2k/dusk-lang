@@ -1,0 +1,70 @@
+import @/util as u
+import @/geo/shapes: Square, Color as Paint, scale
+
+struct Circle
+    radius: float
+
+    func area(self: @) -> float
+        return 3.0 * self.radius * self.radius
+    end
+end
+
+func describe() -> string
+    return "main"
+end
+
+func classify(size: float) -> string
+    let result = shapes::check(size) catch e then
+        when e
+            shapes::ShapeError.TooSmall then return "small" end
+            shapes::ShapeError.TooBig then return "big" end
+        end
+    end
+    return "ok $result"
+end
+
+func main() -> void
+    assert(shapes::SIDES == 4)
+    assert(shapes::helper(2) == 20)
+    assert(shapes::times_ten(1.5) == 40)
+    assert(shapes::scale(2.0) == 5.0)
+    assert(scale(size = 2.0, factor = 3.0) == 6.0)
+
+    let sq = shapes::Square()
+    assert(sq.size == 2.5)
+    assert(sq.color == shapes::Color.Green)
+    assert(sq.area() == 6.25)
+    let other: Square = Square(size = 3.0, color = Paint.Red)
+    assert(other.color == shapes::Color.Red)
+
+    let squares: []shapes::Square = [u::make_square(1.0), u::make_square(2.0)]
+    assert(shapes::total_area(squares) == 5.0)
+    assert(shapes::total_area([Circle(radius = 1.0)]) == 3.0)
+
+    let maybe: ?shapes::Square = u::first_or_null(squares)
+    if maybe: found then
+        assert(found.size == 1.0)
+    end
+
+    let boxed = shapes::Box(item = 7)
+    let typed: shapes::Box[string] = shapes::Box(item = "x")
+    assert(boxed.get() == 7)
+    assert(typed.get() == "x")
+
+    let shape: shapes::Shape = shapes::Shape(circle = 2.0)
+    when shape
+        square: s then assert(false) end
+        circle: r then assert(r == 2.0) end
+    end
+
+    assert(classify(0.5) == "small")
+    assert(classify(500.0) == "big")
+    assert(classify(5.0) == "ok 5")
+
+    assert(describe() == "main")
+    assert(u::describe() == "util")
+    assert(shapes::describe() == "shapes")
+
+    let f: func(float, float) -> float = shapes::scale
+    assert(f(1.0, 2.0) == 2.0)
+end

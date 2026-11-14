@@ -1,0 +1,4 @@
+func main() -> void
+    let mut m: ?map[string, int] = {"a": 1}
+    m?["a"] = 2
+end

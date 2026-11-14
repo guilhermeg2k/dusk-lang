@@ -1,0 +1,552 @@
+const std = @import("std");
+const ir = @import("ir.zig");
+
+pub const TypeId = u64;
+
+pub const TypeTable = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    types: std.ArrayList(Type),
+
+    primitives: std.AutoHashMap(PrimitiveType, TypeId),
+    arrays: std.AutoHashMap(TypeId, TypeId),
+    nullableTypeIdByTypeId: std.AutoHashMap(TypeId, TypeId),
+    typeIdByNullableTypeId: std.AutoHashMap(TypeId, TypeId),
+    anom_structs: std.StringHashMap(TypeId),
+    func_types: std.StringHashMap(TypeId),
+    tasks: std.AutoHashMap(TaskType, TypeId),
+    maps: std.AutoHashMap(MapType, TypeId),
+    error_names: std.ArrayList([]const u8),
+
+    pub fn init(alloc: std.mem.Allocator) !Self {
+        var primitives = std.AutoHashMap(PrimitiveType, TypeId).init(alloc);
+        var types: std.ArrayList(Type) = .empty;
+
+        for (std.enums.values(PrimitiveType), 0..) |primitive_type, i| {
+            try types.append(alloc, Type{
+                .kind = switch (primitive_type) {
+                    .float => .{ .float = {} },
+                    .int => .{ .int = {} },
+                    .byte => .{ .byte = {} },
+                    .string => .{ .string = {} },
+                    .buffer => .{ .buffer = {} },
+                    .boolean => .{ .boolean = {} },
+                    .void => .{ .void = {} },
+                    .null => .{ .null = {} },
+                    .dynamic => .{ .dynamic = {} },
+                    .meta => .{ .meta = {} },
+                    .cell => .{ .cell = {} },
+                },
+                .is_nullable = false,
+            });
+
+            try primitives.put(primitive_type, @intCast(i));
+        }
+
+        return Self{
+            .allocator = alloc,
+            .types = types,
+            .primitives = primitives,
+            .arrays = std.AutoHashMap(TypeId, TypeId).init(alloc),
+            .nullableTypeIdByTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
+            .typeIdByNullableTypeId = std.AutoHashMap(TypeId, TypeId).init(alloc),
+            .anom_structs = std.StringHashMap(TypeId).init(alloc),
+            .func_types = std.StringHashMap(TypeId).init(alloc),
+            .tasks = std.AutoHashMap(TaskType, TypeId).init(alloc),
+            .maps = std.AutoHashMap(MapType, TypeId).init(alloc),
+            .error_names = .empty,
+        };
+    }
+
+    pub fn getPrimitive(self: *const Self, p: PrimitiveType) TypeId {
+        return self.primitives.get(p).?;
+    }
+
+    pub fn getTypePtrById(self: *Self, id: TypeId) *Type {
+        return &self.types.items[@intCast(id)];
+    }
+
+    pub fn eql(_: *Self, a: TypeId, b: TypeId) bool {
+        return a == b;
+    }
+
+    pub fn canCoerce(self: *Self, from: TypeId, to: TypeId) bool {
+        if (from == to) return true;
+
+        const type_from = self.getTypePtrById(from);
+        const type_to = self.getTypePtrById(to);
+
+        if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
+        if (type_from.is_nullable and !type_to.is_nullable) return false;
+        if (type_from.kind == .byte and type_to.kind == .int and type_from.is_nullable == type_to.is_nullable) return true;
+
+        if (!type_from.is_nullable and type_to.is_nullable) {
+            if (type_from.kind == .null) return true;
+            if (self.typeIdByNullableTypeId.get(to)) |unwrapped| {
+                return self.canCoerce(from, unwrapped);
+            }
+        }
+
+        if (self.isErrorSet(from) and self.isErrorSet(to)) {
+            const from_set = type_from.kind.@"enum".error_set.?;
+            const to_set = type_to.kind.@"enum".error_set.?;
+            if (from_set.kind == .inferred or to_set.kind == .inferred) return false;
+            return from_set.isSubsetOf(to_set);
+        }
+
+        if (type_from.kind == .array and type_to.kind == .array) {
+            return self.canCoerce(type_from.kind.array, type_to.kind.array);
+        }
+
+        if (type_from.kind == .@"struct" and type_to.kind == .@"struct") {
+            const from_s = type_from.kind.@"struct";
+            const to_s = type_to.kind.@"struct";
+            const from_is_anon = std.mem.eql(u8, from_s.identifier, "@");
+            const to_is_anon = std.mem.eql(u8, to_s.identifier, "@");
+
+            if (from_is_anon and !to_is_anon) {
+                for (to_s.fields_in_order) |field| {
+                    if (from_s.fields.get(field.identifier) == null) return false;
+                }
+                return true;
+            }
+        }
+
+        //note: wrong?
+        if (type_from.kind == .function and type_to.kind == .function) return false;
+
+        return false;
+    }
+
+    pub fn syntaxName(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
+        const t = self.getTypePtrById(id);
+        if (t.is_nullable) {
+            const base = self.typeIdByNullableTypeId.get(id) orelse id;
+            if (base != id) {
+                return std.fmt.allocPrint(allocator, "?{s}", .{try self.syntaxName(base, allocator)});
+            }
+        }
+        return switch (t.kind) {
+            .float => "float",
+            .int => "int",
+            .byte => "byte",
+            .string => "string",
+            .buffer => "buffer",
+            .boolean => "bool",
+            .void => "void",
+            .null => "null",
+            .dynamic => "dynamic",
+            .meta => "meta",
+            .cell => "cell",
+            .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
+            .map => |m| std.fmt.allocPrint(allocator, "map[{s}, {s}]", .{ try self.syntaxName(m.key, allocator), try self.syntaxName(m.value, allocator) }),
+            .function => |f| f.identifier,
+            .func_type => |f| self.funcTypeText(f, allocator),
+            .task => |task| self.taskTypeText(task, allocator),
+            .@"struct" => |s| s.identifier,
+            .@"enum" => |e| e.identifier,
+            .@"union" => |u| u.identifier,
+            .slot => |s| s.identifier,
+            .error_union => |eu| std.fmt.allocPrint(allocator, "{s}!{s}", .{ self.errorSetSyntaxName(eu.error_set), try self.syntaxName(eu.payload, allocator) }),
+        };
+    }
+
+    pub fn name(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
+        const t = self.getTypePtrById(id);
+        const prefix = if (t.is_nullable) "nullable " else "";
+
+        return switch (t.kind) {
+            .float => if (t.is_nullable) "nullable float" else "float",
+            .int => if (t.is_nullable) "nullable int" else "int",
+            .byte => if (t.is_nullable) "nullable byte" else "byte",
+            .string => if (t.is_nullable) "nullable string" else "string",
+            .buffer => if (t.is_nullable) "nullable buffer" else "buffer",
+            .boolean => if (t.is_nullable) "nullable boolean" else "boolean",
+            .void => if (t.is_nullable) "nullable void" else "void",
+            .null => if (t.is_nullable) "nullable null" else "null",
+            .dynamic => if (t.is_nullable) "nullable dynamic" else "dynamic",
+            .meta => "Meta Symbol",
+            .cell => "cell",
+            .function => |metadata| {
+                return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
+            },
+            .func_type => |f| {
+                return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, try self.funcTypeText(f, allocator) });
+            },
+            .task => |task| {
+                return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, try self.taskTypeText(task, allocator) });
+            },
+            .@"struct" => |s| {
+                if (std.mem.eql(u8, s.identifier, "@")) {
+                    return std.fmt.allocPrint(allocator, "{s}anonymous struct", .{prefix});
+                }
+                return std.fmt.allocPrint(allocator, "{s}struct {s}", .{ prefix, s.identifier });
+            },
+            .@"enum" => |e| {
+                if (e.error_set) |set| {
+                    if (set.kind == .inferred) {
+                        return std.fmt.allocPrint(allocator, "{s}error set of '{s}'", .{ prefix, e.identifier });
+                    }
+                    return std.fmt.allocPrint(allocator, "{s}error {s}", .{ prefix, e.identifier });
+                }
+                return std.fmt.allocPrint(allocator, "{s}enum {s}", .{ prefix, e.identifier });
+            },
+            .error_union => |eu| {
+                const set = self.getTypePtrById(eu.error_set).kind.@"enum";
+                const set_name = if (set.error_set.?.kind == .inferred) "" else set.identifier;
+                return std.fmt.allocPrint(allocator, "{s}!{s}", .{ set_name, try self.name(eu.payload, allocator) });
+            },
+            .@"union" => |u| {
+                return std.fmt.allocPrint(allocator, "{s}union {s}", .{ prefix, u.identifier });
+            },
+            .slot => |s| {
+                return std.fmt.allocPrint(allocator, "{s}{s}", .{ prefix, s.identifier });
+            },
+            .array => |inner_id| {
+                return std.fmt.allocPrint(allocator, "{s}[]{s}", .{ prefix, try self.name(inner_id, allocator) });
+            },
+            .map => |m| {
+                return std.fmt.allocPrint(allocator, "{s}map[{s}, {s}]", .{ prefix, try self.syntaxName(m.key, allocator), try self.syntaxName(m.value, allocator) });
+            },
+        };
+    }
+
+    fn funcTypeText(self: *Self, func: FuncType, allocator: std.mem.Allocator) error{OutOfMemory}![]const u8 {
+        var text: std.ArrayList(u8) = .empty;
+        try text.appendSlice(allocator, "func(");
+        for (func.params, 0..) |param, i| {
+            if (i > 0) {
+                try text.appendSlice(allocator, ", ");
+            }
+            if (param.is_mut) {
+                try text.appendSlice(allocator, "mut ");
+            }
+            try text.appendSlice(allocator, try self.syntaxName(param.type_id, allocator));
+        }
+        try text.appendSlice(allocator, ") -> ");
+        try text.appendSlice(allocator, try self.syntaxName(func.return_type_id, allocator));
+        return text.toOwnedSlice(allocator);
+    }
+
+    fn taskTypeText(self: *Self, task: TaskType, allocator: std.mem.Allocator) error{OutOfMemory}![]const u8 {
+        const set = self.getTypePtrById(task.error_set).kind.@"enum";
+        return std.fmt.allocPrint(allocator, "Task[{s}, {s}]", .{ try self.syntaxName(task.payload, allocator), set.identifier });
+    }
+
+    fn errorSetSyntaxName(self: *Self, error_set: TypeId) []const u8 {
+        const set = self.getTypePtrById(error_set).kind.@"enum";
+        return if (set.error_set.?.kind == .inferred) "" else set.identifier;
+    }
+
+    pub fn isErrorSet(self: *Self, id: TypeId) bool {
+        const t = self.getTypePtrById(id);
+        return t.kind == .@"enum" and t.kind.@"enum".error_set != null;
+    }
+
+    pub fn isErrorUnion(self: *Self, id: TypeId) bool {
+        return self.getTypePtrById(id).kind == .error_union;
+    }
+
+    pub fn addErrorName(self: *Self, set_name: []const u8, variant: []const u8) !i64 {
+        if (self.error_names.items.len == 0) {
+            try self.error_names.append(self.allocator, "");
+        }
+        try self.error_names.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ set_name, variant }));
+        return @intCast(self.error_names.items.len - 1);
+    }
+
+    pub fn addType(self: *Self, typ: Type) !TypeId {
+        try self.types.append(self.allocator, typ);
+        return @intCast(self.types.items.len - 1);
+    }
+
+    pub fn getOrAddNullable(self: *Self, typeId: TypeId) !TypeId {
+        if (self.getTypePtrById(typeId).is_nullable) return typeId;
+
+        const nullable_type = self.nullableTypeIdByTypeId.get(typeId);
+
+        if (nullable_type) |t| {
+            return t;
+        }
+
+        const @"type" = self.getTypePtrById(typeId);
+
+        try self.types.append(self.allocator, .{
+            .kind = @"type".kind,
+            .is_nullable = true,
+        });
+
+        const id: TypeId = @intCast(self.types.items.len - 1);
+        try self.nullableTypeIdByTypeId.put(typeId, id);
+        try self.typeIdByNullableTypeId.put(id, typeId);
+
+        return id;
+    }
+
+    pub fn getOrAddArray(self: *Self, inner: TypeId) !TypeId {
+        const cached_array = self.arrays.get(inner);
+        if (cached_array) |type_id| {
+            return type_id;
+        }
+
+        try self.types.append(self.allocator, .{
+            .kind = .{
+                .array = inner,
+            },
+            .is_nullable = false,
+        });
+
+        const new_type_id: TypeId = @intCast(self.types.items.len - 1);
+        try self.arrays.put(inner, new_type_id);
+        return new_type_id;
+    }
+
+    pub fn getOrAddFuncType(self: *Self, func: FuncType) !TypeId {
+        var key: std.ArrayList(u8) = .empty;
+        for (func.params) |param| {
+            try key.print(self.allocator, "{s}{d},", .{ if (param.is_mut) "m" else "", param.type_id });
+        }
+        const return_type = self.getTypePtrById(func.return_type_id);
+        if (return_type.kind == .error_union) {
+            try key.print(self.allocator, "->{d}!{d}", .{ return_type.kind.error_union.error_set, return_type.kind.error_union.payload });
+        } else {
+            try key.print(self.allocator, "->{d}", .{func.return_type_id});
+        }
+
+        if (self.func_types.get(key.items)) |id| {
+            key.deinit(self.allocator);
+            return id;
+        }
+
+        const id = try self.addType(.{ .kind = .{ .func_type = func }, .is_nullable = false });
+        try self.func_types.put(try key.toOwnedSlice(self.allocator), id);
+        return id;
+    }
+
+    pub fn getOrAddTask(self: *Self, task: TaskType) !TypeId {
+        if (self.tasks.get(task)) |id| {
+            return id;
+        }
+        const id = try self.addType(.{ .kind = .{ .task = task }, .is_nullable = false });
+        try self.tasks.put(task, id);
+        return id;
+    }
+
+    pub fn getOrAddMap(self: *Self, map: MapType) !TypeId {
+        if (self.maps.get(map)) |id| {
+            return id;
+        }
+        const id = try self.addType(.{ .kind = .{ .map = map }, .is_nullable = false });
+        try self.maps.put(map, id);
+        return id;
+    }
+
+    pub fn getAnonymoustStructSignature(self: *Self, anom_struct: *const Struct) ![]const u8 {
+        var fields_in_order: std.ArrayList([]const u8) = .empty;
+
+        var keys_it = anom_struct.fields.keyIterator();
+        while (keys_it.next()) |key_ptr| {
+            try fields_in_order.append(self.allocator, key_ptr.*);
+        }
+
+        std.mem.sort([]const u8, fields_in_order.items, {}, stringCompare);
+
+        var buf: std.ArrayList(u8) = .empty;
+        for (fields_in_order.items) |field| {
+            const typed_id = anom_struct.fields.get(field);
+            if (typed_id) |t_id| {
+                const formatted = try std.fmt.allocPrint(self.allocator, "{s}:{d}/", .{
+                    field,
+                    t_id.type_id,
+                });
+                try buf.appendSlice(self.allocator, formatted);
+            }
+        }
+
+        return buf.toOwnedSlice(self.allocator);
+    }
+
+    pub fn getOrAddAnonymousStruct(self: *Self, anom_struct: Struct) !TypeId {
+        const anom_struct_signature = try self.getAnonymoustStructSignature(&anom_struct);
+        const cached_anom_struct = self.anom_structs.get(anom_struct_signature);
+
+        if (cached_anom_struct) |id| {
+            return id;
+        }
+
+        try self.types.append(self.allocator, .{
+            .kind = .{
+                .@"struct" = anom_struct,
+            },
+            .is_nullable = false,
+        });
+
+        const new_id: TypeId = @intCast(self.types.items.len - 1);
+        try self.anom_structs.put(anom_struct_signature, new_id);
+
+        return new_id;
+    }
+};
+
+pub const PrimitiveType = enum {
+    float,
+    int,
+    byte,
+    string,
+    buffer,
+    boolean,
+    void,
+    null,
+    dynamic,
+    meta,
+    cell,
+};
+
+pub const Struct = struct {
+    identifier: []const u8,
+    fields: std.StringHashMap(TypedIdentifier),
+    static_fields: std.StringHashMap(TypedIdentifier),
+    fields_in_order: []const TypedIdentifier,
+    field_index_by_name: std.StringHashMap(u8),
+    methods: std.StringHashMap(TypeId),
+};
+
+pub const Func = struct {
+    identifier: []const u8,
+    uid: usize,
+    params: []const TypedIdentifier,
+    return_type_id: TypeId,
+};
+
+pub const FuncType = struct {
+    params: []const FuncTypeParam,
+    return_type_id: TypeId,
+};
+
+pub const TaskType = struct {
+    payload: TypeId,
+    error_set: TypeId,
+};
+
+pub const MapType = struct {
+    key: TypeId,
+    value: TypeId,
+};
+
+pub const FuncTypeParam = struct {
+    type_id: TypeId,
+    is_mut: bool,
+};
+
+pub const Enum = struct {
+    identifier: []const u8,
+    variants: std.StringHashMap(i64),
+    variants_in_order: []const []const u8 = &.{},
+    static_fields: std.StringHashMap(TypedIdentifier),
+    methods: std.StringHashMap(TypeId),
+    error_set: ?*ErrorSet = null,
+};
+
+pub const ErrorSet = struct {
+    kind: Kind,
+    ids: std.AutoArrayHashMapUnmanaged(i64, void) = .empty,
+
+    pub const Kind = enum { declared, inferred, slot, none };
+
+    pub fn has(self: *const ErrorSet, id: i64) bool {
+        return self.ids.contains(id);
+    }
+
+    pub fn isSubsetOf(self: *const ErrorSet, other: *const ErrorSet) bool {
+        for (self.ids.keys()) |id| {
+            if (!other.has(id)) return false;
+        }
+        return true;
+    }
+};
+
+pub const Slot = struct {
+    identifier: []const u8,
+    type_list: []const TypeId = &.{},
+    methods: []const SlotMethod = &.{},
+};
+
+pub const SlotMethod = struct {
+    identifier: []const u8,
+    type_id: TypeId,
+};
+
+pub const ErrorUnion = struct {
+    error_set: TypeId,
+    payload: TypeId,
+};
+
+pub const Union = struct {
+    pub const MAX_VARIANTS = 256;
+
+    identifier: []const u8,
+    variants: std.StringHashMap(TypeId),
+    variants_in_order: []const []const u8 = &.{},
+    static_fields: std.StringHashMap(TypedIdentifier),
+    methods: std.StringHashMap(TypeId),
+};
+
+//note: idk about this
+pub const TypedIdentifier = struct {
+    const Self = @This();
+
+    identifier: []const u8,
+    type_id: TypeId,
+    is_mut: bool,
+    is_file_only: bool = false,
+    default_value: ?*ir.Value,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
+    }
+};
+
+pub const Type = struct {
+    const Self = @This();
+
+    kind: union(enum) {
+        float,
+        int,
+        byte,
+        string,
+        buffer,
+        boolean,
+        void,
+        null,
+        dynamic,
+
+        meta,
+        cell,
+
+        function: Func,
+        func_type: FuncType,
+        task: TaskType,
+        array: TypeId,
+        map: MapType,
+        @"struct": Struct,
+        @"enum": Enum,
+        @"union": Union,
+        error_union: ErrorUnion,
+        slot: Slot,
+    },
+
+    is_nullable: bool,
+
+    pub fn init(allocator: std.mem.Allocator, exp: Self) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = exp;
+        return ptr;
+    }
+};
+
+fn stringCompare(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}

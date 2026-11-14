@@ -1,3 +1,5 @@
+import std/array: append
+
 func main() -> void
     for [[1]]: items do
         append(items, 2)

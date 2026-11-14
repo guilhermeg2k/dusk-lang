@@ -1,0 +1,20 @@
+func add_one(x: int) -> int
+    return x + 1
+end
+func pick(flag: bool) -> ?func(int) -> int
+    if flag then
+        return add_one
+    end
+    return null
+end
+func main() -> void
+    let picked = pick(false) orelse func(x) -> return x * 2
+    assert(picked(4) == 8)
+    let chosen: func(int) -> int = if true then add_one else func(x) -> return x - 1 end
+    assert(chosen(1) == 2)
+    let other: func(int) -> int = when 2
+        1 then add_one end
+        else then func(x) -> return x * 10 end
+    end
+    assert(other(1) == 10)
+end

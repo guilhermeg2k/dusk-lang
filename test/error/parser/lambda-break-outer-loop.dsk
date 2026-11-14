@@ -1,0 +1,7 @@
+func main() -> void
+    for 1..3: i do
+        let f = func() -> void
+            break
+        end
+    end
+end

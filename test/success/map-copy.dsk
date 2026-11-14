@@ -1,0 +1,39 @@
+struct Point
+    x: int
+end
+
+func main() -> void
+    let p = Point(x = 1)
+    let original = {"a": [1, 2], "b": [3]}
+    let mut copied = copy(original)
+    assert(copied != original)
+    copied["c"] = [4]
+    assert(original["c"] == null)
+    if copied["a"]: mut items then
+        items[0] = 100
+    end
+    assert(original["a"]?[0] == 1)
+    assert(copied["a"]?[0] == 100)
+
+    let by_point = {p: "p"}
+    let by_point_copy = copy(by_point)
+    assert(by_point_copy[p] == "p")
+
+    let twin = copy(p)
+    let mut both = {p: 1}
+    both[twin] = 2
+    assert(both[p] == 1)
+    assert(both[twin] == 2)
+
+    let empty: map[string, int] = {}
+    let empty_copy = copy(empty)
+    assert(empty_copy["x"] == null)
+
+    let deep: map[int, map[int, int]] = {1: {1: 1}}
+    let mut deep_copy = copy(deep)
+    if deep_copy[1]: mut inner then
+        inner[1] = 9
+    end
+    assert(deep[1]?[1] == 1)
+    assert(deep_copy[1]?[1] == 9)
+end

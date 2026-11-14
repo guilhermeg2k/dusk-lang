@@ -1,7 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
-const Lexer = @import("lexer.zig").Lexer;
+const EntryFile = @import("dusk.zig").EntryFile;
+const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
+const Lexer = @import("compiler/lexer.zig").Lexer;
+const uv = @import("runtime/tasks/uv.zig");
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -15,13 +18,36 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "libuv: a timer fires once" {
+    const State = struct {
+        var fire_count: usize = 0;
+        fn onTimer(_: *uv.Handle) callconv(.c) void {
+            fire_count += 1;
+        }
+    };
+    const loop_memory = try testing.allocator.alignedAlloc(u8, .@"16", uv.uv_loop_size());
+    defer testing.allocator.free(loop_memory);
+    const loop: *uv.Loop = @ptrCast(loop_memory.ptr);
+    try testing.expectEqual(0, uv.uv_loop_init(loop));
+    const timer_memory = try testing.allocator.alignedAlloc(u8, .@"16", uv.uv_handle_size(.timer));
+    defer testing.allocator.free(timer_memory);
+    const timer: *uv.Handle = @ptrCast(timer_memory.ptr);
+    try testing.expectEqual(0, uv.uv_timer_init(loop, timer));
+    try testing.expectEqual(0, uv.uv_timer_start(timer, State.onTimer, 5, 0));
+    _ = uv.uv_run(loop, .default);
+    try testing.expectEqual(1, State.fire_count);
+    uv.uv_close(timer, null);
+    _ = uv.uv_run(loop, .default);
+    try testing.expectEqual(0, uv.uv_loop_close(loop));
+}
+
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
         "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 9 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 3 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -50,7 +76,7 @@ test "string interpolation compiles to one STR_BUILD" {
     try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
 }
 
-fn countOps(source: []const u8, function: []const u8, op: @import("bytecode.zig").OpCode) !usize {
+fn countOps(source: []const u8, function: []const u8, op: @import("runtime/bytecode.zig").OpCode) !usize {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
@@ -167,7 +193,7 @@ test "multiline comments preserve tokens and locations" {
     var lexer = Lexer.init(testing.allocator, src);
     var tokens = try lexer.list();
     defer tokens.deinit(testing.allocator);
-    const Tag = @import("lexer.zig").Tag;
+    const Tag = @import("compiler/lexer.zig").Tag;
     const expected = [_]Tag{ .let_kw, .identifier, .eq, .int_literal, .plus, .int_literal, .eof };
     try testing.expectEqual(expected.len, tokens.items.len);
     for (expected, tokens.items) |tag, token| {
@@ -195,7 +221,7 @@ test "comments and whitespace at EOF" {
         var tokens = try lexer.list();
         defer tokens.deinit(testing.allocator);
         try testing.expectEqual(@as(usize, 1), tokens.items.len);
-        try testing.expectEqual(@import("lexer.zig").Tag.eof, tokens.items[0].tag);
+        try testing.expectEqual(@import("compiler/lexer.zig").Tag.eof, tokens.items[0].tag);
     }
 }
 
@@ -227,7 +253,7 @@ test "string escapes decode into UTF-8 literals" {
         const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
         var lexer = Lexer.init(arena.allocator(), source);
         const tokens = try lexer.list();
-        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
         const decoded = root.statements.items[0].data.let.value.data.string_literal;
         try testing.expectEqualStrings(case.expected, decoded);
@@ -254,7 +280,7 @@ test "multiline strings strip the closing indentation" {
         const source = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{case.source});
         var lexer = Lexer.init(arena.allocator(), source);
         const tokens = try lexer.list();
-        var parser = @import("parser.zig").Parser.init(arena.allocator(), source, tokens.items);
+        var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
         try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.data.string_literal);
     }
@@ -279,15 +305,58 @@ test "string constants outlive compilation and source storage" {
     try testing.expectEqual(@as(usize, 2), pool.values.len);
     try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
     try testing.expectEqualStrings("plain", pool.textAt(1));
-    var vm = @import("vm.zig").VM.init(&program, null);
+    var vm = @import("runtime/vm.zig").VM.init(&program, null);
     defer vm.deinit();
     try vm.run();
 }
 
-test "str_equal" {
-    try runCaseOutput("str-equal.dsk", "true\nfalse\n");
-    try runCaseError("sema/str-equal-nullable.dsk", error.InvalidType);
-    try runCaseError("sema/str-equal-int.dsk", error.InvalidType);
+test "maps: types and literals" {
+    try runCaseOutput("map-literals.dsk", "<map>\n<map> null\n");
+    try runCase("map-name-not-reserved.dsk");
+    try runCaseError("sema/map-invalid-key.dsk", error.InvalidMapKey);
+    try runCaseError("sema/map-nullable-key.dsk", error.InvalidMapKey);
+    try runCaseError("sema/map-generic-invalid-key.dsk", error.InvalidMapKey);
+    try runCaseError("sema/map-duplicate-key.dsk", error.DuplicateMapKey);
+    try runCaseError("sema/map-cant-infer-type.dsk", error.CantInferMapLiteralType);
+    try runCaseError("sema/map-reserved-type-name.dsk", error.ReservedTypeName);
+    try runCaseError("sema/map-wrong-slot-count.dsk", error.WrongSlotCount);
+    try runCaseError("sema/map-mixed-values.dsk", error.InvalidType);
+    try runCaseError("sema/map-no-value-coercion.dsk", error.InvalidType);
+}
+
+test "maps: indexing" {
+    try runCase("map-indexing.dsk");
+    try runCase("map-unboxed-reads.dsk");
+    try runCaseError("sema/map-write-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/map-write-immutable-param.dsk", error.NotMutable);
+    try runCaseError("sema/map-wrong-key-type.dsk", error.InvalidIndexing);
+    try runCaseError("sema/map-wrong-value-type.dsk", error.InvalidType);
+    try runCaseError("sema/map-assign-optional-index.dsk", error.CantAssignThroughOptionalChain);
+    try runCaseError("sema/assign-through-optional-chain.dsk", error.CantAssignThroughOptionalChain);
+    try runCaseError("sema/map-nullable-index.dsk", error.NullableMustBeUnwrapped);
+}
+
+test "maps: garbage collection and copy" {
+    try runCase("gc-maps.dsk");
+    try runCase("map-copy.dsk");
+}
+
+test "maps: loops" {
+    try runCase("map-loops.dsk");
+    try runCaseError("sema/map-loop-mut-primitive.dsk", error.PrimitiveCaptureCantBeMutable);
+    try runCaseError("sema/map-loop-nullable.dsk", error.InvalidType);
+    try runCaseError("sema/map-loop-mut-immutable.dsk", error.UnwrappedCantBeMutable);
+}
+
+test "maps: std/map" {
+    try runCase("map-functions.dsk");
+    try runCaseError("sema/map-remove-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/map-has-wrong-key.dsk", error.InvalidType);
+}
+
+test "strings compare by content with == and !=" {
+    try runCaseOutput("string-equality.dsk", "true\nfalse\n");
+    try runCaseError("sema/string-compare-int.dsk", error.CantCompare);
 }
 
 test "string length and char count" {
@@ -327,7 +396,6 @@ test "string indexing and loops" {
 
 test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
-    try runCaseError("sema/string-error-redefined.dsk", error.AlreadyDefined);
 }
 
 test "string transforms" {
@@ -347,12 +415,11 @@ test "string slice" {
     try runCaseRuntimeError("str-slice-unhandled.dsk", error.UnhandledError);
 }
 
-test "equality: only same types (or numbers) compare, strings and unions can't" {
+test "equality: only same types (or numbers) compare, unions can't" {
     try runCase("equality-rules.dsk");
     try runCaseError("sema/compare-different-structs.dsk", error.CantCompare);
     try runCaseError("sema/compare-bool-int.dsk", error.CantCompare);
     try runCaseError("sema/compare-int-string.dsk", error.CantCompare);
-    try runCaseError("sema/compare-strings.dsk", error.CantCompare);
     try runCaseError("sema/compare-unions.dsk", error.CantCompare);
     try runCaseError("sema/compare-not-nullable-with-null.dsk", error.CantCompare);
 }
@@ -730,6 +797,15 @@ test "sema error: invalid struct function" {
 
 test "sema error: invalid static struct field" {
     try runCaseError("sema/invalid-static-struct-field.dsk", error.InvalidStructField);
+}
+
+test "sema error: instance field read through the type name" {
+    try runCaseError("sema/instance-field-through-type.dsk", error.InvalidStructField);
+    try runCaseError("sema/instance-field-through-type-constant.dsk", error.InvalidStructField);
+}
+
+test "sema error: union variant read through the type name" {
+    try runCaseError("sema/union-variant-through-type.dsk", error.InvalidUnionMember);
 }
 
 test "sema error: cant infer array literal type" {
@@ -1284,8 +1360,9 @@ test "sema error: constant assign" {
     try runCaseError("sema/constant-assign.dsk", error.NotMutable);
 }
 
-test "sema error: constant invalid type" {
-    try runCaseError("sema/constant-invalid-type.dsk", error.InvalidConstantType);
+test "sema error: method as a constant" {
+    try runCaseError("sema/method-as-value-constant.dsk", error.MethodAsValue);
+    try runCaseError("sema/enum-method-as-value-constant.dsk", error.MethodAsValue);
 }
 
 test "sema error: static field not constant" {
@@ -2049,7 +2126,7 @@ test "sema error: float cast of a slot that allows a string" {
 }
 
 test "extern: only the prelude can declare extern functions" {
-    try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsidePrelude);
+    try runCaseError("sema/extern-outside-prelude.dsk", error.ExternOutsideStd);
     try runCaseError("sema/builtin-redefined.dsk", error.AlreadyDefined);
     try runCaseError("parser/extern-missing-return-type.dsk", error.ParserError);
     try runCaseError("parser/extern-missing-func.dsk", error.ParserError);
@@ -2067,6 +2144,275 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);
+}
+
+test "function values: named functions as values, function types and calls through values" {
+    try runCaseOutput("function-values.dsk", "null\n<func add>\nvalue: <func add>\n[<func add>, <func sub>]\n");
+    try runCase("gc-function-values.dsk");
+    try runCaseError("parser/function-type-inferred-error.dsk", error.ParserError);
+    try runCaseError("sema/function-value-compare.dsk", error.CantCompare);
+    try runCaseError("sema/function-value-named-args.dsk", error.NamedArgumentsOnValue);
+    try runCaseError("sema/function-value-builtin.dsk", error.BuiltinAsValue);
+    try runCaseError("sema/function-value-type-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/function-type-mut-primitive.dsk", error.PrimitiveParamsCantBeMutable);
+    try runCaseError("sema/function-value-nullable-call.dsk", error.NullableMustBeUnwrapped);
+    try runCaseError("sema/function-value-arg-count.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/function-value-mut-arg.dsk", error.NotMutable);
+    try runCaseError("sema/function-value-top-level.dsk", error.TopLevelLetNotConstant);
+    try runCaseError("sema/method-as-value.dsk", error.MethodAsValue);
+    try runCaseError("sema/enum-method-as-value.dsk", error.MethodAsValue);
+    try runCaseError("sema/union-method-as-value.dsk", error.MethodAsValue);
+    try runCaseError("sema/struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
+    try runCaseError("sema/generic-struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
+}
+
+test "lambdas: func(...) expressions" {
+    try runCaseOutput("lambdas.dsk", "<func>\n");
+    try runCaseError("parser/lambda-break-outer-loop.dsk", error.ParserError);
+    try runCaseError("sema/lambda-param-default.dsk", error.LambdaParamCantHaveDefault);
+    try runCaseError("sema/lambda-param-without-type.dsk", error.LambdaParamNeedsType);
+    try runCaseError("sema/lambda-calls-itself.dsk", error.LambdaCallsItself);
+}
+
+test "tasks: Task[T, E] types from spawn" {
+    try runCaseOutput("task-types.dsk", "<task> <task>\n");
+    try runCaseError("sema/task-compare.dsk", error.CantCompare);
+    try runCaseError("sema/task-needs-spawn.dsk", error.TaskNeedsSpawn);
+    try runCaseError("sema/task-wrong-slot-count.dsk", error.WrongSlotCount);
+    try runCaseError("sema/task-error-slot-not-set.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/task-name-taken.dsk", error.AlreadyDefined);
+    try runCaseError("sema/task-error-not-in-set.dsk", error.ErrorNotInSet);
+    try runCaseError("sema/task-payload-mismatch.dsk", error.InvalidType);
+    try runCaseError("sema/unawaited-task-can-fail.dsk", error.UnawaitedTaskCanFail);
+}
+
+test "tasks: spawn, await and sleep(0) on the scheduler" {
+    try runCaseOutput("tasks.dsk", "<task>\n<task done>\nmain ends\nafter main\n");
+    try runCase("gc-tasks.dsk");
+    try runCaseRuntimeError("task-awaits-itself.dsk", error.TaskAwaitsItself);
+    try runCaseRuntimeError("tasks-all-waiting.dsk", error.AllTasksWaiting);
+    try runCaseRuntimeError("task-unhandled-error.dsk", error.UnhandledTaskError);
+    try runCaseRuntimeError("sleep-negative.dsk", error.NegativeSleep);
+    try runCaseRuntimeError("task-runtime-error.dsk", error.ArrayOutOfBounds);
+}
+
+test "tasks: sleep(ms) parks on libuv timers" {
+    try runCaseOutput("tasks-timers.dsk", "main ends\nlate task: 3\n");
+    try runCaseRuntimeError("task-error-pending-timer.dsk", error.ArrayOutOfBounds);
+}
+
+test "closures: lambdas capture variables of the functions around them" {
+    try runCase("closures.dsk");
+    try runCase("gc-closures.dsk");
+}
+
+test "gc: heap values passed to functions that collect keep one identity" {
+    try runCase("gc-heap-arguments.dsk");
+}
+
+test "functions with empty bodies return" {
+    try runCase("empty-function-bodies.dsk");
+}
+
+test "modules: every import form parses" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "test/modules/import-forms.dsk", arena.allocator(), .unlimited);
+    const root = try @import("dusk.zig").parse(arena.allocator(), src);
+    var import_count: usize = 0;
+    for (root.statements.items) |stmt| {
+        if (stmt.data == .import) import_count += 1;
+    }
+    try testing.expectEqual(@as(usize, 7), import_count);
+}
+
+test "modules: the loader parses each module once, dependencies first" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, "test/modules/shared-dependency/main.dsk", allocator, .unlimited);
+    var loader = ModuleLoader.init(allocator, testing.io, "test/modules/shared-dependency");
+    const loaded = try loader.load("main", src);
+    try testing.expectEqual(@as(usize, 3), loaded.len);
+    try testing.expectEqualStrings("@/physics", loaded[0].path);
+    try testing.expectEqualStrings("@/ui/button", loaded[1].path);
+    try testing.expectEqualStrings("@/main", loaded[2].path);
+    try testing.expectEqual(@as(usize, 0), loaded[1].imports[0].module_index);
+    try testing.expectEqual(@as(usize, 0), loaded[2].imports[0].module_index);
+    try testing.expectEqual(@as(usize, 1), loaded[2].imports[1].module_index);
+}
+
+test "modules: loading errors" {
+    try runModuleCaseError("missing-module.dsk", error.ModuleNotFound);
+    try runModuleCaseError("missing-in-dependency/main.dsk", error.ModuleNotFound);
+    try runModuleCaseError("library-import.dsk", error.LibrariesNotSupported);
+    try runModuleCaseError("unknown-std-module.dsk", error.UnknownStdModule);
+    try runModuleCaseError("cycle-two/main.dsk", error.ImportCycle);
+    try runModuleCaseError("cycle-three/main.dsk", error.ImportCycle);
+    try runModuleCaseError("self-import/main.dsk", error.ImportCycle);
+}
+
+fn runModuleCaseError(entry_file: []const u8, expected: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    try testing.expectError(expected, dusk.compileEntry(src, EntryFile.fromPath(path)));
+}
+
+test "modules: qualified names, selective imports and aliases across files" {
+    try runModuleCase("shared-dependency/main.dsk");
+    try runModuleCase("qualified-access/main.dsk");
+}
+
+fn runModuleCase(entry_file: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
+    try dusk.runProgram(&program);
+}
+
+test "modules: name errors across files" {
+    try runModuleCaseError("name-errors/unknown-member.dsk", error.NotDefined);
+    try runModuleCaseError("name-errors/unknown-type.dsk", error.UnknownType);
+    try runModuleCaseError("name-errors/not-imported.dsk", error.ModuleNotImported);
+    try runModuleCaseError("name-errors/selected-missing.dsk", error.NotDefined);
+    try runModuleCaseError("name-errors/selected-clash-local.dsk", error.AlreadyDefined);
+    try runModuleCaseError("name-errors/selected-clash-prelude.dsk", error.AlreadyDefined);
+    try runModuleCaseError("name-errors/import-name-clash.dsk", error.AlreadyDefined);
+    try runModuleCaseError("name-errors/no-reexport.dsk", error.NotDefined);
+    try runModuleCaseError("name-errors/error-in-module.dsk", error.InvalidReturnType);
+    try runModuleCaseError("name-errors/wrong-type.dsk", error.InvalidType);
+}
+
+test "modules: '~' declarations and members stay in their file" {
+    try runModuleCase("visibility/main.dsk");
+    try runModuleCase("visibility/private-ok.dsk");
+    try runModuleCaseError("visibility/qualified-function.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/qualified-constant.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/selected.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/field-read.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/field-write.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/method-call.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/build-sets-field.dsk", error.NotVisible);
+    try runModuleCaseError("visibility/build-without-default.dsk", error.CantBuildOutsideModule);
+    try runModuleCaseError("visibility/build-anonymous.dsk", error.CantBuildOutsideModule);
+    try runModuleCaseError("visibility/trait-fit.dsk", error.DoesntFitTrait);
+}
+
+test "modules: public declarations can't mention '~' types" {
+    try runModuleCaseError("visibility/private-param.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-return.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-field.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-error-set.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-variant.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-method.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-function-type.dsk", error.PrivateTypeInPublicSignature);
+}
+
+test "modules: functions and errors from other modules have qualified names at runtime" {
+    try runModuleCaseOutput("runtime-names/main.dsk", "<func util::double>\n<func util::first[int]>\na\n");
+    try testing.expectError(error.UnhandledError, runModuleCase("runtime-names/unhandled.dsk"));
+    try testing.expectError(error.DivisionByZero, runModuleCase("runtime-names/division.dsk"));
+}
+
+fn runModuleCaseOutput(entry_file: []const u8, expected: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
+    const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
+    try dusk.runProgram(&program);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+test "a generic function's copy prints its name after compiling" {
+    try runCaseOutput("generic-function-value-printing.dsk", "<func first[int]>\n");
+}
+
+test "std: sleep lives in std/task" {
+    try runCaseError("sema/sleep-needs-import.dsk", error.NotDefined);
+}
+
+test "std: string and buffer functions live in std/string and std/buffer" {
+    try runCase("std-string-names.dsk");
+    try runCaseError("sema/std-name-clashes-prelude.dsk", error.AlreadyDefined);
+}
+
+test "std: array functions live in std/array" {
+    try runCase("std-array-qualified.dsk");
+    try runCaseError("sema/len-needs-import.dsk", error.NotDefined);
+}
+
+test "unknown types in let annotations are reported" {
+    try runCaseError("sema/unknown-let-type.dsk", error.UnknownType);
+}
+
+test "modules: imports come first in the file" {
+    try runCaseError("parser/import-after-declaration.dsk", error.ParserError);
+    try runCaseError("parser/import-inside-function.dsk", error.ParserError);
+    try runCaseError("parser/import-std-alone.dsk", error.ParserError);
+}
+
+test "visibility: ~ marks top-level declarations, fields and methods as file-only" {
+    try runCase("file-only.dsk");
+    try runCaseError("parser/file-only-local-variable.dsk", error.ParserError);
+    try runCaseError("parser/file-only-static-field.dsk", error.ParserError);
+    try runCaseError("parser/file-only-enum-variant.dsk", error.ParserError);
+    try runCaseError("parser/file-only-param.dsk", error.ParserError);
+}
+
+test "and / or skip the right side when the left side decides" {
+    try runCase("short-circuit.dsk");
+}
+
+test "lambdas: param types come from the expected function type" {
+    try runCase("lambda-param-inference.dsk");
+    try runCase("lambda-branches.dsk");
+    try runCaseError("sema/lambda-param-no-context.dsk", error.LambdaParamNeedsType);
+    try runCaseError("sema/lambda-param-unfillable-slot.dsk", error.LambdaParamNeedsType);
+    try runCaseError("sema/lambda-param-count.dsk", error.WrongLambdaParamCount);
+    try runCaseError("sema/lambda-param-missing-mut.dsk", error.LambdaParamMutDiffers);
+    try runCaseError("sema/lambda-inferred-wrong-return.dsk", error.InvalidReturnType);
+    try runCaseError("sema/lambda-annotated-param-mismatch.dsk", error.InvalidType);
+}
+
+test "lambdas: return types come from the body" {
+    try runCase("lambda-return-inference.dsk");
+    try runCaseError("sema/lambda-returns-differ.dsk", error.LambdaReturnsDiffer);
+    try runCaseError("sema/lambda-returns-value-and-null.dsk", error.LambdaReturnsDiffer);
+    try runCaseError("sema/lambda-inferred-missing-return.dsk", error.InvalidReturnType);
+    try runCaseError("sema/lambda-expected-return-type.dsk", error.InvalidReturnType);
+    try runCaseError("sema/lambda-inferred-error-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/lambda-inferred-error-not-in-set.dsk", error.ErrorNotInSet);
+    try runCaseError("parser/func-block-without-return-type.dsk", error.ParserError);
+}
+
+test "generics: error slots take the errors of failing callbacks" {
+    try runCase("error-slots.dsk");
+    try runCaseError("sema/error-slot-not-marked.dsk", error.SlotNotMarkedError);
+    try runCaseError("sema/error-slot-not-error-set.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/error-slot-struct-not-error-set.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/error-slot-when.dsk", error.CantMatchSlotErrors);
+    try runCaseError("sema/error-slot-conflict.dsk", error.InvalidType);
+    try runCaseError("sema/error-slot-none-conflict.dsk", error.InvalidType);
+    try runCaseError("sema/error-slot-other-error.dsk", error.ErrorNotInSet);
+    try runCaseError("sema/slot-none.dsk", error.InvalidSlotType);
+    try runCaseError("sema/error-slot-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/error-slot-try-none.dsk", error.NotAFailingCall);
+}
+
+test "generics: a slot can hold an error value but not a type that can fail" {
+    try runCase("generic-error-values.dsk");
+    try runCaseError("sema/slot-failing-function.dsk", error.SlotCantFail);
+    try runCaseError("sema/slot-failing-lambda.dsk", error.SlotCantFail);
 }
 
 test "generics: calls fill the slots from the arguments and compile one copy per type" {
@@ -2112,7 +2458,6 @@ test "generics: type lists constrain a slot to primitives" {
     try runCaseError("sema/generic-list-doesnt-fit.dsk", error.TypeDoesntFitSlot);
     try runCaseError("sema/generic-list-annotation-doesnt-fit.dsk", error.TypeDoesntFitSlot);
     try runCaseError("sema/generic-list-slot-doesnt-fit.dsk", error.TypeDoesntFitSlot);
-    try runCaseError("sema/generic-list-string-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-list-operator-member.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-list-result-differs.dsk", error.SlotResultDiffers);
     try runCaseError("sema/generic-list-literal-doesnt-fit.dsk", error.InvalidType);
@@ -2145,9 +2490,9 @@ test "generics: traits constrain a slot to types with methods" {
     try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
 }
 
-test "builtins: pop is a prelude function over an internal builtin" {
+test "builtins: pop is a prelude function over a file-only builtin" {
     try runCase("array-pop.dsk");
-    try runCaseError("sema/internal-builtin.dsk", error.InternalBuiltin);
+    try runCaseError("sema/prelude-file-only.dsk", error.NotDefined);
 }
 
 test "builtins: insert, remove and clear change arrays in place" {
@@ -2163,14 +2508,20 @@ test "sema error: unknown return type is reported, not a crash" {
     try runCaseError("sema/unknown-return-type.dsk", error.UnknownType);
 }
 
-test "prelude: every extern has a binding and every binding has an extern" {
+test "builtins: every extern has a binding and every binding has an extern, per module" {
+    const dusk = @import("dusk.zig");
+    try expectExternsMatchBindings(dusk.prelude_src, &@import("runtime/builtins/prelude.zig").bindings);
+    for (@import("runtime/builtins/std.zig").modules) |module| {
+        try expectExternsMatchBindings(module.source, module.bindings);
+    }
+}
+
+fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runtime/builtins/native.zig").BindingMap) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const dusk = @import("dusk.zig");
-    const bindings = @import("natives.zig").bindings;
-    const prelude = try dusk.parse(arena.allocator(), dusk.prelude_src);
+    const root = try @import("dusk.zig").parse(arena.allocator(), source);
     var extern_count: usize = 0;
-    for (prelude.statements.items) |stmt| {
+    for (root.statements.items) |stmt| {
         if (stmt.data != .func or !stmt.data.func.is_extern) continue;
         try testing.expect(bindings.has(stmt.data.func.identifier));
         extern_count += 1;
@@ -2178,19 +2529,34 @@ test "prelude: every extern has a binding and every binding has an extern" {
     try testing.expectEqual(bindings.keys().len, extern_count);
 }
 
-test "prelude: builtin error ids match the natives constants" {
+test "builtins: each native error enum matches its error set, names and order" {
+    const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
+}
+
+fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {
+    for (root.statements.items) |stmt| {
+        if (stmt.data == .error_set and std.mem.eql(u8, stmt.data.error_set.identifier, name)) return stmt.data.error_set;
+    }
+    return null;
+}
+
+fn expectErrorEnumsMatchSets(source: []const u8, comptime error_sets: anytype) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const natives = @import("natives.zig");
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
-    const program = try dusk.compile("func main() -> void\nend\n");
-    try testing.expectEqualStrings("ConversionError.Invalid", program.error_names[natives.conversion_invalid_id]);
-    try testing.expectEqualStrings("ConversionError.Overflow", program.error_names[natives.conversion_overflow_id]);
-    try testing.expectEqualStrings("StringError.OutOfRange", program.error_names[natives.string_out_of_range_id]);
-    try testing.expectEqualStrings("StringError.NegativeCount", program.error_names[natives.string_negative_count_id]);
-    try testing.expectEqualStrings("StringError.InvalidUtf8", program.error_names[natives.string_invalid_utf8_id]);
-    try testing.expectEqualStrings("ArrayError.Empty", program.error_names[natives.array_empty_id]);
-    try testing.expectEqualStrings("ArrayError.OutOfRange", program.error_names[natives.array_out_of_range_id]);
+    const dusk = @import("dusk.zig");
+    const module_root = try dusk.parse(arena.allocator(), source);
+    const prelude_root = try dusk.parse(arena.allocator(), dusk.prelude_src);
+    inline for (error_sets) |ErrorEnum| {
+        const full_name = @typeName(ErrorEnum);
+        const name = full_name[(std.mem.lastIndexOfScalar(u8, full_name, '.') orelse 0) + 1 ..];
+        const set = findErrorSet(module_root, name) orelse findErrorSet(prelude_root, name) orelse return error.ErrorSetNotDeclared;
+        const variants = std.meta.fieldNames(ErrorEnum);
+        try testing.expectEqual(variants.len, set.variants.len);
+        for (variants, set.variants) |variant, declared| {
+            try testing.expectEqualStrings(variant, declared.identifier);
+        }
+    }
 }
 
 test "array index out of bounds is a runtime error" {

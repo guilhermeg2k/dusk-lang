@@ -1,0 +1,49 @@
+import std/array: len, append
+
+let ~STEP = 1
+
+struct Counter
+    count: int = 0
+    ~history: []int = []
+
+    func increment(mut self: @) -> void
+        self.remember()
+        self.count = self.count + STEP
+    end
+
+    func ~remember(mut self: @) -> void
+        append(self.history, self.count)
+    end
+
+    func remembered(self: @) -> int
+        return len(self.history)
+    end
+end
+
+struct Secret
+    ~key: int
+end
+
+struct Hidden
+    value: int
+
+    func ~area(self: @) -> float
+        return 1.0
+    end
+end
+
+func ~helper() -> int
+    return 41
+end
+
+func answer() -> int
+    return helper() + STEP
+end
+
+func make_secret(key: int) -> Secret
+    return Secret(key = key)
+end
+
+func secret_key(s: Secret) -> int
+    return s.key
+end

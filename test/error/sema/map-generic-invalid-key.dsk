@@ -1,0 +1,7 @@
+func keyed[K](key: K) -> map[K, int]
+    return {key: 1}
+end
+
+func main() -> void
+    let m = keyed(1.5)
+end

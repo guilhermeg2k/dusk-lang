@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> void
-    echo(str_concat("a", 1))
+    echo(string::concat("a", 1))
 end

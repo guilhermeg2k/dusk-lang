@@ -1,0 +1,341 @@
+const std = @import("std");
+const v = @import("../../value.zig");
+const VM = @import("../../vm.zig").VM;
+const native = @import("../native.zig");
+const Binding = native.Binding;
+const NativeResult = native.NativeResult;
+const ok = native.ok;
+const fail = native.fail;
+const stringResult = native.stringResult;
+const bytesArg = native.bytesArg;
+
+pub const ConversionError = enum { Invalid, Overflow };
+pub const StringError = enum { OutOfRange, NegativeCount, InvalidUtf8 };
+pub const error_sets = .{ ConversionError, StringError };
+
+const ascii_whitespace = " \t\n\r\x0b\x0c";
+
+const ParseFailure = error{ Invalid, Overflow };
+
+pub const bindings = native.BindingMap.initComptime(.{
+    .{ "len", Binding{ .intrinsic = .bytes_len } },
+    .{ "char_count", Binding{ .native = &strCharCount } },
+    .{ "concat", Binding{ .native = &strConcat } },
+    .{ "join", Binding{ .native = &strJoin } },
+    .{ "to_int", Binding{ .native = &strToInt } },
+    .{ "to_float", Binding{ .native = &strToFloat } },
+    .{ "find", Binding{ .native = &strFind } },
+    .{ "contains", Binding{ .native = &strContains } },
+    .{ "starts_with", Binding{ .native = &strStartsWith } },
+    .{ "ends_with", Binding{ .native = &strEndsWith } },
+    .{ "count", Binding{ .native = &strCount } },
+    .{ "byte_at", Binding{ .native = &strByteAt } },
+    .{ "char_at", Binding{ .native = &strCharAt } },
+    .{ "trim", Binding{ .native = &strTrim } },
+    .{ "split", Binding{ .native = &strSplit } },
+    .{ "replace", Binding{ .native = &strReplace } },
+    .{ "upper", Binding{ .native = &strUpper } },
+    .{ "lower", Binding{ .native = &strLower } },
+    .{ "slice", Binding{ .native = &strSlice } },
+    .{ "repeat", Binding{ .native = &strRepeat } },
+    .{ "from_bytes", Binding{ .native = &stringFrom } },
+});
+
+fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    if (!std.unicode.utf8ValidateSlice(text)) return fail(StringError.InvalidUtf8);
+    const result = try vm.allocString(text.len);
+    @memcpy(result.mutableSlice(), bytesArg(args, 0));
+    return stringResult(result);
+}
+
+fn strCharCount(_: *VM, args: []v.Value) anyerror!NativeResult {
+    var count: i64 = 0;
+    for (bytesArg(args, 0)) |byte| {
+        if (byte & 0xC0 != 0x80) count += 1;
+    }
+    return ok(.{ .int64 = count });
+}
+
+fn strConcat(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const left_len = bytesArg(args, 0).len;
+    const right_len = bytesArg(args, 1).len;
+    const result = try vm.allocString(left_len + right_len);
+    const data = result.mutableSlice();
+    @memcpy(data[0..left_len], bytesArg(args, 0));
+    @memcpy(data[left_len..], bytesArg(args, 1));
+    return stringResult(result);
+}
+
+fn strJoin(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var parts = joinParts(&args[0]);
+    const separator_len = bytesArg(args, 1).len;
+    var total: usize = 0;
+    for (parts, 0..) |part, i| {
+        if (i > 0) total += separator_len;
+        total += v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).len;
+    }
+    const result = try vm.allocString(total);
+    parts = joinParts(&args[0]);
+    const separator_bytes = bytesArg(args, 1);
+    const data = result.mutableSlice();
+    var offset: usize = 0;
+    for (parts, 0..) |part, i| {
+        if (i > 0) {
+            @memcpy(data[offset..][0..separator_bytes.len], separator_bytes);
+            offset += separator_bytes.len;
+        }
+        const part_bytes = v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice();
+        @memcpy(data[offset..][0..part_bytes.len], part_bytes);
+        offset += part_bytes.len;
+    }
+    return stringResult(result);
+}
+
+fn strToInt(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const number = parseIntText(bytesArg(args, 0)) catch |failure| return conversionFailure(failure);
+    return ok(.{ .int64 = number });
+}
+
+fn strToFloat(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const number = parseFloatText(bytesArg(args, 0)) catch |failure| return conversionFailure(failure);
+    return ok(.{ .float64 = number });
+}
+
+fn strFind(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const needle = bytesArg(args, 1);
+    if (needle.len == 0) return ok(v.NULL_VALUE);
+    const index = std.mem.indexOf(u8, bytesArg(args, 0), needle) orelse return ok(v.NULL_VALUE);
+    return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
+}
+
+fn strContains(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const needle = bytesArg(args, 1);
+    return ok(.{ .bool = needle.len > 0 and std.mem.indexOf(u8, bytesArg(args, 0), needle) != null });
+}
+
+fn strStartsWith(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const prefix = bytesArg(args, 1);
+    return ok(.{ .bool = prefix.len > 0 and std.mem.startsWith(u8, bytesArg(args, 0), prefix) });
+}
+
+fn strEndsWith(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const suffix = bytesArg(args, 1);
+    return ok(.{ .bool = suffix.len > 0 and std.mem.endsWith(u8, bytesArg(args, 0), suffix) });
+}
+
+fn strCount(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const needle = bytesArg(args, 1);
+    if (needle.len == 0) return ok(.{ .int64 = 0 });
+    return ok(.{ .int64 = @intCast(std.mem.count(u8, bytesArg(args, 0), needle)) });
+}
+
+fn strByteAt(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const index = args[1].int64;
+    if (index < 0 or index >= text.len) return fail(StringError.OutOfRange);
+    return ok(.{ .int64 = text[@intCast(index)] });
+}
+
+fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const wanted = args[1].int64;
+    if (wanted < 0) return fail(StringError.OutOfRange);
+    var characters = Pieces{ .text = text, .separator = "" };
+    var position: i64 = 0;
+    while (characters.next()) |character| : (position += 1) {
+        if (position != wanted) continue;
+        const start = @intFromPtr(character.ptr) - @intFromPtr(text.ptr);
+        const result = try vm.allocString(character.len);
+        @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..character.len]);
+        return stringResult(result);
+    }
+    return fail(StringError.OutOfRange);
+}
+
+fn strTrim(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const trimmed = std.mem.trim(u8, text, ascii_whitespace);
+    const start = @intFromPtr(trimmed.ptr) - @intFromPtr(text.ptr);
+    const result = try vm.allocString(trimmed.len);
+    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..trimmed.len]);
+    return stringResult(result);
+}
+
+fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var piece_count: usize = 0;
+    var total: usize = 0;
+    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    while (pieces.next()) |piece| {
+        piece_count += 1;
+        total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
+    }
+    const capacity = @max(piece_count, 1);
+    total += v.Array.calc_size(capacity);
+    try vm.maybeCollectGarbage(total);
+
+    const allocator = vm.getCurrentHeapAllocator();
+    const array = try v.Array.init(allocator, .string, capacity);
+    vm.increaseHeapAllocationCount(v.Array.calc_size(capacity));
+    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    while (pieces.next()) |piece| {
+        const bytes = try v.Bytes.init(allocator, piece, .string);
+        vm.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));
+        try array.append(.{ .heap_obj = &bytes.obj });
+    }
+    return ok(.{ .heap_obj = &array.obj });
+}
+
+fn strReplace(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const old = bytesArg(args, 1);
+    if (old.len == 0) return ok(args[0]);
+    const matches = std.mem.count(u8, text, old);
+    const total = text.len - matches * old.len + matches * bytesArg(args, 2).len;
+    const result = try vm.allocString(total);
+    _ = std.mem.replace(u8, bytesArg(args, 0), bytesArg(args, 1), bytesArg(args, 2), result.mutableSlice());
+    return stringResult(result);
+}
+
+fn strUpper(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyWithCase(vm, args, true);
+}
+
+fn strLower(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyWithCase(vm, args, false);
+}
+
+fn strSlice(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const start = args[1].int64;
+    const end = args[2].int64;
+    const is_in_range = start >= 0 and start <= end and end <= text.len;
+    if (!is_in_range) return fail(StringError.OutOfRange);
+    const start_index: usize = @intCast(start);
+    const end_index: usize = @intCast(end);
+    if (!isCharBoundary(text, start_index) or !isCharBoundary(text, end_index)) return fail(StringError.OutOfRange);
+    const result = try vm.allocString(end_index - start_index);
+    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start_index..end_index]);
+    return stringResult(result);
+}
+
+fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const count = args[1].int64;
+    if (count < 0) return fail(StringError.NegativeCount);
+    const total = std.math.mul(usize, bytesArg(args, 0).len, @intCast(count)) catch return error.OutOfMemory;
+    const result = try vm.allocString(total);
+    const data = result.mutableSlice();
+    const source = bytesArg(args, 0);
+    var offset: usize = 0;
+    while (offset < total) : (offset += source.len) @memcpy(data[offset..][0..source.len], source);
+    return stringResult(result);
+}
+
+fn joinParts(parts_value: *v.Value) []const v.Value {
+    parts_value.heap_obj = parts_value.heap_obj.followRelocated();
+    const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
+    return array.getDataPtr()[0..array.len];
+}
+
+fn conversionFailure(failure: ParseFailure) NativeResult {
+    return fail(switch (failure) {
+        error.Invalid => ConversionError.Invalid,
+        error.Overflow => ConversionError.Overflow,
+    });
+}
+
+fn parseIntText(text: []const u8) ParseFailure!i64 {
+    const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
+    const digits_end = skipDigits(text, digits_start);
+    if (digits_end == digits_start or digits_end != text.len) return error.Invalid;
+    return std.fmt.parseInt(i64, text, 10) catch |failure| switch (failure) {
+        error.Overflow => error.Overflow,
+        error.InvalidCharacter => error.Invalid,
+    };
+}
+
+fn parseFloatText(text: []const u8) ParseFailure!f64 {
+    const digits_start: usize = if (text.len > 0 and text[0] == '-') 1 else 0;
+    var end = skipDigits(text, digits_start);
+    if (end == digits_start) return error.Invalid;
+    if (end < text.len and text[end] == '.') {
+        const fraction_end = skipDigits(text, end + 1);
+        if (fraction_end == end + 1) return error.Invalid;
+        end = fraction_end;
+    }
+    if (end != text.len) return error.Invalid;
+    const number = std.fmt.parseFloat(f64, text) catch return error.Invalid;
+    if (std.math.isInf(number)) return error.Overflow;
+    return number;
+}
+
+fn skipDigits(text: []const u8, start: usize) usize {
+    var index = start;
+    while (index < text.len and std.ascii.isDigit(text[index])) index += 1;
+    return index;
+}
+
+const Pieces = struct {
+    text: []const u8,
+    separator: []const u8,
+    index: ?usize = 0,
+
+    fn next(self: *Pieces) ?[]const u8 {
+        const start = self.index orelse return null;
+        if (self.separator.len == 0) {
+            if (start >= self.text.len) {
+                self.index = null;
+                return null;
+            }
+            var end = start + 1;
+            while (!isCharBoundary(self.text, end)) end += 1;
+            self.index = end;
+            return self.text[start..end];
+        }
+        if (std.mem.indexOfPos(u8, self.text, start, self.separator)) |position| {
+            self.index = position + self.separator.len;
+            return self.text[start..position];
+        }
+        self.index = null;
+        return self.text[start..];
+    }
+};
+
+fn isCharBoundary(text: []const u8, index: usize) bool {
+    if (index == text.len) return true;
+    return text[index] & 0xC0 != 0x80;
+}
+
+fn copyWithCase(vm: *VM, args: []v.Value, is_upper: bool) anyerror!NativeResult {
+    const result = try vm.allocString(bytesArg(args, 0).len);
+    const data = result.mutableSlice();
+    @memcpy(data, bytesArg(args, 0));
+    changeCaseInPlace(data, is_upper);
+    return stringResult(result);
+}
+
+fn changeCaseInPlace(data: []u8, is_upper: bool) void {
+    var index: usize = 0;
+    while (index < data.len) : (index += 1) {
+        const byte = data[index];
+        if (byte == 0xC3 and index + 1 < data.len) {
+            index += 1;
+            const second = data[index];
+            const is_lower_latin = second >= 0xA0 and second <= 0xBE and second != 0xB7;
+            const is_upper_latin = second >= 0x80 and second <= 0x9E and second != 0x97;
+            if (is_upper and is_lower_latin) {
+                data[index] = second - 0x20;
+            }
+            if (!is_upper and is_upper_latin) {
+                data[index] = second + 0x20;
+            }
+            continue;
+        }
+        if (is_upper and std.ascii.isLower(byte)) {
+            data[index] = std.ascii.toUpper(byte);
+        }
+        if (!is_upper and std.ascii.isUpper(byte)) {
+            data[index] = std.ascii.toLower(byte);
+        }
+    }
+}

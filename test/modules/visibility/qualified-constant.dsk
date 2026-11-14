@@ -1,0 +1,5 @@
+import @/counter
+
+func main() -> void
+    let x = counter::STEP
+end

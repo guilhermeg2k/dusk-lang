@@ -1,0 +1,6 @@
+func run[E: error](f: func() -> E!int) -> E!int
+    return try f()
+end
+func main() -> void
+    let x = try run(func() -> return 1)
+end

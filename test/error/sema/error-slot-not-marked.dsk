@@ -1,0 +1,5 @@
+func run[T, E](f: func() -> E!T) -> E!T
+    return try f()
+end
+func main() -> void
+end

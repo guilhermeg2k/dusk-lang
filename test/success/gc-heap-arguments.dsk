@@ -1,0 +1,68 @@
+import std/array: len, append
+
+struct Box
+    value: int
+    items: []int
+end
+
+func churn() -> void
+    let mut i = 0
+    for i < 100000 do
+        let trash = [i, i, i, i]
+        i = i + 1
+    end
+end
+
+func fill(mut items: []int, n: int) -> void
+    churn()
+    let mut i = 0
+    for i < n do
+        append(items, i)
+        i = i + 1
+    end
+    churn()
+end
+
+func update(mut box: Box) -> void
+    churn()
+    box.value = 42
+    fill(box.items, 3)
+    churn()
+end
+
+func deep(mut box: Box, depth: int) -> void
+    if depth == 0 then
+        update(box)
+        return
+    end
+    churn()
+    deep(box, depth - 1)
+    churn()
+end
+
+func main() -> void
+    let mut items: []int = []
+    fill(items, 5)
+    churn()
+    assert(len(items) == 5)
+    assert(items[4] == 4)
+
+    let mut box = Box(value = 1, items = [])
+    deep(box, 3)
+    churn()
+    assert(box.value == 42)
+    assert(len(box.items) == 3)
+    assert(box.items[2] == 2)
+
+    let grow = func(mut list: []int) -> void
+        churn()
+        append(list, 7)
+        churn()
+    end
+    let mut list: []int = [1]
+    grow(list)
+    grow(list)
+    churn()
+    assert(len(list) == 3)
+    assert(list[2] == 7)
+end

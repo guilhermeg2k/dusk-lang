@@ -1,0 +1,3 @@
+import std
+func main() -> void
+end

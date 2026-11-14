@@ -1,0 +1,1915 @@
+const lexer = @import("lexer.zig");
+const ast = @import("ast.zig");
+const err = @import("compile_error.zig");
+const std = @import("std");
+const Token = lexer.Token;
+const Tag = lexer.Tag;
+const CompileError = err.CompileError;
+
+pub const Parser = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    err_reporter: err.CompileErrorReporter,
+    tokens: []const Token = &.{},
+    src: []const u8 = "",
+    cur_index: usize = 0,
+    loop_depth: usize = 0,
+    branch_depth: usize = 0,
+    block_depth: usize = 0,
+    is_parsing_condition: bool = false,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        src: []const u8,
+        tokens: []const Token,
+    ) Self {
+        return Self{
+            .allocator = allocator,
+            .src = src,
+            .tokens = tokens,
+            .err_reporter = .{
+                .allocator = allocator,
+                .src = src,
+            },
+        };
+    }
+
+    pub fn parse(self: *Self) !ast.Root {
+        var statements: std.ArrayList(ast.StatementNode) = .empty;
+        while (self.peekCurrent().tag == .import_kw) {
+            try statements.append(self.allocator, try self.parseImportStmt());
+        }
+        const root = try self.parseBlock(&.{});
+        try statements.appendSlice(self.allocator, root.statements.items);
+        return .{ .statements = statements };
+    }
+
+    fn parseImportStmt(self: *Self) CompileError!ast.StatementNode {
+        const import_tk = self.peekCurrent();
+        self.walk();
+
+        const path_start = self.peekCurrent();
+        var source: ast.ImportSource = .library;
+        if (self.match(.at)) {
+            _ = try self.expect(.slash);
+            source = .project;
+        }
+
+        var parts: std.ArrayList([]const u8) = .empty;
+        try parts.append(self.allocator, try self.parseImportPathPart());
+        while (self.match(.slash)) {
+            try parts.append(self.allocator, try self.parseImportPathPart());
+        }
+        const path_loc = err.Loc{ .start = path_start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end };
+
+        const is_std = source == .library and std.mem.eql(u8, parts.items[0], "std");
+        if (is_std) {
+            if (parts.items.len == 1) {
+                return self.err_reporter.stdNeedsModule(path_loc);
+            }
+            source = .std;
+            _ = parts.orderedRemove(0);
+        }
+
+        var name = parts.items[parts.items.len - 1];
+        if (self.match(.as_kw)) {
+            name = (try self.expect(.identifier)).value(self.src);
+        }
+
+        var selected: std.ArrayList(ast.ImportedName) = .empty;
+        if (self.match(.colon)) {
+            while (true) {
+                const identifier_tk = try self.expect(.identifier);
+                const identifier = identifier_tk.value(self.src);
+                const local_name = if (self.match(.as_kw)) (try self.expect(.identifier)).value(self.src) else identifier;
+                try selected.append(self.allocator, .{ .identifier = identifier, .name = local_name, .loc = identifier_tk.loc });
+                if (!self.match(.comma)) break;
+            }
+        }
+
+        return ast.StatementNode{
+            .data = .{ .import = .{
+                .source = source,
+                .path = try std.mem.join(self.allocator, "/", parts.items),
+                .path_loc = path_loc,
+                .name = name,
+                .selected = try selected.toOwnedSlice(self.allocator),
+            } },
+            .loc = .{ .start = import_tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+        };
+    }
+
+    fn parseImportPathPart(self: *Self) CompileError![]const u8 {
+        const tk = self.peekCurrent();
+        switch (tk.tag) {
+            .identifier, .string_kw, .buffer_kw => {
+                self.walk();
+                return tk.value(self.src);
+            },
+            else => return self.err_reporter.invalidSyntax("a module name", tk),
+        }
+    }
+
+    pub fn parseBlock(self: *Self, extra_stop_tags: []const Tag) CompileError!ast.Block {
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+        self.block_depth += 1;
+        defer self.block_depth -= 1;
+        var statements: std.ArrayList(ast.StatementNode) = .empty;
+
+        var current_tk = self.peekCurrent();
+        while (!isStopToken(current_tk.tag, extra_stop_tags)) : (current_tk = self.peekCurrent()) {
+            const stmt = try self.parseStmt();
+            try statements.append(self.allocator, stmt);
+        }
+
+        return .{ .statements = statements };
+    }
+
+    fn isStopToken(tag: Tag, extrap_stop_tags: []const Tag) bool {
+        if (tag == .eof or tag == .end_kw) return true;
+        for (extrap_stop_tags) |t| {
+            if (tag == t) return true;
+        }
+        return false;
+    }
+
+    fn parseStmt(self: *Self) !ast.StatementNode {
+        const tk = self.peekCurrent();
+
+        switch (tk.tag) {
+            .import_kw => {
+                return self.err_reporter.importNotAtTop(tk.loc);
+            },
+            .let_kw => {
+                const file_only_refusal: ?[]const u8 = if (self.block_depth == 1) null else "local variables already exist only inside their function";
+                const let_stmt_value = try self.parseLetStmt(file_only_refusal);
+                return ast.StatementNode{
+                    .data = .{ .let = let_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = let_stmt_value.value.loc.end },
+                };
+            },
+            .func_kw => {
+                const is_lambda_branch = self.branch_depth > 0 and self.peekNext().tag == .l_paren;
+                if (is_lambda_branch) return self.parseIdentifierStmt();
+                const func_stmt_value = try self.parseFuncStmt();
+                return ast.StatementNode{
+                    .data = .{ .func = func_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .extern_kw => {
+                const func_stmt_value = try self.parseExternFuncStmt();
+                return ast.StatementNode{
+                    .data = .{ .func = func_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .struct_kw => {
+                const struct_stmt_value = try self.parseStructStmt();
+                return ast.StatementNode{
+                    .data = .{ .@"struct" = struct_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .enum_kw => {
+                const enum_stmt_value = try self.parseEnumStmt();
+                return ast.StatementNode{
+                    .data = .{ .@"enum" = enum_stmt_value },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .union_kw => {
+                const union_stmt_value = try self.parseUnionStmt();
+                return ast.StatementNode{
+                    .data = .{ .@"union" = union_stmt_value },
+                    .loc = .{
+                        .start = tk.loc.start,
+                        .end = self.tokens[self.cur_index - 1].loc.end,
+                    },
+                };
+            },
+            .error_kw => {
+                const error_set_stmt = try self.parseErrorSetStmt();
+                return ast.StatementNode{
+                    .data = .{ .error_set = error_set_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .trait_kw => {
+                const trait_stmt = try self.parseTraitStmt();
+                return ast.StatementNode{
+                    .data = .{ .trait = trait_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
+            .if_kw, .when_kw => {
+                return self.parseIdentifierStmt();
+            },
+            .for_kw => {
+                const for_stmt = try self.parseForStmt();
+                const end_pos = self.tokens[self.cur_index - 1].loc.end;
+                return ast.StatementNode{ .data = for_stmt, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+            },
+            .identifier, .try_kw, .string_kw, .buffer_kw => {
+                return self.parseIdentifierStmt();
+            },
+            .break_kw => {
+                if (self.loop_depth == 0) {
+                    return self.err_reporter.invalidSyntax("break called outside a loop", tk);
+                }
+                self.walk();
+                return ast.StatementNode{ .data = .{ .@"break" = {} }, .loc = tk.loc };
+            },
+            .continue_kw => {
+                if (self.loop_depth == 0) {
+                    return self.err_reporter.invalidSyntax("continue called outside a loop", tk);
+                }
+                self.walk();
+                return ast.StatementNode{ .data = .{ .@"continue" = {} }, .loc = tk.loc };
+            },
+            .return_kw => {
+                const return_stmt = try self.parseReturnStmt();
+                const end_pos = if (return_stmt.exp) |exp| exp.loc.end else tk.loc.end;
+                return ast.StatementNode{ .data = .{ .@"return" = return_stmt }, .loc = .{ .start = tk.loc.start, .end = end_pos } };
+            },
+            .then_kw, .do_kw, .end_kw, .elif_kw, .else_kw => {
+                return self.err_reporter.invalidSyntax("unexpected keyword", tk);
+            },
+            else => {
+                if (self.branch_depth > 0 and self.canStartExpression(tk.tag)) return self.parseIdentifierStmt();
+                return self.err_reporter.invalidSyntax("let, if, for, return ...", tk);
+            },
+        }
+    }
+
+    fn parseLetStmt(self: *Self, file_only_refusal: ?[]const u8) !ast.LetStmt {
+        self.walk();
+        const is_mutable = self.match(.mut_kw);
+        const is_file_only = try self.matchFileOnly(file_only_refusal);
+        const identifier_token = try self.expect(.identifier);
+        var type_annotation: ?*ast.TypeAnnotation = null;
+
+        const has_type_annotation = self.match(.colon);
+        if (has_type_annotation) {
+            type_annotation = try self.parseTypeAnnotation(false);
+        }
+
+        _ = try self.expect(.eq);
+        const value = try self.parseExp(0);
+
+        return ast.LetStmt{
+            .identifier = identifier_token.value(self.src),
+            .is_mut = is_mutable,
+            .is_file_only = is_file_only,
+            .type_annotation = type_annotation,
+            .value = value,
+        };
+    }
+
+    fn parseFuncStmt(self: *Self) !ast.FuncStmt {
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
+        const fn_def = try self.parseFnDef();
+
+        return ast.FuncStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = fn_def,
+            .is_file_only = is_file_only,
+            .slots = slots,
+        };
+    }
+
+    fn matchFileOnly(self: *Self, refusal: ?[]const u8) CompileError!bool {
+        const tk = self.peekCurrent();
+        if (tk.tag != .tilde) {
+            return false;
+        }
+        if (refusal) |reason| {
+            return self.err_reporter.fileOnlyNotAllowed(reason, tk.loc);
+        }
+        self.walk();
+        return true;
+    }
+
+    fn parseSlots(self: *Self) ![]const ast.Slot {
+        if (!self.match(.l_bracket)) return &.{};
+        var slots: std.ArrayList(ast.Slot) = .empty;
+        while (true) {
+            try slots.append(self.allocator, try self.parseSlot());
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_bracket);
+        return slots.toOwnedSlice(self.allocator);
+    }
+
+    fn parseSlot(self: *Self) !ast.Slot {
+        const slot_token = try self.expect(.identifier);
+        const identifier = slot_token.value(self.src);
+        if (!self.match(.colon)) {
+            return .{ .identifier = identifier, .loc = slot_token.loc };
+        }
+        if (self.match(.error_kw)) {
+            return .{ .identifier = identifier, .is_error_set = true, .loc = slot_token.loc };
+        }
+        return .{ .identifier = identifier, .constraint = try self.parseConstraint(), .loc = slot_token.loc };
+    }
+
+    fn parseTypeList(self: *Self) ![]const *ast.TypeAnnotation {
+        var types: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        while (true) {
+            try types.append(self.allocator, try self.parseTypeAnnotation(false));
+            if (!self.match(.bar)) break;
+        }
+        return types.toOwnedSlice(self.allocator);
+    }
+
+    fn parseConstraint(self: *Self) ![]const []const *ast.TypeAnnotation {
+        var terms: std.ArrayList([]const *ast.TypeAnnotation) = .empty;
+        while (true) {
+            try terms.append(self.allocator, try self.parseTypeList());
+            if (!self.match(.plus)) break;
+        }
+        return terms.toOwnedSlice(self.allocator);
+    }
+
+    fn parseTraitStmt(self: *Self) !ast.TraitStmt {
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const identifier = identifier_token.value(self.src);
+        if (self.match(.eq)) {
+            return ast.TraitStmt{ .identifier = identifier, .is_file_only = is_file_only, .type_list = try self.parseTypeList() };
+        }
+
+        var parents: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        if (self.match(.colon)) {
+            while (true) {
+                try parents.append(self.allocator, try self.parseTypeAnnotation(false));
+                if (!self.match(.plus)) break;
+            }
+        }
+
+        var methods: std.ArrayList(ast.StatementNode) = .empty;
+        while (!self.match(.end_kw)) {
+            const start = self.peekCurrent();
+            if (start.tag != .func_kw) return self.err_reporter.invalidSyntax("func or end", start);
+            self.walk();
+            const method = try self.parseFuncSignature(false);
+            try methods.append(self.allocator, .{
+                .data = .{ .func = method },
+                .loc = .{ .start = start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+            });
+        }
+
+        return ast.TraitStmt{
+            .identifier = identifier,
+            .is_file_only = is_file_only,
+            .parents = try parents.toOwnedSlice(self.allocator),
+            .methods = try methods.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseStructStmt(self: *Self) !ast.StructStmt {
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
+        const struct_def = try self.parseStructDef();
+
+        return ast.StructStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = struct_def,
+            .is_file_only = is_file_only,
+            .slots = slots,
+        };
+    }
+
+    fn parseEnumStmt(self: *Self) !ast.EnumStmt {
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const enum_def = try self.parseEnumDef();
+
+        return ast.EnumStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = enum_def,
+            .is_file_only = is_file_only,
+        };
+    }
+
+    fn parseUnionStmt(self: *Self) !ast.UnionStmt {
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
+        const union_def = try self.parseUnionDef();
+
+        return ast.UnionStmt{
+            .identifier = identifier_token.value(self.src),
+            .def = union_def,
+            .is_file_only = is_file_only,
+            .slots = slots,
+        };
+    }
+
+    fn parseErrorSetStmt(self: *Self) !ast.ErrorSetStmt {
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        var variants: std.ArrayList(ast.ErrorVariant) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    try variants.append(self.allocator, .{ .identifier = tk.value(self.src), .loc = tk.loc });
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => return self.err_reporter.invalidSyntax("identifier or 'end'", tk),
+            }
+        }
+
+        return ast.ErrorSetStmt{
+            .identifier = identifier_token.value(self.src),
+            .variants = try variants.toOwnedSlice(self.allocator),
+            .is_file_only = is_file_only,
+        };
+    }
+
+    fn parseIdentifierStmt(self: *Self) !ast.StatementNode {
+        const expr = try self.parseExp(0);
+        const cur_tk = self.peekCurrent();
+
+        switch (cur_tk.tag) {
+            .eq => {
+                self.walk();
+                const assign_exp = try self.parseExp(0);
+                return ast.StatementNode{
+                    .data = .{ .assign = .{
+                        .target = expr,
+                        .exp = assign_exp,
+                    } },
+                    .loc = .{ .start = expr.loc.start, .end = assign_exp.loc.end },
+                };
+            },
+
+            else => {
+                return ast.StatementNode{
+                    .data = .{ .expression = expr },
+                    .loc = expr.loc,
+                };
+            },
+        }
+    }
+
+    fn parseCondition(self: *Self) CompileError!*ast.ExpNode {
+        const was_parsing_condition = self.is_parsing_condition;
+        self.is_parsing_condition = true;
+        defer self.is_parsing_condition = was_parsing_condition;
+        return self.parseExp(0);
+    }
+
+    fn leaveCondition(self: *Self) bool {
+        const was_parsing_condition = self.is_parsing_condition;
+        self.is_parsing_condition = false;
+        return was_parsing_condition;
+    }
+
+    fn parseBranchBlock(self: *Self, stop_tags: []const Tag) CompileError!ast.Block {
+        self.branch_depth += 1;
+        defer self.branch_depth -= 1;
+        return self.parseBlock(stop_tags);
+    }
+
+    fn parseIfCapture(self: *Self, exp: *ast.ExpNode) CompileError!ast.IfCaptureStmt {
+        const is_mut = self.match(.mut_kw);
+        const identifier = try self.expect(.identifier);
+        _ = try self.expect(.then_kw);
+        const body = try self.parseBranchBlock(&.{.else_kw});
+        const else_block = if (self.match(.else_kw)) try self.parseBranchBlock(&.{}) else null;
+        _ = try self.expect(.end_kw);
+        return .{
+            .exp = exp,
+            .identifier = .{ .name = identifier.value(self.src), .is_mut = is_mut },
+            .body = body,
+            .else_block = else_block,
+        };
+    }
+
+    fn parseIfStmt(self: *Self, first_cond: *ast.ExpNode) CompileError!ast.IfStmt {
+        _ = try self.expect(.then_kw);
+        const then_block = try self.parseBranchBlock(&.{ .else_kw, .elif_kw });
+
+        var elif_chain: std.ArrayList(ast.StatementNode) = .empty;
+
+        while (self.match(.elif_kw)) {
+            const elif_start = self.tokens[self.cur_index - 1].loc.start;
+
+            const cond = try self.parseCondition();
+            _ = try self.expect(.then_kw);
+            const body = try self.parseBranchBlock(&.{ .else_kw, .elif_kw });
+
+            var elif_end = self.tokens[self.cur_index - 1].loc.end;
+            if (body.statements.items.len > 0) {
+                elif_end = body.statements.items[body.statements.items.len - 1].loc.end;
+            }
+
+            try elif_chain.append(self.allocator, .{
+                .data = .{
+                    .expression = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .if_exp = .{ .condition = cond, .then_block = body, .else_block = null } },
+                        .loc = .{ .start = elif_start, .end = elif_end },
+                    }),
+                },
+                .loc = .{
+                    .start = elif_start,
+                    .end = elif_end,
+                },
+            });
+        }
+
+        var else_block: ?ast.Block = null;
+        if (self.match(.else_kw)) {
+            else_block = try self.parseBranchBlock(&.{});
+        }
+
+        _ = try self.expect(.end_kw);
+
+        while (elif_chain.items.len > 0) {
+            var stmt_node = elif_chain.pop().?;
+            stmt_node.data.expression.data.if_exp.else_block = else_block;
+            var stmts: std.ArrayList(ast.StatementNode) = .empty;
+            try stmts.append(self.allocator, stmt_node);
+            else_block = .{ .statements = stmts };
+        }
+
+        return .{ .condition = first_cond, .then_block = then_block, .else_block = else_block };
+    }
+
+    fn parseWhenStmt(self: *Self) CompileError!ast.WhenStmt {
+        const subject = try self.parseExp(0);
+
+        var prongs: std.ArrayList(ast.WhenProng) = .empty;
+        var else_block: ?ast.Block = null;
+        var else_loc: ?err.Loc = null;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            if (tk.tag == .end_kw or tk.tag == .eof) break;
+
+            if (tk.tag == .else_kw) {
+                self.walk();
+                _ = try self.expect(.then_kw);
+                else_block = try self.parseBranchBlock(&.{});
+                _ = try self.expect(.end_kw);
+                else_loc = tk.loc;
+                break;
+            }
+
+            const pattern: @FieldType(ast.WhenProng, "pattern") = blk: {
+                if (self.match(.null_literal)) break :blk .null_case;
+
+                if (tk.tag == .identifier and self.peekNext().tag == .colon) {
+                    self.walk();
+                    self.walk();
+                    const is_mut = self.match(.mut_kw);
+                    const capture = try self.expect(.identifier);
+                    break :blk .{ .variant = .{ .name = tk.value(self.src), .capture = capture.value(self.src), .is_mut = is_mut } };
+                }
+
+                var values: std.ArrayList(*ast.ExpNode) = .empty;
+                try values.append(self.allocator, try self.parseExp(0));
+                while (self.match(.comma)) {
+                    try values.append(self.allocator, try self.parseExp(0));
+                }
+                break :blk .{ .values = try values.toOwnedSlice(self.allocator) };
+            };
+
+            const pattern_end = self.tokens[self.cur_index - 1].loc.end;
+            _ = try self.expect(.then_kw);
+            const body = try self.parseBranchBlock(&.{.else_kw});
+            _ = try self.expect(.end_kw);
+
+            try prongs.append(self.allocator, .{
+                .pattern = pattern,
+                .body = body,
+                .loc = .{ .start = tk.loc.start, .end = pattern_end },
+            });
+        }
+
+        _ = try self.expect(.end_kw);
+
+        return .{
+            .subject = subject,
+            .prongs = try prongs.toOwnedSlice(self.allocator),
+            .else_block = else_block,
+            .else_loc = else_loc,
+        };
+    }
+
+    fn parseForStmt(self: *Self) CompileError!ast.Statement {
+        self.walk();
+
+        self.loop_depth += 1;
+        defer self.loop_depth -= 1;
+
+        const condition = try self.parseExp(0);
+        if (self.match(.colon)) {
+            const is_item_mut = self.match(.mut_kw);
+            const item = try self.expect(.identifier);
+            const index = if (self.match(.comma)) (try self.expect(.identifier)).value(self.src) else null;
+            _ = try self.expect(.do_kw);
+            const body = try self.parseBlock(&.{});
+            _ = try self.expect(.end_kw);
+            return .{ .for_capture = .{ .source = condition, .item = item.value(self.src), .is_item_mut = is_item_mut, .index = index, .do_block = body } };
+        }
+        _ = try self.expect(.do_kw);
+        const do_block = try self.parseBlock(&.{});
+        _ = try self.expect(.end_kw);
+
+        return .{ .@"for" = .{ .condition = condition, .do_block = do_block } };
+    }
+
+    fn parseField(self: *Self, identifier: []const u8, has_type_annotation: bool) !ast.Field {
+        var type_annotation: ?*ast.TypeAnnotation = null;
+        if (has_type_annotation) {
+            type_annotation = try self.parseTypeAnnotation(true);
+        }
+
+        const has_initial_value = self.match(.eq);
+        if (!has_type_annotation and !has_initial_value) {
+            const expected = try std.fmt.allocPrint(self.allocator, "':' or '=' after field '{s}'", .{identifier});
+            return self.err_reporter.invalidSyntax(expected, self.peekCurrent());
+        }
+
+        var value: ?*ast.ExpNode = null;
+        if (has_initial_value) {
+            value = try self.parseExp(0);
+        }
+
+        return .{
+            .identifier = identifier,
+            .is_mut = false,
+            .type = type_annotation,
+            .default_value = value,
+        };
+    }
+
+    const static_field_refusal = "static fields follow their type: put '~' on the type instead";
+
+    fn parseStructDef(self: *Self) CompileError!ast.Struct {
+        var static_fields: std.ArrayList(ast.Field) = .empty;
+        var fields: std.ArrayList(ast.Field) = .empty;
+        var funcs: std.ArrayList(ast.StatementNode) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .let_kw => {
+                    const let_stmt = try self.parseLetStmt(static_field_refusal);
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .default_value = let_stmt.value,
+                    });
+                },
+                .func_kw => {
+                    self.walk();
+                    const is_file_only = try self.matchFileOnly(null);
+                    const identifier_token = try self.expect(.identifier);
+                    const fn_def = try self.parseFnDef();
+                    try funcs.append(self.allocator, .{
+                        .data = .{ .func = .{
+                            .identifier = identifier_token.value(self.src),
+                            .def = fn_def,
+                            .is_file_only = is_file_only,
+                        } },
+                        .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                    });
+                },
+                .identifier, .tilde => {
+                    const is_file_only = try self.matchFileOnly(null);
+                    const identifier = try self.expect(.identifier);
+                    const has_type_annotation = self.match(.colon);
+                    var strc_field = try self.parseField(identifier.value(self.src), has_type_annotation);
+                    strc_field.is_file_only = is_file_only;
+                    try fields.append(self.allocator, strc_field);
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => {
+                    return self.err_reporter.invalidSyntax("let or an identifier", tk);
+                },
+            }
+        }
+
+        return ast.Struct{
+            .funcs = try funcs.toOwnedSlice(self.allocator),
+            .fields = try fields.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseAnonymousStructDef(self: *Self) CompileError!ast.Struct {
+        var fields: std.ArrayList(ast.Field) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    const identifier = tk;
+                    const has_type_annotation = self.match(.colon);
+
+                    const strc_field = try self.parseField(identifier.value(self.src), has_type_annotation);
+                    try fields.append(self.allocator, strc_field);
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => {
+                    return self.err_reporter.invalidSyntax("identifier", tk);
+                },
+            }
+        }
+
+        return ast.Struct{
+            .fields = try fields.toOwnedSlice(self.allocator),
+            .static_fields = &.{},
+            .funcs = &.{},
+        };
+    }
+
+    fn parseEnumDef(self: *Self) CompileError!ast.EnumDef {
+        var variants: std.ArrayList(ast.EnumVariant) = .empty;
+        var static_fields: std.ArrayList(ast.Field) = .empty;
+        var funcs: std.ArrayList(ast.StatementNode) = .empty;
+        var mode: enum { none, implicit, explicit } = .none;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    const identifier = tk.value(self.src);
+
+                    if (self.match(.eq)) {
+                        switch (mode) {
+                            .none => mode = .explicit,
+                            .implicit => return self.err_reporter.invalidSyntax(
+                                "all enum variants to either have explicit values or none at all",
+                                tk,
+                            ),
+                            .explicit => {},
+                        }
+
+                        const value_tk = try self.expect(.int_literal);
+                        const value = std.fmt.parseInt(i64, value_tk.value(self.src), 10) catch {
+                            return self.err_reporter.invalidSyntax("integer literal", value_tk);
+                        };
+
+                        try variants.append(self.allocator, .{
+                            .identifier = identifier,
+                            .value = value,
+                        });
+                    } else {
+                        switch (mode) {
+                            .none => mode = .implicit,
+                            .explicit => return self.err_reporter.invalidSyntax(
+                                "all enum variants to either have explicit values or none at all",
+                                tk,
+                            ),
+                            .implicit => {},
+                        }
+
+                        try variants.append(self.allocator, .{
+                            .identifier = identifier,
+                            .value = null,
+                        });
+                    }
+                },
+                .func_kw => {
+                    self.walk();
+                    const is_file_only = try self.matchFileOnly(null);
+                    const identifier_token = try self.expect(.identifier);
+                    const fn_def = try self.parseFnDef();
+                    try funcs.append(self.allocator, .{
+                        .data = .{
+                            .func = .{
+                                .identifier = identifier_token.value(self.src),
+                                .def = fn_def,
+                                .is_file_only = is_file_only,
+                            },
+                        },
+                        .loc = .{
+                            .start = tk.loc.start,
+                            .end = self.tokens[self.cur_index - 1].loc.end,
+                        },
+                    });
+                },
+                .let_kw => {
+                    const let_stmt = try self.parseLetStmt(static_field_refusal);
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .default_value = let_stmt.value,
+                    });
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => {
+                    return self.err_reporter.invalidSyntax("identifier, let, func or 'end'", tk);
+                },
+            }
+        }
+
+        return ast.EnumDef{
+            .variants = try variants.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
+            .funcs = try funcs.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseUnionDef(self: *Self) CompileError!ast.UnionDef {
+        var variants: std.ArrayList(ast.UnionVariant) = .empty;
+        var static_fields: std.ArrayList(ast.Field) = .empty;
+        var funcs: std.ArrayList(ast.StatementNode) = .empty;
+
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .identifier => {
+                    self.walk();
+                    const identifier = tk.value(self.src);
+                    _ = try self.expect(.colon);
+                    const @"type" = try self.parseTypeAnnotation(true);
+
+                    try variants.append(self.allocator, .{ .identifier = identifier, .type = @"type" });
+                },
+                .func_kw => {
+                    self.walk();
+                    const is_file_only = try self.matchFileOnly(null);
+                    const identifier_token = try self.expect(.identifier);
+                    const fn_def = try self.parseFnDef();
+                    try funcs.append(self.allocator, .{
+                        .data = .{
+                            .func = .{
+                                .identifier = identifier_token.value(self.src),
+                                .def = fn_def,
+                                .is_file_only = is_file_only,
+                            },
+                        },
+                        .loc = .{
+                            .start = tk.loc.start,
+                            .end = self.tokens[self.cur_index - 1].loc.end,
+                        },
+                    });
+                },
+                .let_kw => {
+                    const let_stmt = try self.parseLetStmt(static_field_refusal);
+                    try static_fields.append(self.allocator, .{
+                        .identifier = let_stmt.identifier,
+                        .is_mut = let_stmt.is_mut,
+                        .type = let_stmt.type_annotation,
+                        .default_value = let_stmt.value,
+                    });
+                },
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => {
+                    return self.err_reporter.invalidSyntax("identifier, let, func or 'end'", tk);
+                },
+            }
+        }
+
+        return ast.UnionDef{
+            .variants = try variants.toOwnedSlice(self.allocator),
+            .static_fields = try static_fields.toOwnedSlice(self.allocator),
+            .funcs = try funcs.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseFnDef(self: *Self) CompileError!ast.FnDef {
+        const params = try self.parseFnParams();
+        return self.parseFnBody(params);
+    }
+
+    fn parseLambdaDef(self: *Self) CompileError!ast.FnDef {
+        const params = try self.parseFnParams();
+        if (self.peekCurrent().tag == .arrow) {
+            return self.parseFnBody(params);
+        }
+
+        const body_block = try self.parseBlock(&.{});
+        _ = try self.expect(.end_kw);
+        return ast.FnDef{
+            .params = params,
+            .body_block = body_block,
+            .return_type = null,
+        };
+    }
+
+    fn parseFnBody(self: *Self, params: []const ast.FnParam) CompileError!ast.FnDef {
+        _ = try self.expect(.arrow);
+
+        const tk = self.peekCurrent();
+        if (tk.tag == .return_kw) {
+            var statements: std.ArrayList(ast.StatementNode) = .empty;
+            const ret_stmt = try self.parseReturnStmt();
+            const return_stmt = ast.StatementNode{
+                .data = .{ .@"return" = ret_stmt },
+                .loc = .{ .start = tk.loc.start, .end = if (ret_stmt.exp) |exp| exp.loc.end else tk.loc.end },
+            };
+            try statements.append(self.allocator, return_stmt);
+            return ast.FnDef{
+                .params = params,
+                .body_block = .{ .statements = statements },
+                .return_type = null,
+            };
+        }
+
+        const result = try self.parseFnResult();
+        const body_block = try self.parseBlock(&.{});
+        _ = try self.expect(.end_kw);
+
+        return ast.FnDef{
+            .params = params,
+            .body_block = body_block,
+            .return_type = result.return_type,
+            .error_set = result.error_set,
+        };
+    }
+
+    fn parseExternFuncStmt(self: *Self) CompileError!ast.FuncStmt {
+        self.walk();
+        _ = try self.expect(.func_kw);
+        const is_file_only = try self.matchFileOnly(null);
+        var func_stmt = try self.parseFuncSignature(true);
+        func_stmt.is_extern = true;
+        func_stmt.is_file_only = is_file_only;
+        return func_stmt;
+    }
+
+    fn parseFuncSignature(self: *Self, can_have_slots: bool) CompileError!ast.FuncStmt {
+        const identifier_token = try self.expect(.identifier);
+        const slots = if (can_have_slots) try self.parseSlots() else &.{};
+        const params = try self.parseFnParams();
+        _ = try self.expect(.arrow);
+        const result = try self.parseFnResult();
+
+        return ast.FuncStmt{
+            .identifier = identifier_token.value(self.src),
+            .slots = slots,
+            .def = .{
+                .params = params,
+                .body_block = .{ .statements = .empty },
+                .return_type = result.return_type,
+                .error_set = result.error_set,
+            },
+        };
+    }
+
+    fn parseFnParams(self: *Self) CompileError![]const ast.FnParam {
+        _ = try self.expect(.l_paren);
+        var arguments: std.ArrayList(ast.FnParam) = .empty;
+        if (self.peekCurrent().tag != .r_paren) {
+            arguments = try self.parseFnArgs();
+        }
+        _ = try self.expect(.r_paren);
+        return arguments.toOwnedSlice(self.allocator);
+    }
+
+    const FnResult = struct {
+        return_type: *ast.TypeAnnotation,
+        error_set: ?ast.FnErrorSet,
+    };
+
+    fn parseFnResult(self: *Self) CompileError!FnResult {
+        const tk = self.peekCurrent();
+        var error_set: ?ast.FnErrorSet = null;
+        if (tk.tag == .not) {
+            self.walk();
+            error_set = .{ .inferred = tk.loc };
+        }
+
+        var return_type = try self.parseTypeAnnotation(false);
+
+        if (error_set == null and self.peekCurrent().tag == .not) {
+            if (return_type.type != .@"struct" or return_type.is_nullable) {
+                return self.err_reporter.invalidSyntax("error set name before '!'", self.peekCurrent());
+            }
+            error_set = .{ .named = .{ .identifier = return_type.type.@"struct", .loc = tk.loc } };
+            self.walk();
+            return_type = try self.parseTypeAnnotation(false);
+        }
+
+        return .{ .return_type = return_type, .error_set = error_set };
+    }
+
+    fn parseFnArgs(self: *Self) CompileError!std.ArrayList(ast.FnParam) {
+        var arguments: std.ArrayList(ast.FnParam) = .empty;
+        while (true) {
+            const arg = try self.parseFnArg();
+            try arguments.append(self.allocator, arg);
+            if (self.peekCurrent().tag != .comma) {
+                break;
+            }
+            self.walk();
+        }
+        return arguments;
+    }
+
+    fn parseFnArg(self: *Self) CompileError!ast.FnParam {
+        var default_value: ?*ast.ExpNode = null;
+        var type_annotation: ?*ast.TypeAnnotation = null;
+
+        const is_mut = self.match(.mut_kw);
+
+        const id_tk = try self.expect(.identifier);
+        const id = id_tk.value(self.src);
+
+        const has_type_annotation = self.match(.colon);
+        if (has_type_annotation) {
+            type_annotation = try self.parseTypeAnnotation(false);
+        }
+
+        if (self.match(.eq)) {
+            default_value = try self.parseExp(0);
+        }
+
+        return ast.FnParam{
+            .identifier = id,
+            .is_mut = is_mut,
+            .type_annotation = type_annotation,
+            .default_value = default_value,
+        };
+    }
+
+    fn parseArrayLiteral(self: *Self) CompileError!ast.ArrayLiteral {
+        var exps: []const *ast.ExpNode = &.{};
+        if (self.peekCurrent().tag != .r_bracket) {
+            exps = try self.parseExpList();
+        }
+
+        _ = try self.expect(.r_bracket);
+
+        return ast.ArrayLiteral{ .exps = exps };
+    }
+
+    fn parseMapLiteral(self: *Self, open_brace: Token) CompileError!*ast.ExpNode {
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+        var entries: std.ArrayList(ast.MapEntry) = .empty;
+
+        while (self.peekCurrent().tag != .r_brace) {
+            const key = try self.parseExp(0);
+            _ = try self.expect(.colon);
+            const value = try self.parseExp(0);
+            try entries.append(self.allocator, .{ .key = key, .value = value });
+            if (!self.match(.comma)) break;
+        }
+
+        const close_brace = try self.expect(.r_brace);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .map_literal = .{ .entries = try entries.toOwnedSlice(self.allocator) } },
+            .loc = .{ .start = open_brace.loc.start, .end = close_brace.loc.end },
+        });
+    }
+
+    fn parseExpList(self: *Self) CompileError![]const *ast.ExpNode {
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+        var exps: std.ArrayList(*ast.ExpNode) = .empty;
+
+        while (true) {
+            const exp = try self.parseExp(0);
+            try exps.append(self.allocator, exp);
+
+            if (!self.match(.comma)) {
+                break;
+            }
+        }
+
+        return exps.toOwnedSlice(self.allocator);
+    }
+
+    fn parseFnCallArgs(self: *Self) CompileError![]const ast.FnCallArg {
+        if (self.peekCurrent().tag == .r_paren) {
+            return &.{};
+        }
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+
+        var are_arguments_named: ?bool = null;
+        var args: std.ArrayList(ast.FnCallArg) = .empty;
+
+        while (true) {
+            if (self.peekCurrent().tag == .r_paren) {
+                break;
+            }
+
+            const exp = try self.parseExp(0);
+            const tk = self.peekCurrent();
+
+            if (are_arguments_named == null) {
+                are_arguments_named = tk.tag == .eq;
+            }
+
+            if (are_arguments_named.?) {
+                if (tk.tag != .eq) {
+                    return self.err_reporter.invalidSyntax("=", tk);
+                }
+
+                if (exp.data != .identifier) {
+                    return self.err_reporter.invalidSyntax("identifier", .{ .tag = .identifier, .loc = exp.loc });
+                }
+
+                self.walk();
+                const value = try self.parseExp(0);
+                try args.append(self.allocator, .{
+                    .identifier = exp.data.identifier,
+                    .exp = value,
+                });
+            } else {
+                try args.append(self.allocator, .{
+                    .identifier = null,
+                    .exp = exp,
+                });
+            }
+
+            const cur = self.peekCurrent().tag;
+            if (cur != .comma) {
+                break;
+            }
+
+            self.walk();
+        }
+
+        return args.toOwnedSlice(self.allocator);
+    }
+
+    fn canStartExpression(_: *Self, tag: Tag) bool {
+        return switch (tag) {
+            .identifier,
+            .int_literal,
+            .float_literal,
+            .string_literal,
+            .multiline_string_literal,
+            .byte_literal,
+            .true_literal,
+            .false_literal,
+            .null_literal,
+            .l_paren,
+            .l_bracket,
+            .l_brace,
+            .not,
+            .minus,
+            .at,
+            .try_kw,
+            .if_kw,
+            .when_kw,
+            .func_kw,
+            .string_kw,
+            .buffer_kw,
+            => true,
+            else => false,
+        };
+    }
+
+    fn parseReturnStmt(self: *Self) CompileError!ast.ReturnStmt {
+        self.walk();
+        const cur_tk = self.peekCurrent();
+
+        if (cur_tk.tag == .eof or !self.canStartExpression(cur_tk.tag)) {
+            return ast.ReturnStmt{ .exp = null };
+        }
+
+        return ast.ReturnStmt{ .exp = try self.parseExp(0) };
+    }
+
+    fn parsePipeOperator(self: *Self, exp: *ast.ExpNode) !*ast.ExpNode {
+        self.walk();
+        const right = try self.parseExp(self.getBindingPower(.l_paren));
+        const call = if (right.data == .try_exp) right.data.try_exp.operand else right;
+
+        if (call.data != .fn_call) {
+            return self.err_reporter.invalidSyntax("function call or 'try' call after '|>'", .{ .tag = .identifier, .loc = right.loc });
+        }
+
+        const old_args = call.data.fn_call.arguments;
+        var new_args = try std.ArrayList(ast.FnCallArg).initCapacity(self.allocator, old_args.len + 1);
+
+        new_args.appendAssumeCapacity(
+            .{
+                .identifier = null,
+                .exp = exp,
+            },
+        );
+
+        new_args.appendSliceAssumeCapacity(old_args);
+
+        call.data.fn_call.arguments = try new_args.toOwnedSlice(self.allocator);
+        return right;
+    }
+
+    fn parseCatch(self: *Self, operand: *ast.ExpNode) CompileError!*ast.ExpNode {
+        self.walk();
+        const tk = self.peekCurrent();
+
+        if (!self.is_parsing_condition and tk.tag == .identifier and self.peekNext().tag == .then_kw) {
+            self.walk();
+            self.walk();
+            const body = try self.parseBlock(&.{});
+            const end_tk = try self.expect(.end_kw);
+            return ast.ExpNode.init(self.allocator, .{
+                .data = .{ .catch_exp = .{
+                    .operand = operand,
+                    .fallback = .{ .block = .{ .capture = tk.value(self.src), .body = body } },
+                } },
+                .loc = .{ .start = operand.loc.start, .end = end_tk.loc.end },
+            });
+        }
+
+        const value = try self.parseExp(self.getBindingPower(.catch_kw) - 1);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .catch_exp = .{
+                .operand = operand,
+                .fallback = .{ .value = value },
+            } },
+            .loc = .{ .start = operand.loc.start, .end = value.loc.end },
+        });
+    }
+
+    fn parseOrelse(self: *Self, operand: *ast.ExpNode) CompileError!*ast.ExpNode {
+        self.walk();
+        const fallback = try self.parseExp(self.getBindingPower(.orelse_kw) - 1);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .orelse_exp = .{ .operand = operand, .fallback = fallback } },
+            .loc = .{ .start = operand.loc.start, .end = fallback.loc.end },
+        });
+    }
+
+    fn parseExp(self: *Self, min_bp: u8) CompileError!*ast.ExpNode {
+        var exp = try self.parsePrefix();
+        exp = try self.parsePostfix(exp);
+
+        while (true) {
+            const tk = self.peekCurrent();
+            const op_bp = self.getBindingPower(tk.tag);
+            if (op_bp <= min_bp) {
+                break;
+            }
+
+            if (tk.tag == .pipe) {
+                exp = try self.parsePipeOperator(exp);
+                continue;
+            }
+
+            if (tk.tag == .catch_kw) {
+                exp = try self.parseCatch(exp);
+                continue;
+            }
+
+            if (tk.tag == .orelse_kw) {
+                exp = try self.parseOrelse(exp);
+                continue;
+            }
+
+            if (tk.tag == .range) {
+                if (exp.data == .range) return self.err_reporter.invalidSyntax("a single range", tk);
+                self.walk();
+                const end = try self.parseExp(op_bp);
+                exp = try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .range = .{ .start = exp, .end = end } },
+                    .loc = .{ .start = exp.loc.start, .end = end.loc.end },
+                });
+                continue;
+            }
+
+            //if dont break or continue it means it's a binary op
+            const op_token = self.peekCurrent();
+            const op = try ast.BinaryOp.fromTag(op_token.tag);
+
+            self.walk();
+            const right = try self.parseExp(op_bp);
+
+            exp = try ast.ExpNode.init(self.allocator, .{
+                .data = .{
+                    .binary_exp = .{
+                        .left = exp,
+                        .op = op,
+                        .right = right,
+                    },
+                },
+                .loc = .{ .start = exp.loc.start, .end = right.loc.end },
+            });
+        }
+
+        return exp;
+    }
+
+    fn invalidStringEscape(self: *Self, base: usize, start: usize, end: usize, message: []const u8) CompileError {
+        self.err_reporter.log(message, .{ .start = base + start, .end = base + end });
+        return error.ParserError;
+    }
+
+    fn skipStringIndent(self: *Self, index: usize, dedent: usize) usize {
+        const line_end = std.mem.indexOfScalarPos(u8, self.src, index, '\n') orelse self.src.len;
+        const is_blank = std.mem.indexOfNone(u8, self.src[index..line_end], " ") == null;
+        if (is_blank) return line_end;
+        return index + dedent;
+    }
+
+    fn decodeStringLiteral(self: *Self, start_index: usize, end_index: usize, dedent: ?usize) CompileError![]const u8 {
+        const raw = self.src[start_index..end_index];
+        const has_escape = std.mem.indexOfScalar(u8, raw, '\\') != null;
+        const has_newline = dedent != null and std.mem.indexOfScalar(u8, raw, '\n') != null;
+        if (!has_escape and !has_newline) return raw;
+
+        var decoded: std.ArrayList(u8) = .empty;
+        errdefer decoded.deinit(self.allocator);
+        var index: usize = 0;
+        while (index < raw.len) {
+            if (raw[index] == '\n' and dedent != null) {
+                try decoded.append(self.allocator, '\n');
+                index = self.skipStringIndent(start_index + index + 1, dedent.?) - start_index;
+                continue;
+            }
+            if (raw[index] != '\\') {
+                try decoded.append(self.allocator, raw[index]);
+                index += 1;
+                continue;
+            }
+
+            const start = index;
+            index += 1;
+            if (index >= raw.len) return self.invalidStringEscape(start_index, start, start, "Incomplete string escape");
+            const escaped: u8 = switch (raw[index]) {
+                '"' => '"',
+                '\'' => '\'',
+                '\\' => '\\',
+                '$' => '$',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '0' => 0,
+                'u' => {
+                    index += 1;
+                    if (index >= raw.len or raw[index] != '{') return self.invalidStringEscape(start_index, start, index - 1, "Unicode escape requires '{' after '\\u'");
+                    index += 1;
+                    const digits_start = index;
+                    var codepoint: u21 = 0;
+                    while (index < raw.len and raw[index] != '}') : (index += 1) {
+                        if (index - digits_start >= 6) return self.invalidStringEscape(start_index, start, index, "Unicode escape requires one to six hexadecimal digits");
+                        const digit = std.fmt.charToDigit(raw[index], 16) catch return self.invalidStringEscape(start_index, start, index, "Invalid hexadecimal digit in Unicode escape");
+                        const next_codepoint = @as(u32, codepoint) * 16 + digit;
+                        if (next_codepoint > 0x10ffff) return self.invalidStringEscape(start_index, start, index, "Unicode escape is outside the Unicode scalar range");
+                        codepoint = @intCast(next_codepoint);
+                    }
+                    if (index >= raw.len) return self.invalidStringEscape(start_index, start, index - 1, "Unterminated Unicode escape: expected '}'");
+                    if (index == digits_start) return self.invalidStringEscape(start_index, start, index, "Unicode escape requires one to six hexadecimal digits");
+                    var bytes: [4]u8 = undefined;
+                    const len = std.unicode.utf8Encode(codepoint, &bytes) catch return self.invalidStringEscape(start_index, start, index, "Unicode escape must be a Unicode scalar value, excluding surrogates");
+                    try decoded.appendSlice(self.allocator, bytes[0..len]);
+                    index += 1;
+                    continue;
+                },
+                else => return self.invalidStringEscape(start_index, start, index, "Unknown string escape"),
+            };
+            try decoded.append(self.allocator, escaped);
+            index += 1;
+        }
+        return decoded.toOwnedSlice(self.allocator);
+    }
+
+    fn appendStringSegment(self: *Self, parts: *std.ArrayList(*ast.ExpNode), start: usize, end: usize, dedent: ?usize) CompileError!void {
+        if (start == end) return;
+        try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .string_literal = try self.decodeStringLiteral(start, end, dedent) },
+            .loc = .{ .start = start, .end = end - 1 },
+        }));
+    }
+
+    fn parseStringLiteral(self: *Self, tk: Token) CompileError!*ast.ExpNode {
+        return self.parseStringContent(tk.loc.start + 1, tk.loc.end, null, tk.loc);
+    }
+
+    fn parseByteLiteral(self: *Self, tk: Token) CompileError!*ast.ExpNode {
+        const decoded = try self.decodeStringLiteral(tk.loc.start + 1, tk.loc.end, null);
+        if (decoded.len == 0) {
+            self.err_reporter.log("Empty byte literal: expected one character", tk.loc);
+            return error.ParserError;
+        }
+        if (decoded.len > 1 or decoded[0] >= 0x80) {
+            self.err_reporter.log("Byte literal must be a single ASCII character or escape", tk.loc);
+            return error.ParserError;
+        }
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .byte_literal = decoded[0] }, .loc = tk.loc });
+    }
+
+    fn parseMultilineStringLiteral(self: *Self, tk: Token) CompileError!*ast.ExpNode {
+        const closing = tk.loc.end - 2;
+        const closing_line_start = std.mem.lastIndexOfScalar(u8, self.src[0..closing], '\n').? + 1;
+        const dedent = closing - closing_line_start;
+        const content_start = std.mem.indexOfScalarPos(u8, self.src, tk.loc.start, '\n').? + 1;
+        if (content_start == closing_line_start) return self.parseStringContent(content_start, content_start, dedent, tk.loc);
+        return self.parseStringContent(self.skipStringIndent(content_start, dedent), closing_line_start - 1, dedent, tk.loc);
+    }
+
+    fn parseStringContent(self: *Self, content_start: usize, content_end: usize, dedent: ?usize, loc: err.Loc) CompileError!*ast.ExpNode {
+        var parts: std.ArrayList(*ast.ExpNode) = .empty;
+        var segment_start = content_start;
+        var index = segment_start;
+        while (index < content_end) {
+            if (self.src[index] == '\\') {
+                index += 2;
+                continue;
+            }
+            if (self.src[index] != '$' or index + 1 >= content_end) {
+                index += 1;
+                continue;
+            }
+            const next = self.src[index + 1];
+            const is_identifier = std.ascii.isAlphabetic(next) or next == '_';
+            if (next != '{' and !is_identifier) {
+                index += 1;
+                continue;
+            }
+            try self.appendStringSegment(&parts, segment_start, index, dedent);
+            if (is_identifier) {
+                const start = index + 1;
+                index = start + 1;
+                while (index < content_end and (std.ascii.isAlphanumeric(self.src[index]) or self.src[index] == '_')) : (index += 1) {}
+                try parts.append(self.allocator, try ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = self.src[start..index] },
+                    .loc = .{ .start = start, .end = index - 1 },
+                }));
+            } else {
+                var expression_lexer = lexer.Lexer.init(self.allocator, self.src);
+                expression_lexer.cur_index = index;
+                expression_lexer.end_index = content_end;
+                const end = try expression_lexer.readInterpolation();
+                expression_lexer.cur_index = index + 2;
+                expression_lexer.end_index = end;
+                const tokens = try expression_lexer.list();
+                var expression_parser = Self.init(self.allocator, self.src, tokens.items);
+                expression_parser.loop_depth = self.loop_depth;
+                expression_parser.branch_depth = self.branch_depth;
+                const expression = try expression_parser.parseExp(0);
+                _ = try expression_parser.expect(.eof);
+                try parts.append(self.allocator, expression);
+                index = end + 1;
+            }
+            segment_start = index;
+        }
+        if (parts.items.len == 0) return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .string_literal = try self.decodeStringLiteral(content_start, content_end, dedent) },
+            .loc = loc,
+        });
+        try self.appendStringSegment(&parts, segment_start, content_end, dedent);
+        return ast.ExpNode.init(self.allocator, .{ .data = .{ .string_interpolation = try parts.toOwnedSlice(self.allocator) }, .loc = loc });
+    }
+
+    fn parsePrefix(self: *Self) CompileError!*ast.ExpNode {
+        const tk = self.peekCurrent();
+        self.walk();
+
+        return switch (tk.tag) {
+            .if_kw => {
+                const condition = try self.parseCondition();
+                const data: ast.Exp = if (self.match(.colon))
+                    .{ .if_capture_exp = try self.parseIfCapture(condition) }
+                else
+                    .{ .if_exp = try self.parseIfStmt(condition) };
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = data,
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
+            .func_kw => {
+                const saved_loop_depth = self.loop_depth;
+                self.loop_depth = 0;
+                defer self.loop_depth = saved_loop_depth;
+                const was_parsing_condition = self.leaveCondition();
+                defer self.is_parsing_condition = was_parsing_condition;
+                const def = try self.parseLambdaDef();
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .lambda = def },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
+            .when_kw => {
+                const when = try self.parseWhenStmt();
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .when_exp = when },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
+            .identifier => {
+                if (self.peekCurrent().tag == .double_colon) {
+                    return self.parseModuleMember(tk);
+                }
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .identifier = tk.value(self.src) },
+                    .loc = tk.loc,
+                });
+            },
+            .string_kw, .buffer_kw => {
+                if (self.peekCurrent().tag != .double_colon) {
+                    return self.err_reporter.invalidSyntax("valid expression", tk);
+                }
+                return self.parseModuleMember(tk);
+            },
+            .int_literal => {
+                const value = std.fmt.parseInt(i64, tk.value(self.src), 10) catch {
+                    return self.err_reporter.invalidSyntax("int literal", tk);
+                };
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{ .int_literal = value },
+                    .loc = tk.loc,
+                });
+            },
+            .float_literal => {
+                const value = std.fmt.parseFloat(f64, tk.value(self.src)) catch {
+                    return self.err_reporter.invalidSyntax("float literal", tk);
+                };
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .float_literal = value }, .loc = tk.loc });
+            },
+            .string_literal => {
+                return self.parseStringLiteral(tk);
+            },
+            .multiline_string_literal => {
+                return self.parseMultilineStringLiteral(tk);
+            },
+            .byte_literal => {
+                return self.parseByteLiteral(tk);
+            },
+
+            .true_literal => {
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = true }, .loc = tk.loc });
+            },
+            .false_literal => {
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .bool_literal = false }, .loc = tk.loc });
+            },
+            .null_literal => {
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .null_literal = {} }, .loc = tk.loc });
+            },
+            .l_bracket => {
+                const arr = try self.parseArrayLiteral();
+                const arr_end = self.tokens[self.cur_index - 1].loc.end;
+                return ast.ExpNode.init(
+                    self.allocator,
+                    .{
+                        .data = .{ .array_literal = arr },
+                        .loc = .{ .start = tk.loc.start, .end = arr_end },
+                    },
+                );
+            },
+            .l_brace => {
+                return self.parseMapLiteral(tk);
+            },
+            .l_paren => {
+                const was_parsing_condition = self.leaveCondition();
+                defer self.is_parsing_condition = was_parsing_condition;
+                const exp = try self.parseExp(0);
+                _ = try self.expect(.r_paren);
+                return exp;
+            },
+            .try_kw => {
+                const operand = try self.parseExp(100);
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .try_exp = .{ .operand = operand } }, .loc = .{ .start = tk.loc.start, .end = operand.loc.end } });
+            },
+            .not, .minus => {
+                const op = try ast.UnaryOp.fromTag(tk.tag);
+                const right = try self.parseExp(100);
+                return ast.ExpNode.init(self.allocator, .{ .data = .{ .unary_exp = .{ .op = op, .right = right } }, .loc = .{ .start = tk.loc.start, .end = right.loc.end } });
+            },
+            .at => {
+                const l_paren = self.peekCurrent();
+                if (l_paren.tag != .l_paren) {
+                    return self.err_reporter.invalidSyntax("'(' after '@'", l_paren);
+                }
+                self.walk();
+                const args = try self.parseFnCallArgs();
+                const r_paren = try self.expect(.r_paren);
+
+                return ast.ExpNode.init(self.allocator, .{
+                    .data = .{
+                        .anonymous_init = .{
+                            .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                            .arguments = args,
+                        },
+                    },
+                    .loc = .{ .start = tk.loc.start, .end = r_paren.loc.end },
+                });
+            },
+            else => {
+                return self.err_reporter.invalidSyntax("valid expression", tk);
+            },
+        };
+    }
+
+    fn parseModuleMember(self: *Self, module_tk: Token) CompileError!*ast.ExpNode {
+        _ = try self.expect(.double_colon);
+        const member_tk = try self.expect(.identifier);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .identifier = try self.qualifiedName(module_tk, member_tk) },
+            .loc = .{ .start = module_tk.loc.start, .end = member_tk.loc.end },
+        });
+    }
+
+    fn qualifiedName(self: *Self, module_tk: Token, member_tk: Token) CompileError![]const u8 {
+        return std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_tk.value(self.src), member_tk.value(self.src) });
+    }
+
+    fn parsePostfix(self: *Self, left: *ast.ExpNode) CompileError!*ast.ExpNode {
+        var node = left;
+
+        var is_done = false;
+        while (!is_done) {
+            const tk = self.peekCurrent();
+
+            switch (tk.tag) {
+                //fnCall
+                .l_paren => {
+                    self.walk();
+                    const args = try self.parseFnCallArgs();
+                    const r_paren = try self.expect(.r_paren);
+
+                    //note: this is supporting only simple fn calls
+                    node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{
+                            .fn_call = .{
+                                .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                                .target = node,
+                                .arguments = args,
+                            },
+                        },
+                        .loc = .{ .start = node.loc.start, .end = r_paren.loc.end },
+                    });
+                },
+
+                .l_bracket => {
+                    node = try self.parseIndexAccess(node, false);
+                },
+                .question_mark => {
+                    if (self.peekNext().tag != .l_bracket) {
+                        is_done = true;
+                        continue;
+                    }
+                    self.walk();
+                    node = try self.parseIndexAccess(node, true);
+                },
+
+                //struct field member access
+                .dot, .question_mark_dot => {
+                    const is_nullable = tk.tag == .question_mark_dot;
+                    self.walk();
+
+                    const id_token = try self.expect(.identifier);
+                    const id_node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .identifier = id_token.value(self.src) },
+                        .loc = id_token.loc,
+                    });
+
+                    node = try ast.ExpNode.init(self.allocator, .{
+                        .data = .{ .indexed = .{
+                            .target = node,
+                            .index = id_node,
+                            .is_nullable = is_nullable,
+                        } },
+                        .loc = .{ .start = node.loc.start, .end = id_token.loc.end },
+                    });
+                },
+
+                else => is_done = true,
+            }
+        }
+
+        return node;
+    }
+
+    fn parseIndexAccess(self: *Self, target: *ast.ExpNode, is_nullable: bool) CompileError!*ast.ExpNode {
+        self.walk();
+        const was_parsing_condition = self.leaveCondition();
+        defer self.is_parsing_condition = was_parsing_condition;
+        const index = try self.parseExp(0);
+        const r_bracket = try self.expect(.r_bracket);
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .indexed = .{
+                .target = target,
+                .index = index,
+                .is_nullable = is_nullable,
+            } },
+            .loc = .{ .start = target.loc.start, .end = r_bracket.loc.end },
+        });
+    }
+
+    fn getBindingPower(_: *const Self, tag: Tag) u8 {
+        return switch (tag) {
+            .catch_kw, .orelse_kw => 3,
+            .pipe => 5,
+            .or_kw => 10,
+            .and_kw => 20,
+            .double_eq, .not_eq, .gt, .ge, .lt, .le => 30,
+            .range => 35,
+            .plus, .minus => 40,
+            .star, .slash, .double_slash, .percent => 50,
+            .l_paren => 60,
+            else => 0,
+        };
+    }
+
+    //note: this is allocating duplicates
+    fn parseTypeAnnotation(self: *Self, can_define_anonymous_struct: bool) !*ast.TypeAnnotation {
+        const is_nullable = self.match(.question_mark);
+        const tk = self.peekCurrent();
+        self.walk();
+
+        if (!can_define_anonymous_struct and tk.tag == .struct_kw) {
+            return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
+        }
+
+        const is_module_type = switch (tk.tag) {
+            .identifier, .string_kw, .buffer_kw => self.peekCurrent().tag == .double_colon,
+            else => false,
+        };
+        if (is_module_type) {
+            self.walk();
+            const name_tk = try self.expect(.identifier);
+            const args = try self.parseTypeArgs();
+            return ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .@"struct" = try self.qualifiedName(tk, name_tk) },
+                .is_nullable = is_nullable,
+                .args = args,
+                .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+            });
+        }
+
+        return switch (tk.tag) {
+            .string_kw, .buffer_kw, .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .primitive = tk.value(self.src) },
+                .is_nullable = is_nullable,
+                .loc = tk.loc,
+            }),
+            .identifier => {
+                const args = try self.parseTypeArgs();
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .type = .{ .@"struct" = tk.value(self.src) },
+                    .is_nullable = is_nullable,
+                    .args = args,
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                });
+            },
+            .struct_kw => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .anonymous_struct = try self.parseAnonymousStructDef() },
+                .is_nullable = is_nullable,
+            }),
+            .at => ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .type_self = {} },
+                .is_nullable = is_nullable,
+            }),
+            .l_bracket => {
+                _ = try self.expect(.r_bracket);
+                const arr_type = try self.parseTypeAnnotation(false);
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .type = .{ .array = arr_type },
+                    .is_nullable = is_nullable,
+                    .loc = .{ .start = tk.loc.start, .end = arr_type.loc.end },
+                });
+            },
+            .func_kw => {
+                const func_type = try self.parseFuncTypeAnnotation();
+                return ast.TypeAnnotation.init(self.allocator, .{
+                    .type = .{ .function = func_type },
+                    .is_nullable = is_nullable,
+                    .loc = .{ .start = tk.loc.start, .end = func_type.return_type.loc.end },
+                });
+            },
+            else => {
+                return self.err_reporter.invalidSyntax("type string, number, bool, void, ...", tk);
+            },
+        };
+    }
+
+    fn parseTypeArgs(self: *Self) CompileError![]const *ast.TypeAnnotation {
+        if (!self.match(.l_bracket)) return &.{};
+        var args: std.ArrayList(*ast.TypeAnnotation) = .empty;
+        while (true) {
+            try args.append(self.allocator, try self.parseTypeAnnotation(false));
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_bracket);
+        return args.toOwnedSlice(self.allocator);
+    }
+
+    fn parseFuncTypeAnnotation(self: *Self) CompileError!ast.FuncTypeAnnotation {
+        _ = try self.expect(.l_paren);
+        var params: std.ArrayList(ast.FuncTypeParam) = .empty;
+        while (self.peekCurrent().tag != .r_paren) {
+            const is_mut = self.match(.mut_kw);
+            try params.append(self.allocator, .{ .type = try self.parseTypeAnnotation(false), .is_mut = is_mut });
+            if (!self.match(.comma)) break;
+        }
+        _ = try self.expect(.r_paren);
+        _ = try self.expect(.arrow);
+
+        if (self.peekCurrent().tag == .not) {
+            return self.err_reporter.invalidSyntax("a named error set before '!' (function types can't infer errors)", self.peekCurrent());
+        }
+        var return_type = try self.parseTypeAnnotation(false);
+        var error_set: ?[]const u8 = null;
+        if (self.peekCurrent().tag == .not) {
+            if (return_type.type != .@"struct" or return_type.is_nullable) {
+                return self.err_reporter.invalidSyntax("error set name before '!'", self.peekCurrent());
+            }
+            error_set = return_type.type.@"struct";
+            self.walk();
+            return_type = try self.parseTypeAnnotation(false);
+        }
+
+        return .{
+            .params = try params.toOwnedSlice(self.allocator),
+            .return_type = return_type,
+            .error_set = error_set,
+        };
+    }
+
+    fn match(self: *Self, tag: Tag) bool {
+        const token = self.peekCurrent();
+        if (token.tag == tag) {
+            self.walk();
+            return true;
+        }
+
+        return false;
+    }
+
+    fn expect(self: *Self, tag: Tag) !Token {
+        defer self.walk();
+        const token = self.peekCurrent();
+        if (token.tag == tag) {
+            return token;
+        }
+
+        return self.err_reporter.invalidSyntax(@tagName(tag), token);
+    }
+
+    fn walkBack(self: *Self) void {
+        self.cur_index = @max(0, self.cur_index - 1);
+    }
+
+    fn walk(self: *Self) void {
+        self.cur_index += 1;
+    }
+
+    fn peekCurrent(self: *Self) Token {
+        if (self.cur_index >= self.tokens.len) {
+            return Token.init(Tag.eof, 0, 0);
+        }
+
+        return self.tokens[self.cur_index];
+    }
+
+    fn peekNext(self: *Self) Token {
+        return self.peekNextN(1);
+    }
+
+    fn peekNextN(self: *Self, n: usize) Token {
+        if (self.cur_index + n >= self.tokens.len) {
+            return Token.init(Tag.eof, 0, 0);
+        }
+
+        return self.tokens[self.cur_index + n];
+    }
+
+    fn peekBack(self: *Self) Token {
+        if (self.cur_index - 1 >= self.tokens.len or self.cur_index - 1 == 0) {
+            return Token.init(Tag.eof, 0, 0);
+        }
+
+        return self.tokens[self.cur_index - 1];
+    }
+};

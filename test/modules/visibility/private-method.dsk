@@ -1,0 +1,13 @@
+struct ~Key
+    id: int
+end
+
+struct Door
+    id: int
+
+    func open(self: @, key: Key) -> void
+    end
+end
+
+func main() -> void
+end

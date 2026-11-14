@@ -1,0 +1,5 @@
+func keep[E: error](e: E) -> void
+end
+func main() -> void
+    keep(1)
+end

@@ -1,0 +1,17 @@
+import @/geo/shapes
+import std/array: len
+
+func describe() -> string
+    return "util"
+end
+
+func make_square(size: float) -> shapes::Square
+    return shapes::Square(size = size)
+end
+
+func first_or_null(items: []shapes::Square) -> ?shapes::Square
+    if len(items) == 0 then
+        return null
+    end
+    return items[0]
+end

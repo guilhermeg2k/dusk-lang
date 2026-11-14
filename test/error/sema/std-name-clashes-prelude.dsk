@@ -1,0 +1,4 @@
+import std/string: to_int
+
+func main() -> void
+end

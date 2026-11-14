@@ -1,0 +1,4 @@
+import @/physics
+
+func draw() -> void
+end

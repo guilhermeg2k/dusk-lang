@@ -3,7 +3,7 @@ const dusk = @import("dusk.zig");
 const Dusk = dusk.Dusk;
 
 const build_zon = @import("build_zon");
-const CliErrorReporter = @import("error.zig").CliErrorReporter;
+const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();

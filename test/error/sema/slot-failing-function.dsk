@@ -1,0 +1,18 @@
+import std/array: append
+import std/string
+
+func map[T, U](items: []T, f: func(T) -> U) -> []U
+    let mut out: []U = []
+    for items: item do
+        append(out, f(item))
+    end
+    return out
+end
+
+func parse(s: string) -> ConversionError!int
+    return try string::to_int(s)
+end
+
+func main() -> !void
+    let xs = map(["1", "2"], parse)
+end

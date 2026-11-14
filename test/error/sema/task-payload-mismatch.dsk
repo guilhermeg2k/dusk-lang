@@ -1,0 +1,3 @@
+func main() -> void
+    let t: Task[string] = spawn(func() -> return 1)
+end

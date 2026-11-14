@@ -1,0 +1,10 @@
+import std/task
+
+func main() -> void
+    spawn(func()
+        task::sleep(5000)
+    end)
+    task::sleep(1)
+    let items = [1]
+    echo(items[3])
+end

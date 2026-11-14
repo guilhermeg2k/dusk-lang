@@ -1,0 +1,5 @@
+import @/shapes
+
+func main() -> void
+    other::area(1.0)
+end

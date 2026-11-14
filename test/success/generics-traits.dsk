@@ -1,3 +1,5 @@
+import std/string
+
 trait Shape
     func area(self: @) -> float
     func scale(mut self: @, by: float) -> void
@@ -103,8 +105,8 @@ struct Text
     value: string
 
     func parse(self: @) -> ParseError!int
-        if str_len(self.value) == 0 then return ParseError.Empty end
-        return str_len(self.value)
+        if string::len(self.value) == 0 then return ParseError.Empty end
+        return string::len(self.value)
     end
 end
 
@@ -151,7 +153,7 @@ func main() -> void
     let mut c = Circle(r = 1.0)
     grow(c)
     assert(c.r == 2.0)
-    assert(str_equal(describe(Square(side = 1.0)), "square 1"))
+    assert(describe(Square(side = 1.0)) == "square 1")
     assert(smallest([Size.Big, Size.Small]) == Size.Small)
     let b = Box(item = Circle(r = 1.0))
     assert(b.area() == 3.0)

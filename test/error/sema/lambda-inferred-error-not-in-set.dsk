@@ -1,0 +1,17 @@
+error E
+    Bad
+end
+error F
+    Other
+end
+func p(x: int) -> E!int
+    return x
+end
+func q() -> F!int
+    let f = func(n: int)
+        return try p(n)
+    end
+    return try f(1)
+end
+func main() -> void
+end

@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> void
-    echo(str_join([1, 2], ","))
+    echo(string::join([1, 2], ","))
 end

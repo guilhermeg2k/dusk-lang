@@ -1,4 +1,0 @@
-func main() -> void
-    let mut xs = [1]
-    let x = __array_pop(xs)
-end

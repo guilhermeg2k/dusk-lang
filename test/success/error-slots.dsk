@@ -1,0 +1,102 @@
+import std/array: len, append
+import std/string
+
+error LookupError
+    Missing
+end
+
+struct Db
+    names: []string
+end
+
+func get(db: Db, n: int) -> LookupError!string
+    if n > len(db.names) then
+        return LookupError.Missing
+    end
+    return db.names[n - 1]
+end
+
+func map[T, U, E: error](items: []T, f: func(T) -> E!U) -> E![]U
+    let mut out: []U = []
+    for items: item do
+        append(out, try f(item))
+    end
+    return out
+end
+
+func map_or[T, U, E: error](items: []T, f: func(T) -> E!U, fallback: U) -> []U
+    let mut out: []U = []
+    for items: item do
+        append(out, f(item) catch fallback)
+    end
+    return out
+end
+
+func first_error[T, E: error](items: []T, f: func(T) -> E!int) -> ?E
+    for items: item do
+        let n = f(item) catch e then
+            return e
+        end
+    end
+    return null
+end
+
+func twice[T, E: error](items: []T, f: func(T) -> E!T) -> E![]T
+    return try map(items, f)
+end
+
+struct Job[T, E: error]
+    run: func() -> E!T
+
+    func go(self: @) -> E!T
+        return try self.run()
+    end
+end
+
+func parse(s: string) -> ConversionError!int
+    return try string::to_int(s)
+end
+
+func main() -> !void
+    let db = Db(names = ["ana", "bia", "caio"])
+
+    let lengths = map(["a", "bbb"], func(s) -> return string::len(s))
+    assert(lengths[1] == 3)
+
+    let numbers = try map(["1", "2"], parse)
+    assert(numbers[1] == 2)
+    let bad = map(["1", "x"], parse) catch []
+    assert(len(bad) == 0)
+
+    let people = try map([1, 2], func(n)
+        let name = try get(db, n)
+        return @(id = n, name = name)
+    end)
+    assert(people[1].name == "bia")
+    let missing = map([1, 9], func(n) -> return try get(db, n)) catch ["none"]
+    assert(missing[0] == "none")
+
+    let safe = map_or(["1", "x", "3"], parse, 0)
+    assert(safe[1] == 0)
+    let plain = map_or([1, 2], func(n) -> return n * 2, 0)
+    assert(plain[1] == 4)
+
+    let found = first_error(["1", "x"], parse)
+    assert(found != null)
+    let none_found = first_error([1, 2], func(n) -> return n)
+    assert(none_found == null)
+
+    let doubled = twice([1, 2], func(n) -> return n * 2)
+    assert(doubled[1] == 4)
+    let parsed = twice(["7"], func(s) -> return s)
+    assert(parsed[0] == "7")
+
+    let task = Job(run = func() -> return 5)
+    assert(task.go() == 5)
+    let failing = Job(run = func() -> return try parse("8"))
+    assert((try failing.go()) == 8)
+    let typed: Job[int, none] = @(run = func() -> return 1)
+    assert(typed.go() == 1)
+    let typed_failing: Job[int, ConversionError] = @(run = func() -> return try parse("x"))
+    assert((typed_failing.go() catch -1) == -1)
+end

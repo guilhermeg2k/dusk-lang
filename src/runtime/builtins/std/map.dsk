@@ -1,0 +1,6 @@
+extern func len[K, V](m: map[K, V]) -> int
+extern func has[K, V](m: map[K, V], key: K) -> bool
+extern func remove[K, V](mut m: map[K, V], key: K) -> bool
+extern func keys[K, V](m: map[K, V]) -> []K
+extern func values[K, V](m: map[K, V]) -> []V
+extern func clear[K, V](mut m: map[K, V]) -> void

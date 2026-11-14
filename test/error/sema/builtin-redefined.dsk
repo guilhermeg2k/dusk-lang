@@ -1,5 +1,4 @@
-func str_trim(text: string) -> string
-    return text
+func assert(cond: bool) -> void
 end
 
 func main() -> void

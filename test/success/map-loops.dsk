@@ -1,0 +1,89 @@
+import std/array: len, append
+
+struct Counter
+    hits: int
+end
+
+func main() -> void
+    let ages = {"ana": 31, "bob": 27, "cy": 40}
+    let mut names: []string = []
+    let mut total = 0
+    for ages: age, name do
+        append(names, name)
+        total = total + age
+    end
+    assert(len(names) == 3)
+    assert(names[0] == "ana")
+    assert(names[1] == "bob")
+    assert(names[2] == "cy")
+    assert(total == 98)
+
+    let mut only_values = 0
+    for ages: age do
+        only_values = only_values + age
+    end
+    assert(only_values == 98)
+
+    let mut only_keys = ""
+    for ages: _, name do
+        only_keys = "${only_keys}${name}"
+    end
+    assert(only_keys == "anabobcy")
+
+    let empty: map[string, int] = {}
+    for empty: x do
+        assert(false)
+    end
+
+    let mut counters = {"a": Counter(hits = 0), "b": Counter(hits = 0)}
+    for counters: mut counter do
+        counter.hits = counter.hits + 1
+    end
+    assert(counters["a"]?.hits == 1)
+    assert(counters["b"]?.hits == 1)
+
+    let mut growing: map[int, int] = {0: 0}
+    let mut seen = 0
+    for growing: value, key do
+        seen = seen + 1
+        if key < 20 then
+            growing[key + 1] = value + 1
+        end
+    end
+    assert(seen == 21)
+
+    let mut skipped = 0
+    for ages: age, name do
+        if name == "bob" then
+            continue
+        end
+        skipped = skipped + 1
+        if name == "cy" then
+            break
+        end
+    end
+    assert(skipped == 2)
+
+    let mut big: map[int, string] = {}
+    for 0..999: i do
+        big[i] = "v${i}"
+    end
+    let mut count = 0
+    let mut previous = -1
+    for big: text, key do
+        assert(key == previous + 1)
+        assert(text == "v${key}")
+        previous = key
+        count = count + 1
+    end
+    assert(count == 1000)
+
+    let nested: map[string, map[string, int]] = {"x": {"a": 1, "b": 2}, "y": {"c": 3}}
+    let mut sum = 0
+    for nested: inner do
+        for inner: n do
+            sum = sum + n
+        end
+    end
+    assert(sum == 6)
+end

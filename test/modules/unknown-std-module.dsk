@@ -1,0 +1,4 @@
+import std/nope
+
+func main() -> void
+end

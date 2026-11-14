@@ -1,3 +1,5 @@
+import std/string
+
 func classify(command: string) -> int
     when command
         "start", "run" then return 1 end
@@ -34,9 +36,9 @@ func main() -> void
     assert(classify("Stop") == 0)
     assert(classify("starting") == 0)
 
-    let built = str_concat("st", "op")
+    let built = string::concat("st", "op")
     assert(classify(built) == 2)
-    let pieces = str_split("run,stop,olá", ",")
+    let pieces = string::split("run,stop,olá", ",")
     assert(classify(pieces[0]) == 1)
     assert(classify(pieces[1]) == 2)
     let size = when word
@@ -49,11 +51,11 @@ func main() -> void
         "dusk" then "hi ${name}" end
         else then "who?" end
     end
-    assert(str_equal(greeting, "hi dusk"))
+    assert(greeting == "hi dusk")
 
-    assert(str_equal(describe(null), "none"))
-    assert(str_equal(describe("a"), "letter a"))
-    assert(str_equal(describe("b"), "other"))
+    assert(describe(null) == "none")
+    assert(describe("a") == "letter a")
+    assert(describe("b") == "other")
 
     assert(describeNoNullCase(null) == 2)
     assert(describeNoNullCase("a") == 1)

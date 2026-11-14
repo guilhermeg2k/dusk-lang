@@ -1,3 +1,5 @@
+import std/array: append
+
 func main() -> void
     let rows = [[1], [2]]
     let mut kept: [][]int = []

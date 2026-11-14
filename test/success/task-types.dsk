@@ -1,0 +1,40 @@
+import std/array: len, append
+import std/string
+
+func make_counter() -> Task[int]
+    return spawn(func() -> return 3)
+end
+
+func main() -> void
+    let a = spawn(func() -> return 42)
+    let b: Task[int] = a
+    let c: Task[int, none] = make_counter()
+
+    let failing = spawn(func() -> return try string::to_int("4"))
+    let declared: Task[int, ConversionError] = failing
+
+    let quiet = spawn(func()
+        let x = 1 + 1
+    end)
+    let typed_quiet: Task[void] = quiet
+
+    let list = spawn(func() -> return [1, 2])
+    let lists: []Task[[]int] = [list]
+
+    let mut later: []Task[int, ConversionError] = []
+    append(later, spawn(func() -> return try string::to_int("7")))
+    append(later, declared)
+    assert(len(later) == 2)
+
+    let tasks: []Task[int] = [a, b, c]
+    assert(len(tasks) == 3)
+    assert(len(lists) == 1)
+
+    let maybe: ?Task[int] = null
+    assert(maybe == null)
+    let some: ?Task[int] = a
+    assert(some != null)
+
+    let shared = copy(tasks)
+    echo("$typed_quiet ${shared[0]}")
+end

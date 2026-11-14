@@ -1,3 +1,6 @@
+import std/array: len, append
+import std/buffer
+
 struct Node
     value: int
     next: ?Node
@@ -44,7 +47,7 @@ func main() -> !void
     if shape_copy.poly: mut points then points[0] = 7 end
     if shape.poly: points then assert(points[0] == 1) else assert(false) end
 
-    let mut bytes = try new_buffer(2)
+    let mut bytes = try buffer::new(2)
     let mut bytes_copy = copy(bytes)
     bytes_copy[0] = 'z'
     assert(bytes[0] == 0)
@@ -64,7 +67,7 @@ func main() -> !void
     assert(boxed_copy[1] == null)
 
     assert(copy(5) == 5)
-    assert(str_equal(copy("text"), "text"))
+    assert(copy("text") == "text")
 
     let mut big: [][]int = []
     for 0..20000: i do

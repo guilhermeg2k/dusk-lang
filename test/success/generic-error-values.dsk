@@ -1,0 +1,17 @@
+import std/array: len
+import std/string
+
+func id[T](x: T) -> T
+    return x
+end
+struct Box[T]
+    item: T
+end
+func main() -> void
+    string::to_int("x") catch e then
+        let same = id(e)
+        let b = Box(item = e)
+        let xs = [e]
+        assert(len(id(xs)) == 1)
+    end
+end

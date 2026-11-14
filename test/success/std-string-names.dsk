@@ -1,0 +1,17 @@
+import std/string
+import std/buffer
+
+func main() -> !void
+    assert(try string::to_int("42") == 42)
+    assert(try to_int(2.0) == 2)
+    assert((string::to_float("x") catch 0.5) == 0.5)
+    let data = buffer::from_string("hi")
+    assert(buffer::len(data) == 2)
+    let text = try string::from_bytes(data)
+    assert(text == "hi")
+    let empty = buffer::new(-1) catch e then
+        when e
+            buffer::BufferError.NegativeSize then return end
+        end
+    end
+end

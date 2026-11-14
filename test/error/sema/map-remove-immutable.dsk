@@ -1,0 +1,6 @@
+import std/map
+
+func main() -> void
+    let m = {"a": 1}
+    map::remove(m, "a")
+end

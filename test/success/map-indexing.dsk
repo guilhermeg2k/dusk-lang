@@ -1,0 +1,67 @@
+struct Point
+    x: int
+end
+enum Color
+    Red
+    Green
+end
+
+func main() -> void
+    let mut ages = {"ana": 31, "bob": 27}
+    assert(ages["ana"] == 31)
+    assert(ages["zoe"] == null)
+    ages["zoe"] = 5
+    ages["ana"] = 32
+    assert(ages["zoe"] == 5)
+    assert(ages["ana"] == 32)
+    assert((ages["nobody"] orelse 0) == 0)
+    if ages["bob"]: age then
+        assert(age == 27)
+    else
+        assert(false)
+    end
+    let mut grid: map[int, map[int, string]] = {1: {1: "x"}}
+    assert(grid[1]?[1] == "x")
+    assert(grid[2]?[1] == null)
+    assert(grid[1]?[9] == null)
+    if grid[1]: mut row then
+        row[2] = "y"
+    end
+    assert(grid[1]?[2] == "y")
+    let p = Point(x = 1)
+    let q = Point(x = 1)
+    let mut by_point = {p: "p"}
+    by_point[q] = "q"
+    assert(by_point[p] == "p")
+    assert(by_point[q] == "q")
+    let colors = {Color.Red: 1.5}
+    assert(colors[Color.Red] == 1.5)
+    assert(colors[Color.Green] == null)
+    let flags = {true: "yes"}
+    assert(flags[true] == "yes")
+    assert(flags[false] == null)
+    let letters = {'a': 1}
+    assert(letters['a'] == 1)
+    let mut big: map[int, int] = {}
+    for 0..2000: i do
+        big[i] = i * 2
+    end
+    for 0..2000: i do
+        assert(big[i] == i * 2)
+    end
+    let mut words: map[string, int] = {}
+    for 0..3000: i do
+        words["w${i}"] = i
+    end
+    for 0..3000: i do
+        assert(words["w${i}"] == i)
+    end
+    let xs: ?[]int = [1, 2]
+    assert(xs?[1] == 2)
+    let none: ?[]int = null
+    assert(none?[0] == null)
+    let maybe: map[string, ?int] = {"a": null, "b": 1}
+    assert(maybe["a"] == null)
+    assert(maybe["b"] == 1)
+    echo("ok")
+end

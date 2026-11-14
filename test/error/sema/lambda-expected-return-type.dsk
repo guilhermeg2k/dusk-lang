@@ -1,0 +1,5 @@
+func main() -> void
+    let f: func(int) -> string = func(x)
+        return x
+    end
+end

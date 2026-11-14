@@ -1,4 +1,6 @@
+import std/buffer
+
 func main() -> !void
-    let mut b = try new_buffer(2)
+    let mut b = try buffer::new(2)
     b[-1] = 1
 end

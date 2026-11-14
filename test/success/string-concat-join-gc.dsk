@@ -1,3 +1,6 @@
+import std/array: append
+import std/string
+
 func main() -> void
     let mut kept: []string = []
     let mut total = 0
@@ -6,13 +9,13 @@ func main() -> void
         append(parts, "item")
         append(parts, "$i")
         append(parts, "end")
-        let joined = str_join(parts, "-")
-        let text = str_concat(joined, "!")
-        total = total + str_len(text)
+        let joined = string::join(parts, "-")
+        let text = string::concat(joined, "!")
+        total = total + string::len(text)
         if i % 5000 == 0 then
             append(kept, text)
         end
     end
-    echo(str_join(kept, " | "))
+    echo(string::join(kept, " | "))
     echo(total)
 end

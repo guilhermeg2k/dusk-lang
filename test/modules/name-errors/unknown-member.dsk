@@ -1,0 +1,5 @@
+import @/shapes
+
+func main() -> void
+    shapes::nope(1.0)
+end

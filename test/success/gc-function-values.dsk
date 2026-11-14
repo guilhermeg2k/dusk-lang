@@ -1,0 +1,32 @@
+import std/array: append
+
+func double(x: int) -> return x * 2
+func triple(x: int) -> return x * 3
+
+struct Step
+    name: string
+    run: func(int) -> int
+end
+
+func main() -> void
+    let mut steps: []Step = []
+    let mut ops: []func(int) -> int = []
+    for 1..20000: i do
+        if i % 2 == 0 then
+            append(steps, Step(name = "double $i", run = double))
+            append(ops, double)
+        else
+            append(steps, Step(name = "triple $i", run = triple))
+            append(ops, triple)
+        end
+    end
+    let mut total = 0
+    for steps: step do
+        total = total + step.run(1)
+    end
+    for ops: op do
+        total = total + op(1)
+    end
+    assert(total == 100000)
+    assert(steps[19999].name == "double 20000")
+end

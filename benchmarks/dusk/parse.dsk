@@ -1,14 +1,17 @@
+import std/array: append
+import std/string
+
 func main() -> void
     let mut rows: []string = []
     for 0..499999: i do
         append(rows, "$i,${(i * 7) % 1000},item$i")
     end
-    let csv = str_join(rows, "\n")
+    let csv = string::join(rows, "\n")
     let mut total = 0
     let mut count = 0
-    for str_split(csv, "\n"): row do
-        let fields = str_split(row, ",")
-        total = total + ((str_to_int(fields[0]) catch 0) + (str_to_int(fields[1]) catch 0))
+    for string::split(csv, "\n"): row do
+        let fields = string::split(row, ",")
+        total = total + ((string::to_int(fields[0]) catch 0) + (string::to_int(fields[1]) catch 0))
         count = count + 1
     end
     echo(total + count)

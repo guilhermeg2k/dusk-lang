@@ -1,0 +1,5 @@
+import @/shapes: area
+
+func double_area(size: float) -> float
+    return area(size) * 2.0
+end

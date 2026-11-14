@@ -1,0 +1,14 @@
+func shout() -> return "from the field"
+
+struct Button
+    click: func() -> string
+
+    func click(self: @) -> string
+        return "from the method"
+    end
+end
+
+func main() -> void
+    let b = Button(click = shout)
+    echo(b.click())
+end

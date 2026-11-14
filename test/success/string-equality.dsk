@@ -1,0 +1,42 @@
+import std/string
+import std/buffer
+
+let name = "Dusk"
+
+func same[T: int | string](a: T, b: T) -> bool
+    return a == b
+end
+
+func main() -> void
+    let built = "${name}"
+    assert(built == name)
+    assert(name == "Dusk")
+    assert(name != "dusk")
+    assert(name != "Dus")
+    assert("" != "a")
+    assert("" == "${""}")
+    assert("olá 🌙" == "ol\u{E1} \u{1F319}")
+    assert((string::from_bytes(buffer::from_string("copy")) catch "") == "copy")
+    let mut matches = 0
+    for 1..20000: i do
+        let text = "item $i"
+        if text == "item 19999" then
+            matches = matches + 1
+        end
+    end
+    assert(matches == 1)
+    echo("a" == "a")
+    echo("a" == "b")
+    let maybe: ?string = "Dusk"
+    let missing: ?string = null
+    let other_missing: ?string = null
+    assert(maybe == "Dusk")
+    assert("Dusk" == maybe)
+    assert(maybe != missing)
+    assert(missing == null)
+    assert(missing != "Dusk")
+    assert(missing == other_missing)
+    assert(same("a", "a"))
+    assert(!same("a", "b"))
+    assert(same(1, 1))
+end

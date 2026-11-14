@@ -1,0 +1,81 @@
+
+error ParseError
+    Odd
+end
+
+func apply(f: func(int, int) -> int, a: int, b: int) -> int
+    return f(a, b)
+end
+
+func twice[T](x: T, f: func(T) -> T) -> T
+    return f(f(x))
+end
+
+func adder() -> func(int, int) -> int
+    return func(a: int, b: int) -> return a + b
+end
+
+func same_twice[T](x: T) -> T
+    let f = func(v: T) -> T
+        return v
+    end
+    return twice(x, f)
+end
+
+struct Button
+    on_click: func() -> string
+end
+
+func main() -> void
+    let sq = func(x: int) -> return x * x
+    assert(sq(5) == 25)
+
+    let size = func(x: int) -> string
+        if x > 2 then
+            return "big"
+        end
+        return "small"
+    end
+    assert(size(3) == "big")
+    assert(size(1) == "small")
+
+    assert(apply(func(a: int, b: int) -> return a * b, 6, 7) == 42)
+    assert(twice(3, func(x: int) -> return x + 10) == 23)
+    assert(adder()(1, 2) == 3)
+    echo(sq)
+
+    let half = func(x: int) -> ParseError!int
+        if x % 2 == 1 then
+            return ParseError.Odd
+        end
+        return x // 2
+    end
+    assert((half(8) catch -1) == 4)
+    assert((half(3) catch -1) == -1)
+
+    let nested = func(x: int) -> return func(y: int) -> return y * 2
+    assert(nested(1)(21) == 42)
+
+    for 1..3: i do
+        let first_two = func(n: int) -> int
+            let mut count = 0
+            for 1..n: k do
+                if k > 2 then
+                    break
+                end
+                count = count + 1
+            end
+            return count
+        end
+        assert(first_two(i) == if i > 2 then 2 else i end)
+    end
+
+    assert(same_twice("same") == "same")
+
+    let fns: []func(int) -> int = [func(x: int) -> return x + 1, func(x: int) -> return x - 1]
+    assert(fns[0](1) == 2)
+    assert(fns[1](1) == 0)
+
+    let b = Button(on_click = func() -> return "clicked")
+    assert(b.on_click() == "clicked")
+end
