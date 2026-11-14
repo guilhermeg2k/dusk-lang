@@ -1248,7 +1248,7 @@ pub const BytecodeGen = struct {
             _ = try self.genValue(arg, try self.consumeRegister());
         }
 
-        try self.chunk_instructions.append(self.allocator, .{ .op = .CALL_VALUE, .a = target_reg });
+        try self.chunk_instructions.append(self.allocator, .{ .op = .CALL_CLOSURE, .a = target_reg });
         try self.recordHeapMap();
 
         self.freeRegisterN(cv.args.len);

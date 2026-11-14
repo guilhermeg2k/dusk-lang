@@ -194,7 +194,7 @@ callee:                  | (base - 1)  | R[0]   R[1]   R[2] ...
 This gives three properties:
 - Passing arguments costs nothing: they are already in the callee's parameter registers.
 - `RETURN` writes the result to `stack[stack_base - 1]`, which is the caller's `R[a]`, exactly where the caller expects it.
-- For `CALL_VALUE`, `stack[stack_base - 1]` holds the closure being called for the whole call. That's how `CAPTURE_GET` finds its captures (section 8).
+- For `CALL_CLOSURE`, `stack[stack_base - 1]` holds the closure being called for the whole call. That's how `CAPTURE_GET` finds its captures (section 8).
 
 Before pushing a frame, a call checks that a frame is free and that `new_offset + 256` slots still fit on the stack. Otherwise `growCallStack` (a cold path) doubles the frames or the stack with `realloc`, zero-fills the new slots, and the handler reloads its `stack` local. Growing is safe because frames hold offsets, captured variables live in heap `Cell`s and natives never call back into Dusk: nothing keeps a pointer into a stack across a call. Past the limits it fails with "call depth exceeded".
 
@@ -330,7 +330,7 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | Instruction | Effect |
 |---|---|
 | `CALL R[a] FN[bEx]` | call a Dusk or native function; the arguments are in `R[a+1 ..]` and the result goes in `R[a]` |
-| `CALL_VALUE R[a]` | call the closure in `R[a]`; the arguments are in `R[a+1 ..]` |
+| `CALL_CLOSURE R[a]` | call the closure in `R[a]`; the arguments are in `R[a+1 ..]` |
 | `TAIL_CALL R[a] FN[bEx]` | reuse the current frame for a call to a Dusk function |
 | `RETURN R[a]` | return `R[a]` |
 | `RETURN_ERR R[a]` | return the error id in `R[a]` |
@@ -424,7 +424,7 @@ CALL R[a] FN[i]          ; function i is a Dusk function
 3. Push `{ function, cur_inst = 0, stack_offset = stack_base + a + 1 }`.
 4. Switch `current_frame`, `instructions`, `cur_instruction = 0` and `stack_base`.
 
-`CALL_VALUE R[a]` does the same, but takes the function from the closure in `R[a]`.
+`CALL_CLOSURE R[a]` does the same, but takes the function from the closure in `R[a]`.
 
 ### 7.2 Returning
 
@@ -489,7 +489,7 @@ LOAD       R[1] R[2]     ; success path
   - `catch value`: the fallback value is loaded into the same register.
   - `catch e then ... end`: the block runs with `e` bound to the register.
 
-This is why only `CALL` and `CALL_VALUE` can fail (`OpCode.canFail`), and codegen asserts that a `JUMP` always follows one. Error ids are global: builtin error sets use 1 to 8, then user errors follow in declaration order. `Program.error_names` maps an id back to its name.
+This is why only `CALL` and `CALL_CLOSURE` can fail (`OpCode.canFail`), and codegen asserts that a `JUMP` always follows one. Error ids are global: builtin error sets use 1 to 8, then user errors follow in declaration order. `Program.error_names` maps an id back to its name.
 
 A full example, from `let x = twice(3) catch 0` in `main`:
 
@@ -553,7 +553,7 @@ for each register i < owned with bit i set: copy stack[base + i]
 - For caller frames, `cur_inst - 1` is their `CALL`. For the top frame of a parked task, it is the native `CALL` it is waiting in.
 - A frame with `cur_inst == 0` hasn't started (a spawned task that never ran), so it has nothing to scan yet.
 - For the running frame, it's the allocating instruction, because each such handler sets `current_frame.cur_inst = cur_instruction` before it can allocate.
-- **A caller frame only scans `R[0] .. R[a]`**, up to and including its call register. Its argument registers are the callee's parameters (section 4.2), so the callee scans them. If both frames scanned them, the second pass would copy the already-copied object again, and the parameter would end up pointing to a different object than the caller's variable. The call register stays with the caller, so the closure of a `CALL_VALUE` is kept alive. Natives don't push frames, so the arguments of a native call are scanned as part of the top frame.
+- **A caller frame only scans `R[0] .. R[a]`**, up to and including its call register. Its argument registers are the callee's parameters (section 4.2), so the callee scans them. If both frames scanned them, the second pass would copy the already-copied object again, and the parameter would end up pointing to a different object than the caller's variable. The call register stays with the caller, so the closure of a `CALL_CLOSURE` is kept alive. Natives don't push frames, so the arguments of a native call are scanned as part of the top frame.
 
 So the two rules for adding an allocating instruction are: **record a heap map in codegen, and set `cur_inst` in the VM before allocating.** If an instruction has no heap map, its frame gets bitmap `0` and none of its registers are kept alive.
 
@@ -616,7 +616,7 @@ Task { obj: HeapValue, state: *TaskState }   // src/runtime/value.zig: the Dusk 
 
 The GC moves objects, but the scheduler, waiter lists and libuv requests need pointers that stay valid, and stacks are large. So the Dusk value is a small `Task` handle that the GC copies like any object, and everything else lives in the `TaskState`, which never moves. `Scheduler.tasks` holds every `TaskState` that hasn't been freed.
 
-**Slot 0.** A task's stack starts with its entry closure in `stack[0]` and its first frame at `stack_offset = 1`. That is the layout `CALL_VALUE` makes (section 4.2), so `CAPTURE_GET` finds the lambda's captures at `stack[base - 1]`, and the final `RETURN` writes the result into `stack[0]`. `$main` is a task too, with its static closure in `stack[0]`.
+**Slot 0.** A task's stack starts with its entry closure in `stack[0]` and its first frame at `stack_offset = 1`. That is the layout `CALL_CLOSURE` makes (section 4.2), so `CAPTURE_GET` finds the lambda's captures at `stack[base - 1]`, and the final `RETURN` writes the result into `stack[0]`. `$main` is a task too, with its static closure in `stack[0]`.
 
 ### 11.2 The scheduler loop
 

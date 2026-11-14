@@ -174,7 +174,7 @@ pub const Chunk = struct {
             .CAPTURE_GET => std.debug.print("R[{d}] CAP[{d}]", .{ inst.a, inst.b }),
             .CELL_NEW => std.debug.print("R[{d}] K[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .CELL_GET, .CELL_SET => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .CALL_VALUE => std.debug.print("R[{d}]", .{inst.a}),
+            .CALL_CLOSURE => std.debug.print("R[{d}]", .{inst.a}),
             .RETURN, .RETURN_ERR, .PANIC_ERR => std.debug.print("R[{d}]", .{inst.a}),
             .JUMP => std.debug.print("I[{d}]", .{inst.aEx()}),
             .JUMP_IF_FALSE => std.debug.print("R[{d}] I[{d}]", .{ inst.a, inst.bEx() }),
@@ -334,7 +334,7 @@ pub const OpCode = enum(u8) {
     CELL_GET,
     CELL_SET,
     CALL,
-    CALL_VALUE,
+    CALL_CLOSURE,
     TAIL_CALL,
     RETURN,
     RETURN_ERR,
@@ -347,7 +347,7 @@ pub const OpCode = enum(u8) {
     TASK_SPAWN,
 
     pub fn canFail(self: Self) bool {
-        return self == .CALL or self == .CALL_VALUE;
+        return self == .CALL or self == .CALL_CLOSURE;
     }
 
     pub fn canTriggerGc(self: Self) bool {
@@ -366,7 +366,7 @@ pub const OpCode = enum(u8) {
             .BYTES_NEW,
             .DEEP_COPY,
             .CALL,
-            .CALL_VALUE,
+            .CALL_CLOSURE,
             .MAKE_CLOSURE,
             .CELL_NEW,
             .TASK_SPAWN,

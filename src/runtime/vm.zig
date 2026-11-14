@@ -646,7 +646,7 @@ pub const VM = struct {
                     v.HeapValue.getParentPtr(v.Cell, stack[stack_base + inst.a].heap_obj).value = stack[stack_base + inst.b];
                 },
 
-                .CALL_VALUE => {
+                .CALL_CLOSURE => {
                     const closure = v.HeapValue.getParentPtr(v.Closure, stack[stack_base + inst.a].heap_obj);
                     const func = closure.function;
                     current_frame.cur_inst = cur_instruction;
