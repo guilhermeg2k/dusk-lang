@@ -21,12 +21,15 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "listener_port", Binding{ .native = &listenerPort } },
     .{ "listener_close", Binding{ .native = &listenerClose } },
     .{ "stream_read_bytes", Binding{ .native = &io.streamReadBytes } },
+    .{ "stream_read_exact", Binding{ .native = &io.streamReadExact } },
     .{ "stream_read_line", Binding{ .native = &io.streamReadLine } },
     .{ "stream_read_all", Binding{ .native = &io.streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &io.streamReadAllBytes } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_close", Binding{ .native = &io.streamClose } },
+    .{ "remote_host", Binding{ .native = &remoteHost } },
+    .{ "remote_port", Binding{ .native = &remotePort } },
 });
 
 fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -81,4 +84,18 @@ fn listenerPort(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn listenerClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
     vm.event_loop.closeListener(args[0].int64);
     return ok(.{ .null = {} });
+}
+
+fn remoteHost(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
+    const peer = stream.peer orelse return fail(IoError.Other);
+    var text: [64]u8 = @splat(0);
+    const host = tcp.addressHost(&peer, &text) orelse return fail(IoError.Other);
+    return ok(try vm.allocBytesValue(host, .string));
+}
+
+fn remotePort(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
+    const peer = stream.peer orelse return fail(IoError.Other);
+    return ok(.{ .int64 = tcp.addressPort(&peer) });
 }

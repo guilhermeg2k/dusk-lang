@@ -267,6 +267,10 @@ test "net: names in connect and listen, every address tried, connect and accept 
     try runCase("net-tcp-names.dsk");
 }
 
+test "net: read_exact and remote_address" {
+    try runCase("net-tcp-extras.dsk");
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }
@@ -559,6 +563,43 @@ test "io: read_bytes needs a size of at least 1" {
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     try testing.expectError(error.InvalidReadSize, runWithStdin("import std/io\nfunc main() -> !void\n    let data = try io::stdin().read_bytes(0)\nend\n", fds[0], &output.writer));
+}
+
+test "io: read_exact on stdin waits for the count, fails with UnexpectedEnd partway, keeps the rest" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    _ = std.c.write(fds[1], "hello world", 11);
+    closeFd(fds[1]);
+    const source =
+        \\import std/io
+        \\import std/string
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    let first = try input.read_exact(5)
+        \\    if first: data then
+        \\        io::println(try string::from_bytes(data))
+        \\    end
+        \\    input.read_exact(10) catch e then
+        \\        io::println(if e == io::IoError.UnexpectedEnd then "unexpected end" else "other" end)
+        \\    end
+        \\    let rest = try input.read_bytes(20)
+        \\    if rest: data then
+        \\        io::println(try string::from_bytes(data))
+        \\    end
+        \\    let after = try input.read_exact(1)
+        \\    io::println("${after == null}")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "hello\nunexpected end\n world\ntrue\n");
+}
+
+test "io: read_exact needs a count of at least 1" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    closeFd(fds[1]);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try testing.expectError(error.InvalidReadSize, runWithStdin("import std/io\nfunc main() -> !void\n    let data = try io::stdin().read_exact(0)\nend\n", fds[0], &output.writer));
 }
 
 test "io: read_line splits lines, strips \r\n, returns the last line, then null" {
@@ -985,7 +1026,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 12 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 13 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {

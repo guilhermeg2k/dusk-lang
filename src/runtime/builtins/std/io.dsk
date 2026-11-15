@@ -8,6 +8,7 @@ error IoError
     LineTooLong
     InvalidUtf8
     TimedOut
+    UnexpectedEnd
     Other
 end
 
@@ -17,6 +18,7 @@ extern func eprint(text: string) -> void
 extern func eprintln(text: string) -> void
 extern func ~stdin_handle() -> int
 extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> IoError!?buffer
+extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> IoError!?buffer
 extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> IoError!?string
 extern func ~stream_read_all(handle: int, timeout_ms: int) -> IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> IoError!buffer
@@ -45,6 +47,10 @@ struct Stdin
 
     func read_bytes(self: @, max: int, timeout_ms: int = -1) -> IoError!?buffer
         return try stream_read_bytes(self.handle, max, timeout_ms)
+    end
+
+    func read_exact(self: @, count: int, timeout_ms: int = -1) -> IoError!?buffer
+        return try stream_read_exact(self.handle, count, timeout_ms)
     end
 
     func read_all(self: @, timeout_ms: int = -1) -> IoError!string

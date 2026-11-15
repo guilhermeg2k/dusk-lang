@@ -21,6 +21,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "eprintln", Binding{ .native = &eprintln } },
     .{ "stdin_handle", Binding{ .native = &stdinHandle } },
     .{ "stream_read_bytes", Binding{ .native = &streamReadBytes } },
+    .{ "stream_read_exact", Binding{ .native = &streamReadExact } },
     .{ "stream_read_line", Binding{ .native = &streamReadLine } },
     .{ "stream_read_all", Binding{ .native = &streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &streamReadAllBytes } },
@@ -62,6 +63,14 @@ pub fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return RuntimeErrorReporter.invalidReadSize(max);
     }
     return readStream(vm, args[0].int64, .{ .bytes = @intCast(max) }, args[2].int64);
+}
+
+pub fn streamReadExact(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const count = args[1].int64;
+    if (count < 1) {
+        return RuntimeErrorReporter.invalidReadSize(count);
+    }
+    return readStream(vm, args[0].int64, .{ .exact = @intCast(count) }, args[2].int64);
 }
 
 pub fn streamReadLine(vm: *VM, args: []v.Value) anyerror!NativeResult {

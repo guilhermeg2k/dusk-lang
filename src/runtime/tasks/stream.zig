@@ -37,6 +37,7 @@ pub const Stream = struct {
     is_closed: bool = false,
     has_chunk_in_flight: bool = false,
     requests_in_flight: usize = 0,
+    peer: ?uv.SocketAddress = null,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
 
@@ -75,6 +76,13 @@ pub const Stream = struct {
         stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = .tcp, .loop = loop, .file = -1, .handle_memory = memory, .open_handles = 1 };
         uv.uv_handle_set_data(stream.uvHandle(), &stream.owner);
         return stream;
+    }
+
+    pub fn rememberPeer(self: *Self) void {
+        var address: uv.SocketAddress = .{};
+        var length: c_int = @sizeOf(uv.SocketAddress);
+        if (uv.uv_tcp_getpeername(self.uvHandle(), &address, &length) != 0) return;
+        self.peer = address;
     }
 
     fn initHandle(self: *Self, loop: *uv.Loop, file: c_int) void {
@@ -179,6 +187,7 @@ pub const Stream = struct {
     pub fn readyOutcome(self: *const Self, mode: ReadMode) ?ReadOutcome {
         return switch (mode) {
             .bytes => |max| self.bytesOutcome(max),
+            .exact => |count| self.exactOutcome(count),
             .line => |max| self.lineOutcome(max),
             .all_text => self.allOutcome(true),
             .all_bytes => self.allOutcome(false),
@@ -190,6 +199,18 @@ pub const Stream = struct {
         if (available.len > 0) {
             const count = @min(available.len, max);
             return .{ .result = .{ .data = available[0..count] }, .consumed = count };
+        }
+        return self.endOutcome();
+    }
+
+    fn exactOutcome(self: *const Self, count: usize) ?ReadOutcome {
+        const available = self.bufferedBytes();
+        if (available.len >= count) {
+            return .{ .result = .{ .data = available[0..count] }, .consumed = count };
+        }
+        const has_ended_partway = self.has_ended and available.len > 0 and self.failure == null;
+        if (has_ended_partway) {
+            return .{ .result = .{ .failure = .UnexpectedEnd } };
         }
         return self.endOutcome();
     }
@@ -447,6 +468,7 @@ fn onWrite(uv_request: *uv.Request, status: c_int) callconv(.c) void {
 
 pub const ReadMode = union(enum) {
     bytes: usize,
+    exact: usize,
     line: ?usize,
     all_text,
     all_bytes,
@@ -454,7 +476,7 @@ pub const ReadMode = union(enum) {
     pub fn valueKind(self: ReadMode) v.ValueType {
         return switch (self) {
             .line, .all_text => .string,
-            .bytes, .all_bytes => .buffer,
+            .bytes, .exact, .all_bytes => .buffer,
         };
     }
 };
@@ -490,6 +512,7 @@ pub const IoError = enum {
     LineTooLong,
     InvalidUtf8,
     TimedOut,
+    UnexpectedEnd,
     Other,
 };
 

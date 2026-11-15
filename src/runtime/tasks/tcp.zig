@@ -305,6 +305,7 @@ fn onConnect(uv_request: *uv.Request, status: c_int) callconv(.c) void {
         return;
     }
     if (status == 0) {
+        attempt.stream.rememberPeer();
         request.finish(handleResult(attempt.handle));
         return;
     }
@@ -385,7 +386,7 @@ pub const Listener = struct {
         if (uv.uv_tcp_getsockname(self.uvHandle(), &address, &length) != 0) {
             return 0;
         }
-        return std.mem.readInt(u16, address.bytes[2..4], .big);
+        return addressPort(&address);
     }
 
     pub fn takeReadyConnection(self: *Self) ?AcceptOutcome {
@@ -408,6 +409,7 @@ pub const Listener = struct {
             self.event_loop.closeStream(@intCast(handle));
             return error.AcceptFailed;
         }
+        stream.rememberPeer();
         return handle;
     }
 
@@ -519,6 +521,17 @@ fn onAcceptTimeout(timer: *uv.Handle) callconv(.c) void {
     listener.scheduler.wake(task, ioFailure(.TimedOut)) catch |failure| {
         listener.event_loop.callback_failure = failure;
     };
+}
+
+pub fn addressHost(address: *const uv.SocketAddress, text: []u8) ?[]const u8 {
+    if (uv.uv_ip_name(address, text.ptr, text.len) != 0) {
+        return null;
+    }
+    return std.mem.sliceTo(text, 0);
+}
+
+pub fn addressPort(address: *const uv.SocketAddress) i64 {
+    return std.mem.readInt(u16, address.bytes[2..4], .big);
 }
 
 pub fn validPort(port: i64) ?u16 {

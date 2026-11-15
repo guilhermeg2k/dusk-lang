@@ -123,6 +123,7 @@ pub extern fn uv_tcp_init(loop: *Loop, tcp: *Handle) c_int;
 pub extern fn uv_tcp_bind(tcp: *Handle, address: *const SocketAddress, flags: c_uint) c_int;
 pub extern fn uv_tcp_connect(request: *Request, tcp: *Handle, address: *const SocketAddress, callback: ConnectCallback) c_int;
 pub extern fn uv_tcp_getsockname(tcp: *const Handle, address: *SocketAddress, length: *c_int) c_int;
+pub extern fn uv_tcp_getpeername(tcp: *const Handle, address: *SocketAddress, length: *c_int) c_int;
 pub extern fn uv_listen(stream: *Handle, backlog: c_int, callback: ConnectionCallback) c_int;
 pub extern fn uv_accept(server: *Handle, client: *Handle) c_int;
 
@@ -135,6 +136,7 @@ pub extern fn uv_freeaddrinfo(result: ?*AddressInfo) void;
 
 pub extern fn uv_ip4_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
 pub extern fn uv_ip6_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
+pub extern fn uv_ip_name(address: *const SocketAddress, text: [*]u8, size: usize) c_int;
 
 // ---- Clocks ----
 

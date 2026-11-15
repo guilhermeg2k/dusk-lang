@@ -17,12 +17,20 @@ extern func ~listener_accept(handle: int, timeout_ms: int) -> io::IoError!int
 extern func ~listener_port(handle: int) -> int
 extern func ~listener_close(handle: int) -> void
 extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
 extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
+extern func ~remote_host(handle: int) -> io::IoError!string
+extern func ~remote_port(handle: int) -> io::IoError!int
+
+struct Address
+    host: string
+    port: int
+end
 
 struct TcpListener
     ~handle: int
@@ -51,6 +59,10 @@ struct TcpConn
         return try stream_read_bytes(self.handle, max, timeout_ms)
     end
 
+    func read_exact(self: @, count: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        return try stream_read_exact(self.handle, count, timeout_ms)
+    end
+
     func read_all(self: @, timeout_ms: int = -1) -> io::IoError!string
         return try stream_read_all(self.handle, timeout_ms)
     end
@@ -65,6 +77,10 @@ struct TcpConn
 
     func write_bytes(self: @, data: buffer) -> io::IoError!void
         try stream_write_bytes(self.handle, data)
+    end
+
+    func remote_address(self: @) -> io::IoError!Address
+        return Address(host = try remote_host(self.handle), port = try remote_port(self.handle))
     end
 
     func flush(self: @) -> io::IoError!void
