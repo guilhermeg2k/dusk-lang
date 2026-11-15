@@ -5,13 +5,17 @@ const native = @import("../native.zig");
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 const ok = native.ok;
+const fail = native.fail;
+
+pub const ArrayError = enum { Empty, OutOfRange };
+pub const error_sets = .{ArrayError};
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "len", Binding{ .intrinsic = .array_len } },
     .{ "append", Binding{ .intrinsic = .append } },
-    .{ "unchecked_pop", Binding{ .intrinsic = .array_pop } },
-    .{ "unchecked_insert", Binding{ .native = &arrayInsert } },
-    .{ "unchecked_remove", Binding{ .native = &arrayRemove } },
+    .{ "pop", Binding{ .native = &arrayPop } },
+    .{ "insert", Binding{ .native = &arrayInsert } },
+    .{ "remove", Binding{ .native = &arrayRemove } },
     .{ "sort", Binding{ .native = &arraySort } },
     .{ "extend", Binding{ .native = &arrayExtend } },
     .{ "clear", Binding{ .native = &arrayClear } },
@@ -19,10 +23,26 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "contains", Binding{ .native = &arrayContains } },
 });
 
+fn arrayPop(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const array = arrayArg(args, 0);
+    if (array.len == 0) {
+        return fail(ArrayError.Empty);
+    }
+    array.len -= 1;
+    return ok(array.getDataPtr()[array.len]);
+}
+
 fn arrayInsert(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var array = arrayArg(args, 0);
-    if (array.needsResize()) array = try vm.growArray(&args[0]);
-    const index: usize = @intCast(args[1].int64);
+    const index_value = args[1].int64;
+    const is_out_of_range = index_value < 0 or index_value > array.len;
+    if (is_out_of_range) {
+        return fail(ArrayError.OutOfRange);
+    }
+    if (array.needsResize()) {
+        array = try vm.growArray(&args[0]);
+    }
+    const index: usize = @intCast(index_value);
     const items = array.getDataPtr();
     std.mem.copyBackwards(v.Value, items[index + 1 .. array.len + 1], items[index..array.len]);
     items[index] = args[2];
@@ -32,7 +52,12 @@ fn arrayInsert(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn arrayRemove(_: *VM, args: []v.Value) anyerror!NativeResult {
     const array = arrayArg(args, 0);
-    const index: usize = @intCast(args[1].int64);
+    const index_value = args[1].int64;
+    const is_out_of_range = index_value < 0 or index_value >= array.len;
+    if (is_out_of_range) {
+        return fail(ArrayError.OutOfRange);
+    }
+    const index: usize = @intCast(index_value);
     const items = array.getDataPtr();
     const removed = items[index];
     std.mem.copyForwards(v.Value, items[index .. array.len - 1], items[index + 1 .. array.len]);

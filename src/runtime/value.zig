@@ -228,17 +228,6 @@ pub const Array = extern struct {
         items[@intCast(i)] = value;
     }
 
-    pub fn pop(self: *Self) !Value {
-        //note: poping null if len == 0
-        if (self.len == 0) {
-            return NULL_VALUE;
-        }
-
-        self.len -= 1;
-
-        return self.getDataPtr()[self.len];
-    }
-
     pub fn needsResize(self: *Self) bool {
         return self.len + 1 > self.capacity;
     }

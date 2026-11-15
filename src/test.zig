@@ -2735,13 +2735,17 @@ test "generics: traits constrain a slot to types with methods" {
     try runCaseError("sema/trait-duplicate-method.dsk", error.AlreadyDefined);
 }
 
-test "builtins: pop is a prelude function over a file-only builtin" {
+test "builtins: pop and pop_or_null report empty arrays" {
     try runCase("array-pop.dsk");
     try runCaseError("sema/prelude-file-only.dsk", error.NotDefined);
 }
 
 test "builtins: insert, remove and clear change arrays in place" {
     try runCase("array-insert-remove.dsk");
+    try runCase("array-checked-natives.dsk");
+    try runCaseError("sema/array-pop-as-value.dsk", error.BuiltinAsValue);
+    try runCaseError("sema/array-insert-as-value.dsk", error.BuiltinAsValue);
+    try runCaseError("sema/array-remove-as-value.dsk", error.BuiltinAsValue);
 }
 
 test "builtins: reverse, slice, index_of and contains" {
@@ -2776,6 +2780,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
 }

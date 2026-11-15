@@ -321,12 +321,6 @@ pub const VM = struct {
                     try self.spawnTask(stack_base + inst.a, stack_base + inst.b, @enumFromInt(inst.c));
                 },
 
-                .ARRAY_POP => {
-                    var array = getArrayFromHeapValuePtr(stack, stack_base, inst.b);
-                    const value = try array.pop();
-                    stack[stack_base + inst.a] = value;
-                },
-
                 .STRUCT_INIT => {
                     const desc_id = inst.bEx();
                     const desc = self.program.struct_descriptors[desc_id];

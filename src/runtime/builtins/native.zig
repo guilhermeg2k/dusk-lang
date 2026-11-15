@@ -15,7 +15,6 @@ pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_p
 
 pub const Intrinsic = enum {
     array_len,
-    array_pop,
     bytes_len,
     new_buffer,
     to_byte,

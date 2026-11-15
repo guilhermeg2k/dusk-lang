@@ -292,7 +292,6 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | `ARRAY_APPEND R[a] R[b]` | append `R[b]`, growing the array first if it is full |
 | `ARRAY_LOAD R[a] R[b] R[c]`, `ARRAY_STORE R[a] R[b] R[c]` | read or write an element, with bounds check |
 | `ARRAY_LEN R[a] R[b]` | length |
-| `ARRAY_POP R[a] R[b]` | remove and return the last element (`0` if empty; the prelude's `pop` checks first) |
 | `DEEP_COPY R[a] R[b]` | `copy(x)` (section 10) |
 
 **Maps** (section 6.8). The handlers call `Map` methods (`value.zig`); the three that can allocate go through VM helpers (`newMap`, `readMapEntry`, `setMapEntry`).
@@ -457,6 +456,8 @@ if (result.has_failed) {
 
 - `args` points directly into the caller's registers. A native that allocates can trigger a GC, which moves objects and updates those stack slots. So natives size their whole result, allocate once, and only then reread their arguments from `args`.
 - If a native returns a Zig error (a runtime error), its name is saved in `failed_builtin` for the error message.
+
+`array::pop`, `array::insert` and `array::remove` are checked natives. They return `ArrayError.Empty` or `ArrayError.OutOfRange` through the native error path; `array::pop_or_null` is a Dusk wrapper over `pop`.
 
 **Intrinsics** never run as calls. Codegen evaluates the arguments into `R[a+1 ..]` as usual, then emits the instruction for that intrinsic (`genIntrinsicCall`), for example `len` → `ARRAY_LEN`, `append` → `ARRAY_APPEND`, `copy` → `DEEP_COPY`, `to_float` → `LOAD` + `I_TO_F`. `==` and `!=` on strings are lowered by sema to the hidden prelude intrinsic `~strings_equal`, which becomes `STR_EQ` (`!=` adds a `B_NOT`).
 

@@ -193,7 +193,6 @@ pub const Chunk = struct {
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .ARRAY_APPEND,
             .ARRAY_LEN,
-            .ARRAY_POP,
             .BYTES_NEW,
             .BYTES_LEN,
             .DEEP_COPY,
@@ -261,7 +260,6 @@ pub const OpCode = enum(u8) {
     ARRAY_STORE,
     ARRAY_LEN,
     ARRAY_APPEND,
-    ARRAY_POP,
 
     MAP_INIT,
     MAP_GET,
@@ -376,5 +374,4 @@ pub const OpCode = enum(u8) {
             else => false,
         };
     }
-
 };

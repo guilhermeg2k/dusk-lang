@@ -4787,7 +4787,7 @@ pub const SemaAnalyzer = struct {
                 const copy_uid = self.generic_functions.items[symbol.kind.generic_function].extern_uid.?;
                 return try self.evalCopyCall(copy_uid, symbol.identifier, argument);
             },
-            .array_len, .array_pop, .bytes_len, .new_buffer, .to_byte, .to_int, .append, .task_spawn, .strings_equal => null,
+            .array_len, .bytes_len, .new_buffer, .to_byte, .to_int, .append, .task_spawn, .strings_equal => null,
         };
     }
 
@@ -6225,7 +6225,6 @@ pub const Symbol = struct {
         task_type: void,
     },
 };
-
 
 const LambdaContext = struct {
     floor: usize,

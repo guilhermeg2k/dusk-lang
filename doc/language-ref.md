@@ -1774,7 +1774,7 @@ The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`
 
 ### std/array
 
-Functions that change an array take it as `mut`, and the ones that can fail return an error union, handled with `try` or `catch`. The module declares the error set `ArrayError` (`Empty`, `OutOfRange`).
+Functions that change an array take it as `mut`, and the ones that can fail return an error union, handled with `try` or `catch`. The module declares the error set `ArrayError` (`Empty`, `OutOfRange`). `pop`, `insert` and `remove` are native builtins: to pass one as a function value, wrap its call in a lambda or a Dusk function.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |

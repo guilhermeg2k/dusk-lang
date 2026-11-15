@@ -1166,7 +1166,6 @@ pub const BytecodeGen = struct {
         const arg = target_reg + 1;
         switch (intrinsic) {
             .array_len => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_LEN, .a = target_reg, .b = arg }),
-            .array_pop => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_POP, .a = target_reg, .b = arg }),
             .bytes_len => try self.appendIntrinsicInstruction(.{ .op = .BYTES_LEN, .a = target_reg, .b = arg }),
             .new_buffer => try self.appendIntrinsicInstruction(.{ .op = .BYTES_NEW, .a = target_reg, .b = arg }),
             .to_byte => try self.appendIntrinsicInstruction(.{ .op = .I_TO_BYTE, .a = target_reg, .b = arg }),
@@ -1177,7 +1176,9 @@ pub const BytecodeGen = struct {
             .to_float => {
                 try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
                 const is_float_arg = fc.args[0].type_id == self.type_table.getPrimitive(.float);
-                if (!is_float_arg) try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+                if (!is_float_arg) {
+                    try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
+                }
             },
             .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
             .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
