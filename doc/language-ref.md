@@ -1695,7 +1695,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/time`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -2032,6 +2032,7 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | :----- | :------ | :---------- |
 | `read_line(max = -1, timeout_ms = -1)` | `IoError!?string` | The next line, without its `\n` or `\r\n`; the last line is returned even without a newline. `null` at the end of the input. |
 | `read_bytes(max, timeout_ms = -1)` | `IoError!?buffer` | Up to `max` bytes (at least 1), as soon as some are there: it doesn't wait for `max` of them. `null` at the end of the input. |
+| `read_exact(count, timeout_ms = -1)` | `IoError!?buffer` | Exactly `count` bytes (at least 1), waiting until they're all there. `null` at the end of the input; `UnexpectedEnd` when the input ends partway, and the bytes that did arrive stay for the next read. |
 | `read_all(timeout_ms = -1)` | `IoError!string` | Everything until the end of the input, as text. |
 | `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes. |
 | `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
@@ -2091,6 +2092,7 @@ When the program reading the output stopped (`dusk app.dsk | head -1`), they fai
 | `LineTooLong` | A line longer than `read_line`'s `max` |
 | `InvalidUtf8` | `read_line` or `read_all` on text that isn't valid UTF-8 |
 | `TimedOut` | A read with `timeout_ms` didn't complete in time |
+| `UnexpectedEnd` | `read_exact` reached the end of the input before `count` bytes |
 | `Other` | Any other failure |
 
 #### Readers, writers and `io::copy`
@@ -2109,7 +2111,7 @@ trait Writer
 end
 ```
 
-`io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout` and `io::Stderr` fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
+`io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr` and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
 
 ```nim
 import std/io
@@ -2210,6 +2212,109 @@ func main() -> !void
 end
 ```
 
+### std/net
+
+TCP connections over the network. A server listens on an address and accepts connections; a client connects to one. Connecting, accepting, reading and writing wait without blocking the program: only the calling task waits, and other tasks keep running (see [Tasks](#13-tasks)).
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `tcp_connect(host, port, timeout_ms = -1)` | `NetError!TcpConn` | Connects to `host` (a name like `"example.com"` or `"localhost"`, or an IP address like `"127.0.0.1"` or `"::1"`) on `port`. |
+| `tcp_listen(host, port, backlog = 128)` | `NetError!TcpListener` | Listens on a local address: `"0.0.0.0"` for every IPv4 interface, `"::"` for IPv6, `"127.0.0.1"` or `"localhost"` for this machine only. Port `0` picks a free port. `backlog` is how many connections can wait for `accept`. |
+
+A name is looked up first, and each of its addresses is tried in order until one works (`"localhost"` is usually `::1` and then `127.0.0.1`); IP addresses skip the lookup. `timeout_ms` on `tcp_connect` covers the lookup and every attempt.
+
+**`TcpListener`**
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `accept(timeout_ms = -1)` | `io::IoError!TcpConn` | Waits for the next connection. |
+| `port()` | `int` | The port it listens on, useful after listening on port `0`. |
+| `close()` | `void` | Stops listening. A task waiting in `accept` fails with `Closed`; closing twice does nothing. |
+
+**`TcpConn`** reads like `io::Stdin` and writes like `io::stdout()`:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `read_line(max = -1, timeout_ms = -1)` | `io::IoError!?string` | The next line, without its `\n` or `\r\n`. `null` when the other side closed the connection. |
+| `read_bytes(max, timeout_ms = -1)` | `io::IoError!?buffer` | Up to `max` bytes, as soon as some are there. |
+| `read_exact(count, timeout_ms = -1)` | `io::IoError!?buffer` | Exactly `count` bytes. |
+| `read_all(timeout_ms = -1)` | `io::IoError!string` | Everything until the other side closes the connection, as text. |
+| `read_all_bytes(timeout_ms = -1)` | `io::IoError!buffer` | Same, as bytes. |
+| `write(text)` | `io::IoError!void` | Sends `text`. |
+| `write_bytes(data)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
+| `flush()` | `io::IoError!void` | Does nothing: writes are never buffered. It's there so a connection fits `io::Writer`. |
+| `remote_address()` | `io::IoError!Address` | The other side's address. |
+| `close()` | `void` | Closes the connection. |
+
+```nim
+struct Address
+    host: string    # an IP address: "127.0.0.1", "::1"
+    port: int
+end
+```
+
+A server accepts connections in a loop and serves each one in its own task:
+
+```nim
+import std/io
+import std/net
+
+func serve(conn: net::TcpConn) -> io::IoError!void
+    for true do
+        let next = try conn.read_line()
+        if next: line then
+            try conn.write("you said: ${line}\n")
+        else
+            break
+        end
+    end
+    conn.close()
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("0.0.0.0", 8080)
+    io::println("listening on ${listener.port()}")
+    for true do
+        let conn = try listener.accept()
+        spawn(func() -> void
+            serve(conn) catch _ then conn.close() end
+        end)
+    end
+end
+```
+
+```nim
+import std/io
+import std/net
+
+func main() -> !void
+    let conn = try net::tcp_connect("localhost", 8080, timeout_ms = 5000)
+    try conn.write("hello\n")
+    io::println(try conn.read_line() orelse "closed")   # you said: hello
+    conn.close()
+end
+```
+
+- A write returns once the system has taken all the bytes. When the other side reads slowly, the writing task waits, so a fast writer can't fill memory.
+- Writes from several tasks to the same connection are sent whole, one after the other, in the order they were called: they never mix.
+- Reads follow the stdin rules: `null` means the other side closed the connection, `timeout_ms` loses nothing, and a second task reading the same connection at the same time fails with `Busy`. The same goes for two tasks in `accept` on one listener.
+- Writing to a connection the other side has closed fails with `BrokenPipe` or `ConnectionReset`. The first write after that may still succeed, since the system only finds out on a later one.
+- Closing a connection with writes still waiting (from other tasks) makes them fail with `Closed`. A connection or listener that isn't closed stays open until the program ends.
+- `remote_address()` keeps working after the other side leaves, and fails with `Closed` after `close()`.
+
+Opening (`tcp_connect`, `tcp_listen`) fails with `NetError`; using a listener or a connection fails with `io::IoError` (see [std/io](#stdio)), so generic code like `io::copy` has one error type.
+
+| `net::NetError` | When |
+| :-------------- | :--- |
+| `HostNotFound` | The name doesn't exist, or it can't be looked up (no network) |
+| `ConnectionRefused` | Nothing listens on that port |
+| `AddressInUse` | `tcp_listen` on an address and port something already listens on |
+| `NetworkUnreachable` | No route to the address |
+| `PermissionDenied` | The system doesn't allow it (a port below 1024 without the rights, for example) |
+| `InvalidAddress` | An empty host, a port outside `0..65535`, or an address that isn't on this machine (`tcp_listen`) |
+| `TimedOut` | `tcp_connect` didn't finish within `timeout_ms` |
+| `Other` | Any other failure |
+
 ### Errors from builtins
 
 Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name.
@@ -2256,5 +2361,6 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Modules**: libraries (`import jsonc`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
 - **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
-- **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`). `task::sleep` is the only builtin that waits on time: files and the network come later. A running task can't be stopped from outside.
+- **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
+- **Network**: only TCP for now: no UDP, no TLS (`https`), no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener.
 - **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
