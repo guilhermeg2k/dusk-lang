@@ -19,6 +19,10 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "math: constants, numeric functions and errors" {
+    try runCase("math.dsk");
+}
+
 test "time: timestamps, formatting and private construction" {
     try runCase("time-timestamps.dsk");
     try runCaseError("sema/time-timestamp-construct.dsk", error.CantBuildOutsideModule);
@@ -3503,6 +3507,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
