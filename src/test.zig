@@ -150,6 +150,29 @@ fn failDrain(_: *std.Io.Writer, _: []const []const u8, _: usize) std.Io.Writer.E
     return error.WriteFailed;
 }
 
+test "io: print and println write to stdout, eprint and eprintln to stderr" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var stdout: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stdout.deinit();
+    var stderr: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer stderr.deinit();
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, "test/success/io-print.dsk", arena.allocator(), .unlimited);
+    var dusk = Dusk{
+        .allocator = arena.allocator(),
+        .stdio = .{ .stdout = .{ .custom = &stdout.writer }, .stderr = .{ .custom = &stderr.writer } },
+        .io = testing.io,
+    };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("hello\nno newline\nDusk\n42 1.5 true [1, 2, 3] null { 1, 2 }\n", stdout.written());
+    try testing.expectEqualStrings("this goes to stderr\nso does this", stderr.written());
+}
+
+test "io: needs an import and only prints strings" {
+    try runCaseError("sema/io-without-import.dsk", error.ModuleNotImported);
+    try runCaseError("sema/io-print-not-string.dsk", error.InvalidType);
+}
+
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
         "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++

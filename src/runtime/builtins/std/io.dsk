@@ -1,0 +1,4 @@
+extern func print(text: string) -> void
+extern func println(text: string) -> void
+extern func eprint(text: string) -> void
+extern func eprintln(text: string) -> void

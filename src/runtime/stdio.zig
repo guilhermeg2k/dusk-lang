@@ -11,23 +11,38 @@ pub const Stdio = struct {
     is_stdout_terminal: bool = false,
 
     pub fn writeBytes(self: *Self, stream: Stream, bytes: []const u8) !void {
-        switch (stream) {
-            .stdout => {
-                self.stdout.writeAll(bytes) catch |failure| return reportWriteFailure(.stdout, failure);
-                const has_finished_line = self.is_stdout_terminal and std.mem.indexOfScalar(u8, bytes, '\n') != null;
-                if (has_finished_line) {
-                    try self.flushStdout();
-                }
-            },
-            .stderr => {
-                self.stderr.writeAll(bytes) catch |failure| return reportWriteFailure(.stderr, failure);
-                self.stderr.flush() catch |failure| return reportWriteFailure(.stderr, failure);
-            },
-        }
+        try self.append(stream, bytes);
+        try self.flushAfterWrite(stream, bytes);
+    }
+
+    pub fn writeLine(self: *Self, stream: Stream, bytes: []const u8) !void {
+        try self.append(stream, bytes);
+        try self.append(stream, "\n");
+        try self.flushAfterWrite(stream, "\n");
     }
 
     pub fn flushStdout(self: *Self) !void {
         self.stdout.flush() catch |failure| return reportWriteFailure(.stdout, failure);
+    }
+
+    fn append(self: *Self, stream: Stream, bytes: []const u8) !void {
+        self.output(stream).writeAll(bytes) catch |failure| return reportWriteFailure(stream, failure);
+    }
+
+    fn flushAfterWrite(self: *Self, stream: Stream, written: []const u8) !void {
+        const needs_flush = switch (stream) {
+            .stdout => self.is_stdout_terminal and std.mem.indexOfScalar(u8, written, '\n') != null,
+            .stderr => true,
+        };
+        if (!needs_flush) return;
+        self.output(stream).flush() catch |failure| return reportWriteFailure(stream, failure);
+    }
+
+    fn output(self: *const Self, stream: Stream) Output {
+        return switch (stream) {
+            .stdout => self.stdout,
+            .stderr => self.stderr,
+        };
     }
 };
 

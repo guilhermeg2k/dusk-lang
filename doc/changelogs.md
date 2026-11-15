@@ -6,6 +6,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Features
 
+- `std/io`: `io::print(text)` and `io::println(text)` write to stdout, `io::eprint(text)` and `io::eprintln(text)` write to stderr. They take a string; other values go through interpolation (`io::println("x = ${x}")`)
 - Program output is buffered: when stdout is a pipe or a file, it's written in large blocks instead of one write per line. It's flushed when the program ends, before the program waits on timers or other tasks, and before a runtime error message, so nothing is lost or shown late. On a terminal, output still shows at the end of each line
 
 ### Fixes

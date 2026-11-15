@@ -13,6 +13,7 @@ pub const modules = [_]Module{
     .{ .path = "array", .source = @embedFile("std/array.dsk"), .bindings = &@import("std/array.zig").bindings },
     .{ .path = "task", .source = @embedFile("std/task.dsk"), .bindings = &@import("std/task.zig").bindings },
     .{ .path = "map", .source = @embedFile("std/map.dsk"), .bindings = &@import("std/map.zig").bindings },
+    .{ .path = "io", .source = @embedFile("std/io.dsk"), .bindings = &@import("std/io.zig").bindings },
 };
 
 pub fn find(path: []const u8) ?*const Module {

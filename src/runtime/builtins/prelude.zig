@@ -24,8 +24,7 @@ pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
     vm.scratch.clearRetainingCapacity();
     format.printValue(&vm.scratch.writer, args[0], ty) catch return error.OutOfMemory;
-    vm.scratch.writer.writeByte('\n') catch return error.OutOfMemory;
-    try vm.stdio.writeBytes(.stdout, vm.scratch.written());
+    try vm.stdio.writeLine(.stdout, vm.scratch.written());
     return ok(.{ .null = {} });
 }
 
