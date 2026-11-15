@@ -25,17 +25,35 @@ pub const Stdio = struct {
         self.stdout.flush() catch |failure| return reportWriteFailure(.stdout, failure);
     }
 
+    pub fn tryWriteBytes(self: *Self, stream: Stream, bytes: []const u8) anyerror!void {
+        const out = self.output(stream);
+        errdefer out.discardBuffered();
+        try out.writeAll(bytes);
+        if (self.needsFlushAfterWrite(stream, bytes)) {
+            try out.flush();
+        }
+    }
+
+    pub fn tryFlush(self: *Self, stream: Stream) anyerror!void {
+        const out = self.output(stream);
+        errdefer out.discardBuffered();
+        try out.flush();
+    }
+
     fn append(self: *Self, stream: Stream, bytes: []const u8) !void {
         self.output(stream).writeAll(bytes) catch |failure| return reportWriteFailure(stream, failure);
     }
 
     fn flushAfterWrite(self: *Self, stream: Stream, written: []const u8) !void {
-        const needs_flush = switch (stream) {
+        if (!self.needsFlushAfterWrite(stream, written)) return;
+        self.output(stream).flush() catch |failure| return reportWriteFailure(stream, failure);
+    }
+
+    fn needsFlushAfterWrite(self: *const Self, stream: Stream, written: []const u8) bool {
+        return switch (stream) {
             .stdout => self.is_stdout_terminal and std.mem.indexOfScalar(u8, written, '\n') != null,
             .stderr => true,
         };
-        if (!needs_flush) return;
-        self.output(stream).flush() catch |failure| return reportWriteFailure(stream, failure);
     }
 
     fn output(self: *const Self, stream: Stream) Output {
@@ -67,6 +85,11 @@ pub const Output = union(enum) {
     fn flush(self: Output) anyerror!void {
         const out = self.writer() orelse return;
         out.flush() catch return self.writeFailureCause();
+    }
+
+    fn discardBuffered(self: Output) void {
+        const out = self.writer() orelse return;
+        out.end = 0;
     }
 
     fn writeFailureCause(self: Output) anyerror {

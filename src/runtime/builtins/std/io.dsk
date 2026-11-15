@@ -22,6 +22,19 @@ extern func ~stream_read_all(handle: int, timeout_ms: int) -> IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> IoError!buffer
 extern func ~is_terminal_fd(fd: int) -> bool
 extern func ~stream_close(handle: int) -> void
+extern func ~stdio_write(fd: int, text: string) -> IoError!void
+extern func ~stdio_write_bytes(fd: int, data: buffer) -> IoError!void
+extern func ~stdio_flush(fd: int) -> IoError!void
+
+trait Reader
+    func read_bytes(mut self: @, max: int, timeout_ms: int) -> IoError!?buffer
+end
+
+trait Writer
+    func write(mut self: @, text: string) -> IoError!void
+    func write_bytes(mut self: @, data: buffer) -> IoError!void
+    func flush(mut self: @) -> IoError!void
+end
 
 struct Stdin
     ~handle: int
@@ -54,6 +67,18 @@ end
 struct Stdout
     ~fd: int
 
+    func write(self: @, text: string) -> IoError!void
+        try stdio_write(self.fd, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> IoError!void
+        try stdio_write_bytes(self.fd, data)
+    end
+
+    func flush(self: @) -> IoError!void
+        try stdio_flush(self.fd)
+    end
+
     func is_terminal(self: @) -> bool
         return is_terminal_fd(self.fd)
     end
@@ -61,6 +86,18 @@ end
 
 struct Stderr
     ~fd: int
+
+    func write(self: @, text: string) -> IoError!void
+        try stdio_write(self.fd, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> IoError!void
+        try stdio_write_bytes(self.fd, data)
+    end
+
+    func flush(self: @) -> IoError!void
+        try stdio_flush(self.fd)
+    end
 
     func is_terminal(self: @) -> bool
         return is_terminal_fd(self.fd)
@@ -77,4 +114,19 @@ end
 
 func stderr() -> Stderr
     return Stderr(fd = 2)
+end
+
+func copy[R: Reader, W: Writer](mut from: R, mut to: W) -> IoError!int
+    let mut total = 0
+    for true do
+        let next = try from.read_bytes(65536, -1)
+        if next: chunk then
+            try to.write_bytes(chunk)
+            total = total + buffer::len(chunk)
+        else
+            break
+        end
+    end
+    try to.flush()
+    return total
 end

@@ -723,6 +723,111 @@ test "io: a timer that doesn't fire doesn't delay the program, and close beats i
     try testing.expect(elapsed.toMilliseconds() < 2000);
 }
 
+test "io: stdout and stderr writers, flush, and errors returned instead of ending the program" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    var errors: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer errors.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const writers =
+        \\import std/io
+        \\import std/buffer
+        \\func main() -> !void
+        \\    let out = io::stdout()
+        \\    try out.write("no newline")
+        \\    try out.flush()
+        \\    try out.write_bytes(buffer::from_string(", bytes\n"))
+        \\    try io::stderr().write("to stderr\n")
+        \\end
+    ;
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &recorder.interface }, .stderr = .{ .custom = &errors.writer } }, .io = testing.io };
+    try dusk.compileAndRun(writers);
+    try testing.expectEqual(2, recorder.drain_count);
+    try testing.expectEqualStrings("no newline, bytes\n", recorder.flushed.items);
+    try testing.expectEqualStrings("to stderr\n", errors.written());
+
+    const fds = try std.Io.Threaded.pipe2(.{});
+    closeFd(fds[0]);
+    defer closeFd(fds[1]);
+    const write_end: std.Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+    var pipe_buffer: [64]u8 = undefined;
+    var file_writer = write_end.writerStreaming(testing.io, &pipe_buffer);
+    errors.clearRetainingCapacity();
+    const broken =
+        \\import std/io
+        \\func main() -> void
+        \\    let out = io::stdout()
+        \\    out.write("lost") catch e then
+        \\        io::eprintln("write: ${e == io::IoError.BrokenPipe}")
+        \\    end
+        \\    out.flush() catch e then
+        \\        io::eprintln("flush: ${e == io::IoError.BrokenPipe}")
+        \\    end
+        \\    io::eprintln("still running")
+        \\end
+    ;
+    var broken_dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .file = &file_writer }, .stderr = .{ .custom = &errors.writer } }, .io = testing.io };
+    try broken_dusk.compileAndRun(broken);
+    try testing.expectEqualStrings("flush: true\nstill running\n", errors.written());
+}
+
+test "io: copy works with std streams and with user structs fitting Reader and Writer" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const piped =
+        \\import std/io
+        \\func main() -> !void
+        \\    let mut out = io::stdout()
+        \\    let copied = try io::copy(io::stdin(), out)
+        \\    io::println(" $copied")
+        \\end
+    ;
+    try expectStdinOutput(piped, (try pipeWithInput("piped data"))[0], "piped data 10\n");
+
+    const custom =
+        \\import std/io
+        \\import std/buffer
+        \\import std/array: len, append
+        \\struct Chunks
+        \\    parts: []string
+        \\    position: int = 0
+        \\
+        \\    func read_bytes(mut self: @, max: int, timeout_ms: int) -> io::IoError!?buffer
+        \\        if self.position >= len(self.parts) then
+        \\            return null
+        \\        end
+        \\        self.position = self.position + 1
+        \\        return buffer::from_string(self.parts[self.position - 1])
+        \\    end
+        \\end
+        \\struct Collector
+        \\    sizes: []int = []
+        \\    flushes: int = 0
+        \\
+        \\    func write(mut self: @, text: string) -> io::IoError!void
+        \\    end
+        \\
+        \\    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        \\        append(self.sizes, buffer::len(data))
+        \\    end
+        \\
+        \\    func flush(mut self: @) -> io::IoError!void
+        \\        self.flushes = self.flushes + 1
+        \\    end
+        \\end
+        \\func main() -> !void
+        \\    let mut source = Chunks(parts = ["ab", "cde"])
+        \\    let mut sink = Collector()
+        \\    let copied = try io::copy(source, sink)
+        \\    io::println("$copied ${sink.sizes} ${sink.flushes}")
+        \\end
+    ;
+    try expectStdinOutput(custom, (try pipeWithInput(""))[0], "5 [2, 3] 1\n");
+    try runCaseError("sema/io-copy-not-mutable.dsk", error.NotMutable);
+}
+
 const read_lines_source =
     \\import std/io
     \\func main() -> !void

@@ -11,6 +11,7 @@ const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorRepo
 
 pub const IoError = @import("../../tasks/stream.zig").IoError;
 const ReadMode = @import("../../tasks/stream.zig").ReadMode;
+const Stream = @import("../../stdio.zig").Stream;
 pub const error_sets = .{IoError};
 
 pub const bindings = native.BindingMap.initComptime(.{
@@ -25,6 +26,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_read_all_bytes", Binding{ .native = &streamReadAllBytes } },
     .{ "is_terminal_fd", Binding{ .native = &isTerminalFd } },
     .{ "stream_close", Binding{ .native = &streamClose } },
+    .{ "stdio_write", Binding{ .native = &stdioWrite } },
+    .{ "stdio_write_bytes", Binding{ .native = &stdioWrite } },
+    .{ "stdio_flush", Binding{ .native = &stdioFlush } },
 });
 
 fn print(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -107,6 +111,24 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Na
 fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
     vm.event_loop.closeStream(args[0].int64);
     return ok(.{ .null = {} });
+}
+
+fn stdioWrite(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    vm.stdio.tryWriteBytes(stdioStream(args[0].int64), bytesArg(args, 1)) catch |failure| return writeFailure(failure);
+    return ok(.{ .null = {} });
+}
+
+fn stdioFlush(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    vm.stdio.tryFlush(stdioStream(args[0].int64)) catch |failure| return writeFailure(failure);
+    return ok(.{ .null = {} });
+}
+
+fn stdioStream(fd: i64) Stream {
+    return if (fd == 2) .stderr else .stdout;
+}
+
+fn writeFailure(failure: anyerror) NativeResult {
+    return fail(if (failure == error.BrokenPipe) IoError.BrokenPipe else IoError.Other);
 }
 
 fn isTerminalFd(vm: *VM, args: []v.Value) anyerror!NativeResult {
