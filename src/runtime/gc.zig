@@ -16,6 +16,7 @@ pub const Heap = struct {
     object_count: usize = 0,
     allocated: usize = 0,
     threshold: usize = MIN_GC_THRESHOLD,
+    temporary_roots: std.ArrayList(NativeRoot) = .empty,
 
     pub fn init(backing_allocator: std.mem.Allocator) Self {
         return .{
@@ -29,6 +30,7 @@ pub const Heap = struct {
 
     pub fn deinit(self: *Self) void {
         self.gc_queue.deinit(self.queue_allocator);
+        self.temporary_roots.deinit(self.queue_allocator);
         for (&self.arenas) |*arena| arena.deinit();
     }
 
@@ -42,6 +44,11 @@ pub const Heap = struct {
 
         var collector = Collector{ .heap = self, .program = program, .to_space = self.arenas[inactive].allocator() };
 
+        for (self.temporary_roots.items) |*root| {
+            if (root.kind.isHeapType()) {
+                try collector.copyHeapValue(&root.value);
+            }
+        }
         scheduler.clearReachable();
         for (scheduler.tasks.items) |task| {
             try collector.copyTaskRoots(task);
@@ -54,6 +61,20 @@ pub const Heap = struct {
         self.active = inactive;
         self.threshold = @max(self.allocated * 2, MIN_GC_THRESHOLD);
         try self.shrinkOldArena();
+    }
+
+    pub fn protectValue(self: *Self, value: v.Value, kind: v.ValueType) !usize {
+        const index = self.temporary_roots.items.len;
+        try self.temporary_roots.append(self.queue_allocator, .{ .value = value, .kind = kind });
+        return index;
+    }
+
+    pub fn protectedValue(self: *Self, index: usize) v.Value {
+        return self.temporary_roots.items[index].value;
+    }
+
+    pub fn restoreRootCount(self: *Self, count: usize) void {
+        self.temporary_roots.shrinkRetainingCapacity(count);
     }
 
     fn shrinkOldArena(self: *Self) !void {
@@ -76,6 +97,11 @@ pub const Heap = struct {
         self.allocated += bytes;
         self.object_count += 1;
     }
+};
+
+pub const NativeRoot = struct {
+    value: v.Value,
+    kind: v.ValueType,
 };
 
 const Collector = struct {

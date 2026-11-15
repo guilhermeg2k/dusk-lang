@@ -19,6 +19,31 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "gc: scoped native roots survive collection and root-list growth" {
+    const VM = @import("runtime/vm.zig").VM;
+    const value = @import("runtime/value.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{});
+    defer vm.deinit();
+    const outer = vm.heap.temporary_roots.items.len;
+    defer vm.heap.restoreRootCount(outer);
+    const text = try vm.allocBytesValue("kept", .string);
+    const root = try vm.heap.protectValue(text, .string);
+    const nested = vm.heap.temporary_roots.items.len;
+    for (0..1000) |i| {
+        _ = try vm.heap.protectValue(.{ .int64 = @intCast(i) }, .int64);
+    }
+    try vm.heap.collect(&vm.scheduler, &program);
+    try testing.expectEqualStrings("kept", value.HeapValue.getParentPtr(value.Bytes, vm.heap.protectedValue(root).heap_obj).slice());
+    vm.heap.restoreRootCount(nested);
+    try vm.heap.collect(&vm.scheduler, &program);
+    try testing.expectEqualStrings("kept", value.HeapValue.getParentPtr(value.Bytes, vm.heap.protectedValue(root).heap_obj).slice());
+    try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }
