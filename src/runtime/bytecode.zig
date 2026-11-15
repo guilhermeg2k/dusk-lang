@@ -139,7 +139,6 @@ pub const Chunk = struct {
             .LOAD_CONST => std.debug.print("R[{d}] C[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD_STRING => std.debug.print("R[{d}] STR[{d}]", .{ inst.a, inst.bEx() }),
             .LOAD => std.debug.print("R[{d}] R[{d}]", .{ inst.a, inst.b }),
-            .STORE_VAR => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
             .I_ADD,
             .I_SUB,
             .I_MULT,
@@ -249,7 +248,6 @@ pub const OpCode = enum(u8) {
 
     LOAD_CONST,
     LOAD,
-    STORE_VAR,
 
     LOAD_STRING,
     STR_BUILD,

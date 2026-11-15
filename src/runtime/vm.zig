@@ -763,7 +763,6 @@ pub const VM = struct {
                 .PANIC_ERR => {
                     return RuntimeErrorReporter.unhandledError(self.program.error_names[@intCast(stack[stack_base + inst.a].int64)]);
                 },
-                else => unreachable,
             }
         }
     }
