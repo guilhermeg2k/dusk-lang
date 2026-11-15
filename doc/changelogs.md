@@ -10,6 +10,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - Breaking: `echo` is removed. Print with `io::println` from `std/io`: `echo(x)` becomes `io::println("${x}")`, which prints the same text. Calling `echo` is a `NotDefined` error that points to `io::println`, and a program can now declare its own `echo`
 - Program output is buffered: when stdout is a pipe or a file, it's written in large blocks instead of one write per line. It's flushed when the program ends, before the program waits on timers or other tasks, and before a runtime error message, so nothing is lost or shown late. On a terminal, output still shows at the end of each line
 - An interpolation made of a single string (`"${name}"`, `io::println("${text}")`) reuses that string instead of copying it
+- `string::split(text, separator, limit = -1)` accepts a maximum number of parts, keeping the remainder in the last part. Negative limits split without a cap; zero returns an empty array
 
 ### Fixes
 

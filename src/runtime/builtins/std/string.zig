@@ -165,7 +165,9 @@ fn strTrim(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var piece_count: usize = 0;
     var total: usize = 0;
-    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    const limit = args[2].int64;
+    const remaining: ?usize = if (limit < 0) null else @intCast(limit);
+    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1), .remaining = remaining };
     while (pieces.next()) |piece| {
         piece_count += 1;
         total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
@@ -177,7 +179,7 @@ fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const allocator = vm.getCurrentHeapAllocator();
     const array = try v.Array.init(allocator, .string, capacity);
     vm.increaseHeapAllocationCount(v.Array.calc_size(capacity));
-    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1), .remaining = remaining };
     while (pieces.next()) |piece| {
         const bytes = try v.Bytes.init(allocator, piece, .string);
         vm.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));
@@ -279,14 +281,26 @@ const Pieces = struct {
     text: []const u8,
     separator: []const u8,
     index: ?usize = 0,
+    remaining: ?usize = null,
 
     fn next(self: *Pieces) ?[]const u8 {
         const start = self.index orelse return null;
-        if (self.separator.len == 0) {
-            if (start >= self.text.len) {
-                self.index = null;
+        if (self.remaining) |remaining| {
+            if (remaining == 0) {
                 return null;
             }
+            self.remaining = remaining - 1;
+        }
+        const is_empty_character_split = self.separator.len == 0 and start >= self.text.len;
+        if (is_empty_character_split) {
+            self.index = null;
+            return null;
+        }
+        if (self.remaining == 0) {
+            self.index = null;
+            return self.text[start..];
+        }
+        if (self.separator.len == 0) {
             var end = start + 1;
             while (!isCharBoundary(self.text, end)) end += 1;
             self.index = end;

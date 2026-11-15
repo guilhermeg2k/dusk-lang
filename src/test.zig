@@ -579,6 +579,10 @@ test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
 }
 
+test "string split limit" {
+    try runCase("string-split-limit.dsk");
+}
+
 test "string transforms" {
     try runCaseOutput("string-transform.dsk", "[hello world]\n[]\n[none]\n[x]\n[\u{A0}x\u{A0}]\n[a, b, , c]\n[abc]\n1\n[a, b, c]\n[ol\u{E1}, mundo]\n" ++
         "a+b+c\nbbbbbb\nheo\nabc\nHELLO, A\u{C7}\u{C3}O! \u{DF} \u{FF} \u{D7} \u{F7} \u{3B1}\nhello, a\u{E7}\u{E3}o! \u{17D} \u{3A9}\n" ++
