@@ -2097,6 +2097,7 @@ When the program reading the output stopped (`dusk app.dsk | head -1`), they fai
 | `InvalidUtf8` | `read_line` or `read_all` on text that isn't valid UTF-8 |
 | `TimedOut` | A read with `timeout_ms` didn't complete in time |
 | `UnexpectedEnd` | `read_exact` reached the end of the input before `count` bytes |
+| `HandshakeFailed` | Reading or writing a TLS connection whose handshake failed |
 | `Other` | Any other failure |
 
 #### Readers, writers and `io::copy`
@@ -2218,12 +2219,15 @@ end
 
 ### std/net
 
-TCP connections over the network. A server listens on an address and accepts connections; a client connects to one. Connecting, accepting, reading and writing wait without blocking the program: only the calling task waits, and other tasks keep running (see [Tasks](#13-tasks)).
+TCP connections over the network, plain or encrypted with TLS (see [TLS](#tls) below). A server listens on an address and accepts connections; a client connects to one. Connecting, accepting, reading and writing wait without blocking the program: only the calling task waits, and other tasks keep running (see [Tasks](#13-tasks)).
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `tcp_connect(host, port, timeout_ms = -1)` | `NetError!TcpConn` | Connects to `host` (a name like `"example.com"` or `"localhost"`, or an IP address like `"127.0.0.1"` or `"::1"`) on `port`. |
 | `tcp_listen(host, port, backlog = 128)` | `NetError!TcpListener` | Listens on a local address: `"0.0.0.0"` for every IPv4 interface, `"::"` for IPv6, `"127.0.0.1"` or `"localhost"` for this machine only. Port `0` picks a free port. `backlog` is how many connections can wait for `accept`. |
+| `tls_connect(host, port, timeout_ms = -1, ca = null, verify = true)` | `NetError!TcpConn` | Like `tcp_connect`, then a TLS handshake that checks the server's certificate against `host`. `timeout_ms` covers both. |
+| `tls_listen(host, port, cert, backlog = 128)` | `NetError!TcpListener` | Like `tcp_listen`, but every accepted connection uses TLS with the `Certificate` `cert`. |
+| `certificate(cert_pem, key_pem)` | `NetError!Certificate` | A server certificate and its private key, from PEM text. |
 
 A name is looked up first, and each of its addresses is tried in order until one works (`"localhost"` is usually `::1` and then `127.0.0.1`); IP addresses skip the lookup. `timeout_ms` on `tcp_connect` covers the lookup and every attempt.
 
@@ -2248,7 +2252,10 @@ A name is looked up first, and each of its addresses is tried in order until one
 | `write_bytes(data)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
 | `flush()` | `io::IoError!void` | Writes are never buffered, so there's nothing to send: it only fails with `Closed` after `close()`, like `write`. It's there so a connection fits `io::Writer`. |
 | `remote_address()` | `Address` | The other side's address, saved when the connection opened. |
-| `close()` | `void` | Closes the connection. |
+| `start_tls(host, timeout_ms = -1, ca = null, verify = true)` | `NetError!void` | Switches a plain connection to TLS as a client, for protocols that start in plain text. Calling it on a connection that already uses TLS is a runtime error. |
+| `handshake(timeout_ms = -1)` | `NetError!void` | Waits for the TLS handshake to finish. Does nothing on a plain connection or one whose handshake is done. |
+| `is_tls()` | `bool` | Whether the connection uses TLS. |
+| `close()` | `void` | Closes the connection. On a TLS connection, it first tells the other side it's closing. |
 
 ```nim
 struct Address
@@ -2306,7 +2313,55 @@ end
 - Closing a connection with writes still waiting (from other tasks) makes them fail with `Closed`. A connection or listener that isn't closed stays open until the program ends.
 - `remote_address()` never fails: it keeps working after the other side leaves and after `close()`, so a server can log who it served. Each call returns a new `Address`.
 
-Opening (`tcp_connect`, `tcp_listen`) fails with `NetError`; using a listener or a connection fails with `io::IoError` (see [std/io](#stdio)), so generic code like `io::copy` has one error type.
+#### TLS
+
+A TLS connection is a `TcpConn` like any other: it has the same methods and rules, fits `io::Reader` and `io::Writer`, and a function that takes a `net::TcpConn` serves plain and encrypted connections alike. Encryption and decryption happen inside the runtime. TLS 1.3 is used when the other side supports it, TLS 1.2 otherwise.
+
+```nim
+import std/io
+import std/net
+
+func main() -> !void
+    let conn = try net::tls_connect("example.com", 443, timeout_ms = 10000)
+    try conn.write("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+    io::println(try conn.read_line() orelse "no answer")   # HTTP/1.1 200 OK
+    conn.close()
+end
+```
+
+**Checking the server.** `tls_connect` and `start_tls` check that the server's certificate is valid now, matches `host` (a name, or an IP address when connecting by address), and was issued by a trusted certificate authority:
+
+- By default, the trusted authorities are the system's, loaded once, the first time a connection needs them. The environment variables `SSL_CERT_FILE` (a PEM file) and `SSL_CERT_DIR` (folders of PEM files, separated by `:`, or `;` on Windows) replace the system's list when set.
+- A container image without the system's certificate package (`ca-certificates` on most Linux distributions) has no trusted authorities, so every connection fails with `UntrustedCertificate`. Install the package, or point `SSL_CERT_FILE` at a bundle.
+- `ca = pem` trusts only the authorities in that PEM text, for a private service or a development certificate.
+- `verify = false` skips the check entirely: the connection is encrypted, but anyone in the middle can pretend to be the server. Use it only for tests and local labs.
+- Revoked certificates aren't detected.
+
+**Serving TLS.** `net::certificate(cert_pem, key_pem)` reads a certificate and its private key once, failing with `InvalidCertificate` when either isn't valid PEM or the key doesn't belong to the certificate. `cert_pem` can hold the whole chain (the server's certificate followed by the intermediate ones, like a `fullchain.pem`), and all of it is sent to clients. Keys can be RSA or ECDSA (P-256, P-384); password-protected keys and Ed25519 certificates aren't supported. One `Certificate` can serve several listeners.
+
+```nim
+import std/fs
+import std/net
+
+func main() -> !void
+    let cert = try net::certificate(try fs::read("fullchain.pem"), try fs::read("privkey.pem"))
+    let listener = try net::tls_listen("0.0.0.0", 8443, cert)
+    for true do
+        let conn = try listener.accept()
+        spawn(func() -> void
+            serve(conn) catch _ then conn.close() end
+        end)
+    end
+end
+```
+
+`serve` is the same function as in the plain server above.
+
+**When the handshake happens.** `tls_connect` and `start_tls` return once it's done. On the server, `accept` returns right away, and the handshake runs in the connection's own task on its first read or write, so a slow or hostile client can't hold up the others. A server that writes first (a greeting) waits for the handshake before its bytes go out. Reads and writes on a connection whose handshake failed fail with `io::IoError.HandshakeFailed`. `conn.handshake()` waits for it explicitly and reports why it failed as a `NetError`; with `timeout_ms`, a handshake that takes too long fails with `TimedOut`, and the connection can't be used anymore.
+
+#### Errors
+
+Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`) and the handshake calls (`start_tls`, `handshake`) fail with `NetError`; using a listener or a connection fails with `io::IoError` (see [std/io](#stdio)), so generic code like `io::copy` has one error type.
 
 | `net::NetError` | When |
 | :-------------- | :--- |
@@ -2316,7 +2371,12 @@ Opening (`tcp_connect`, `tcp_listen`) fails with `NetError`; using a listener or
 | `NetworkUnreachable` | No route to the address |
 | `PermissionDenied` | The system doesn't allow it (a port below 1024 without the rights, for example) |
 | `InvalidAddress` | An empty host, a port outside `0..65535`, or an address that isn't on this machine (`tcp_listen`) |
-| `TimedOut` | `tcp_connect` didn't finish within `timeout_ms` |
+| `TimedOut` | `tcp_connect`, `tls_connect`, `start_tls` or `handshake` didn't finish within `timeout_ms` |
+| `HandshakeFailed` | The TLS handshake failed for another reason (the other side doesn't speak TLS, has no protocol in common, or closed the connection) |
+| `UntrustedCertificate` | The server's certificate wasn't issued by a trusted authority (self-signed, an unknown authority, or no trusted authorities at all) |
+| `ExpiredCertificate` | The server's certificate is expired, or not valid yet |
+| `WrongHostCertificate` | The server's certificate is for another name |
+| `InvalidCertificate` | `certificate` got text that isn't a valid PEM certificate or key, or a key that doesn't match; or `ca` isn't valid PEM |
 | `Other` | Any other failure |
 
 ### std/json
@@ -2435,5 +2495,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
-- **Network**: only TCP for now: no UDP, no TLS (`https`), no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener.
+- **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
 - **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
