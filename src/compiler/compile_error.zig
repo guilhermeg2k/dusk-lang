@@ -89,6 +89,15 @@ pub const CompileErrorReporter = struct {
         return CompileError.ParserError;
     }
 
+    pub fn anonymousStructLayoutDiffers(self: *Self, expected: []const u8, field_names: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(
+            self.allocator,
+            "Invalid type: an anonymous struct fits '{s}' only with the same fields, in the same order, of the same types ({s}); give it the type where it's built (`let x: T = @(...)`)",
+            .{ expected, field_names },
+        ), loc);
+        return error.InvalidType;
+    }
+
     pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(

@@ -1,0 +1,4 @@
+func main() -> void
+    let p = @(a = null)
+    let n: int = p.a
+end

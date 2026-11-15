@@ -55,7 +55,7 @@ test "stdout: flushed before the scheduler waits for events" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("import std/io\nimport std/task\nfunc main() -> void io::println(\"1\") task::sleep(1) io::println(\"2\") end", &recorder.interface);
+    try runSourceWithStdout("import std/io\nimport std/task\nfunc main() -> void io::println(\"1\") task::sleep(20) io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(2, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -837,6 +837,16 @@ test "static fields structs" {
 
 test "simple tree" {
     try runCase("simple-tree.dsk");
+}
+
+test "anonymous structs fit a named struct only with the same layout" {
+    try runCase("anonymous-struct-reuse.dsk");
+    try runCaseError("sema/anonymous-null-field-into-int.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-null-field-write.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-empty-array-field.dsk", error.CantInferArrayLiteralType);
+    try runCaseError("sema/anonymous-struct-field-order.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-struct-field-type.dsk", error.InvalidType);
+    try runCaseError("sema/anonymous-struct-field-not-nullable-struct.dsk", error.InvalidType);
 }
 
 test "linked list" {

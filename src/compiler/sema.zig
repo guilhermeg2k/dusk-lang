@@ -1006,6 +1006,11 @@ pub const SemaAnalyzer = struct {
         for (anonymous_init.arguments) |arg| {
             const exp_value = try self.evalExp(arg.exp);
             var field_type_id = exp_value.type_id;
+            const field_type = self.type_table.getTypePtrById(field_type_id);
+            const is_empty_array_literal = field_type.kind == .array and self.type_table.getTypePtrById(field_type.kind.array).kind == .unknown;
+            if (is_empty_array_literal) {
+                return self.err_reporter.cantInferArrayLiteralType(arg.exp.loc);
+            }
             if (field_type_id == self.type_table.getPrimitive(.null)) {
                 field_type_id = try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.unknown));
             } else if (self.type_table.getTypePtrById(field_type_id).kind == .@"struct") {
@@ -5806,6 +5811,13 @@ pub const SemaAnalyzer = struct {
         }
         const promoted = try self.promoteToFloat(value, target_type);
         if (!try self.canCoerce(promoted.type_id, target_type, loc)) {
+            if (self.type_table.isAnonymousStructForNamedStruct(promoted.type_id, target_type)) {
+                return self.err_reporter.anonymousStructLayoutDiffers(
+                    try self.type_table.name(target_type, self.allocator),
+                    try self.type_table.fieldNameList(target_type, self.allocator),
+                    loc,
+                );
+            }
             return self.err_reporter.invalidType(
                 try self.type_table.name(target_type, self.allocator),
                 try self.type_table.name(promoted.type_id, self.allocator),

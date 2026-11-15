@@ -13,6 +13,9 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- An anonymous struct built without a type (`let p = @(value = 1, next = 5)`) could be passed where a named struct was expected even with fields of other types or in another order, which read the wrong fields or crashed. It now fits a named struct only with the same fields, in the same order, of the same types, and the `InvalidType` message says so
+- A field set to `null` in an anonymous struct (`@(a = null)`) could be read as any type and written with any value, which printed garbage or crashed. It now only holds `null` and fits only nullable types
+- An anonymous struct field set to an empty `[]` crashed the compiler when the field was used. It's now `CantInferArrayLiteralType`, like `let xs = []`
 - Piping a program's output into a command that stops reading early (`dusk app.dsk | head -2`) crashed with a stack trace. The program now ends quietly, like other command-line tools (exit status 141)
 - Failing to write output (a full disk, for example) crashed with a stack trace. It's now a runtime error: `can't write to stdout: NoSpaceLeft`
 - With both outputs sent to the same file (`dusk app.dsk > out.txt 2>&1`), a runtime error message overwrote the program's output at the start of the file

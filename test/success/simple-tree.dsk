@@ -18,7 +18,7 @@ end
 func main() -> void
     let mut root = Node(value = 50, left = null, right = null)
 
-    let left_node = @(value = 0, left = null, right = null)
+    let left_node = @(left = null, right = null, value = 7)
 
     root.add(
         left = @(value = 0, left = null, right = null),
@@ -27,5 +27,6 @@ func main() -> void
 
     print_node(root)
     print_node(left_node)
+    assert(left_node.value == 7)
     print_node(@(value = 888, left = null, right = null))
 end

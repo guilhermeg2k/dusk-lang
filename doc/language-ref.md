@@ -415,7 +415,7 @@ let a: Point = @(x = 1, y = 2)
 show(@(x = 3, y = 4))
 ```
 
-`let b = @(x = 1, y = 2)` without an annotation creates a new anonymous struct type with those fields.
+`let b = @(x = 1, y = 2)` without an annotation creates a new anonymous struct type with those fields. It can still be used where a named struct is expected (`show(b)`), as long as it has the same fields, in the same order, of the same types. A field set to `null` (`@(next = null)`) only holds `null`: it fits a nullable field, and reads as `null`. A field set to an empty `[]` needs a type, so build that struct where its type is known (`let c: Cart = @(items = [])`).
 
 ## 5. Enums
 
