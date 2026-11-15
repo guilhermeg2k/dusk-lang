@@ -942,11 +942,24 @@ io::println("${scale(10, 3)}")   # 30
 
 ### Named arguments
 
-Arguments can be passed by name, in any order. A call uses either all named or all positional arguments.
+Arguments can be passed by name. A call with only named arguments can list them in any order:
 
 ```nim
 io::println("${scale(factor = 5, x = 1)}")   # 5
 ```
+
+A call can also mix positional and named arguments. The arguments are then read in the order of the parameters: a positional argument fills the next parameter, and a named one jumps forward to its parameter, skipping parameters that have a default value. It never goes back.
+
+```nim
+func delete(path: string, recursive: bool = false, force: bool = false) -> void
+
+delete("build", recursive = true)          # recursive by name, force keeps its default
+delete("build", force = true)              # recursive keeps its default
+delete("build", recursive = true, true)    # true fills force, the parameter after recursive
+delete(force = true, path = "build")       # only named arguments: any order
+```
+
+A named argument that comes before a parameter it follows is an `ArgumentOutOfOrder` error (`delete("x", force = true, recursive = true)`). A positional argument with no parameter left after a named one is an `InvalidNumberOfArgs` error (`delete("x", force = true, true)`). A name that isn't a parameter is `UnknownArgumentName`, and a parameter given twice is `ArgumentGivenTwice`. Calls through a function value only take positional arguments (`NamedArgumentsOnValue`).
 
 ### Mutable parameters
 

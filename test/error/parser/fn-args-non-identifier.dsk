@@ -1,3 +1,6 @@
-import std/io
+func f(a: int) -> void
+end
 
-io::println("${42 = 1}")
+func main() -> void
+    f(42 = 1)
+end

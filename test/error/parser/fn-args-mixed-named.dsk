@@ -1,3 +1,0 @@
-import std/io
-
-io::println("${x = 1, 2}")

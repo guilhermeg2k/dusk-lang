@@ -1721,11 +1721,16 @@ pub const SemaAnalyzer = struct {
         self.can_bind_void_slots = self.generic_functions.items[index].extern_uid != null;
         defer self.can_bind_void_slots = could_bind_void_slots;
 
+        const param_names = try self.allocator.alloc([]const u8, func_stmt.def.params.len);
+        for (func_stmt.def.params, param_names) |param, *name| {
+            name.* = param.identifier;
+        }
+        const matched = try self.matchArguments(fn_call.arguments, fn_call.are_arguments_named, param_names, 0);
         var has_lambda_args = false;
         for (func_stmt.def.params, 0..) |param, param_index| {
             const annotation = param.type_annotation orelse continue;
             if (!mentionsSlot(annotation, func_stmt.slots) or areMentionedSlotsBound(annotation, func_stmt.slots, bindings)) continue;
-            const arg_exp = argumentFor(fn_call, param_index, param.identifier) orelse continue;
+            const arg_exp = matched[param_index] orelse continue;
             if (arg_exp.data == .lambda) {
                 has_lambda_args = true;
                 continue;
@@ -1737,7 +1742,7 @@ pub const SemaAnalyzer = struct {
         if (has_lambda_args) {
             for (func_stmt.def.params, 0..) |param, param_index| {
                 const annotation = param.type_annotation orelse continue;
-                const arg_exp = argumentFor(fn_call, param_index, param.identifier) orelse continue;
+                const arg_exp = matched[param_index] orelse continue;
                 try self.inferSlotsFromLambda(annotation, arg_exp, func_stmt.slots, bindings, inferred_values);
             }
         }
@@ -1825,16 +1830,45 @@ pub const SemaAnalyzer = struct {
         return is_widening and (from_base == from or to_base != to);
     }
 
-    fn argumentFor(fn_call: ast.FnCall, param_index: usize, param_name: []const u8) ?*ast.ExpNode {
-        if (!fn_call.are_arguments_named) {
-            if (param_index >= fn_call.arguments.len) return null;
-            return fn_call.arguments[param_index].exp;
+    fn matchArguments(self: *Self, arguments: []const ast.FnCallArg, are_all_named: bool, param_names: []const []const u8, first_param: usize) CompileError![]?*ast.ExpNode {
+        const matched = try self.allocator.alloc(?*ast.ExpNode, param_names.len);
+        @memset(matched, null);
+        if (are_all_named) {
+            for (arguments) |argument| {
+                const name = argument.identifier.?;
+                const index = indexOfName(param_names, name) orelse return self.err_reporter.unknownArgumentName(name, argument.exp.loc);
+                if (matched[index] != null) {
+                    return self.err_reporter.argumentGivenTwice(name, argument.exp.loc);
+                }
+                matched[index] = argument.exp;
+            }
+            return matched;
         }
-        for (fn_call.arguments) |arg| {
-            const name = arg.identifier orelse continue;
-            if (std.mem.eql(u8, name, param_name)) return arg.exp;
+
+        var next_param = first_param;
+        var last_named: ?[]const u8 = null;
+        for (arguments) |argument| {
+            const name = argument.identifier orelse {
+                if (next_param >= param_names.len) {
+                    const previous = last_named orelse continue;
+                    return self.err_reporter.noParameterAfter(previous, argument.exp.loc);
+                }
+                matched[next_param] = argument.exp;
+                next_param += 1;
+                continue;
+            };
+            const index = indexOfName(param_names, name) orelse return self.err_reporter.unknownArgumentName(name, argument.exp.loc);
+            if (matched[index] != null) {
+                return self.err_reporter.argumentGivenTwice(name, argument.exp.loc);
+            }
+            if (index < next_param) {
+                return self.err_reporter.argumentOutOfOrder(name, param_names[next_param - 1], argument.exp.loc);
+            }
+            matched[index] = argument.exp;
+            next_param = index + 1;
+            last_named = name;
         }
-        return null;
+        return matched;
     }
 
     fn inferSlots(self: *Self, annotation: *const ast.TypeAnnotation, arg_type: tt.TypeId, slots: []const ast.Slot, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
@@ -2034,11 +2068,16 @@ pub const SemaAnalyzer = struct {
 
         switch (generic.def) {
             .@"struct" => |struct_def| {
+                const field_names = try self.allocator.alloc([]const u8, struct_def.fields.len);
+                for (struct_def.fields, field_names) |field, *name| {
+                    name.* = field.identifier;
+                }
+                const matched = try self.matchArguments(fn_call.arguments, fn_call.are_arguments_named, field_names, 0);
                 var has_lambda_args = false;
                 for (struct_def.fields, 0..) |field, field_index| {
                     const annotation = field.type orelse continue;
                     if (!mentionsSlot(annotation, generic.slots) or areMentionedSlotsBound(annotation, generic.slots, bindings)) continue;
-                    const arg_exp = argumentFor(fn_call, field_index, field.identifier) orelse continue;
+                    const arg_exp = matched[field_index] orelse continue;
                     if (arg_exp.data == .lambda) {
                         has_lambda_args = true;
                         continue;
@@ -2050,7 +2089,7 @@ pub const SemaAnalyzer = struct {
                 if (has_lambda_args) {
                     for (struct_def.fields, 0..) |field, field_index| {
                         const annotation = field.type orelse continue;
-                        const arg_exp = argumentFor(fn_call, field_index, field.identifier) orelse continue;
+                        const arg_exp = matched[field_index] orelse continue;
                         try self.inferSlotsFromLambda(annotation, arg_exp, generic.slots, bindings, inferred_values);
                     }
                 }
@@ -4483,9 +4522,6 @@ pub const SemaAnalyzer = struct {
         var is_struct_init = false;
         var callee: ?*ir.Value = null;
 
-        var arg_exp_by_param_name = std.StringHashMap(*ast.ExpNode).init(self.allocator);
-        defer arg_exp_by_param_name.deinit();
-
         var fn_call_arguments_values: std.ArrayList(*ir.Value) = .empty;
         var inferred_values: std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value) = .empty;
 
@@ -4612,7 +4648,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (callee) |value| {
-            if (fn_call.are_arguments_named) {
+            if (ast.hasNamedArgument(fn_call.arguments)) {
                 return self.err_reporter.namedArgumentsOnValue(exp.loc);
             }
             const func_type = self.type_table.getTypePtrById(value.type_id).kind.func_type;
@@ -4648,29 +4684,12 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.invalidNumberOfArgs(params.len, total_args_len, exp.loc);
         }
 
-        if (fn_call.are_arguments_named) {
-            for (fn_call.arguments) |arg| {
-                if (arg.identifier) |identifier| {
-                    try arg_exp_by_param_name.put(identifier, arg.exp);
-                } else @panic("evalFnCall: named call has an unnamed argument");
-            }
-        }
-
         const has_first_argument_being_binded = fn_call_arguments_values.items.len == 1;
+        const matched = try self.matchArguments(fn_call.arguments, fn_call.are_arguments_named, try paramNames(self.allocator, params), if (has_first_argument_being_binded) 1 else 0);
         for (params, 0..) |param, i| {
             if (i == 0 and has_first_argument_being_binded) continue;
 
-            var arg_exp: ?*ast.ExpNode = null;
-
-            if (fn_call.are_arguments_named) {
-                const named_arg_exp = arg_exp_by_param_name.get(param.identifier);
-                if (named_arg_exp) |named_arg| {
-                    arg_exp = named_arg;
-                }
-            } else {
-                const index = if (has_first_argument_being_binded) i - 1 else i;
-                arg_exp = if (fn_call.arguments.len > index) fn_call.arguments[index].exp else null;
-            }
+            const arg_exp = matched[i];
             if (is_struct_init) {
                 try self.checkFieldArgument(return_type, param, arg_exp);
             }
@@ -4824,14 +4843,10 @@ pub const SemaAnalyzer = struct {
         }
         const keys = try self.allocator.alloc([]const u8, structure.fields_in_order.len);
         const values = try self.allocator.alloc(*ir.Value, structure.fields_in_order.len);
+        const matched = try self.matchArguments(initialization.arguments, initialization.are_arguments_named, try paramNames(self.allocator, structure.fields_in_order), 0);
         for (structure.fields_in_order, 0..) |field, index| {
             keys[index] = field.identifier;
-            const argument = if (initialization.are_arguments_named)
-                arguments_by_name.get(field.identifier)
-            else if (index < initialization.arguments.len)
-                initialization.arguments[index].exp
-            else
-                null;
+            const argument = matched[index];
             try self.checkFieldArgument(type_id, field, argument);
             const value = if (argument) |operand|
                 try self.evalExpExpecting(operand, field.type_id)
@@ -6411,3 +6426,20 @@ const BranchValue = struct {
     value: *ir.Value,
     loc: err.Loc,
 };
+
+fn paramNames(allocator: std.mem.Allocator, params: []const tt.TypedIdentifier) ![]const []const u8 {
+    const names = try allocator.alloc([]const u8, params.len);
+    for (params, names) |param, *name| {
+        name.* = param.identifier;
+    }
+    return names;
+}
+
+fn indexOfName(names: []const []const u8, name: []const u8) ?usize {
+    for (names, 0..) |candidate, index| {
+        if (std.mem.eql(u8, candidate, name)) {
+            return index;
+        }
+    }
+    return null;
+}

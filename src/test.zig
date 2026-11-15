@@ -304,15 +304,15 @@ test "fs: read_dir, make_dir, remove and rename, checked on disk" {
         \\    fs::make_dir("DIR/new/deep") catch e then io::println(name(e)) end
         \\    try fs::make_dir("DIR/new")
         \\    fs::make_dir("DIR/new") catch e then io::println(name(e)) end
-        \\    try fs::make_dir("DIR/made/a/b/", true)
-        \\    try fs::make_dir("DIR/made/a/b", true)
-        \\    fs::make_dir("DIR/tree/top.txt/x", true) catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/made/a/b/", recursive = true)
+        \\    try fs::make_dir("DIR/made/a/b", recursive = true)
+        \\    fs::make_dir("DIR/tree/top.txt/x", recursive = true) catch e then io::println(name(e)) end
         \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
         \\    try fs::delete("DIR/new")
         \\    try fs::rename("DIR/tree/top.txt", "DIR/moved.txt")
         \\    try fs::rename("DIR/made", "DIR/made-renamed")
         \\    try fs::delete("DIR/moved.txt")
-        \\    try fs::delete("DIR/tree", true)
+        \\    try fs::delete("DIR/tree", recursive = true)
         \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
         \\end
     ;
@@ -364,6 +364,16 @@ test "fs: stat follows symlinks and reports permissions and times like the OS" {
     const permissions = file_stat.permissions.toMode() & 0o777;
     const expected = try std.fmt.allocPrint(allocator, "5 true false true {d} {d}\nfalse false true\n", .{ permissions, file_stat.mtime.toMilliseconds() });
     try testing.expectEqualStrings(expected, output.written());
+}
+
+test "calls mix positional and named arguments in parameter order" {
+    try runCase("call-arguments-mixed.dsk");
+    try runCaseError("sema/call-args-out-of-order.dsk", error.ArgumentOutOfOrder);
+    try runCaseError("sema/call-args-none-left.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/call-args-given-twice.dsk", error.ArgumentGivenTwice);
+    try runCaseError("sema/call-args-unknown-name.dsk", error.UnknownArgumentName);
+    try runCaseError("sema/call-args-named-unknown.dsk", error.UnknownArgumentName);
+    try runCaseError("sema/call-args-named-twice.dsk", error.ArgumentGivenTwice);
 }
 
 test "string interpolation" {
@@ -1559,7 +1569,6 @@ test "syntax error: anonymous struct missing end" {
 }
 
 test "syntax error: fn args mixed named positional" {
-    try runCaseError("parser/fn-args-mixed-named.dsk", error.ParserError);
 }
 
 test "syntax error: fn args non identifier name" {

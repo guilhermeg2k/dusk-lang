@@ -208,6 +208,26 @@ pub const CompileErrorReporter = struct {
         return error.MissingArgument;
     }
 
+    pub fn unknownArgumentName(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "No parameter named '{s}'", .{name}), loc);
+        return error.UnknownArgumentName;
+    }
+
+    pub fn argumentOutOfOrder(self: *Self, name: []const u8, previous: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' must come before '{s}': when a call mixes positional and named arguments, they follow the parameter order", .{ name, previous }), loc);
+        return error.ArgumentOutOfOrder;
+    }
+
+    pub fn argumentGivenTwice(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is given twice", .{name}), loc);
+        return error.ArgumentGivenTwice;
+    }
+
+    pub fn noParameterAfter(self: *Self, previous: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Too many arguments: there's no parameter after '{s}'", .{previous}), loc);
+        return error.InvalidNumberOfArgs;
+    }
+
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
         return error.AlreadyDefined;
@@ -1162,6 +1182,9 @@ pub const CompileError = error{
     LambdaCallsItself,
     FieldAndMethodSameName,
     NamedArgumentsOnValue,
+    UnknownArgumentName,
+    ArgumentOutOfOrder,
+    ArgumentGivenTwice,
     CantInferSlot,
     ConflictingSlotTypes,
     InvalidSlotType,

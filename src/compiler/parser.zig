@@ -1122,7 +1122,6 @@ pub const Parser = struct {
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
 
-        var are_arguments_named: ?bool = null;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
         while (true) {
@@ -1133,15 +1132,7 @@ pub const Parser = struct {
             const exp = try self.parseExp(0);
             const tk = self.peekCurrent();
 
-            if (are_arguments_named == null) {
-                are_arguments_named = tk.tag == .eq;
-            }
-
-            if (are_arguments_named.?) {
-                if (tk.tag != .eq) {
-                    return self.err_reporter.invalidSyntax("=", tk);
-                }
-
+            if (tk.tag == .eq) {
                 if (exp.data != .identifier) {
                     return self.err_reporter.invalidSyntax("identifier", .{ .tag = .identifier, .loc = exp.loc });
                 }
@@ -1618,7 +1609,7 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
                         .anonymous_init = .{
-                            .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                            .are_arguments_named = ast.areAllArgumentsNamed(args),
                             .arguments = args,
                         },
                     },
@@ -1662,7 +1653,7 @@ pub const Parser = struct {
                     node = try ast.ExpNode.init(self.allocator, .{
                         .data = .{
                             .fn_call = .{
-                                .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                                .are_arguments_named = ast.areAllArgumentsNamed(args),
                                 .target = node,
                                 .arguments = args,
                             },
