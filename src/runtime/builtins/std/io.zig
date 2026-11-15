@@ -131,6 +131,13 @@ pub fn streamWrite(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
 }
 
+pub fn streamFlush(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    if (vm.event_loop.streamAt(args[0].int64) == null) {
+        return fail(IoError.Closed);
+    }
+    return ok(.{ .null = {} });
+}
+
 pub fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
     vm.event_loop.closeStream(args[0].int64);
     return ok(.{ .null = {} });

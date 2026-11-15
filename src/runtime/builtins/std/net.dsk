@@ -23,6 +23,7 @@ extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_flush(handle: int) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
 extern func ~remote_host(handle: int) -> string
 extern func ~remote_port(handle: int) -> int
@@ -34,13 +35,14 @@ end
 
 struct TcpListener
     ~handle: int
+    ~bound_port: int
 
     func accept(self: @, timeout_ms: int = -1) -> io::IoError!TcpConn
         return open_conn(try listener_accept(self.handle, timeout_ms))
     end
 
     func port(self: @) -> int
-        return listener_port(self.handle)
+        return self.bound_port
     end
 
     func close(self: @) -> void
@@ -86,6 +88,7 @@ struct TcpConn
     end
 
     func flush(self: @) -> io::IoError!void
+        try stream_flush(self.handle)
     end
 
     func close(self: @) -> void
@@ -98,7 +101,8 @@ func tcp_connect(host: string, port: int, timeout_ms: int = -1) -> NetError!TcpC
 end
 
 func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
-    return TcpListener(handle = try tcp_listen_handle(host, port, backlog))
+    let handle = try tcp_listen_handle(host, port, backlog)
+    return TcpListener(handle = handle, bound_port = listener_port(handle))
 end
 
 func ~open_conn(handle: int) -> TcpConn

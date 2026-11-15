@@ -2228,7 +2228,7 @@ A name is looked up first, and each of its addresses is tried in order until one
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `accept(timeout_ms = -1)` | `io::IoError!TcpConn` | Waits for the next connection. |
-| `port()` | `int` | The port it listens on, useful after listening on port `0`. |
+| `port()` | `int` | The port it listens on, useful after listening on port `0`. Still returns it after `close()`. |
 | `close()` | `void` | Stops listening. A task waiting in `accept` fails with `Closed`; closing twice does nothing. |
 
 **`TcpConn`** reads like `io::Stdin` and writes like `io::stdout()`:
@@ -2242,7 +2242,7 @@ A name is looked up first, and each of its addresses is tried in order until one
 | `read_all_bytes(timeout_ms = -1)` | `io::IoError!buffer` | Same, as bytes. |
 | `write(text)` | `io::IoError!void` | Sends `text`. |
 | `write_bytes(data)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
-| `flush()` | `io::IoError!void` | Does nothing: writes are never buffered. It's there so a connection fits `io::Writer`. |
+| `flush()` | `io::IoError!void` | Writes are never buffered, so there's nothing to send: it only fails with `Closed` after `close()`, like `write`. It's there so a connection fits `io::Writer`. |
 | `remote_address()` | `Address` | The other side's address, saved when the connection opened. |
 | `close()` | `void` | Closes the connection. |
 

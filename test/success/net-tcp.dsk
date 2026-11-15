@@ -81,6 +81,7 @@ func main() -> !void
     assert(in_use == "in use")
 
     listener.close()
+    assert(listener.port() == port)
     let mut parked_error = ""
     await(first) catch e then
         parked_error = io_error_name(e)

@@ -100,6 +100,11 @@ func main() -> !void
         closed_error = io_error_name(e)
     end
     assert(closed_error == "closed")
+    let mut flush_error = ""
+    lonely.flush() catch e then
+        flush_error = io_error_name(e)
+    end
+    assert(flush_error == "closed")
 
     let sink = try net::tcp_listen("127.0.0.1", 0)
     let sink_reader = spawn(func() -> io::IoError!string
