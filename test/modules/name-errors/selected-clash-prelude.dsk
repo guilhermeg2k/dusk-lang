@@ -1,4 +1,4 @@
-import @/shapes: area as echo
+import @/shapes: area as assert
 
 func main() -> void
 

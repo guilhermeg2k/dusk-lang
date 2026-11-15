@@ -206,6 +206,10 @@ pub const CompileErrorReporter = struct {
 
     pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         try self.checkModuleImported(identifier, loc);
+        if (std.mem.eql(u8, identifier, "echo")) {
+            self.log("Cannot find name 'echo': printing moved to std/io, use io::println(\"${value}\") after `import std/io`", loc);
+            return error.NotDefined;
+        }
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
         return error.NotDefined;
     }

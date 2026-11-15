@@ -1760,7 +1760,6 @@ The **prelude** is always available. Everything else is in the **standard librar
 
 | Function   | Signature                                         | Description                                                                          |
 | :--------- | :------------------------------------------------ | :----------------------------------------------------------------------------------- |
-| `echo`     | `echo(value: T) -> void`                          | Prints a value and a newline.                                                        |
 | `assert`   | `assert(cond: bool) -> void`                      | Stops the program with an error if `cond` is false.                                  |
 | `copy`     | `copy(value: T) -> T`                             | Returns a deep copy of an array, map, buffer, struct or union (see below).           |
 | `to_byte`  | `to_byte(value: int) -> ConversionError!byte`     | Converts an `int` or `byte` to `byte`; fails with `ConversionError.Overflow` outside `0..255`. |
@@ -1770,8 +1769,6 @@ The **prelude** is always available. Everything else is in the **standard librar
 | `await`    | `await(task: Task[T, E]) -> E!T`                  | Waits for a task's result.                                                           |
 
 The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`).
-
-`echo` prints primitives, arrays and nullables. It prints enums as their number, unions as `<union>`, maps as `<map>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as raw values.
 
 `copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
@@ -1986,7 +1983,7 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.
 - **Maps**: keys can't be floats, nullables, arrays, maps, buffers, unions or functions, and struct keys match by identity only. There's no content comparison for maps (`==` is identity).
-- **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`echo`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
+- **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`assert`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
 - **Modules**: libraries (`import jsonc`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
 - **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.

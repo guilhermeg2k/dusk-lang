@@ -1,5 +1,4 @@
 const v = @import("../value.zig");
-const format = @import("../format.zig");
 const VM = @import("../vm.zig").VM;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 const native = @import("native.zig");
@@ -9,7 +8,6 @@ const ok = native.ok;
 const parked = native.parked;
 
 pub const bindings = native.BindingMap.initComptime(.{
-    .{ "echo", Binding{ .native = &echo } },
     .{ "assert", Binding{ .native = &assert } },
     .{ "unchecked_to_byte", Binding{ .intrinsic = .to_byte } },
     .{ "unchecked_to_int", Binding{ .intrinsic = .to_int } },
@@ -19,14 +17,6 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "await", Binding{ .native = &taskAwait } },
     .{ "strings_equal", Binding{ .intrinsic = .strings_equal } },
 });
-
-pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const ty: v.ValueType = @enumFromInt(@as(u8, @intCast(args[1].int64)));
-    vm.scratch.clearRetainingCapacity();
-    format.printValue(&vm.scratch.writer, args[0], ty) catch return error.OutOfMemory;
-    try vm.stdio.writeLine(.stdout, vm.scratch.written());
-    return ok(.{ .null = {} });
-}
 
 pub fn assert(_: *VM, args: []v.Value) anyerror!NativeResult {
     if (!args[0].bool) return RuntimeErrorReporter.assertionFailed();

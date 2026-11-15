@@ -1007,7 +1007,7 @@ pub const SemaAnalyzer = struct {
             const exp_value = try self.evalExp(arg.exp);
             var field_type_id = exp_value.type_id;
             if (field_type_id == self.type_table.getPrimitive(.null)) {
-                field_type_id = try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.dynamic));
+                field_type_id = try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.unknown));
             } else if (self.type_table.getTypePtrById(field_type_id).kind == .@"struct") {
                 field_type_id = try self.type_table.getOrAddNullable(field_type_id);
             }
@@ -1612,7 +1612,7 @@ pub const SemaAnalyzer = struct {
         } else {
             var_type_id = expression_type_id;
             const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
-            if (var_type_ptr.kind == .array and self.type_table.getTypePtrById(var_type_ptr.kind.array).kind == .dynamic) {
+            if (var_type_ptr.kind == .array and self.type_table.getTypePtrById(var_type_ptr.kind.array).kind == .unknown) {
                 return self.err_reporter.cantInferArrayLiteralType(let_stmt.value.loc);
             }
         }
@@ -1620,7 +1620,7 @@ pub const SemaAnalyzer = struct {
         const boxed_value = try self.coerceValue(expression_value, var_type_id, stmt.data.let.value.loc);
 
         const expr_type = self.type_table.getTypePtrById(expression_type_id);
-        if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .dynamic) {
+        if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .unknown) {
             expression_value.type_id = var_type_id;
         }
 
@@ -1865,7 +1865,7 @@ pub const SemaAnalyzer = struct {
                 try self.bindSlot(slots, bindings, slot_index, type_id, loc);
             },
             .array => |inner| {
-                if (kind == .dynamic or kind == .null) return;
+                if (kind == .unknown or kind == .null) return;
                 if (kind != .array) {
                     return self.err_reporter.invalidType("an array", try self.type_table.name(arg_type, self.allocator), loc);
                 }
@@ -1900,7 +1900,7 @@ pub const SemaAnalyzer = struct {
     fn bindSlot(self: *Self, slots: []const ast.Slot, bindings: []?tt.TypeId, slot_index: usize, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
         const slot = slots[slot_index];
         const kind = self.type_table.getTypePtrById(type_id).kind;
-        if (kind == .dynamic or kind == .null) return;
+        if (kind == .unknown or kind == .null) return;
         if (kind == .void and !self.can_bind_void_slots) {
             return self.err_reporter.invalidSlotType(slot.identifier, try self.type_table.name(type_id, self.allocator), loc);
         }
@@ -3888,7 +3888,7 @@ pub const SemaAnalyzer = struct {
     fn evalConditionalWithContext(self: *Self, exp: *const ast.ExpNode, expected_type_id: ?tt.TypeId, context_type_id: ?tt.TypeId) CompileError!*ir.Value {
         if (exp.data == .orelse_exp) return self.evalOrelse(exp, expected_type_id, context_type_id);
 
-        const expected = if (expected_type_id == self.type_table.getPrimitive(.dynamic)) null else expected_type_id;
+        const expected = if (expected_type_id == self.type_table.getPrimitive(.unknown)) null else expected_type_id;
         var result = BranchResult{ .uid = self.scope.genUid(), .expected_type_id = expected, .context_type_id = context_type_id, .loc = exp.loc };
         const instructions = switch (exp.data) {
             .if_exp => conditional: {
@@ -3940,7 +3940,7 @@ pub const SemaAnalyzer = struct {
 
     fn evalOrelse(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId, context_type: ?tt.TypeId) CompileError!*ir.Value {
         const coalescing = exp.data.orelse_exp;
-        const expected = if (expected_type == self.type_table.getPrimitive(.dynamic)) null else expected_type;
+        const expected = if (expected_type == self.type_table.getPrimitive(.unknown)) null else expected_type;
         const operand = try self.evalExpWithContext(coalescing.operand, null, expected orelse context_type);
         const null_type = self.type_table.getPrimitive(.null);
         const is_null_operand = operand.type_id == null_type;
@@ -4055,9 +4055,9 @@ pub const SemaAnalyzer = struct {
         const first_kind = self.type_table.getTypePtrById(first_base).kind;
         const second_kind = self.type_table.getTypePtrById(second_base).kind;
         if (first_kind == .array and second_kind == .array) {
-            const dynamic_type = self.type_table.getPrimitive(.dynamic);
-            if (first_kind.array == dynamic_type or second_kind.array == dynamic_type) {
-                const array_type = if (first_kind.array == dynamic_type) second_base else first_base;
+            const unknown_type = self.type_table.getPrimitive(.unknown);
+            if (first_kind.array == unknown_type or second_kind.array == unknown_type) {
+                const array_type = if (first_kind.array == unknown_type) second_base else first_base;
                 return if (is_nullable) self.type_table.getOrAddNullable(array_type) else array_type;
             }
             return self.err_reporter.invalidType(try self.type_table.name(first, self.allocator), try self.type_table.name(second, self.allocator), loc);
@@ -4072,7 +4072,7 @@ pub const SemaAnalyzer = struct {
         const result_base = self.type_table.typeIdByNullableTypeId.get(result_type) orelse result_type;
         const value_kind = self.type_table.getTypePtrById(value_base).kind;
         const result_kind = self.type_table.getTypePtrById(result_base).kind;
-        if (value.data == .i_array and value_kind == .array and result_kind == .array and value_kind.array == self.type_table.getPrimitive(.dynamic)) {
+        if (value.data == .i_array and value_kind == .array and result_kind == .array and value_kind.array == self.type_table.getPrimitive(.unknown)) {
             value.type_id = result_base;
         }
         const converted = try self.coerceValue(value, result_type, loc);
@@ -4670,7 +4670,7 @@ pub const SemaAnalyzer = struct {
                 const fn_call_arg_value = try self.coerceValue(evaluated, param.type_id, _exp.loc);
 
                 const arg_type_ptr = self.type_table.getTypePtrById(arg_type);
-                if (arg_type_ptr.kind == .array and self.type_table.getTypePtrById(arg_type_ptr.kind.array).kind == .dynamic) {
+                if (arg_type_ptr.kind == .array and self.type_table.getTypePtrById(arg_type_ptr.kind.array).kind == .unknown) {
                     fn_call_arg_value.type_id = param.type_id;
                 }
 
@@ -5296,16 +5296,16 @@ pub const SemaAnalyzer = struct {
     fn evalArrayLiteral(self: *Self, exp: *const ast.ExpNode, expected_item_type_id: ?tt.TypeId) !*ir.Value {
         var values: std.ArrayList(*ir.Value) = .empty;
         const array_literal = exp.data.array_literal;
-        var array_literal_type: tt.TypeId = expected_item_type_id orelse self.type_table.getPrimitive(.dynamic);
+        var array_literal_type: tt.TypeId = expected_item_type_id orelse self.type_table.getPrimitive(.unknown);
 
         for (array_literal.exps) |e| {
             // without a declared item type, later items follow the first one
             const item_type_id = expected_item_type_id orelse
-                if (array_literal_type == self.type_table.getPrimitive(.dynamic)) null else array_literal_type;
+                if (array_literal_type == self.type_table.getPrimitive(.unknown)) null else array_literal_type;
             const exp_value = try self.evalExpExpecting(e, item_type_id);
             const exp_value_type = exp_value.type_id;
 
-            if (array_literal_type == self.type_table.getPrimitive(.dynamic)) {
+            if (array_literal_type == self.type_table.getPrimitive(.unknown)) {
                 array_literal_type = exp_value_type;
             }
 
@@ -5845,14 +5845,10 @@ pub const SemaAnalyzer = struct {
                 if (std.mem.eql(u8, primitive_name, "void")) {
                     return self.type_table.getPrimitive(.void);
                 }
-                if (std.mem.eql(u8, primitive_name, "dynamic")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.dynamic)) else self.type_table.getPrimitive(.dynamic);
 
                 return CompileError.SemaError;
             },
             .@"struct" => |struct_name| {
-                if (self.is_in_prelude and std.mem.eql(u8, struct_name, "dynamic")) {
-                    return self.type_table.getPrimitive(.dynamic);
-                }
                 if (std.mem.eql(u8, struct_name, map_type_name)) {
                     const map_type_id = try self.resolveMapTypeAnnotation(type_annotation, current_defined_type_type_id);
                     return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(map_type_id) else map_type_id;

@@ -33,7 +33,6 @@ pub const BytecodeGen = struct {
     break_patches: std.ArrayList(usize),
     continue_patches: std.ArrayList(usize),
     intrinsic_by_uid: std.AutoHashMap(usize, native.Intrinsic),
-    native_params_by_uid: std.AutoHashMap(usize, []const tt.TypedIdentifier),
     fn_index_by_uid: std.AutoHashMap(usize, u16),
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     cell_type_by_uid: std.AutoHashMapUnmanaged(usize, tt.TypeId) = .empty,
@@ -67,7 +66,6 @@ pub const BytecodeGen = struct {
             .break_patches = .empty,
             .continue_patches = .empty,
             .intrinsic_by_uid = std.AutoHashMap(usize, native.Intrinsic).init(alloc),
-            .native_params_by_uid = std.AutoHashMap(usize, []const tt.TypedIdentifier).init(alloc),
             .fn_index_by_uid = std.AutoHashMap(usize, u16).init(alloc),
             .chunk_heap_maps = .empty,
             .struct_descriptors = .empty,
@@ -153,28 +151,13 @@ pub const BytecodeGen = struct {
     fn bindExtern(self: *Self, ext: ir.Extern) !bc.Function {
         const num_args: u8 = @intCast(ext.params.len);
         const kind: bc.FunctionKind = switch (ext.binding) {
-            .native => |func| blk: {
-                try self.native_params_by_uid.put(ext.uid, ext.params);
-                break :blk .{ .native = .{ .func = func, .num_args = num_args + self.dynamicParamCount(ext.params), .error_base = ext.error_base } };
-            },
+            .native => |func| .{ .native = .{ .func = func, .num_args = num_args, .error_base = ext.error_base } },
             .intrinsic => |intrinsic| blk: {
                 try self.intrinsic_by_uid.put(ext.uid, intrinsic);
                 break :blk .{ .intrinsic = intrinsic };
             },
         };
         return .{ .uid = ext.uid, .name = try self.allocator.dupe(u8, ext.identifier), .kind = kind };
-    }
-
-    fn dynamicParamCount(self: *Self, params: []const tt.TypedIdentifier) u8 {
-        var count: u8 = 0;
-        for (params) |param| {
-            if (self.isDynamicParam(param)) count += 1;
-        }
-        return count;
-    }
-
-    fn isDynamicParam(self: *Self, param: tt.TypedIdentifier) bool {
-        return param.type_id == self.type_table.getPrimitive(.dynamic);
     }
 
     fn genMainFunc(self: *Self, program: *const ir.Program) !bc.Function {
@@ -1165,8 +1148,6 @@ pub const BytecodeGen = struct {
             return;
         }
 
-        const kind_count = try self.genArgKinds(fc);
-
         var fn_call = bc.Instruction{
             .op = .CALL,
             .a = target_reg,
@@ -1177,7 +1158,7 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
 
-        self.freeRegisterN(fc.args.len + kind_count);
+        self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
     }
 
@@ -1214,23 +1195,6 @@ pub const BytecodeGen = struct {
     fn appendIntrinsicInstruction(self: *Self, instruction: bc.Instruction) !void {
         try self.chunk_instructions.append(self.allocator, instruction);
         if (instruction.op.canTriggerGc()) try self.recordHeapMap();
-    }
-
-    fn genArgKinds(self: *Self, fc: ir.FnCall) !usize {
-        const params = self.native_params_by_uid.get(fc.fn_uid) orelse return 0;
-        var count: usize = 0;
-        for (params, fc.args) |param, arg| {
-            if (!self.isDynamicParam(param)) continue;
-            const kind_reg = try self.consumeRegister();
-            const kind_value = ir.Value{
-                .type_id = self.type_table.getPrimitive(.int),
-                .data = .{ .i_int = @intFromEnum(valueTypeFromTypeId(self.type_table, arg.type_id)) },
-            };
-            try self.genLoadConst(typedValueFromIr(&kind_value), kind_reg);
-            self.register_types[kind_reg] = self.type_table.getPrimitive(.int);
-            count += 1;
-        }
-        return count;
     }
 
     fn genCallValue(self: *Self, cv: ir.CallValue, value: *const ir.Value, target_reg: u8) !void {

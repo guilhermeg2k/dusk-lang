@@ -34,7 +34,7 @@ pub const TypeTable = struct {
                     .boolean => .{ .boolean = {} },
                     .void => .{ .void = {} },
                     .null => .{ .null = {} },
-                    .dynamic => .{ .dynamic = {} },
+                    .unknown => .{ .unknown = {} },
                     .meta => .{ .meta = {} },
                     .cell => .{ .cell = {} },
                 },
@@ -77,7 +77,7 @@ pub const TypeTable = struct {
         const type_from = self.getTypePtrById(from);
         const type_to = self.getTypePtrById(to);
 
-        if (type_from.kind == .dynamic or type_to.kind == .dynamic) return true;
+        if (type_from.kind == .unknown or type_to.kind == .unknown) return true;
         if (type_from.is_nullable and !type_to.is_nullable) return false;
         if (type_from.kind == .byte and type_to.kind == .int and type_from.is_nullable == type_to.is_nullable) return true;
 
@@ -136,7 +136,7 @@ pub const TypeTable = struct {
             .boolean => "bool",
             .void => "void",
             .null => "null",
-            .dynamic => "dynamic",
+            .unknown => "unknown",
             .meta => "meta",
             .cell => "cell",
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
@@ -165,7 +165,7 @@ pub const TypeTable = struct {
             .boolean => if (t.is_nullable) "nullable boolean" else "boolean",
             .void => if (t.is_nullable) "nullable void" else "void",
             .null => if (t.is_nullable) "nullable null" else "null",
-            .dynamic => if (t.is_nullable) "nullable dynamic" else "dynamic",
+            .unknown => if (t.is_nullable) "nullable unknown" else "unknown",
             .meta => "Meta Symbol",
             .cell => "cell",
             .function => |metadata| {
@@ -398,7 +398,7 @@ pub const PrimitiveType = enum {
     boolean,
     void,
     null,
-    dynamic,
+    unknown,
     meta,
     cell,
 };
@@ -521,7 +521,7 @@ pub const Type = struct {
         boolean,
         void,
         null,
-        dynamic,
+        unknown,
 
         meta,
         cell,

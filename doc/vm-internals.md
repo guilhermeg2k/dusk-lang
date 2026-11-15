@@ -125,7 +125,6 @@ The few places that need a type at runtime carry it explicitly:
 - Struct and union descriptors.
 - `capture_kinds` for closures.
 - `build_recipes` for interpolation.
-- The hidden kind argument given to natives with `dynamic` params (`echo`).
 
 ### 3.2 Heap objects
 
@@ -457,7 +456,6 @@ if (result.has_failed) {
 ```
 
 - `args` points directly into the caller's registers. A native that allocates can trigger a GC, which moves objects and updates those stack slots. So natives size their whole result, allocate once, and only then reread their arguments from `args`.
-- Natives with `dynamic` parameters get one extra hidden `int` argument per `dynamic` parameter, after the normal ones, holding its `ValueType`. Codegen loads it with `genArgKinds`. This is how `echo` knows how to print.
 - If a native returns a Zig error (a runtime error), its name is saved in `failed_builtin` for the error message.
 
 **Intrinsics** never run as calls. Codegen evaluates the arguments into `R[a+1 ..]` as usual, then emits the instruction for that intrinsic (`genIntrinsicCall`), for example `len` → `ARRAY_LEN`, `append` → `ARRAY_APPEND`, `copy` → `DEEP_COPY`, `to_float` → `LOAD` + `I_TO_F`. `==` and `!=` on strings are lowered by sema to the hidden prelude intrinsic `~strings_equal`, which becomes `STR_EQ` (`!=` adds a `B_NOT`).

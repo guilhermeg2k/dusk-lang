@@ -168,7 +168,8 @@ test "io: print and println write to stdout, eprint and eprintln to stderr" {
     try testing.expectEqualStrings("this goes to stderr\nso does this", stderr.written());
 }
 
-test "io: needs an import and only prints strings" {
+test "io: needs an import, only prints strings, and replaces echo" {
+    try runCaseError("sema/echo-removed.dsk", error.NotDefined);
     try runCaseError("sema/io-without-import.dsk", error.ModuleNotImported);
     try runCaseError("sema/io-print-not-string.dsk", error.InvalidType);
 }
