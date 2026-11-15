@@ -7,6 +7,7 @@ func net_error_name(e: net::NetError) -> string
         net::NetError.ConnectionRefused then "refused" end
         net::NetError.AddressInUse then "in use" end
         net::NetError.InvalidAddress then "invalid" end
+        net::NetError.HostNotFound then "not found" end
         else then "other" end
     end
 end
@@ -98,11 +99,11 @@ func main() -> !void
     end
     assert(refused == "refused")
 
-    let mut bad_host = ""
-    net::tcp_connect("not an address", 80) catch e then
-        bad_host = net_error_name(e)
+    let mut empty_host = ""
+    net::tcp_connect("", 80) catch e then
+        empty_host = net_error_name(e)
     end
-    assert(bad_host == "invalid")
+    assert(empty_host == "invalid")
 
     let mut bad_port = ""
     net::tcp_listen("127.0.0.1", 70000) catch e then

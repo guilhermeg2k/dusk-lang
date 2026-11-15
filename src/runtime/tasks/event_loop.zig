@@ -6,6 +6,7 @@ const v = @import("../value.zig");
 const FsJob = @import("fs_job.zig").FsJob;
 const Stream = @import("stream.zig").Stream;
 const Listener = @import("tcp.zig").Listener;
+const OpenRequest = @import("tcp.zig").OpenRequest;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
@@ -17,12 +18,14 @@ pub const EventLoop = struct {
     allocator: std.mem.Allocator,
     loop: ?*uv.Loop = null,
     pending_operations: usize = 0,
+    is_shutting_down: bool = false,
     callback_failure: ?anyerror = null,
     streams: std.ArrayList(?*Stream) = .empty,
     listeners: std.ArrayList(?*Listener) = .empty,
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
+        self.is_shutting_down = true;
         for (self.streams.items) |entry| {
             const stream = entry orelse continue;
             stream.releaseAtExit();
@@ -158,7 +161,7 @@ pub const EventLoop = struct {
         return self.streams.items[@intCast(handle)];
     }
 
-    fn ensureLoopStarted(self: *Self) !*uv.Loop {
+    pub fn ensureLoopStarted(self: *Self) !*uv.Loop {
         if (self.loop) |loop| return loop;
         const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_loop_size());
         const loop: *uv.Loop = @ptrCast(memory.ptr);
@@ -200,7 +203,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer, listener };
+    pub const Kind = enum { timer, stream, stream_timer, listener, listener_timer, open_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -232,6 +235,14 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         .listener => {
             const listener: *Listener = @alignCast(@fieldParentPtr("owner", owner));
             listener.markHandleClosed();
+        },
+        .listener_timer => {
+            const listener: *Listener = @alignCast(@fieldParentPtr("timer_owner", owner));
+            listener.markHandleClosed();
+        },
+        .open_timer => {
+            const request: *OpenRequest = @alignCast(@fieldParentPtr("owner", owner));
+            request.markTimerClosed();
         },
     }
 }

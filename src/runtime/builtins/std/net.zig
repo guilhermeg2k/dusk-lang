@@ -30,26 +30,30 @@ pub const bindings = native.BindingMap.initComptime(.{
 });
 
 fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const address = tcp.parseIpAddress(bytesArg(args, 0), args[1].int64) orelse return fail(NetError.InvalidAddress);
-    const current = vm.running_task.?;
-    const failure = tcp.connect(&vm.event_loop, &vm.scheduler, current, &address) catch return fail(NetError.Other);
-    if (failure) |net_error| {
-        return fail(net_error);
-    }
-    current.park();
-    return native.parked();
+    return openTcp(vm, args, .connect, timeoutArg(args[2].int64));
 }
 
 fn tcpListen(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const address = tcp.parseIpAddress(bytesArg(args, 0), args[1].int64) orelse return fail(NetError.InvalidAddress);
     const backlog: c_int = @intCast(std.math.clamp(args[2].int64, 1, std.math.maxInt(u16)));
-    const handle = vm.event_loop.openListener(&vm.scheduler) catch return fail(NetError.Other);
-    const listener = vm.event_loop.listenerAt(@intCast(handle)).?;
-    if (listener.bindAndListen(&address, backlog)) |failure| {
-        vm.event_loop.closeListener(@intCast(handle));
-        return fail(failure);
+    return openTcp(vm, args, .{ .listen = backlog }, null);
+}
+
+fn openTcp(vm: *VM, args: []v.Value, purpose: tcp.Purpose, timeout_ms: ?u64) anyerror!NativeResult {
+    const port = tcp.validPort(args[1].int64) orelse return fail(NetError.InvalidAddress);
+    const current = vm.running_task.?;
+    const progress = tcp.open(&vm.event_loop, &vm.scheduler, current, purpose, bytesArg(args, 0), port, timeout_ms) catch return fail(NetError.Other);
+    switch (progress) {
+        .opened => |handle| return ok(.{ .int64 = @intCast(handle) }),
+        .failed => |failure| return fail(failure),
+        .waiting => {
+            current.park();
+            return native.parked();
+        },
     }
-    return ok(.{ .int64 = @intCast(handle) });
+}
+
+fn timeoutArg(timeout_ms: i64) ?u64 {
+    return if (timeout_ms < 0) null else @intCast(timeout_ms);
 }
 
 fn listenerAccept(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -64,7 +68,7 @@ fn listenerAccept(vm: *VM, args: []v.Value) anyerror!NativeResult {
         };
     }
     const current = vm.running_task.?;
-    listener.parkAccepter(current);
+    listener.parkAccepter(current, timeoutArg(args[1].int64)) catch return fail(IoError.Other);
     current.park();
     return native.parked();
 }

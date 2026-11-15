@@ -263,6 +263,10 @@ test "net: tcp writes, echo, large and concurrent writes, broken pipe, io::copy"
     try runCase("net-tcp-write.dsk");
 }
 
+test "net: names in connect and listen, every address tried, connect and accept timeouts" {
+    try runCase("net-tcp-names.dsk");
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }

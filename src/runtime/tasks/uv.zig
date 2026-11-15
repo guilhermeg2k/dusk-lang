@@ -10,7 +10,7 @@ pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
 pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, file = 17, _ };
-pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7 };
+pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7, getaddrinfo = 8 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
 // ---- Structs mirrored from uv.h (layouts must match) ----
@@ -32,6 +32,8 @@ pub const DirEntries = extern struct {
     entries: [*]DirEntry,
     entry_count: usize,
 };
+
+pub const AddressInfo = @import("std").c.addrinfo;
 
 pub const SocketAddress = extern struct {
     bytes: [128]u8 align(8) = @splat(0),
@@ -78,6 +80,7 @@ pub const AllocCallback = *const fn (handle: *Handle, suggested_size: usize, buf
 pub const ReadCallback = *const fn (stream: *Handle, read_count: isize, buffer: *const Buffer) callconv(.c) void;
 pub const WriteCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
 pub const ConnectCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
+pub const LookupCallback = *const fn (request: *Request, status: c_int, result: ?*AddressInfo) callconv(.c) void;
 pub const ConnectionCallback = *const fn (server: *Handle, status: c_int) callconv(.c) void;
 
 // ---- Loop ----
@@ -123,6 +126,11 @@ pub extern fn uv_tcp_getsockname(tcp: *const Handle, address: *SocketAddress, le
 pub extern fn uv_listen(stream: *Handle, backlog: c_int, callback: ConnectionCallback) c_int;
 pub extern fn uv_accept(server: *Handle, client: *Handle) c_int;
 
+// ---- DNS ----
+
+pub extern fn uv_getaddrinfo(loop: *Loop, request: *Request, callback: LookupCallback, node: [*:0]const u8, service: ?[*:0]const u8, hints: ?*const AddressInfo) c_int;
+pub extern fn uv_freeaddrinfo(result: ?*AddressInfo) void;
+
 // ---- IP addresses ----
 
 pub extern fn uv_ip4_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
@@ -138,6 +146,7 @@ pub extern fn uv_hrtime() u64;
 pub extern fn uv_req_size(request_type: RequestType) usize;
 pub extern fn uv_req_get_data(request: *const Request) ?*anyopaque;
 pub extern fn uv_req_set_data(request: *Request, data: ?*anyopaque) void;
+pub extern fn uv_cancel(request: *Request) c_int;
 
 // ---- Errors ----
 

@@ -11,9 +11,9 @@ error NetError
     Other
 end
 
-extern func ~tcp_connect_handle(host: string, port: int) -> NetError!int
+extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> NetError!int
 extern func ~tcp_listen_handle(host: string, port: int, backlog: int) -> NetError!int
-extern func ~listener_accept(handle: int) -> io::IoError!int
+extern func ~listener_accept(handle: int, timeout_ms: int) -> io::IoError!int
 extern func ~listener_port(handle: int) -> int
 extern func ~listener_close(handle: int) -> void
 extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
@@ -27,8 +27,8 @@ extern func ~stream_close(handle: int) -> void
 struct TcpListener
     ~handle: int
 
-    func accept(self: @) -> io::IoError!TcpConn
-        return TcpConn(handle = try listener_accept(self.handle))
+    func accept(self: @, timeout_ms: int = -1) -> io::IoError!TcpConn
+        return TcpConn(handle = try listener_accept(self.handle, timeout_ms))
     end
 
     func port(self: @) -> int
@@ -75,8 +75,8 @@ struct TcpConn
     end
 end
 
-func tcp_connect(host: string, port: int) -> NetError!TcpConn
-    return TcpConn(handle = try tcp_connect_handle(host, port))
+func tcp_connect(host: string, port: int, timeout_ms: int = -1) -> NetError!TcpConn
+    return TcpConn(handle = try tcp_connect_handle(host, port, timeout_ms))
 end
 
 func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
