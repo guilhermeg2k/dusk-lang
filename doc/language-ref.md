@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.15 - Enjin**. Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.16 - Shigeo** (in development). Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -942,11 +942,24 @@ io::println("${scale(10, 3)}")   # 30
 
 ### Named arguments
 
-Arguments can be passed by name, in any order. A call uses either all named or all positional arguments.
+Arguments can be passed by name. A call with only named arguments can list them in any order:
 
 ```nim
 io::println("${scale(factor = 5, x = 1)}")   # 5
 ```
+
+A call can also start with positional arguments and continue with named ones. Positional arguments fill the parameters in order; once an argument is named, the ones after it must be named too, in any order. Parameters with a default value can be left out.
+
+```nim
+func delete(path: string, recursive: bool = false, force: bool = false) -> void
+
+delete("build", recursive = true)                 # force keeps its default
+delete("build", force = true, recursive = true)   # named ones in any order
+delete("build", true, force = true)               # positional ones first
+delete(force = true, path = "build")              # only named arguments
+```
+
+A positional argument after a named one is a `PositionalAfterNamed` error (`delete("build", recursive = true, true)`). A name that isn't a parameter is `UnknownArgumentName`, and a parameter given twice, by position and by name or by name twice, is `ArgumentGivenTwice`. Calls through a function value only take positional arguments (`NamedArgumentsOnValue`).
 
 ### Mutable parameters
 
@@ -1957,6 +1970,77 @@ Output is buffered. On a terminal, stdout shows at the end of each line. When st
 Printing never needs `try`. If the program reading the output stops early (`dusk app.dsk | head -1`), the program ends quietly, like other command-line tools; any other failure to write is a runtime error (`can't write to stdout: NoSpaceLeft`).
 
 Interpolation formats primitives, arrays and nullables as their values. It formats enums as their number, unions as `<union>`, maps as `<map>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as their raw values.
+
+### std/fs
+
+Reads and writes files and folders. Every call waits for the disk without blocking the program: it parks only the running task, and other tasks keep running meanwhile (see [Tasks](#13-tasks)). Paths are relative to the current directory. Functions that can fail return an error union with the module's error set `FsError`:
+
+| Variant | When |
+| :------ | :--- |
+| `NotFound` | The path, or a folder on the way to it, doesn't exist |
+| `PermissionDenied` | The program isn't allowed to read, write or list it |
+| `AlreadyExists` | `make_dir` on a path that already exists |
+| `IsDirectory` | A file operation on a folder |
+| `NotDirectory` | A folder operation on a file, or a file in the middle of a path |
+| `NotEmpty` | `delete` on a folder that has contents |
+| `InvalidUtf8` | `read_text` on a file that isn't valid UTF-8 text |
+| `Other` | Any other failure (a full disk, too many open files...) |
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `read_text(path)` | `FsError!string` | The whole file as text. |
+| `read_bytes(path)` | `FsError!buffer` | The whole file as bytes, for anything that isn't text. |
+| `write_text(path, text)` | `FsError!void` | Creates the file, or replaces its contents. |
+| `write_bytes(path, data)` | `FsError!void` | Same, from a `buffer`. |
+| `append_text(path, text)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
+| `read_dir(path)` | `FsError![]string` | The names of the entries in a folder (not `.` and `..`), in the order the system gives them. |
+| `exists(path)` | `bool` | Whether the path exists. Never fails: any problem gives `false`. |
+| `stat(path)` | `FsError!FileInfo` | Information about a file or folder (below). |
+| `make_dir(path, recursive = false)` | `FsError!void` | Creates a folder. With `recursive = true`, also creates missing parent folders, and a folder that already exists is fine. |
+| `delete(path, recursive = false)` | `FsError!void` | Deletes a file or an empty folder. With `recursive = true`, deletes a folder with everything inside. |
+| `rename(from, to)` | `FsError!void` | Renames or moves a file or folder. |
+
+```nim
+struct FileInfo
+    size: int           # bytes; 0 for a folder
+    is_dir: bool
+    is_file: bool
+    is_symlink: bool
+    modified_ms: int    # milliseconds since 1970-01-01 (UTC)
+    created_ms: ?int    # null when the file system doesn't record it
+    permissions: int    # the permission bits: 420 is rw-r--r--
+end
+```
+
+- `stat` follows symbolic links: `is_symlink` says the path itself is a link, and the other fields describe the file it points to (or the link itself, when what it points to is gone).
+- `delete(path, recursive = true)` never follows symbolic links: a link inside the folder is deleted, not what it points to.
+- `write_*` and `append_text` create new files with the permissions `rw-rw-rw-`, minus what the system's default mask removes (usually `rw-r--r--`).
+- Each call reads or writes the whole file at once. `read_bytes` returns a new `buffer`: changing it doesn't change the file until it's written back.
+
+```nim
+import std/io
+import std/fs
+
+func main() -> !void
+    try fs::make_dir("out/logs", recursive = true)
+    try fs::write_text("out/logs/today.txt", "started\n")
+    try fs::append_text("out/logs/today.txt", "done\n")
+    io::print(try fs::read_text("out/logs/today.txt"))   # started, done
+
+    let info = try fs::stat("out/logs/today.txt")
+    io::println("${info.size} bytes")                     # 13 bytes
+    try fs::delete("out", recursive = true)
+
+    let config = fs::read_text("config.json") catch e then
+        when e
+            fs::FsError.NotFound then io::println("no config, using defaults") end
+            else then io::eprintln("can't read config.json") end
+        end
+        return
+    end
+    io::println(config)
+end
+```
 
 ### Errors from builtins
 

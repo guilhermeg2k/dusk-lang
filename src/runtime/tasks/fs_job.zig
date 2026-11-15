@@ -1,10 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const uv = @import("uv.zig");
 const v = @import("../value.zig");
 const EventLoop = @import("event_loop.zig").EventLoop;
 const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
+const WakePayload = @import("scheduler.zig").WakePayload;
 
 const request_alignment = std.mem.Alignment.@"16";
 
@@ -14,16 +16,22 @@ const mode_regular_file = 0o100000;
 const mode_symlink = 0o120000;
 const mode_permission_mask = 0o777;
 const open_read_only = 0;
+const open_to_replace = writeOpenFlags(.{ .should_truncate = true });
+const open_to_append = writeOpenFlags(.{ .should_append = true });
+const new_file_mode = 0o666;
 const min_read_capacity = 4096;
+const new_dir_mode = 0o777;
+const dir_batch_size = 64;
 
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes };
+    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename };
 
     allocator: std.mem.Allocator,
     kind: Kind,
     path: [:0]u8,
+    input: [:0]u8,
     work_memory: []align(16) u8,
     fs_memory: []align(16) u8,
     event_loop: *EventLoop = undefined,
@@ -34,16 +42,19 @@ pub const FsJob = struct {
     is_found: bool = false,
     stat_numbers: ?[]i64 = null,
     contents: ?[]u8 = null,
+    names: ?[][]u8 = null,
 
-    pub fn create(allocator: std.mem.Allocator, kind: Kind, path: []const u8) !*Self {
+    pub fn create(allocator: std.mem.Allocator, kind: Kind, path: []const u8, input: []const u8) !*Self {
         const job = try allocator.create(Self);
         errdefer allocator.destroy(job);
         const path_copy = try allocator.dupeZ(u8, path);
         errdefer allocator.free(path_copy);
+        const input_copy = try allocator.dupeZ(u8, input);
+        errdefer allocator.free(input_copy);
         const work_memory = try allocator.alignedAlloc(u8, request_alignment, uv.uv_req_size(.work));
         errdefer allocator.free(work_memory);
         const fs_memory = try allocator.alignedAlloc(u8, request_alignment, uv.uv_req_size(.fs));
-        job.* = .{ .allocator = allocator, .kind = kind, .path = path_copy, .work_memory = work_memory, .fs_memory = fs_memory };
+        job.* = .{ .allocator = allocator, .kind = kind, .path = path_copy, .input = input_copy, .work_memory = work_memory, .fs_memory = fs_memory };
         return job;
     }
 
@@ -55,8 +66,12 @@ pub const FsJob = struct {
         if (self.contents) |contents| {
             allocator.free(contents);
         }
+        if (self.names) |names| {
+            WakePayload.free(.{ .names = names }, allocator);
+        }
         allocator.free(self.fs_memory);
         allocator.free(self.work_memory);
+        allocator.free(self.input);
         allocator.free(self.path);
         allocator.destroy(self);
     }
@@ -67,6 +82,14 @@ pub const FsJob = struct {
             .stat => self.statPath(),
             .read_text => self.readWholeFile(true),
             .read_bytes => self.readWholeFile(false),
+            .write => self.writeWholeFile(open_to_replace),
+            .append => self.writeWholeFile(open_to_append),
+            .read_dir => self.readDir(),
+            .make_dir => self.makeDir(),
+            .make_dir_recursive => self.makeDirWithParents(),
+            .delete => self.deletePath(),
+            .delete_recursive => _ = self.deleteTree(self.path, .unknown),
+            .rename => self.renamePath(),
         }
     }
 
@@ -158,6 +181,215 @@ pub const FsJob = struct {
         };
     }
 
+    fn writeWholeFile(self: *Self, open_flags: c_int) void {
+        const request = self.fsRequest();
+        const file = uv.uv_fs_open(self.loop, request, self.path.ptr, open_flags, new_file_mode, null);
+        uv.uv_fs_req_cleanup(request);
+        if (file < 0) {
+            self.failure = failureFromStatus(file);
+            return;
+        }
+        defer self.closeFile(file);
+
+        var written: usize = 0;
+        while (written < self.input.len) {
+            const remaining = self.input[written..];
+            const buffer = uv.Buffer{ .base = remaining.ptr, .len = @intCast(remaining.len) };
+            const status = uv.uv_fs_write(self.loop, request, file, @ptrCast(&buffer), 1, -1, null);
+            uv.uv_fs_req_cleanup(request);
+            if (status < 0) {
+                self.failure = failureFromStatus(status);
+                return;
+            }
+            written += @intCast(status);
+        }
+    }
+
+    fn readDir(self: *Self) void {
+        const entries = self.readDirEntries(self.path) orelse return;
+        defer self.allocator.free(entries);
+        const names = self.allocator.alloc([]u8, entries.len) catch {
+            for (entries) |entry| {
+                self.allocator.free(entry.name);
+            }
+            self.failure = .Other;
+            return;
+        };
+        for (entries, names) |entry, *name| {
+            name.* = entry.name;
+        }
+        self.names = names;
+    }
+
+    fn readDirEntries(self: *Self, path: [*:0]const u8) ?[]DirEntry {
+        const request = self.fsRequest();
+        const open_status = uv.uv_fs_opendir(self.loop, request, path, null);
+        if (open_status < 0) {
+            uv.uv_fs_req_cleanup(request);
+            self.failure = failureFromStatus(open_status);
+            return null;
+        }
+        const dir: *uv.DirEntries = @ptrCast(@alignCast(uv.uv_fs_get_ptr(request).?));
+        uv.uv_fs_req_cleanup(request);
+        defer self.closeDir(dir);
+
+        var batch: [dir_batch_size]uv.DirEntry = undefined;
+        dir.entries = &batch;
+        dir.entry_count = batch.len;
+        var entries: std.ArrayList(DirEntry) = .empty;
+        while (true) {
+            const count = uv.uv_fs_readdir(self.loop, request, dir, null);
+            if (count <= 0) {
+                uv.uv_fs_req_cleanup(request);
+                if (count == 0) break;
+                freeDirEntries(self.allocator, &entries);
+                self.failure = failureFromStatus(count);
+                return null;
+            }
+            for (batch[0..@intCast(count)]) |found| {
+                const name = self.allocator.dupe(u8, std.mem.span(found.name)) catch null;
+                const is_added = if (name) |copy| addDirEntry(self.allocator, &entries, copy, found.entry_type) else false;
+                if (!is_added) {
+                    uv.uv_fs_req_cleanup(request);
+                    freeDirEntries(self.allocator, &entries);
+                    self.failure = .Other;
+                    return null;
+                }
+            }
+            uv.uv_fs_req_cleanup(request);
+        }
+        return entries.toOwnedSlice(self.allocator) catch {
+            freeDirEntries(self.allocator, &entries);
+            self.failure = .Other;
+            return null;
+        };
+    }
+
+    fn closeDir(self: *Self, dir: *uv.DirEntries) void {
+        const request = self.fsRequest();
+        _ = uv.uv_fs_closedir(self.loop, request, dir, null);
+        uv.uv_fs_req_cleanup(request);
+    }
+
+    fn makeDir(self: *Self) void {
+        const status = self.createDir(self.path.ptr);
+        if (status < 0) {
+            self.failure = failureFromStatus(status);
+        }
+    }
+
+    fn makeDirWithParents(self: *Self) void {
+        const path = self.path;
+        for (path, 0..) |char, i| {
+            const ends_parent = std.fs.path.isSep(char) and i > 0 and !std.fs.path.isSep(path[i - 1]);
+            if (!ends_parent) continue;
+            path[i] = 0;
+            const is_ready = self.makeDirIfMissing(path.ptr);
+            path[i] = char;
+            if (!is_ready) return;
+        }
+        _ = self.makeDirIfMissing(path.ptr);
+    }
+
+    fn makeDirIfMissing(self: *Self, path: [*:0]const u8) bool {
+        const status = self.createDir(path);
+        if (status >= 0) return true;
+        if (self.isDirectory(path)) return true;
+        const failure = failureFromStatus(status);
+        self.failure = if (failure == .AlreadyExists) .NotDirectory else failure;
+        return false;
+    }
+
+    fn createDir(self: *Self, path: [*:0]const u8) c_int {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        return uv.uv_fs_mkdir(self.loop, request, path, new_dir_mode, null);
+    }
+
+    fn isDirectory(self: *Self, path: [*:0]const u8) bool {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        if (uv.uv_fs_stat(self.loop, request, path, null) < 0) return false;
+        return uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
+    }
+
+    fn deletePath(self: *Self) void {
+        const request = self.fsRequest();
+        const status = uv.uv_fs_lstat(self.loop, request, self.path.ptr, null);
+        const is_dir = status >= 0 and uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
+        uv.uv_fs_req_cleanup(request);
+        if (status < 0) {
+            self.failure = failureFromStatus(status);
+            return;
+        }
+        _ = if (is_dir) self.deleteEmptyDir(self.path.ptr) else self.deleteFile(self.path.ptr);
+    }
+
+    fn deleteTree(self: *Self, path: [*:0]const u8, entry_type: uv.DirEntryType) bool {
+        const is_dir = switch (entry_type) {
+            .dir => true,
+            .unknown => self.lstatIsDirectory(path) orelse return false,
+            else => false,
+        };
+        if (!is_dir) return self.deleteFile(path);
+
+        const entries = self.readDirEntries(path) orelse return false;
+        defer {
+            for (entries) |entry| {
+                self.allocator.free(entry.name);
+            }
+            self.allocator.free(entries);
+        }
+        for (entries) |entry| {
+            const child = std.fmt.allocPrintSentinel(self.allocator, "{s}/{s}", .{ std.mem.span(path), entry.name }, 0) catch {
+                self.failure = .Other;
+                return false;
+            };
+            defer self.allocator.free(child);
+            if (!self.deleteTree(child.ptr, entry.entry_type)) return false;
+        }
+        return self.deleteEmptyDir(path);
+    }
+
+    fn lstatIsDirectory(self: *Self, path: [*:0]const u8) ?bool {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        const status = uv.uv_fs_lstat(self.loop, request, path, null);
+        if (status < 0) {
+            self.failure = failureFromStatus(status);
+            return null;
+        }
+        return uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
+    }
+
+    fn deleteEmptyDir(self: *Self, path: [*:0]const u8) bool {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        const status = uv.uv_fs_rmdir(self.loop, request, path, null);
+        if (status >= 0) return true;
+        const failure = failureFromStatus(status);
+        self.failure = if (failure == .AlreadyExists) .NotEmpty else failure;
+        return false;
+    }
+
+    fn deleteFile(self: *Self, path: [*:0]const u8) bool {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        const status = uv.uv_fs_unlink(self.loop, request, path, null);
+        if (status >= 0) return true;
+        self.failure = failureFromStatus(status);
+        return false;
+    }
+
+    fn renamePath(self: *Self) void {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        const status = uv.uv_fs_rename(self.loop, request, self.path.ptr, self.input.ptr, null);
+        if (status < 0) {
+            self.failure = failureFromStatus(status);
+        }
+    }
+
     fn fileSizeHint(self: *Self, file: c_int) usize {
         const request = self.fsRequest();
         defer uv.uv_fs_req_cleanup(request);
@@ -187,6 +419,12 @@ pub const FsJob = struct {
         }
         return switch (self.kind) {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
+            .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
+            .read_dir => result: {
+                const names = self.names.?;
+                self.names = null;
+                break :result .{ .value = v.NULL_VALUE, .kind = .array, .payload = .{ .names = names } };
+            },
             .stat => result: {
                 const numbers = self.stat_numbers.?;
                 self.stat_numbers = null;
@@ -216,6 +454,44 @@ pub const FsError = enum {
     InvalidUtf8,
     Other,
 };
+
+const DirEntry = struct {
+    name: []u8,
+    entry_type: uv.DirEntryType,
+};
+
+fn addDirEntry(allocator: std.mem.Allocator, entries: *std.ArrayList(DirEntry), name: []u8, entry_type: uv.DirEntryType) bool {
+    entries.append(allocator, .{ .name = name, .entry_type = entry_type }) catch {
+        allocator.free(name);
+        return false;
+    };
+    return true;
+}
+
+fn freeDirEntries(allocator: std.mem.Allocator, entries: *std.ArrayList(DirEntry)) void {
+    for (entries.items) |entry| {
+        allocator.free(entry.name);
+    }
+    entries.deinit(allocator);
+}
+
+const WriteMode = struct {
+    should_truncate: bool = false,
+    should_append: bool = false,
+};
+
+fn writeOpenFlags(comptime mode: WriteMode) c_int {
+    if (builtin.os.tag == .windows) {
+        const write_only = 0x0001;
+        const append = 0x0008;
+        const create = 0x0100;
+        const truncate = 0x0200;
+        return write_only | create | (if (mode.should_truncate) truncate else 0) | (if (mode.should_append) append else 0);
+    } else {
+        const flags: std.posix.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = mode.should_truncate, .APPEND = mode.should_append };
+        return @bitCast(@as(u32, @bitCast(flags)));
+    }
+}
 
 fn millisecondsOf(time: uv.Timespec) i64 {
     return @as(i64, time.tv_sec) * 1000 + @divTrunc(@as(i64, time.tv_nsec), 1_000_000);

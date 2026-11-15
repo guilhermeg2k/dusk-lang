@@ -218,6 +218,120 @@ test "fs: read_text reads big files and files that report size 0" {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "fs: write_text, write_bytes and append_text, checked on disk" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(testing.io, "folder", .default_dir);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/io
+        \\import std/fs
+        \\import std/buffer
+        \\func main() -> !void
+        \\    try fs::write_text("DIR/text.txt", "a longer first version\n")
+        \\    try fs::write_text("DIR/text.txt", "olá 🌙\n")
+        \\    try fs::append_text("DIR/text.txt", "more\n")
+        \\    try fs::append_text("DIR/created.txt", "new\n")
+        \\    try fs::write_text("DIR/empty.txt", "")
+        \\    let mut data = try buffer::new(256)
+        \\    let mut i = 0
+        \\    for i < 256 do
+        \\        data[i] = try to_byte(i)
+        \\        i = i + 1
+        \\    end
+        \\    try fs::write_bytes("DIR/all.bin", data)
+        \\    fs::write_text("DIR/missing/x.txt", "x") catch e then
+        \\        io::println("${e == fs::FsError.NotFound}")
+        \\    end
+        \\    fs::append_text("DIR/folder", "x") catch e then
+        \\        io::println("${e == fs::FsError.IsDirectory}")
+        \\    end
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("true\ntrue\n", output.written());
+
+    try testing.expectEqualStrings("olá 🌙\nmore\n", try tmp.dir.readFileAlloc(testing.io, "text.txt", allocator, .unlimited));
+    try testing.expectEqualStrings("new\n", try tmp.dir.readFileAlloc(testing.io, "created.txt", allocator, .unlimited));
+    try testing.expectEqualStrings("", try tmp.dir.readFileAlloc(testing.io, "empty.txt", allocator, .unlimited));
+    const all = try tmp.dir.readFileAlloc(testing.io, "all.bin", allocator, .unlimited);
+    try testing.expectEqual(@as(usize, 256), all.len);
+    for (all, 0..) |byte, i| {
+        try testing.expectEqual(@as(u8, @intCast(i)), byte);
+    }
+}
+
+test "fs: read_dir, make_dir, remove and rename, checked on disk" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "outside");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "outside/keep.txt", .data = "keep" });
+    try tmp.dir.createDirPath(testing.io, "tree/inner/deeper");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/top.txt", .data = "1" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/inner/deeper/leaf.txt", .data = "2" });
+    try tmp.dir.symLink(testing.io, "../outside", "tree/inner/link-to-outside", .{});
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/io
+        \\import std/fs
+        \\import std/array: len, contains
+        \\func name(e: fs::FsError) -> string
+        \\    return when e
+        \\        fs::FsError.NotFound then "NotFound" end
+        \\        fs::FsError.AlreadyExists then "AlreadyExists" end
+        \\        fs::FsError.NotDirectory then "NotDirectory" end
+        \\        fs::FsError.NotEmpty then "NotEmpty" end
+        \\        else then "other" end
+        \\    end
+        \\end
+        \\func main() -> !void
+        \\    let names = try fs::read_dir("DIR/tree")
+        \\    io::println("${len(names)} ${contains(names, "top.txt")} ${contains(names, "inner")}")
+        \\    fs::read_dir("DIR/missing") catch e then io::println(name(e)) end
+        \\    fs::read_dir("DIR/tree/top.txt") catch e then io::println(name(e)) end
+        \\    fs::make_dir("DIR/new/deep") catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/new")
+        \\    fs::make_dir("DIR/new") catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/made/a/b/", recursive = true)
+        \\    try fs::make_dir("DIR/made/a/b", recursive = true)
+        \\    fs::make_dir("DIR/tree/top.txt/x", recursive = true) catch e then io::println(name(e)) end
+        \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
+        \\    try fs::delete("DIR/new")
+        \\    try fs::rename("DIR/tree/top.txt", "DIR/moved.txt")
+        \\    try fs::rename("DIR/made", "DIR/made-renamed")
+        \\    try fs::delete("DIR/moved.txt")
+        \\    try fs::delete("DIR/tree", recursive = true)
+        \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("2 true true\nNotFound\nNotDirectory\nNotFound\nAlreadyExists\nNotDirectory\nNotEmpty\nNotFound\n", output.written());
+
+    try testing.expectEqualStrings("keep", try tmp.dir.readFileAlloc(testing.io, "outside/keep.txt", allocator, .unlimited));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "tree", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "new", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "moved.txt", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "made", .{}));
+    const made = try tmp.dir.statFile(testing.io, "made-renamed/a/b", .{});
+    try testing.expectEqual(std.Io.File.Kind.directory, made.kind);
+}
+
 test "fs: stat follows symlinks and reports permissions and times like the OS" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
@@ -250,6 +364,15 @@ test "fs: stat follows symlinks and reports permissions and times like the OS" {
     const permissions = file_stat.permissions.toMode() & 0o777;
     const expected = try std.fmt.allocPrint(allocator, "5 true false true {d} {d}\nfalse false true\n", .{ permissions, file_stat.mtime.toMilliseconds() });
     try testing.expectEqualStrings(expected, output.written());
+}
+
+test "calls take positional arguments first, then named ones in any order" {
+    try runCase("call-arguments-mixed.dsk");
+    try runCaseError("sema/call-args-positional-after-named.dsk", error.PositionalAfterNamed);
+    try runCaseError("sema/call-args-given-twice.dsk", error.ArgumentGivenTwice);
+    try runCaseError("sema/call-args-unknown-name.dsk", error.UnknownArgumentName);
+    try runCaseError("sema/call-args-named-unknown.dsk", error.UnknownArgumentName);
+    try runCaseError("sema/call-args-named-twice.dsk", error.ArgumentGivenTwice);
 }
 
 test "string interpolation" {
@@ -1459,7 +1582,6 @@ test "syntax error: anonymous struct missing end" {
 }
 
 test "syntax error: fn args mixed named positional" {
-    try runCaseError("parser/fn-args-mixed-named.dsk", error.ParserError);
 }
 
 test "syntax error: fn args non identifier name" {

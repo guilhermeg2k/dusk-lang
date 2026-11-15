@@ -208,6 +208,21 @@ pub const CompileErrorReporter = struct {
         return error.MissingArgument;
     }
 
+    pub fn unknownArgumentName(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "No parameter named '{s}'", .{name}), loc);
+        return error.UnknownArgumentName;
+    }
+
+    pub fn positionalAfterNamed(self: *Self, loc: Loc) CompileError {
+        self.log("Positional argument after a named one: once a call names an argument, the ones after it must be named too", loc);
+        return error.PositionalAfterNamed;
+    }
+
+    pub fn argumentGivenTwice(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is given twice", .{name}), loc);
+        return error.ArgumentGivenTwice;
+    }
+
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
         return error.AlreadyDefined;
@@ -1162,6 +1177,9 @@ pub const CompileError = error{
     LambdaCallsItself,
     FieldAndMethodSameName,
     NamedArgumentsOnValue,
+    UnknownArgumentName,
+    PositionalAfterNamed,
+    ArgumentGivenTwice,
     CantInferSlot,
     ConflictingSlotTypes,
     InvalidSlotType,

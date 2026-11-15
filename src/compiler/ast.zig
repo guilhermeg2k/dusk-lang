@@ -361,6 +361,24 @@ pub const FnCallArg = struct {
     exp: *ExpNode,
 };
 
+pub fn areAllArgumentsNamed(arguments: []const FnCallArg) bool {
+    for (arguments) |argument| {
+        if (argument.identifier == null) {
+            return false;
+        }
+    }
+    return arguments.len > 0;
+}
+
+pub fn hasNamedArgument(arguments: []const FnCallArg) bool {
+    for (arguments) |argument| {
+        if (argument.identifier != null) {
+            return true;
+        }
+    }
+    return false;
+}
+
 pub const ReturnStmt = struct {
     exp: ?*ExpNode,
 };

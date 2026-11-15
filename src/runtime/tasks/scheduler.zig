@@ -180,12 +180,19 @@ pub const WakePayload = union(enum) {
     none,
     ints: []i64,
     bytes: []u8,
+    names: [][]u8,
 
     pub fn free(self: WakePayload, allocator: std.mem.Allocator) void {
         switch (self) {
             .none => {},
             .ints => |ints| allocator.free(ints),
             .bytes => |bytes| allocator.free(bytes),
+            .names => |names| {
+                for (names) |name| {
+                    allocator.free(name);
+                }
+                allocator.free(names);
+            },
         }
     }
 };
