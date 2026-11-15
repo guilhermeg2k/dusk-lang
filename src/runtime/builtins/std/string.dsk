@@ -11,7 +11,9 @@ extern func concat(a: string, b: string) -> string
 extern func join(parts: []string, sep: string = "") -> string
 extern func to_int(text: string) -> ConversionError!int
 extern func to_float(text: string) -> ConversionError!float
-extern func find(text: string, needle: string) -> ?int
+extern func find(text: string, needle: string, start: int = 0) -> ?int
+extern func find_last(text: string, needle: string) -> ?int
+extern func compare(a: string, b: string) -> int
 extern func contains(text: string, needle: string) -> bool
 extern func starts_with(text: string, prefix: string) -> bool
 extern func ends_with(text: string, suffix: string) -> bool
@@ -19,6 +21,8 @@ extern func count(text: string, needle: string) -> int
 extern func byte_at(text: string, index: int) -> StringError!byte
 extern func char_at(text: string, index: int) -> StringError!string
 extern func trim(text: string) -> string
+extern func trim_start(text: string) -> string
+extern func trim_end(text: string) -> string
 extern func split(text: string, separator: string, limit: int = -1) -> []string
 extern func replace(text: string, old: string, new: string) -> string
 extern func upper(text: string) -> string

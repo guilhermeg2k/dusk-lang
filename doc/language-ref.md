@@ -1854,7 +1854,7 @@ end
 
 String functions never change their argument: a function that produces text returns a new string. They work with pipes: `line |> string::trim()`. The module declares the error set `StringError` (`OutOfRange`, `NegativeCount`, `InvalidUtf8`). Strings compare with `==` (see [Comparison and logic](#comparison-and-logic)).
 
-Positions are **byte offsets**, the same unit as `string::len(s)` and `string::byte_at`, so a position from `string::find` can be passed straight to `string::slice`. `char_count` and `char_at` are the only functions that count characters.
+Positions are **byte offsets**, the same unit as `string::len(s)` and `string::byte_at`, so a position from `string::find` can be passed straight to `string::slice`. `char_count` and `char_at` are the only functions that count characters. The `start` argument of `find` is inclusive; a byte offset inside a multi-byte character searches forward from that byte. `find_last` returns the start of the last match, so its result can be passed to `slice` too.
 
 | Function                    | Returns                 | Description                                                                                                                                                       |
 | :-------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1864,12 +1864,16 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 | `join(parts, sep = "")`     | `string`                | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array.                                                                       |
 | `byte_at(text, index)`      | `StringError!byte`      | The byte at byte offset `index`.                                                                                                                                  |
 | `char_at(text, index)`      | `StringError!string`    | The `index`-th character, as a one-character string (`string::char_at("olá", 2)` is `"á"`). Scans from the start.                                                 |
-| `find(text, needle)`        | `?int`                  | Byte offset of the first match, `null` if there is none or `needle` is empty.                                                                                     |
+| `find(text, needle, start = 0)` | `?int` | Byte offset of the first match at or after `start`, or `null` for no match, an empty needle, or a start outside the string. Negative starts return `null`. |
+| `find_last(text, needle)` | `?int` | Byte offset of the last match, including overlapping matches, or `null` for no match or an empty needle. |
+| `compare(a, b)` | `int` | Lexicographic UTF-8 byte ordering: exactly `-1` if `a` comes before `b`, `0` if equal, or `1` if it comes after. Case-sensitive, matching `array::sort` on strings. |
 | `contains(text, needle)`    | `bool`                  | Whether `needle` appears in `text`; `false` for an empty `needle`.                                                                                                |
 | `starts_with(text, prefix)` | `bool`                  | Whether `text` starts with `prefix`; `false` for an empty `prefix`.                                                                                               |
 | `ends_with(text, suffix)`   | `bool`                  | Whether `text` ends with `suffix`; `false` for an empty `suffix`.                                                                                                 |
 | `count(text, needle)`       | `int`                   | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`.                                                                             |
 | `trim(text)`                | `string`                | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends.                                                                               |
+| `trim_start(text)` | `string` | Removes the same whitespace as `trim`, from the start only. |
+| `trim_end(text)` | `string` | Removes the same whitespace as `trim`, from the end only. |
 | `upper(text)` / `lower(text)` | `string`              | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged.                                                              |
 | `split(text, separator, limit = -1)`    | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. A positive `limit` caps the number of parts, preserving the remainder in the last part: `split("a=b=c", "=", 2)` gives `["a", "b=c"]`. A negative limit means unlimited; `0` returns an empty array. |
 | `replace(text, old, new)`   | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
@@ -1878,6 +1882,8 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 | `to_int(text)`              | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `to_float(text)`            | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 | `from_bytes(data)`          | `StringError!string`    | Copies a buffer into a new string; fails with `StringError.InvalidUtf8` if it isn't valid UTF-8.                                                                  |
+
+Use `string::compare` for string fields in custom sorting: `array::sort_by(players, func(a, b) -> return string::compare(a.name, b.name) < 0)`. It compares bytes without case folding or locale rules.
 
 `to_int` and `to_float` share their names with the prelude's conversions, so `import std/string: to_int` is an `AlreadyDefined` error: call them as `string::to_int`, or rename them (`import std/string: to_int as parse_int`).
 

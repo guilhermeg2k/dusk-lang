@@ -613,6 +613,15 @@ test "string indexing and loops" {
     try runCaseError("sema/str-byte-at-unhandled.dsk", error.UnhandledError);
 }
 
+test "string core additions" {
+    try runCase("string-core-additions.dsk");
+    try runCaseError("sema/string-find-start-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-find-last-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-compare-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-trim-start-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-trim-end-type.dsk", error.InvalidType);
+}
+
 test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
 }
