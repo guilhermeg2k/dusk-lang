@@ -5,6 +5,7 @@
 
 #include "mbedtls/pk.h"
 #include "mbedtls/ssl.h"
+#include "mbedtls/ssl_ticket.h"
 #include "mbedtls/x509_crt.h"
 #include "psa/crypto.h"
 
@@ -19,6 +20,8 @@
 #define DUSK_TLS_END -7
 
 #define DUSK_TLS_FIRST_QUEUE_CAPACITY 4096
+#define DUSK_TLS_MAX_IDLE_RETRIES 8
+#define DUSK_TLS_TICKET_LIFETIME_SECONDS 86400
 
 typedef struct {
     unsigned char *bytes;
@@ -35,6 +38,7 @@ typedef struct {
 typedef struct {
     mbedtls_ssl_config ssl;
     mbedtls_x509_crt ca;
+    mbedtls_ssl_ticket_context ticket;
 } DuskTlsConfig;
 
 typedef struct {
@@ -155,6 +159,7 @@ DuskTlsCertificate *dusk_tls_certificate_new(const unsigned char *cert_pem, size
 void dusk_tls_config_free(DuskTlsConfig *config) {
     mbedtls_ssl_config_free(&config->ssl);
     mbedtls_x509_crt_free(&config->ca);
+    mbedtls_ssl_ticket_free(&config->ticket);
     free(config);
 }
 
@@ -165,6 +170,7 @@ static DuskTlsConfig *new_config(int endpoint) {
     }
     mbedtls_ssl_config_init(&config->ssl);
     mbedtls_x509_crt_init(&config->ca);
+    mbedtls_ssl_ticket_init(&config->ticket);
     if (mbedtls_ssl_config_defaults(&config->ssl, endpoint, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
         dusk_tls_config_free(config);
         return NULL;
@@ -192,6 +198,11 @@ DuskTlsConfig *dusk_tls_server_config_new(DuskTlsCertificate *certificate) {
         dusk_tls_config_free(config);
         return NULL;
     }
+    if (mbedtls_ssl_ticket_setup(&config->ticket, PSA_ALG_GCM, PSA_KEY_TYPE_AES, 256, DUSK_TLS_TICKET_LIFETIME_SECONDS) != 0) {
+        dusk_tls_config_free(config);
+        return NULL;
+    }
+    mbedtls_ssl_conf_session_tickets_cb(&config->ssl, mbedtls_ssl_ticket_write, mbedtls_ssl_ticket_parse, &config->ticket);
     return config;
 }
 
@@ -269,6 +280,26 @@ void dusk_tls_consume_output(DuskTlsSession *session, size_t count) {
     byte_queue_consume(&session->output, count);
 }
 
+static int is_waiting(int status) {
+    return status == MBEDTLS_ERR_SSL_WANT_READ || status == MBEDTLS_ERR_SSL_WANT_WRITE;
+}
+
+static int has_unread_input(DuskTlsSession *session) {
+    return byte_queue_available(&session->input) > 0 || mbedtls_ssl_check_pending(&session->ssl);
+}
+
+static int should_retry(DuskTlsSession *session, int status, size_t input_before, int *idle_retries) {
+    if (!is_waiting(status) || !has_unread_input(session)) {
+        return 0;
+    }
+    if (byte_queue_available(&session->input) != input_before) {
+        *idle_retries = 0;
+        return 1;
+    }
+    *idle_retries += 1;
+    return *idle_retries <= DUSK_TLS_MAX_IDLE_RETRIES;
+}
+
 static int verify_failure(const DuskTlsSession *session) {
     uint32_t flags = mbedtls_ssl_get_verify_result(&session->ssl);
     if (flags & MBEDTLS_X509_BADCERT_EXPIRED) {
@@ -281,11 +312,17 @@ static int verify_failure(const DuskTlsSession *session) {
 }
 
 int dusk_tls_handshake(DuskTlsSession *session) {
-    int status = mbedtls_ssl_handshake(&session->ssl);
+    int idle_retries = 0;
+    int status;
+    size_t input_before;
+    do {
+        input_before = byte_queue_available(&session->input);
+        status = mbedtls_ssl_handshake(&session->ssl);
+    } while (should_retry(session, status, input_before, &idle_retries));
     if (status == 0) {
         return DUSK_TLS_DONE;
     }
-    if (status == MBEDTLS_ERR_SSL_WANT_READ || status == MBEDTLS_ERR_SSL_WANT_WRITE) {
+    if (is_waiting(status)) {
         return DUSK_TLS_WANT_MORE;
     }
     if (status == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
@@ -295,7 +332,9 @@ int dusk_tls_handshake(DuskTlsSession *session) {
 }
 
 ptrdiff_t dusk_tls_read(DuskTlsSession *session, unsigned char *buffer, size_t capacity) {
+    int idle_retries = 0;
     for (;;) {
+        size_t input_before = byte_queue_available(&session->input);
         int status = mbedtls_ssl_read(&session->ssl, buffer, capacity);
         if (status > 0) {
             return status;
@@ -303,7 +342,10 @@ ptrdiff_t dusk_tls_read(DuskTlsSession *session, unsigned char *buffer, size_t c
         if (status == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET) {
             continue;
         }
-        if (status == MBEDTLS_ERR_SSL_WANT_READ || status == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        if (should_retry(session, status, input_before, &idle_retries)) {
+            continue;
+        }
+        if (is_waiting(status)) {
             return 0;
         }
         if (status == 0 || status == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
