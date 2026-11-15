@@ -421,7 +421,7 @@ pub const BytecodeGen = struct {
 
             .func_ref => |func_ref| {
                 var load = bc.Instruction{ .op = .LOAD_FUNC, .a = target_reg };
-                load.putBEx(self.fn_index_by_uid.get(func_ref.fn_uid) orelse unreachable);
+                load.putBEx(self.fn_index_by_uid.get(func_ref.fn_uid) orelse @panic("genValue: function value has no index"));
                 try self.chunk_instructions.append(self.allocator, load);
                 self.register_types[target_reg] = value.type_id;
             },
@@ -682,7 +682,7 @@ pub const BytecodeGen = struct {
                 try self.genUnionLoad(target_reg, union_reg, idx.target.type_id, field_name);
                 self.register_types[target_reg] = value.type_id;
             },
-            else => unreachable,
+            else => @panic("genIndexedLoad: type can't be indexed"),
         }
     }
 
@@ -709,8 +709,8 @@ pub const BytecodeGen = struct {
         switch (target_type.kind) {
             .@"struct" => |@"struct"| {
                 const member_name = idx.index.data.i_string;
-                const field_index = @"struct".field_index_by_name.get(member_name) orelse unreachable;
-                const field_type_id = (@"struct".fields.get(member_name) orelse unreachable).type_id;
+                const field_index = @"struct".field_index_by_name.get(member_name) orelse @panic("genNullableIndexedLoad: unknown struct field");
+                const field_type_id = (@"struct".fields.get(member_name) orelse @panic("genNullableIndexedLoad: unknown struct field")).type_id;
                 const field_kind = valueTypeFromTypeId(self.type_table, field_type_id);
 
                 if (field_kind.isHeapType()) {
@@ -740,7 +740,7 @@ pub const BytecodeGen = struct {
             .map => try self.genMapLoad(target_reg, obj_reg, idx.index),
 
             .@"union" => try self.genUnionLoad(target_reg, obj_reg, idx.target.type_id, idx.index.data.i_string),
-            else => unreachable,
+            else => @panic("genNullableIndexedLoad: type can't be indexed"),
         }
 
         self.chunk_instructions.items[jump_idx].putBEx(try self.currentPosition());
@@ -925,7 +925,7 @@ pub const BytecodeGen = struct {
         var bitmap: u256 = 0;
 
         for (struct_data.keys, 0..) |key, i| {
-            const field = struct_def.fields.get(key) orelse unreachable;
+            const field = struct_def.fields.get(key) orelse @panic("getOrCreateStructDescriptor: unknown struct field");
             const vt = valueTypeFromTypeId(self.type_table, field.type_id);
             if (vt.isHeapType()) {
                 bitmap |= @as(u256, 1) << @intCast(i);
@@ -1166,7 +1166,7 @@ pub const BytecodeGen = struct {
             .a = target_reg,
         };
 
-        fn_call.putBEx(self.fn_index_by_uid.get(fc.fn_uid) orelse unreachable);
+        fn_call.putBEx(self.fn_index_by_uid.get(fc.fn_uid) orelse @panic("genFnCall: function has no index"));
 
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
@@ -1262,7 +1262,7 @@ pub const BytecodeGen = struct {
             _ = try self.genValue(source, try self.consumeRegister());
         }
         var make = bc.Instruction{ .op = .MAKE_CLOSURE, .a = target_reg };
-        make.putBEx(self.fn_index_by_uid.get(closure.fn_uid) orelse unreachable);
+        make.putBEx(self.fn_index_by_uid.get(closure.fn_uid) orelse @panic("genMakeClosure: lambda has no index"));
         try self.chunk_instructions.append(self.allocator, make);
         try self.recordHeapMap();
 
@@ -1313,7 +1313,7 @@ pub const BytecodeGen = struct {
         switch (call.data) {
             .fn_call => |fc| try self.genFnCall(fc, call, target_reg),
             .call_value => |cv| try self.genCallValue(cv, call, target_reg),
-            else => unreachable,
+            else => @panic("genCall: value isn't a call"),
         }
     }
 
@@ -1623,7 +1623,7 @@ pub const BytecodeGen = struct {
     }
 
     fn popLoopCtx(self: *Self) !void {
-        const ctx = self.loop_stack.pop() orelse unreachable;
+        const ctx = self.loop_stack.pop() orelse @panic("popLoopCtx: no loop to pop");
         const loop_end = try self.currentPosition();
         for (self.break_patches.items[ctx.first_break_patch_index..]) |patch_index| {
             self.chunk_instructions.items[patch_index].putAEx(loop_end);
@@ -1725,7 +1725,7 @@ pub const BytecodeGen = struct {
                 try self.genMapSet(map_reg, indexed.index, stmt.value);
                 self.freeRegister();
             },
-            else => unreachable,
+            else => @panic("genUpdateArrayValue: type can't be indexed"),
         }
     }
 
@@ -1852,12 +1852,7 @@ const TypedValueHashContext = struct {
             .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
             .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
             .null => {},
-            .string, .buffer => unreachable,
-            .array => unreachable,
-            .nullable => unreachable,
-            .@"struct" => unreachable,
-            .@"union" => unreachable,
-            .function, .cell, .task, .map => unreachable,
+            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map => @panic("TypedValueHashContext.hash: constants are only primitives"),
         }
         return hasher.final();
     }
@@ -1869,12 +1864,7 @@ const TypedValueHashContext = struct {
             .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
             .bool => a.value.bool == b.value.bool,
             .null => true,
-            .nullable => unreachable,
-            .string, .buffer => unreachable,
-            .array => unreachable,
-            .@"struct" => unreachable,
-            .@"union" => unreachable,
-            .function, .cell, .task, .map => unreachable,
+            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map => @panic("TypedValueHashContext.eql: constants are only primitives"),
         };
     }
 };
@@ -1908,10 +1898,7 @@ fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueTyp
         //note: void -> null
         .void => .null,
         .null => .null,
-        else => {
-            std.debug.print("{}", .{ty});
-            unreachable;
-        },
+        else => std.debug.panic("valueTypeFromTypeId: no value type for {}", .{ty}),
     };
 }
 
@@ -1920,10 +1907,10 @@ fn typedValueFromIr(ir_value: *const ir.Value) TypedValue {
         .i_int => |i| TypedValue{ .value = .{ .int64 = i }, .type = .int64 },
         .i_float => |f| TypedValue{ .value = .{ .float64 = f }, .type = .float64 },
         .i_bool => |b| TypedValue{ .value = .{ .bool = b }, .type = .bool },
-        .i_string => unreachable,
+        .i_string => @panic("typedValueFromIr: strings go to the string pool"),
         .i_null, .i_void => TypedValue{ .value = v.NULL_VALUE, .type = .null },
         .i_array => TypedValue{ .value = undefined, .type = .array },
-        else => unreachable,
+        else => @panic("typedValueFromIr: value isn't a constant"),
     };
 }
 

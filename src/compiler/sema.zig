@@ -1981,7 +1981,7 @@ pub const SemaAnalyzer = struct {
 
     fn checkGenericType(self: *Self, index: usize) CompileError!void {
         const generic = self.generic_types.items[index];
-        const opaque_copy = generic.opaque_copy orelse unreachable;
+        const opaque_copy = generic.opaque_copy orelse @panic("checkGenericType: generic type has no opaque copy");
         const was_checking_opaque = self.is_checking_opaque;
         self.is_checking_opaque = true;
         defer self.is_checking_opaque = was_checking_opaque;
@@ -3142,7 +3142,7 @@ pub const SemaAnalyzer = struct {
         for (union_def.variants_in_order, 0..) |name, i| {
             if (std.mem.eql(u8, name, variant_name)) return i;
         }
-        unreachable;
+        @panic("unionTagIndex: unknown union variant");
     }
 
     fn evalWhenErrorCaseValue(self: *Self, exp: *const ast.ExpNode, expected_type: tt.TypeId) CompileError!*ir.Value {
@@ -3416,7 +3416,7 @@ pub const SemaAnalyzer = struct {
                 if (union_def.variants.contains(member_name)) return self.err_reporter.notMutable(member_name, member_loc);
                 return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, member_loc);
             },
-            else => unreachable,
+            else => @panic("assignedFieldType: static target isn't a struct, enum or union"),
         };
         if (!field.is_mut) return self.err_reporter.notMutable(field.identifier, member_loc);
         return field.type_id;
@@ -3898,7 +3898,7 @@ pub const SemaAnalyzer = struct {
             },
             .if_capture_exp => try self.lowerIfCapture(exp, &result),
             .when_exp => try self.lowerWhen(exp, &result),
-            else => unreachable,
+            else => @panic("evalConditionalWithContext: expression isn't a conditional"),
         };
         return self.finishBranchResult(&result, instructions);
     }
@@ -4519,7 +4519,7 @@ pub const SemaAnalyzer = struct {
                                     exp.loc,
                                 );
                             },
-                            else => unreachable,
+                            else => @panic("evalFnCall: called type isn't a struct, enum or union"),
                         }
                     },
                     .constant => return self.err_reporter.invalidType(
@@ -4538,7 +4538,7 @@ pub const SemaAnalyzer = struct {
                                 is_struct_init = true;
                             },
                             .@"union" => return self.evalUnionInit(exp, fn_call.arguments, blueprint_type_id),
-                            else => unreachable,
+                            else => @panic("evalFnCall: called generic type isn't a struct or union"),
                         }
                     },
                     .generic_function => |index| {
@@ -4641,7 +4641,7 @@ pub const SemaAnalyzer = struct {
             for (fn_call.arguments) |arg| {
                 if (arg.identifier) |identifier| {
                     try arg_exp_by_param_name.put(identifier, arg.exp);
-                } else unreachable;
+                } else @panic("evalFnCall: named call has an unnamed argument");
             }
         }
 
@@ -4973,7 +4973,7 @@ pub const SemaAnalyzer = struct {
                             .type_id = result_type,
                         });
                     },
-                    else => unreachable,
+                    else => @panic("indexInto: struct member isn't a name"),
                 };
             },
 
@@ -4996,7 +4996,7 @@ pub const SemaAnalyzer = struct {
 
                         return self.err_reporter.invalidEnumVariant(enum_def.identifier, member_name, exp.loc);
                     },
-                    else => unreachable,
+                    else => @panic("indexInto: enum member isn't a name"),
                 };
             },
 
@@ -5030,7 +5030,7 @@ pub const SemaAnalyzer = struct {
                             .type_id = result_type,
                         });
                     },
-                    else => unreachable,
+                    else => @panic("indexInto: union member isn't a name"),
                 };
             },
 
@@ -5058,7 +5058,7 @@ pub const SemaAnalyzer = struct {
                 return self.err_reporter.genericNeedsCall(id, exp.loc);
             }
             if (symbol.kind == .generic_type) {
-                const opaque_copy = self.generic_types.items[symbol.kind.generic_type].opaque_copy orelse unreachable;
+                const opaque_copy = self.generic_types.items[symbol.kind.generic_type].opaque_copy orelse @panic("evalIdentifier: generic type has no opaque copy");
                 return ir.Value.init(self.allocator, .{
                     .data = .{ .identifier = .{ .uid = opaque_copy.uid, .name = symbol.identifier } },
                     .type_id = opaque_copy.kind.defined_type.blueprint_type_id,
@@ -5979,7 +5979,7 @@ pub const SemaAnalyzer = struct {
                 if (struct_def.methods.get(field_name)) |method_type_id| {
                     return method_type_id;
                 }
-                unreachable;
+                @panic("getIndexedType: unknown struct member");
             },
             .@"enum" => {
                 const enum_def = &target_type.kind.@"enum";
@@ -5993,9 +5993,9 @@ pub const SemaAnalyzer = struct {
                 if (enum_def.methods.get(field_name)) |method_type_id| {
                     return method_type_id;
                 }
-                unreachable;
+                @panic("getIndexedType: unknown enum member");
             },
-            else => unreachable,
+            else => @panic("getIndexedType: type has no members"),
         };
     }
 
