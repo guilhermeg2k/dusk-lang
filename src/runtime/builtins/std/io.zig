@@ -92,6 +92,7 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Na
     if (stream.waiter != null) {
         return fail(IoError.Busy);
     }
+    stream.ensureHandshakeStarted();
     if (stream.readyOutcome(mode)) |outcome| {
         switch (outcome.result) {
             .data => |data| {

@@ -45,6 +45,13 @@ pub fn stringResult(result: *v.Bytes) NativeResult {
     return ok(.{ .heap_obj = &result.obj });
 }
 
+pub fn optionalBytesArg(args: []const v.Value, index: usize) ?[]const u8 {
+    if (@as(u64, @bitCast(args[index])) == 0) {
+        return null;
+    }
+    return bytesArg(args, index);
+}
+
 pub fn bytesArg(args: []const v.Value, index: usize) []const u8 {
     return v.HeapValue.getParentPtr(v.Bytes, args[index].heap_obj).slice();
 }

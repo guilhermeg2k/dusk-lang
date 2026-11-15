@@ -363,6 +363,11 @@ test "net: read_exact and remote_address" {
     try runCase("net-tcp-extras.dsk");
 }
 
+test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {
+    try runCase("net-tls.dsk");
+    try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }
@@ -1118,7 +1123,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 13 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 14 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {

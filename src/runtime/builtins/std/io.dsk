@@ -9,6 +9,7 @@ error IoError
     InvalidUtf8
     TimedOut
     UnexpectedEnd
+    HandshakeFailed
     Other
 end
 

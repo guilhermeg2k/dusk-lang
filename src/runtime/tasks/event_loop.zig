@@ -7,6 +7,7 @@ const FsJob = @import("fs_job.zig").FsJob;
 const Stream = @import("stream.zig").Stream;
 const Listener = @import("tcp.zig").Listener;
 const OpenRequest = @import("tcp.zig").OpenRequest;
+const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
@@ -22,6 +23,7 @@ pub const EventLoop = struct {
     callback_failure: ?anyerror = null,
     streams: std.ArrayList(?*Stream) = .empty,
     listeners: std.ArrayList(?*Listener) = .empty,
+    certificates: std.ArrayList(*ServerCertificate) = .empty,
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -36,6 +38,7 @@ pub const EventLoop = struct {
         }
         defer self.streams.deinit(self.allocator);
         defer self.listeners.deinit(self.allocator);
+        defer self.freeCertificates();
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -131,6 +134,26 @@ pub const EventLoop = struct {
         const handle = self.listeners.items.len;
         self.listeners.appendAssumeCapacity(listener);
         return handle;
+    }
+
+    pub fn addCertificate(self: *Self, certificate: *ServerCertificate) !usize {
+        try self.certificates.append(self.allocator, certificate);
+        return self.certificates.items.len - 1;
+    }
+
+    pub fn certificateAt(self: *Self, handle: i64) ?*ServerCertificate {
+        const is_valid = handle >= 0 and handle < self.certificates.items.len;
+        if (!is_valid) {
+            return null;
+        }
+        return self.certificates.items[@intCast(handle)];
+    }
+
+    fn freeCertificates(self: *Self) void {
+        for (self.certificates.items) |certificate| {
+            certificate.destroy(self.allocator);
+        }
+        self.certificates.deinit(self.allocator);
     }
 
     pub fn closeListener(self: *Self, handle: i64) void {

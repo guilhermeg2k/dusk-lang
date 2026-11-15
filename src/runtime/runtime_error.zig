@@ -21,6 +21,7 @@ pub const RuntimeError = error{
     OutputFailed,
     ClockFailed,
     ClockOutOfRange,
+    TlsAlreadyStarted,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -34,6 +35,11 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn indexOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.IndexOutOfBounds, "index {d} is out of bounds for length {d}", .{ index, len });
+    }
+
+    pub noinline fn tlsAlreadyStarted() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.TlsAlreadyStarted, "start_tls on a connection that already uses TLS", .{});
     }
 
     pub noinline fn invalidReadSize(max: i64) RuntimeError {

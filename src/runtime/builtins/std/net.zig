@@ -5,6 +5,8 @@ const native = @import("../native.zig");
 const io = @import("io.zig");
 const tcp = @import("../../tasks/tcp.zig");
 const uv = @import("../../tasks/uv.zig");
+const tls_layer = @import("../../tasks/tls_layer.zig");
+const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 const ok = native.ok;
@@ -32,6 +34,10 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_close", Binding{ .native = &io.streamClose } },
     .{ "remote_host", Binding{ .native = &remoteHost } },
     .{ "remote_port", Binding{ .native = &remotePort } },
+    .{ "certificate_handle", Binding{ .native = &certificateHandle } },
+    .{ "listener_use_tls", Binding{ .native = &listenerUseTls } },
+    .{ "stream_start_tls", Binding{ .native = &streamStartTls } },
+    .{ "stream_is_tls", Binding{ .native = &streamIsTls } },
 });
 
 fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -103,4 +109,46 @@ fn remotePort(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn peerOf(vm: *VM, handle: i64) ?uv.SocketAddress {
     const stream = vm.event_loop.streamAt(handle) orelse return null;
     return stream.peer;
+}
+
+fn certificateHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const allocator = vm.event_loop.allocator;
+    const certificate = tls_layer.ServerCertificate.create(allocator, bytesArg(args, 0), bytesArg(args, 1)) catch |failure| {
+        return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
+    };
+    const handle = vm.event_loop.addCertificate(certificate) catch {
+        certificate.destroy(allocator);
+        return fail(NetError.Other);
+    };
+    return ok(.{ .int64 = @intCast(handle) });
+}
+
+fn listenerUseTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const listener = vm.event_loop.listenerAt(args[0].int64) orelse return ok(.{ .null = {} });
+    listener.tls_certificate = vm.event_loop.certificateAt(args[1].int64);
+    return ok(.{ .null = {} });
+}
+
+fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
+    if (stream.isTls()) {
+        return RuntimeErrorReporter.tlsAlreadyStarted();
+    }
+    const config = tls_layer.newClientConfig(args[3].bool, native.optionalBytesArg(args, 2)) catch |failure| {
+        return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
+    };
+    const current = vm.running_task.?;
+    const start = stream.startClientTls(current, config, bytesArg(args, 1)) catch return fail(NetError.Other);
+    switch (start) {
+        .failure => |failure| return fail(failure),
+        .parked => {
+            current.park();
+            return native.parked();
+        },
+    }
+}
+
+fn streamIsTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .bool = false });
+    return ok(.{ .bool = stream.isTls() });
 }

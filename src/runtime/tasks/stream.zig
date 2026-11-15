@@ -7,11 +7,18 @@ const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
 const FsJob = @import("fs_job.zig").FsJob;
+const tls = @import("tls.zig");
+const TlsLayer = @import("tls_layer.zig").TlsLayer;
+const HandshakeWaiter = @import("tls_layer.zig").HandshakeWaiter;
+const cipher_chunk_size = @import("tls_layer.zig").cipher_chunk_size;
+const netErrorFromHandshake = @import("tls_layer.zig").netErrorFromHandshake;
+const NetError = @import("tcp.zig").NetError;
 const onHandleClosed = @import("event_loop.zig").onHandleClosed;
 
 const handle_alignment = std.mem.Alignment.@"16";
 const read_chunk_size = 64 * 1024;
 const high_water_mark = 1024 * 1024;
+const tls_record_size = 16 * 1024 + 256;
 
 pub const Stream = struct {
     const Self = @This();
@@ -38,6 +45,7 @@ pub const Stream = struct {
     has_chunk_in_flight: bool = false,
     requests_in_flight: usize = 0,
     peer: ?uv.SocketAddress = null,
+    tls_layer: ?*TlsLayer = null,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
 
@@ -108,6 +116,9 @@ pub const Stream = struct {
     }
 
     pub fn destroy(self: *Self) void {
+        if (self.tls_layer) |layer| {
+            layer.destroy();
+        }
         self.buffered.deinit(self.allocator);
         if (self.handle_memory.len > 0) {
             self.allocator.free(self.handle_memory);
@@ -153,6 +164,9 @@ pub const Stream = struct {
                 self.event_loop.callback_failure = failure;
             };
         }
+        if (self.tls_layer) |layer| {
+            self.closeTls(layer);
+        }
         self.is_closed = true;
         if (self.handle_memory.len > 0) {
             self.stopReading();
@@ -163,6 +177,24 @@ pub const Stream = struct {
             uv.uv_close(self.timerHandle(), onHandleClosed);
         }
         self.releaseIfDone();
+    }
+
+    fn closeTls(self: *Self, layer: *TlsLayer) void {
+        var waiters = layer.takeHandshakeWaiters();
+        defer waiters.deinit(self.allocator);
+        for (waiters.items) |waiter| {
+            defer waiter.free(self.allocator);
+            self.event_loop.pending_operations -= 1;
+            const wake_result = if (waiter.pending_write == null) netFailureResult(.HandshakeFailed) else failureResult(.Closed);
+            self.wakeTask(waiter.task, wake_result);
+        }
+        if (layer.handshake != .done) return;
+        _ = tls.dusk_tls_close_notify(layer.session);
+        const length = tls.dusk_tls_output_length(layer.session);
+        if (length == 0) return;
+        const buffers = [_]uv.Buffer{.{ .base = @constCast(tls.dusk_tls_output_bytes(layer.session)), .len = @intCast(length) }};
+        _ = uv.uv_try_write(self.uvHandle(), &buffers, 1);
+        tls.dusk_tls_consume_output(layer.session, length);
     }
 
     pub fn bufferedBytes(self: *const Self) []const u8 {
@@ -388,6 +420,29 @@ pub const Stream = struct {
 
     pub fn write(self: *Self, task: *TaskState, data: []const u8) !WriteOutcome {
         if (data.len == 0) return .done;
+        const layer = self.tls_layer orelse return self.sendBytes(task, data);
+        if (layer.handshake != .done) {
+            self.ensureHandshakeStarted();
+        }
+        switch (layer.handshake) {
+            .failed => return .{ .failure = .HandshakeFailed },
+            .pending, .running => {
+                const bytes = try self.allocator.dupe(u8, data);
+                errdefer self.allocator.free(bytes);
+                try layer.handshake_waiters.append(self.allocator, .{ .task = task, .pending_write = bytes });
+                self.event_loop.pending_operations += 1;
+                return .parked;
+            },
+            .done => {},
+        }
+        if (tls.dusk_tls_write(layer.session, data.ptr, data.len) < 0) {
+            return .{ .failure = .Other };
+        }
+        return self.sendCipherOutput(task);
+    }
+
+    fn sendBytes(self: *Self, task: ?*TaskState, data: []const u8) !WriteOutcome {
+        if (data.len == 0) return .done;
         const buffers = [_]uv.Buffer{.{ .base = @constCast(data.ptr), .len = @intCast(data.len) }};
         const status = uv.uv_try_write(self.uvHandle(), &buffers, 1);
         const written: usize = if (status >= 0) @intCast(status) else 0;
@@ -403,9 +458,204 @@ pub const Stream = struct {
             return .{ .failure = ioErrorFromStatus(write_status) };
         }
         self.requests_in_flight += 1;
+        if (task != null) {
+            self.event_loop.pending_operations += 1;
+        }
+        return .parked;
+    }
+
+    pub fn isTls(self: *const Self) bool {
+        return self.tls_layer != null;
+    }
+
+    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, host: []const u8) !TlsStart {
+        const layer = TlsLayer.createClient(self.allocator, config, host) catch |failure| {
+            tls.dusk_tls_config_free(config);
+            return failure;
+        };
+        self.tls_layer = layer;
+        const early = self.bufferedBytes();
+        if (early.len > 0) {
+            _ = tls.dusk_tls_feed(layer.session, early.ptr, early.len);
+            self.consume(early.len);
+        }
+        self.ensureHandshakeStarted();
+        if (layer.handshake == .failed) {
+            return .{ .failure = layer.handshake_failure };
+        }
+        try layer.handshake_waiters.append(self.allocator, .{ .task = task, .pending_write = null });
         self.event_loop.pending_operations += 1;
         return .parked;
     }
+
+    pub fn useServerTls(self: *Self, config: *tls.Config) !void {
+        self.tls_layer = try TlsLayer.createServer(self.allocator, config);
+    }
+
+    pub fn ensureHandshakeStarted(self: *Self) void {
+        const layer = self.tls_layer orelse return;
+        if (layer.handshake != .pending) return;
+        layer.handshake = .running;
+        self.startReading() catch {
+            layer.handshake = .failed;
+            self.failure = .HandshakeFailed;
+            return;
+        };
+        self.stepHandshake(false);
+    }
+
+    fn stepHandshake(self: *Self, should_wake: bool) void {
+        const layer = self.tls_layer.?;
+        const status = tls.dusk_tls_handshake(layer.session);
+        self.flushCipherOutput();
+        const outcome: TlsLayer.Handshake = switch (status) {
+            .want_more => if (self.failure != null) .failed else return,
+            .done => .done,
+            else => .failed,
+        };
+        if (outcome == .failed and status != .want_more) {
+            layer.handshake_failure = netErrorFromHandshake(status);
+        }
+        if (!should_wake) {
+            layer.handshake = outcome;
+            if (outcome == .failed) {
+                self.failure = .HandshakeFailed;
+            }
+            return;
+        }
+        self.finishHandshake(outcome);
+    }
+
+    fn finishHandshake(self: *Self, outcome: TlsLayer.Handshake) void {
+        const layer = self.tls_layer.?;
+        layer.handshake = outcome;
+        if (outcome == .failed) {
+            self.failure = .HandshakeFailed;
+        }
+        var waiters = layer.takeHandshakeWaiters();
+        defer waiters.deinit(self.allocator);
+        for (waiters.items) |waiter| {
+            defer waiter.free(self.allocator);
+            self.event_loop.pending_operations -= 1;
+            const wake_result = self.handshakeWakeResult(waiter, outcome) orelse continue;
+            self.wakeTask(waiter.task, wake_result);
+        }
+        if (outcome == .done) {
+            self.decryptAvailable();
+            return;
+        }
+        self.serveWaiter();
+        self.applyBackpressure();
+    }
+
+    fn handshakeWakeResult(self: *Self, waiter: HandshakeWaiter, outcome: TlsLayer.Handshake) ?WakeResult {
+        const layer = self.tls_layer.?;
+        const bytes = waiter.pending_write orelse {
+            return if (outcome == .done) doneResult() else netFailureResult(layer.handshake_failure);
+        };
+        if (outcome != .done) {
+            return failureResult(.HandshakeFailed);
+        }
+        if (tls.dusk_tls_write(layer.session, bytes.ptr, bytes.len) < 0) {
+            return failureResult(.Other);
+        }
+        const sent = self.sendCipherOutput(waiter.task) catch return failureResult(.Other);
+        return switch (sent) {
+            .done => doneResult(),
+            .parked => null,
+            .failure => |failure| failureResult(failure),
+        };
+    }
+
+    fn receiveTlsRead(self: *Self, layer: *TlsLayer, read_count: isize) void {
+        if (read_count > 0) {
+            self.receiveCiphertext(layer, layer.cipher_scratch[0..@intCast(read_count)]);
+            return;
+        }
+        if (read_count == 0) return;
+        const status: c_int = @intCast(read_count);
+        if (isErrorNamed(status, "EOF")) {
+            self.has_ended = true;
+        } else {
+            self.failure = ioErrorFromStatus(status);
+        }
+        if (layer.handshake == .running) {
+            self.finishHandshake(.failed);
+            return;
+        }
+        self.serveWaiter();
+        self.applyBackpressure();
+    }
+
+    fn receiveCiphertext(self: *Self, layer: *TlsLayer, data: []const u8) void {
+        if (tls.dusk_tls_feed(layer.session, data.ptr, data.len) != .done) {
+            self.failure = .Other;
+            self.serveWaiter();
+            return;
+        }
+        switch (layer.handshake) {
+            .running => self.stepHandshake(true),
+            .done => self.decryptAvailable(),
+            .pending, .failed => {},
+        }
+    }
+
+    fn decryptAvailable(self: *Self) void {
+        const layer = self.tls_layer.?;
+        while (true) {
+            self.buffered.ensureUnusedCapacity(self.allocator, tls_record_size) catch {
+                self.failure = .Other;
+                break;
+            };
+            const space = self.buffered.unusedCapacitySlice();
+            const count = tls.dusk_tls_read(layer.session, space.ptr, space.len);
+            if (count > 0) {
+                self.buffered.items.len += @intCast(count);
+                continue;
+            }
+            if (count == @intFromEnum(tls.Status.end)) {
+                self.has_ended = true;
+            } else if (count < 0) {
+                self.failure = .Other;
+            }
+            break;
+        }
+        self.flushCipherOutput();
+        self.serveWaiter();
+        self.applyBackpressure();
+    }
+
+    fn sendCipherOutput(self: *Self, task: ?*TaskState) !WriteOutcome {
+        const session = self.tls_layer.?.session;
+        const length = tls.dusk_tls_output_length(session);
+        if (length == 0) return .done;
+        const outcome = try self.sendBytes(task, tls.dusk_tls_output_bytes(session)[0..length]);
+        tls.dusk_tls_consume_output(session, length);
+        return outcome;
+    }
+
+    fn flushCipherOutput(self: *Self) void {
+        if (self.is_closed) return;
+        const outcome = self.sendCipherOutput(null) catch {
+            self.failure = .Other;
+            return;
+        };
+        switch (outcome) {
+            .failure => |failure| self.failure = failure,
+            .done, .parked => {},
+        }
+    }
+
+    fn wakeTask(self: *Self, task: *TaskState, wake_result: WakeResult) void {
+        self.scheduler.wake(task, wake_result) catch |failure| {
+            self.event_loop.callback_failure = failure;
+        };
+    }
+};
+
+pub const TlsStart = union(enum) {
+    parked,
+    failure: NetError,
 };
 
 pub const WriteOutcome = union(enum) {
@@ -417,12 +667,12 @@ pub const WriteOutcome = union(enum) {
 const WriteRequest = struct {
     allocator: std.mem.Allocator,
     stream: *Stream,
-    task: *TaskState,
+    task: ?*TaskState,
     bytes: []u8,
     buffers: [1]uv.Buffer,
     request_memory: []align(16) u8,
 
-    fn create(stream: *Stream, task: *TaskState, data: []const u8) !*WriteRequest {
+    fn create(stream: *Stream, task: ?*TaskState, data: []const u8) !*WriteRequest {
         const allocator = stream.allocator;
         const request = try allocator.create(WriteRequest);
         errdefer allocator.destroy(request);
@@ -457,12 +707,13 @@ fn onWrite(uv_request: *uv.Request, status: c_int) callconv(.c) void {
     const request: *WriteRequest = @ptrCast(@alignCast(uv.uv_req_get_data(uv_request).?));
     defer request.destroy();
     const stream = request.stream;
-    const event_loop = stream.event_loop;
-    event_loop.pending_operations -= 1;
-    const wake_result: WakeResult = if (status == 0) .{ .value = v.NULL_VALUE, .kind = .null } else failureResult(ioErrorFromStatus(status));
-    stream.scheduler.wake(request.task, wake_result) catch |failure| {
-        event_loop.callback_failure = failure;
-    };
+    if (request.task) |task| {
+        stream.event_loop.pending_operations -= 1;
+        const wake_result: WakeResult = if (status == 0) doneResult() else failureResult(ioErrorFromStatus(status));
+        stream.wakeTask(task, wake_result);
+    } else if (status != 0 and !stream.is_closed) {
+        stream.failure = ioErrorFromStatus(status);
+    }
     stream.finishRequest();
 }
 
@@ -513,6 +764,7 @@ pub const IoError = enum {
     InvalidUtf8,
     TimedOut,
     UnexpectedEnd,
+    HandshakeFailed,
     Other,
 };
 
@@ -542,6 +794,14 @@ fn failureResult(failure: IoError) WakeResult {
     return .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
 }
 
+fn netFailureResult(failure: NetError) WakeResult {
+    return .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+}
+
+fn doneResult() WakeResult {
+    return .{ .value = v.NULL_VALUE, .kind = .null };
+}
+
 fn streamOf(handle: *uv.Handle) *Stream {
     return @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
 }
@@ -560,6 +820,10 @@ fn onReadTimeout(timer: *uv.Handle) callconv(.c) void {
 
 fn onAlloc(handle: *uv.Handle, _: usize, buffer: *uv.Buffer) callconv(.c) void {
     const stream = streamOf(handle);
+    if (stream.tls_layer) |layer| {
+        buffer.* = .{ .base = &layer.cipher_scratch, .len = cipher_chunk_size };
+        return;
+    }
     stream.buffered.ensureUnusedCapacity(stream.allocator, read_chunk_size) catch {
         buffer.* = .{ .base = undefined, .len = 0 };
         return;
@@ -570,6 +834,10 @@ fn onAlloc(handle: *uv.Handle, _: usize, buffer: *uv.Buffer) callconv(.c) void {
 
 fn onRead(handle: *uv.Handle, read_count: isize, _: *const uv.Buffer) callconv(.c) void {
     const stream = streamOf(handle);
+    if (stream.tls_layer) |layer| {
+        stream.receiveTlsRead(layer, read_count);
+        return;
+    }
     if (read_count > 0) {
         stream.buffered.items.len += @intCast(read_count);
     } else if (read_count < 0) {

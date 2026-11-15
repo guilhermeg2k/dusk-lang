@@ -8,6 +8,7 @@ const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
 const Stream = @import("stream.zig").Stream;
 const IoError = @import("stream.zig").IoError;
+const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 
 const handle_alignment = std.mem.Alignment.@"16";
 const max_ip_length = 64;
@@ -21,6 +22,11 @@ pub const NetError = enum {
     PermissionDenied,
     InvalidAddress,
     TimedOut,
+    HandshakeFailed,
+    UntrustedCertificate,
+    ExpiredCertificate,
+    WrongHostCertificate,
+    InvalidCertificate,
     Other,
 };
 
@@ -343,6 +349,7 @@ pub const Listener = struct {
     pending_connections: usize = 0,
     failure: ?IoError = null,
     waiter: ?*TaskState = null,
+    tls_certificate: ?*ServerCertificate = null,
 
     pub const AcceptOutcome = union(enum) {
         connection: usize,
@@ -410,6 +417,12 @@ pub const Listener = struct {
             return error.AcceptFailed;
         }
         stream.rememberPeer();
+        if (self.tls_certificate) |certificate| {
+            stream.useServerTls(certificate.config) catch {
+                self.event_loop.closeStream(@intCast(handle));
+                return error.AcceptFailed;
+            };
+        }
         return handle;
     }
 
