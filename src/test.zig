@@ -218,6 +218,56 @@ test "fs: read_text reads big files and files that report size 0" {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "fs: write_text, write_bytes and append_text, checked on disk" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(testing.io, "folder", .default_dir);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/io
+        \\import std/fs
+        \\import std/buffer
+        \\func main() -> !void
+        \\    try fs::write_text("DIR/text.txt", "a longer first version\n")
+        \\    try fs::write_text("DIR/text.txt", "olá 🌙\n")
+        \\    try fs::append_text("DIR/text.txt", "more\n")
+        \\    try fs::append_text("DIR/created.txt", "new\n")
+        \\    try fs::write_text("DIR/empty.txt", "")
+        \\    let mut data = try buffer::new(256)
+        \\    let mut i = 0
+        \\    for i < 256 do
+        \\        data[i] = try to_byte(i)
+        \\        i = i + 1
+        \\    end
+        \\    try fs::write_bytes("DIR/all.bin", data)
+        \\    fs::write_text("DIR/missing/x.txt", "x") catch e then
+        \\        io::println("${e == fs::FsError.NotFound}")
+        \\    end
+        \\    fs::append_text("DIR/folder", "x") catch e then
+        \\        io::println("${e == fs::FsError.IsDirectory}")
+        \\    end
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("true\ntrue\n", output.written());
+
+    try testing.expectEqualStrings("olá 🌙\nmore\n", try tmp.dir.readFileAlloc(testing.io, "text.txt", allocator, .unlimited));
+    try testing.expectEqualStrings("new\n", try tmp.dir.readFileAlloc(testing.io, "created.txt", allocator, .unlimited));
+    try testing.expectEqualStrings("", try tmp.dir.readFileAlloc(testing.io, "empty.txt", allocator, .unlimited));
+    const all = try tmp.dir.readFileAlloc(testing.io, "all.bin", allocator, .unlimited);
+    try testing.expectEqual(@as(usize, 256), all.len);
+    for (all, 0..) |byte, i| {
+        try testing.expectEqual(@as(u8, @intCast(i)), byte);
+    }
+}
+
 test "fs: stat follows symlinks and reports permissions and times like the OS" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
