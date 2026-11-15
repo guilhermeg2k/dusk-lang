@@ -6,6 +6,7 @@ pub const RuntimeError = error{
     ByteOutOfRange,
     IndexOutOfBounds,
     NegativeBufferSize,
+    InvalidReadSize,
     UnhandledError,
     CallDepthExceeded,
     DivisionByZero,
@@ -31,6 +32,11 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn indexOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.IndexOutOfBounds, "index {d} is out of bounds for length {d}", .{ index, len });
+    }
+
+    pub noinline fn invalidReadSize(max: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.InvalidReadSize, "read size must be at least 1: {d}", .{max});
     }
 
     pub noinline fn negativeBufferSize(len: i64) RuntimeError {

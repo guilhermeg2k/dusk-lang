@@ -1,4 +1,60 @@
+import std/buffer
+
+error IoError
+    Closed
+    Busy
+    BrokenPipe
+    ConnectionReset
+    LineTooLong
+    InvalidUtf8
+    TimedOut
+    Other
+end
+
 extern func print(text: string) -> void
 extern func println(text: string) -> void
 extern func eprint(text: string) -> void
 extern func eprintln(text: string) -> void
+extern func ~stdin_handle() -> int
+extern func ~stream_read_bytes(handle: int, max: int) -> IoError!?buffer
+extern func ~is_terminal_fd(fd: int) -> bool
+
+struct Stdin
+    ~handle: int
+
+    func read_bytes(self: @, max: int) -> IoError!?buffer
+        return try stream_read_bytes(self.handle, max)
+    end
+
+    func is_terminal(self: @) -> bool
+        return is_terminal_fd(0)
+    end
+end
+
+struct Stdout
+    ~fd: int
+
+    func is_terminal(self: @) -> bool
+        return is_terminal_fd(self.fd)
+    end
+end
+
+struct Stderr
+    ~fd: int
+
+    func is_terminal(self: @) -> bool
+        return is_terminal_fd(self.fd)
+    end
+end
+
+func stdin() -> Stdin
+    return Stdin(handle = stdin_handle())
+end
+
+func stdout() -> Stdout
+    return Stdout(fd = 1)
+end
+
+func stderr() -> Stderr
+    return Stderr(fd = 2)
+end

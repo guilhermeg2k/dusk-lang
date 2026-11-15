@@ -36,6 +36,7 @@ pub const Dusk = struct {
 
     allocator: std.mem.Allocator,
     stdio: Stdio = .{},
+    stdin_fd: c_int = 0,
     io: std.Io,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
@@ -78,6 +79,7 @@ pub const Dusk = struct {
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
         Map.randomizeSeeds(self.io);
         var v = VM.init(program, self.stdio);
+        v.stdin_fd = self.stdin_fd;
         defer v.deinit();
         try v.run();
     }

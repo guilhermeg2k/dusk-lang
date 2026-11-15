@@ -375,13 +375,142 @@ test "calls take positional arguments first, then named ones in any order" {
     try runCaseError("sema/call-args-named-twice.dsk", error.ArgumentGivenTwice);
 }
 
+test "io: stdin read_bytes over a pipe, in chunks, then null" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    _ = std.c.write(fds[1], "hello world!", 12);
+    closeFd(fds[1]);
+    const source =
+        \\import std/io
+        \\import std/buffer
+        \\import std/string
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    io::println("${input.is_terminal()}")
+        \\    let mut total = 0
+        \\    for true do
+        \\        let next = try input.read_bytes(4)
+        \\        if next: chunk then
+        \\            total = total + buffer::len(chunk)
+        \\            io::println(try string::from_bytes(chunk))
+        \\        else
+        \\            break
+        \\        end
+        \\    end
+        \\    io::println("total $total")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "false\nhell\no wo\nrld!\ntotal 12\n");
+}
+
+test "io: a stdin read parks until data arrives while other tasks run" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .data = "late" };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const source =
+        \\import std/io
+        \\import std/task
+        \\import std/string
+        \\func main() -> !void
+        \\    let mut is_done = false
+        \\    let mut ticks = 0
+        \\    let counter = spawn(func() -> void
+        \\        for !is_done do
+        \\            ticks = ticks + 1
+        \\            task::sleep(1)
+        \\        end
+        \\    end)
+        \\    let input = io::stdin()
+        \\    let first = try input.read_bytes(16)
+        \\    if first: data then
+        \\        io::println(try string::from_bytes(data))
+        \\    end
+        \\    let second = try input.read_bytes(16)
+        \\    io::println("${second == null}")
+        \\    is_done = true
+        \\    await(counter)
+        \\    io::println("${ticks > 0}")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "late\ntrue\ntrue\n");
+}
+
+test "io: a second task reading stdin at the same time gets Busy" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .data = "x" };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const source =
+        \\import std/io
+        \\import std/task
+        \\import std/string
+        \\func main() -> !void
+        \\    let reader = spawn(func() -> !string
+        \\        let next = try io::stdin().read_bytes(8)
+        \\        if next: data then
+        \\            return try string::from_bytes(data)
+        \\        end
+        \\        return "none"
+        \\    end)
+        \\    task::sleep(5)
+        \\    io::stdin().read_bytes(8) catch e then
+        \\        io::println("${e == io::IoError.Busy}")
+        \\    end
+        \\    io::println(try await(reader))
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "true\nx\n");
+}
+
+test "io: read_bytes needs a size of at least 1" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    closeFd(fds[1]);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try testing.expectError(error.InvalidReadSize, runWithStdin("import std/io\nfunc main() -> !void\n    let data = try io::stdin().read_bytes(0)\nend\n", fds[0], &output.writer));
+}
+
+fn expectStdinOutput(source: []const u8, stdin_fd: c_int, expected: []const u8) !void {
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    try runWithStdin(source, stdin_fd, &output.writer);
+    try testing.expectEqualStrings(expected, output.written());
+}
+
+fn runWithStdin(source: []const u8, stdin_fd: c_int, stdout: *std.Io.Writer) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = stdout } }, .stdin_fd = stdin_fd, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+fn closeFd(fd: c_int) void {
+    const file: std.Io.File = .{ .handle = fd, .flags = .{ .nonblocking = false } };
+    file.close(testing.io);
+}
+
+const DelayedWriter = struct {
+    fd: c_int,
+    data: []const u8,
+
+    fn run(self: *DelayedWriter) void {
+        testing.io.sleep(std.Io.Duration.fromMilliseconds(50), .awake) catch {};
+        _ = std.c.write(self.fd, self.data.ptr, self.data.len);
+        closeFd(self.fd);
+    }
+};
+
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
         "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 3 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 12 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {

@@ -23,6 +23,7 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     scratch: std.Io.Writer.Allocating,
     stdio: Stdio,
+    stdin_fd: c_int = 0,
     stack: []v.Value,
     heap: Heap,
     scheduler: Scheduler,
@@ -141,7 +142,7 @@ pub const VM = struct {
         };
     }
 
-    fn allocBytesValue(self: *Self, bytes: []const u8, kind: v.ValueType) !v.Value {
+    pub fn allocBytesValue(self: *Self, bytes: []const u8, kind: v.ValueType) !v.Value {
         const size = v.Bytes.calc_size(bytes.len);
         try self.maybeCollectGarbage(size);
         const allocator = self.getCurrentHeapAllocator();

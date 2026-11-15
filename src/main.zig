@@ -8,6 +8,7 @@ const build_zon = @import("build_zon");
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub fn main(init: std.process.Init) !void {
+    openMissingStandardFiles();
     const allocator = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(allocator);
@@ -41,6 +42,16 @@ pub fn main(init: std.process.Init) !void {
         }
         std.process.exit(1);
     };
+}
+
+fn openMissingStandardFiles() void {
+    if (builtin.os.tag == .windows) return;
+    for (0..3) |file| {
+        const is_closed = std.posix.errno(std.c.fcntl(@intCast(file), std.posix.F.GETFD)) == .BADF;
+        if (is_closed) {
+            _ = std.c.open("/dev/null", .{ .ACCMODE = .RDWR });
+        }
+    }
 }
 
 fn exitAfterBrokenPipe() noreturn {

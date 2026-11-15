@@ -9,7 +9,7 @@ pub const Handle = opaque {};
 pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
-pub const HandleType = enum(c_int) { timer = 13 };
+pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, timer = 13, tty = 14, file = 17, _ };
 pub const RequestType = enum(c_int) { fs = 6, work = 7 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
@@ -65,6 +65,8 @@ pub const WalkCallback = *const fn (handle: *Handle, arg: ?*anyopaque) callconv(
 pub const WorkCallback = *const fn (request: *Request) callconv(.c) void;
 pub const AfterWorkCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
 pub const FsCallback = *const fn (request: *Request) callconv(.c) void;
+pub const AllocCallback = *const fn (handle: *Handle, suggested_size: usize, buffer: *Buffer) callconv(.c) void;
+pub const ReadCallback = *const fn (stream: *Handle, read_count: isize, buffer: *const Buffer) callconv(.c) void;
 
 // ---- Loop ----
 
@@ -82,11 +84,20 @@ pub extern fn uv_handle_get_data(handle: *const Handle) ?*anyopaque;
 pub extern fn uv_handle_set_data(handle: *Handle, data: ?*anyopaque) void;
 pub extern fn uv_is_closing(handle: *const Handle) c_int;
 pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
+pub extern fn uv_guess_handle(file: c_int) HandleType;
 
 // ---- Timers ----
 
 pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
+
+// ---- Streams (terminals and pipes) ----
+
+pub extern fn uv_tty_init(loop: *Loop, tty: *Handle, file: c_int, readable: c_int) c_int;
+pub extern fn uv_pipe_init(loop: *Loop, pipe: *Handle, ipc: c_int) c_int;
+pub extern fn uv_pipe_open(pipe: *Handle, file: c_int) c_int;
+pub extern fn uv_read_start(stream: *Handle, alloc: AllocCallback, read: ReadCallback) c_int;
+pub extern fn uv_read_stop(stream: *Handle) c_int;
 
 // ---- Requests (shared by every request type) ----
 

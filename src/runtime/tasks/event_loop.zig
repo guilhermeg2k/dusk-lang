@@ -4,6 +4,7 @@ const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const v = @import("../value.zig");
 const FsJob = @import("fs_job.zig").FsJob;
+const Stream = @import("stream.zig").Stream;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -14,8 +15,15 @@ pub const EventLoop = struct {
     loop: ?*uv.Loop = null,
     pending_operations: usize = 0,
     callback_failure: ?anyerror = null,
+    streams: std.ArrayList(?*Stream) = .empty,
+    stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
+        for (self.streams.items) |entry| {
+            const stream = entry orelse continue;
+            stream.releaseWithoutHandle();
+        }
+        defer self.streams.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -59,10 +67,10 @@ pub const EventLoop = struct {
             self.allocator.destroy(request);
             return error.TimerFailed;
         }
-        uv.uv_handle_set_data(timer, request);
+        uv.uv_handle_set_data(timer, &request.owner);
         uv.uv_update_time(loop);
         if (uv.uv_timer_start(timer, onTimer, ms, 0) != 0) {
-            uv.uv_close(timer, onClose);
+            uv.uv_close(timer, onHandleClosed);
             return error.TimerFailed;
         }
         self.pending_operations += 1;
@@ -82,6 +90,27 @@ pub const EventLoop = struct {
         self.pending_operations += 1;
     }
 
+    pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !usize {
+        if (self.stdin_handle) |handle| {
+            return handle;
+        }
+        const loop = try self.ensureLoopStarted();
+        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
+        const handle = self.streams.items.len;
+        self.streams.appendAssumeCapacity(stream);
+        self.stdin_handle = handle;
+        return handle;
+    }
+
+    pub fn streamAt(self: *Self, handle: i64) ?*Stream {
+        const is_valid = handle >= 0 and handle < self.streams.items.len;
+        if (!is_valid) {
+            return null;
+        }
+        return self.streams.items[@intCast(handle)];
+    }
+
     fn ensureLoopStarted(self: *Self) !*uv.Loop {
         if (self.loop) |loop| return loop;
         const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_loop_size());
@@ -99,23 +128,43 @@ pub const EventLoop = struct {
     }
 };
 
+pub const HandleOwner = struct {
+    kind: Kind,
+
+    pub const Kind = enum { timer, stream };
+
+    pub fn of(handle: *uv.Handle) *HandleOwner {
+        return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
+    }
+};
+
 fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
     if (uv.uv_is_closing(handle) != 0) return;
-    uv.uv_close(handle, onClose);
+    uv.uv_close(handle, onHandleClosed);
 }
 
-fn onClose(handle: *uv.Handle) callconv(.c) void {
-    const request = timerRequestOf(handle);
-    const allocator = request.event_loop.allocator;
-    allocator.free(request.timer_memory);
-    allocator.destroy(request);
+pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
+    const owner = HandleOwner.of(handle);
+    switch (owner.kind) {
+        .timer => {
+            const request: *TimerRequest = @alignCast(@fieldParentPtr("owner", owner));
+            const allocator = request.event_loop.allocator;
+            allocator.free(request.timer_memory);
+            allocator.destroy(request);
+        },
+        .stream => {
+            const stream: *Stream = @alignCast(@fieldParentPtr("owner", owner));
+            stream.destroy();
+        },
+    }
 }
 
 fn timerRequestOf(handle: *uv.Handle) *TimerRequest {
-    return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
+    return @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
 }
 
 const TimerRequest = struct {
+    owner: HandleOwner = .{ .kind = .timer },
     event_loop: *EventLoop,
     scheduler: *Scheduler,
     task: *TaskState,
@@ -133,7 +182,7 @@ fn onTimer(handle: *uv.Handle) callconv(.c) void {
     request.scheduler.wake(request.task, .{ .value = v.NULL_VALUE, .kind = .null }) catch |failure| {
         event_loop.callback_failure = failure;
     };
-    uv.uv_close(handle, onClose);
+    uv.uv_close(handle, onHandleClosed);
 }
 
 fn onFsJobWork(work: *uv.Request) callconv(.c) void {
