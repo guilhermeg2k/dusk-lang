@@ -528,6 +528,12 @@ pub const BytecodeGen = struct {
     }
 
     fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
+        const is_lone_string = parts.len == 1 and parts[0].type_id == self.type_table.getPrimitive(.string);
+        if (is_lone_string) {
+            _ = try self.genValue(parts[0], target_reg);
+            self.register_types[target_reg] = result_type;
+            return;
+        }
         const build_reg = try self.consumeRegister();
         defer self.freeRegister();
         var kinds: std.ArrayList(v.ValueType) = .empty;

@@ -208,6 +208,13 @@ test "string interpolation compiles to one STR_BUILD" {
     try testing.expectEqual(@as(usize, 4), chunk.build_recipes[0].len);
 }
 
+test "string interpolation of a lone string reuses it" {
+    const lone = "func f(s: string) -> string return \"${s}\" end func main() -> void end";
+    const nullable = "func f(s: ?string) -> string return \"${s}\" end func main() -> void end";
+    try testing.expectEqual(@as(usize, 0), try countOps(lone, "f", .STR_BUILD));
+    try testing.expectEqual(@as(usize, 1), try countOps(nullable, "f", .STR_BUILD));
+}
+
 fn countOps(source: []const u8, function: []const u8, op: @import("runtime/bytecode.zig").OpCode) !usize {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
