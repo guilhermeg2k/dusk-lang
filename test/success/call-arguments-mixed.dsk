@@ -17,7 +17,7 @@ end
 func main() -> void
     assert(describe("a", recursive = true) == "a true false")
     assert(describe("b", force = true) == "b false true")
-    assert(describe("c", recursive = true, true) == "c true true")
+    assert(describe("c", force = true, recursive = true) == "c true true")
     assert(describe("d", true, force = true) == "d true true")
     assert(describe(force = true, path = "e") == "e false true")
     assert(describe("f") == "f false false")

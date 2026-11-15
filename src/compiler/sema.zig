@@ -1725,7 +1725,7 @@ pub const SemaAnalyzer = struct {
         for (func_stmt.def.params, param_names) |param, *name| {
             name.* = param.identifier;
         }
-        const matched = try self.matchArguments(fn_call.arguments, fn_call.are_arguments_named, param_names, 0);
+        const matched = try self.matchArguments(fn_call.arguments, param_names, 0);
         var has_lambda_args = false;
         for (func_stmt.def.params, 0..) |param, param_index| {
             const annotation = param.type_annotation orelse continue;
@@ -1830,43 +1830,29 @@ pub const SemaAnalyzer = struct {
         return is_widening and (from_base == from or to_base != to);
     }
 
-    fn matchArguments(self: *Self, arguments: []const ast.FnCallArg, are_all_named: bool, param_names: []const []const u8, first_param: usize) CompileError![]?*ast.ExpNode {
+    fn matchArguments(self: *Self, arguments: []const ast.FnCallArg, param_names: []const []const u8, first_param: usize) CompileError![]?*ast.ExpNode {
         const matched = try self.allocator.alloc(?*ast.ExpNode, param_names.len);
         @memset(matched, null);
-        if (are_all_named) {
-            for (arguments) |argument| {
-                const name = argument.identifier.?;
-                const index = indexOfName(param_names, name) orelse return self.err_reporter.unknownArgumentName(name, argument.exp.loc);
-                if (matched[index] != null) {
-                    return self.err_reporter.argumentGivenTwice(name, argument.exp.loc);
-                }
-                matched[index] = argument.exp;
-            }
-            return matched;
-        }
-
         var next_param = first_param;
-        var last_named: ?[]const u8 = null;
+        var has_named = false;
         for (arguments) |argument| {
             const name = argument.identifier orelse {
-                if (next_param >= param_names.len) {
-                    const previous = last_named orelse continue;
-                    return self.err_reporter.noParameterAfter(previous, argument.exp.loc);
+                if (has_named) {
+                    return self.err_reporter.positionalAfterNamed(argument.exp.loc);
                 }
-                matched[next_param] = argument.exp;
+                if (next_param < param_names.len) {
+                    matched[next_param] = argument.exp;
+                }
                 next_param += 1;
                 continue;
             };
+            has_named = true;
             const index = indexOfName(param_names, name) orelse return self.err_reporter.unknownArgumentName(name, argument.exp.loc);
-            if (matched[index] != null) {
+            const is_already_given = index < first_param or matched[index] != null;
+            if (is_already_given) {
                 return self.err_reporter.argumentGivenTwice(name, argument.exp.loc);
             }
-            if (index < next_param) {
-                return self.err_reporter.argumentOutOfOrder(name, param_names[next_param - 1], argument.exp.loc);
-            }
             matched[index] = argument.exp;
-            next_param = index + 1;
-            last_named = name;
         }
         return matched;
     }
@@ -2072,7 +2058,7 @@ pub const SemaAnalyzer = struct {
                 for (struct_def.fields, field_names) |field, *name| {
                     name.* = field.identifier;
                 }
-                const matched = try self.matchArguments(fn_call.arguments, fn_call.are_arguments_named, field_names, 0);
+                const matched = try self.matchArguments(fn_call.arguments, field_names, 0);
                 var has_lambda_args = false;
                 for (struct_def.fields, 0..) |field, field_index| {
                     const annotation = field.type orelse continue;
@@ -4685,7 +4671,7 @@ pub const SemaAnalyzer = struct {
         }
 
         const has_first_argument_being_binded = fn_call_arguments_values.items.len == 1;
-        const matched = try self.matchArguments(fn_call.arguments, fn_call.are_arguments_named, try paramNames(self.allocator, params), if (has_first_argument_being_binded) 1 else 0);
+        const matched = try self.matchArguments(fn_call.arguments, try paramNames(self.allocator, params), if (has_first_argument_being_binded) 1 else 0);
         for (params, 0..) |param, i| {
             if (i == 0 and has_first_argument_being_binded) continue;
 
@@ -4843,7 +4829,7 @@ pub const SemaAnalyzer = struct {
         }
         const keys = try self.allocator.alloc([]const u8, structure.fields_in_order.len);
         const values = try self.allocator.alloc(*ir.Value, structure.fields_in_order.len);
-        const matched = try self.matchArguments(initialization.arguments, initialization.are_arguments_named, try paramNames(self.allocator, structure.fields_in_order), 0);
+        const matched = try self.matchArguments(initialization.arguments, try paramNames(self.allocator, structure.fields_in_order), 0);
         for (structure.fields_in_order, 0..) |field, index| {
             keys[index] = field.identifier;
             const argument = matched[index];

@@ -366,10 +366,9 @@ test "fs: stat follows symlinks and reports permissions and times like the OS" {
     try testing.expectEqualStrings(expected, output.written());
 }
 
-test "calls mix positional and named arguments in parameter order" {
+test "calls take positional arguments first, then named ones in any order" {
     try runCase("call-arguments-mixed.dsk");
-    try runCaseError("sema/call-args-out-of-order.dsk", error.ArgumentOutOfOrder);
-    try runCaseError("sema/call-args-none-left.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/call-args-positional-after-named.dsk", error.PositionalAfterNamed);
     try runCaseError("sema/call-args-given-twice.dsk", error.ArgumentGivenTwice);
     try runCaseError("sema/call-args-unknown-name.dsk", error.UnknownArgumentName);
     try runCaseError("sema/call-args-named-unknown.dsk", error.UnknownArgumentName);

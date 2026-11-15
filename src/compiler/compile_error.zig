@@ -213,19 +213,14 @@ pub const CompileErrorReporter = struct {
         return error.UnknownArgumentName;
     }
 
-    pub fn argumentOutOfOrder(self: *Self, name: []const u8, previous: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "'{s}' must come before '{s}': when a call mixes positional and named arguments, they follow the parameter order", .{ name, previous }), loc);
-        return error.ArgumentOutOfOrder;
+    pub fn positionalAfterNamed(self: *Self, loc: Loc) CompileError {
+        self.log("Positional argument after a named one: once a call names an argument, the ones after it must be named too", loc);
+        return error.PositionalAfterNamed;
     }
 
     pub fn argumentGivenTwice(self: *Self, name: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is given twice", .{name}), loc);
         return error.ArgumentGivenTwice;
-    }
-
-    pub fn noParameterAfter(self: *Self, previous: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Too many arguments: there's no parameter after '{s}'", .{previous}), loc);
-        return error.InvalidNumberOfArgs;
     }
 
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
@@ -1183,7 +1178,7 @@ pub const CompileError = error{
     FieldAndMethodSameName,
     NamedArgumentsOnValue,
     UnknownArgumentName,
-    ArgumentOutOfOrder,
+    PositionalAfterNamed,
     ArgumentGivenTwice,
     CantInferSlot,
     ConflictingSlotTypes,

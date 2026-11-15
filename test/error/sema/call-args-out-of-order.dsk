@@ -1,6 +1,0 @@
-func f(path: string, recursive: bool = false, force: bool = false) -> void
-end
-
-func main() -> void
-    f("x", force = true, recursive = true)
-end
