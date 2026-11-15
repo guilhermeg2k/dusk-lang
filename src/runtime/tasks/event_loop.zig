@@ -8,6 +8,7 @@ const Stream = @import("stream.zig").Stream;
 const Listener = @import("tcp.zig").Listener;
 const OpenRequest = @import("tcp.zig").OpenRequest;
 const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
+const TrustStore = @import("trust_store.zig").TrustStore;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
@@ -24,6 +25,7 @@ pub const EventLoop = struct {
     streams: std.ArrayList(?*Stream) = .empty,
     listeners: std.ArrayList(?*Listener) = .empty,
     certificates: std.ArrayList(*ServerCertificate) = .empty,
+    trust_store: TrustStore = .{},
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -154,6 +156,7 @@ pub const EventLoop = struct {
             certificate.destroy(self.allocator);
         }
         self.certificates.deinit(self.allocator);
+        self.trust_store.deinit(self.allocator);
     }
 
     pub fn closeListener(self: *Self, handle: i64) void {

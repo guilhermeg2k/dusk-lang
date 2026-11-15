@@ -8,6 +8,7 @@ const uv = @import("../../tasks/uv.zig");
 const tls_layer = @import("../../tasks/tls_layer.zig");
 const TaskState = @import("../../tasks/scheduler.zig").TaskState;
 const HandshakeWait = @import("../../tasks/stream.zig").HandshakeWait;
+const Stream = @import("../../tasks/stream.zig").Stream;
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
@@ -137,12 +138,30 @@ fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (stream.isTls()) {
         return RuntimeErrorReporter.tlsAlreadyStarted();
     }
-    const config = tls_layer.newClientConfig(args[3].bool, native.optionalBytesArg(args, 2)) catch |failure| {
+    const should_verify = args[3].bool;
+    const ca = native.optionalBytesArg(args, 2);
+    const current = vm.running_task.?;
+    const timeout_ms = timeoutArg(args[4].int64);
+    const uses_system_roots = should_verify and ca == null;
+    if (uses_system_roots) {
+        return startWithSystemRoots(vm, stream, current, @intCast(args[0].int64), bytesArg(args, 1), timeout_ms);
+    }
+    const config = tls_layer.newClientConfig(should_verify, ca) catch |failure| {
         return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
     };
-    const current = vm.running_task.?;
-    const wait = stream.startClientTls(current, config, bytesArg(args, 1), timeoutArg(args[4].int64)) catch return fail(NetError.Other);
+    const wait = stream.startClientTls(current, config, true, bytesArg(args, 1), timeout_ms) catch return fail(NetError.Other);
     return handshakeResult(current, wait);
+}
+
+fn startWithSystemRoots(vm: *VM, stream: *Stream, current: *TaskState, handle: usize, host: []const u8, timeout_ms: ?u64) anyerror!NativeResult {
+    const trust_store = &vm.event_loop.trust_store;
+    if (trust_store.config) |config| {
+        const wait = stream.startClientTls(current, config, false, host, timeout_ms) catch return fail(NetError.Other);
+        return handshakeResult(current, wait);
+    }
+    trust_store.parkStarter(&vm.event_loop, &vm.scheduler, current, handle, host, timeout_ms) catch return fail(NetError.Other);
+    current.park();
+    return native.parked();
 }
 
 fn streamHandshake(vm: *VM, args: []v.Value) anyerror!NativeResult {

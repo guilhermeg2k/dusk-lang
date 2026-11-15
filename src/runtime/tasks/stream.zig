@@ -482,9 +482,11 @@ pub const Stream = struct {
         return self.tls_layer != null;
     }
 
-    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, host: []const u8, timeout_ms: ?u64) !HandshakeWait {
-        const layer = TlsLayer.createClient(self.allocator, config, host) catch |failure| {
-            tls.dusk_tls_config_free(config);
+    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, owns_config: bool, host: []const u8, timeout_ms: ?u64) !HandshakeWait {
+        const layer = TlsLayer.createClient(self.allocator, config, owns_config, host) catch |failure| {
+            if (owns_config) {
+                tls.dusk_tls_config_free(config);
+            }
             return failure;
         };
         self.tls_layer = layer;

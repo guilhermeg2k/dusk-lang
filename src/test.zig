@@ -372,6 +372,16 @@ test "net: start_tls on a plain connection, handshake() and its errors, handshak
     try runCase("net-tls-handshake.dsk");
 }
 
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+
+test "net: SSL_CERT_FILE replaces the system roots, and connections wait for them to load" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    _ = setenv("SSL_CERT_FILE", "test/fixtures/tls/ca.pem", 1);
+    defer _ = unsetenv("SSL_CERT_FILE");
+    try runCase("net-tls-env-roots.dsk");
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }

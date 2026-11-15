@@ -20,11 +20,11 @@ pub const TlsLayer = struct {
     handshake_waiters: std.ArrayList(HandshakeWaiter) = .empty,
     cipher_scratch: [cipher_chunk_size]u8 = undefined,
 
-    pub fn createClient(allocator: std.mem.Allocator, config: *tls.Config, host: []const u8) !*Self {
+    pub fn createClient(allocator: std.mem.Allocator, config: *tls.Config, owns_config: bool, host: []const u8) !*Self {
         const session = tls.dusk_tls_session_new(config, host.ptr, host.len) orelse return error.TlsSessionFailed;
         errdefer tls.dusk_tls_session_free(session);
         const layer = try allocator.create(Self);
-        layer.* = .{ .allocator = allocator, .session = session, .owned_config = config, .role = .client };
+        layer.* = .{ .allocator = allocator, .session = session, .owned_config = if (owns_config) config else null, .role = .client };
         return layer;
     }
 
