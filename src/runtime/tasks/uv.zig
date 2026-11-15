@@ -33,7 +33,16 @@ pub const DirEntries = extern struct {
     entry_count: usize,
 };
 
-pub const AddressInfo = @import("std").c.addrinfo;
+pub const AddressInfo = if (@import("builtin").os.tag == .windows) extern struct {
+    flags: c_int,
+    family: c_int,
+    socktype: c_int,
+    protocol: c_int,
+    addrlen: usize,
+    canonname: ?[*:0]u8,
+    addr: ?*@import("std").c.sockaddr,
+    next: ?*@This(),
+} else @import("std").c.addrinfo;
 
 pub const SocketAddress = extern struct {
     bytes: [128]u8 align(8) = @splat(0),

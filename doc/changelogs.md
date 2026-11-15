@@ -28,6 +28,8 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- Windows builds use the platform address-info layout for name resolution, fixing a missing-binding compilation error
+
 - `import std/math` now loads the math module instead of failing with `UnknownStdModule`
 - Calling an indexed function with a named index (`callbacks[i](value)`) now reads the indexed function instead of treating the index as a method name
 - An anonymous struct built without a type (`let p = @(value = 1, next = 5)`) could be passed where a named struct was expected even with fields of other types or in another order, which read the wrong fields or crashed. It now fits a named struct only with the same fields, in the same order, of the same types, and the `InvalidType` message says so
