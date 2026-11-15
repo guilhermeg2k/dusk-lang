@@ -1937,10 +1937,12 @@ The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](
 
 ### std/time
 
-Two clocks for timestamps and elapsed time. Import with `import std/time`.
+Clocks and timestamp values. Import with `import std/time`.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
+| `now()` | `Timestamp` | A timestamp from the current wall-clock reading. |
+| `from_unix_ms(milliseconds)` | `Timestamp` | A timestamp from any `int` epoch-millisecond value, including negative values. |
 | `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
 | `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
 
@@ -1948,7 +1950,7 @@ Two clocks for timestamps and elapsed time. Import with `import std/time`.
 
 `monotonic_ns` ignores jumps in the system wall clock. Consecutive readings may be equal; nanosecond units do not guarantee nanosecond resolution. Elapsed time includes waiting for tasks or I/O, rather than only time spent executing. Inclusion of time while the whole system is suspended is platform-dependent. Use differences within a program run; do not persist monotonic readings as timestamps or compare them across runs or machines.
 
-Both calls return immediately, without allocating or yielding to another task. Neither needs `try`. A platform clock failure or a reading outside `int` range is a runtime error. Waiting remains `task::sleep` in `std/task`.
+The raw clock calls return immediately, without allocating or yielding to another task. Neither needs `try`. A platform clock failure or a reading outside `int` range is a runtime error. Waiting remains `task::sleep` in `std/task`.
 
 ```dusk
 import std/time
@@ -1964,6 +1966,27 @@ func main() -> void
     io::println("Sorted in $elapsed_ms ms")
 end
 ```
+
+A `Timestamp` stores epoch milliseconds in a private field and has no mutating methods. Create one with `now` or `from_unix_ms`. It exposes:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `unix_ms()` | `int` | The stored epoch milliseconds, unchanged. |
+| `to_string()` | `string` | ISO 8601-style UTC text with exactly three fractional millisecond digits. |
+
+Formatting works for every `int` timestamp, without `try` or a date-range error. Years `0000–9999` use four digits. Larger years have a leading `+` and all digits; negative years have a leading `-` and at least four digits. The Gregorian calendar extends backward through year zero. Unix milliseconds do not represent leap seconds. Expanded-year output is not strict RFC 3339.
+
+```dusk
+let epoch = time::from_unix_ms(0)
+io::println(epoch.to_string())
+let before_epoch = time::from_unix_ms(-1)
+io::println(before_epoch.to_string())
+let modified = time::from_unix_ms(info.modified_ms)
+```
+
+The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
+
+The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Parsing, date arithmetic and timestamp comparison methods are not provided. Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
 
 ### std/task
 

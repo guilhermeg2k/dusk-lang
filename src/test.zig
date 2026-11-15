@@ -19,6 +19,16 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "time: timestamps, formatting and private construction" {
+    try runCase("time-timestamps.dsk");
+    try runCaseError("sema/time-timestamp-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-timestamp-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-timestamp-format-argument.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-timestamp-native-private.dsk", error.NotVisible);
+}
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);
