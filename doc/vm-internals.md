@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.15 (closures and tasks). The language itself is described in [language-ref.md](language-ref.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.15 (closures, tasks and maps). The language itself is described in [language-ref.md](language-ref.md).
 
 The source files involved:
 
