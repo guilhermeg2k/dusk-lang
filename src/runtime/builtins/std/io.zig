@@ -10,6 +10,7 @@ const uv = @import("../../tasks/uv.zig");
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 
 pub const IoError = @import("../../tasks/stream.zig").IoError;
+const ReadMode = @import("../../tasks/stream.zig").ReadMode;
 pub const error_sets = .{IoError};
 
 pub const bindings = native.BindingMap.initComptime(.{
@@ -19,6 +20,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "eprintln", Binding{ .native = &eprintln } },
     .{ "stdin_handle", Binding{ .native = &stdinHandle } },
     .{ "stream_read_bytes", Binding{ .native = &streamReadBytes } },
+    .{ "stream_read_line", Binding{ .native = &streamReadLine } },
+    .{ "stream_read_all", Binding{ .native = &streamReadAll } },
+    .{ "stream_read_all_bytes", Binding{ .native = &streamReadAllBytes } },
     .{ "is_terminal_fd", Binding{ .native = &isTerminalFd } },
 });
 
@@ -52,25 +56,48 @@ fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (max < 1) {
         return RuntimeErrorReporter.invalidReadSize(max);
     }
-    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
+    return readStream(vm, args[0].int64, .{ .bytes = @intCast(max) });
+}
+
+fn streamReadLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const max = args[1].int64;
+    const limit: ?usize = if (max < 0) null else @intCast(max);
+    return readStream(vm, args[0].int64, .{ .line = limit });
+}
+
+fn streamReadAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return readStream(vm, args[0].int64, .all_text);
+}
+
+fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return readStream(vm, args[0].int64, .all_bytes);
+}
+
+fn readStream(vm: *VM, handle: i64, mode: ReadMode) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(handle) orelse return fail(IoError.Closed);
     if (stream.waiter != null) {
         return fail(IoError.Busy);
     }
-    const available = stream.bufferedBytes();
-    if (available.len > 0) {
-        const count = @min(available.len, @as(usize, @intCast(max)));
-        const value = try vm.allocBytesValue(available[0..count], .buffer);
-        stream.consume(count);
-        return ok(value);
+    if (stream.readyOutcome(mode)) |outcome| {
+        switch (outcome.result) {
+            .data => |data| {
+                const value = try vm.allocBytesValue(data, mode.valueKind());
+                stream.consume(outcome.consumed);
+                return ok(value);
+            },
+            .end => return ok(v.NULL_VALUE),
+            .failure => |failure| {
+                stream.consume(outcome.consumed);
+                return fail(failure);
+            },
+        }
     }
-    if (stream.failure) |failure| {
-        return fail(failure);
-    }
-    if (stream.has_ended) {
-        return ok(v.NULL_VALUE);
+    const is_stdin = vm.event_loop.stdin_handle == @as(usize, @intCast(handle));
+    if (is_stdin) {
+        try vm.stdio.flushStdout();
     }
     const current = vm.running_task.?;
-    stream.parkReader(current, @intCast(max)) catch return fail(IoError.Other);
+    stream.parkReader(current, mode) catch return fail(IoError.Other);
     current.park();
     return native.parked();
 }

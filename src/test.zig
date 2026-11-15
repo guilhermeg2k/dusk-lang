@@ -406,7 +406,7 @@ test "io: stdin read_bytes over a pipe, in chunks, then null" {
 test "io: a stdin read parks until data arrives while other tasks run" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const fds = try std.Io.Threaded.pipe2(.{});
-    var writer = DelayedWriter{ .fd = fds[1], .data = "late" };
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"late"} };
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
     const source =
@@ -440,7 +440,7 @@ test "io: a stdin read parks until data arrives while other tasks run" {
 test "io: a second task reading stdin at the same time gets Busy" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const fds = try std.Io.Threaded.pipe2(.{});
-    var writer = DelayedWriter{ .fd = fds[1], .data = "x" };
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"x"} };
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
     const source =
@@ -474,6 +474,124 @@ test "io: read_bytes needs a size of at least 1" {
     try testing.expectError(error.InvalidReadSize, runWithStdin("import std/io\nfunc main() -> !void\n    let data = try io::stdin().read_bytes(0)\nend\n", fds[0], &output.writer));
 }
 
+test "io: read_line splits lines, strips \r\n, returns the last line, then null" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try pipeWithInput("one\ntwo\r\n\nlast");
+    try expectStdinOutput(read_lines_source, fds[0], "[one]\n[two]\n[]\n[last]\nend\n");
+}
+
+test "io: read_line waits for a line split across writes" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{ "par", "tial\nne", "xt\n" } };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    try expectStdinOutput(read_lines_source, fds[0], "[partial]\n[next]\nend\n");
+}
+
+test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const too_long =
+        \\import std/io
+        \\import std/string
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line(max = 3) catch e then
+        \\        io::println("${e == io::IoError.LineTooLong}")
+        \\    end
+        \\    let rest = try input.read_bytes(64)
+        \\    if rest: data then
+        \\        io::print(try string::from_bytes(data))
+        \\    end
+        \\    io::println("${try input.read_line(max = 3)}")
+        \\end
+    ;
+    try expectStdinOutput(too_long, (try pipeWithInput("abcdef\nok\n"))[0], "true\nabcdef\nok\nnull\n");
+
+    const invalid =
+        \\import std/io
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line() catch e then
+        \\        io::println("${e == io::IoError.InvalidUtf8}")
+        \\    end
+        \\    io::println("${try input.read_line()}")
+        \\end
+    ;
+    try expectStdinOutput(invalid, (try pipeWithInput("\xff\nok\n"))[0], "true\nok\n");
+
+    const all =
+        \\import std/io
+        \\import std/string
+        \\func main() -> !void
+        \\    let text = try io::stdin().read_all()
+        \\    io::println("${string::char_count(text)} [$text]")
+        \\end
+    ;
+    try expectStdinOutput(all, (try pipeWithInput("olá\n🌙"))[0], "5 [olá\n🌙]\n");
+    try expectStdinOutput(all, (try pipeWithInput(""))[0], "0 []\n");
+
+    const all_bytes =
+        \\import std/io
+        \\import std/buffer
+        \\func main() -> !void
+        \\    let data = try io::stdin().read_all_bytes()
+        \\    io::println("${buffer::len(data)} ${data[0]}")
+        \\end
+    ;
+    try expectStdinOutput(all_bytes, (try pipeWithInput("\xff\x00\x01"))[0], "3 255\n");
+}
+
+test "io: read_all collects 10 MB written while the program waits" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const big = try testing.allocator.alloc(u8, 10 * 1024 * 1024);
+    defer testing.allocator.free(big);
+    @memset(big, 'a');
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{big} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const source =
+        \\import std/io
+        \\import std/string
+        \\func main() -> !void
+        \\    let text = try io::stdin().read_all()
+        \\    io::println("${string::len(text)}")
+        \\end
+    ;
+    try expectStdinOutput(source, fds[0], "10485760\n");
+}
+
+test "io: reading stdin flushes stdout before waiting" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"Ana\n"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try runWithStdin("import std/io\nfunc main() -> !void\n    io::print(\"Name: \")\n    let name = try io::stdin().read_line()\n    io::println(\"Hi ${name}\")\nend\n", fds[0], &recorder.interface);
+    try testing.expectEqual(2, recorder.drain_count);
+    try testing.expectEqualStrings("Name: Hi Ana\n", recorder.flushed.items);
+}
+
+const read_lines_source =
+    \\import std/io
+    \\func main() -> !void
+    \\    let input = io::stdin()
+    \\    for true do
+    \\        let next = try input.read_line()
+    \\        if next: line then
+    \\            io::println("[$line]")
+    \\        else
+    \\            break
+    \\        end
+    \\    end
+    \\    io::println("end")
+    \\end
+;
+
 fn expectStdinOutput(source: []const u8, stdin_fd: c_int, expected: []const u8) !void {
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
@@ -495,14 +613,32 @@ fn closeFd(fd: c_int) void {
 
 const DelayedWriter = struct {
     fd: c_int,
-    data: []const u8,
+    parts: []const []const u8,
 
     fn run(self: *DelayedWriter) void {
-        testing.io.sleep(std.Io.Duration.fromMilliseconds(50), .awake) catch {};
-        _ = std.c.write(self.fd, self.data.ptr, self.data.len);
+        for (self.parts) |part| {
+            testing.io.sleep(std.Io.Duration.fromMilliseconds(30), .awake) catch {};
+            writeAllToFd(self.fd, part);
+        }
         closeFd(self.fd);
     }
 };
+
+fn writeAllToFd(fd: c_int, data: []const u8) void {
+    var written: usize = 0;
+    while (written < data.len) {
+        const count = std.c.write(fd, data[written..].ptr, data.len - written);
+        if (count <= 0) return;
+        written += @intCast(count);
+    }
+}
+
+fn pipeWithInput(input: []const u8) ![2]c_int {
+    const fds = try std.Io.Threaded.pipe2(.{});
+    writeAllToFd(fds[1], input);
+    closeFd(fds[1]);
+    return fds;
+}
 
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++

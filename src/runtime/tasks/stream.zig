@@ -31,7 +31,7 @@ pub const Stream = struct {
 
     pub const Waiter = struct {
         task: *TaskState,
-        max: usize,
+        mode: ReadMode,
     };
 
     pub fn open(allocator: std.mem.Allocator, event_loop: *EventLoop, scheduler: *Scheduler, loop: *uv.Loop, file: c_int) !*Self {
@@ -106,9 +106,66 @@ pub const Stream = struct {
         self.read_offset = 0;
     }
 
-    pub fn parkReader(self: *Self, task: *TaskState, max: usize) !void {
+    pub fn readyOutcome(self: *const Self, mode: ReadMode) ?ReadOutcome {
+        return switch (mode) {
+            .bytes => |max| self.bytesOutcome(max),
+            .line => |max| self.lineOutcome(max),
+            .all_text => self.allOutcome(true),
+            .all_bytes => self.allOutcome(false),
+        };
+    }
+
+    fn bytesOutcome(self: *const Self, max: usize) ?ReadOutcome {
+        const available = self.bufferedBytes();
+        if (available.len > 0) {
+            const count = @min(available.len, max);
+            return .{ .result = .{ .data = available[0..count] }, .consumed = count };
+        }
+        return self.endOutcome();
+    }
+
+    fn lineOutcome(self: *const Self, max: ?usize) ?ReadOutcome {
+        const available = self.bufferedBytes();
+        if (std.mem.indexOfScalar(u8, available, '\n')) |newline| {
+            return lineFrom(available[0..newline], newline + 1, max);
+        }
+        if (max) |limit| {
+            if (available.len > limit) {
+                return .{ .result = .{ .failure = .LineTooLong } };
+            }
+        }
+        const is_last_line = available.len > 0 and self.has_ended;
+        if (is_last_line) {
+            return lineFrom(available, available.len, max);
+        }
+        return self.endOutcome();
+    }
+
+    fn allOutcome(self: *const Self, needs_utf8: bool) ?ReadOutcome {
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (!self.has_ended) return null;
+        const available = self.bufferedBytes();
+        if (needs_utf8 and !std.unicode.utf8ValidateSlice(available)) {
+            return .{ .result = .{ .failure = .InvalidUtf8 }, .consumed = available.len };
+        }
+        return .{ .result = .{ .data = available }, .consumed = available.len };
+    }
+
+    fn endOutcome(self: *const Self) ?ReadOutcome {
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (self.has_ended) {
+            return .{ .result = .end };
+        }
+        return null;
+    }
+
+    pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode) !void {
         try self.startReading();
-        self.waiter = .{ .task = task, .max = max };
+        self.waiter = .{ .task = task, .mode = mode };
         self.event_loop.pending_operations += 1;
     }
 
@@ -132,18 +189,16 @@ pub const Stream = struct {
 
     fn serveWaiter(self: *Self) void {
         const waiter = self.waiter orelse return;
-        const available = self.bufferedBytes();
-        const wake_result: WakeResult = if (available.len > 0) result: {
-            const count = @min(available.len, waiter.max);
-            const bytes = self.allocator.dupe(u8, available[0..count]) catch break :result failureResult(.Other);
-            self.consume(count);
-            break :result .{ .value = v.NULL_VALUE, .kind = .buffer, .payload = .{ .bytes = bytes } };
-        } else if (self.failure) |failure|
-            failureResult(failure)
-        else if (self.has_ended)
-            .{ .value = v.NULL_VALUE, .kind = .null }
-        else
-            return;
+        const outcome = self.readyOutcome(waiter.mode) orelse return;
+        const wake_result: WakeResult = switch (outcome.result) {
+            .data => |data| result: {
+                const bytes = self.allocator.dupe(u8, data) catch break :result failureResult(.Other);
+                break :result .{ .value = v.NULL_VALUE, .kind = waiter.mode.valueKind(), .payload = .{ .bytes = bytes } };
+            },
+            .end => .{ .value = v.NULL_VALUE, .kind = .null },
+            .failure => |failure| failureResult(failure),
+        };
+        self.consume(outcome.consumed);
         self.waiter = null;
         self.event_loop.pending_operations -= 1;
         self.scheduler.wake(waiter.task, wake_result) catch |failure| {
@@ -159,6 +214,43 @@ pub const Stream = struct {
         }
     }
 };
+
+pub const ReadMode = union(enum) {
+    bytes: usize,
+    line: ?usize,
+    all_text,
+    all_bytes,
+
+    pub fn valueKind(self: ReadMode) v.ValueType {
+        return switch (self) {
+            .line, .all_text => .string,
+            .bytes, .all_bytes => .buffer,
+        };
+    }
+};
+
+pub const ReadOutcome = struct {
+    result: union(enum) {
+        data: []const u8,
+        end,
+        failure: IoError,
+    },
+    consumed: usize = 0,
+};
+
+fn lineFrom(raw: []const u8, consumed: usize, max: ?usize) ReadOutcome {
+    const has_carriage_return = raw.len > 0 and raw[raw.len - 1] == '\r';
+    const line = if (has_carriage_return) raw[0 .. raw.len - 1] else raw;
+    if (max) |limit| {
+        if (line.len > limit) {
+            return .{ .result = .{ .failure = .LineTooLong } };
+        }
+    }
+    if (!std.unicode.utf8ValidateSlice(line)) {
+        return .{ .result = .{ .failure = .InvalidUtf8 }, .consumed = consumed };
+    }
+    return .{ .result = .{ .data = line }, .consumed = consumed };
+}
 
 pub const IoError = enum {
     Closed,
