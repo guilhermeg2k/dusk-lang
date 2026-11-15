@@ -1,6 +1,6 @@
-// Hand-written libuv bindings: only what event_loop.zig calls.
+// Hand-written libuv bindings: only what event_loop.zig and fs_job.zig call.
 // translate-c of uv.h breaks on macOS, so libuv structs stay opaque here
-// and their sizes come from uv_loop_size / uv_handle_size at runtime.
+// and their sizes come from uv_loop_size / uv_handle_size / uv_req_size at runtime.
 
 // ---- Types ----
 
@@ -11,6 +11,9 @@ pub const Request = opaque {};
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
 pub const HandleType = enum(c_int) { timer = 13 };
 pub const RequestType = enum(c_int) { fs = 6, work = 7 };
+pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
+
+// ---- Structs mirrored from uv.h (layouts must match) ----
 
 pub const Buffer = if (@import("builtin").os.tag == .windows) extern struct {
     len: c_ulong,
@@ -19,8 +22,6 @@ pub const Buffer = if (@import("builtin").os.tag == .windows) extern struct {
     base: [*]u8,
     len: usize,
 };
-
-pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
 pub const DirEntry = extern struct {
     name: [*:0]const u8,
@@ -87,27 +88,45 @@ pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
 
+// ---- Requests (shared by every request type) ----
+
 pub extern fn uv_req_size(request_type: RequestType) usize;
 pub extern fn uv_req_get_data(request: *const Request) ?*anyopaque;
 pub extern fn uv_req_set_data(request: *Request, data: ?*anyopaque) void;
+
+// ---- Errors ----
+
 pub extern fn uv_err_name(status: c_int) [*:0]const u8;
 
+// ---- Thread pool ----
+
 pub extern fn uv_queue_work(loop: *Loop, request: *Request, work: WorkCallback, after_work: AfterWorkCallback) c_int;
+
+// ---- File system: files (called synchronously from pool jobs, with no callback) ----
 
 pub extern fn uv_fs_open(loop: *Loop, request: *Request, path: [*:0]const u8, flags: c_int, mode: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_read(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_write(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_close(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
+
+// ---- File system: paths ----
+
+pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_rename(loop: *Loop, request: *Request, path: [*:0]const u8, new_path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_unlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_mkdir(loop: *Loop, request: *Request, path: [*:0]const u8, mode: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_rmdir(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
-pub extern fn uv_fs_unlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
-pub extern fn uv_fs_rename(loop: *Loop, request: *Request, path: [*:0]const u8, new_path: [*:0]const u8, callback: ?FsCallback) c_int;
+
+// ---- File system: folders ----
+
 pub extern fn uv_fs_opendir(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_readdir(loop: *Loop, request: *Request, dir: *DirEntries, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_closedir(loop: *Loop, request: *Request, dir: *DirEntries, callback: ?FsCallback) c_int;
+
+// ---- File system: request results ----
+
 pub extern fn uv_fs_get_ptr(request: *const Request) ?*anyopaque;
-pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
-pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_get_statbuf(request: *Request) *Stat;
 pub extern fn uv_fs_req_cleanup(request: *Request) void;
