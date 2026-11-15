@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.16 (in development: std/io output, fs jobs on libuv's thread pool). The language itself is described in [language-ref.md](language-ref.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.16 (in development: std/io output and stdin streams, fs jobs on libuv's thread pool). The language itself is described in [language-ref.md](language-ref.md).
 
 The source files involved:
 
@@ -21,6 +21,7 @@ The source files involved:
 | `src/runtime/tasks/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
 | `src/runtime/tasks/event_loop.zig` | `EventLoop`: the libuv loop, timers for `sleep`, and queuing fs jobs |
 | `src/runtime/tasks/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 11.5) |
+| `src/runtime/tasks/stream.zig` | `Stream`: an input stream (stdin) with its C-side buffer, parked reader, timer and libuv read callbacks (section 11.6) |
 | `src/runtime/tasks/uv.zig` | The few libuv functions Dusk calls, declared by hand |
 
 Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.
@@ -669,14 +670,15 @@ WakeResult {                    // src/runtime/tasks/scheduler.zig
 | `sleep(0)` | Delivers `void` to the running task right away (back of the queue) and parks. |
 | `sleep(ms)` | Starts a libuv timer for the running task and parks; the timer's callback wakes it with `void`. |
 | `std/fs` functions | Copy their paths (and the data to write) into an `FsJob`, start it on libuv's thread pool (11.5) and park; the job's callback wakes the task with the result or an `FsError` variant. |
+| stdin reads | Return right away when the stream's buffer already holds the answer; otherwise park as the stream's waiter (11.6), woken by data, the end of input, a timeout or `close()`. |
 
 `spawn` isn't a native: it is the `TASK_SPAWN R[a] R[b] K[c]` intrinsic, which creates the `TaskState` from the closure in `R[b]`, records `c` (the kind of `T`) as `result_kind`, queues it, and puts a new `Task` handle in `R[a]`.
 
 ### 11.4 The event loop
 
-`EventLoop` (`src/runtime/tasks/event_loop.zig`) and the fs jobs (`src/runtime/tasks/fs_job.zig`, 11.5) are the only code that calls libuv. `EventLoop` creates its `uv_loop_t` on the first `sleep` with a time above 0 or the first fs call, so programs that use neither don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
+`EventLoop` (`src/runtime/tasks/event_loop.zig`), the fs jobs (`src/runtime/tasks/fs_job.zig`, 11.5) and the streams (`src/runtime/tasks/stream.zig`, 11.6) are the only code that calls libuv. `EventLoop` creates its `uv_loop_t` on the first `sleep` with a time above 0 or the first fs call, so programs that use neither don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
 
-libuv's structs differ per OS, so Dusk mostly doesn't use their layout: `src/runtime/tasks/uv.zig` declares the functions it calls with opaque `Loop`, `Handle` and `Request` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`, `uv_req_size`). The few plain C structs whose fields Dusk reads or fills are mirrored as `extern struct`s: `Stat` (`uv_stat_t`, with `c_long` times so it also matches Windows), `Buffer` (`uv_buf_t`, whose field order differs on Windows), and the first public fields of `uv_dirent_t` and `uv_dir_t`. The handle's `data` (`uv_handle_set_data`) points back to the request. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
+libuv's structs differ per OS, so Dusk mostly doesn't use their layout: `src/runtime/tasks/uv.zig` declares the functions it calls with opaque `Loop`, `Handle` and `Request` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`, `uv_req_size`). The few plain C structs whose fields Dusk reads or fills are mirrored as `extern struct`s: `Stat` (`uv_stat_t`, with `c_long` times so it also matches Windows), `Buffer` (`uv_buf_t`, whose field order differs on Windows), and the first public fields of `uv_dirent_t` and `uv_dir_t`. Every handle's `data` (`uv_handle_set_data`) points to a `HandleOwner` field (`kind`: `timer`, `stream` or `stream_timer`) inside the struct that owns it, and `@fieldParentPtr` gets from the field back to the owner, so `onHandleClosed` and the exit cleanup know what they're freeing. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
 
 ### 11.5 fs jobs
 
@@ -692,7 +694,32 @@ Every `std/fs` call is one `FsJob` (`src/runtime/tasks/fs_job.zig`), run with `u
 
 **Details.** Writes open with `WRONLY | CREAT | TRUNC` (or `APPEND`), taken from `std.posix.O` on POSIX and from the C runtime's `_O_*` values on Windows. `read_dir` uses `uv_fs_opendir`/`uv_fs_readdir` rather than `uv_fs_scandir`, which sorts the names. Recursive `delete` reads a folder's entries before deleting them, uses the entry type `readdir` reports (an `lstat` only when it's unknown), and never follows symlinks. `stat` runs `lstat` first and `stat` only for a link, so the other fields describe the link's target.
 
-### 11.6 Freeing tasks
+### 11.6 Streams (stdin)
+
+`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/tasks/stream.zig`) on the first call and keeps its index in `EventLoop.streams`. The Dusk value (`io::Stdin`) only holds that index in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
+
+| Kind | Opened as | Reads with |
+|---|---|---|
+| `tty` | `uv_tty_init` | `uv_read_start` |
+| `pipe` | `uv_pipe_init` + `uv_pipe_open` | `uv_read_start` |
+| `file` | the fd itself | 64 KiB `read_chunk` fs jobs (11.5), one at a time |
+| `closed_input` | — | always at the end |
+
+A `Stream` lives in C memory: the bytes read so far (a byte array and a read offset; consumed bytes are dropped by moving the rest down once the offset passes half), the end and failure flags, at most one `waiter` (the parked task and what it asked for), and an optional timer.
+
+**One rule for every read.** `Stream.readyOutcome(mode)` decides whether a read (`bytes`, `line`, `all_text`, `all_bytes`) can complete now, and returns the data (a slice of the buffer and how much to consume), the end, or an error. The native calls it first and, when it's ready, builds the string or buffer right there with no park. That's the common case when lines come from a pipe. Otherwise it parks the task as the waiter (or fails with `Busy` if there already is one), turns reading on, starts the timer for `timeout_ms`, and counts one pending operation. Before parking on stdin, it flushes stdout, so prompts show up.
+
+**Callbacks.** libuv's `onAlloc` hands out free space at the end of the buffer, and `onRead` appends to it, or records the end (`UV_EOF`) or a failure. A finished `read_chunk` job does the same through `Stream.finishChunk`. Then `serveWaiter` runs `readyOutcome` for the waiter: if the read can complete, it copies the result into a payload (11.3), consumes it, stops the timer and wakes the task. If no task waits and 1 MiB or more is buffered, reading stops (`uv_read_stop`), so a fast writer fills the OS pipe and slows down instead of filling memory. The next read turns it back on.
+
+**Timeouts and one wake per wait.** Each stream has one timer handle, made on its first timed read and reused. Data (`serveWaiter`), the timer (`onReadTimeout`) and `close()` all clear the same `waiter`: the first one wakes the task and stops the timer, and the others find no waiter and do nothing. Everything runs on the loop thread. A timed-out read consumes nothing.
+
+**Closing and freeing.** `close()` wakes a waiter with `Closed`, stops reading, closes the stream handle and the timer, and clears the table slot. `EventLoop.stdin_handle` keeps the old index, so later `io::stdin()` reads fail with `Closed`. The `Stream` is freed only when it's closed, its open handles (`open_handles`: the stream handle and the timer) have all reported back to `onHandleClosed`, and no chunk job is running (a job still on the pool writes into the stream when it finishes). At exit, `releaseAtExit` marks every stream closed and the loop's handle walk closes what's left. File streams close their fd only when it's above 2; libuv never closes stdio fds either.
+
+**Missing stdio fds.** libuv asserts that it never closes fds 0 to 2. If the program starts with one of them closed, the loop's own fds would get those numbers, so `main.zig` opens `/dev/null` in their place first; closed stdin then reads as the end of the input.
+
+**Writers.** `io::stdout()` and `io::stderr()` don't use libuv: their methods go through `Stdio` like `io::print`, but `Stdio.tryWriteBytes` / `tryFlush` return the error (`BrokenPipe` becomes `IoError.BrokenPipe`) instead of ending the program, and drop the bytes that couldn't be sent so the exit flush doesn't fail again.
+
+### 11.7 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 

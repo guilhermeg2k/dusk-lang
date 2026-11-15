@@ -1971,6 +1971,121 @@ Printing never needs `try`. If the program reading the output stops early (`dusk
 
 Interpolation formats primitives, arrays and nullables as their values. It formats enums as their number, unions as `<union>`, maps as `<map>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as their raw values.
 
+#### Reading stdin
+
+`io::stdin()` returns the program's standard input as an `io::Stdin`. Every call gives the same input, whether it's a terminal, a pipe (`cat data.txt | dusk app.dsk`) or a file (`dusk app.dsk < data.txt`). Reading waits without blocking the program: only the reading task waits, and other tasks keep running.
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `read_line(max = -1, timeout_ms = -1)` | `IoError!?string` | The next line, without its `\n` or `\r\n`; the last line is returned even without a newline. `null` at the end of the input. |
+| `read_bytes(max, timeout_ms = -1)` | `IoError!?buffer` | Up to `max` bytes (at least 1), as soon as some are there: it doesn't wait for `max` of them. `null` at the end of the input. |
+| `read_all(timeout_ms = -1)` | `IoError!string` | Everything until the end of the input, as text. |
+| `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes. |
+| `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
+| `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
+
+```nim
+import std/io
+
+func main() -> !void
+    let input = io::stdin()
+    if input.is_terminal() then
+        io::print("Name: ")
+    end
+    let name = try input.read_line() orelse "anonymous"
+    io::println("Hello, $name")
+
+    for true do
+        let next = try input.read_line()
+        if next: line then
+            io::println("> $line")
+        else
+            break
+        end
+    end
+end
+```
+
+- An empty line is `""`; only `null` means the input ended. The end of input is read with a capture (`if next: line then ... else break end`), since `orelse break` isn't allowed.
+- Reading from stdin first sends what's waiting in stdout's buffer when the read has to wait, so a prompt printed with `io::print` shows before the user types.
+- `read_line(max = n)` fails with `LineTooLong` when a line is longer than `n` bytes. The line stays unread: drain it with `read_bytes` or stop reading. Without `max`, lines can be of any length.
+- `read_line` and `read_all` fail with `InvalidUtf8` on text that isn't valid UTF-8 (`read_line` skips that line). Use `read_bytes` or `read_all_bytes` for binary data.
+- `timeout_ms` makes a read fail with `TimedOut` when nothing complete arrives in time. Nothing is lost: what arrived stays for the next read, and the input stays usable.
+- Two tasks reading stdin at the same time: the second one fails with `Busy`. A task waiting for input when another task calls `close()` fails with `Closed`.
+- When the program has no input at all (started with stdin closed), reads return the end of the input.
+
+#### Writing through stdout and stderr
+
+`io::stdout()` and `io::stderr()` return writers for the same output `io::print` and `io::eprint` use, in the same order. Unlike `io::print`, their methods return errors, for programs that want to handle them:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `write(text)` | `IoError!void` | Writes `text`. |
+| `write_bytes(data)` | `IoError!void` | Writes the bytes of a `buffer`. |
+| `flush()` | `IoError!void` | Sends what's buffered now. |
+| `is_terminal()` | `bool` | Whether the output is a terminal. |
+
+When the program reading the output stopped (`dusk app.dsk | head -1`), they fail with `BrokenPipe` and the program keeps running; the output that couldn't be sent is dropped. Writes follow the same buffering rules as `io::print`, so a failure can show up at the next `write` or `flush` rather than at the write that caused it.
+
+#### Errors
+
+| `io::IoError` | When |
+| :------------ | :--- |
+| `Closed` | Reading after `close()`, or while another task closes the input |
+| `Busy` | Another task is already reading the same input |
+| `BrokenPipe` | Writing to an output whose reader is gone |
+| `ConnectionReset` | The other side dropped the connection |
+| `LineTooLong` | A line longer than `read_line`'s `max` |
+| `InvalidUtf8` | `read_line` or `read_all` on text that isn't valid UTF-8 |
+| `TimedOut` | A read with `timeout_ms` didn't complete in time |
+| `Other` | Any other failure |
+
+#### Readers, writers and `io::copy`
+
+Two traits describe what reads and what writes, so generic code works with any of them:
+
+```nim
+trait Reader
+    func read_bytes(mut self: @, max: int, timeout_ms: int) -> IoError!?buffer
+end
+
+trait Writer
+    func write(mut self: @, text: string) -> IoError!void
+    func write_bytes(mut self: @, data: buffer) -> IoError!void
+    func flush(mut self: @) -> IoError!void
+end
+```
+
+`io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout` and `io::Stderr` fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
+
+```nim
+import std/io
+import std/buffer
+import std/array: len
+
+struct Greetings
+    names: []string
+    position: int = 0
+
+    func read_bytes(mut self: @, max: int, timeout_ms: int) -> io::IoError!?buffer
+        if self.position >= len(self.names) then
+            return null
+        end
+        self.position = self.position + 1
+        return buffer::from_string("hello ${self.names[self.position - 1]}\n")
+    end
+end
+
+func main() -> !void
+    let mut source = Greetings(names = ["ana", "bob"])
+    let mut out = io::stdout()
+    let copied = try io::copy(source, out)   # hello ana, hello bob
+    try io::copy(io::stdin(), io::stdout())  # copies stdin to stdout
+end
+```
+
+The trait methods take `mut self` because reading or writing may change the stream, so a type that keeps its position in a field fits. Methods that change nothing, like the ones of `io::Stdin`, fit too. Generic code that uses them takes the stream as `mut` (`io::copy(mut from: R, mut to: W)`), so a stream kept in a variable is passed as `let mut`; temporaries like `io::stdin()` can be passed directly. Calling a stream's own methods (`input.read_line()`) doesn't need `mut`.
+
 ### std/fs
 
 Reads and writes files and folders. Every call waits for the disk without blocking the program: it parks only the running task, and other tasks keep running meanwhile (see [Tasks](#13-tasks)). Paths are relative to the current directory. Functions that can fail return an error union with the module's error set `FsError`:
