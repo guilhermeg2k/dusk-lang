@@ -24,6 +24,7 @@ pub const Intrinsic = enum {
     append,
     copy,
     task_spawn,
+    strings_equal,
 };
 
 pub fn ok(value: v.Value) NativeResult {

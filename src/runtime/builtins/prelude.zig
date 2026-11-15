@@ -1,4 +1,3 @@
-const std = @import("std");
 const v = @import("../value.zig");
 const format = @import("../format.zig");
 const VM = @import("../vm.zig").VM;
@@ -8,7 +7,6 @@ const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 const ok = native.ok;
 const parked = native.parked;
-const bytesArg = native.bytesArg;
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "echo", Binding{ .native = &echo } },
@@ -19,7 +17,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "copy", Binding{ .intrinsic = .copy } },
     .{ "spawn", Binding{ .intrinsic = .task_spawn } },
     .{ "await", Binding{ .native = &taskAwait } },
-    .{ "strings_equal", Binding{ .native = &stringsEqual } },
+    .{ "strings_equal", Binding{ .intrinsic = .strings_equal } },
 });
 
 pub fn echo(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -50,13 +48,4 @@ pub fn taskAwait(vm: *VM, args: []v.Value) anyerror!NativeResult {
     try target.waiters.append(vm.scheduler.allocator, current);
     current.park();
     return parked();
-}
-
-fn stringsEqual(_: *VM, args: []v.Value) anyerror!NativeResult {
-    const left_is_null = @as(u64, @bitCast(args[0])) == 0;
-    const right_is_null = @as(u64, @bitCast(args[1])) == 0;
-    if (left_is_null or right_is_null) {
-        return ok(.{ .bool = left_is_null and right_is_null });
-    }
-    return ok(.{ .bool = std.mem.eql(u8, bytesArg(args, 0), bytesArg(args, 1)) });
 }

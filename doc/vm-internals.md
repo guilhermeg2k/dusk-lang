@@ -281,6 +281,7 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | `TO_STRING R[a] R[b] T[c]` | formats `R[b]` as kind `c` into a new string |
 | `BYTES_NEW R[a] R[b]` | new zeroed buffer of length `R[b]` |
 | `BYTES_LEN R[a] R[b]` | length of a string or buffer |
+| `STR_EQ R[a] R[b] R[c]` | `R[b]` and `R[c]` are `?string`: `true` when both are `null` or have the same bytes. Same pointer is `true` right away, so a string compared with itself or with the same literal (string pool) skips the byte comparison |
 | `BYTES_GET R[a] R[b] R[c]`, `BYTES_SET R[a] R[b] R[c]` | read or write one byte, with bounds check |
 
 **Arrays**
@@ -458,7 +459,7 @@ if (result.has_failed) {
 - Natives with `dynamic` parameters get one extra hidden `int` argument per `dynamic` parameter, after the normal ones, holding its `ValueType`. Codegen loads it with `genArgKinds`. This is how `echo` knows how to print.
 - If a native returns a Zig error (a runtime error), its name is saved in `failed_builtin` for the error message.
 
-**Intrinsics** never run as calls. Codegen evaluates the arguments into `R[a+1 ..]` as usual, then emits the instruction for that intrinsic (`genIntrinsicCall`), for example `len` → `ARRAY_LEN`, `append` → `ARRAY_APPEND`, `copy` → `DEEP_COPY`, `to_float` → `LOAD` + `I_TO_F`.
+**Intrinsics** never run as calls. Codegen evaluates the arguments into `R[a+1 ..]` as usual, then emits the instruction for that intrinsic (`genIntrinsicCall`), for example `len` → `ARRAY_LEN`, `append` → `ARRAY_APPEND`, `copy` → `DEEP_COPY`, `to_float` → `LOAD` + `I_TO_F`. `==` and `!=` on strings are lowered by sema to the hidden prelude intrinsic `~strings_equal`, which becomes `STR_EQ` (`!=` adds a `B_NOT`).
 
 ### 7.4 Tail calls
 

@@ -166,6 +166,7 @@ pub const Chunk = struct {
             .B_AND,
             .B_EQ,
             .B_NEQ,
+            .STR_EQ,
             .I_TO_F,
             .F_TO_I,
             => std.debug.print("R[{d}] R[{d}] R[{d}]", .{ inst.a, inst.b, inst.c }),
@@ -272,6 +273,7 @@ pub const OpCode = enum(u8) {
 
     BYTES_NEW,
     BYTES_LEN,
+    STR_EQ,
     BYTES_GET,
     BYTES_SET,
     DEEP_COPY,

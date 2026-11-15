@@ -1199,6 +1199,7 @@ pub const BytecodeGen = struct {
                 const payload_kind = valueTypeFromTypeId(self.type_table, payload);
                 try self.appendIntrinsicInstruction(.{ .op = .TASK_SPAWN, .a = target_reg, .b = arg, .c = @intFromEnum(payload_kind) });
             },
+            .strings_equal => try self.appendIntrinsicInstruction(.{ .op = .STR_EQ, .a = target_reg, .b = arg, .c = arg + 1 }),
         }
         self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
