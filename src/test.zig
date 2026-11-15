@@ -3449,6 +3449,32 @@ test "generics: calls fill the slots from the arguments and compile one copy per
     try runCaseError("sema/generic-void-argument.dsk", error.InvalidSlotType);
 }
 
+test "generics: explicit call types and indexed function calls" {
+    try runCase("generics-explicit-calls.dsk");
+    try runModuleCase("generic-calls/main.dsk");
+    try runCaseError("sema/generic-call-value-as-type.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-nested-value-as-type.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-wrong-result-constraint.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-call-explicit-try-plain.dsk", error.NotAFailingCall);
+    try runCaseError("sema/generic-call-too-many-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-too-few-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-plain-function-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-plain-function-named-type.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-wrong-argument.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-constraint.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/generic-call-void-type.dsk", error.InvalidSlotType);
+    try runCaseError("sema/generic-call-error-slot-type.dsk", error.SlotNeedsErrorSet);
+    try runCaseError("sema/generic-call-copy-wrong-type.dsk", error.InvalidType);
+    try runCaseError("sema/generic-call-copy-too-many-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-explicit-result-mismatch.dsk", error.InvalidType);
+}
+
+test "generics: failing calls infer their payload from try and catch context" {
+    try runCase("generics-failing-expected-type.dsk");
+    try runCaseError("sema/generic-failing-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-failing-error-not-in-set.dsk", error.ErrorNotInSet);
+}
+
 test "generics: slots the arguments don't fill come from the expected type" {
     try runCase("generics-expected-type.dsk");
     try runCaseError("sema/generic-expected-type-mismatch.dsk", error.InvalidType);

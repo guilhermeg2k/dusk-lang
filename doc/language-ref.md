@@ -1220,7 +1220,9 @@ io::println("${first(["a", "b"])}")     # first[string]
 
 ### Filling slots
 
-A call fills its slots from the arguments. The first argument that mentions a slot fills it, and the others must convert to that type: `both(2.5, 1)` makes `T` a `float`, while `both(1, 2.5)` is an error at `2.5`.
+A call can name its type arguments explicitly, in declaration order: `first[int]([1, 2])`, `empty[string]()`. When a list is written, it must fill every slot, including error slots; the usual constraints apply, and value arguments must convert to the selected types. For example, `first[float]([1.0, 2.0])` selects `float` directly. Explicit type arguments work on module-qualified calls too (`util::empty[int]()`).
+
+Without an explicit type list, a call fills its slots from the arguments. The first argument that mentions a slot fills it, and the others must convert to that type: `both(2.5, 1)` makes `T` a `float`, while `both(1, 2.5)` is an error at `2.5`.
 
 Slots the arguments leave open come from the type the result is expected to have: a variable's annotation, a return type, a parameter or a field.
 
@@ -1232,7 +1234,9 @@ end
 let xs: []int = empty()     # empty[int]
 ```
 
-A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). There's no way to write the types in a call, like `empty[int]()`. A generic function used as a value takes its slots from the function type it's used as (see [Function values](#function-values)).
+The expected type also reaches a failing call through `try` and `catch`. For a generic function returning `ParseError![]T`, both `let xs: []int = try read_items(text)` and `let xs: []int = read_items(text) catch []` fill `T` with `int`. This fills the success type; it does not change the function's errors. Explicit calls such as `try read_items[int](text)` work without a result annotation.
+
+A slot that nothing fills is an error (`Can't work out 'T' for 'empty'`). Supply type arguments (`empty[int]()`) or give the result a type. A generic function used as a value takes its slots from the function type it's used as (see [Function values](#function-values)); explicit type arguments apply to calls.
 
 Lambda arguments are checked after the other arguments: their parameters take their types from the slots filled so far, and their result can fill the rest (see [Lambdas](#lambdas)).
 
@@ -1240,7 +1244,7 @@ A slot can't be `void` or a type that can fail. Passing `parse`, which returns `
 
 ### Generic structs and unions
 
-Structs and unions take slots too. In types they're written with their arguments, `Stack[int]`. When building one, the slots come from the field or variant values, or from the expected type.
+Structs and unions take slots too. In types they're written with their arguments, `Stack[int]`. When building one, the slots come from explicit type arguments (`Stack[int](items = [])`), the field or variant values, or the expected type.
 
 ```nim
 struct Stack[T]
@@ -2363,4 +2367,4 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: only TCP for now: no UDP, no TLS (`https`), no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener.
-- **Generics**: type arguments can't be written in a call (`empty[int]()`); slots come from the arguments or the expected type. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
+- **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

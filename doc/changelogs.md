@@ -21,10 +21,13 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - `array::pop`, `array::insert` and `array::remove` are checked native builtins. Using these functions as values now requires a lambda or a Dusk function wrapper
 - Array mutators `append`, `extend`, `clear`, `insert` and `reverse` now return the same array reference, like `sort` and `sort_by`. Pass `copy(array)` to preserve the original and use the returned array in expressions or chains; `insert` returns `ArrayError![]T`
 - `std/string` adds `find(text, needle, start = 0)`, `find_reverse(text, needle, start = null)`, `trim_start`, `trim_end` and `compare`. Search positions are byte offsets; `compare` returns `-1`, `0` or `1` using the same string order as array sorting
+- Generic function and constructor calls accept explicit type arguments: `empty[int]()`, `util::keep[User](user)`, `Box[int](value = 1)`. Supply every slot in declaration order, including error slots; constraints and argument types are checked as usual
+- Generic result types can be inferred through `try` and `catch`: a call returning `ParseError![]T` can fill `T` from `let xs: []int = try read_items(text)` or `let xs: []int = read_items(text) catch []`
 
 ### Fixes
 
 - `import std/math` now loads the math module instead of failing with `UnknownStdModule`
+- Calling an indexed function with a named index (`callbacks[i](value)`) now reads the indexed function instead of treating the index as a method name
 - An anonymous struct built without a type (`let p = @(value = 1, next = 5)`) could be passed where a named struct was expected even with fields of other types or in another order, which read the wrong fields or crashed. It now fits a named struct only with the same fields, in the same order, of the same types, and the `InvalidType` message says so
 - A field set to `null` in an anonymous struct (`@(a = null)`) could be read as any type and written with any value, which printed garbage or crashed. It now only holds `null` and fits only nullable types
 - An anonymous struct field set to an empty `[]` crashed the compiler when the field was used. It's now `CantInferArrayLiteralType`, like `let xs = []`

@@ -1,0 +1,7 @@
+func keep[T: int | float](value: T) -> T
+    return value
+end
+
+func main() -> !void
+    let x = keep[string]("a")
+end

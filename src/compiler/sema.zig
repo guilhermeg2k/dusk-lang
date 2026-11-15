@@ -1458,7 +1458,7 @@ pub const SemaAnalyzer = struct {
             .if_capture_exp => return ir.Instruction{ .block = try self.lowerIfCapture(expression_stmt, null) },
             .when_exp => return ir.Instruction{ .block = try self.lowerWhen(expression_stmt, null) },
             .fn_call, .orelse_exp => try self.evalExp(expression_stmt),
-            .try_exp => try self.evalTry(expression_stmt),
+            .try_exp => try self.evalTry(expression_stmt, null),
             .catch_exp => try self.evalCatch(expression_stmt, true, null),
             else => return self.err_reporter.invalidType("function", @tagName(expression_stmt.data), expression_stmt.loc),
         };
@@ -1483,12 +1483,12 @@ pub const SemaAnalyzer = struct {
         return call;
     }
 
-    fn evalFailingCall(self: *Self, exp: *const ast.ExpNode, keyword: []const u8) CompileError!*ir.Value {
+    fn evalFailingCall(self: *Self, exp: *const ast.ExpNode, keyword: []const u8, expected_type: ?tt.TypeId) CompileError!*ir.Value {
         if (exp.data != .fn_call) {
             return self.err_reporter.notAFailingCall(keyword, exp.loc);
         }
 
-        const call = try self.evalFnCall(exp, null);
+        const call = try self.evalFnCall(exp, expected_type);
         const is_failing = self.type_table.isErrorUnion(call.type_id);
         if (!is_failing and !self.has_none_error_slot) {
             return self.err_reporter.notAFailingCall(keyword, exp.loc);
@@ -1497,9 +1497,11 @@ pub const SemaAnalyzer = struct {
         return call;
     }
 
-    fn evalTry(self: *Self, exp: *const ast.ExpNode) CompileError!*ir.Value {
-        const call = try self.evalFailingCall(exp.data.try_exp.operand, "try");
-        if (!self.type_table.isErrorUnion(call.type_id)) return call;
+    fn evalTry(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        const call = try self.evalFailingCall(exp.data.try_exp.operand, "try", expected_type);
+        if (!self.type_table.isErrorUnion(call.type_id)) {
+            return call;
+        }
         const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
         const is_top_level = self.fn_depth == 0;
 
@@ -1521,8 +1523,10 @@ pub const SemaAnalyzer = struct {
 
     fn evalCatch(self: *Self, exp: *const ast.ExpNode, is_statement: bool, expected_type_id: ?tt.TypeId) CompileError!*ir.Value {
         const catch_exp = exp.data.catch_exp;
-        const call = try self.evalFailingCall(catch_exp.operand, "catch");
-        if (!self.type_table.isErrorUnion(call.type_id)) return call;
+        const call = try self.evalFailingCall(catch_exp.operand, "catch", expected_type_id);
+        if (!self.type_table.isErrorUnion(call.type_id)) {
+            return call;
+        }
         const error_union = self.type_table.getTypePtrById(call.type_id).kind.error_union;
         const payload = error_union.payload;
 
@@ -1720,6 +1724,7 @@ pub const SemaAnalyzer = struct {
         const could_bind_void_slots = self.can_bind_void_slots;
         self.can_bind_void_slots = self.generic_functions.items[index].extern_uid != null;
         defer self.can_bind_void_slots = could_bind_void_slots;
+        try self.bindExplicitTypeArguments(func_stmt.identifier, func_stmt.slots, fn_call.type_arguments, bindings, loc);
 
         const param_names = try self.allocator.alloc([]const u8, func_stmt.def.params.len);
         for (func_stmt.def.params, param_names) |param, *name| {
@@ -1753,6 +1758,17 @@ pub const SemaAnalyzer = struct {
             args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, func_stmt.identifier, loc);
         }
         return self.instantiateGenericFunction(index, args, loc);
+    }
+
+    fn bindExplicitTypeArguments(self: *Self, identifier: []const u8, slots: []const ast.Slot, arguments: []const *ast.TypeAnnotation, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
+        if (arguments.len == 0) return;
+        if (arguments.len != slots.len) {
+            return self.err_reporter.wrongSlotCount(identifier, slots.len, arguments.len, loc);
+        }
+        for (arguments, 0..) |argument, i| {
+            const type_id = try self.resolveTypeAnnotation(argument, null);
+            try self.bindSlot(slots, bindings, i, type_id, argument.loc);
+        }
     }
 
     fn inferSlotsFromLambda(
@@ -1809,7 +1825,6 @@ pub const SemaAnalyzer = struct {
     fn inferSlotsFromExpectedType(self: *Self, func_stmt: *const ast.FuncStmt, expected_type: ?tt.TypeId, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
         const expected = expected_type orelse return;
         const return_annotation = func_stmt.def.return_type orelse return;
-        if (func_stmt.def.error_set != null) return;
         for (bindings) |binding| {
             if (binding == null) break;
         } else return;
@@ -1818,7 +1833,9 @@ pub const SemaAnalyzer = struct {
         @memset(from_expected, null);
         try self.inferSlots(return_annotation, expected, func_stmt.slots, from_expected, loc);
         for (bindings, from_expected) |*binding, expected_binding| {
-            if (binding.* == null) binding.* = expected_binding;
+            if (binding.* == null) {
+                binding.* = expected_binding;
+            }
         }
     }
 
@@ -2051,6 +2068,7 @@ pub const SemaAnalyzer = struct {
         const generic = self.generic_types.items[index];
         const bindings = try self.allocator.alloc(?tt.TypeId, generic.slots.len);
         @memset(bindings, null);
+        try self.bindExplicitTypeArguments(generic.identifier, generic.slots, fn_call.type_arguments, bindings, loc);
 
         switch (generic.def) {
             .@"struct" => |struct_def| {
@@ -2084,7 +2102,8 @@ pub const SemaAnalyzer = struct {
                 for (fn_call.arguments) |arg| {
                     const name = arg.identifier orelse continue;
                     for (union_def.variants) |variant| {
-                        if (!std.mem.eql(u8, variant.identifier, name) or !mentionsSlot(variant.type, generic.slots)) continue;
+                        const needs_inference = std.mem.eql(u8, variant.identifier, name) and mentionsSlot(variant.type, generic.slots) and !areMentionedSlotsBound(variant.type, generic.slots, bindings);
+                        if (!needs_inference) continue;
                         const value = try self.evalExpExpecting(arg.exp, null);
                         try self.inferSlots(variant.type, value.type_id, generic.slots, bindings, arg.exp.loc);
                     }
@@ -4178,6 +4197,7 @@ pub const SemaAnalyzer = struct {
         const value = switch (exp.data) {
             .fn_call => try self.evalHandledCall(exp, expected_type_id),
             .catch_exp => try self.evalCatch(exp, false, expected_type_id),
+            .try_exp => try self.evalTry(exp, expected_type_id),
             else => try self.evalExp(exp),
         };
         const expected = expected_type_id orelse return value;
@@ -4302,8 +4322,9 @@ pub const SemaAnalyzer = struct {
                 return self.evalIdentifier(exp);
             },
             .fn_call => return self.evalHandledCall(exp, null),
+            .type_application => return self.err_reporter.invalidExpression("a call after type arguments", "type arguments without a call", exp.loc),
             .try_exp => {
-                return self.evalTry(exp);
+                return self.evalTry(exp, null);
             },
             .catch_exp => {
                 return self.evalCatch(exp, false, null);
@@ -4480,10 +4501,17 @@ pub const SemaAnalyzer = struct {
         });
     }
 
-    fn evalCopyCall(self: *Self, copy_uid: usize, identifier: []const u8, argument: *const ast.ExpNode) CompileError!*ir.Value {
-        const value = try self.evalExp(argument);
-        if (isValueLeaving(value)) return value;
-        if (!self.isChangeableType(value.type_id)) return value;
+    fn evalCopyCall(self: *Self, copy_uid: usize, identifier: []const u8, argument: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        var value = try self.evalExpExpecting(argument, expected_type);
+        if (isValueLeaving(value)) {
+            return value;
+        }
+        if (expected_type) |expected| {
+            value = try self.coerceValue(value, expected, argument.loc);
+        }
+        if (!self.isChangeableType(value.type_id)) {
+            return value;
+        }
         const args = try self.allocator.alloc(*ir.Value, 1);
         args[0] = value;
         return ir.Value.init(self.allocator, .{
@@ -4499,7 +4527,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalFnCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) !*ir.Value {
-        const fn_call = exp.data.fn_call;
+        const fn_call = try self.resolveCallTypeArguments(exp.data.fn_call, exp.loc);
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;
         var params: []const tt.TypedIdentifier = undefined;
@@ -4605,7 +4633,7 @@ pub const SemaAnalyzer = struct {
                     },
                 }
             },
-            .indexed => |indexed| if (indexed.index.data != .identifier) {
+            .indexed => |indexed| if (indexed.is_bracket or indexed.index.data != .identifier) {
                 callee = try self.evalCallee(fn_call.target);
             } else {
                 const target = try self.evalExp(indexed.target);
@@ -4670,10 +4698,10 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.invalidNumberOfArgs(params.len, total_args_len, exp.loc);
         }
 
-        const has_first_argument_being_binded = fn_call_arguments_values.items.len == 1;
-        const matched = try self.matchArguments(fn_call.arguments, try paramNames(self.allocator, params), if (has_first_argument_being_binded) 1 else 0);
+        const has_bound_first_argument = fn_call_arguments_values.items.len == 1;
+        const matched = try self.matchArguments(fn_call.arguments, try paramNames(self.allocator, params), if (has_bound_first_argument) 1 else 0);
         for (params, 0..) |param, i| {
-            if (i == 0 and has_first_argument_being_binded) continue;
+            if (i == 0 and has_bound_first_argument) continue;
 
             const arg_exp = matched[i];
             if (is_struct_init) {
@@ -4746,6 +4774,67 @@ pub const SemaAnalyzer = struct {
         );
     }
 
+    fn resolveCallTypeArguments(self: *Self, original: ast.FnCall, loc: err.Loc) CompileError!ast.FnCall {
+        var call = original;
+        switch (call.target.data) {
+            .type_application => |application| {
+                call.target = application.target;
+                call.type_arguments = application.arguments;
+            },
+            .indexed => |indexed| {
+                const can_name_generic = indexed.is_bracket and !indexed.is_nullable and indexed.target.data == .identifier;
+                if (!can_name_generic) return call;
+                const symbol = self.scope.symbol_table.get(indexed.target.data.identifier) orelse return call;
+                switch (symbol.kind) {
+                    .generic_function, .generic_type, .function, .defined_type => {},
+                    else => return call,
+                }
+                call.target = indexed.target;
+                const arguments = try self.allocator.alloc(*ast.TypeAnnotation, 1);
+                arguments[0] = try self.typeArgumentFromExpression(indexed.index);
+                call.type_arguments = arguments;
+            },
+            else => return call,
+        }
+        if (call.target.data != .identifier) {
+            return self.err_reporter.wrongSlotCount("this call", 0, call.type_arguments.len, loc);
+        }
+        const name = call.target.data.identifier;
+        const symbol = self.scope.symbol_table.getOrError(name) catch return self.notDefined(name, loc);
+        switch (symbol.kind) {
+            .generic_function, .generic_type => return call,
+            else => return self.err_reporter.wrongSlotCount(name, 0, call.type_arguments.len, loc),
+        }
+    }
+
+    fn typeArgumentFromExpression(self: *Self, exp: *const ast.ExpNode) CompileError!*ast.TypeAnnotation {
+        switch (exp.data) {
+            .identifier => |name| return ast.TypeAnnotation.init(self.allocator, .{
+                .type = .{ .@"struct" = name },
+                .is_nullable = false,
+                .loc = exp.loc,
+            }),
+            .type_application => |application| {
+                const annotation = try self.typeArgumentFromExpression(application.target);
+                annotation.args = application.arguments;
+                annotation.loc = exp.loc;
+                return annotation;
+            },
+            .indexed => |indexed| {
+                if (indexed.is_nullable) {
+                    return self.err_reporter.invalidExpression("a type argument", "optional indexing", exp.loc);
+                }
+                const annotation = try self.typeArgumentFromExpression(indexed.target);
+                const arguments = try self.allocator.alloc(*ast.TypeAnnotation, 1);
+                arguments[0] = try self.typeArgumentFromExpression(indexed.index);
+                annotation.args = arguments;
+                annotation.loc = exp.loc;
+                return annotation;
+            },
+            else => return self.err_reporter.invalidExpression("a type argument", @tagName(exp.data), exp.loc),
+        }
+    }
+
     fn evalCallee(self: *Self, target: *const ast.ExpNode) CompileError!*ir.Value {
         return self.checkCallee(try self.evalExp(target), target.loc);
     }
@@ -4784,13 +4873,23 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalIntrinsicCall(self: *Self, intrinsic: native.Intrinsic, symbol: Symbol, fn_call: ast.FnCall) CompileError!?*ir.Value {
-        if (fn_call.arguments.len != 1) return null;
+        if (fn_call.arguments.len != 1) {
+            return null;
+        }
         const argument = fn_call.arguments[0].exp;
         return switch (intrinsic) {
             .to_float => try self.evalFloatCast(argument),
             .copy => {
                 const copy_uid = self.generic_functions.items[symbol.kind.generic_function].extern_uid.?;
-                return try self.evalCopyCall(copy_uid, symbol.identifier, argument);
+                var expected_type: ?tt.TypeId = null;
+                if (fn_call.type_arguments.len > 0) {
+                    const slots = self.generic_functions.items[symbol.kind.generic_function].func_stmt.slots;
+                    const bindings = try self.allocator.alloc(?tt.TypeId, slots.len);
+                    @memset(bindings, null);
+                    try self.bindExplicitTypeArguments(symbol.identifier, slots, fn_call.type_arguments, bindings, argument.loc);
+                    expected_type = bindings[0];
+                }
+                return try self.evalCopyCall(copy_uid, symbol.identifier, argument, expected_type);
             },
             .array_len, .bytes_len, .new_buffer, .to_byte, .to_int, .append, .task_spawn, .strings_equal => null,
         };
@@ -5855,12 +5954,24 @@ pub const SemaAnalyzer = struct {
     pub fn resolveTypeAnnotation(self: *Self, type_annotation: *ast.TypeAnnotation, current_defined_type_type_id: ?tt.TypeId) !tt.TypeId {
         switch (type_annotation.type) {
             .primitive => |primitive_name| {
-                if (std.mem.eql(u8, primitive_name, "float")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
-                if (std.mem.eql(u8, primitive_name, "byte")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.byte)) else self.type_table.getPrimitive(.byte);
-                if (std.mem.eql(u8, primitive_name, "int")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.int)) else self.type_table.getPrimitive(.int);
-                if (std.mem.eql(u8, primitive_name, "buffer")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.buffer)) else self.type_table.getPrimitive(.buffer);
-                if (std.mem.eql(u8, primitive_name, "string")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.string)) else self.type_table.getPrimitive(.string);
-                if (std.mem.eql(u8, primitive_name, "bool")) return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.boolean)) else self.type_table.getPrimitive(.boolean);
+                if (std.mem.eql(u8, primitive_name, "float")) {
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.float)) else self.type_table.getPrimitive(.float);
+                }
+                if (std.mem.eql(u8, primitive_name, "byte")) {
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.byte)) else self.type_table.getPrimitive(.byte);
+                }
+                if (std.mem.eql(u8, primitive_name, "int")) {
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.int)) else self.type_table.getPrimitive(.int);
+                }
+                if (std.mem.eql(u8, primitive_name, "buffer")) {
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.buffer)) else self.type_table.getPrimitive(.buffer);
+                }
+                if (std.mem.eql(u8, primitive_name, "string")) {
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.string)) else self.type_table.getPrimitive(.string);
+                }
+                if (std.mem.eql(u8, primitive_name, "bool")) {
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(self.type_table.getPrimitive(.boolean)) else self.type_table.getPrimitive(.boolean);
+                }
                 if (std.mem.eql(u8, primitive_name, "void")) {
                     return self.type_table.getPrimitive(.void);
                 }
@@ -5887,7 +5998,7 @@ pub const SemaAnalyzer = struct {
                     .type_slot => symbol.type_id,
                     .trait => return self.err_reporter.traitUsedAsType(struct_name, type_annotation.loc),
                     .generic_type => |index| try self.resolveGenericTypeAnnotation(index, type_annotation, current_defined_type_type_id),
-                    else => return CompileError.SemaError,
+                    else => return self.err_reporter.invalidType("a type", "a value", type_annotation.loc),
                 };
                 return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(blueprint_type_id) else blueprint_type_id;
             },

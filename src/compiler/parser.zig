@@ -1703,18 +1703,43 @@ pub const Parser = struct {
     }
 
     fn parseIndexAccess(self: *Self, target: *ast.ExpNode, is_nullable: bool) CompileError!*ast.ExpNode {
+        const bracket_index = self.cur_index;
+        const can_start_type = switch (self.peekNext().tag) {
+            .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw, .question_mark, .at, .func_kw => true,
+            .string_kw, .buffer_kw => self.peekNextN(2).tag != .double_colon,
+            .l_bracket => self.peekNextN(2).tag == .r_bracket,
+            else => false,
+        };
+        const is_type_application = !is_nullable and can_start_type;
+        if (is_type_application) {
+            return self.parseTypeApplication(target);
+        }
         self.walk();
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
         const index = try self.parseExp(0);
+        const has_multiple_types = !is_nullable and self.peekCurrent().tag == .comma;
+        if (has_multiple_types) {
+            self.cur_index = bracket_index;
+            return self.parseTypeApplication(target);
+        }
         const r_bracket = try self.expect(.r_bracket);
         return ast.ExpNode.init(self.allocator, .{
             .data = .{ .indexed = .{
                 .target = target,
                 .index = index,
                 .is_nullable = is_nullable,
+                .is_bracket = true,
             } },
             .loc = .{ .start = target.loc.start, .end = r_bracket.loc.end },
+        });
+    }
+
+    fn parseTypeApplication(self: *Self, target: *ast.ExpNode) CompileError!*ast.ExpNode {
+        const arguments = try self.parseTypeArgs();
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .type_application = .{ .target = target, .arguments = arguments } },
+            .loc = .{ .start = target.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
         });
     }
 

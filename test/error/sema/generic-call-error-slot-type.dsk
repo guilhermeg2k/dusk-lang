@@ -1,0 +1,7 @@
+func empty[T, E: error]() -> E![]T
+    return []
+end
+
+func main() -> !void
+    let x = try empty[int, string]()
+end

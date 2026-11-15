@@ -1,0 +1,9 @@
+error Fault
+    Bad
+end
+func empty[T: int | float]() -> Fault![]T
+    return []
+end
+func main() -> !void
+    let xs: []string = try empty()
+end

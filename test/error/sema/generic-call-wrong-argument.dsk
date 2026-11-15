@@ -1,0 +1,7 @@
+func keep[T](value: T) -> T
+    return value
+end
+
+func main() -> !void
+    let x = keep[int]("a")
+end

@@ -267,6 +267,7 @@ pub const Exp = union(enum) {
     map_literal: MapLiteral,
     null_literal: void,
     fn_call: FnCall,
+    type_application: TypeApplication,
     indexed: IndexedExp,
     unary_exp: UnaryExp,
     binary_exp: BinaryExp,
@@ -349,6 +350,12 @@ pub const FnCall = struct {
     target: *ExpNode,
     are_arguments_named: bool,
     arguments: []const FnCallArg,
+    type_arguments: []const *TypeAnnotation = &.{},
+};
+
+pub const TypeApplication = struct {
+    target: *ExpNode,
+    arguments: []const *TypeAnnotation,
 };
 
 pub const AnonymousInit = struct {
@@ -387,6 +394,7 @@ pub const IndexedExp = struct {
     target: *ExpNode,
     index: *ExpNode,
     is_nullable: bool,
+    is_bracket: bool = false,
 };
 
 pub const Struct = struct {

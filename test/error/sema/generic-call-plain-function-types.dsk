@@ -1,0 +1,7 @@
+func keep(value: int) -> int
+    return value
+end
+
+func main() -> !void
+    let x = keep[int](1)
+end

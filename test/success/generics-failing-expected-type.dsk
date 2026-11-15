@@ -1,0 +1,75 @@
+import std/array
+
+struct User
+    name: string
+end
+
+struct Box
+    users: []User
+end
+
+error Fault
+    Bad
+end
+
+func empty[T](should_fail: bool = false) -> Fault![]T
+    if should_fail then
+        return Fault.Bad
+    end
+    return []
+end
+
+func inferred[T]() -> ![]T
+    return []
+end
+
+func optional[T]() -> Fault!?T
+    return null
+end
+
+func relay[T]() -> Fault![]T
+    return try empty()
+end
+
+func user_list() -> Fault![]User
+    return try relay()
+end
+
+func count(users: []User) -> int
+    return array::len(users)
+end
+
+func main() -> !void
+    let users: []User = try empty()
+    assert(array::len(users) == 0)
+    let grid: [][]User = try empty()
+    assert(array::len(grid) == 0)
+    let nullable: ?User = try optional()
+    assert(nullable == null)
+    let mut reset: []User = [User(name = "Ada")]
+    reset = try empty()
+    assert(array::len(reset) == 0)
+    assert(count(try empty()) == 0)
+    assert(array::len(Box(users = try empty()).users) == 0)
+    assert(array::len(try user_list()) == 0)
+    let inferred_users: []User = try inferred()
+    assert(array::len(inferred_users) == 0)
+    let caught: []User = empty(true) catch []
+    assert(array::len(caught) == 0)
+    let block: []User = empty() catch e then
+        return e
+    end
+    assert(array::len(block) == 0)
+    let fallback: ?[]User = empty(true) catch null
+    assert(fallback == null)
+    let present: ?[]User = empty() catch null
+    assert(present != null)
+    let explicit = try empty[User]()
+    assert(array::len(explicit) == 0)
+    let failed = empty[User](true) catch [User(name = "fallback")]
+    assert(failed[0].name == "fallback")
+    let chosen: []User = if true then try empty() else [] end
+    assert(array::len(chosen) == 0)
+    let callback: func() -> Fault![]User = func() -> return try empty()
+    assert(array::len(try callback()) == 0)
+end
