@@ -6,15 +6,44 @@
 
 pub const Loop = opaque {};
 pub const Handle = opaque {};
+pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
 pub const HandleType = enum(c_int) { timer = 13 };
+pub const RequestType = enum(c_int) { fs = 6, work = 7 };
+
+pub const Timespec = extern struct {
+    tv_sec: c_long,
+    tv_nsec: c_long,
+};
+
+pub const Stat = extern struct {
+    st_dev: u64,
+    st_mode: u64,
+    st_nlink: u64,
+    st_uid: u64,
+    st_gid: u64,
+    st_rdev: u64,
+    st_ino: u64,
+    st_size: u64,
+    st_blksize: u64,
+    st_blocks: u64,
+    st_flags: u64,
+    st_gen: u64,
+    st_atim: Timespec,
+    st_mtim: Timespec,
+    st_ctim: Timespec,
+    st_birthtim: Timespec,
+};
 
 // ---- Callbacks ----
 
 pub const TimerCallback = *const fn (timer: *Handle) callconv(.c) void;
 pub const CloseCallback = *const fn (handle: *Handle) callconv(.c) void;
 pub const WalkCallback = *const fn (handle: *Handle, arg: ?*anyopaque) callconv(.c) void;
+pub const WorkCallback = *const fn (request: *Request) callconv(.c) void;
+pub const AfterWorkCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
+pub const FsCallback = *const fn (request: *Request) callconv(.c) void;
 
 // ---- Loop ----
 
@@ -37,3 +66,15 @@ pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 
 pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
+
+pub extern fn uv_req_size(request_type: RequestType) usize;
+pub extern fn uv_req_get_data(request: *const Request) ?*anyopaque;
+pub extern fn uv_req_set_data(request: *Request, data: ?*anyopaque) void;
+pub extern fn uv_err_name(status: c_int) [*:0]const u8;
+
+pub extern fn uv_queue_work(loop: *Loop, request: *Request, work: WorkCallback, after_work: AfterWorkCallback) c_int;
+
+pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_get_statbuf(request: *Request) *Stat;
+pub extern fn uv_fs_req_cleanup(request: *Request) void;

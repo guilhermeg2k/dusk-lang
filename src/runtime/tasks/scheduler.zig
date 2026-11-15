@@ -125,6 +125,9 @@ pub const TaskState = struct {
     }
 
     pub fn destroy(self: *Self, allocator: std.mem.Allocator) void {
+        if (self.wake_result) |wake_result| {
+            wake_result.payload.free(allocator);
+        }
         self.freeStack(allocator);
         self.waiters.deinit(allocator);
         allocator.destroy(self);
@@ -165,8 +168,22 @@ pub const WakeResult = struct {
     value: v.Value,
     kind: v.ValueType,
     has_failed: bool = false,
+    error_is_relative: bool = false,
+    payload: WakePayload = .none,
 
     pub fn isHeapValue(self: WakeResult) bool {
-        return !self.has_failed and self.kind.isHeapType();
+        return !self.has_failed and self.payload == .none and self.kind.isHeapType();
+    }
+};
+
+pub const WakePayload = union(enum) {
+    none,
+    ints: []i64,
+
+    pub fn free(self: WakePayload, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .none => {},
+            .ints => |ints| allocator.free(ints),
+        }
     }
 };

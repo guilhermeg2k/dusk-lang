@@ -1,0 +1,29 @@
+error FsError
+    NotFound
+    PermissionDenied
+    AlreadyExists
+    IsDirectory
+    NotDirectory
+    NotEmpty
+    InvalidUtf8
+    Other
+end
+
+struct FileInfo
+    size: int
+    is_dir: bool
+    is_file: bool
+    is_symlink: bool
+    modified_ms: int
+    created_ms: ?int
+    permissions: int
+end
+
+extern func exists(path: string) -> bool
+extern func ~stat_numbers(path: string) -> FsError![]int
+
+func stat(path: string) -> FsError!FileInfo
+    let n = try stat_numbers(path)
+    let created: ?int = if n[5] == 0 then null else n[5] end
+    return FileInfo(size = n[0], is_dir = n[1] == 1, is_file = n[2] == 1, is_symlink = n[3] == 1, modified_ms = n[4], created_ms = created, permissions = n[6])
+end

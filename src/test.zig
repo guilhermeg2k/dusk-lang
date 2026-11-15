@@ -174,6 +174,46 @@ test "io: needs an import, only prints strings, and replaces echo" {
     try runCaseError("sema/io-print-not-string.dsk", error.InvalidType);
 }
 
+test "fs: exists and stat, errors after a park, other tasks keep running" {
+    try runCase("fs-stat.dsk");
+    try runCase("fs-tasks.dsk");
+    try runCaseError("sema/fs-exists-not-string.dsk", error.InvalidType);
+}
+
+test "fs: stat follows symlinks and reports permissions and times like the OS" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "a.txt", .data = "hello" });
+    try tmp.dir.symLink(testing.io, "a.txt", "link", .{});
+    try tmp.dir.symLink(testing.io, "missing", "broken", .{});
+    const file_stat = try tmp.dir.statFile(testing.io, "a.txt", .{});
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/io
+        \\import std/fs
+        \\func main() -> !void
+        \\    let link = try fs::stat("DIR/link")
+        \\    io::println("${link.size} ${link.is_file} ${link.is_dir} ${link.is_symlink} ${link.permissions} ${link.modified_ms}")
+        \\    let broken = try fs::stat("DIR/broken")
+        \\    io::println("${broken.is_file} ${broken.is_dir} ${broken.is_symlink}")
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+
+    const permissions = file_stat.permissions.toMode() & 0o777;
+    const expected = try std.fmt.allocPrint(allocator, "5 true false true {d} {d}\nfalse false true\n", .{ permissions, file_stat.mtime.toMilliseconds() });
+    try testing.expectEqualStrings(expected, output.written());
+}
+
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
         "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
@@ -2683,6 +2723,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {

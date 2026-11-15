@@ -3,6 +3,7 @@ const uv = @import("uv.zig");
 const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const v = @import("../value.zig");
+const FsJob = @import("fs_job.zig").FsJob;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -67,6 +68,20 @@ pub const EventLoop = struct {
         self.pending_operations += 1;
     }
 
+    pub fn startFsJob(self: *Self, scheduler: *Scheduler, task: *TaskState, job: *FsJob) !void {
+        const loop = try self.ensureLoopStarted();
+        job.event_loop = self;
+        job.scheduler = scheduler;
+        job.task = task;
+        job.loop = loop;
+        const work = job.workRequest();
+        uv.uv_req_set_data(work, job);
+        if (uv.uv_queue_work(loop, work, onFsJobWork, onFsJobDone) != 0) {
+            return error.PoolJobFailed;
+        }
+        self.pending_operations += 1;
+    }
+
     fn ensureLoopStarted(self: *Self) !*uv.Loop {
         if (self.loop) |loop| return loop;
         const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_loop_size());
@@ -119,4 +134,24 @@ fn onTimer(handle: *uv.Handle) callconv(.c) void {
         event_loop.callback_failure = failure;
     };
     uv.uv_close(handle, onClose);
+}
+
+fn onFsJobWork(work: *uv.Request) callconv(.c) void {
+    fsJobOf(work).runOnPoolThread();
+}
+
+fn fsJobOf(work: *uv.Request) *FsJob {
+    return @ptrCast(@alignCast(uv.uv_req_get_data(work).?));
+}
+
+fn onFsJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
+    const job = fsJobOf(work);
+    defer job.destroy();
+    const event_loop = job.event_loop;
+    event_loop.pending_operations -= 1;
+    const wake_result = job.takeWakeResult();
+    job.scheduler.wake(job.task, wake_result) catch |failure| {
+        wake_result.payload.free(event_loop.allocator);
+        event_loop.callback_failure = failure;
+    };
 }

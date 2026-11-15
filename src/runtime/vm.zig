@@ -98,7 +98,7 @@ pub const VM = struct {
     }
 
     fn runTask(self: *Self, task: *TaskState) !void {
-        self.enterTask(task);
+        try self.enterTask(task);
         try self.execute();
         self.leaveTask();
         if (task.frame_count == 0) {
@@ -106,25 +106,49 @@ pub const VM = struct {
         }
     }
 
-    fn enterTask(self: *Self, task: *TaskState) void {
+    fn enterTask(self: *Self, task: *TaskState) !void {
         self.running_task = task;
         self.stack = task.stack;
         self.frames = task.frames;
         self.frame_count = task.frame_count;
         task.status = .running;
         if (task.wake_result) |wake_result| {
-            finishParkedCall(task, wake_result);
+            try self.finishParkedCall(task, wake_result);
         }
     }
 
-    fn finishParkedCall(task: *TaskState, wake_result: WakeResult) void {
+    fn finishParkedCall(self: *Self, task: *TaskState, wake_result: WakeResult) !void {
         task.wake_result = null;
+        var result = try self.buildWakeValue(wake_result);
         const frame = &task.frames[task.frame_count - 1];
         const call = frame.function.kind.dusk.instructions[frame.cur_inst - 1];
-        task.stack[frame.stack_offset + call.a] = wake_result.value;
         if (wake_result.has_failed) {
+            if (wake_result.error_is_relative) {
+                result.int64 += self.program.functions[call.bEx()].kind.native.error_base;
+            }
             frame.cur_inst += 1;
         }
+        task.stack[frame.stack_offset + call.a] = result;
+    }
+
+    fn buildWakeValue(self: *Self, wake_result: WakeResult) !v.Value {
+        defer wake_result.payload.free(self.scheduler.allocator);
+        return switch (wake_result.payload) {
+            .none => wake_result.value,
+            .ints => |ints| try self.allocIntArray(ints),
+        };
+    }
+
+    fn allocIntArray(self: *Self, ints: []const i64) !v.Value {
+        const capacity = @max(ints.len, 1);
+        const size = v.Array.calc_size(capacity);
+        try self.maybeCollectGarbage(size);
+        const array = try v.Array.init(self.getCurrentHeapAllocator(), .int64, capacity);
+        self.increaseHeapAllocationCount(size);
+        for (ints) |item| {
+            try array.append(.{ .int64 = item });
+        }
+        return .{ .heap_obj = &array.obj };
     }
 
     noinline fn execute(self: *Self) align(64) !void {
