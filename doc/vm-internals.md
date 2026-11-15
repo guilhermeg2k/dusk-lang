@@ -221,7 +221,7 @@ stack_base         // current_frame.stack_offset
 
 Each iteration reads `instructions[cur_instruction]` and increments it before running the handler. So inside a handler `cur_instruction` already points at the next instruction, and that is the value calls save as the return point.
 
-Slow paths are `noinline` helpers: `makeClosure`, `newCell`, `newBuffer`, `deepCopy`, `toString`, `buildString`, `loadUnionVariant`, and `Heap.collect` in `gc.zig`. Error reporters are `noinline` with `@branchHint(.cold)`. That keeps `execute` small. Performance is very sensitive to the machine code layout of this loop, so even unrelated edits to it can move benchmarks noticeably.
+Slow paths are `noinline` helpers: `makeClosure`, `newCell`, `newBuffer`, `deepCopy`, `toString`, `buildString`, `loadUnionVariant`, and `Heap.collect` in `gc.zig`. Error reporters are `noinline` with `@branchHint(.cold)`. That keeps `execute` small. Performance is very sensitive to the machine code layout of this loop, so even unrelated edits to it can move benchmarks noticeably. `execute` is declared `align(64)`: without it, code added anywhere before it in the binary (even in the compiler) could move its start off a 64-byte boundary and shift every jump target inside it, which once made `fib` 28% slower with an identical loop.
 
 ### 5.1 Instruction format
 

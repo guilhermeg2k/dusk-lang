@@ -120,7 +120,7 @@ pub const VM = struct {
         }
     }
 
-    noinline fn execute(self: *Self) !void {
+    noinline fn execute(self: *Self) align(64) !void {
         var stack = self.stack;
         var current_frame = &self.frames[self.frame_count - 1];
         var cur_instruction: usize = current_frame.cur_inst;
