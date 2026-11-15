@@ -180,11 +180,11 @@ test "fs: exists and stat, errors after a park, other tasks keep running" {
     try runCaseError("sema/fs-exists-not-string.dsk", error.InvalidType);
 }
 
-test "fs: read_text and read_bytes" {
+test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }
 
-test "fs: read_text reads big files and files that report size 0" {
+test "fs: read reads big files and files that report size 0" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -200,10 +200,10 @@ test "fs: read_text reads big files and files that report size 0" {
         \\import std/fs
         \\import std/string
         \\func main() -> !void
-        \\    let big = try fs::read_text("DIR/big.txt")
+        \\    let big = try fs::read("DIR/big.txt")
         \\    io::println("${string::len(big)} ${try string::char_at(big, 26)}")
         \\    if CHECK_PROC then
-        \\        let proc = try fs::read_text("/proc/self/stat")
+        \\        let proc = try fs::read("/proc/self/stat")
         \\        io::println("${string::len(proc) > 0}")
         \\    end
         \\end
@@ -218,7 +218,7 @@ test "fs: read_text reads big files and files that report size 0" {
     try testing.expectEqualStrings(expected, output.written());
 }
 
-test "fs: write_text, write_bytes and append_text, checked on disk" {
+test "fs: write, write_bytes and append, checked on disk" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.createDir(testing.io, "folder", .default_dir);
@@ -231,11 +231,11 @@ test "fs: write_text, write_bytes and append_text, checked on disk" {
         \\import std/fs
         \\import std/buffer
         \\func main() -> !void
-        \\    try fs::write_text("DIR/text.txt", "a longer first version\n")
-        \\    try fs::write_text("DIR/text.txt", "olá 🌙\n")
-        \\    try fs::append_text("DIR/text.txt", "more\n")
-        \\    try fs::append_text("DIR/created.txt", "new\n")
-        \\    try fs::write_text("DIR/empty.txt", "")
+        \\    try fs::write("DIR/text.txt", "a longer first version\n")
+        \\    try fs::write("DIR/text.txt", "olá 🌙\n")
+        \\    try fs::append("DIR/text.txt", "more\n")
+        \\    try fs::append("DIR/created.txt", "new\n")
+        \\    try fs::write("DIR/empty.txt", "")
         \\    let mut data = try buffer::new(256)
         \\    let mut i = 0
         \\    for i < 256 do
@@ -243,10 +243,10 @@ test "fs: write_text, write_bytes and append_text, checked on disk" {
         \\        i = i + 1
         \\    end
         \\    try fs::write_bytes("DIR/all.bin", data)
-        \\    fs::write_text("DIR/missing/x.txt", "x") catch e then
+        \\    fs::write("DIR/missing/x.txt", "x") catch e then
         \\        io::println("${e == fs::FsError.NotFound}")
         \\    end
-        \\    fs::append_text("DIR/folder", "x") catch e then
+        \\    fs::append("DIR/folder", "x") catch e then
         \\        io::println("${e == fs::FsError.IsDirectory}")
         \\    end
         \\end

@@ -1983,16 +1983,16 @@ Reads and writes files and folders. Every call waits for the disk without blocki
 | `IsDirectory` | A file operation on a folder |
 | `NotDirectory` | A folder operation on a file, or a file in the middle of a path |
 | `NotEmpty` | `delete` on a folder that has contents |
-| `InvalidUtf8` | `read_text` on a file that isn't valid UTF-8 text |
+| `InvalidUtf8` | `read` on a file that isn't valid UTF-8 text |
 | `Other` | Any other failure (a full disk, too many open files...) |
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `read_text(path)` | `FsError!string` | The whole file as text. |
+| `read(path)` | `FsError!string` | The whole file as text. |
 | `read_bytes(path)` | `FsError!buffer` | The whole file as bytes, for anything that isn't text. |
-| `write_text(path, text)` | `FsError!void` | Creates the file, or replaces its contents. |
+| `write(path, text)` | `FsError!void` | Creates the file, or replaces its contents. |
 | `write_bytes(path, data)` | `FsError!void` | Same, from a `buffer`. |
-| `append_text(path, text)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
+| `append(path, text)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
 | `read_dir(path)` | `FsError![]string` | The names of the entries in a folder (not `.` and `..`), in the order the system gives them. |
 | `exists(path)` | `bool` | Whether the path exists. Never fails: any problem gives `false`. |
 | `stat(path)` | `FsError!FileInfo` | Information about a file or folder (below). |
@@ -2014,7 +2014,7 @@ end
 
 - `stat` follows symbolic links: `is_symlink` says the path itself is a link, and the other fields describe the file it points to (or the link itself, when what it points to is gone).
 - `delete(path, recursive = true)` never follows symbolic links: a link inside the folder is deleted, not what it points to.
-- `write_*` and `append_text` create new files with the permissions `rw-rw-rw-`, minus what the system's default mask removes (usually `rw-r--r--`).
+- `write`, `write_bytes` and `append` create new files with the permissions `rw-rw-rw-`, minus what the system's default mask removes (usually `rw-r--r--`).
 - Each call reads or writes the whole file at once. `read_bytes` returns a new `buffer`: changing it doesn't change the file until it's written back.
 
 ```nim
@@ -2023,15 +2023,15 @@ import std/fs
 
 func main() -> !void
     try fs::make_dir("out/logs", recursive = true)
-    try fs::write_text("out/logs/today.txt", "started\n")
-    try fs::append_text("out/logs/today.txt", "done\n")
-    io::print(try fs::read_text("out/logs/today.txt"))   # started, done
+    try fs::write("out/logs/today.txt", "started\n")
+    try fs::append("out/logs/today.txt", "done\n")
+    io::print(try fs::read("out/logs/today.txt"))   # started, done
 
     let info = try fs::stat("out/logs/today.txt")
     io::println("${info.size} bytes")                     # 13 bytes
     try fs::delete("out", recursive = true)
 
-    let config = fs::read_text("config.json") catch e then
+    let config = fs::read("config.json") catch e then
         when e
             fs::FsError.NotFound then io::println("no config, using defaults") end
             else then io::eprintln("can't read config.json") end
