@@ -4,6 +4,7 @@ const VM = @import("../../vm.zig").VM;
 const native = @import("../native.zig");
 const io = @import("io.zig");
 const tcp = @import("../../tasks/tcp.zig");
+const uv = @import("../../tasks/uv.zig");
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 const ok = native.ok;
@@ -87,15 +88,18 @@ fn listenerClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn remoteHost(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
-    const peer = stream.peer orelse return fail(IoError.Other);
+    const peer = peerOf(vm, args[0].int64) orelse return ok(try vm.allocBytesValue("", .string));
     var text: [64]u8 = @splat(0);
-    const host = tcp.addressHost(&peer, &text) orelse return fail(IoError.Other);
+    const host = tcp.addressHost(&peer, &text) orelse "";
     return ok(try vm.allocBytesValue(host, .string));
 }
 
 fn remotePort(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
-    const peer = stream.peer orelse return fail(IoError.Other);
+    const peer = peerOf(vm, args[0].int64) orelse return ok(.{ .int64 = 0 });
     return ok(.{ .int64 = tcp.addressPort(&peer) });
+}
+
+fn peerOf(vm: *VM, handle: i64) ?uv.SocketAddress {
+    const stream = vm.event_loop.streamAt(handle) orelse return null;
+    return stream.peer;
 }

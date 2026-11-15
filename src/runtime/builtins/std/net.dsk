@@ -24,8 +24,8 @@ extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
-extern func ~remote_host(handle: int) -> io::IoError!string
-extern func ~remote_port(handle: int) -> io::IoError!int
+extern func ~remote_host(handle: int) -> string
+extern func ~remote_port(handle: int) -> int
 
 struct Address
     host: string
@@ -36,7 +36,7 @@ struct TcpListener
     ~handle: int
 
     func accept(self: @, timeout_ms: int = -1) -> io::IoError!TcpConn
-        return TcpConn(handle = try listener_accept(self.handle, timeout_ms))
+        return open_conn(try listener_accept(self.handle, timeout_ms))
     end
 
     func port(self: @) -> int
@@ -50,6 +50,8 @@ end
 
 struct TcpConn
     ~handle: int
+    ~remote_host: string
+    ~remote_port: int
 
     func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
         return try stream_read_line(self.handle, max, timeout_ms)
@@ -79,8 +81,8 @@ struct TcpConn
         try stream_write_bytes(self.handle, data)
     end
 
-    func remote_address(self: @) -> io::IoError!Address
-        return Address(host = try remote_host(self.handle), port = try remote_port(self.handle))
+    func remote_address(self: @) -> Address
+        return Address(host = self.remote_host, port = self.remote_port)
     end
 
     func flush(self: @) -> io::IoError!void
@@ -92,9 +94,13 @@ struct TcpConn
 end
 
 func tcp_connect(host: string, port: int, timeout_ms: int = -1) -> NetError!TcpConn
-    return TcpConn(handle = try tcp_connect_handle(host, port, timeout_ms))
+    return open_conn(try tcp_connect_handle(host, port, timeout_ms))
 end
 
 func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
     return TcpListener(handle = try tcp_listen_handle(host, port, backlog))
+end
+
+func ~open_conn(handle: int) -> TcpConn
+    return TcpConn(handle = handle, remote_host = remote_host(handle), remote_port = remote_port(handle))
 end

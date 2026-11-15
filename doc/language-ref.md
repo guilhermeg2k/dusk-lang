@@ -2243,7 +2243,7 @@ A name is looked up first, and each of its addresses is tried in order until one
 | `write(text)` | `io::IoError!void` | Sends `text`. |
 | `write_bytes(data)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
 | `flush()` | `io::IoError!void` | Does nothing: writes are never buffered. It's there so a connection fits `io::Writer`. |
-| `remote_address()` | `io::IoError!Address` | The other side's address. |
+| `remote_address()` | `Address` | The other side's address, saved when the connection opened. |
 | `close()` | `void` | Closes the connection. |
 
 ```nim
@@ -2300,7 +2300,7 @@ end
 - Reads follow the stdin rules: `null` means the other side closed the connection, `timeout_ms` loses nothing, and a second task reading the same connection at the same time fails with `Busy`. The same goes for two tasks in `accept` on one listener.
 - Writing to a connection the other side has closed fails with `BrokenPipe` or `ConnectionReset`. The first write after that may still succeed, since the system only finds out on a later one.
 - Closing a connection with writes still waiting (from other tasks) makes them fail with `Closed`. A connection or listener that isn't closed stays open until the program ends.
-- `remote_address()` keeps working after the other side leaves, and fails with `Closed` after `close()`.
+- `remote_address()` never fails: it keeps working after the other side leaves and after `close()`, so a server can log who it served. Each call returns a new `Address`.
 
 Opening (`tcp_connect`, `tcp_listen`) fails with `NetError`; using a listener or a connection fails with `io::IoError` (see [std/io](#stdio)), so generic code like `io::copy` has one error type.
 

@@ -75,12 +75,13 @@ func main() -> !void
 
     let peer_check = spawn(func() -> io::IoError!net::Address
         let conn = try listener.accept()
-        let address = try conn.remote_address()
+        let address = conn.remote_address()
         conn.close()
+        assert(conn.remote_address().port == address.port)
         return address
     end)
     let client = try net::tcp_connect("127.0.0.1", listener.port())
-    let server_address = try client.remote_address()
+    let server_address = client.remote_address()
     assert(server_address.host == "127.0.0.1")
     assert(server_address.port == listener.port())
     let client_address = try await(peer_check)
@@ -88,22 +89,36 @@ func main() -> !void
     assert(client_address.port > 0)
     assert(client_address.port != listener.port())
     client.close()
-    let mut closed_error = ""
-    client.remote_address() catch e then
-        closed_error = io_error_name(e)
-    end
-    assert(closed_error == "closed")
+    let mut changed = client.remote_address()
+    changed.port = 1
+    assert(client.remote_address().port == listener.port())
+    let after_close = client.remote_address()
+    assert(after_close.host == "127.0.0.1")
+    assert(after_close.port == listener.port())
+
+    let leaving = spawn(func() -> io::IoError!net::Address
+        let conn = try listener.accept()
+        task::sleep(20)
+        let address = conn.remote_address()
+        conn.close()
+        return address
+    end)
+    let brief = try net::tcp_connect("127.0.0.1", listener.port())
+    brief.close()
+    let left_address = try await(leaving)
+    assert(left_address.host == "127.0.0.1")
+    assert(left_address.port > 0)
     listener.close()
 
     let ipv6 = try net::tcp_listen("::1", 0)
     let ipv6_peer = spawn(func() -> io::IoError!string
         let conn = try ipv6.accept()
-        let address = try conn.remote_address()
+        let address = conn.remote_address()
         conn.close()
         return address.host
     end)
     let ipv6_client = try net::tcp_connect("::1", ipv6.port())
-    assert((try ipv6_client.remote_address()).host == "::1")
+    assert(ipv6_client.remote_address().host == "::1")
     ipv6_client.close()
     assert(try await(ipv6_peer) == "::1")
     ipv6.close()
