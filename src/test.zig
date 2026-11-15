@@ -576,6 +576,87 @@ test "io: reading stdin flushes stdout before waiting" {
     try testing.expectEqualStrings("Name: Hi Ana\n", recorder.flushed.items);
 }
 
+test "io: stdin redirected from a file, across chunks, and from /dev/null" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lines.txt", .data = "one\r\ntwo\nlast" });
+    const lines_file = try tmp.dir.openFile(testing.io, "lines.txt", .{});
+    try expectStdinOutput(read_lines_source, lines_file.handle, "[one]\n[two]\n[last]\nend\n");
+
+    const big = try testing.allocator.alloc(u8, 200_000);
+    defer testing.allocator.free(big);
+    for (big, 0..) |*byte, i| {
+        byte.* = if (i % 1000 == 999) '\n' else 'a';
+    }
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.txt", .data = big });
+    const count_lines =
+        \\import std/io
+        \\import std/string
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    let mut count = 0
+        \\    let mut is_uniform = true
+        \\    for true do
+        \\        let next = try input.read_line()
+        \\        if next: line then
+        \\            count = count + 1
+        \\            is_uniform = is_uniform and string::len(line) == 999
+        \\        else
+        \\            break
+        \\        end
+        \\    end
+        \\    io::println("$count $is_uniform")
+        \\end
+    ;
+    const big_file = try tmp.dir.openFile(testing.io, "big.txt", .{});
+    try expectStdinOutput(count_lines, big_file.handle, "200 true\n");
+
+    const null_file = try std.Io.Dir.cwd().openFile(testing.io, "/dev/null", .{});
+    try expectStdinOutput(read_lines_source, null_file.handle, "end\n");
+}
+
+test "io: close, reading after close, and a parked reader woken by close" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const after_close =
+        \\import std/io
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    io::println("${try input.read_line()}")
+        \\    input.close()
+        \\    input.close()
+        \\    input.read_line() catch e then
+        \\        io::println("${e == io::IoError.Closed}")
+        \\    end
+        \\    io::stdin().read_bytes(4) catch e then
+        \\        io::println("${e == io::IoError.Closed}")
+        \\    end
+        \\end
+    ;
+    try expectStdinOutput(after_close, (try pipeWithInput("first\nsecond\n"))[0], "first\ntrue\ntrue\n");
+
+    const fds = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = fds[1], .parts = &.{"late"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    const woken =
+        \\import std/io
+        \\import std/task
+        \\func main() -> !void
+        \\    let reader = spawn(func() -> bool
+        \\        io::stdin().read_line() catch e then
+        \\            return e == io::IoError.Closed
+        \\        end
+        \\        return false
+        \\    end)
+        \\    task::sleep(5)
+        \\    io::stdin().close()
+        \\    io::println("${await(reader)}")
+        \\end
+    ;
+    try expectStdinOutput(woken, fds[0], "true\n");
+}
+
 const read_lines_source =
     \\import std/io
     \\func main() -> !void

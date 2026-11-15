@@ -24,6 +24,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_read_all", Binding{ .native = &streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &streamReadAllBytes } },
     .{ "is_terminal_fd", Binding{ .native = &isTerminalFd } },
+    .{ "stream_close", Binding{ .native = &streamClose } },
 });
 
 fn print(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -100,6 +101,11 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode) anyerror!NativeResult {
     stream.parkReader(current, mode) catch return fail(IoError.Other);
     current.park();
     return native.parked();
+}
+
+fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    vm.event_loop.closeStream(args[0].int64);
+    return ok(.{ .null = {} });
 }
 
 fn isTerminalFd(vm: *VM, args: []v.Value) anyerror!NativeResult {

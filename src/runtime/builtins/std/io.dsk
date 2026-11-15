@@ -21,6 +21,7 @@ extern func ~stream_read_line(handle: int, max: int) -> IoError!?string
 extern func ~stream_read_all(handle: int) -> IoError!string
 extern func ~stream_read_all_bytes(handle: int) -> IoError!buffer
 extern func ~is_terminal_fd(fd: int) -> bool
+extern func ~stream_close(handle: int) -> void
 
 struct Stdin
     ~handle: int
@@ -43,6 +44,10 @@ struct Stdin
 
     func is_terminal(self: @) -> bool
         return is_terminal_fd(0)
+    end
+
+    func close(self: @) -> void
+        stream_close(self.handle)
     end
 end
 

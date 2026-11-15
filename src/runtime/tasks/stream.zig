@@ -6,6 +6,8 @@ const HandleOwner = @import("event_loop.zig").HandleOwner;
 const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
+const FsJob = @import("fs_job.zig").FsJob;
+const onHandleClosed = @import("event_loop.zig").onHandleClosed;
 
 const handle_alignment = std.mem.Alignment.@"16";
 const read_chunk_size = 64 * 1024;
@@ -14,18 +16,22 @@ const high_water_mark = 1024 * 1024;
 pub const Stream = struct {
     const Self = @This();
 
-    pub const Kind = enum { tty, pipe, unsupported_file, closed_input };
+    pub const Kind = enum { tty, pipe, file, closed_input };
 
     owner: HandleOwner = .{ .kind = .stream },
     allocator: std.mem.Allocator,
     event_loop: *EventLoop,
     scheduler: *Scheduler,
     kind: Kind,
+    loop: *uv.Loop,
+    file: c_int,
     handle_memory: []align(16) u8 = &.{},
     buffered: std.ArrayList(u8) = .empty,
     read_offset: usize = 0,
     is_reading: bool = false,
     has_ended: bool = false,
+    is_closed: bool = false,
+    has_chunk_in_flight: bool = false,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
 
@@ -40,13 +46,13 @@ pub const Stream = struct {
         const kind: Kind = switch (uv.uv_guess_handle(file)) {
             .tty => .tty,
             .named_pipe => .pipe,
-            .file => .unsupported_file,
+            .file => .file,
             else => .closed_input,
         };
-        stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = kind };
+        stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = kind, .loop = loop, .file = file };
         switch (kind) {
             .tty, .pipe => stream.initHandle(loop, file),
-            .unsupported_file => stream.failure = .Other,
+            .file => {},
             .closed_input => stream.has_ended = true,
         }
         return stream;
@@ -78,11 +84,38 @@ pub const Stream = struct {
         if (self.handle_memory.len > 0) {
             self.allocator.free(self.handle_memory);
         }
+        const owns_file = self.kind == .file and self.file > 2;
+        if (owns_file) {
+            closeFileNow(self.allocator, self.loop, self.file);
+        }
         self.allocator.destroy(self);
     }
 
-    pub fn releaseWithoutHandle(self: *Self) void {
+    pub fn releaseAtExit(self: *Self) void {
+        if (self.has_chunk_in_flight) {
+            self.is_closed = true;
+            return;
+        }
         if (self.handle_memory.len == 0) {
+            self.destroy();
+        }
+    }
+
+    pub fn close(self: *Self) void {
+        if (self.waiter) |waiter| {
+            self.waiter = null;
+            self.event_loop.pending_operations -= 1;
+            self.scheduler.wake(waiter.task, failureResult(.Closed)) catch |failure| {
+                self.event_loop.callback_failure = failure;
+            };
+        }
+        self.is_closed = true;
+        if (self.handle_memory.len > 0) {
+            self.stopReading();
+            uv.uv_close(self.uvHandle(), onHandleClosed);
+            return;
+        }
+        if (!self.has_chunk_in_flight) {
             self.destroy();
         }
     }
@@ -170,11 +203,60 @@ pub const Stream = struct {
     }
 
     fn startReading(self: *Self) !void {
-        if (self.is_reading) return;
-        if (uv.uv_read_start(self.uvHandle(), onAlloc, onRead) != 0) {
-            return error.StreamReadFailed;
+        switch (self.kind) {
+            .file => try self.startChunk(),
+            .closed_input => {},
+            .tty, .pipe => {
+                if (self.is_reading) return;
+                if (uv.uv_read_start(self.uvHandle(), onAlloc, onRead) != 0) {
+                    return error.StreamReadFailed;
+                }
+                self.is_reading = true;
+            },
         }
-        self.is_reading = true;
+    }
+
+    fn startChunk(self: *Self) !void {
+        if (self.has_chunk_in_flight) return;
+        const job = try FsJob.create(self.allocator, .read_chunk, "", "");
+        errdefer job.destroy();
+        job.file = self.file;
+        job.stream = self;
+        try self.event_loop.startFsJob(self.scheduler, null, job);
+        self.has_chunk_in_flight = true;
+    }
+
+    pub fn finishChunk(self: *Self, contents: ?[]u8, has_failed: bool) void {
+        self.has_chunk_in_flight = false;
+        const allocator = self.allocator;
+        defer {
+            if (contents) |data| {
+                allocator.free(data);
+            }
+        }
+        if (self.is_closed) {
+            self.destroy();
+            return;
+        }
+        if (has_failed) {
+            self.failure = .Other;
+        } else if (contents) |data| {
+            if (data.len == 0) {
+                self.has_ended = true;
+            } else {
+                self.buffered.appendSlice(self.allocator, data) catch {
+                    self.failure = .Other;
+                };
+            }
+        }
+        self.serveWaiter();
+        const needs_more = self.waiter != null and !self.has_ended and self.failure == null;
+        if (needs_more) {
+            self.startChunk() catch {
+                self.failure = .Other;
+                self.serveWaiter();
+            };
+        }
     }
 
     fn stopReading(self: *Self) void {
@@ -262,6 +344,14 @@ pub const IoError = enum {
     TimedOut,
     Other,
 };
+
+fn closeFileNow(allocator: std.mem.Allocator, loop: *uv.Loop, file: c_int) void {
+    const request_memory = allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.fs)) catch return;
+    defer allocator.free(request_memory);
+    const request: *uv.Request = @ptrCast(request_memory.ptr);
+    _ = uv.uv_fs_close(loop, request, file, null);
+    uv.uv_fs_req_cleanup(request);
+}
 
 fn failureResult(failure: IoError) WakeResult {
     return .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true };

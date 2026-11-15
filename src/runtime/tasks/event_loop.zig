@@ -21,7 +21,7 @@ pub const EventLoop = struct {
     pub fn deinit(self: *Self) void {
         for (self.streams.items) |entry| {
             const stream = entry orelse continue;
-            stream.releaseWithoutHandle();
+            stream.releaseAtExit();
         }
         defer self.streams.deinit(self.allocator);
         const loop = self.loop orelse return;
@@ -76,7 +76,7 @@ pub const EventLoop = struct {
         self.pending_operations += 1;
     }
 
-    pub fn startFsJob(self: *Self, scheduler: *Scheduler, task: *TaskState, job: *FsJob) !void {
+    pub fn startFsJob(self: *Self, scheduler: *Scheduler, task: ?*TaskState, job: *FsJob) !void {
         const loop = try self.ensureLoopStarted();
         job.event_loop = self;
         job.scheduler = scheduler;
@@ -101,6 +101,12 @@ pub const EventLoop = struct {
         self.streams.appendAssumeCapacity(stream);
         self.stdin_handle = handle;
         return handle;
+    }
+
+    pub fn closeStream(self: *Self, handle: i64) void {
+        const stream = self.streamAt(handle) orelse return;
+        self.streams.items[@intCast(handle)] = null;
+        stream.close();
     }
 
     pub fn streamAt(self: *Self, handle: i64) ?*Stream {
@@ -198,8 +204,12 @@ fn onFsJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
     defer job.destroy();
     const event_loop = job.event_loop;
     event_loop.pending_operations -= 1;
+    if (job.stream) |stream| {
+        stream.finishChunk(job.takeContents(), job.failure != null);
+        return;
+    }
     const wake_result = job.takeWakeResult();
-    job.scheduler.wake(job.task, wake_result) catch |failure| {
+    job.scheduler.wake(job.task.?, wake_result) catch |failure| {
         wake_result.payload.free(event_loop.allocator);
         event_loop.callback_failure = failure;
     };

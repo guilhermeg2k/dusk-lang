@@ -7,6 +7,7 @@ const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
 const WakePayload = @import("scheduler.zig").WakePayload;
+const Stream = @import("stream.zig").Stream;
 
 const request_alignment = std.mem.Alignment.@"16";
 
@@ -22,11 +23,12 @@ const new_file_mode = 0o666;
 const min_read_capacity = 4096;
 const new_dir_mode = 0o777;
 const dir_batch_size = 64;
+const chunk_size = 64 * 1024;
 
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename };
+    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk };
 
     allocator: std.mem.Allocator,
     kind: Kind,
@@ -36,7 +38,9 @@ pub const FsJob = struct {
     fs_memory: []align(16) u8,
     event_loop: *EventLoop = undefined,
     scheduler: *Scheduler = undefined,
-    task: *TaskState = undefined,
+    task: ?*TaskState = null,
+    stream: ?*Stream = null,
+    file: c_int = -1,
     loop: *uv.Loop = undefined,
     failure: ?FsError = null,
     is_found: bool = false,
@@ -90,6 +94,7 @@ pub const FsJob = struct {
             .delete => self.deletePath(),
             .delete_recursive => _ = self.deleteTree(self.path, .unknown),
             .rename => self.renamePath(),
+            .read_chunk => self.readChunk(),
         }
     }
 
@@ -390,6 +395,33 @@ pub const FsJob = struct {
         }
     }
 
+    fn readChunk(self: *Self) void {
+        const data = self.allocator.alloc(u8, chunk_size) catch {
+            self.failure = .Other;
+            return;
+        };
+        const request = self.fsRequest();
+        const buffer = uv.Buffer{ .base = data.ptr, .len = @intCast(data.len) };
+        const status = uv.uv_fs_read(self.loop, request, self.file, @ptrCast(&buffer), 1, -1, null);
+        uv.uv_fs_req_cleanup(request);
+        if (status < 0) {
+            self.allocator.free(data);
+            self.failure = failureFromStatus(status);
+            return;
+        }
+        self.contents = self.allocator.realloc(data, @intCast(status)) catch {
+            self.allocator.free(data);
+            self.failure = .Other;
+            return;
+        };
+    }
+
+    pub fn takeContents(self: *Self) ?[]u8 {
+        const contents = self.contents;
+        self.contents = null;
+        return contents;
+    }
+
     fn fileSizeHint(self: *Self, file: c_int) usize {
         const request = self.fsRequest();
         defer uv.uv_fs_req_cleanup(request);
@@ -420,6 +452,7 @@ pub const FsJob = struct {
         return switch (self.kind) {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
             .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
+            .read_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
             .read_dir => result: {
                 const names = self.names.?;
                 self.names = null;
