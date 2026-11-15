@@ -19,6 +19,77 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "time: timestamps, formatting and private construction" {
+    try runCase("time-timestamps.dsk");
+    try runCaseError("sema/time-timestamp-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-timestamp-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-timestamp-format-argument.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-timestamp-native-private.dsk", error.NotVisible);
+}
+
+test "time: clocks and tasks" {
+    try runCase("time-clocks.dsk");
+    try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);
+    try runCaseError("sema/time-clock-extra-argument.dsk", error.InvalidNumberOfArgs);
+}
+
+test "time: wall milliseconds handle fractions, pre-epoch times and integer limits" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    try testing.expectEqual(@as(i64, 0), try EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = 0, .tv_usec = 0 }));
+    try testing.expectEqual(@as(i64, 0), try EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = 0, .tv_usec = 999 }));
+    try testing.expectEqual(@as(i64, 1), try EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = 0, .tv_usec = 1000 }));
+    try testing.expectEqual(@as(i64, 999), try EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = 0, .tv_usec = 999999 }));
+    try testing.expectEqual(@as(i64, -1), try EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = -1, .tv_usec = 999999 }));
+    try testing.expectEqual(@as(i64, -1000), try EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = -1, .tv_usec = 0 }));
+    const maximum = std.math.maxInt(i64);
+    const minimum = std.math.minInt(i64);
+    const maximum_time = uv.Timeval64{ .tv_sec = @divFloor(maximum, 1000), .tv_usec = @intCast(@mod(maximum, 1000) * 1000 + 999) };
+    const minimum_time = uv.Timeval64{ .tv_sec = @divFloor(minimum, 1000), .tv_usec = @intCast(@mod(minimum, 1000) * 1000) };
+    try testing.expectEqual(maximum, try EventLoop.wallMillisecondsFromTimeval(maximum_time));
+    try testing.expectEqual(minimum, try EventLoop.wallMillisecondsFromTimeval(minimum_time));
+    try testing.expectError(error.ClockOutOfRange, EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = maximum_time.tv_sec, .tv_usec = maximum_time.tv_usec + 1 }));
+    try testing.expectError(error.ClockOutOfRange, EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = minimum_time.tv_sec, .tv_usec = minimum_time.tv_usec - 1 }));
+    try testing.expectError(error.ClockOutOfRange, EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = maximum, .tv_usec = 0 }));
+    try testing.expectError(error.ClockOutOfRange, EventLoop.wallMillisecondsFromTimeval(.{ .tv_sec = minimum, .tv_usec = 0 }));
+}
+
+test "time: monotonic readings use checked integer conversion" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    try testing.expectEqual(@as(i64, 0), try EventLoop.monotonicNanosecondsFromReading(0));
+    try testing.expectEqual(std.math.maxInt(i64), try EventLoop.monotonicNanosecondsFromReading(std.math.maxInt(i64)));
+    try testing.expectError(error.ClockOutOfRange, EventLoop.monotonicNanosecondsFromReading(@as(u64, std.math.maxInt(i64)) + 1));
+    try testing.expectError(error.ClockOutOfRange, EventLoop.monotonicNanosecondsFromReading(std.math.maxInt(u64)));
+}
+
+test "time: natives read clocks without a task, event loop or GC allocations" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{});
+    defer vm.deinit();
+    const time = @import("runtime/builtins/std/time.zig");
+    const host_wall = std.Io.Clock.real.now(testing.io).toMilliseconds();
+    var args: [0]@import("runtime/value.zig").Value = .{};
+    const wall = try time.bindings.get("now_ms").?.native(&vm, &args);
+    try testing.expect(@abs(@as(i128, wall.value.int64) - host_wall) < 60000);
+    try testing.expect(!wall.has_failed and !wall.is_parked);
+    const first = try time.bindings.get("monotonic_ns").?.native(&vm, &args);
+    const second = try time.bindings.get("monotonic_ns").?.native(&vm, &args);
+    try testing.expect(second.value.int64 >= first.value.int64);
+    try testing.expect(!first.has_failed and !first.is_parked);
+    try testing.expect(!second.has_failed and !second.is_parked);
+    try testing.expect(vm.event_loop.loop == null);
+    try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+    try testing.expectEqual(@as(usize, 0), vm.heap.allocated);
+    try testing.expectEqual(@as(usize, 0), vm.heap.object_count);
+    try testing.expect(vm.running_task == null);
+    try testing.expectEqual(@as(usize, 0), @offsetOf(uv.Timeval64, "tv_sec"));
+    try testing.expectEqual(@as(usize, 8), @offsetOf(uv.Timeval64, "tv_usec"));
+}
+
 test "libuv: a timer fires once" {
     const State = struct {
         var fire_count: usize = 0;
@@ -2098,8 +2169,7 @@ test "syntax error: anonymous struct missing end" {
     try runCaseError("parser/struct-static-keyword.dsk", error.ParserError);
 }
 
-test "syntax error: fn args mixed named positional" {
-}
+test "syntax error: fn args mixed named positional" {}
 
 test "syntax error: fn args non identifier name" {
     try runCaseError("parser/fn-args-non-identifier.dsk", error.ParserError);

@@ -19,6 +19,8 @@ pub const RuntimeError = error{
     NegativeSleep,
     UnhandledTaskError,
     OutputFailed,
+    ClockFailed,
+    ClockOutOfRange,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -128,6 +130,16 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn cantWriteOutput(stream_name: []const u8, failure: anyerror) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.OutputFailed, "can't write to {s}: {s}", .{ stream_name, @errorName(failure) });
+    }
+
+    pub noinline fn clockFailed(clock_name: []const u8, failure_name: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.ClockFailed, "can't read {s} clock: {s}", .{ clock_name, failure_name });
+    }
+
+    pub noinline fn clockOutOfRange(clock_name: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.ClockOutOfRange, "{s} clock reading doesn't fit in int", .{clock_name});
     }
 
     fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {

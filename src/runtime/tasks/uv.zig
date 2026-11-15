@@ -38,6 +38,11 @@ pub const Timespec = extern struct {
     tv_nsec: c_long,
 };
 
+pub const Timeval64 = extern struct {
+    tv_sec: i64,
+    tv_usec: i32,
+};
+
 pub const Stat = extern struct {
     st_dev: u64,
     st_mode: u64,
@@ -99,6 +104,11 @@ pub extern fn uv_pipe_init(loop: *Loop, pipe: *Handle, ipc: c_int) c_int;
 pub extern fn uv_pipe_open(pipe: *Handle, file: c_int) c_int;
 pub extern fn uv_read_start(stream: *Handle, alloc: AllocCallback, read: ReadCallback) c_int;
 pub extern fn uv_read_stop(stream: *Handle) c_int;
+
+// ---- Clocks ----
+
+pub extern fn uv_gettimeofday(time: *Timeval64) c_int;
+pub extern fn uv_hrtime() u64;
 
 // ---- Requests (shared by every request type) ----
 
