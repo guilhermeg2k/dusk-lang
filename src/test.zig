@@ -307,13 +307,13 @@ test "fs: read_dir, make_dir, remove and rename, checked on disk" {
         \\    try fs::make_dir("DIR/made/a/b/", true)
         \\    try fs::make_dir("DIR/made/a/b", true)
         \\    fs::make_dir("DIR/tree/top.txt/x", true) catch e then io::println(name(e)) end
-        \\    fs::remove("DIR/tree") catch e then io::println(name(e)) end
-        \\    try fs::remove("DIR/new")
+        \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
+        \\    try fs::delete("DIR/new")
         \\    try fs::rename("DIR/tree/top.txt", "DIR/moved.txt")
         \\    try fs::rename("DIR/made", "DIR/made-renamed")
-        \\    try fs::remove("DIR/moved.txt")
-        \\    try fs::remove("DIR/tree", true)
-        \\    fs::remove("DIR/tree") catch e then io::println(name(e)) end
+        \\    try fs::delete("DIR/moved.txt")
+        \\    try fs::delete("DIR/tree", true)
+        \\    fs::delete("DIR/tree") catch e then io::println(name(e)) end
         \\end
     ;
     const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);

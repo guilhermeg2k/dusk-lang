@@ -26,7 +26,7 @@ const dir_batch_size = 64;
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, remove, remove_recursive, rename };
+    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename };
 
     allocator: std.mem.Allocator,
     kind: Kind,
@@ -87,8 +87,8 @@ pub const FsJob = struct {
             .read_dir => self.readDir(),
             .make_dir => self.makeDir(),
             .make_dir_recursive => self.makeDirWithParents(),
-            .remove => self.removePath(),
-            .remove_recursive => _ = self.removeTree(self.path, .unknown),
+            .delete => self.deletePath(),
+            .delete_recursive => _ = self.deleteTree(self.path, .unknown),
             .rename => self.renamePath(),
         }
     }
@@ -313,7 +313,7 @@ pub const FsJob = struct {
         return uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
     }
 
-    fn removePath(self: *Self) void {
+    fn deletePath(self: *Self) void {
         const request = self.fsRequest();
         const status = uv.uv_fs_lstat(self.loop, request, self.path.ptr, null);
         const is_dir = status >= 0 and uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
@@ -322,16 +322,16 @@ pub const FsJob = struct {
             self.failure = failureFromStatus(status);
             return;
         }
-        _ = if (is_dir) self.removeEmptyDir(self.path.ptr) else self.removeFile(self.path.ptr);
+        _ = if (is_dir) self.deleteEmptyDir(self.path.ptr) else self.deleteFile(self.path.ptr);
     }
 
-    fn removeTree(self: *Self, path: [*:0]const u8, entry_type: uv.DirEntryType) bool {
+    fn deleteTree(self: *Self, path: [*:0]const u8, entry_type: uv.DirEntryType) bool {
         const is_dir = switch (entry_type) {
             .dir => true,
             .unknown => self.lstatIsDirectory(path) orelse return false,
             else => false,
         };
-        if (!is_dir) return self.removeFile(path);
+        if (!is_dir) return self.deleteFile(path);
 
         const entries = self.readDirEntries(path) orelse return false;
         defer {
@@ -346,9 +346,9 @@ pub const FsJob = struct {
                 return false;
             };
             defer self.allocator.free(child);
-            if (!self.removeTree(child.ptr, entry.entry_type)) return false;
+            if (!self.deleteTree(child.ptr, entry.entry_type)) return false;
         }
-        return self.removeEmptyDir(path);
+        return self.deleteEmptyDir(path);
     }
 
     fn lstatIsDirectory(self: *Self, path: [*:0]const u8) ?bool {
@@ -362,7 +362,7 @@ pub const FsJob = struct {
         return uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
     }
 
-    fn removeEmptyDir(self: *Self, path: [*:0]const u8) bool {
+    fn deleteEmptyDir(self: *Self, path: [*:0]const u8) bool {
         const request = self.fsRequest();
         defer uv.uv_fs_req_cleanup(request);
         const status = uv.uv_fs_rmdir(self.loop, request, path, null);
@@ -372,7 +372,7 @@ pub const FsJob = struct {
         return false;
     }
 
-    fn removeFile(self: *Self, path: [*:0]const u8) bool {
+    fn deleteFile(self: *Self, path: [*:0]const u8) bool {
         const request = self.fsRequest();
         defer uv.uv_fs_req_cleanup(request);
         const status = uv.uv_fs_unlink(self.loop, request, path, null);
@@ -419,7 +419,7 @@ pub const FsJob = struct {
         }
         return switch (self.kind) {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
-            .write, .append, .make_dir, .make_dir_recursive, .remove, .remove_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
+            .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
             .read_dir => result: {
                 const names = self.names.?;
                 self.names = null;

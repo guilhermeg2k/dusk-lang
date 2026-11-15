@@ -19,7 +19,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "append_text", Binding{ .native = &appendText } },
     .{ "read_dir", Binding{ .native = &readDir } },
     .{ "make_dir", Binding{ .native = &makeDir } },
-    .{ "remove", Binding{ .native = &remove } },
+    .{ "delete", Binding{ .native = &delete } },
     .{ "rename", Binding{ .native = &rename } },
 });
 
@@ -56,8 +56,8 @@ fn makeDir(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startFsJob(vm, kind, bytesArg(args, 0), "");
 }
 
-fn remove(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const kind: FsJob.Kind = if (args[1].bool) .remove_recursive else .remove;
+fn delete(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const kind: FsJob.Kind = if (args[1].bool) .delete_recursive else .delete;
     return startFsJob(vm, kind, bytesArg(args, 0), "");
 }
 
