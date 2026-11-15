@@ -1695,7 +1695,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/time`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1934,6 +1934,36 @@ end
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
 
 The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](#buffers).
+
+### std/time
+
+Two clocks for timestamps and elapsed time. Import with `import std/time`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
+| `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
+
+`now_ms` is wall-clock time: system clock adjustments can move it forward or backward. It is independent of the local time zone. Fractions are rounded down to milliseconds, including before the epoch.
+
+`monotonic_ns` ignores jumps in the system wall clock. Consecutive readings may be equal; nanosecond units do not guarantee nanosecond resolution. Elapsed time includes waiting for tasks or I/O, rather than only time spent executing. Inclusion of time while the whole system is suspended is platform-dependent. Use differences within a program run; do not persist monotonic readings as timestamps or compare them across runs or machines.
+
+Both calls return immediately, without allocating or yielding to another task. Neither needs `try`. A platform clock failure or a reading outside `int` range is a runtime error. Waiting remains `task::sleep` in `std/task`.
+
+```dusk
+import std/time
+import std/array
+import std/io
+
+func main() -> void
+    let mut numbers = [3, 1, 2]
+    let start = time::monotonic_ns()
+    array::sort(numbers)
+    let elapsed_ns = time::monotonic_ns() - start
+    let elapsed_ms = to_float(elapsed_ns) / 1000000.0
+    io::println("Sorted in $elapsed_ms ms")
+end
+```
 
 ### std/task
 

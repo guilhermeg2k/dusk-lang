@@ -1,0 +1,2 @@
+extern func now_ms() -> int
+extern func monotonic_ns() -> int

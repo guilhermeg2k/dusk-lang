@@ -37,6 +37,11 @@ pub const Timespec = extern struct {
     tv_nsec: c_long,
 };
 
+pub const Timeval64 = extern struct {
+    tv_sec: i64,
+    tv_usec: i32,
+};
+
 pub const Stat = extern struct {
     st_dev: u64,
     st_mode: u64,
@@ -87,12 +92,23 @@ pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
 
+// ---- Clocks ----
+
+pub extern fn uv_gettimeofday(time: *Timeval64) c_int;
+pub extern fn uv_hrtime() u64;
+
+// ---- Requests ----
+
 pub extern fn uv_req_size(request_type: RequestType) usize;
 pub extern fn uv_req_get_data(request: *const Request) ?*anyopaque;
 pub extern fn uv_req_set_data(request: *Request, data: ?*anyopaque) void;
 pub extern fn uv_err_name(status: c_int) [*:0]const u8;
 
+// ---- Worker pool ----
+
 pub extern fn uv_queue_work(loop: *Loop, request: *Request, work: WorkCallback, after_work: AfterWorkCallback) c_int;
+
+// ---- File system ----
 
 pub extern fn uv_fs_open(loop: *Loop, request: *Request, path: [*:0]const u8, flags: c_int, mode: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_read(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
