@@ -252,7 +252,13 @@ pub const SemaAnalyzer = struct {
         const symbol = try self.createEmptyFuncSymbol(generic.func_stmt.identifier);
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
-        return .{ .uid = generic.extern_uid.?, .identifier = generic.func_stmt.identifier, .params = func.params, .binding = binding };
+        return .{
+            .uid = generic.extern_uid.?,
+            .identifier = generic.func_stmt.identifier,
+            .params = func.params,
+            .binding = binding,
+            .error_base = self.declaredErrorBase(func.return_type_id),
+        };
     }
 
     fn isDeclaration(stmt: ast.Statement) bool {

@@ -6,10 +6,11 @@ let nan = 0.0 / 0.0
 
 error MathError
     InvalidBounds
+    Empty
 end
 
-extern func min[T: int | float](values: []T) -> ?T
-extern func max[T: int | float](values: []T) -> ?T
+extern func min[T: int | float](values: []T) -> MathError!T
+extern func max[T: int | float](values: []T) -> MathError!T
 extern func abs(value: int) -> int
 extern func f_abs(value: float) -> float
 extern func clamp(value: int, lower: int, upper: int) -> MathError!int

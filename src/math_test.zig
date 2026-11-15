@@ -46,19 +46,20 @@ test "math: numeric functions, constants and special values" {
     try runMathSource(source);
 }
 
-test "math: nullable extrema survive garbage collection" {
+test "math: extrema remain correct across garbage collection" {
     try runMathSource(
         \\import std/math
-        \\func main() -> void
+        \\func main() -> math::MathError!void
         \\    let values = [9, -7, 3]
         \\    let floats = [9.5, -7.5, 3.5]
-        \\    let saved_min = math::min(values)
-        \\    let saved_max = math::max(floats)
+        \\    let saved_min = try math::min(values)
+        \\    let saved_max = try math::max(floats)
         \\    for 0..40000: i do
-        \\        assert(math::min(values) == -7)
-        \\        assert(math::max(values) == 9)
-        \\        assert(math::min(floats) == -7.5)
-        \\        assert(math::max(floats) == 9.5)
+        \\        let garbage = [i, i + 1, i + 2]
+        \\        assert((try math::min(values)) == -7)
+        \\        assert((try math::max(values)) == 9)
+        \\        assert((try math::min(floats)) == -7.5)
+        \\        assert((try math::max(floats)) == 9.5)
         \\    end
         \\    assert(saved_min == -7)
         \\    assert(saved_max == 9.5)
@@ -70,17 +71,17 @@ test "math: extrema read arrays after growth" {
     try runMathSource(
         \\import std/math
         \\import std/array
-        \\func main() -> void
+        \\func main() -> math::MathError!void
         \\    let mut integers = [0]
         \\    let mut floats = [0.0]
         \\    for 1..1000: i do
         \\        array::append(integers, i)
         \\        array::append(floats, -to_float(i))
         \\    end
-        \\    assert(math::min(integers) == 0)
-        \\    assert(math::max(integers) == 1000)
-        \\    assert(math::min(floats) == -1000.0)
-        \\    assert(math::max(floats) == 0.0)
+        \\    assert((try math::min(integers)) == 0)
+        \\    assert((try math::max(integers)) == 1000)
+        \\    assert((try math::min(floats)) == -1000.0)
+        \\    assert((try math::max(floats)) == 0.0)
         \\end
     );
 }
@@ -110,6 +111,35 @@ test "math: min and max reject nonnumeric element types" {
             try testing.expectError(expected_error, compileMathSource(arena.allocator(), source));
         }
     }
+}
+
+test "math: empty extrema return the declared error and propagate through try" {
+    try runMathSource(
+        \\import std/math
+        \\func smallest(values: []int) -> math::MathError!int
+        \\    return try math::min(values)
+        \\end
+        \\func largest(values: []float) -> math::MathError!float
+        \\    return try math::max(values)
+        \\end
+        \\func main() -> math::MathError!void
+        \\    let integers: []int = []
+        \\    let floats: []float = []
+        \\    let mut empty_failures = 0
+        \\    smallest(integers) catch err then
+        \\        assert(err == math::MathError.Empty)
+        \\        assert(err != ConversionError.Overflow)
+        \\        empty_failures = empty_failures + 1
+        \\    end
+        \\    largest(floats) catch err then
+        \\        assert(err == math::MathError.Empty)
+        \\        empty_failures = empty_failures + 1
+        \\    end
+        \\    assert(empty_failures == 2)
+        \\    assert((try smallest([3, 1])) == 1)
+        \\    assert((try largest([3.5, 1.5])) == 3.5)
+        \\end
+    );
 }
 
 fn runMathSource(source: []const u8) !void {

@@ -37,17 +37,17 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "is_finite", Binding{ .native = &isFinite } },
 });
 
-pub const MathError = enum { InvalidBounds };
+pub const MathError = enum { InvalidBounds, Empty };
 pub const error_sets = .{MathError};
 
-fn arrayMin(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return arrayExtremum(vm, args, .min);
+fn arrayMin(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return arrayExtremum(args, .min);
 }
 
-fn arrayExtremum(vm: *VM, args: []v.Value, comptime operation: enum { min, max }) !NativeResult {
+fn arrayExtremum(args: []v.Value, comptime operation: enum { min, max }) !NativeResult {
     const array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj.followRelocated());
     if (array.len == 0) {
-        return ok(v.NULL_VALUE);
+        return fail(MathError.Empty);
     }
     const items = array.getDataPtr()[0..array.len];
     var result = items[0];
@@ -77,11 +77,11 @@ fn arrayExtremum(vm: *VM, args: []v.Value, comptime operation: enum { min, max }
         },
         else => unreachable,
     }
-    return ok(try vm.allocNullBox(result, array.kind));
+    return ok(result);
 }
 
-fn arrayMax(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return arrayExtremum(vm, args, .max);
+fn arrayMax(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return arrayExtremum(args, .max);
 }
 
 fn intAbs(_: *VM, args: []v.Value) anyerror!NativeResult {
