@@ -1,5 +1,9 @@
 # Changelogs
 
+## v0.16 - Shigeo
+
+Started v0.16 development: updated the CLI version to `0.16.0-devel`.
+
 ## v0.15 - Enjin
 
 Started v0.15 development: updated the CLI version to `0.15.0-devel`.
