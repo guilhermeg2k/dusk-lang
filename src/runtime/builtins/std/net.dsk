@@ -20,6 +20,8 @@ extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::Io
 extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
 extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_write(handle: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
 
 struct TcpListener
@@ -55,6 +57,17 @@ struct TcpConn
 
     func read_all_bytes(self: @, timeout_ms: int = -1) -> io::IoError!buffer
         return try stream_read_all_bytes(self.handle, timeout_ms)
+    end
+
+    func write(self: @, text: string) -> io::IoError!void
+        try stream_write(self.handle, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> io::IoError!void
+        try stream_write_bytes(self.handle, data)
+    end
+
+    func flush(self: @) -> io::IoError!void
     end
 
     func close(self: @) -> void

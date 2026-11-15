@@ -10,7 +10,7 @@ pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
 pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, file = 17, _ };
-pub const RequestType = enum(c_int) { connect = 2, fs = 6, work = 7 };
+pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
 // ---- Structs mirrored from uv.h (layouts must match) ----
@@ -76,6 +76,7 @@ pub const AfterWorkCallback = *const fn (request: *Request, status: c_int) callc
 pub const FsCallback = *const fn (request: *Request) callconv(.c) void;
 pub const AllocCallback = *const fn (handle: *Handle, suggested_size: usize, buffer: *Buffer) callconv(.c) void;
 pub const ReadCallback = *const fn (stream: *Handle, read_count: isize, buffer: *const Buffer) callconv(.c) void;
+pub const WriteCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
 pub const ConnectCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
 pub const ConnectionCallback = *const fn (server: *Handle, status: c_int) callconv(.c) void;
 
@@ -103,13 +104,15 @@ pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
 pub extern fn uv_timer_stop(timer: *Handle) c_int;
 
-// ---- Streams (terminals and pipes) ----
+// ---- Streams (terminals, pipes and sockets) ----
 
 pub extern fn uv_tty_init(loop: *Loop, tty: *Handle, file: c_int, readable: c_int) c_int;
 pub extern fn uv_pipe_init(loop: *Loop, pipe: *Handle, ipc: c_int) c_int;
 pub extern fn uv_pipe_open(pipe: *Handle, file: c_int) c_int;
 pub extern fn uv_read_start(stream: *Handle, alloc: AllocCallback, read: ReadCallback) c_int;
 pub extern fn uv_read_stop(stream: *Handle) c_int;
+pub extern fn uv_try_write(stream: *Handle, buffers: [*]const Buffer, buffer_count: c_uint) c_int;
+pub extern fn uv_write(request: *Request, stream: *Handle, buffers: [*]const Buffer, buffer_count: c_uint, callback: WriteCallback) c_int;
 
 // ---- TCP ----
 

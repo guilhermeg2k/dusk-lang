@@ -364,7 +364,86 @@ pub const Stream = struct {
             self.stopReading();
         }
     }
+
+    pub fn write(self: *Self, task: *TaskState, data: []const u8) !WriteOutcome {
+        if (data.len == 0) return .done;
+        const buffers = [_]uv.Buffer{.{ .base = @constCast(data.ptr), .len = @intCast(data.len) }};
+        const status = uv.uv_try_write(self.uvHandle(), &buffers, 1);
+        const written: usize = if (status >= 0) @intCast(status) else 0;
+        if (written == data.len) return .done;
+        const is_waiting_for_room = status >= 0 or isErrorNamed(status, "EAGAIN");
+        if (!is_waiting_for_room) {
+            return .{ .failure = ioErrorFromStatus(status) };
+        }
+        const request = try WriteRequest.create(self, task, data[written..]);
+        const write_status = uv.uv_write(request.uvRequest(), self.uvHandle(), &request.buffers, 1, onWrite);
+        if (write_status != 0) {
+            request.destroy();
+            return .{ .failure = ioErrorFromStatus(write_status) };
+        }
+        self.requests_in_flight += 1;
+        self.event_loop.pending_operations += 1;
+        return .parked;
+    }
 };
+
+pub const WriteOutcome = union(enum) {
+    done,
+    parked,
+    failure: IoError,
+};
+
+const WriteRequest = struct {
+    allocator: std.mem.Allocator,
+    stream: *Stream,
+    task: *TaskState,
+    bytes: []u8,
+    buffers: [1]uv.Buffer,
+    request_memory: []align(16) u8,
+
+    fn create(stream: *Stream, task: *TaskState, data: []const u8) !*WriteRequest {
+        const allocator = stream.allocator;
+        const request = try allocator.create(WriteRequest);
+        errdefer allocator.destroy(request);
+        const bytes = try allocator.dupe(u8, data);
+        errdefer allocator.free(bytes);
+        const memory = try allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.write));
+        request.* = .{
+            .allocator = allocator,
+            .stream = stream,
+            .task = task,
+            .bytes = bytes,
+            .buffers = .{.{ .base = bytes.ptr, .len = @intCast(bytes.len) }},
+            .request_memory = memory,
+        };
+        uv.uv_req_set_data(request.uvRequest(), request);
+        return request;
+    }
+
+    fn destroy(self: *WriteRequest) void {
+        const allocator = self.allocator;
+        allocator.free(self.request_memory);
+        allocator.free(self.bytes);
+        allocator.destroy(self);
+    }
+
+    fn uvRequest(self: *WriteRequest) *uv.Request {
+        return @ptrCast(self.request_memory.ptr);
+    }
+};
+
+fn onWrite(uv_request: *uv.Request, status: c_int) callconv(.c) void {
+    const request: *WriteRequest = @ptrCast(@alignCast(uv.uv_req_get_data(uv_request).?));
+    defer request.destroy();
+    const stream = request.stream;
+    const event_loop = stream.event_loop;
+    event_loop.pending_operations -= 1;
+    const wake_result: WakeResult = if (status == 0) .{ .value = v.NULL_VALUE, .kind = .null } else failureResult(ioErrorFromStatus(status));
+    stream.scheduler.wake(request.task, wake_result) catch |failure| {
+        event_loop.callback_failure = failure;
+    };
+    stream.finishRequest();
+}
 
 pub const ReadMode = union(enum) {
     bytes: usize,
@@ -414,6 +493,20 @@ pub const IoError = enum {
     Other,
 };
 
+const io_errors_by_name = std.StaticStringMap(IoError).initComptime(.{
+    .{ "EPIPE", .BrokenPipe },
+    .{ "ECONNRESET", .ConnectionReset },
+    .{ "ECANCELED", .Closed },
+});
+
+fn ioErrorFromStatus(status: c_int) IoError {
+    return io_errors_by_name.get(std.mem.span(uv.uv_err_name(status))) orelse .Other;
+}
+
+fn isErrorNamed(status: c_int, name: []const u8) bool {
+    return std.mem.eql(u8, std.mem.span(uv.uv_err_name(status)), name);
+}
+
 fn closeFileNow(allocator: std.mem.Allocator, loop: *uv.Loop, file: c_int) void {
     const request_memory = allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.fs)) catch return;
     defer allocator.free(request_memory);
@@ -457,11 +550,11 @@ fn onRead(handle: *uv.Handle, read_count: isize, _: *const uv.Buffer) callconv(.
     if (read_count > 0) {
         stream.buffered.items.len += @intCast(read_count);
     } else if (read_count < 0) {
-        const name = std.mem.span(uv.uv_err_name(@intCast(read_count)));
-        if (std.mem.eql(u8, name, "EOF")) {
+        const status: c_int = @intCast(read_count);
+        if (isErrorNamed(status, "EOF")) {
             stream.has_ended = true;
         } else {
-            stream.failure = if (std.mem.eql(u8, name, "ECONNRESET")) .ConnectionReset else .Other;
+            stream.failure = ioErrorFromStatus(status);
         }
     }
     stream.serveWaiter();

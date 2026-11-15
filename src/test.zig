@@ -259,6 +259,10 @@ test "net: tcp listen, connect and accept on loopback, errors, end of input" {
     try runCase("net-tcp.dsk");
 }
 
+test "net: tcp writes, echo, large and concurrent writes, broken pipe, io::copy" {
+    try runCase("net-tcp-write.dsk");
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }

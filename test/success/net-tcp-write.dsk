@@ -1,0 +1,127 @@
+import std/io
+import std/net
+import std/string
+import std/buffer
+import std/task
+
+func echo_lines(conn: net::TcpConn) -> io::IoError!void
+    for true do
+        let next = try conn.read_line()
+        if next: line then
+            try conn.write("echo ${line}\n")
+        else
+            break
+        end
+    end
+    conn.close()
+end
+
+func io_error_name(e: io::IoError) -> string
+    return when e
+        io::IoError.BrokenPipe then "broken" end
+        io::IoError.ConnectionReset then "reset" end
+        io::IoError.Closed then "closed" end
+        else then "other" end
+    end
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let port = listener.port()
+
+    let echo = spawn(func() -> io::IoError!void
+        try echo_lines(try listener.accept())
+    end)
+    let client = try net::tcp_connect("127.0.0.1", port)
+    try client.write("hello\n")
+    assert(try client.read_line() == "echo hello")
+    try client.write_bytes(buffer::from_string("one\ntwo\n"))
+    assert(try client.read_line() == "echo one")
+    assert(try client.read_line() == "echo two")
+    try client.flush()
+    client.close()
+    try await(echo)
+
+    let big = try string::repeat("0123456789abcdef", 1048576)
+    let receiver = spawn(func() -> io::IoError!string
+        let conn = try listener.accept()
+        task::sleep(20)
+        let text = try conn.read_all()
+        conn.close()
+        return text
+    end)
+    let sender = try net::tcp_connect("127.0.0.1", port)
+    try sender.write(big)
+    sender.close()
+    assert(try await(receiver) == big)
+
+    let block_a = try string::repeat("a", 4194304)
+    let block_b = try string::repeat("b", 4194304)
+    let collector = spawn(func() -> io::IoError!string
+        let conn = try listener.accept()
+        task::sleep(20)
+        let text = try conn.read_all()
+        conn.close()
+        return text
+    end)
+    let shared = try net::tcp_connect("127.0.0.1", port)
+    let writer_a = spawn(func() -> io::IoError!void
+        try shared.write(block_a)
+    end)
+    let writer_b = spawn(func() -> io::IoError!void
+        try shared.write(block_b)
+    end)
+    try await(writer_a)
+    try await(writer_b)
+    shared.close()
+    let collected = try await(collector)
+    let is_whole = collected == string::concat(block_a, block_b) or collected == string::concat(block_b, block_a)
+    assert(is_whole)
+
+    let closer = spawn(func() -> io::IoError!void
+        let conn = try listener.accept()
+        conn.close()
+    end)
+    let lonely = try net::tcp_connect("127.0.0.1", port)
+    try await(closer)
+    let mut write_error = ""
+    let mut attempts = 0
+    for write_error == "" and attempts < 1000 do
+        lonely.write("ping\n") catch e then
+            write_error = io_error_name(e)
+        end
+        task::sleep(1)
+        attempts = attempts + 1
+    end
+    assert(write_error == "broken" or write_error == "reset")
+    lonely.close()
+    let mut closed_error = ""
+    lonely.write("late") catch e then
+        closed_error = io_error_name(e)
+    end
+    assert(closed_error == "closed")
+
+    let sink = try net::tcp_listen("127.0.0.1", 0)
+    let sink_reader = spawn(func() -> io::IoError!string
+        let conn = try sink.accept()
+        let text = try conn.read_all()
+        conn.close()
+        return text
+    end)
+    let proxy = spawn(func() -> !int
+        let mut from = try listener.accept()
+        let mut to = try net::tcp_connect("127.0.0.1", sink.port())
+        let copied = try io::copy(from, to)
+        from.close()
+        to.close()
+        return copied
+    end)
+    let source = try net::tcp_connect("127.0.0.1", port)
+    try source.write("through the proxy")
+    source.close()
+    assert(try await(proxy) == 17)
+    assert(try await(sink_reader) == "through the proxy")
+
+    sink.close()
+    listener.close()
+end

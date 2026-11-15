@@ -24,6 +24,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_read_line", Binding{ .native = &io.streamReadLine } },
     .{ "stream_read_all", Binding{ .native = &io.streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &io.streamReadAllBytes } },
+    .{ "stream_write", Binding{ .native = &io.streamWrite } },
+    .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_close", Binding{ .native = &io.streamClose } },
 });
 

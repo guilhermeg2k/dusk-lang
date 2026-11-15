@@ -108,6 +108,20 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Na
     return native.parked();
 }
 
+pub fn streamWrite(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
+    const current = vm.running_task.?;
+    const outcome = stream.write(current, bytesArg(args, 1)) catch return fail(IoError.Other);
+    switch (outcome) {
+        .done => return ok(.{ .null = {} }),
+        .failure => |failure| return fail(failure),
+        .parked => {
+            current.park();
+            return native.parked();
+        },
+    }
+}
+
 pub fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
     vm.event_loop.closeStream(args[0].int64);
     return ok(.{ .null = {} });
