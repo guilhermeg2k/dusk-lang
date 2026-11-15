@@ -17,6 +17,10 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "write_text", Binding{ .native = &writeFile } },
     .{ "write_bytes", Binding{ .native = &writeFile } },
     .{ "append_text", Binding{ .native = &appendText } },
+    .{ "read_dir", Binding{ .native = &readDir } },
+    .{ "make_dir", Binding{ .native = &makeDir } },
+    .{ "remove", Binding{ .native = &remove } },
+    .{ "rename", Binding{ .native = &rename } },
 });
 
 fn exists(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -41,6 +45,24 @@ fn writeFile(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn appendText(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startFsJob(vm, .append, bytesArg(args, 0), bytesArg(args, 1));
+}
+
+fn readDir(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startFsJob(vm, .read_dir, bytesArg(args, 0), "");
+}
+
+fn makeDir(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const kind: FsJob.Kind = if (args[1].bool) .make_dir_recursive else .make_dir;
+    return startFsJob(vm, kind, bytesArg(args, 0), "");
+}
+
+fn remove(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const kind: FsJob.Kind = if (args[1].bool) .remove_recursive else .remove;
+    return startFsJob(vm, kind, bytesArg(args, 0), "");
+}
+
+fn rename(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startFsJob(vm, .rename, bytesArg(args, 0), bytesArg(args, 1));
 }
 
 fn startFsJob(vm: *VM, kind: FsJob.Kind, path: []const u8, input: []const u8) anyerror!NativeResult {

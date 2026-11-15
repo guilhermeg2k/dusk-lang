@@ -268,6 +268,70 @@ test "fs: write_text, write_bytes and append_text, checked on disk" {
     }
 }
 
+test "fs: read_dir, make_dir, remove and rename, checked on disk" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "outside");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "outside/keep.txt", .data = "keep" });
+    try tmp.dir.createDirPath(testing.io, "tree/inner/deeper");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/top.txt", .data = "1" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "tree/inner/deeper/leaf.txt", .data = "2" });
+    try tmp.dir.symLink(testing.io, "../outside", "tree/inner/link-to-outside", .{});
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/io
+        \\import std/fs
+        \\import std/array: len, contains
+        \\func name(e: fs::FsError) -> string
+        \\    return when e
+        \\        fs::FsError.NotFound then "NotFound" end
+        \\        fs::FsError.AlreadyExists then "AlreadyExists" end
+        \\        fs::FsError.NotDirectory then "NotDirectory" end
+        \\        fs::FsError.NotEmpty then "NotEmpty" end
+        \\        else then "other" end
+        \\    end
+        \\end
+        \\func main() -> !void
+        \\    let names = try fs::read_dir("DIR/tree")
+        \\    io::println("${len(names)} ${contains(names, "top.txt")} ${contains(names, "inner")}")
+        \\    fs::read_dir("DIR/missing") catch e then io::println(name(e)) end
+        \\    fs::read_dir("DIR/tree/top.txt") catch e then io::println(name(e)) end
+        \\    fs::make_dir("DIR/new/deep") catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/new")
+        \\    fs::make_dir("DIR/new") catch e then io::println(name(e)) end
+        \\    try fs::make_dir("DIR/made/a/b/", true)
+        \\    try fs::make_dir("DIR/made/a/b", true)
+        \\    fs::make_dir("DIR/tree/top.txt/x", true) catch e then io::println(name(e)) end
+        \\    fs::remove("DIR/tree") catch e then io::println(name(e)) end
+        \\    try fs::remove("DIR/new")
+        \\    try fs::rename("DIR/tree/top.txt", "DIR/moved.txt")
+        \\    try fs::rename("DIR/made", "DIR/made-renamed")
+        \\    try fs::remove("DIR/moved.txt")
+        \\    try fs::remove("DIR/tree", true)
+        \\    fs::remove("DIR/tree") catch e then io::println(name(e)) end
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    try testing.expectEqualStrings("2 true true\nNotFound\nNotDirectory\nNotFound\nAlreadyExists\nNotDirectory\nNotEmpty\nNotFound\n", output.written());
+
+    try testing.expectEqualStrings("keep", try tmp.dir.readFileAlloc(testing.io, "outside/keep.txt", allocator, .unlimited));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "tree", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "new", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "moved.txt", .{}));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(testing.io, "made", .{}));
+    const made = try tmp.dir.statFile(testing.io, "made-renamed/a/b", .{});
+    try testing.expectEqual(std.Io.File.Kind.directory, made.kind);
+}
+
 test "fs: stat follows symlinks and reports permissions and times like the OS" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});

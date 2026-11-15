@@ -20,6 +20,18 @@ pub const Buffer = if (@import("builtin").os.tag == .windows) extern struct {
     len: usize,
 };
 
+pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
+
+pub const DirEntry = extern struct {
+    name: [*:0]const u8,
+    entry_type: DirEntryType,
+};
+
+pub const DirEntries = extern struct {
+    entries: [*]DirEntry,
+    entry_count: usize,
+};
+
 pub const Timespec = extern struct {
     tv_sec: c_long,
     tv_nsec: c_long,
@@ -87,6 +99,14 @@ pub extern fn uv_fs_read(loop: *Loop, request: *Request, file: c_int, buffers: [
 pub extern fn uv_fs_write(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_close(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_mkdir(loop: *Loop, request: *Request, path: [*:0]const u8, mode: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_rmdir(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_unlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_rename(loop: *Loop, request: *Request, path: [*:0]const u8, new_path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_opendir(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_readdir(loop: *Loop, request: *Request, dir: *DirEntries, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_closedir(loop: *Loop, request: *Request, dir: *DirEntries, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_get_ptr(request: *const Request) ?*anyopaque;
 pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_get_statbuf(request: *Request) *Stat;

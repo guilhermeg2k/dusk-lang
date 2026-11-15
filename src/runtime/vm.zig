@@ -137,6 +137,7 @@ pub const VM = struct {
             .none => wake_result.value,
             .ints => |ints| try self.allocIntArray(ints),
             .bytes => |bytes| try self.allocBytesValue(bytes, wake_result.kind),
+            .names => |names| try self.allocStringArray(names),
         };
     }
 
@@ -147,6 +148,24 @@ pub const VM = struct {
         const result = if (kind == .buffer) try v.Bytes.init(allocator, bytes, .buffer) else try v.Bytes.init(allocator, bytes, .string);
         self.increaseHeapAllocationCount(size);
         return .{ .heap_obj = &result.obj };
+    }
+
+    fn allocStringArray(self: *Self, strings: []const []const u8) !v.Value {
+        const capacity = @max(strings.len, 1);
+        var total = v.Array.calc_size(capacity);
+        for (strings) |text| {
+            total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(text.len));
+        }
+        try self.maybeCollectGarbage(total);
+        const allocator = self.getCurrentHeapAllocator();
+        const array = try v.Array.init(allocator, .string, capacity);
+        self.increaseHeapAllocationCount(v.Array.calc_size(capacity));
+        for (strings) |text| {
+            const bytes = try v.Bytes.init(allocator, text, .string);
+            self.increaseHeapAllocationCount(v.Bytes.calc_size(text.len));
+            try array.append(.{ .heap_obj = &bytes.obj });
+        }
+        return .{ .heap_obj = &array.obj };
     }
 
     fn allocIntArray(self: *Self, ints: []const i64) !v.Value {

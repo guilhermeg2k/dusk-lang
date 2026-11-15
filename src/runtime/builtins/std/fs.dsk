@@ -24,6 +24,10 @@ extern func read_bytes(path: string) -> FsError!buffer
 extern func write_text(path: string, text: string) -> FsError!void
 extern func write_bytes(path: string, data: buffer) -> FsError!void
 extern func append_text(path: string, text: string) -> FsError!void
+extern func read_dir(path: string) -> FsError![]string
+extern func make_dir(path: string, recursive: bool = false) -> FsError!void
+extern func remove(path: string, recursive: bool = false) -> FsError!void
+extern func rename(from: string, to: string) -> FsError!void
 extern func exists(path: string) -> bool
 extern func ~stat_numbers(path: string) -> FsError![]int
 
