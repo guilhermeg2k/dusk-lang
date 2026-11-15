@@ -866,12 +866,8 @@ pub const VM = struct {
             switch (copy.kind) {
                 .array => {
                     const array = v.HeapValue.getParentPtr(v.Array, copy);
-                    switch (array.kind) {
-                        .buffer, .@"struct", .array, .@"union", .nullable, .function, .task => {
-                            for (array.getDataPtr()[0..array.len]) |*item| try self.deepCopySlot(item, &copies, &pending);
-                        },
-                        else => {},
-                    }
+                    if (!array.kind.isHeapType()) continue;
+                    for (array.getDataPtr()[0..array.len]) |*item| try self.deepCopySlot(item, &copies, &pending);
                 },
                 .@"struct" => {
                     const s = v.HeapValue.getParentPtr(v.Struct, copy);

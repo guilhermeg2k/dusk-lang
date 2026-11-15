@@ -338,6 +338,7 @@ test "maps: indexing" {
 
 test "maps: garbage collection and copy" {
     try runCase("gc-maps.dsk");
+    try runCase("gc-array-of-maps.dsk");
     try runCase("map-copy.dsk");
 }
 

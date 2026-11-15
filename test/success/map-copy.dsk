@@ -36,4 +36,11 @@ func main() -> void
     end
     assert(deep[1]?[1] == 1)
     assert(deep_copy[1]?[1] == 9)
+
+    let mut first: map[string, int] = {"k": 0}
+    let rows: []map[string, int] = [first]
+    let mut rows_copy = copy(rows)
+    rows_copy[0]["k"] = 999
+    assert(rows[0]["k"] == 0)
+    assert(rows_copy[0]["k"] == 999)
 end

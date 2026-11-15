@@ -138,14 +138,9 @@ const Collector = struct {
         switch (obj.kind) {
             .array => {
                 const array = v.HeapValue.getParentPtr(v.Array, obj);
-                switch (array.kind) {
-                    .string, .buffer, .@"struct", .array, .@"union", .nullable, .function, .task => {
-                        const items = array.getDataPtr()[0..array.len];
-                        for (items) |*item| {
-                            try self.copyHeapValue(item);
-                        }
-                    },
-                    else => {},
+                if (!array.kind.isHeapType()) return;
+                for (array.getDataPtr()[0..array.len]) |*item| {
+                    try self.copyHeapValue(item);
                 }
             },
             .@"struct" => {
