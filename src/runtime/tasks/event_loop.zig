@@ -226,7 +226,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer, listener, listener_timer, open_timer };
+    pub const Kind = enum { timer, stream, stream_timer, stream_handshake_timer, listener, listener_timer, open_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -253,6 +253,10 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         },
         .stream_timer => {
             const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", owner));
+            stream.markHandleClosed();
+        },
+        .stream_handshake_timer => {
+            const stream: *Stream = @alignCast(@fieldParentPtr("handshake_timer_owner", owner));
             stream.markHandleClosed();
         },
         .listener => {

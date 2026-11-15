@@ -6,6 +6,8 @@ const io = @import("io.zig");
 const tcp = @import("../../tasks/tcp.zig");
 const uv = @import("../../tasks/uv.zig");
 const tls_layer = @import("../../tasks/tls_layer.zig");
+const TaskState = @import("../../tasks/scheduler.zig").TaskState;
+const HandshakeWait = @import("../../tasks/stream.zig").HandshakeWait;
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
@@ -38,6 +40,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "listener_use_tls", Binding{ .native = &listenerUseTls } },
     .{ "stream_start_tls", Binding{ .native = &streamStartTls } },
     .{ "stream_is_tls", Binding{ .native = &streamIsTls } },
+    .{ "stream_handshake", Binding{ .native = &streamHandshake } },
 });
 
 fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -138,8 +141,20 @@ fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
     };
     const current = vm.running_task.?;
-    const start = stream.startClientTls(current, config, bytesArg(args, 1)) catch return fail(NetError.Other);
-    switch (start) {
+    const wait = stream.startClientTls(current, config, bytesArg(args, 1), timeoutArg(args[4].int64)) catch return fail(NetError.Other);
+    return handshakeResult(current, wait);
+}
+
+fn streamHandshake(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
+    const current = vm.running_task.?;
+    const wait = stream.awaitHandshake(current, timeoutArg(args[1].int64)) catch return fail(NetError.Other);
+    return handshakeResult(current, wait);
+}
+
+fn handshakeResult(current: *TaskState, wait: HandshakeWait) NativeResult {
+    switch (wait) {
+        .done => return ok(.{ .null = {} }),
         .failure => |failure| return fail(failure),
         .parked => {
             current.park();

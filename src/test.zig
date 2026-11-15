@@ -368,6 +368,10 @@ test "net: TLS over loopback with test certificates, errors on both sides, start
     try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
 }
 
+test "net: start_tls on a plain connection, handshake() and its errors, handshake timeouts" {
+    try runCase("net-tls-handshake.dsk");
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }

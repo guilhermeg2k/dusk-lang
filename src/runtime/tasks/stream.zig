@@ -27,6 +27,7 @@ pub const Stream = struct {
 
     owner: HandleOwner = .{ .kind = .stream },
     timer_owner: HandleOwner = .{ .kind = .stream_timer },
+    handshake_timer_owner: HandleOwner = .{ .kind = .stream_handshake_timer },
     allocator: std.mem.Allocator,
     event_loop: *EventLoop,
     scheduler: *Scheduler,
@@ -35,8 +36,10 @@ pub const Stream = struct {
     file: c_int,
     handle_memory: []align(16) u8 = &.{},
     timer_memory: []align(16) u8 = &.{},
+    handshake_timer_memory: []align(16) u8 = &.{},
     open_handles: u8 = 0,
     is_timer_running: bool = false,
+    is_handshake_timer_running: bool = false,
     buffered: std.ArrayList(u8) = .empty,
     read_offset: usize = 0,
     is_reading: bool = false,
@@ -126,6 +129,9 @@ pub const Stream = struct {
         if (self.timer_memory.len > 0) {
             self.allocator.free(self.timer_memory);
         }
+        if (self.handshake_timer_memory.len > 0) {
+            self.allocator.free(self.handshake_timer_memory);
+        }
         const owns_file = self.kind == .file and self.file > 2;
         if (owns_file) {
             closeFileNow(self.allocator, self.loop, self.file);
@@ -175,6 +181,10 @@ pub const Stream = struct {
         if (self.timer_memory.len > 0) {
             self.stopTimer();
             uv.uv_close(self.timerHandle(), onHandleClosed);
+        }
+        if (self.handshake_timer_memory.len > 0) {
+            self.stopHandshakeTimer();
+            uv.uv_close(self.handshakeTimerHandle(), onHandleClosed);
         }
         self.releaseIfDone();
     }
@@ -296,21 +306,25 @@ pub const Stream = struct {
     }
 
     fn startTimer(self: *Self, ms: u64) !void {
-        if (self.timer_memory.len == 0) {
-            const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer));
-            if (uv.uv_timer_init(self.loop, @ptrCast(memory.ptr)) != 0) {
-                self.allocator.free(memory);
+        try self.startTimerHandle(&self.timer_memory, &self.timer_owner, onReadTimeout, ms);
+        self.is_timer_running = true;
+    }
+
+    fn startTimerHandle(self: *Self, memory: *[]align(16) u8, owner: *HandleOwner, callback: uv.TimerCallback, ms: u64) !void {
+        if (memory.len == 0) {
+            const timer_memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer));
+            if (uv.uv_timer_init(self.loop, @ptrCast(timer_memory.ptr)) != 0) {
+                self.allocator.free(timer_memory);
                 return error.TimerFailed;
             }
-            self.timer_memory = memory;
+            memory.* = timer_memory;
             self.open_handles += 1;
-            uv.uv_handle_set_data(self.timerHandle(), &self.timer_owner);
+            uv.uv_handle_set_data(@ptrCast(timer_memory.ptr), owner);
         }
         uv.uv_update_time(self.loop);
-        if (uv.uv_timer_start(self.timerHandle(), onReadTimeout, ms, 0) != 0) {
+        if (uv.uv_timer_start(@ptrCast(memory.ptr), callback, ms, 0) != 0) {
             return error.TimerFailed;
         }
-        self.is_timer_running = true;
     }
 
     fn stopTimer(self: *Self) void {
@@ -468,7 +482,7 @@ pub const Stream = struct {
         return self.tls_layer != null;
     }
 
-    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, host: []const u8) !TlsStart {
+    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, host: []const u8, timeout_ms: ?u64) !HandshakeWait {
         const layer = TlsLayer.createClient(self.allocator, config, host) catch |failure| {
             tls.dusk_tls_config_free(config);
             return failure;
@@ -479,13 +493,36 @@ pub const Stream = struct {
             _ = tls.dusk_tls_feed(layer.session, early.ptr, early.len);
             self.consume(early.len);
         }
+        return self.awaitHandshake(task, timeout_ms);
+    }
+
+    pub fn awaitHandshake(self: *Self, task: *TaskState, timeout_ms: ?u64) !HandshakeWait {
+        const layer = self.tls_layer orelse return .done;
         self.ensureHandshakeStarted();
-        if (layer.handshake == .failed) {
-            return .{ .failure = layer.handshake_failure };
+        switch (layer.handshake) {
+            .done => return .done,
+            .failed => return .{ .failure = layer.handshake_failure },
+            .pending, .running => {},
+        }
+        if (timeout_ms) |ms| {
+            if (!self.is_handshake_timer_running) {
+                try self.startTimerHandle(&self.handshake_timer_memory, &self.handshake_timer_owner, onHandshakeTimeout, ms);
+                self.is_handshake_timer_running = true;
+            }
         }
         try layer.handshake_waiters.append(self.allocator, .{ .task = task, .pending_write = null });
         self.event_loop.pending_operations += 1;
         return .parked;
+    }
+
+    fn stopHandshakeTimer(self: *Self) void {
+        if (!self.is_handshake_timer_running) return;
+        _ = uv.uv_timer_stop(self.handshakeTimerHandle());
+        self.is_handshake_timer_running = false;
+    }
+
+    fn handshakeTimerHandle(self: *Self) *uv.Handle {
+        return @ptrCast(self.handshake_timer_memory.ptr);
     }
 
     pub fn useServerTls(self: *Self, config: *tls.Config) !void {
@@ -529,6 +566,7 @@ pub const Stream = struct {
     fn finishHandshake(self: *Self, outcome: TlsLayer.Handshake) void {
         const layer = self.tls_layer.?;
         layer.handshake = outcome;
+        self.stopHandshakeTimer();
         if (outcome == .failed) {
             self.failure = .HandshakeFailed;
         }
@@ -653,7 +691,8 @@ pub const Stream = struct {
     }
 };
 
-pub const TlsStart = union(enum) {
+pub const HandshakeWait = union(enum) {
+    done,
     parked,
     failure: NetError,
 };
@@ -816,6 +855,15 @@ fn onReadTimeout(timer: *uv.Handle) callconv(.c) void {
         stream.event_loop.callback_failure = failure;
     };
     stream.applyBackpressure();
+}
+
+fn onHandshakeTimeout(timer: *uv.Handle) callconv(.c) void {
+    const stream: *Stream = @alignCast(@fieldParentPtr("handshake_timer_owner", HandleOwner.of(timer)));
+    stream.is_handshake_timer_running = false;
+    const layer = stream.tls_layer orelse return;
+    if (layer.isHandshakeOver()) return;
+    layer.handshake_failure = .TimedOut;
+    stream.finishHandshake(.failed);
 }
 
 fn onAlloc(handle: *uv.Handle, _: usize, buffer: *uv.Buffer) callconv(.c) void {
