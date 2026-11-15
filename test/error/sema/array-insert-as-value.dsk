@@ -5,5 +5,5 @@ struct Item
 end
 
 func main() -> void
-    let f: func(mut []Item, int, mut Item) -> array::ArrayError!void = array::insert
+    let f: func(mut []Item, int, mut Item) -> array::ArrayError![]Item = array::insert
 end

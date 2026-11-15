@@ -617,6 +617,10 @@ test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
 }
 
+test "array mutators return their array" {
+    try runCase("array-mutator-returns.dsk");
+}
+
 test "array sorting and transforms" {
     try runCase("array-sort.dsk");
     try runCase("array-transform.dsk");

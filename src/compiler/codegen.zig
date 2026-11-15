@@ -1180,7 +1180,10 @@ pub const BytecodeGen = struct {
                     try self.appendIntrinsicInstruction(.{ .op = .I_TO_F, .a = target_reg });
                 }
             },
-            .append => try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 }),
+            .append => {
+                try self.appendIntrinsicInstruction(.{ .op = .ARRAY_APPEND, .a = arg, .b = arg + 1 });
+                try self.appendIntrinsicInstruction(.{ .op = .LOAD, .a = target_reg, .b = arg });
+            },
             .copy => try self.appendIntrinsicInstruction(.{ .op = .DEEP_COPY, .a = target_reg, .b = arg }),
             .task_spawn => {
                 const payload = self.type_table.getTypePtrById(value.type_id).kind.task.payload;

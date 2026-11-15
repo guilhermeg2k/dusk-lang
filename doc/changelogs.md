@@ -12,7 +12,8 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - An interpolation made of a single string (`"${name}"`, `io::println("${text}")`) reuses that string instead of copying it
 - `string::split(text, separator, limit = -1)` accepts a maximum number of parts, keeping the remainder in the last part. Negative limits split without a cap; zero returns an empty array
 - `std/array` adds `sort` (ascending numbers and strings), `sort_by` (custom comparator), `extend`, `map` and `filter`. Both sorts return the same array reference; `map` and `filter` infer and propagate callback errors
-- `array::pop`, `array::insert` and `array::remove` are checked native builtins. Direct calls keep their signatures and errors; using these functions as values now requires a lambda or a Dusk function wrapper
+- `array::pop`, `array::insert` and `array::remove` are checked native builtins. Using these functions as values now requires a lambda or a Dusk function wrapper
+- Array mutators `append`, `extend`, `clear`, `insert` and `reverse` now return the same array reference, like `sort` and `sort_by`. Pass `copy(array)` to preserve the original and use the returned array in expressions or chains; `insert` returns `ArrayError![]T`
 
 ### Fixes
 

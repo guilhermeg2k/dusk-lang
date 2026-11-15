@@ -47,7 +47,7 @@ fn arrayInsert(vm: *VM, args: []v.Value) anyerror!NativeResult {
     std.mem.copyBackwards(v.Value, items[index + 1 .. array.len + 1], items[index..array.len]);
     items[index] = args[2];
     array.len += 1;
-    return ok(.{ .null = {} });
+    return ok(args[0]);
 }
 
 fn arrayRemove(_: *VM, args: []v.Value) anyerror!NativeResult {
@@ -84,7 +84,7 @@ fn arrayExtend(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var array = arrayArg(args, 0);
     const item_count = arrayArg(args, 1).len;
     if (item_count == 0) {
-        return ok(.{ .null = {} });
+        return ok(args[0]);
     }
     const new_len = std.math.add(usize, array.len, item_count) catch return error.OutOfMemory;
     if (new_len > array.capacity) {
@@ -103,12 +103,12 @@ fn arrayExtend(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const items = arrayArg(args, 1);
     @memcpy(array.getDataPtr()[array.len..new_len], items.getDataPtr()[0..item_count]);
     array.len = new_len;
-    return ok(.{ .null = {} });
+    return ok(args[0]);
 }
 
 fn arrayClear(_: *VM, args: []v.Value) anyerror!NativeResult {
     arrayArg(args, 0).len = 0;
-    return ok(.{ .null = {} });
+    return ok(args[0]);
 }
 
 fn arrayIndexOf(vm: *VM, args: []v.Value) anyerror!NativeResult {

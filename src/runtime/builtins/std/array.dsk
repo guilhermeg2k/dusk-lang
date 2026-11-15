@@ -4,13 +4,13 @@ error ArrayError
 end
 
 extern func len[T](array: []T) -> int
-extern func append[T](mut array: []T, mut value: T) -> void
+extern func append[T](mut array: []T, mut value: T) -> []T
 extern func pop[T](mut array: []T) -> ArrayError!T
-extern func insert[T](mut array: []T, index: int, mut value: T) -> ArrayError!void
+extern func insert[T](mut array: []T, index: int, mut value: T) -> ArrayError![]T
 extern func remove[T](mut array: []T, index: int) -> ArrayError!T
 extern func sort[T: int | float | byte | string](mut array: []T) -> []T
-extern func extend[T](mut array: []T, items: []T) -> void
-extern func clear[T](mut array: []T) -> void
+extern func extend[T](mut array: []T, items: []T) -> []T
+extern func clear[T](mut array: []T) -> []T
 extern func index_of[T: int | float | byte | bool | string](array: []T, value: T) -> ?int
 extern func contains[T: int | float | byte | bool | string](array: []T, value: T) -> bool
 
@@ -18,7 +18,7 @@ func pop_or_null[T](mut arr: []T) -> ?T
     return pop(arr) catch null
 end
 
-func reverse[T](mut array: []T) -> void
+func reverse[T](mut array: []T) -> []T
     let mut low = 0
     let mut high = len(array) - 1
     for low < high do
@@ -28,6 +28,7 @@ func reverse[T](mut array: []T) -> void
         low = low + 1
         high = high - 1
     end
+    return array
 end
 
 func slice[T](array: []T, start: int, stop: int) -> ArrayError![]T
