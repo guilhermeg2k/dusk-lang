@@ -180,6 +180,44 @@ test "fs: exists and stat, errors after a park, other tasks keep running" {
     try runCaseError("sema/fs-exists-not-string.dsk", error.InvalidType);
 }
 
+test "fs: read_text and read_bytes" {
+    try runCase("fs-read.dsk");
+}
+
+test "fs: read_text reads big files and files that report size 0" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const big = try allocator.alloc(u8, 3 * 1024 * 1024 + 17);
+    for (big, 0..) |*byte, i| byte.* = 'a' + @as(u8, @intCast(i % 26));
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.txt", .data = big });
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const is_linux = @import("builtin").os.tag == .linux;
+    const template =
+        \\import std/io
+        \\import std/fs
+        \\import std/string
+        \\func main() -> !void
+        \\    let big = try fs::read_text("DIR/big.txt")
+        \\    io::println("${string::len(big)} ${try string::char_at(big, 26)}")
+        \\    if CHECK_PROC then
+        \\        let proc = try fs::read_text("/proc/self/stat")
+        \\        io::println("${string::len(proc) > 0}")
+        \\    end
+        \\end
+    ;
+    const with_dir = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    const source = try std.mem.replaceOwned(u8, allocator, with_dir, "CHECK_PROC", if (is_linux) "true" else "false");
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+    const expected = if (is_linux) "3145745 a\ntrue\n" else "3145745 a\n";
+    try testing.expectEqualStrings(expected, output.written());
+}
+
 test "fs: stat follows symlinks and reports permissions and times like the OS" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});

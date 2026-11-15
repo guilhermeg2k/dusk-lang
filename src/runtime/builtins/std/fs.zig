@@ -12,6 +12,8 @@ pub const error_sets = .{FsError};
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "exists", Binding{ .native = &exists } },
     .{ "stat_numbers", Binding{ .native = &statNumbers } },
+    .{ "read_text", Binding{ .native = &readText } },
+    .{ "read_bytes", Binding{ .native = &readBytes } },
 });
 
 fn exists(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -20,6 +22,14 @@ fn exists(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn statNumbers(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startFsJob(vm, .stat, bytesArg(args, 0));
+}
+
+fn readText(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startFsJob(vm, .read_text, bytesArg(args, 0));
+}
+
+fn readBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startFsJob(vm, .read_bytes, bytesArg(args, 0));
 }
 
 fn startFsJob(vm: *VM, kind: FsJob.Kind, path: []const u8) anyerror!NativeResult {

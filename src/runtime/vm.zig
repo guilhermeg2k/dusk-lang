@@ -136,7 +136,17 @@ pub const VM = struct {
         return switch (wake_result.payload) {
             .none => wake_result.value,
             .ints => |ints| try self.allocIntArray(ints),
+            .bytes => |bytes| try self.allocBytesValue(bytes, wake_result.kind),
         };
+    }
+
+    fn allocBytesValue(self: *Self, bytes: []const u8, kind: v.ValueType) !v.Value {
+        const size = v.Bytes.calc_size(bytes.len);
+        try self.maybeCollectGarbage(size);
+        const allocator = self.getCurrentHeapAllocator();
+        const result = if (kind == .buffer) try v.Bytes.init(allocator, bytes, .buffer) else try v.Bytes.init(allocator, bytes, .string);
+        self.increaseHeapAllocationCount(size);
+        return .{ .heap_obj = &result.obj };
     }
 
     fn allocIntArray(self: *Self, ints: []const i64) !v.Value {

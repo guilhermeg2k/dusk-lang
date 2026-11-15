@@ -12,6 +12,14 @@ pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
 pub const HandleType = enum(c_int) { timer = 13 };
 pub const RequestType = enum(c_int) { fs = 6, work = 7 };
 
+pub const Buffer = if (@import("builtin").os.tag == .windows) extern struct {
+    len: c_ulong,
+    base: [*]u8,
+} else extern struct {
+    base: [*]u8,
+    len: usize,
+};
+
 pub const Timespec = extern struct {
     tv_sec: c_long,
     tv_nsec: c_long,
@@ -74,6 +82,10 @@ pub extern fn uv_err_name(status: c_int) [*:0]const u8;
 
 pub extern fn uv_queue_work(loop: *Loop, request: *Request, work: WorkCallback, after_work: AfterWorkCallback) c_int;
 
+pub extern fn uv_fs_open(loop: *Loop, request: *Request, path: [*:0]const u8, flags: c_int, mode: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_read(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_close(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_get_statbuf(request: *Request) *Stat;

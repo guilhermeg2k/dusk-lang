@@ -19,6 +19,8 @@ struct FileInfo
     permissions: int
 end
 
+extern func read_text(path: string) -> FsError!string
+extern func read_bytes(path: string) -> FsError!buffer
 extern func exists(path: string) -> bool
 extern func ~stat_numbers(path: string) -> FsError![]int
 

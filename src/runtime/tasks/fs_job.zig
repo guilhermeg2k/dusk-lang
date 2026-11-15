@@ -13,11 +13,13 @@ const mode_directory = 0o040000;
 const mode_regular_file = 0o100000;
 const mode_symlink = 0o120000;
 const mode_permission_mask = 0o777;
+const open_read_only = 0;
+const min_read_capacity = 4096;
 
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat };
+    pub const Kind = enum { exists, stat, read_text, read_bytes };
 
     allocator: std.mem.Allocator,
     kind: Kind,
@@ -31,6 +33,7 @@ pub const FsJob = struct {
     failure: ?FsError = null,
     is_found: bool = false,
     stat_numbers: ?[]i64 = null,
+    contents: ?[]u8 = null,
 
     pub fn create(allocator: std.mem.Allocator, kind: Kind, path: []const u8) !*Self {
         const job = try allocator.create(Self);
@@ -49,6 +52,9 @@ pub const FsJob = struct {
         if (self.stat_numbers) |numbers| {
             allocator.free(numbers);
         }
+        if (self.contents) |contents| {
+            allocator.free(contents);
+        }
         allocator.free(self.fs_memory);
         allocator.free(self.work_memory);
         allocator.free(self.path);
@@ -59,6 +65,8 @@ pub const FsJob = struct {
         switch (self.kind) {
             .exists => self.checkPathExists(),
             .stat => self.statPath(),
+            .read_text => self.readWholeFile(true),
+            .read_bytes => self.readWholeFile(false),
         }
     }
 
@@ -103,6 +111,72 @@ pub const FsJob = struct {
         self.stat_numbers = numbers;
     }
 
+    fn readWholeFile(self: *Self, needs_utf8: bool) void {
+        const request = self.fsRequest();
+        const file = uv.uv_fs_open(self.loop, request, self.path.ptr, open_read_only, 0, null);
+        uv.uv_fs_req_cleanup(request);
+        if (file < 0) {
+            self.failure = failureFromStatus(file);
+            return;
+        }
+        defer self.closeFile(file);
+
+        const contents = self.readUntilEnd(file) orelse return;
+        if (needs_utf8 and !std.unicode.utf8ValidateSlice(contents)) {
+            self.allocator.free(contents);
+            self.failure = .InvalidUtf8;
+            return;
+        }
+        self.contents = contents;
+    }
+
+    fn readUntilEnd(self: *Self, file: c_int) ?[]u8 {
+        const request = self.fsRequest();
+        var data = self.allocator.alloc(u8, self.fileSizeHint(file) + 1) catch return self.failWith(.Other);
+        var len: usize = 0;
+        while (true) {
+            if (len == data.len) {
+                data = self.allocator.realloc(data, data.len * 2) catch {
+                    self.allocator.free(data);
+                    return self.failWith(.Other);
+                };
+            }
+            const free_space = data[len..];
+            const buffer = uv.Buffer{ .base = free_space.ptr, .len = @intCast(free_space.len) };
+            const status = uv.uv_fs_read(self.loop, request, file, @ptrCast(&buffer), 1, -1, null);
+            uv.uv_fs_req_cleanup(request);
+            if (status < 0) {
+                self.allocator.free(data);
+                return self.failWith(failureFromStatus(status));
+            }
+            if (status == 0) break;
+            len += @intCast(status);
+        }
+        return self.allocator.realloc(data, len) catch {
+            self.allocator.free(data);
+            return self.failWith(.Other);
+        };
+    }
+
+    fn fileSizeHint(self: *Self, file: c_int) usize {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        if (uv.uv_fs_fstat(self.loop, request, file, null) < 0) return min_read_capacity;
+        const size: usize = @intCast(uv.uv_fs_get_statbuf(request).st_size);
+        return @max(size, min_read_capacity);
+    }
+
+    fn failWith(self: *Self, failure: FsError) ?[]u8 {
+        self.failure = failure;
+        return null;
+    }
+
+    fn closeFile(self: *Self, file: c_int) void {
+        const request = self.fsRequest();
+        _ = uv.uv_fs_close(self.loop, request, file, null);
+        uv.uv_fs_req_cleanup(request);
+    }
+
     fn fsRequest(self: *Self) *uv.Request {
         return @ptrCast(self.fs_memory.ptr);
     }
@@ -117,6 +191,12 @@ pub const FsJob = struct {
                 const numbers = self.stat_numbers.?;
                 self.stat_numbers = null;
                 break :result .{ .value = v.NULL_VALUE, .kind = .array, .payload = .{ .ints = numbers } };
+            },
+            .read_text, .read_bytes => result: {
+                const contents = self.contents.?;
+                self.contents = null;
+                const kind: v.ValueType = if (self.kind == .read_text) .string else .buffer;
+                break :result .{ .value = v.NULL_VALUE, .kind = kind, .payload = .{ .bytes = contents } };
             },
         };
     }
