@@ -44,6 +44,73 @@ test "gc: scoped native roots survive collection and root-list growth" {
     try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
 }
 
+test "json: typed values, containers, enums, unions, defaults and recursion" {
+    try runCase("json.dsk");
+    try runCase("json-imports.dsk");
+    try runCase("json-errors.dsk");
+    try runCase("gc-json.dsk");
+    try runCaseOutput("json-defaults.dsk", "name\nitems\nname\nitems\nname\nitems\nname\nitems\n");
+}
+
+test "json: native entry points reject invalid UTF-8" {
+    const value = @import("runtime/value.zig");
+    const VM = @import("runtime/vm.zig").VM;
+    const json = @import("runtime/json_codec.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile(
+        \\import std/json
+        \\func main() -> !void
+        \\    let text = try json::encode("")
+        \\    let parsed = try json::decode[string](text)
+        \\end
+    );
+    var vm = VM.init(&program, .{});
+    defer vm.deinit();
+    const codec_index = for (program.json_codecs, 0..) |codec, i| {
+        if (codec.shape == .string) break i;
+    } else return error.TestUnexpectedResult;
+    var encode_descriptor: u16 = 0;
+    var decode_descriptor: u16 = 0;
+    for (program.struct_descriptors, 0..) |descriptor, i| {
+        if (descriptor.heap_bitmap != 0) continue;
+        if (descriptor.field_count == 1) {
+            encode_descriptor = @intCast(i);
+        }
+        if (descriptor.field_count == 2) {
+            decode_descriptor = @intCast(i);
+        }
+    }
+    const encode_options = try value.Struct.init(vm.getCurrentHeapAllocator(), 1, encode_descriptor);
+    encode_options.set(0, .{ .int64 = 128 });
+    const invalid_text = try vm.allocBytesValue(&.{0xff}, .string);
+    var encode_args = [_]value.Value{ invalid_text, .{ .heap_obj = &encode_options.obj }, .{ .int64 = @intCast(codec_index) } };
+    const encoded = try json.encode(&vm, &encode_args);
+    try testing.expect(encoded.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(json.JsonError.InvalidJson)), encoded.value.int64);
+    const decode_options = try value.Struct.init(vm.getCurrentHeapAllocator(), 2, decode_descriptor);
+    decode_options.set(0, .{ .bool = false });
+    decode_options.set(1, .{ .int64 = 128 });
+    const invalid_document = try vm.allocBytesValue(&.{ '"', 0xff, '"' }, .string);
+    var decode_args = [_]value.Value{ invalid_document, value.NULL_VALUE, .{ .heap_obj = &decode_options.obj }, .{ .int64 = @intCast(codec_index) }, .{ .int64 = 0 } };
+    const decoded = try json.decode(&vm, &decode_args);
+    try testing.expect(decoded.has_failed);
+    try testing.expectEqual(@as(usize, 0), vm.heap.temporary_roots.items.len);
+    try testing.expectEqual(@as(i64, @intFromEnum(json.JsonError.InvalidJson)), decoded.value.int64);
+}
+
+test "json: unsupported types and context-free calls are compile errors" {
+    try runCaseError("sema/json-buffer.dsk", error.InvalidType);
+    try runCaseError("sema/json-function.dsk", error.InvalidType);
+    try runCaseError("sema/json-error-value.dsk", error.InvalidType);
+    try runCaseError("sema/json-map-key.dsk", error.InvalidType);
+    try runCaseError("sema/json-private-field.dsk", error.InvalidType);
+    try runCaseError("sema/json-nested-private-field.dsk", error.InvalidType);
+    try runCaseError("sema/json-untyped-decode.dsk", error.CantInferSlot);
+    try runCaseError("sema/json-encode-as-value.dsk", error.BuiltinAsValue);
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }
@@ -3611,6 +3678,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("json"), @import("runtime/builtins/std/json.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);

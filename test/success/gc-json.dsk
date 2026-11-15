@@ -1,0 +1,59 @@
+import std/json
+import std/string
+import std/array
+import std/task
+
+struct Entry
+    label: string
+    value: ?int = 7
+    items: []int = [1, 2]
+end
+
+func default_stamp() -> int
+    task::sleep(0)
+    return 11
+end
+
+struct Batch
+    entries: []Entry
+    stamp: int = default_stamp()
+end
+
+func worker() -> !void
+    let row = "{\"label\":\"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\"}"
+    let repeated = try string::repeat("$row,", 5999)
+    let source = "[$repeated$row]"
+    let mut batch = try json::decode[Batch]("{\"entries\":$source}")
+    assert(batch.stamp == 11)
+    let mut entries = batch.entries
+    assert(array::len(entries) == 6000)
+    assert(entries[0].value == 7)
+    assert(entries[5999].label == "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    entries[0].items[0] = 99
+    assert(entries[1].items[0] == 1)
+    let text = try json::encode(entries)
+    let decoded = try json::decode[[]Entry](text)
+    assert(decoded[0].items[0] == 99)
+    assert(decoded[5999].items[0] == 1)
+    let bad_repeated = try string::repeat("$row,", 6000)
+    let bad = "[${bad_repeated}null]"
+    let mut diagnostic = json::Diagnostic()
+    for 0..3: _ do
+        json::decode[[]Entry](bad, diagnostic) catch e then
+            assert(e == json::JsonError.TypeMismatch)
+            assert(diagnostic.path == "[6000]")
+        end
+    end
+    let empty = try json::decode[[]Entry]("[]", diagnostic)
+    assert(array::len(empty) == 0)
+    assert(diagnostic.byte_offset == null)
+    task::sleep(0)
+    assert(entries[5999].value == 7)
+end
+
+func main() -> !void
+    let first = spawn(worker)
+    let second = spawn(worker)
+    try await(first)
+    try await(second)
+end

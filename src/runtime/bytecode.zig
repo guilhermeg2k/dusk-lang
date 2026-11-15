@@ -63,6 +63,7 @@ pub const Program = struct {
     struct_descriptors: []const StructDescriptor,
     union_descriptors: []const UnionDescriptor,
     error_names: []const []const u8,
+    json_codecs: []const @import("json_format.zig").Codec = &.{},
 };
 
 pub const NativeFn = struct {

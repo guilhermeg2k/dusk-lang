@@ -1,0 +1,46 @@
+error JsonError
+    InvalidJson
+    TypeMismatch
+    MissingField
+    UnknownField
+    DuplicateKey
+    NumberOutOfRange
+    UnknownVariant
+    InvalidUnion
+    NonFiniteNumber
+    DepthExceeded
+    CycleDetected
+    InvalidOptions
+end
+
+struct Diagnostic
+    path: string = ""
+    byte_offset: ?int = null
+    line: ?int = null
+    column: ?int = null
+end
+
+struct DecodeOptions
+    should_reject_unknown_fields: bool = false
+    max_depth: int = 128
+end
+
+struct EncodeOptions
+    max_depth: int = 128
+end
+
+struct ~Decoded[T]
+    value: T
+    defaults: []func() -> void
+end
+
+extern func encode[T](value: T, options: EncodeOptions = @()) -> JsonError!string
+extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions) -> JsonError!Decoded[T]
+
+func decode[T](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
+    let decoded: Decoded[T] = try decode_value(text, diagnostic, options)
+    for decoded.defaults: apply_default do
+        apply_default()
+    end
+    return decoded.value
+end

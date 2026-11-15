@@ -1,0 +1,4 @@
+import std/json
+func main() -> void
+    let encode: func(int, json::EncodeOptions) -> json::JsonError!string = json::encode
+end
