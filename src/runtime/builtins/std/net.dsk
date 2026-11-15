@@ -1,0 +1,71 @@
+import std/io
+
+error NetError
+    HostNotFound
+    ConnectionRefused
+    AddressInUse
+    NetworkUnreachable
+    PermissionDenied
+    InvalidAddress
+    TimedOut
+    Other
+end
+
+extern func ~tcp_connect_handle(host: string, port: int) -> NetError!int
+extern func ~tcp_listen_handle(host: string, port: int, backlog: int) -> NetError!int
+extern func ~listener_accept(handle: int) -> io::IoError!int
+extern func ~listener_port(handle: int) -> int
+extern func ~listener_close(handle: int) -> void
+extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
+extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_close(handle: int) -> void
+
+struct TcpListener
+    ~handle: int
+
+    func accept(self: @) -> io::IoError!TcpConn
+        return TcpConn(handle = try listener_accept(self.handle))
+    end
+
+    func port(self: @) -> int
+        return listener_port(self.handle)
+    end
+
+    func close(self: @) -> void
+        listener_close(self.handle)
+    end
+end
+
+struct TcpConn
+    ~handle: int
+
+    func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
+        return try stream_read_line(self.handle, max, timeout_ms)
+    end
+
+    func read_bytes(self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        return try stream_read_bytes(self.handle, max, timeout_ms)
+    end
+
+    func read_all(self: @, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_read_all(self.handle, timeout_ms)
+    end
+
+    func read_all_bytes(self: @, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_read_all_bytes(self.handle, timeout_ms)
+    end
+
+    func close(self: @) -> void
+        stream_close(self.handle)
+    end
+end
+
+func tcp_connect(host: string, port: int) -> NetError!TcpConn
+    return TcpConn(handle = try tcp_connect_handle(host, port))
+end
+
+func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
+    return TcpListener(handle = try tcp_listen_handle(host, port, backlog))
+end

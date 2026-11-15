@@ -17,6 +17,7 @@ pub const modules = [_]Module{
     .{ .path = "io", .source = @embedFile("std/io.dsk"), .bindings = &@import("std/io.zig").bindings },
     .{ .path = "fs", .source = @embedFile("std/fs.dsk"), .bindings = &@import("std/fs.zig").bindings },
     .{ .path = "time", .source = @embedFile("std/time.dsk"), .bindings = &@import("std/time.zig").bindings },
+    .{ .path = "net", .source = @embedFile("std/net.dsk"), .bindings = &@import("std/net.zig").bindings },
 };
 
 pub fn find(path: []const u8) ?*const Module {

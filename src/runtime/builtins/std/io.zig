@@ -56,7 +56,7 @@ fn stdinHandle(vm: *VM, _: []v.Value) anyerror!NativeResult {
     return ok(.{ .int64 = @intCast(handle) });
 }
 
-fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const max = args[1].int64;
     if (max < 1) {
         return RuntimeErrorReporter.invalidReadSize(max);
@@ -64,17 +64,17 @@ fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return readStream(vm, args[0].int64, .{ .bytes = @intCast(max) }, args[2].int64);
 }
 
-fn streamReadLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn streamReadLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const max = args[1].int64;
     const limit: ?usize = if (max < 0) null else @intCast(max);
     return readStream(vm, args[0].int64, .{ .line = limit }, args[2].int64);
 }
 
-fn streamReadAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn streamReadAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return readStream(vm, args[0].int64, .all_text, args[1].int64);
 }
 
-fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return readStream(vm, args[0].int64, .all_bytes, args[1].int64);
 }
 
@@ -108,7 +108,7 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Na
     return native.parked();
 }
 
-fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
     vm.event_loop.closeStream(args[0].int64);
     return ok(.{ .null = {} });
 }

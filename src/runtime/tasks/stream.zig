@@ -16,7 +16,7 @@ const high_water_mark = 1024 * 1024;
 pub const Stream = struct {
     const Self = @This();
 
-    pub const Kind = enum { tty, pipe, file, closed_input };
+    pub const Kind = enum { tty, pipe, file, tcp, closed_input };
 
     owner: HandleOwner = .{ .kind = .stream },
     timer_owner: HandleOwner = .{ .kind = .stream_timer },
@@ -36,6 +36,7 @@ pub const Stream = struct {
     has_ended: bool = false,
     is_closed: bool = false,
     has_chunk_in_flight: bool = false,
+    requests_in_flight: usize = 0,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
 
@@ -58,7 +59,21 @@ pub const Stream = struct {
             .tty, .pipe => stream.initHandle(loop, file),
             .file => {},
             .closed_input => stream.has_ended = true,
+            .tcp => unreachable,
         }
+        return stream;
+    }
+
+    pub fn openTcp(allocator: std.mem.Allocator, event_loop: *EventLoop, scheduler: *Scheduler, loop: *uv.Loop) !*Self {
+        const stream = try allocator.create(Self);
+        errdefer allocator.destroy(stream);
+        const memory = try allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.tcp));
+        errdefer allocator.free(memory);
+        if (uv.uv_tcp_init(loop, @ptrCast(memory.ptr)) != 0) {
+            return error.TcpInitFailed;
+        }
+        stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = .tcp, .loop = loop, .file = -1, .handle_memory = memory, .open_handles = 1 };
+        uv.uv_handle_set_data(stream.uvHandle(), &stream.owner);
         return stream;
     }
 
@@ -109,8 +124,13 @@ pub const Stream = struct {
         self.releaseIfDone();
     }
 
+    pub fn finishRequest(self: *Self) void {
+        self.requests_in_flight -= 1;
+        self.releaseIfDone();
+    }
+
     fn releaseIfDone(self: *Self) void {
-        const is_done = self.is_closed and self.open_handles == 0 and !self.has_chunk_in_flight;
+        const is_done = self.is_closed and self.open_handles == 0 and !self.has_chunk_in_flight and self.requests_in_flight == 0;
         if (is_done) {
             self.destroy();
         }
@@ -254,7 +274,7 @@ pub const Stream = struct {
         switch (self.kind) {
             .file => try self.startChunk(),
             .closed_input => {},
-            .tty, .pipe => {
+            .tty, .pipe, .tcp => {
                 if (self.is_reading) return;
                 if (uv.uv_read_start(self.uvHandle(), onAlloc, onRead) != 0) {
                     return error.StreamReadFailed;
@@ -313,7 +333,7 @@ pub const Stream = struct {
         self.is_reading = false;
     }
 
-    fn uvHandle(self: *Self) *uv.Handle {
+    pub fn uvHandle(self: *Self) *uv.Handle {
         return @ptrCast(self.handle_memory.ptr);
     }
 

@@ -5,6 +5,7 @@ const TaskState = @import("scheduler.zig").TaskState;
 const v = @import("../value.zig");
 const FsJob = @import("fs_job.zig").FsJob;
 const Stream = @import("stream.zig").Stream;
+const Listener = @import("tcp.zig").Listener;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
@@ -18,6 +19,7 @@ pub const EventLoop = struct {
     pending_operations: usize = 0,
     callback_failure: ?anyerror = null,
     streams: std.ArrayList(?*Stream) = .empty,
+    listeners: std.ArrayList(?*Listener) = .empty,
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -25,7 +27,12 @@ pub const EventLoop = struct {
             const stream = entry orelse continue;
             stream.releaseAtExit();
         }
+        for (self.listeners.items) |entry| {
+            const listener = entry orelse continue;
+            listener.releaseAtExit();
+        }
         defer self.streams.deinit(self.allocator);
+        defer self.listeners.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -105,6 +112,38 @@ pub const EventLoop = struct {
         return handle;
     }
 
+    pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !usize {
+        const loop = try self.ensureLoopStarted();
+        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        const stream = try Stream.openTcp(self.allocator, self, scheduler, loop);
+        const handle = self.streams.items.len;
+        self.streams.appendAssumeCapacity(stream);
+        return handle;
+    }
+
+    pub fn openListener(self: *Self, scheduler: *Scheduler) !usize {
+        const loop = try self.ensureLoopStarted();
+        try self.listeners.ensureUnusedCapacity(self.allocator, 1);
+        const listener = try Listener.create(self.allocator, self, scheduler, loop);
+        const handle = self.listeners.items.len;
+        self.listeners.appendAssumeCapacity(listener);
+        return handle;
+    }
+
+    pub fn closeListener(self: *Self, handle: i64) void {
+        const listener = self.listenerAt(handle) orelse return;
+        self.listeners.items[@intCast(handle)] = null;
+        listener.close();
+    }
+
+    pub fn listenerAt(self: *Self, handle: i64) ?*Listener {
+        const is_valid = handle >= 0 and handle < self.listeners.items.len;
+        if (!is_valid) {
+            return null;
+        }
+        return self.listeners.items[@intCast(handle)];
+    }
+
     pub fn closeStream(self: *Self, handle: i64) void {
         const stream = self.streamAt(handle) orelse return;
         self.streams.items[@intCast(handle)] = null;
@@ -161,7 +200,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer };
+    pub const Kind = enum { timer, stream, stream_timer, listener };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -189,6 +228,10 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         .stream_timer => {
             const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", owner));
             stream.markHandleClosed();
+        },
+        .listener => {
+            const listener: *Listener = @alignCast(@fieldParentPtr("owner", owner));
+            listener.markHandleClosed();
         },
     }
 }

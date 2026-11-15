@@ -255,6 +255,10 @@ test "fs: exists and stat, errors after a park, other tasks keep running" {
     try runCaseError("sema/fs-exists-not-string.dsk", error.InvalidType);
 }
 
+test "net: tcp listen, connect and accept on loopback, errors, end of input" {
+    try runCase("net-tcp.dsk");
+}
+
 test "fs: read and read_bytes" {
     try runCase("fs-read.dsk");
 }

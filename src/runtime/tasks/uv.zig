@@ -9,8 +9,8 @@ pub const Handle = opaque {};
 pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
-pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, timer = 13, tty = 14, file = 17, _ };
-pub const RequestType = enum(c_int) { fs = 6, work = 7 };
+pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, file = 17, _ };
+pub const RequestType = enum(c_int) { connect = 2, fs = 6, work = 7 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
 // ---- Structs mirrored from uv.h (layouts must match) ----
@@ -31,6 +31,10 @@ pub const DirEntry = extern struct {
 pub const DirEntries = extern struct {
     entries: [*]DirEntry,
     entry_count: usize,
+};
+
+pub const SocketAddress = extern struct {
+    bytes: [128]u8 align(8) = @splat(0),
 };
 
 pub const Timespec = extern struct {
@@ -72,6 +76,8 @@ pub const AfterWorkCallback = *const fn (request: *Request, status: c_int) callc
 pub const FsCallback = *const fn (request: *Request) callconv(.c) void;
 pub const AllocCallback = *const fn (handle: *Handle, suggested_size: usize, buffer: *Buffer) callconv(.c) void;
 pub const ReadCallback = *const fn (stream: *Handle, read_count: isize, buffer: *const Buffer) callconv(.c) void;
+pub const ConnectCallback = *const fn (request: *Request, status: c_int) callconv(.c) void;
+pub const ConnectionCallback = *const fn (server: *Handle, status: c_int) callconv(.c) void;
 
 // ---- Loop ----
 
@@ -104,6 +110,20 @@ pub extern fn uv_pipe_init(loop: *Loop, pipe: *Handle, ipc: c_int) c_int;
 pub extern fn uv_pipe_open(pipe: *Handle, file: c_int) c_int;
 pub extern fn uv_read_start(stream: *Handle, alloc: AllocCallback, read: ReadCallback) c_int;
 pub extern fn uv_read_stop(stream: *Handle) c_int;
+
+// ---- TCP ----
+
+pub extern fn uv_tcp_init(loop: *Loop, tcp: *Handle) c_int;
+pub extern fn uv_tcp_bind(tcp: *Handle, address: *const SocketAddress, flags: c_uint) c_int;
+pub extern fn uv_tcp_connect(request: *Request, tcp: *Handle, address: *const SocketAddress, callback: ConnectCallback) c_int;
+pub extern fn uv_tcp_getsockname(tcp: *const Handle, address: *SocketAddress, length: *c_int) c_int;
+pub extern fn uv_listen(stream: *Handle, backlog: c_int, callback: ConnectionCallback) c_int;
+pub extern fn uv_accept(server: *Handle, client: *Handle) c_int;
+
+// ---- IP addresses ----
+
+pub extern fn uv_ip4_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
+pub extern fn uv_ip6_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
 
 // ---- Clocks ----
 
