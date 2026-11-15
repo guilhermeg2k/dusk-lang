@@ -3,12 +3,16 @@
 > This is a moving target and can change anytime
 
 ## Version 0.16 - Shigeo
-- Libuv IO: files, TCP, DNS, processes (tasks wait on them like `sleep`), http
-- Collections: Lists, Sets, Tuples
-
+- std::io
+- std::fs
+- std::net
+- std::math
+- std::time
+- std::os
 
 ## Backlog
 
+- Collections: Lists, Sets, Tuples
 - Bytecode file generation + caching (Each compilation step)
 - Code Formatter
 - Fuzz testing
