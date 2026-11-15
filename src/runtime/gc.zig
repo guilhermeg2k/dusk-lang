@@ -196,7 +196,7 @@ const Collector = struct {
                     try self.copyHeapValue(&slot[0]);
                 }
             },
-            else => {},
+            .string, .buffer, .null_box => {},
         }
     }
 };

@@ -893,7 +893,7 @@ pub const VM = struct {
                     if (!storage.value_type.isHeapType()) continue;
                     for (storage.usedEntries()) |*entry| try self.deepCopySlot(&entry.value, &copies, &pending);
                 },
-                else => {},
+                .string, .buffer, .null_box, .closure, .cell, .task => {},
             }
         }
         return result;
