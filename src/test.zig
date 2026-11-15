@@ -3715,3 +3715,137 @@ test "array index out of bounds is a runtime error" {
     try runCaseRuntimeError("array-negative-index.dsk", error.ArrayOutOfBounds);
     try runCaseRuntimeError("array-store-negative-index.dsk", error.ArrayOutOfBounds);
 }
+
+const tls = @import("runtime/tasks/tls.zig");
+
+fn readTlsFixture(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    const path = try std.fmt.allocPrint(allocator, "test/fixtures/tls/{s}", .{name});
+    return std.Io.Dir.cwd().readFileAlloc(testing.io, path, allocator, .unlimited);
+}
+
+fn newTestCertificate(allocator: std.mem.Allocator, cert_name: []const u8, key_name: []const u8) !*tls.Certificate {
+    const cert_pem = try readTlsFixture(allocator, cert_name);
+    const key_pem = try readTlsFixture(allocator, key_name);
+    var status: tls.Status = .done;
+    const certificate = tls.dusk_tls_certificate_new(cert_pem.ptr, cert_pem.len, key_pem.ptr, key_pem.len, &status) orelse return error.InvalidCertificate;
+    try testing.expectEqual(tls.Status.done, status);
+    return certificate;
+}
+
+fn moveTlsOutput(from: *tls.Session, to: *tls.Session) !void {
+    const length = tls.dusk_tls_output_length(from);
+    if (length == 0) return;
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_feed(to, tls.dusk_tls_output_bytes(from), length));
+    tls.dusk_tls_consume_output(from, length);
+}
+
+fn runTlsHandshake(client: *tls.Session, server: *tls.Session) !tls.Status {
+    var client_status: tls.Status = .want_more;
+    var server_status: tls.Status = .want_more;
+    for (0..32) |_| {
+        if (client_status == .want_more) {
+            client_status = tls.dusk_tls_handshake(client);
+        }
+        try moveTlsOutput(client, server);
+        if (server_status == .want_more) {
+            server_status = tls.dusk_tls_handshake(server);
+        }
+        try moveTlsOutput(server, client);
+        const is_settled = client_status != .want_more and server_status != .want_more;
+        if (is_settled) break;
+        const has_client_failed = client_status != .want_more and client_status != .done;
+        if (has_client_failed) break;
+    }
+    return client_status;
+}
+
+fn clientHandshakeWith(cert_name: []const u8, key_name: []const u8, ca_name: ?[]const u8, host: []const u8) !tls.Status {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_global_init());
+    const certificate = try newTestCertificate(allocator, cert_name, key_name);
+    defer tls.dusk_tls_certificate_free(certificate);
+    const server_config = tls.dusk_tls_server_config_new(certificate) orelse return error.ConfigFailed;
+    defer tls.dusk_tls_config_free(server_config);
+    const client_config = tls.dusk_tls_client_config_new(1) orelse return error.ConfigFailed;
+    defer tls.dusk_tls_config_free(client_config);
+    if (ca_name) |name| {
+        const ca_pem = try readTlsFixture(allocator, name);
+        try testing.expectEqual(tls.Status.done, tls.dusk_tls_config_add_ca_pem(client_config, ca_pem.ptr, ca_pem.len));
+    }
+    const server = tls.dusk_tls_session_new(server_config, null, 0) orelse return error.SessionFailed;
+    defer tls.dusk_tls_session_free(server);
+    const client = tls.dusk_tls_session_new(client_config, host.ptr, host.len) orelse return error.SessionFailed;
+    defer tls.dusk_tls_session_free(client);
+    return runTlsHandshake(client, server);
+}
+
+test "tls: a client and a server session shake hands in memory and exchange data both ways" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_global_init());
+    const certificate = try newTestCertificate(allocator, "server.pem", "server.key");
+    defer tls.dusk_tls_certificate_free(certificate);
+    const server_config = tls.dusk_tls_server_config_new(certificate).?;
+    defer tls.dusk_tls_config_free(server_config);
+    const client_config = tls.dusk_tls_client_config_new(1).?;
+    defer tls.dusk_tls_config_free(client_config);
+    const ca_pem = try readTlsFixture(allocator, "ca.pem");
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_config_add_ca_pem(client_config, ca_pem.ptr, ca_pem.len));
+    const server = tls.dusk_tls_session_new(server_config, null, 0).?;
+    defer tls.dusk_tls_session_free(server);
+    const client = tls.dusk_tls_session_new(client_config, "localhost", 9).?;
+    defer tls.dusk_tls_session_free(client);
+
+    try testing.expectEqual(tls.Status.done, try runTlsHandshake(client, server));
+
+    const request = "hello over tls";
+    try testing.expectEqual(@as(isize, request.len), tls.dusk_tls_write(client, request, request.len));
+    try moveTlsOutput(client, server);
+    var buffer: [64]u8 = undefined;
+    const received = tls.dusk_tls_read(server, &buffer, buffer.len);
+    try testing.expectEqualStrings(request, buffer[0..@intCast(received)]);
+
+    const big = try allocator.alloc(u8, 100_000);
+    @memset(big, 'z');
+    try testing.expectEqual(@as(isize, @intCast(big.len)), tls.dusk_tls_write(server, big.ptr, big.len));
+    try moveTlsOutput(server, client);
+    var total: usize = 0;
+    var chunk: [16384]u8 = undefined;
+    while (true) {
+        const count = tls.dusk_tls_read(client, &chunk, chunk.len);
+        if (count <= 0) break;
+        total += @intCast(count);
+    }
+    try testing.expectEqual(big.len, total);
+    try testing.expectEqual(@as(isize, 0), tls.dusk_tls_read(client, &chunk, chunk.len));
+
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_close_notify(client));
+    try moveTlsOutput(client, server);
+    try testing.expectEqual(@intFromEnum(tls.Status.end), tls.dusk_tls_read(server, &buffer, buffer.len));
+}
+
+test "tls: verification tells untrusted, expired and wrong-host certificates apart" {
+    try testing.expectEqual(tls.Status.untrusted, try clientHandshakeWith("server.pem", "server.key", null, "localhost"));
+    try testing.expectEqual(tls.Status.untrusted, try clientHandshakeWith("self-signed.pem", "self-signed.key", "ca.pem", "localhost"));
+    try testing.expectEqual(tls.Status.expired, try clientHandshakeWith("expired.pem", "server.key", "ca.pem", "localhost"));
+    try testing.expectEqual(tls.Status.wrong_host, try clientHandshakeWith("other-host.pem", "server.key", "ca.pem", "localhost"));
+    try testing.expectEqual(tls.Status.done, try clientHandshakeWith("server.pem", "server.key", "ca.pem", "127.0.0.1"));
+}
+
+test "tls: a certificate whose key doesn't match, or that isn't PEM, is invalid" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    try testing.expectEqual(tls.Status.done, tls.dusk_tls_global_init());
+    const cert_pem = try readTlsFixture(allocator, "server.pem");
+    const wrong_key = try readTlsFixture(allocator, "ca.key");
+    var status: tls.Status = .done;
+    try testing.expect(tls.dusk_tls_certificate_new(cert_pem.ptr, cert_pem.len, wrong_key.ptr, wrong_key.len, &status) == null);
+    try testing.expectEqual(tls.Status.invalid, status);
+    const garbage = "not a certificate";
+    try testing.expect(tls.dusk_tls_certificate_new(garbage, garbage.len, wrong_key.ptr, wrong_key.len, &status) == null);
+    try testing.expectEqual(tls.Status.invalid, status);
+}
