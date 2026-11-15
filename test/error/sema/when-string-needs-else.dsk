@@ -1,8 +1,10 @@
+import std/io
+
 let name = "dusk"
 
 func main() -> void
     when name
-        "dusk" then echo(1) end
-        "lang" then echo(2) end
+        "dusk" then io::println("${1}") end
+        "lang" then io::println("${2}") end
     end
 end

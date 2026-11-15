@@ -1,5 +1,6 @@
 import std/string
+import std/io
 
 func main() -> void
-    echo(string::from_bytes("x"))
+    io::println("${string::from_bytes("x")}")
 end

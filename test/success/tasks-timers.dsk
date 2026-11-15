@@ -1,5 +1,6 @@
 import std/task
 import std/array: len, append
+import std/io
 
 func pause_then(ms: int, label: string) -> string
     task::sleep(ms)
@@ -37,7 +38,7 @@ func main() -> void
 
     spawn(func()
         task::sleep(15)
-        echo("late task: ${len(order)}")
+        io::println("late task: ${len(order)}")
     end)
-    echo("main ends")
+    io::println("main ends")
 end

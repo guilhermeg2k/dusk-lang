@@ -1,5 +1,6 @@
 import std/string
+import std/io
 
 func main() -> void
-    echo(string::concat("a", 1))
+    io::println("${string::concat("a", 1)}")
 end

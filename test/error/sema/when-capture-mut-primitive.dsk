@@ -1,3 +1,5 @@
+import std/io
+
 union U
     n: int
     s: string
@@ -7,7 +9,7 @@ func main() -> void
     let mut u = U(n = 1)
 
     when u
-        n: mut k then echo(k) end
-        s: v then echo(v) end
+        n: mut k then io::println("${k}") end
+        s: v then io::println("${v}") end
     end
 end

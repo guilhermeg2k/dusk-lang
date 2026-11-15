@@ -46,7 +46,7 @@ test "stdout: a pipe is flushed when the program ends" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("func main() -> void echo(1) echo(2) end", &recorder.interface);
+    try runSourceWithStdout("import std/io\nfunc main() -> void io::println(\"1\") io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(1, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -55,7 +55,7 @@ test "stdout: flushed before the scheduler waits for events" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("import std/task\nfunc main() -> void echo(1) task::sleep(1) echo(2) end", &recorder.interface);
+    try runSourceWithStdout("import std/io\nimport std/task\nfunc main() -> void io::println(\"1\") task::sleep(1) io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(2, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -64,7 +64,7 @@ test "stdout: flushed before a runtime error" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try testing.expectError(error.AssertionFailed, runSourceWithStdout("func main() -> void echo(1) assert(false) end", &recorder.interface));
+    try testing.expectError(error.AssertionFailed, runSourceWithStdout("import std/io\nfunc main() -> void io::println(\"1\") assert(false) end", &recorder.interface));
     try testing.expectEqualStrings("1\n", recorder.flushed.items);
 }
 
@@ -100,12 +100,12 @@ test "stdout: a closed pipe stops the program with BrokenPipe" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .file = &file_writer } }, .io = testing.io };
-    try testing.expectError(error.BrokenPipe, dusk.compileAndRun("func main() -> void echo(1) end"));
+    try testing.expectError(error.BrokenPipe, dusk.compileAndRun("import std/io\nfunc main() -> void io::println(\"1\") end"));
 }
 
 test "stdout: any other failed write is a runtime error" {
     var failing: std.Io.Writer = .{ .vtable = &.{ .drain = failDrain }, .buffer = &.{} };
-    try testing.expectError(error.OutputFailed, runSourceWithStdout("func main() -> void echo(1) end", &failing));
+    try testing.expectError(error.OutputFailed, runSourceWithStdout("import std/io\nfunc main() -> void io::println(\"1\") end", &failing));
 }
 
 fn runSourceWithStdout(source: []const u8, stdout: *std.Io.Writer) !void {
@@ -241,7 +241,7 @@ test "when: dense cases compile to a jump table, sparse ones to compares" {
 }
 
 test "when: a nullable subject without a null case lowers else once" {
-    const source = "func f(n: ?int) -> void when n 1 then end 2 then end else then echo(7) end end end func main() -> void end";
+    const source = "import std/io\nfunc f(n: ?int) -> void when n 1 then end 2 then end else then io::println(\"7\") end end end func main() -> void end";
     try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
 }
 
@@ -255,9 +255,9 @@ fn runLongWhen(step: usize, expected: []const u8) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
     var source: std.ArrayList(u8) = .empty;
-    try source.appendSlice(allocator, "func f(x: int) -> int\n    when x\n");
+    try source.appendSlice(allocator, "import std/io\nfunc f(x: int) -> int\n    when x\n");
     for (0..300) |i| try source.print(allocator, "        {d} then return {d} end\n", .{ i * step, i });
-    try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    echo([f(0), f({d}), f(5)])\nend\n", .{299 * step});
+    try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    io::println(\"${{[f(0), f({d}), f(5)]}}\")\nend\n", .{299 * step});
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
     var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
@@ -572,15 +572,15 @@ test "more than 65536 distinct string literals are rejected" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var source: std.ArrayList(u8) = .empty;
-    try source.appendSlice(arena.allocator(), "func main() -> void\nend\n");
+    try source.appendSlice(arena.allocator(), "import std/io\nfunc main() -> void\nend\n");
     for (0..65536) |i| {
         if (i % 1000 == 0) try source.print(arena.allocator(), "func f{d}() -> void\n", .{i});
-        try source.print(arena.allocator(), "echo(\"s{d}\")\n", .{i});
+        try source.print(arena.allocator(), "io::println(\"s{d}\")\n", .{i});
         if (i % 1000 == 999 or i == 65535) try source.appendSlice(arena.allocator(), "end\n");
     }
     var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     _ = try dusk.compile(source.items);
-    try source.print(arena.allocator(), "func g() -> void\necho(\"one more\")\nend\n", .{});
+    try source.print(arena.allocator(), "func g() -> void\nio::println(\"one more\")\nend\n", .{});
     try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
 }
 
@@ -726,8 +726,8 @@ fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
     try testing.expectError(expected, dusk.compileAndRun(src));
 }
 
-test "echo-2" {
-    try runCase("echo-2.dsk");
+test "a name starting with a builtin's name" {
+    try runCase("builtin-name-prefix.dsk");
 }
 
 test "fibonacci" {
@@ -786,8 +786,8 @@ test "union with the max number of variants" {
     try runCase("union-max-variants.dsk");
 }
 
-test "nullable echo" {
-    try runCase("nullable-echo.dsk");
+test "printing nullables" {
+    try runCase("print-nullables.dsk");
 }
 
 test "optional chaining" {

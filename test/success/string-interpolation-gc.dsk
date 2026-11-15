@@ -1,3 +1,5 @@
+import std/io
+
 func make(value: int) -> string
     return "value=$value"
 end
@@ -9,6 +11,6 @@ func main() -> void
     for 1..12000: i do
         result = "${make(i)} / ${"nested ${make(i + 1)}"} / $roots / $nullable"
     end
-    echo(result)
-    echo("$roots $nullable")
+    io::println("${result}")
+    io::println("$roots $nullable")
 end

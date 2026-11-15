@@ -1,4 +1,5 @@
 import std/array: len, append
+import std/io
 
 func swap(mut arr: []int, i: int, j: int) -> void
     let t: int = arr[i]
@@ -43,5 +44,5 @@ func main() -> void
     end
 
     quicksort(data, 0, len(data) - 1)
-    echo(data[5000])
+    io::println("${data[5000]}")
 end

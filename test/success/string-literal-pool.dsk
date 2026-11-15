@@ -1,5 +1,6 @@
 import std/array: len, append
 import std/buffer
+import std/io
 
 func greeting() -> string
     return "hello"
@@ -32,8 +33,8 @@ func main() -> !void
     for kept: text do
         assert(text == "kept")
     end
-    echo(local)
-    echo(holder.text)
-    echo(Holder.shared)
-    echo(kept)
+    io::println("${local}")
+    io::println("${holder.text}")
+    io::println("${Holder.shared}")
+    io::println("${kept}")
 end

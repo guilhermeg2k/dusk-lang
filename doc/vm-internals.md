@@ -11,7 +11,8 @@ The source files involved:
 | `src/runtime/vm.zig` | The interpreter (`VM.execute`), allocation helpers, `copy` |
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
 | `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the work on them that doesn't allocate (array items; map hashing, lookup, insert and removal, section 6.8) |
-| `src/runtime/format.zig` | Printing values (`echo`, interpolation, `TO_STRING`) |
+| `src/runtime/format.zig` | Formatting values (interpolation, `TO_STRING`) |
+| `src/runtime/stdio.zig` | Writing to stdout and stderr (`Stdio.writeBytes`, flush rules) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
 | `src/runtime/builtins/std.zig`, `std/*.zig` | Standard library registry and each module's natives |
@@ -692,7 +693,7 @@ end
 func main() -> void
     let b = [1]
     churn(b)
-    echo(b)
+    io::println("$b")
 end
 ```
 

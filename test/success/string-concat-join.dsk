@@ -1,29 +1,30 @@
 import std/array: append
 import std/string
+import std/io
 
 let name = "Dusk"
 
 func main() -> void
     let greeting = string::concat("Hello, ", name)
-    echo(greeting)
+    io::println("${greeting}")
     assert(greeting == "Hello, Dusk")
     assert(string::concat("", "") == "")
     assert(string::concat("a", "") == "a")
     assert(string::concat("", "b") == "b")
     assert(("ol" |> string::concat("á") |> string::concat(" 🌙")) == "olá 🌙")
     assert(string::len(string::concat("ab", "cd")) == 4)
-    echo(string::join(["a", "b", "c"], ", "))
-    echo(string::join(["only"], ", "))
+    io::println("${string::join(["a", "b", "c"], ", ")}")
+    io::println("${string::join(["only"], ", ")}")
     let empty: []string = []
-    echo("[${string::join(empty, ", ")}]")
-    echo(string::join(["", "", ""], "-"))
-    echo(string::join(["x", "y"], ""))
+    io::println("[${string::join(empty, ", ")}]")
+    io::println("${string::join(["", "", ""], "-")}")
+    io::println("${string::join(["x", "y"], "")}")
     let mut words: []string = []
     append(words, "grow")
     append(words, "the")
     append(words, "array")
-    echo(words |> string::join(" "))
-    echo(string::join(["a", "b", "c"]))
-    echo(["x", "y"] |> string::join())
-    echo(string::join(parts = ["p", "q"], sep = "+"))
+    io::println("${words |> string::join(" ")}")
+    io::println("${string::join(["a", "b", "c"])}")
+    io::println("${["x", "y"] |> string::join()}")
+    io::println("${string::join(parts = ["p", "q"], sep = "+")}")
 end

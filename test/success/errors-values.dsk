@@ -1,4 +1,5 @@
 import std/array: len
+import std/io
 
 error ParseError
     Empty
@@ -54,6 +55,6 @@ func main() -> void
     assert(!same(ParseError.Empty, ParseError.BadDigit))
 
     assert(pick(false) == ParseError.BadDigit)
-    echo(ParseError.Empty)
-    echo(IoError.NotFound)
+    io::println("${ParseError.Empty}")
+    io::println("${IoError.NotFound}")
 end

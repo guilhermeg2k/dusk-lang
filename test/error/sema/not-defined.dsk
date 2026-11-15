@@ -1,3 +1,5 @@
+import std/io
+
 func main() -> void
-    echo(x)
+    io::println("${x}")
 end

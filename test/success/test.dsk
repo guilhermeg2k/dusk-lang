@@ -1,9 +1,11 @@
+import std/io
+
 let x = 10
 
 func main() -> void
     if x > 10 then
-        echo(x)
+        io::println("${x}")
     elif x <= 10 then
-        echo("salada")
+        io::println("salada")
     end
 end

@@ -1,3 +1,5 @@
+import std/io
+
 struct Node
     left: ?Node
     right: ?Node
@@ -10,7 +12,7 @@ struct Node
 end
 
 func print_node(node: Node) -> void
-    echo(node.value)
+    io::println("${node.value}")
 end
 
 func main() -> void

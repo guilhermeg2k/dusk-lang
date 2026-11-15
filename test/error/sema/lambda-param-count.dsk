@@ -1,3 +1,5 @@
+import std/io
+
 func apply(f: func(int, int) -> int) -> int
     return f(3, 4)
 end
@@ -11,5 +13,5 @@ func grow(f: func(mut []int) -> void) -> void
 end
 
 func main() -> void
-    echo(apply(func(a) -> return a))
+    io::println("${apply(func(a) -> return a)}")
 end

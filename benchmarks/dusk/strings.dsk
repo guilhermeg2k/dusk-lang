@@ -1,5 +1,6 @@
 import std/array: len
 import std/string
+import std/io
 
 let name = "dusk"
 
@@ -11,5 +12,5 @@ func main() -> void
         let joined = string::join(fields, ",")
         total = total + (string::len(line) + len(fields) + string::len(joined))
     end
-    echo(total)
+    io::println("${total}")
 end

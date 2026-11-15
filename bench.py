@@ -76,8 +76,8 @@ def run_once(binary: Path, bench_file: Path) -> tuple[float, int, str, int]:
     return elapsed, rusage.ru_maxrss, out, proc.returncode
 
 
-def verify(binary: Path, bench: dict) -> bool:
-    _, _, out, code = run_once(binary, BENCH_DIR / "dusk" / f"{bench['key']}.dsk")
+def verify(binary: Path, bench_dir: Path, bench: dict) -> bool:
+    _, _, out, code = run_once(binary, bench_dir / f"{bench['key']}.dsk")
     return code == 0 and matches(bench["expected"], out, bench["numeric"])
 
 
@@ -95,14 +95,13 @@ def summarize(times: list[float], mems: list[int]) -> dict:
     }
 
 
-def measure(bench: dict, binaries: dict[str, Path], runs: int, warmup: int) -> dict[str, dict]:
-    """Run every binary alternately, return stats per binary name."""
-    bench_file = BENCH_DIR / "dusk" / f"{bench['key']}.dsk"
+def measure(bench: dict, binaries: dict[str, Path], bench_dirs: dict[str, Path], runs: int, warmup: int) -> dict[str, dict]:
+    """Run every binary alternately on its own commit's benchmark file, return stats per binary name."""
     samples: dict[str, tuple[list[float], list[int]]] = {name: ([], []) for name in binaries}
 
     for i in range(warmup + runs):
         for name, binary in binaries.items():
-            elapsed, mem, _, code = run_once(binary, bench_file)
+            elapsed, mem, _, code = run_once(binary, bench_dirs[name] / f"{bench['key']}.dsk")
             if code != 0:
                 raise SystemExit(f"[bench] {bench['key']} exited with {code} ({name})")
             if i >= warmup:
@@ -179,6 +178,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="dusk-bench-") as tmp_str:
         tmp = Path(tmp_str)
         binaries = {"current": tmp / "dusk-current"}
+        bench_dirs = {"current": BENCH_DIR / "dusk"}
         build(ROOT, binaries["current"])
 
         if args.compare:
@@ -188,17 +188,19 @@ def main() -> None:
             try:
                 binaries["base"] = tmp / "dusk-base"
                 build(worktree, binaries["base"])
+                bench_dirs["base"] = tmp / "base-benchmarks"
+                shutil.copytree(worktree / "benchmarks" / "dusk", bench_dirs["base"])
             finally:
                 git("worktree", "remove", "--force", str(worktree))
             result["compare"] = {"against": f"{args.compare}@{base_commit}", "benchmarks": {}}
 
         for bench in benches:
             for name, binary in binaries.items():
-                if not verify(binary, bench):
+                if not verify(binary, bench_dirs[name], bench):
                     raise SystemExit(f"[verify] {bench['key']} printed the wrong result ({name})")
 
             log(f"[bench] {bench['key']} ({args.runs} runs)")
-            stats = measure(bench, binaries, args.runs, args.warmup)
+            stats = measure(bench, binaries, bench_dirs, args.runs, args.warmup)
             result["benchmarks"][bench["key"]] = stats["current"]
             if args.compare:
                 result["compare"]["benchmarks"][bench["key"]] = verdict(stats["current"], stats["base"])

@@ -1,3 +1,5 @@
+import std/io
+
 enum Color
     Red
     Green
@@ -13,7 +15,7 @@ let flag = true
 
 func main() -> void
     when flag
-        true then echo(1) end
-        else then echo(0) end
+        true then io::println("${1}") end
+        else then io::println("${0}") end
     end
 end

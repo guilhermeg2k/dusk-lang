@@ -1,4 +1,5 @@
 import std/string
+import std/io
 
 let word = "olá!"
 func byte_or_reason(text: string, index: int) -> string
@@ -30,13 +31,13 @@ func main() -> !void
     assert(try string::char_at(word, 2) == "á")
     assert(try string::char_at(word, 3) == "!")
     assert(try string::char_at("🌙x", 1) == "x")
-    echo(byte_or_reason(word, -1))
-    echo(byte_or_reason(word, 5))
-    echo(byte_or_reason(word, 1))
-    echo(char_or_reason(word, -1))
-    echo(char_or_reason(word, 4))
-    echo(char_or_reason(word, 2))
-    echo(char_or_reason("", 0))
+    io::println("${byte_or_reason(word, -1)}")
+    io::println("${byte_or_reason(word, 5)}")
+    io::println("${byte_or_reason(word, 1)}")
+    io::println("${char_or_reason(word, -1)}")
+    io::println("${char_or_reason(word, 4)}")
+    io::println("${char_or_reason(word, 2)}")
+    io::println("${char_or_reason("", 0)}")
     let mut digits = 0
     for "a1b22": b do
         if b >= '0' and b <= '9' then
@@ -45,6 +46,6 @@ func main() -> !void
     end
     assert(digits == 3)
     for word: b, i do
-        echo("$i: $b")
+        io::println("$i: $b")
     end
 end

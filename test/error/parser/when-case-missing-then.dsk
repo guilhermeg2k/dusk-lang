@@ -1,5 +1,7 @@
+import std/io
+
 let n = 1
 when n
-    1 echo(1) end
-    else then echo(2) end
+    1 io::println("${1}") end
+    else then io::println("${2}") end
 end

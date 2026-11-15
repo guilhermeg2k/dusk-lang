@@ -1,8 +1,10 @@
+import std/io
+
 struct S
     a: int
 end
 
 func main() -> void
     let s = S(a = 1)
-    echo(s.b)
+    io::println("${s.b}")
 end

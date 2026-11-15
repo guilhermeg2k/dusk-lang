@@ -1,6 +1,7 @@
 import std/string
+import std/io
 
 func main() -> void
     let s: ?string = "a"
-    echo(string::len(s))
+    io::println("${string::len(s)}")
 end

@@ -1,8 +1,10 @@
+import std/io
+
 func main() -> void
     let n = 3
     let m = 3
     when n
-        m then echo(0) end
-        else then echo(1) end
+        m then io::println("${0}") end
+        else then io::println("${1}") end
     end
 end

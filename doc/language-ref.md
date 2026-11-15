@@ -29,14 +29,16 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 A program starts at its `main` function. Since v0.13 every program must declare one, taking no parameters and returning `void`, or an error union of `void` (`-> !void`) when it uses `try` (see [try](#try)).
 
 ```nim
+import std/io
+
 func main() -> void
-    echo("Hello, Dusk")
+    io::println("Hello, Dusk")
 end
 ```
 
 The top level only holds declarations: functions, structs, enums, unions, error sets and [constants](#constants). Any other statement, a `let mut` or a `let` that isn't a constant at the top level is a compile error (`StatementOutsideMain`, `TopLevelLetNotConstant`). Functions and types are declared at the top level only, not inside a function (`DeclarationInsideFunction`).
 
-To keep them short, the examples in this reference show statements without the `main` around them. Examples that use the standard library (`len`, `append`, `string::split`, `task::sleep`, ...) leave out its imports too: `import std/array: len, append`, `import std/string` and so on (see [Modules](#14-modules)).
+To keep them short, the examples in this reference show statements without the `main` around them. Examples that use the standard library (`io::println`, `len`, `append`, `string::split`, `task::sleep`, ...) leave out its imports too: `import std/io`, `import std/array: len, append`, `import std/string` and so on (see [Modules](#14-modules)).
 
 **Comments** start with `#` and run to the end of the line.
 
@@ -102,8 +104,8 @@ let mut items = [1, 2]
 let view = items
 let snapshot = copy(items)
 append(items, 3)
-echo(view)       # [1, 2, 3]
-echo(snapshot)   # [1, 2]
+io::println("$view")       # [1, 2, 3]
+io::println("$snapshot")   # [1, 2]
 ```
 
 Strings and primitives can't be changed in place, so sharing them never shows.
@@ -151,7 +153,7 @@ Any other value (a `let mut`, an array, a struct, a value computed by a call) is
 | `bool`   | Boolean                                       | `true`, `false`     |
 | `void`   | No value, used as a function return type      |                     |
 
-Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `to_float(x)` converts an `int` or `byte` explicitly (`echo(to_float(count))`).
+Since v0.13, an `int` converts to `float` wherever a `float` is expected: a typed `let`, an assignment, an argument, a return value, a struct field, a union payload, an array item and a `catch` or `orelse` fallback (`let ratio: float = count`). An `int` or `?int` converts to `?float` the same way. An untyped array literal that mixes them is a `[]float` (`[1, 2.5]`). `to_float(x)` converts an `int` or `byte` explicitly (`let ratio = to_float(count)`).
 
 A `float` never converts to `int` automatically (use `to_int(x)`, which truncates and can fail), a `byte` only converts to `float` with `to_float(x)`, and `[]int` doesn't convert to `[]float`. Ints larger than 2^53 lose precision as floats.
 
@@ -172,20 +174,20 @@ Strings contain valid UTF-8 text in double quotes. Invalid UTF-8 and missing clo
 Unicode escapes accept values from `0` through `10FFFF`, excluding surrogates (`D800` through `DFFF`), and encode them as UTF-8. Unknown escapes, malformed Unicode escapes and invalid scalar values are compile errors. Escapes are decoded once during compilation.
 
 ```nim
-echo("Hello\nworld")
-echo("Say \"hello\"")
-echo("Moon: \u{1F319}")
-echo("A literal backslash: \\")
+io::println("Hello\nworld")
+io::println("Say \"hello\"")
+io::println("Moon: \u{1F319}")
+io::println("A literal backslash: \\")
 ```
 
 Strings can't be indexed with `s[i]`. Use `string::byte_at(s, i)` for the byte at a byte offset, or `string::char_at(s, i)` for the `i`-th character (see [String functions](#string-functions)). `for s: b, i do` loops over a string's bytes. Strings are immutable; use a buffer to change bytes.
 
 ```nim
 let word = "olá"
-echo(try string::byte_at(word, 0))   # 111 ('o')
-echo(try string::char_at(word, 2))   # á
+io::println("${try string::byte_at(word, 0)}")   # 111 ('o')
+io::println(try string::char_at(word, 2))   # á
 for word: b, i do                # 4 bytes: "á" is two bytes in UTF-8
-    echo("$i: $b")
+    io::println("$i: $b")
 end
 ```
 
@@ -204,9 +206,9 @@ let digit = '7' - '0'      # arithmetic on bytes gives an int: 7
 let code: int = comma      # a byte converts to int automatically
 
 when comma
-    'a'..'z' then echo("lower") end
-    ',' then echo("comma") end
-    else then echo("other") end
+    'a'..'z' then io::println("lower") end
+    ',' then io::println("comma") end
+    else then io::println("other") end
 end
 ```
 
@@ -224,11 +226,11 @@ let mut data = try buffer::new(4)  # in a function that can fail (-> !T)
 data[0] = 'h'                     # writes take a byte
 data[1] = 105
 let first = data[0]               # reads give a byte
-echo(buffer::len(data))            # 4
-echo(data)                        # [104, 105, 0, 0]
+io::println("${buffer::len(data)}")            # 4
+io::println("$data")                        # [104, 105, 0, 0]
 
 for data: b, i do
-    echo("$i: $b")
+    io::println("$i: $b")
 end
 
 let bytes = buffer::from_string("olá")    # [111, 108, 195, 161]
@@ -266,17 +268,17 @@ Use `$name` to insert a variable or `${expression}` to insert an expression:
 ```nim
 let name = "Dusk"
 let age = 13
-echo("Hello, $name! You are $age years old.")
+io::println("Hello, $name! You are $age years old.")
 let a = 2
 let b = 3
-echo("Sum: ${a + b}")
-echo("Nested: ${"Hello, $name"}")
-echo("A literal dollar: \$name")
+io::println("Sum: ${a + b}")
+io::println("Nested: ${"Hello, $name"}")
+io::println("A literal dollar: \$name")
 ```
 
 `$name` consumes a complete identifier, including underscores and digits after its first character. Use braces to separate a name from following text (`"${name}_suffix"`), access a member (`"${item.field}"`), index an array or call a function. A dollar sign that starts neither an identifier nor `${` stays literal, as in `"$5"`.
 
-Expressions are evaluated and formatted exactly once, from left to right. Values use the current `echo` formatting, including arrays, structs, unions, nullable values and `null`, without adding a newline. An empty `${}`, an unknown name or a `void` result is a compile error. Failing calls require `try` or `catch`, as elsewhere. Expressions can contain nested strings, interpolations, conditionals and comments; error locations refer to the original source.
+Expressions are evaluated and formatted exactly once, from left to right. Values of any type can be interpolated, including arrays, structs, unions, nullable values and `null` (see [how values are formatted](#stdio)), without adding a newline. This is also how to print a value that isn't a string: `io::println("$count")`. An empty `${}`, an unknown name or a `void` result is a compile error. Failing calls require `try` or `catch`, as elsewhere. Expressions can contain nested strings, interpolations, conditionals and comments; error locations refer to the original source.
 
 Escaped dollars (`\$`) and dollars produced by Unicode escapes (`\u{24}`) remain literal and do not start interpolation.
 
@@ -289,8 +291,8 @@ let numbers = [1, 2, 3]
 let names: []string = ["Alice", "Bob"]
 let mut empty: []int = []
 
-echo(numbers[0])        # 1
-echo(len(numbers))      # 3
+io::println("${numbers[0]}")        # 1
+io::println("${len(numbers)}")      # 3
 append(empty, 4)
 ```
 
@@ -305,9 +307,9 @@ let ages = {"ana": 31, "bob": 27}
 let mut scores: map[string, int] = {}
 scores["ana"] = 10
 
-echo(ages["ana"])             # 31
-echo(ages["zoe"])             # null
-echo(ages["zoe"] orelse 0)    # 0
+io::println("${ages["ana"]}")             # 31
+io::println("${ages["zoe"]}")             # null
+io::println("${ages["zoe"] orelse 0}")    # 0
 ```
 
 - Keys can be `int`, `byte`, `bool`, `string`, enums or structs. Strings match by content. Structs match by identity: the key is that exact struct, so two `Point(x = 1, y = 2)` built separately are two different keys, and so is a `copy` of a struct.
@@ -316,7 +318,7 @@ echo(ages["zoe"] orelse 0)    # 0
 - `m[k] = v` adds an entry or replaces its value. It needs a mutable map, like changing an array.
 - `m?[k]` reads from a nullable map, so lookups chain: `grid[1]?[2]` on a `map[int, map[int, string]]`.
 - Entries keep the order they were added in, for loops, `map::keys` and `map::values`. Replacing a value keeps its place.
-- `==` compares identity, and `echo` prints `<map>`.
+- `==` compares identity, and interpolating a map gives `<map>`.
 
 The other map functions (`map::len`, `map::remove`, ...) are in [std/map](#stdmap). `map` is a built-in type name: a struct, enum or union can't be called `map`, but functions and variables can.
 
@@ -350,8 +352,8 @@ Call the struct name like a function. Arguments can be named or positional, and 
 ```nim
 let mut user = User(id = "1", username = "geromel")
 
-echo(user.username)
-echo(user.display_name())
+io::println(user.username)
+io::println(user.display_name())
 user.change_id("100")
 ```
 
@@ -373,7 +375,7 @@ struct Api
     end
 end
 
-echo(Api.host)
+io::println(Api.host)
 ```
 
 Members should be written in this order: static fields, then instance fields, then methods. The same order applies to enums and unions. The compiler doesn't check the order yet.
@@ -392,7 +394,7 @@ struct Customer
 end
 
 let c = Customer(name = "Ana", address = @(city = "Recife", country = "BR"))
-echo(c.address.city)
+io::println(c.address.city)
 ```
 
 ### Anonymous initialisation
@@ -406,7 +408,7 @@ struct Point
 end
 
 func show(p: Point) -> void
-    echo(p.x)
+    io::println("${p.x}")
 end
 
 let a: Point = @(x = 1, y = 2)
@@ -453,12 +455,12 @@ enum Direction
     end
 end
 
-echo(Direction.DEFAULT.is_north())
+io::println("${Direction.DEFAULT.is_north()}")
 ```
 
 - Enums support `==` and `!=`, but not `<`, `>` or arithmetic.
 - An enum is a different type from `int`: `Color.Red == 0` is a type error.
-- `echo` prints an enum's number, not its name.
+- Interpolating an enum gives its number, not its name.
 
 ## 6. Unions
 
@@ -491,7 +493,7 @@ Reading a variant gives a nullable (`?T`): its payload when it's the active vari
 
 ```nim
 if ok.success: message then
-    echo(message)
+    io::println(message)
 end
 ```
 
@@ -499,8 +501,8 @@ To handle every variant, use [`when`](#when):
 
 ```nim
 when fetch(2)
-    success: message then echo(message) end
-    failure: reason then echo(reason) end
+    success: message then io::println(message) end
+    failure: reason then io::println(reason) end
 end
 ```
 
@@ -546,11 +548,11 @@ union Shape
     end
 end
 
-echo(Shape(square = 3).area())
+io::println("${Shape(square = 3).area()}")
 ```
 
 - `==` and `!=` can't compare unions: check the variant with `when` or `if u.variant: value then ... end`.
-- `echo` on a union prints `<union>`.
+- Interpolating a union gives `<union>`.
 
 ## 7. Nullables
 
@@ -574,9 +576,9 @@ A nullable can't be used directly as its inner type. Unwrap it first.
 
 ```nim
 if name: n then
-    echo(n)
+    io::println("$n")
 else
-    echo("no name")
+    io::println("no name")
 end
 ```
 
@@ -625,7 +627,7 @@ struct User
 end
 
 let user = User(country = null)
-echo(user.country?.name)   # null
+io::println("${user.country?.name}")   # null
 ```
 
 `?[` reads an item from a nullable array or map the same way: `maybe_items?[0]`, `grid[1]?[2]`.
@@ -685,11 +687,11 @@ Strings compare by content: `name == "Dusk"` is true when `name` holds that text
 
 ```nim
 if x > 10 then
-    echo("big")
+    io::println("big")
 elif x > 0 then
-    echo("small")
+    io::println("small")
 else
-    echo("zero or less")
+    io::println("zero or less")
 end
 ```
 
@@ -701,22 +703,22 @@ The condition must be a `bool`. For nullable capture (`if value: name then`), se
 
 ```nim
 when color
-    Color.Red then echo("red") end
+    Color.Red then io::println("red") end
     Color.Green, Color.Blue then
-        echo("cold")
+        io::println("cold")
     end
 end
 
 when code
-    200 then echo("ok") end
-    404, 410 then echo("gone") end
-    else then echo("other") end
+    200 then io::println("ok") end
+    404, 410 then io::println("gone") end
+    else then io::println("other") end
 end
 
 when command
-    "start", "run" then echo("go") end
-    "stop" then echo("halt") end
-    else then echo("unknown") end
+    "start", "run" then io::println("go") end
+    "stop" then io::println("halt") end
+    else then io::println("unknown") end
 end
 ```
 
@@ -724,8 +726,8 @@ Union cases name a variant and capture its payload. Use `_` to ignore it:
 
 ```nim
 when shape
-    circle: r then echo(3 * r * r) end
-    square: _ then echo("square") end
+    circle: r then io::println("${3 * r * r}") end
+    square: _ then io::println("square") end
 end
 ```
 
@@ -742,9 +744,9 @@ A nullable subject can have a `null` case. In the other cases the value is alrea
 
 ```nim
 when maybe_shape
-    null then echo("none") end
-    circle: r then echo(r) end
-    square: s then echo(s) end
+    null then io::println("none") end
+    circle: r then io::println("$r") end
+    square: s then io::println("$s") end
 end
 ```
 
@@ -826,7 +828,7 @@ Rules:
 ```nim
 let mut i = 0
 for i < 5 do
-    echo(i)
+    io::println("$i")
     i = i + 1
 end
 ```
@@ -836,11 +838,11 @@ Arrays can be traversed with a capture loop. The first capture is the item; the 
 ```nim
 let items = [10, 20, 30]
 for items: item, index do
-    echo("$index: $item")
+    io::println("$index: $item")
 end
 
 for items: item do
-    echo(item)
+    io::println("$item")
 end
 ```
 
@@ -853,7 +855,7 @@ Maps are traversed the same way, in the order their entries were added. The firs
 ```nim
 let ages = {"ana": 31, "bob": 27}
 for ages: age, name do
-    echo("$name: $age")
+    io::println("$name: $age")
 end
 ```
 
@@ -865,7 +867,7 @@ Integer ranges use the same capture syntax, without allocating an array:
 
 ```nim
 for 1..5: value, index do
-    echo("$index: $value")
+    io::println("$index: $value")
 end
 ```
 
@@ -885,7 +887,7 @@ for true do
     if n > 7 then
         break
     end
-    echo(n)   # 1, 3, 5, 7
+    io::println("$n")   # 1, 3, 5, 7
 end
 ```
 
@@ -897,7 +899,7 @@ func add(a: int, b: int) -> int
 end
 
 func greet(name: string) -> void
-    echo(name)
+    io::println(name)
 end
 ```
 
@@ -934,8 +936,8 @@ A parameter with a default value can be left out of a call. Its type can be infe
 ```nim
 func scale(x: int, factor = 2) -> return x * factor
 
-echo(scale(10))      # 20
-echo(scale(10, 3))   # 30
+io::println("${scale(10)}")      # 20
+io::println("${scale(10, 3)}")   # 30
 ```
 
 ### Named arguments
@@ -943,7 +945,7 @@ echo(scale(10, 3))   # 30
 Arguments can be passed by name, in any order. A call uses either all named or all positional arguments.
 
 ```nim
-echo(scale(factor = 5, x = 1))   # 5
+io::println("${scale(factor = 5, x = 1)}")   # 5
 ```
 
 ### Mutable parameters
@@ -975,7 +977,7 @@ end
 
 let mut items = [10, 20]
 push_one(items)
-echo(items)   # [10, 20, 1]
+io::println("$items")   # [10, 20, 1]
 ```
 
 ### Pipe
@@ -1020,7 +1022,7 @@ end
 func main() -> void
     let mut stats = Stats()
     bump(stats)
-    echo(stats.count)  # 1
+    io::println("${stats.count}")  # 1
 end
 ```
 
@@ -1039,11 +1041,11 @@ func apply(f: func(int, int) -> int, a: int, b: int) -> int
 end
 
 let op = add
-echo(op(1, 2))              # 3
-echo(apply(sub, 5, 3))      # 2
+io::println("${op(1, 2)}")              # 3
+io::println("${apply(sub, 5, 3)}")      # 2
 let ops = [add, sub]
-echo(ops[1](10, 4))         # 6
-echo(op)                    # <func add>
+io::println("${ops[1](10, 4)}")         # 6
+io::println("$op")                    # <func add>
 ```
 
 A call through a value passes every argument, in order: default values and named arguments belong to the declaration, so they don't carry over to a value.
@@ -1052,7 +1054,7 @@ A struct field that holds a function is called like a method: `button.on_click()
 
 A generic function becomes a value when a function type fills its slots: `let same: func(int) -> int = id` makes `id[int]`. Without one, `let f = id` is an error. Builtins can't be used as values: call the builtin from a lambda or a function and use that instead.
 
-Functions can't be compared with `==` or `!=`. `echo` prints a named function as `<func add>` and a lambda as `<func>`.
+Functions can't be compared with `==` or `!=`. Interpolating a named function gives `<func add>`, and a lambda gives `<func>`.
 
 ### Function types
 
@@ -1064,7 +1066,7 @@ let size = reader("") catch -1
 
 let mut handler: ?func() -> void = null
 handler = func() -> void
-    echo("handled")
+    io::println("handled")
 end
 if handler: run then
     run()
@@ -1086,14 +1088,14 @@ let describe = func(x: int) -> string
     return "small"
 end
 
-echo(apply(func(a: int, b: int) -> return a * b, 6, 7))    # 42
+io::println("${apply(func(a: int, b: int) -> return a * b, 6, 7)}")    # 42
 ```
 
 Where a function type is expected (an annotation, a parameter, a field, an array item, a return value, the fallback of `orelse` on a `?func(...)`), the lambda's parameters can leave out their types and take them from that function type. A `mut` parameter is still written `mut`, matching the function type:
 
 ```nim
 let double: func(int) -> int = func(x) -> return x * 2
-echo(apply(func(a, b) -> return a - b, 9, 4))    # 5
+io::println("${apply(func(a, b) -> return a - b, 9, 4)}")    # 5
 ```
 
 In a call to a generic function, the other arguments fill the slots first, the lambda's parameters take their types from them, and what the lambda returns can fill the slots that are left:
@@ -1103,8 +1105,8 @@ In a call to a generic function, the other arguments fill the slots first, the l
 func keep[T](items: []T, ok: func(T) -> bool) -> []T
 func map_to[T, U](items: []T, f: func(T) -> U) -> []U
 
-echo(keep([1, 5, 12], func(x) -> return x > 2))            # [5, 12]
-echo(map_to(["a", "bbb"], func(s) -> return string::len(s)))   # [1, 3]: U is int
+io::println("${keep([1, 5, 12], func(x) -> return x > 2)}")            # [5, 12]
+io::println("${map_to(["a", "bbb"], func(s) -> return string::len(s))}")   # [1, 3]: U is int
 ```
 
 A lambda can also leave out its return type. Where a function type is expected, it takes the return type from it. Otherwise its body decides: every `return` must give the same type, and a lambda that never returns a value returns `void`. Using `try`, or returning an error, makes the lambda fail with the errors it can return, as `-> !T` does for a declaration:
@@ -1121,7 +1123,7 @@ let people = map_to([1, 2], func(n)
     let name = "user ${n}"
     return @(id = n, name = name)
 end)
-echo(people[1].id)    # 2
+io::println("${people[1].id}")    # 2
 
 let sum_all = func(items: []string)
     let mut total = 0
@@ -1130,8 +1132,8 @@ let sum_all = func(items: []string)
     end
     return total
 end
-echo(try sum_all(["1", "2"]))          # 3
-echo(sum_all(["1", "x"]) catch -1)     # -1
+io::println("${try sum_all(["1", "2"])}")          # 3
+io::println("${sum_all(["1", "x"]) catch -1}")     # -1
 ```
 
 Returns of different types are an error (`return 1` in one place and `return "one"` in another), and so are `return user` and `return null` in one lambda: name the type (`-> ?User`) for that. Named functions always name their return type, unless they use the inline form.
@@ -1154,10 +1156,10 @@ let add = func(x: int) -> void
 end
 add(5)
 add(7)
-echo(total)    # 12
+io::println("$total")    # 12
 total = 0
 add(3)
-echo(total)    # 3
+io::println("$total")    # 3
 ```
 
 A lambda keeps its variables after the function that made it returns, so each call below makes a separate counter:
@@ -1173,9 +1175,9 @@ end
 
 let next = make_counter()
 let other = make_counter()
-echo(next())     # 1
-echo(next())     # 2
-echo(other())    # 1
+io::println("${next()}")     # 1
+io::println("${next()}")     # 2
+io::println("${other()}")    # 1
 ```
 
 Each pass of a loop has its own loop variable, so lambdas made in a loop see different values:
@@ -1185,7 +1187,7 @@ let mut steps: []func() -> int = []
 for 1..3: i do
     append(steps, func() -> return i * 10)
 end
-echo("${steps[0]()} ${steps[1]()} ${steps[2]()}")    # 10 20 30
+io::println("${steps[0]()} ${steps[1]()} ${steps[2]()}")    # 10 20 30
 ```
 
 The usual mutability rules apply to what a lambda uses: a `let` variable or a parameter without `mut` can be read but not changed, and a `let mut` one can be reassigned or changed through. A lambda inside another lambda can use the variables of every function around it.
@@ -1199,8 +1201,8 @@ func first[T](xs: []T) -> T
     return xs[0]
 end
 
-echo(first([1, 2]))         # first[int]
-echo(first(["a", "b"]))     # first[string]
+io::println("${first([1, 2])}")         # first[int]
+io::println("${first(["a", "b"])}")     # first[string]
 ```
 
 ### Filling slots
@@ -1251,7 +1253,7 @@ Each filled type is its own type: a `Stack[int]` isn't a `Stack[float]`. Recursi
 
 ### Checked where written
 
-A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `echo`, `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value; it can be `mut` (see [Mutable parameters](#mutable-parameters)).
+A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value; it can be `mut` (see [Mutable parameters](#mutable-parameters)).
 
 Each copy is checked again with its real types. An error there names the copy and the call that made it:
 
@@ -1275,8 +1277,8 @@ func sum[T: Number](xs: []T) -> T
     return total
 end
 
-echo(sum([1, 2, 3]))        # 6
-echo(sum([0.5, 1.5]))       # 2
+io::println("${sum([1, 2, 3])}")        # 6
+io::println("${sum([0.5, 1.5])}")       # 2
 sum(["a"])                  # error: 'string' doesn't fit T: Number
 ```
 
@@ -1301,9 +1303,9 @@ func map[T, U, E: error](items: []T, f: func(T) -> E!U) -> E![]U
     return out
 end
 
-echo(map(["a", "bbb"], func(s) -> return string::len(s)))    # [1, 3]
-echo(try map(["1", "2"], parse))                         # [1, 2]
-echo(map(["1", "x"], parse) catch [])                    # []
+io::println("${map(["a", "bbb"], func(s) -> return string::len(s))}")    # [1, 3]
+io::println("${try map(["1", "2"], parse)}")                         # [1, 2]
+io::println("${map(["1", "x"], parse) catch []}")                    # []
 ```
 
 `E` takes the error set of the function passed in: `ConversionError` for `parse`. When that function can't fail, `E` is `none`, the error set with no errors, and `none!U` is just `U`: that `map` can't fail, so its call takes no `try`, and inside it `try f(item)` is a plain call.
@@ -1338,9 +1340,9 @@ struct Job[T, E: error]
 end
 
 let later = Job(run = func() -> return try parse("8"))
-echo(try later.go())                                # 8
+io::println("${try later.go()}")                                # 8
 let ready: Job[int, none] = @(run = func() -> return 1)
-echo(ready.go())                                    # 1
+io::println("${ready.go()}")                                    # 1
 ```
 
 ### Traits
@@ -1418,7 +1420,7 @@ error ParseError
 end
 ```
 
-An error is written like an enum variant (`ParseError.Empty`). It can be stored in variables, fields, arrays and nullables (`?ParseError`), passed around, and compared with `==` and `!=`, also against errors from other sets. `echo` prints its number.
+An error is written like an enum variant (`ParseError.Empty`). It can be stored in variables, fields, arrays and nullables (`?ParseError`), passed around, and compared with `==` and `!=`, also against errors from other sets. Interpolating an error gives its number.
 
 ### Functions that can fail
 
@@ -1492,7 +1494,7 @@ func describe(n: int) -> int
 end
 
 parse_digit(-1) catch e then
-    echo(e)
+    io::println("$e")
 end
 ```
 
@@ -1517,7 +1519,7 @@ A caught error can also be passed to a function, stored in a field or assigned t
 
 ```nim
 func report(e: ParseError) -> void
-    echo(e)
+    io::println("$e")
 end
 
 double(-1) catch e then
@@ -1547,8 +1549,8 @@ A task runs a function alongside the rest of the program. `spawn` starts one and
 ```nim
 func main() -> void
     let answer = spawn(func() -> return 6 * 7)
-    echo("waiting")
-    echo(await(answer))   # 42
+    io::println("waiting")
+    io::println("${await(answer)}")   # 42
 end
 ```
 
@@ -1565,7 +1567,7 @@ All tasks run on one thread, one at a time. A task keeps running until it waits 
 ```nim
 func step(name: string) -> void
     for 1..2: i do
-        echo("$name $i")
+        io::println("$name $i")
         task::sleep(0)
     end
 end
@@ -1590,7 +1592,7 @@ end
 func main() -> void
     let first = spawn(func() -> return slow_double(1))
     let second = spawn(func() -> return slow_double(2))
-    echo(await(first) + await(second))   # 6, after about 100 ms
+    io::println("${await(first) + await(second)}")   # 6, after about 100 ms
 end
 ```
 
@@ -1608,7 +1610,7 @@ func main() -> void
         end
     end)
     await(counter)
-    echo(count)   # 3
+    io::println("$count")   # 3
 end
 ```
 
@@ -1619,10 +1621,10 @@ end
 ```nim
 func main() -> !void
     let parsed = spawn(func() -> return try string::to_int("12"))   # Task[int, ConversionError]
-    echo(try await(parsed))                                    # 12
+    io::println("${try await(parsed)}")                                    # 12
 
     let bad = spawn(func() -> return try string::to_int("x"))
-    echo(await(bad) catch -1)                                  # -1
+    io::println("${await(bad) catch -1}")                                  # -1
 
     let mut tasks: []Task[int, ConversionError] = []
     for ["1", "2", "3"]: text do
@@ -1632,7 +1634,7 @@ func main() -> !void
     for tasks: t do
         total = total + (await(t) catch 0)
     end
-    echo(total)                                                # 6
+    io::println("$total")                                                # 6
 end
 ```
 
@@ -1640,7 +1642,7 @@ A task fits a `Task` type with the same `T` when every error it can fail with is
 
 - A task whose result isn't used can't fail: `spawn(func() -> return try save(data))` as a statement is a compile error (`this task's result isn't used, so it can't fail`). Catch the errors inside it, or keep the task and `await` it.
 - A task that failed and was never awaited is reported when the program ends (`error: unhandled error in task: ConversionError.Invalid`), and the program exits with an error.
-- Tasks can be stored in arrays, fields and nullables (`?Task[int]`), and `echo` prints them as `<task>`, or `<task done>` once they are done. `copy` keeps the same task. Tasks can't be compared (`CantCompare`), and `Task(...)` can't create one (`TaskNeedsSpawn`): use `spawn`.
+- Tasks can be stored in arrays, fields and nullables (`?Task[int]`), and interpolating one gives `<task>`, or `<task done>` once it's done. `copy` keeps the same task. Tasks can't be compared (`CantCompare`), and `Task(...)` can't create one (`TaskNeedsSpawn`): use `spawn`.
 
 ### Program end
 
@@ -1650,9 +1652,9 @@ The program ends when every task is done, so a task spawned near the end still f
 func main() -> void
     spawn(func()
         task::sleep(50)
-        echo("background work done")
+        io::println("background work done")
     end)
-    echo("top level done")
+    io::println("top level done")
 end
 # top level done, then background work done
 ```
@@ -1795,12 +1797,13 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 
 ```nim
 import std/array: pop
+import std/io
 
 func main() -> void
     let mut stack = [1, 2, 3]
     for true do
         let item = pop(stack) catch _ then break end
-        echo(item)   # 3, 2, 1
+        io::println("$item")   # 3, 2, 1
     end
 end
 ```
@@ -1820,6 +1823,7 @@ Reading and writing entries uses indexing (`m[k]`, `m[k] = v`, see [Maps](#maps)
 
 ```nim
 import std/map
+import std/io
 
 func count_words(words: []string) -> map[string, int]
     let mut counts: map[string, int] = {}
@@ -1831,10 +1835,10 @@ end
 
 func main() -> void
     let mut counts = count_words(["a", "b", "a"])
-    echo(counts["a"])                 # 2
+    io::println("${counts["a"]}")                 # 2
     map::remove(counts, "b")
-    echo(map::keys(counts))           # [a]
-    echo(map::len(counts))            # 1
+    io::println("${map::keys(counts)}")           # [a]
+    io::println("${map::len(counts)}")            # 1
 end
 ```
 
@@ -1871,6 +1875,7 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 
 ```nim
 import std/string
+import std/io
 
 func describe_age(text: string) -> string
     let age = string::to_int(text) catch e then
@@ -1886,10 +1891,10 @@ func main() -> void
     let line = "  name = Dusk, age = 13  "
     for string::split(string::trim(line), ","): field do
         let pair = string::split(field, "=")
-        echo("${string::upper(string::trim(pair[0]))}: ${string::trim(pair[1])}")
+        io::println("${string::upper(string::trim(pair[0]))}: ${string::trim(pair[1])}")
     end
-    echo(describe_age("13"))     # age 13
-    echo(describe_age("abc"))    # not a number
+    io::println(describe_age("13"))     # age 13
+    io::println(describe_age("abc"))    # not a number
 end
 ```
 
@@ -1908,6 +1913,36 @@ The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](
 | Function    | Returns | Description                                                     |
 | :---------- | :------ | :-------------------------------------------------------------- |
 | `sleep(ms)` | `void`  | Pauses the running task for `ms` milliseconds (see [Tasks](#13-tasks)). |
+
+### std/io
+
+Writes text to the standard output (stdout) and the standard error output (stderr). The functions take a `string`: use [interpolation](#string-interpolation) for any other value.
+
+| Function         | Returns | Description                             |
+| :--------------- | :------ | :-------------------------------------- |
+| `print(text)`    | `void`  | Writes `text` to stdout.                |
+| `println(text)`  | `void`  | Writes `text` and a newline to stdout.  |
+| `eprint(text)`   | `void`  | Writes `text` to stderr.                |
+| `eprintln(text)` | `void`  | Writes `text` and a newline to stderr.  |
+
+```nim
+import std/io
+
+func main() -> void
+    let scores = [10, 20]
+    io::println("hello")
+    io::println("scores: $scores")    # scores: [10, 20]
+    io::print("no newline, ")
+    io::println("then one")
+    io::eprintln("warning: disk almost full")
+end
+```
+
+Output is buffered. On a terminal, stdout shows at the end of each line. When stdout is a pipe or a file, it's written in large blocks and flushed when the program ends, before the program waits on timers or other tasks, and before a runtime error message. stderr is written right away.
+
+Printing never needs `try`. If the program reading the output stops early (`dusk app.dsk | head -1`), the program ends quietly, like other command-line tools; any other failure to write is a runtime error (`can't write to stdout: NoSpaceLeft`).
+
+Interpolation formats primitives, arrays and nullables as their values. It formats enums as their number, unions as `<union>`, maps as `<map>`, functions as `<func name>` (`<func>` for a lambda), tasks as `<task>` or `<task done>`, and structs as their raw values.
 
 ### Errors from builtins
 
@@ -1946,7 +1981,7 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Strings**: Positions are byte offsets; only `string::char_count` and `string::char_at` count characters (`char_at` scans from the start), and case changes cover ASCII and Latin-1 letters only. There's no case-insensitive comparison: compare `string::lower(a) == string::lower(b)`.
 - **Building strings in a loop**: `s = string::concat(s, x)` copies the whole string every time. To build a long string, collect the pieces in an array and call `string::join` once.
 - **String literals**: a program can have at most 65,536 different string literals.
-- **Printing**: `echo` doesn't print struct fields or union variants.
+- **Formatting**: interpolating a struct shows its raw values, not its field names, and interpolating a union doesn't show which variant is active.
 - **Read-only values**: a function call counts as a new value, so a function that returns its own non-`mut` parameter (`func keep(items: []int) -> []int return items end`) lets `let mut y = keep(frozen)` change `frozen`.
 - **Union size**: a union can have at most 256 variants.
 - **Array search**: `index_of` and `contains` don't take arrays of enums, structs, unions, arrays or buffers yet.

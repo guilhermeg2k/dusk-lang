@@ -1,3 +1,5 @@
+import std/io
+
 enum Color
     Red
     Green
@@ -58,6 +60,6 @@ func main() -> void
     let by_point = keyed(p)
     let scores = Scores()
     let filled = Scores(by_name = {"x": 2})
-    echo(ages)
-    echo("${empty} ${missing}")
+    io::println("${ages}")
+    io::println("${empty} ${missing}")
 end

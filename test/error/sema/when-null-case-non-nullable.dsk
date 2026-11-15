@@ -1,3 +1,5 @@
+import std/io
+
 enum Color
     Red
     Green
@@ -13,7 +15,7 @@ let n = 3
 
 func main() -> void
     when n
-        null then echo(0) end
-        else then echo(1) end
+        null then io::println("${0}") end
+        else then io::println("${1}") end
     end
 end

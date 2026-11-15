@@ -1,6 +1,7 @@
 import std/array: len
+import std/io
 
 func main() -> void
     let a: ?[]int = [1]
-    echo(len(a))
+    io::println("${len(a)}")
 end

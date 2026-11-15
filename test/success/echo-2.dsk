@@ -1,7 +1,0 @@
-func echo2() -> int
-    return 2
-end
-
-func main() -> void
-    assert(echo2() == 2)
-end

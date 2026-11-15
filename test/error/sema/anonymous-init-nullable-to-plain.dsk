@@ -1,3 +1,5 @@
+import std/io
+
 struct Point
     x: int
 end
@@ -7,5 +9,5 @@ let c = false
 func main() -> void
     let a = if c then @(x = 1) else null end
     let p: Point = a
-    echo(p.x)
+    io::println("${p.x}")
 end

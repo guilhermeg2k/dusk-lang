@@ -1,8 +1,10 @@
+import std/io
+
 func f(x: int) -> int
     if x > 0 then
         return 1
     elif x < 0 then
-        echo(x)
+        io::println("${x}")
     else
         return 0
     end

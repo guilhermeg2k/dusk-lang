@@ -1,1 +1,3 @@
-echo(x = 1, 2)
+import std/io
+
+io::println("${x = 1, 2}")

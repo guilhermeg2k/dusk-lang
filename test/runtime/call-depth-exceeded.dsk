@@ -1,8 +1,10 @@
+import std/io
+
 func down(n: int) -> int
     if n == 0 then return 0 end
     return down(n - 1) + 1
 end
 
 func main() -> void
-    echo(down(200000))
+    io::println("${down(200000)}")
 end
