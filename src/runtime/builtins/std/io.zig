@@ -57,24 +57,24 @@ fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (max < 1) {
         return RuntimeErrorReporter.invalidReadSize(max);
     }
-    return readStream(vm, args[0].int64, .{ .bytes = @intCast(max) });
+    return readStream(vm, args[0].int64, .{ .bytes = @intCast(max) }, args[2].int64);
 }
 
 fn streamReadLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const max = args[1].int64;
     const limit: ?usize = if (max < 0) null else @intCast(max);
-    return readStream(vm, args[0].int64, .{ .line = limit });
+    return readStream(vm, args[0].int64, .{ .line = limit }, args[2].int64);
 }
 
 fn streamReadAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return readStream(vm, args[0].int64, .all_text);
+    return readStream(vm, args[0].int64, .all_text, args[1].int64);
 }
 
 fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return readStream(vm, args[0].int64, .all_bytes);
+    return readStream(vm, args[0].int64, .all_bytes, args[1].int64);
 }
 
-fn readStream(vm: *VM, handle: i64, mode: ReadMode) anyerror!NativeResult {
+fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(handle) orelse return fail(IoError.Closed);
     if (stream.waiter != null) {
         return fail(IoError.Busy);
@@ -98,7 +98,8 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode) anyerror!NativeResult {
         try vm.stdio.flushStdout();
     }
     const current = vm.running_task.?;
-    stream.parkReader(current, mode) catch return fail(IoError.Other);
+    const timeout: ?u64 = if (timeout_ms < 0) null else @intCast(timeout_ms);
+    stream.parkReader(current, mode, timeout) catch return fail(IoError.Other);
     current.park();
     return native.parked();
 }

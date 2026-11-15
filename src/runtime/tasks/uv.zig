@@ -90,6 +90,7 @@ pub extern fn uv_guess_handle(file: c_int) HandleType;
 
 pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
+pub extern fn uv_timer_stop(timer: *Handle) c_int;
 
 // ---- Streams (terminals and pipes) ----
 

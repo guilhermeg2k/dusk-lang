@@ -19,6 +19,7 @@ pub const Stream = struct {
     pub const Kind = enum { tty, pipe, file, closed_input };
 
     owner: HandleOwner = .{ .kind = .stream },
+    timer_owner: HandleOwner = .{ .kind = .stream_timer },
     allocator: std.mem.Allocator,
     event_loop: *EventLoop,
     scheduler: *Scheduler,
@@ -26,6 +27,9 @@ pub const Stream = struct {
     loop: *uv.Loop,
     file: c_int,
     handle_memory: []align(16) u8 = &.{},
+    timer_memory: []align(16) u8 = &.{},
+    open_handles: u8 = 0,
+    is_timer_running: bool = false,
     buffered: std.ArrayList(u8) = .empty,
     read_offset: usize = 0,
     is_reading: bool = false,
@@ -72,6 +76,7 @@ pub const Stream = struct {
             return;
         }
         self.handle_memory = memory;
+        self.open_handles += 1;
         uv.uv_handle_set_data(handle, &self.owner);
         const has_failed_to_open = self.kind == .pipe and uv.uv_pipe_open(handle, file) != 0;
         if (has_failed_to_open) {
@@ -84,6 +89,9 @@ pub const Stream = struct {
         if (self.handle_memory.len > 0) {
             self.allocator.free(self.handle_memory);
         }
+        if (self.timer_memory.len > 0) {
+            self.allocator.free(self.timer_memory);
+        }
         const owns_file = self.kind == .file and self.file > 2;
         if (owns_file) {
             closeFileNow(self.allocator, self.loop, self.file);
@@ -92,11 +100,18 @@ pub const Stream = struct {
     }
 
     pub fn releaseAtExit(self: *Self) void {
-        if (self.has_chunk_in_flight) {
-            self.is_closed = true;
-            return;
-        }
-        if (self.handle_memory.len == 0) {
+        self.is_closed = true;
+        self.releaseIfDone();
+    }
+
+    pub fn markHandleClosed(self: *Self) void {
+        self.open_handles -= 1;
+        self.releaseIfDone();
+    }
+
+    fn releaseIfDone(self: *Self) void {
+        const is_done = self.is_closed and self.open_handles == 0 and !self.has_chunk_in_flight;
+        if (is_done) {
             self.destroy();
         }
     }
@@ -104,6 +119,7 @@ pub const Stream = struct {
     pub fn close(self: *Self) void {
         if (self.waiter) |waiter| {
             self.waiter = null;
+            self.stopTimer();
             self.event_loop.pending_operations -= 1;
             self.scheduler.wake(waiter.task, failureResult(.Closed)) catch |failure| {
                 self.event_loop.callback_failure = failure;
@@ -113,11 +129,12 @@ pub const Stream = struct {
         if (self.handle_memory.len > 0) {
             self.stopReading();
             uv.uv_close(self.uvHandle(), onHandleClosed);
-            return;
         }
-        if (!self.has_chunk_in_flight) {
-            self.destroy();
+        if (self.timer_memory.len > 0) {
+            self.stopTimer();
+            uv.uv_close(self.timerHandle(), onHandleClosed);
         }
+        self.releaseIfDone();
     }
 
     pub fn bufferedBytes(self: *const Self) []const u8 {
@@ -196,10 +213,41 @@ pub const Stream = struct {
         return null;
     }
 
-    pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode) !void {
+    pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode, timeout_ms: ?u64) !void {
         try self.startReading();
+        if (timeout_ms) |ms| {
+            try self.startTimer(ms);
+        }
         self.waiter = .{ .task = task, .mode = mode };
         self.event_loop.pending_operations += 1;
+    }
+
+    fn startTimer(self: *Self, ms: u64) !void {
+        if (self.timer_memory.len == 0) {
+            const memory = try self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer));
+            if (uv.uv_timer_init(self.loop, @ptrCast(memory.ptr)) != 0) {
+                self.allocator.free(memory);
+                return error.TimerFailed;
+            }
+            self.timer_memory = memory;
+            self.open_handles += 1;
+            uv.uv_handle_set_data(self.timerHandle(), &self.timer_owner);
+        }
+        uv.uv_update_time(self.loop);
+        if (uv.uv_timer_start(self.timerHandle(), onReadTimeout, ms, 0) != 0) {
+            return error.TimerFailed;
+        }
+        self.is_timer_running = true;
+    }
+
+    fn stopTimer(self: *Self) void {
+        if (!self.is_timer_running) return;
+        _ = uv.uv_timer_stop(self.timerHandle());
+        self.is_timer_running = false;
+    }
+
+    fn timerHandle(self: *Self) *uv.Handle {
+        return @ptrCast(self.timer_memory.ptr);
     }
 
     fn startReading(self: *Self) !void {
@@ -282,6 +330,7 @@ pub const Stream = struct {
         };
         self.consume(outcome.consumed);
         self.waiter = null;
+        self.stopTimer();
         self.event_loop.pending_operations -= 1;
         self.scheduler.wake(waiter.task, wake_result) catch |failure| {
             wake_result.payload.free(self.allocator);
@@ -359,6 +408,18 @@ fn failureResult(failure: IoError) WakeResult {
 
 fn streamOf(handle: *uv.Handle) *Stream {
     return @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
+}
+
+fn onReadTimeout(timer: *uv.Handle) callconv(.c) void {
+    const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", HandleOwner.of(timer)));
+    stream.is_timer_running = false;
+    const waiter = stream.waiter orelse return;
+    stream.waiter = null;
+    stream.event_loop.pending_operations -= 1;
+    stream.scheduler.wake(waiter.task, failureResult(.TimedOut)) catch |failure| {
+        stream.event_loop.callback_failure = failure;
+    };
+    stream.applyBackpressure();
 }
 
 fn onAlloc(handle: *uv.Handle, _: usize, buffer: *uv.Buffer) callconv(.c) void {

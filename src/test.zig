@@ -657,6 +657,72 @@ test "io: close, reading after close, and a parked reader woken by close" {
     try expectStdinOutput(woken, fds[0], "true\n");
 }
 
+test "io: a read that times out loses nothing and the stream stays usable" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const silent = try std.Io.Threaded.pipe2(.{});
+    var late_writer = DelayedWriter{ .fd = silent[1], .parts = &.{ "", "late\n" } };
+    const late_thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&late_writer});
+    defer late_thread.join();
+    const late =
+        \\import std/io
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line(timeout_ms = 15) catch e then
+        \\        io::println("${e == io::IoError.TimedOut}")
+        \\    end
+        \\    io::println("${try input.read_line()}")
+        \\end
+    ;
+    try expectStdinOutput(late, silent[0], "true\nlate\n");
+
+    const split = try std.Io.Threaded.pipe2(.{});
+    var split_writer = DelayedWriter{ .fd = split[1], .parts = &.{ "par", "", "", "tial\n" } };
+    const split_thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&split_writer});
+    defer split_thread.join();
+    const partial =
+        \\import std/io
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.read_line(timeout_ms = 60) catch e then
+        \\        io::println("${e == io::IoError.TimedOut}")
+        \\    end
+        \\    io::println("${try input.read_line()}")
+        \\end
+    ;
+    try expectStdinOutput(partial, split[0], "true\npartial\n");
+}
+
+test "io: a timer that doesn't fire doesn't delay the program, and close beats it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const start = std.Io.Clock.awake.now(testing.io);
+    const in_time = try std.Io.Threaded.pipe2(.{});
+    var writer = DelayedWriter{ .fd = in_time[1], .parts = &.{"quick\n"} };
+    const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
+    defer thread.join();
+    try expectStdinOutput("import std/io\nfunc main() -> !void\n    io::println(\"${try io::stdin().read_line(timeout_ms = 5000)}\")\nend\n", in_time[0], "quick\n");
+
+    const silent = try std.Io.Threaded.pipe2(.{});
+    defer closeFd(silent[1]);
+    const closed =
+        \\import std/io
+        \\import std/task
+        \\func main() -> !void
+        \\    let reader = spawn(func() -> bool
+        \\        io::stdin().read_all(timeout_ms = 5000) catch e then
+        \\            return e == io::IoError.Closed
+        \\        end
+        \\        return false
+        \\    end)
+        \\    task::sleep(5)
+        \\    io::stdin().close()
+        \\    io::println("${await(reader)}")
+        \\end
+    ;
+    try expectStdinOutput(closed, silent[0], "true\n");
+    const elapsed = start.durationTo(std.Io.Clock.awake.now(testing.io));
+    try testing.expect(elapsed.toMilliseconds() < 2000);
+}
+
 const read_lines_source =
     \\import std/io
     \\func main() -> !void
