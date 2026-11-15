@@ -617,6 +617,18 @@ test "string search" {
     try runCaseOutput("string-search.dsk", "2\n0\n6\nnull\n");
 }
 
+test "array sorting and transforms" {
+    try runCase("array-sort.dsk");
+    try runCase("array-transform.dsk");
+    try runCaseError("sema/array-sort-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/array-sort-by-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/array-extend-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/array-sort-bool.dsk", error.TypeDoesntFitSlot);
+    try runCaseError("sema/array-sort-by-callback.dsk", error.InvalidReturnType);
+    try runCaseError("sema/array-map-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/array-filter-unhandled.dsk", error.UnhandledError);
+}
+
 test "string split limit" {
     try runCase("string-split-limit.dsk");
 }

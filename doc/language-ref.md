@@ -1780,6 +1780,11 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 | :------- | :------ | :---------- |
 | `len(list)` | `int` | The number of items. |
 | `append(mut list, mut item)` | `void` | Adds an item to the end. |
+| `extend(mut list, items)` | `void` | Appends all items, retaining references to nested values. Extending an array with itself appends its original contents once. |
+| `sort(mut list)` | `[]T` | Sorts numbers or strings in ascending order and returns the same array reference. |
+| `sort_by(mut list, is_before)` | `[]T` | Sorts in place using `func(T, T) -> bool`, and returns the same array reference. The callback returns whether its first item comes before its second. |
+| `map(list, transform)` | `E![]U` | A new array containing each callback result, in input order. `transform` is `func(T) -> E!U`. |
+| `filter(list, is_kept)` | `E![]T` | A new array containing the items for which `func(T) -> E!bool` returns true, preserving order and references to nested values. |
 | `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
 | `pop_or_null(mut list)` | `?T` | Removes the last item and returns it, or `null` on an empty array. |
 | `insert(mut list, index, mut item)` | `ArrayError!void` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
@@ -1789,6 +1794,10 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 | `slice(list, start, stop)` | `ArrayError![]T` | A new array with the items from `start` up to, not including, `stop`. The items are copies, so changing the slice never changes `list`. Fails with `ArrayError.OutOfRange` for a negative bound, `start > stop` or `stop > len(list)`. |
 | `index_of(list, item)` | `?int` | The position of the first item equal to `item`, or `null`. |
 | `contains(list, item)` | `bool` | Whether some item equals `item`. |
+
+`sort` accepts `int`, `float`, `byte` and `string` arrays. Strings use lexicographic UTF-8 byte order. Floats put NaNs after all other values; signed zeros compare as equal. Both sorts use O(n log n) comparisons and constant auxiliary space; equal items may change relative order. The `sort_by` callback must give a consistent ordering, return false for equal items, and leave the array and its ordering fields unchanged. Use `array::sort(copy(numbers))` to preserve the original array.
+
+`map` and `filter` infer the callback's error set. A non-failing callback gives a plain array result with no `try`; a failing callback stops at the first error and propagates it. `extend`, `map` and `filter` do not deep-copy items; use `copy` when independent nested values are needed. For `map` and `filter`, callbacks must leave the source array unchanged.
 
 `index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content. Floats compare like `==`, so `nan` is never found and `-0.0` matches `0.0`.
 

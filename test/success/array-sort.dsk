@@ -1,0 +1,69 @@
+import std/array
+import std/string
+
+struct Player
+    score: int
+    name: string
+end
+
+func main() -> !void
+    let mut numbers = [4, -1, 4, 0, 9, -10]
+    let ordered = array::sort(numbers)
+    assert(ordered == numbers)
+    assert(numbers[0] == -10 and numbers[5] == 9)
+    for 1..5: i do
+        assert(numbers[i - 1] <= numbers[i])
+    end
+    let descending = array::sort_by(numbers, func(a, b) -> return a > b)
+    assert(descending == numbers)
+    assert(numbers[0] == 9 and numbers[5] == -10)
+    let independent = array::sort(copy(numbers))
+    assert(independent != numbers)
+    assert(independent[0] == -10 and numbers[0] == 9)
+    let mut empty: []int = []
+    assert(array::sort(empty) == empty)
+    assert(array::sort_by(empty, func(a, b) -> return a < b) == empty)
+    let mut single = [5]
+    assert(array::sort_by(single, func(a, b) -> return a < b)[0] == 5)
+    let mut pair = [2, 1]
+    array::sort_by(pair, func(a, b) -> return a < b)
+    assert(pair[0] == 1 and pair[1] == 2)
+    let mut names = ["á", "z", "", "alpha", "a", "alpha"]
+    array::sort(names)
+    assert(names[0] == "" and names[1] == "a")
+    assert(names[2] == "alpha" and names[3] == "alpha")
+    assert(names[4] == "z" and names[5] == "á")
+    let mut bytes: []byte = [255, 0, 128, 1]
+    array::sort(bytes)
+    assert(bytes[0] == 0 and bytes[3] == 255)
+    let inf = 1.0 / 0.0
+    let nan = 0.0 / 0.0
+    let mut floats = [nan, 3.5, -inf, 0.0, inf, nan, -2.0]
+    array::sort(floats)
+    assert(floats[0] == -inf and floats[1] == -2.0)
+    assert(floats[2] == 0.0 and floats[3] == 3.5 and floats[4] == inf)
+    assert(floats[5] != floats[5] and floats[6] != floats[6])
+    let mut players = [Player(score = 3, name = "c"), Player(score = 1, name = "a"), Player(score = 2, name = "b")]
+    let mut comparisons = 0
+    array::sort_by(players, func(a, b)
+        comparisons = comparisons + 1
+        let text = "$comparisons ${a.name} ${b.name}"
+        assert(string::len(text) > 0)
+        return a.score < b.score
+    end)
+    assert(players[0].name == "a" and players[2].name == "c")
+    let mut many: []Player = []
+    for 0..1999: i do
+        array::append(many, Player(score = (1999 - i) % 101, name = "player$i"))
+    end
+    array::sort_by(many, func(a, b)
+        let text = "${a.name}:${b.name}"
+        assert(string::len(text) > 0)
+        return a.score < b.score
+    end)
+    for 1..1999: i do
+        assert(many[i - 1].score <= many[i].score)
+    end
+    array::sort_by(many, func(a, b) -> return false)
+    assert(array::len(many) == 2000)
+end

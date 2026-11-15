@@ -8,6 +8,8 @@ extern func append[T](mut array: []T, mut value: T) -> void
 extern func ~unchecked_pop[T](mut array: []T) -> T
 extern func ~unchecked_insert[T](mut array: []T, index: int, value: T) -> void
 extern func ~unchecked_remove[T](mut array: []T, index: int) -> T
+extern func sort[T: int | float | byte | string](mut array: []T) -> []T
+extern func extend[T](mut array: []T, items: []T) -> void
 extern func clear[T](mut array: []T) -> void
 extern func index_of[T: int | float | byte | bool | string](array: []T, value: T) -> ?int
 extern func contains[T: int | float | byte | bool | string](array: []T, value: T) -> bool
@@ -52,4 +54,59 @@ func slice[T](array: []T, start: int, stop: int) -> ArrayError![]T
         i = i + 1
     end
     return out
+end
+
+func sort_by[T](mut array: []T, is_before: func(T, T) -> bool) -> []T
+    let count = len(array)
+    let mut start = count // 2
+    for start > 0 do
+        start = start - 1
+        move_largest_to_root(array, start, count, is_before)
+    end
+    let mut stop = count - 1
+    for stop > 0 do
+        let mut item = array[0]
+        array[0] = array[stop]
+        array[stop] = item
+        move_largest_to_root(array, 0, stop, is_before)
+        stop = stop - 1
+    end
+    return array
+end
+
+func ~move_largest_to_root[T](mut array: []T, start: int, stop: int, is_before: func(T, T) -> bool) -> void
+    let mut root = start
+    for root < stop // 2 do
+        let mut child = root * 2 + 1
+        let has_right_child = child + 1 < stop
+        if has_right_child then
+            if is_before(array[child], array[child + 1]) then
+                child = child + 1
+            end
+        end
+        if !is_before(array[root], array[child]) then return end
+        let mut item = array[root]
+        array[root] = array[child]
+        array[child] = item
+        root = child
+    end
+end
+
+func map[T, U, E: error](array: []T, transform: func(T) -> E!U) -> E![]U
+    let mut result: []U = []
+    for array: item do
+        append(result, try transform(item))
+    end
+    return result
+end
+
+func filter[T, E: error](array: []T, is_kept: func(T) -> E!bool) -> E![]T
+    let mut result: []T = []
+    for array: item do
+        if try is_kept(item) then
+            let mut kept = item
+            append(result, kept)
+        end
+    end
+    return result
 end

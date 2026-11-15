@@ -12,6 +12,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "unchecked_pop", Binding{ .intrinsic = .array_pop } },
     .{ "unchecked_insert", Binding{ .native = &arrayInsert } },
     .{ "unchecked_remove", Binding{ .native = &arrayRemove } },
+    .{ "sort", Binding{ .native = &arraySort } },
+    .{ "extend", Binding{ .native = &arrayExtend } },
     .{ "clear", Binding{ .native = &arrayClear } },
     .{ "index_of", Binding{ .native = &arrayIndexOf } },
     .{ "contains", Binding{ .native = &arrayContains } },
@@ -36,6 +38,47 @@ fn arrayRemove(_: *VM, args: []v.Value) anyerror!NativeResult {
     std.mem.copyForwards(v.Value, items[index .. array.len - 1], items[index + 1 .. array.len]);
     array.len -= 1;
     return ok(removed);
+}
+
+fn arraySort(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const array = arrayArg(args, 0);
+    std.sort.heap(v.Value, array.getDataPtr()[0..array.len], array.kind, isItemBefore);
+    return ok(args[0]);
+}
+
+fn isItemBefore(kind: v.ValueType, left: v.Value, right: v.Value) bool {
+    return switch (kind) {
+        .int64 => left.int64 < right.int64,
+        .float64 => if (std.math.isNan(right.float64)) !std.math.isNan(left.float64) else left.float64 < right.float64,
+        .string => std.mem.order(u8, v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).slice(), v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).slice()) == .lt,
+        else => unreachable,
+    };
+}
+
+fn arrayExtend(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var array = arrayArg(args, 0);
+    const item_count = arrayArg(args, 1).len;
+    if (item_count == 0) {
+        return ok(.{ .null = {} });
+    }
+    const new_len = std.math.add(usize, array.len, item_count) catch return error.OutOfMemory;
+    if (new_len > array.capacity) {
+        const capacity = @max(new_len, array.calcNewCapacity());
+        const size = v.Array.calc_size(capacity);
+        try vm.maybeCollectGarbage(size);
+        array = arrayArg(args, 0);
+        const grown = try v.Array.init(vm.getCurrentHeapAllocator(), array.kind, capacity);
+        @memcpy(grown.getDataPtr()[0..array.len], array.getDataPtr()[0..array.len]);
+        grown.len = array.len;
+        array.obj.relocated = &grown.obj;
+        args[0].heap_obj = &grown.obj;
+        array = grown;
+        vm.increaseHeapAllocationCount(size);
+    }
+    const items = arrayArg(args, 1);
+    @memcpy(array.getDataPtr()[array.len..new_len], items.getDataPtr()[0..item_count]);
+    array.len = new_len;
+    return ok(.{ .null = {} });
 }
 
 fn arrayClear(_: *VM, args: []v.Value) anyerror!NativeResult {
