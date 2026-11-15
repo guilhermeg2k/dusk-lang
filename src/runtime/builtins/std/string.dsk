@@ -12,7 +12,7 @@ extern func join(parts: []string, sep: string = "") -> string
 extern func to_int(text: string) -> ConversionError!int
 extern func to_float(text: string) -> ConversionError!float
 extern func find(text: string, needle: string, start: int = 0) -> ?int
-extern func find_last(text: string, needle: string) -> ?int
+extern func find_reverse(text: string, needle: string, start: ?int = null) -> ?int
 extern func compare(a: string, b: string) -> int
 extern func contains(text: string, needle: string) -> bool
 extern func starts_with(text: string, prefix: string) -> bool

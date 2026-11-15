@@ -1,5 +1,0 @@
-import std/string
-
-func main() -> void
-    let result = string::find_last("abc", 1)
-end

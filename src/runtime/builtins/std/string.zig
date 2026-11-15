@@ -25,7 +25,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "to_int", Binding{ .native = &strToInt } },
     .{ "to_float", Binding{ .native = &strToFloat } },
     .{ "find", Binding{ .native = &strFind } },
-    .{ "find_last", Binding{ .native = &strFindLast } },
+    .{ "find_reverse", Binding{ .native = &strFindReverse } },
     .{ "compare", Binding{ .native = &strCompare } },
     .{ "contains", Binding{ .native = &strContains } },
     .{ "starts_with", Binding{ .native = &strStartsWith } },
@@ -118,12 +118,23 @@ fn strFind(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
 }
 
-fn strFindLast(vm: *VM, args: []v.Value) anyerror!NativeResult {
+fn strFindReverse(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
     const needle = bytesArg(args, 1);
-    if (needle.len == 0) {
+    const has_no_search_range = needle.len == 0 or needle.len > text.len;
+    if (has_no_search_range) {
         return ok(v.NULL_VALUE);
     }
-    const index = std.mem.lastIndexOf(u8, bytesArg(args, 0), needle) orelse return ok(v.NULL_VALUE);
+    var start = text.len - needle.len;
+    if (args[2].int64 != 0) {
+        const requested_start = v.HeapValue.getParentPtr(v.NullBox, args[2].heap_obj).value.int64;
+        if (requested_start < 0) {
+            return ok(v.NULL_VALUE);
+        }
+        start = @min(start, @as(usize, @intCast(requested_start)));
+    }
+    const search_end = start + needle.len;
+    const index = std.mem.lastIndexOf(u8, text[0..search_end], needle) orelse return ok(v.NULL_VALUE);
     return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
 }
 

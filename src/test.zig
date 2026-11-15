@@ -616,7 +616,8 @@ test "string indexing and loops" {
 test "string core additions" {
     try runCase("string-core-additions.dsk");
     try runCaseError("sema/string-find-start-type.dsk", error.InvalidType);
-    try runCaseError("sema/string-find-last-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-find-reverse-type.dsk", error.InvalidType);
+    try runCaseError("sema/string-find-reverse-start-type.dsk", error.InvalidType);
     try runCaseError("sema/string-compare-type.dsk", error.InvalidType);
     try runCaseError("sema/string-trim-start-type.dsk", error.InvalidType);
     try runCaseError("sema/string-trim-end-type.dsk", error.InvalidType);

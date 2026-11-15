@@ -14,7 +14,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - `std/array` adds `sort` (ascending numbers and strings), `sort_by` (custom comparator), `extend`, `map` and `filter`. Both sorts return the same array reference; `map` and `filter` infer and propagate callback errors
 - `array::pop`, `array::insert` and `array::remove` are checked native builtins. Using these functions as values now requires a lambda or a Dusk function wrapper
 - Array mutators `append`, `extend`, `clear`, `insert` and `reverse` now return the same array reference, like `sort` and `sort_by`. Pass `copy(array)` to preserve the original and use the returned array in expressions or chains; `insert` returns `ArrayError![]T`
-- `std/string` adds `find(text, needle, start = 0)`, `find_last`, `trim_start`, `trim_end` and `compare`. Search positions are byte offsets; `compare` returns `-1`, `0` or `1` using the same string order as array sorting
+- `std/string` adds `find(text, needle, start = 0)`, `find_reverse(text, needle, start = null)`, `trim_start`, `trim_end` and `compare`. Search positions are byte offsets; `compare` returns `-1`, `0` or `1` using the same string order as array sorting
 
 ### Fixes
 
