@@ -9,6 +9,7 @@ const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
 const Map = @import("runtime/value.zig").Map;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
+pub const Stdio = @import("runtime/stdio.zig").Stdio;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
@@ -34,7 +35,7 @@ pub const Dusk = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    stdout_writer: ?*std.Io.Writer,
+    stdio: Stdio = .{},
     io: std.Io,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
@@ -76,7 +77,7 @@ pub const Dusk = struct {
 
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
         Map.randomizeSeeds(self.io);
-        var v = VM.init(program, self.stdout_writer);
+        var v = VM.init(program, self.stdio);
         defer v.deinit();
         try v.run();
     }

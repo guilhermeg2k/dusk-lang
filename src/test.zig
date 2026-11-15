@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const Dusk = @import("dusk.zig").Dusk;
 const EntryFile = @import("dusk.zig").EntryFile;
+const Stdio = @import("dusk.zig").Stdio;
 const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
 const Lexer = @import("compiler/lexer.zig").Lexer;
 const uv = @import("runtime/tasks/uv.zig");
@@ -13,7 +14,7 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     defer output.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
     const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
     try dusk.compileAndRun(source);
     try testing.expectEqualStrings(expected, output.written());
 }
@@ -41,6 +42,114 @@ test "libuv: a timer fires once" {
     try testing.expectEqual(0, uv.uv_loop_close(loop));
 }
 
+test "stdout: a pipe is flushed when the program ends" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try runSourceWithStdout("func main() -> void echo(1) echo(2) end", &recorder.interface);
+    try testing.expectEqual(1, recorder.drain_count);
+    try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
+}
+
+test "stdout: flushed before the scheduler waits for events" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try runSourceWithStdout("import std/task\nfunc main() -> void echo(1) task::sleep(1) echo(2) end", &recorder.interface);
+    try testing.expectEqual(2, recorder.drain_count);
+    try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
+}
+
+test "stdout: flushed before a runtime error" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    try testing.expectError(error.AssertionFailed, runSourceWithStdout("func main() -> void echo(1) assert(false) end", &recorder.interface));
+    try testing.expectEqualStrings("1\n", recorder.flushed.items);
+}
+
+test "stdout: a terminal is flushed at the end of each line" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    var stdio = Stdio{ .stdout = .{ .custom = &recorder.interface }, .is_stdout_terminal = true };
+    try stdio.writeBytes(.stdout, "ab");
+    try testing.expectEqual(0, recorder.drain_count);
+    try stdio.writeBytes(.stdout, "c\n");
+    try testing.expectEqualStrings("abc\n", recorder.flushed.items);
+}
+
+test "stderr: flushed after every write" {
+    var buffer: [1024]u8 = undefined;
+    var recorder = FlushRecorder.init(&buffer);
+    defer recorder.deinit();
+    var stdio = Stdio{ .stderr = .{ .custom = &recorder.interface } };
+    try stdio.writeBytes(.stderr, "warning");
+    try testing.expectEqualStrings("warning", recorder.flushed.items);
+}
+
+test "stdout: a closed pipe stops the program with BrokenPipe" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const fds = try std.Io.Threaded.pipe2(.{});
+    const read_end: std.Io.File = .{ .handle = fds[0], .flags = .{ .nonblocking = false } };
+    read_end.close(testing.io);
+    const write_end: std.Io.File = .{ .handle = fds[1], .flags = .{ .nonblocking = false } };
+    defer write_end.close(testing.io);
+    var buffer: [64]u8 = undefined;
+    var file_writer = write_end.writerStreaming(testing.io, &buffer);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .file = &file_writer } }, .io = testing.io };
+    try testing.expectError(error.BrokenPipe, dusk.compileAndRun("func main() -> void echo(1) end"));
+}
+
+test "stdout: any other failed write is a runtime error" {
+    var failing: std.Io.Writer = .{ .vtable = &.{ .drain = failDrain }, .buffer = &.{} };
+    try testing.expectError(error.OutputFailed, runSourceWithStdout("func main() -> void echo(1) end", &failing));
+}
+
+fn runSourceWithStdout(source: []const u8, stdout: *std.Io.Writer) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = stdout } }, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+const FlushRecorder = struct {
+    interface: std.Io.Writer,
+    drain_count: usize = 0,
+    flushed: std.ArrayList(u8) = .empty,
+
+    fn init(buffer: []u8) FlushRecorder {
+        return .{ .interface = .{ .vtable = &.{ .drain = drain }, .buffer = buffer } };
+    }
+
+    fn deinit(self: *FlushRecorder) void {
+        self.flushed.deinit(testing.allocator);
+    }
+
+    fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const self: *FlushRecorder = @alignCast(@fieldParentPtr("interface", w));
+        self.drain_count += 1;
+        self.flushed.appendSlice(testing.allocator, w.buffered()) catch return error.WriteFailed;
+        w.end = 0;
+        var consumed: usize = 0;
+        for (data[0 .. data.len - 1]) |bytes| {
+            self.flushed.appendSlice(testing.allocator, bytes) catch return error.WriteFailed;
+            consumed += bytes.len;
+        }
+        const last = data[data.len - 1];
+        for (0..splat) |_| {
+            self.flushed.appendSlice(testing.allocator, last) catch return error.WriteFailed;
+        }
+        return consumed + last.len * splat;
+    }
+};
+
+fn failDrain(_: *std.Io.Writer, _: []const []const u8, _: usize) std.Io.Writer.Error!usize {
+    return error.WriteFailed;
+}
+
 test "string interpolation" {
     try runCaseOutput("string-interpolation.dsk", "Hello, Dusk! You are 13 years old.\n" ++
         "Sum: 5\nDusk135\nDusk.length 20 yes\nNested: Dusk 5\n" ++
@@ -59,7 +168,7 @@ test "string interpolation in batches" {
 test "string interpolation compiles to one STR_BUILD" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = try dusk.compile("func main() -> void let a = 1 let b = [2] let s = \"a=$a b=$b\" end");
     const chunk = for (program.functions) |func| {
         if (std.mem.eql(u8, func.name, "main")) break func.kind.dusk;
@@ -79,7 +188,7 @@ test "string interpolation compiles to one STR_BUILD" {
 fn countOps(source: []const u8, function: []const u8, op: @import("runtime/bytecode.zig").OpCode) !usize {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = try dusk.compile(source);
     const chunk = for (program.functions) |func| {
         if (std.mem.eql(u8, func.name, function)) break func.kind.dusk;
@@ -121,7 +230,7 @@ fn runLongWhen(step: usize, expected: []const u8) !void {
     try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    echo([f(0), f({d}), f(5)])\nend\n", .{299 * step});
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    var dusk = Dusk{ .allocator = allocator, .stdout_writer = &output.writer, .io = testing.io };
+    var dusk = Dusk{ .allocator = allocator, .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
     try dusk.compileAndRun(source.items);
     try testing.expectEqualStrings(expected, output.written());
 }
@@ -159,7 +268,7 @@ test "string interpolation ignores braces in comments" {
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         try dusk.compileAndRun(source);
     }
 }
@@ -295,7 +404,7 @@ test "string constants outlive compilation and source storage" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const source = try testing.allocator.dupe(u8, "func main() -> void let mut text = \"a\\n\\u{1F319}\\0\" let mut same = \"a\\n🌙\\0\" let mut plain = \"plain\" end");
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = dusk.compile(source) catch |failure| {
         testing.allocator.free(source);
         return failure;
@@ -305,7 +414,7 @@ test "string constants outlive compilation and source storage" {
     try testing.expectEqual(@as(usize, 2), pool.values.len);
     try testing.expectEqualStrings("a\n🌙\x00", pool.textAt(0));
     try testing.expectEqualStrings("plain", pool.textAt(1));
-    var vm = @import("runtime/vm.zig").VM.init(&program, null);
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{});
     defer vm.deinit();
     try vm.run();
 }
@@ -439,7 +548,7 @@ test "more than 65536 distinct string literals are rejected" {
         try source.print(arena.allocator(), "echo(\"s{d}\")\n", .{i});
         if (i % 1000 == 999 or i == 65535) try source.appendSlice(arena.allocator(), "end\n");
     }
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     _ = try dusk.compile(source.items);
     try source.print(arena.allocator(), "func g() -> void\necho(\"one more\")\nend\n", .{});
     try testing.expectError(error.TooManyStrings, dusk.compile(source.items));
@@ -452,7 +561,7 @@ test "functions over 65535 instructions are rejected" {
     try source.appendSlice(arena.allocator(), "func main() -> void\nend\nfunc big(x: int) -> int\nlet mut y = x\n");
     for (0..20000) |_| try source.appendSlice(arena.allocator(), "if y > 5 then y = y - 1 end\n");
     try source.appendSlice(arena.allocator(), "return y\nend\n");
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(error.FunctionTooLong, dusk.compile(source.items));
 }
 
@@ -465,7 +574,7 @@ test "invalid string escapes are rejected" {
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         const program = try std.fmt.allocPrint(arena.allocator(), "let text = {s}", .{source});
         try testing.expectError(error.ParserError, dusk.compile(program));
     }
@@ -523,7 +632,7 @@ test "invalid byte literals are rejected" {
     for (parser_sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         const program = try std.fmt.allocPrint(arena.allocator(), "let b = {s}", .{source});
         try testing.expectError(error.ParserError, dusk.compile(program));
     }
@@ -531,7 +640,7 @@ test "invalid byte literals are rejected" {
     for (lexer_sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         try testing.expectError(error.LexerError, dusk.compile(source));
     }
 }
@@ -546,7 +655,7 @@ test "invalid UTF-8 and unterminated strings are rejected" {
     for (sources) |source| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
-        var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
         try testing.expectError(error.LexerError, dusk.compile(source));
     }
 }
@@ -559,7 +668,7 @@ fn runCase(src_file: []const u8) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try dusk.compileAndRun(src);
 }
 
@@ -571,7 +680,7 @@ fn runCaseError(src_file: []const u8, expected: anytype) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/error/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(expected, dusk.compile(src));
 }
 
@@ -583,7 +692,7 @@ fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
     const file_path = try std.fmt.allocPrint(arena.allocator(), "test/runtime/{s}", .{src_file});
     const src = try cwd.readFileAlloc(testing.io, file_path, arena.allocator(), .unlimited);
 
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(expected, dusk.compileAndRun(src));
 }
 
@@ -2258,7 +2367,7 @@ fn runModuleCaseError(entry_file: []const u8, expected: anytype) !void {
     defer arena.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     try testing.expectError(expected, dusk.compileEntry(src, EntryFile.fromPath(path)));
 }
 
@@ -2272,7 +2381,7 @@ fn runModuleCase(entry_file: []const u8) !void {
     defer arena.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = null, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
     try dusk.runProgram(&program);
 }
@@ -2328,7 +2437,7 @@ fn runModuleCaseOutput(entry_file: []const u8, expected: []const u8) !void {
     defer output.deinit();
     const path = try std.fmt.allocPrint(arena.allocator(), "test/modules/{s}", .{entry_file});
     const src = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
-    var dusk = Dusk{ .allocator = arena.allocator(), .stdout_writer = &output.writer, .io = testing.io };
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
     const program = try dusk.compileEntry(src, EntryFile.fromPath(path));
     try dusk.runProgram(&program);
     try testing.expectEqualStrings(expected, output.written());

@@ -4,6 +4,16 @@
 
 Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
+### Features
+
+- Program output is buffered: when stdout is a pipe or a file, it's written in large blocks instead of one write per line. It's flushed when the program ends, before the program waits on timers or other tasks, and before a runtime error message, so nothing is lost or shown late. On a terminal, output still shows at the end of each line
+
+### Fixes
+
+- Piping a program's output into a command that stops reading early (`dusk app.dsk | head -2`) crashed with a stack trace. The program now ends quietly, like other command-line tools (exit status 141)
+- Failing to write output (a full disk, for example) crashed with a stack trace. It's now a runtime error: `can't write to stdout: NoSpaceLeft`
+- With both outputs sent to the same file (`dusk app.dsk > out.txt 2>&1`), a runtime error message overwrote the program's output at the start of the file
+
 ## v0.15 - Enjin
 
 Started v0.15 development: updated the CLI version to `0.15.0-devel`.

@@ -17,9 +17,12 @@ pub const RuntimeError = error{
     AllTasksWaiting,
     NegativeSleep,
     UnhandledTaskError,
+    OutputFailed,
 };
 
 pub const RuntimeErrorReporter = struct {
+    pub var stdout_to_flush_first: ?*std.Io.Writer = null;
+
     pub noinline fn arrayOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.ArrayOutOfBounds, "index {d} is out of bounds for array of length {d}", .{ index, len });
@@ -116,6 +119,11 @@ pub const RuntimeErrorReporter = struct {
         }
     }
 
+    pub noinline fn cantWriteOutput(stream_name: []const u8, failure: anyerror) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.OutputFailed, "can't write to {s}: {s}", .{ stream_name, @errorName(failure) });
+    }
+
     fn report(err: RuntimeError, comptime fmt: []const u8, args: anytype) RuntimeError {
         print("error: " ++ fmt ++ "\n", args);
         return err;
@@ -123,6 +131,9 @@ pub const RuntimeErrorReporter = struct {
 
     fn print(comptime fmt: []const u8, args: anytype) void {
         if (@import("builtin").is_test) return;
+        if (stdout_to_flush_first) |stdout| {
+            stdout.flush() catch {};
+        }
         std.debug.print(fmt, args);
     }
 };

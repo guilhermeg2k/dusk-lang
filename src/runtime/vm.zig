@@ -8,6 +8,7 @@ const CallFrame = @import("tasks/scheduler.zig").CallFrame;
 const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
+const Stdio = @import("stdio.zig").Stdio;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
 
@@ -21,7 +22,7 @@ pub const VM = struct {
     running_task: ?*TaskState = null,
     allocator: std.mem.Allocator,
     scratch: std.Io.Writer.Allocating,
-    stdout: ?*std.Io.Writer,
+    stdio: Stdio,
     stack: []v.Value,
     heap: Heap,
     scheduler: Scheduler,
@@ -30,7 +31,7 @@ pub const VM = struct {
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
 
-    pub fn init(program: *const bc.Program, stdout: ?*std.Io.Writer) VM {
+    pub fn init(program: *const bc.Program, stdio: Stdio) VM {
         return .{
             .allocator = std.heap.page_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
@@ -41,7 +42,7 @@ pub const VM = struct {
             .stack = &.{},
             .heap = Heap.init(std.heap.page_allocator),
             .scratch = .init(std.heap.page_allocator),
-            .stdout = stdout,
+            .stdio = stdio,
         };
     }
 
@@ -55,11 +56,16 @@ pub const VM = struct {
     pub noinline fn run(self: *Self) !void {
         const main_closure: *v.Closure = @constCast(&self.program.static_closures[self.program.main_func_index]);
         _ = try self.scheduler.spawn(main_closure, .null);
+        RuntimeErrorReporter.stdout_to_flush_first = self.stdio.stdout.writer();
+        defer RuntimeErrorReporter.stdout_to_flush_first = null;
         self.runScheduler() catch |failure| {
-            self.reportErrorLocation(failure);
             self.saveCurrentTask();
+            if (failure == error.BrokenPipe) return failure;
+            self.stdio.flushStdout() catch {};
+            self.reportErrorLocation(failure);
             return failure;
         };
+        try self.stdio.flushStdout();
     }
 
     fn runScheduler(self: *Self) !void {
@@ -77,6 +83,7 @@ pub const VM = struct {
             }
 
             if (self.event_loop.hasPendingOperations()) {
+                try self.stdio.flushStdout();
                 try self.event_loop.waitForEvent();
                 continue;
             }
@@ -715,7 +722,7 @@ pub const VM = struct {
 
     noinline fn toString(self: *Self, value: v.Value, kind: v.ValueType) !v.Value {
         self.scratch.clearRetainingCapacity();
-        format.printValue(&self.scratch.writer, value, kind);
+        format.printValue(&self.scratch.writer, value, kind) catch return error.OutOfMemory;
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
         @memcpy(result.mutableSlice(), bytes);
@@ -766,7 +773,7 @@ pub const VM = struct {
                 try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
                 continue;
             }
-            format.printValue(&self.scratch.writer, part, kind);
+            format.printValue(&self.scratch.writer, part, kind) catch return error.OutOfMemory;
         }
         const bytes = self.scratch.written();
         const result = try self.allocString(bytes.len);
