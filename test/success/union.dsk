@@ -1,3 +1,5 @@
+import std/array: len
+
 union Response
     success: string
     failure: string
@@ -180,8 +182,8 @@ func main() -> void
     assert(Shape.new_square(2).area() == 4)
 
     assert(Shape.sides_of_square == 4)
-    assert(str_equal(Shape.label, "shape"))
-    assert(str_equal(square.label, "shape"))
+    assert(Shape.label == "shape")
+    assert(square.label == "shape")
 
     # Arrays of unions
     let shapes = [Shape(circle = 1), Shape(square = 2), Shape(square = 3)]

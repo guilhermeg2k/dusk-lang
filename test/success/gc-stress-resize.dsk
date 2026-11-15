@@ -1,3 +1,5 @@
+import std/array: len, append
+
 func main() -> void
     # test GC interleaved with array resizes
     # grow a large array while creating trash; relocated pointers must be followed

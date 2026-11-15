@@ -1,3 +1,4 @@
+
 let LOW = 10
 let HIGH = LOW * 2
 
@@ -22,13 +23,13 @@ func kind(n: int) -> string
 end
 
 func main() -> void
-    assert(str_equal(kind(0), "zero"))
-    assert(str_equal(kind(-1), "minus one"))
-    assert(str_equal(kind(10), "low"))
-    assert(str_equal(kind(11), "low plus one"))
-    assert(str_equal(kind(3), "size"))
-    assert(str_equal(kind(-3), "minus size"))
-    assert(str_equal(kind(22), "high"))
-    assert(str_equal(kind(100), "hundred"))
-    assert(str_equal(kind(7), "other"))
+    assert(kind(0) == "zero")
+    assert(kind(-1) == "minus one")
+    assert(kind(10) == "low")
+    assert(kind(11) == "low plus one")
+    assert(kind(3) == "size")
+    assert(kind(-3) == "minus size")
+    assert(kind(22) == "high")
+    assert(kind(100) == "hundred")
+    assert(kind(7) == "other")
 end

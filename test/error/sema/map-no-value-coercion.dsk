@@ -1,0 +1,4 @@
+func main() -> void
+    let m: map[string, ?int] = {"a": 1}
+    let n: map[string, int] = m
+end

@@ -1,7 +1,9 @@
+import std/string
+
 func main() -> void
     let mut text = ""
     for 0..199999: i do
-        text = str_concat(text, "ab")
+        text = string::concat(text, "ab")
     end
-    echo(str_len(text))
+    echo(string::len(text))
 end

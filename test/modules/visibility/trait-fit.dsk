@@ -1,0 +1,13 @@
+import @/counter
+
+trait Area
+    func area(self: @) -> float
+end
+
+func total[T: Area](items: []T) -> float
+    return items[0].area()
+end
+
+func main() -> void
+    let t = total([counter::Hidden(value = 1)])
+end

@@ -1,0 +1,19 @@
+error ParseError
+    Empty
+end
+
+func double(x: int) -> int
+    return x * 2
+end
+
+func first[T](items: []T) -> T
+    return items[0]
+end
+
+func fail_empty() -> ParseError!int
+    return ParseError.Empty
+end
+
+func divide(a: int, b: int) -> int
+    return a // b
+end

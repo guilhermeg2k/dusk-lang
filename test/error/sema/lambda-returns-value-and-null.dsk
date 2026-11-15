@@ -1,0 +1,11 @@
+struct U
+    n: int
+end
+func main() -> void
+    let f = func(n: int)
+        if n > 0 then
+            return U(n = n)
+        end
+        return null
+    end
+end

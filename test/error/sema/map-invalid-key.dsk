@@ -1,0 +1,3 @@
+func main() -> void
+    let m = {1.5: 1}
+end

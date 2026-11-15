@@ -1,0 +1,8 @@
+import @/util
+
+func main() -> void
+    echo(util::double)
+    let f: func([]int) -> int = util::first
+    echo(f)
+    echo(util::first(["a"]))
+end

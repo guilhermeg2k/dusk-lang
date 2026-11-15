@@ -1,0 +1,5 @@
+func main() -> void
+    let items = [1, 2]
+    let t = spawn(func() -> return items[5])
+    await(t)
+end

@@ -1,0 +1,19 @@
+import std/array: append, len
+
+func main() -> void
+    let mut rows: []map[string, int] = []
+    for 0..50: i do
+        let mut row: map[string, int] = {"k": i}
+        append(rows, row)
+    end
+    let mut garbage: []string = []
+    for 0..200000: i do
+        append(garbage, "x${i}")
+    end
+    let mut total = 0
+    for rows: row do
+        total = total + (row["k"] orelse -1)
+    end
+    assert(total == 1275)
+    assert(len(garbage) > 0)
+end

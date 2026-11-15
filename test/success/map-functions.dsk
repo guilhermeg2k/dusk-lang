@@ -1,0 +1,155 @@
+import std/array: len, append
+import std/map
+
+struct Point
+    x: int
+end
+
+func main() -> void
+    let mut ages = {"ana": 31, "bob": 27, "cy": 40}
+    assert(map::len(ages) == 3)
+    assert(map::has(ages, "ana"))
+    assert(!map::has(ages, "zoe"))
+    let maybe: map[string, ?int] = {"none": null}
+    assert(map::has(maybe, "none"))
+    assert(maybe["none"] == null)
+
+    let names = map::keys(ages)
+    assert(len(names) == 3)
+    assert(names[0] == "ana")
+    assert(names[2] == "cy")
+    let years = map::values(ages)
+    assert(years[1] == 27)
+
+    assert(map::remove(ages, "bob"))
+    assert(!map::remove(ages, "bob"))
+    assert(map::len(ages) == 2)
+    assert(ages["bob"] == null)
+    assert(!map::has(ages, "bob"))
+    assert(map::keys(ages)[1] == "cy")
+    ages["bob"] = 28
+    assert(map::keys(ages)[2] == "bob")
+    assert(ages["bob"] == 28)
+
+    map::clear(ages)
+    assert(map::len(ages) == 0)
+    assert(ages["ana"] == null)
+    assert(len(map::keys(ages)) == 0)
+    ages["dee"] = 1
+    assert(map::len(ages) == 1)
+    assert(ages["dee"] == 1)
+
+    let empty: map[int, int] = {}
+    assert(map::len(empty) == 0)
+    assert(len(map::values(empty)) == 0)
+    assert(!map::has(empty, 1))
+
+    let mut churn: map[int, int] = {}
+    for 0..20000: i do
+        churn[i] = i
+        if i >= 3 then
+            assert(map::remove(churn, i - 3))
+        end
+    end
+    assert(map::len(churn) == 3)
+    assert(churn[19998] == 19998)
+    assert(churn[100] == null)
+    let rest = map::keys(churn)
+    assert(rest[0] == 19998)
+    assert(rest[2] == 20000)
+
+    let mut visited: []int = []
+    let mut numbers: map[int, int] = {}
+    for 0..9: i do
+        numbers[i] = i
+    end
+    for numbers: n, key do
+        append(visited, key)
+        if key == 0 then
+            map::remove(numbers, 5)
+            map::remove(numbers, 0)
+        end
+        if key == 2 then
+            numbers[100] = 100
+        end
+    end
+    assert(len(visited) == 10)
+    assert(visited[4] == 4)
+    assert(visited[5] == 6)
+    assert(visited[9] == 100)
+
+    let mut compacting: map[int, int] = {}
+    for 0..7: i do
+        compacting[i] = i
+    end
+    let mut order: []int = []
+    for compacting: n, key do
+        append(order, key)
+        if key == 1 then
+            for 2..5: gone do
+                map::remove(compacting, gone)
+            end
+            for 10..30: extra do
+                compacting[extra] = extra
+            end
+        end
+    end
+    assert(order[0] == 0)
+    assert(order[1] == 1)
+    assert(order[2] == 6)
+    assert(order[3] == 7)
+    assert(order[4] == 10)
+    assert(len(order) == 25)
+
+    let mut shifting: map[int, int] = {}
+    for 0..7: i do
+        shifting[i] = i
+    end
+    let mut after_shift: []int = []
+    for shifting: n, key do
+        append(after_shift, key)
+        if key == 5 then
+            for 0..3: gone do
+                map::remove(shifting, gone)
+            end
+            for 40..44: extra do
+                shifting[extra] = extra
+            end
+        end
+    end
+    assert(len(after_shift) == 13)
+    assert(after_shift[5] == 5)
+    assert(after_shift[6] == 6)
+    assert(after_shift[7] == 7)
+    assert(after_shift[8] == 40)
+    assert(after_shift[12] == 44)
+
+    let mut cleared = {1: 1, 2: 2, 3: 3}
+    let mut steps = 0
+    for cleared: n do
+        steps = steps + 1
+        map::clear(cleared)
+    end
+    assert(steps == 1)
+
+    let mut emptied = {"a": 1, "b": 2, "c": 3}
+    assert(map::remove(emptied, "a"))
+    assert(map::remove(emptied, "b"))
+    assert(map::remove(emptied, "c"))
+    for 0..100: i do
+        emptied["key ${i}"] = i
+    end
+    emptied["b"] = 20
+    assert(map::len(emptied) == 102)
+    assert(emptied["b"] == 20)
+    assert(emptied["a"] == null)
+    assert(emptied["key 50"] == 50)
+    assert(map::keys(emptied)[0] == "key 0")
+
+    let p = Point(x = 1)
+    let mut by_point = {p: 1}
+    assert(map::has(by_point, p))
+    assert(map::remove(by_point, p))
+    assert(!map::has(by_point, p))
+    assert(map::len(by_point) == 0)
+end

@@ -1,8 +1,10 @@
+import std/buffer
+
 func f(mut b: buffer) -> void
     b[0] = 1
 end
 
 func main() -> !void
-    let data = try new_buffer(2)
+    let data = try buffer::new(2)
     f(data)
 end

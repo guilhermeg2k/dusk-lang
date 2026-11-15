@@ -1,0 +1,5 @@
+func foo(x: int)
+    return x
+end
+func main() -> void
+end

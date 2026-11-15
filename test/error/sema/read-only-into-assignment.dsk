@@ -1,3 +1,5 @@
+import std/array: len
+
 func main() -> void
     let frozen = [1, 2]
     let mut z: []int = []

@@ -1,0 +1,6 @@
+import @/counter
+
+func main() -> void
+    let mut c = counter::Counter()
+    c.history = [1]
+end

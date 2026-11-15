@@ -1,0 +1,100 @@
+import std/task
+import std/array: len, append
+import std/string
+
+error FetchError
+    NotFound
+end
+
+func fetch(id: int) -> FetchError!string
+    task::sleep(0)
+    if id < 0 then
+        return FetchError.NotFound
+    end
+    return "item ${id}"
+end
+
+func join(parts: []string) -> string
+    return string::join(parts, ",")
+end
+
+func fetch_both(a: int, b: int) -> FetchError!string
+    let first = spawn(func() -> return try fetch(a))
+    let second = spawn(func() -> return try fetch(b))
+    let x = try await(first)
+    let y = try await(second)
+    return "$x+$y"
+end
+
+func main() -> void
+    let mut log: []string = []
+    let a = spawn(func()
+        append(log, "a1")
+        task::sleep(0)
+        append(log, "a2")
+    end)
+    let b = spawn(func()
+        append(log, "b1")
+        task::sleep(0)
+        append(log, "b2")
+    end)
+    append(log, "main")
+    await(a)
+    await(b)
+    assert(join(log) == "main,a1,b1,a2,b2")
+
+    let answer = spawn(func() -> return 42)
+    let n: int = await(answer)
+    assert(n == 42)
+    assert(await(answer) == 42)
+
+    let shared = spawn(func()
+        task::sleep(0)
+        return 7
+    end)
+    let mut seen: []int = []
+    let w1 = spawn(func()
+        append(seen, await(shared))
+    end)
+    let w2 = spawn(func()
+        append(seen, await(shared) * 2)
+    end)
+    await(w1)
+    await(w2)
+    assert(len(seen) == 2)
+    assert(seen[0] + seen[1] == 21)
+
+    assert((fetch_both(1, 2) catch "failed") == "item 1+item 2")
+    assert((fetch_both(1, -1) catch "failed") == "failed")
+
+    let failing = spawn(func() -> return try fetch(-3))
+    let fallback = await(failing) catch "none"
+    assert(fallback == "none")
+    let mut caught = false
+    await(failing) catch e then
+        assert(e == FetchError.NotFound)
+        caught = true
+    end
+    assert(caught)
+
+    let mut results: []Task[string, FetchError] = []
+    for 1..3: id do
+        append(results, spawn(func() -> return try fetch(id)))
+    end
+    let mut texts: []string = []
+    for results: t do
+        append(texts, await(t) catch "?")
+    end
+    assert(join(texts) == "item 1,item 2,item 3")
+
+    let done = spawn(func() -> return 1)
+    echo("$done")
+    await(done)
+    echo("$done")
+
+    spawn(func()
+        task::sleep(0)
+        echo("after main")
+    end)
+    echo("main ends")
+end

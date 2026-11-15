@@ -1,0 +1,11 @@
+struct ~Key
+    id: int
+end
+
+union Item
+    key: Key
+    coin: int
+end
+
+func main() -> void
+end

@@ -1,0 +1,3 @@
+func main() -> void
+    let t = Task(1)
+end

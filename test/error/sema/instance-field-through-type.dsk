@@ -1,0 +1,7 @@
+struct P
+    x: int
+end
+
+func main() -> void
+    let a = P.x
+end

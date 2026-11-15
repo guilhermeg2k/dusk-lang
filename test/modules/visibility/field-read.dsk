@@ -1,0 +1,6 @@
+import @/counter
+
+func main() -> void
+    let c = counter::Counter()
+    let h = c.history
+end

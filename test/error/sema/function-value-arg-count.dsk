@@ -1,0 +1,14 @@
+import std/array: append
+
+func add(a: int, b: int) -> return a + b
+func id[T](x: T) -> T
+    return x
+end
+func grow(mut xs: []int) -> void
+    append(xs, 1)
+end
+
+func main() -> void
+    let f = add
+    echo(f(1))
+end

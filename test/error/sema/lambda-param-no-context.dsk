@@ -1,0 +1,15 @@
+func apply(f: func(int, int) -> int) -> int
+    return f(3, 4)
+end
+func keep[T](xs: []T, ok: func(T) -> bool) -> []T
+    return xs
+end
+func call[T](f: func(T) -> T) -> int
+    return 1
+end
+func grow(f: func(mut []int) -> void) -> void
+end
+
+func main() -> void
+    let f = func(x) -> return x
+end

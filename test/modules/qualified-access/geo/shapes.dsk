@@ -1,0 +1,76 @@
+let SIDES = 4
+let DEFAULT_SIZE = 2.5
+
+enum Color
+    Red
+    Green
+end
+
+error ShapeError
+    TooSmall
+    TooBig
+end
+
+trait Area
+    func area(self: @) -> float
+end
+
+struct Square
+    size: float = DEFAULT_SIZE
+    color: Color = Color.Green
+
+    func area(self: @) -> float
+        return self.size * self.size
+    end
+end
+
+struct Box[T]
+    item: T
+
+    func get(self: @) -> T
+        return self.item
+    end
+end
+
+union Shape
+    square: Square
+    circle: float
+end
+
+func scale(size: float, factor: float = DEFAULT_SIZE) -> float
+    return size * factor
+end
+
+func helper(x: int) -> int
+    return x * 10
+end
+
+func times_ten[T: int | float](x: T) -> int
+    return helper(SIDES) + 0 * SIDES
+end
+
+func total_area[T: Area](items: []T) -> float
+    let mut total = 0.0
+    for items: item do
+        total = total + item.area()
+    end
+    return total
+end
+
+func check(size: float) -> ShapeError!float
+    if size < 1.0 then
+        return ShapeError.TooSmall
+    end
+    if size > 100.0 then
+        return ShapeError.TooBig
+    end
+    return size
+end
+
+func describe() -> string
+    return "shapes"
+end
+
+func main() -> void
+    assert(false)
+end

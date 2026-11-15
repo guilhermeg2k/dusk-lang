@@ -1,0 +1,24 @@
+import @/counter
+
+func helper() -> int
+    return 1
+end
+
+func unchecked_pop() -> int
+    return 2
+end
+
+func main() -> void
+    let mut c = counter::Counter()
+    c.increment()
+    c.increment()
+    assert(c.count == 2)
+    assert(c.remembered() == 2)
+    assert(counter::answer() == 42)
+    assert(helper() == 1)
+    assert(unchecked_pop() == 2)
+    let s = counter::make_secret(7)
+    assert(counter::secret_key(s) == 7)
+    let d: counter::Counter = @(count = 5)
+    assert(d.count == 5)
+end

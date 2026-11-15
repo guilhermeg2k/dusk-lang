@@ -1,0 +1,12 @@
+enum Color
+    Red
+
+    func name(self: @) -> string
+        return "red"
+    end
+end
+
+let MAKER = Color.name
+
+func main() -> void
+end

@@ -1,0 +1,5 @@
+func main() -> void
+    let m = {"a": [1]}
+    for m: mut items do
+    end
+end

@@ -1,0 +1,11 @@
+func check[E: error](f: func() -> E!int) -> int
+    let n = f() catch e then
+        when e
+            ConversionError.Invalid then return 1 end
+        end
+        return 0
+    end
+    return n
+end
+func main() -> void
+end

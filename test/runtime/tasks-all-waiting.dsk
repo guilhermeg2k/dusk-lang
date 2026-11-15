@@ -1,0 +1,11 @@
+func main() -> void
+    let mut first: ?Task[void] = null
+    let second = spawn(func()
+        if first: t then
+            await(t)
+        end
+    end)
+    first = spawn(func()
+        await(second)
+    end)
+end

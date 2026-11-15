@@ -1,0 +1,79 @@
+import std/array: len, append
+
+struct Point
+    x: int
+    y: int
+end
+
+struct Inventory
+    counts: map[string, int] = {}
+end
+
+func fill(mut words: map[string, []int], n: int) -> void
+    for 0..n: i do
+        words["word ${i}"] = [i, i * 2]
+    end
+end
+
+func main() -> void
+    let mut words: map[string, []int] = {}
+    fill(words, 20000)
+    let mut garbage: [][]int = []
+    for 0..20000: i do
+        append(garbage, [i, i, i])
+    end
+    for 0..20000: i do
+        if words["word ${i}"]: pair then
+            assert(pair[0] == i)
+            assert(pair[1] == i * 2)
+        else
+            assert(false)
+        end
+    end
+
+    let mut points: []Point = []
+    let mut labels: map[Point, string] = {}
+    for 0..5000: i do
+        let mut p = Point(x = i, y = i)
+        append(points, p)
+        labels[p] = "point ${i}"
+    end
+    for 0..20000: i do
+        append(garbage, [i])
+    end
+    for 0..5000: i do
+        assert(labels[points[i]] == "point ${i}")
+    end
+    assert(labels[Point(x = 1, y = 1)] == null)
+
+    let mut nested: map[int, map[int, string]] = {}
+    for 0..300: i do
+        let mut row: map[int, string] = {}
+        for 0..30: j do
+            row[j] = "${i},${j}"
+        end
+        nested[i] = row
+    end
+    for 0..20000: i do
+        append(garbage, [i, i])
+    end
+    assert(nested[299]?[29] == "299,29")
+    assert(nested[0]?[0] == "0,0")
+
+    let mut stock = Inventory()
+    let mut all: []map[string, int] = []
+    for 0..2000: i do
+        stock.counts["item ${i}"] = i
+        append(all, {"n": i})
+    end
+    let lookup = func(name: string) -> int
+        return stock.counts[name] orelse -1
+    end
+    for 0..20000: i do
+        append(garbage, [i, i, i, i])
+    end
+    assert(lookup("item 1999") == 1999)
+    assert(lookup("nothing") == -1)
+    assert(all[1500]["n"] == 1500)
+    assert(len(garbage) > 0)
+end

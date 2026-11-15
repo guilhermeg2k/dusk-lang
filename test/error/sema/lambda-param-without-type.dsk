@@ -1,0 +1,3 @@
+func main() -> void
+    let f = func(x) -> return x
+end

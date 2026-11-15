@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> void
-    echo(str_repeat("a", "b") catch "")
+    echo(string::repeat("a", "b") catch "")
 end

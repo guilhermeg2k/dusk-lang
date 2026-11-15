@@ -1,0 +1,17 @@
+import std/array
+
+func main() -> void
+    let mut items = [3, 1, 2]
+    array::append(items, 4)
+    assert(array::len(items) == 4)
+    array::reverse(items)
+    assert(items[0] == 4)
+    let last = array::pop(items) catch 0
+    assert(last == 3)
+    let missing = array::remove(items, 10) catch e then
+        when e
+            array::ArrayError.Empty then return end
+            array::ArrayError.OutOfRange then return end
+        end
+    end
+end

@@ -1,0 +1,6 @@
+func read(m: map[string, int]) -> void
+    m["x"] = 1
+end
+
+func main() -> void
+end

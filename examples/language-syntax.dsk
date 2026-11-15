@@ -1,224 +1,372 @@
-# This file does not mean anything
-# I use it to keep some ideas
-# It does not means that the things here gonna be implemented
+# Learn Dusk in Y minutes
+# A quick tour of the current language. See doc/language-ref.md for details.
+# Run a Dusk program with: dusk path/to/file.dsk
 
-# One line comment
+# A hash starts a comment that continues to the end of the line.
+#= Multiline comments use these delimiters.
+   #= They can nest, too. =#
+=#
 
-###
-  Multi line comment
-###
+# Blocks end with `end`. Indentation makes them easier to read.
+# Execution starts in main; other functions and types can be declared below it.
+# At the top level, `let` declares a value known at compile time.
+let ANSWER = 42
 
-# Identation + new lines are used to define code blocks similar to python
+func main() -> !void
+    # ------------------------------------------------------------
+    # 1. Variables and basic types
+    # ------------------------------------------------------------
 
-###
-    Basic Types and variables
-###
+    let count = 3                  # int: a signed 64-bit integer
+    let ratio: float = 1.5         # float: a 64-bit floating-point number
+    let letter: byte = 'a'         # byte: a value from 0 to 255
+    let is_ready = true           # bool: true or false
+    let name: string = "Dusk"      # string: UTF-8 text in double quotes
 
-let x, y, z: number
-let x: number = 2
-let y: bool = false
-let z: string = 'Hello'
+    # Types are inferred unless you write an annotation after the name.
+    # Variables need an initial value and cannot change by default.
+    let mut score = 10
+    score = score + 5              # 15; reassignment needs `let mut`
+    echo(ANSWER)                  # 42
+    echo(score)                   # 15
 
-# Type can be infered
-let str = 'START'
+    # ------------------------------------------------------------
+    # 2. Operators and strings
+    # ------------------------------------------------------------
 
-# By default all variables are initialized
-# Initial values
+    echo(7 + 2)                   # 9
+    echo(7 - 2)                   # 5
+    echo(7 * 2)                   # 14
+    echo(7 / 2)                   # 3.5; / always produces a float
+    echo(7 // 2)                  # 3; // truncates toward zero
+    echo(7 % 2)                   # 1; % takes the divisor's sign
+    echo(count + ratio)           # 4.5; int promotes to float
+    echo(letter)                  # 97; bytes print as numbers
 
-let x: number = 0
-let y: string = ''
-let z: boolean = false
+    echo(count == 3)              # true
+    echo(count != 0)              # true
+    echo(count >= 2)              # true
+    echo(!is_ready)               # false
+    let can_start = is_ready and score > 0
+    echo(can_start or count == 0) # true; and/or short-circuit
+
+    # `$name` inserts a variable; `${...}` inserts an expression.
+    echo("Hello, $name!")         # Hello, Dusk!
+    echo("Next score: ${score + 1}") # Next score: 16
+    echo("line one\nline two")    # Escapes include \n, \t, \" and \\.
+    echo("Moon: \u{1F319}")       # Unicode escapes use hexadecimal digits.
+    echo("Price: \$5")            # Escape a dollar sign to keep it literal.
+
+    # Triple quotes allow several lines. Closing indentation is stripped.
+    let message = """
+        Welcome to Dusk.
+        Enjoy the tour!
+        """
+    echo(message)
+
+    # Strings are immutable. Use interpolation or string functions to join text.
+    echo(str_concat("good", " morning")) # good morning
+    echo(str_upper(name))         # DUSK
+    echo(str_equal(name, "Dusk")) # true; string equality uses str_equal
+    echo(str_len("olá"))          # 4 bytes
+    echo(str_char_count("olá"))   # 3 characters
+
+    # ------------------------------------------------------------
+    # 3. Arrays, sharing and buffers
+    # ------------------------------------------------------------
+
+    # Arrays grow and hold items of one type. Indexes start at zero.
+    let mut numbers: []int = [10, 20, 30]
+    let mut empty: []string = []   # Empty arrays need a type from context.
+    numbers[0] = 5
+    append(numbers, 40)
+    append(empty, "first")
+    echo(numbers)                 # [5, 20, 30, 40]
+    echo(len(numbers))            # 4
+
+    # Assignment shares arrays, structs, unions and buffers.
+    # `let` prevents changes through that name, but can observe other changes.
+    let view = numbers
+    let snapshot = copy(numbers)  # An independent, deep copy.
+    append(numbers, 50)
+    echo(view)                    # [5, 20, 30, 40, 50]
+    echo(snapshot)                # [5, 20, 30, 40]
+    echo(view == numbers)         # true; arrays compare identity
+    echo(snapshot == numbers)     # false
+
+    # A buffer holds a fixed number of packed bytes.
+    # `try` passes a failed call's error to the caller; more on errors below.
+    let mut bytes = try new_buffer(2)
+    bytes[0] = 'h'
+    bytes[1] = 'i'
+    echo(buffer_len(bytes))       # 2
+    echo(try string_from(bytes))  # hi
+    echo(buffer_from("hi"))       # [104, 105]
+
+    # ------------------------------------------------------------
+    # 4. Conditions and loops
+    # ------------------------------------------------------------
+
+    # Conditions must be bool values.
+    if score > 20 then
+        echo("high score")
+    elif score > 0 then
+        echo("keep going")
+    else
+        echo("start playing")
+    end
+
+    # `if` can also produce a value. Only the chosen branch runs.
+    let label = if is_ready then "ready" else "waiting" end
+    echo(label)                   # ready
+
+    # A condition loop repeats while its condition is true.
+    let mut remaining = 3
+    for remaining > 0 do
+        echo(remaining)           # 3, then 2, then 1
+        remaining = remaining - 1
+    end
+
+    # Capture loops give the item and, optionally, its zero-based index.
+    for numbers: item, index do
+        echo("$index: $item")
+    end
+
+    # Ranges include both endpoints. `_` ignores a capture.
+    for 1..5: value, _ do
+        if value == 2 then
+            continue
+        end
+        if value == 4 then
+            break
+        end
+        echo(value)               # 1, then 3
+    end
+
+    # `when` matches values or ranges. Every case has its own `end`.
+    let category = when score
+        0 then
+            "new"
+        end
+        1..10 then
+            "warming up"
+        end
+        else then
+            "on a roll"
+        end
+    end
+    echo(category)                # on a roll
+
+    # ------------------------------------------------------------
+    # 5. Functions and function values
+    # ------------------------------------------------------------
+
+    echo(add(2, 3))               # 5; declarations are below main
+    echo(scale(5))                # 10; uses the default factor
+    echo(scale(factor = 3, value = 5)) # 15; all arguments are named
+    echo(5 |> add(1) |> scale(3)) # 18; pipes pass the first argument
+
+    # Functions are values. A function type lists parameter and return types.
+    let operation: func(int, int) -> int = add
+    echo(operation(4, 5))         # 9
+
+    # Lambdas use `func` without a name. Context can supply parameter types.
+    let twice: func(int) -> int = func(value) -> return value * 2
+    echo(twice(6))                # 12
+
+    # Closures remember surrounding variables, including later changes.
+    let mut total = 0
+    let accumulate = func(amount: int)
+        total = total + amount
+    end
+    accumulate(3)
+    accumulate(4)
+    echo(total)                   # 7
+
+    # ------------------------------------------------------------
+    # 6. Structs, enums and unions
+    # ------------------------------------------------------------
+
+    let mut player = Player(name = "Ada")
+    player.add_points(5)          # A mut self method can change fields.
+    echo(player.describe())       # Ada: 5
+    let guest: Player = @(name = "Guest") # @ uses the expected struct type.
+    echo(guest.points)            # 0; a field default
+
+    let direction = Direction.North
+    when direction
+        Direction.North then
+            echo("north")
+        end
+        Direction.South then
+            echo("south")
+        end
+    end
+
+    # A union holds one variant and its payload at a time.
+    let response = Response(success = "saved")
+    when response
+        success: text then
+            echo(text)            # saved
+        end
+        failure: reason then
+            echo(reason)
+        end
+    end
+
+    # ------------------------------------------------------------
+    # 7. Nullable values
+    # ------------------------------------------------------------
+
+    # Prefix a type with ? to allow null. Unwrap before using its value.
+    let maybe_count: ?int = null
+    echo(maybe_count orelse 10)    # 10; fallback only runs for null
+
+    let maybe_player: ?Player = player
+    if maybe_player: found then
+        echo(found.name)          # Ada; found has type Player
+    else
+        echo("no player")
+    end
+
+    # Optional chaining returns null when the receiver is null.
+    echo(maybe_player?.name orelse "Anonymous") # Ada
+
+    # Reading a union variant also returns a nullable payload.
+    if response.success: text then
+        echo(text)                # saved
+    end
+
+    # ------------------------------------------------------------
+    # 8. Generics and traits
+    # ------------------------------------------------------------
+
+    # Type slots are filled from arguments or the expected result type.
+    echo(first([10, 20]))          # 10; T is int
+    echo(first(["a", "b"]))       # a; T is string
+    let box = Box(value = 42)      # Box[int]
+    echo(box.value)               # 42
+
+    # A trait requires methods; a type fits by providing those methods.
+    echo(describe_value(player))  # Ada: 5
+    echo(sum([1, 2, 3]))           # 6; Number limits T to int or float
+
+    # ------------------------------------------------------------
+    # 9. Errors
+    # ------------------------------------------------------------
+
+    # A failing call must use try or catch immediately.
+    echo(try positive(4))         # 4; failure would leave main with its error
+    echo(positive(-1) catch 0)    # 0; a fallback handles the failure
+    echo(str_to_int("42") catch 0) # 42; builtins can fail too
+
+    # A catch block can inspect the error and leave the enclosing function.
+    echo(read_positive(-1))       # missing positive value
+
+    # ------------------------------------------------------------
+    # 10. Tasks
+    # ------------------------------------------------------------
+
+    # spawn schedules a closure and returns a Task holding its future result.
+    let task: Task[int] = spawn(func() -> int
+        sleep(1)                  # Wait for one millisecond.
+        return 42
+    end)
+    echo(await(task))             # 42; waits until the task finishes
+
+    # Tasks share one thread and give way when they wait.
+    # Awaiting a task that can fail needs try or catch.
+    let checked = spawn(func() -> return try positive(7))
+    echo(try await(checked))      # 7
+end
+
+# ------------------------------------------------------------
+# Declarations used above
+# ------------------------------------------------------------
+
+# Named functions declare parameter and return types.
+# Use void when there is no return value; return leaves the function.
+func add(left: int, right: int) -> int
+    return left + right
+end
+
+# An inline return infers the result type. Defaults can infer parameter types.
+func scale(value: int, factor = 2) -> return value * factor
 
 
-#All variables are immutable by default to make it mutable use the keyword mut
-let mut v = 'Hello idiots'
-v = 'Olá idiotas'
+struct Player
+     name: string
+     points = 0
 
-let x, y, z = 1, 2, 3
+    # @ means the type being defined. self receives the instance.
+    func add_points(mut self: @, amount: int) -> void
+        self.points = self.points + amount
+    end
 
-# String interpolation
-#
-let str = 'User name is #{user.name}'
+    func describe(self: @) -> string
+        return "${self.name}: ${self.points}"
+    end
+end
 
-# Null Safety
-# Any type can be marked as a potential null value by the ? mark
-#
-let b: ?number = null
-let b: number = null
+enum Direction
+    North
+    South
+end
 
-# Control Flow
-#
-if x > y
-    echo('Hello bitches')
+union Response
+    success: string
+    failure: string
+end
 
-if x > y or x > z
-    echo('X is bigger')
+# [T] declares a type slot, filled separately for each use.
+func first[T](items: []T) -> T
+    return items[0]
+end
 
-if x > y and y > z
-    echo('Y is bigger')
+struct Box[T]
+    value: T
+end
 
-if (x > z or x > y) and z > y
-    echo('idk what i\'m doing')
+trait Described
+    func describe(self: @) -> string
+end
 
-if x == z
-    echo('x == z')
-else if x > y
-    echo('x > y')
-else
-    echo('x')
+func describe_value[T: Described](value: T) -> string
+    return value.describe()
+end
 
+trait Number = int | float
 
-#Ternary operator
-let x = y == 2 ? 'yes' : 'false'
+func sum[T: Number](items: []T) -> T
+    let mut total: T = 0
+    for items: item do
+        total = total + item
+    end
+    return total
+end
 
-# Match operator
-#
-let err = match res.err
-    404 -> 'Not found'
-    500..599 -> 'Internal Server Error'
-    default -> 'Unkown Error'
+error InputError
+    NotPositive
+end
 
-let err = match res.err
-    500..599
-        return 'Internal Server Error'
-    default
-        return 'Unkown Error'
+# E!T means either a successful T or an error from the set E.
+func positive(value: int) -> InputError!int
+    if value <= 0 then
+        return InputError.NotPositive
+    end
+    return value
+end
 
-match status
-    'START'
-        echo('Start')
-    'RUNNNING' or 'WAITING'
-        echo("Runing or Waiting")
-    default
-        echo('Invalid status')
+# !T lets the compiler infer the error set, as in main's !void.
+func read_positive(value: int) -> string
+    let number = positive(value) catch err then
+        when err
+            InputError.NotPositive then
+                return "missing positive value"
+            end
+        end
+    end
+    return "value: $number"
+end
 
-
-# Loops
-#
-for let mut i = 0; i < 2; i++
-    echo(i)
-
-for x > y
-    echo(x)
-    x++
-
-for
-    echo('I\'m infinity')
-
-for items: item, index
-    echo(item, index)
-
-###
-  Functions
-###
-
-func main() -> void
-  echo('Hello, World!')
-
-###
-  Return types needs to be expliced declared
-###
-
-func add(a: number, b: number) -> number
-  return a + b
-
-# Default values
-func add(a: number, b: number = 2) -> number
-  return a + b
-
-# Arguments can be chained if all are of the same type
-func add(a, b: number) -> number
-    return a + b
-
-# Inline return
-func add(a, b: number) return a + b
-
-###
-    Function return can be piped to another function
-    by the pipe operator |>
-###
-
-let result = add(1,2)
-    |> double
-    |> fixTo
-
-
-###
-    Structs
-    The language is not gonna have a heavy oop orientation
-    Structs are like the regular C structs but also can have
-    functions
-###
-
-
-## Defining a struct
-#
-struct Animal
-    id: number
-    name: string
-
-    to_string: ()
-        return this.name
-
-# Instanciating a struct object
-
-let animal = Animal(id = 1, name = 'José')
-
-let animal2 = Animal(
-  id = 1,
-  name = 'José'
-)
-
-# Composition
-# A struct can be composed of other structs
-
-struct Dog
-    ...Animal
-
-let dog = Dog(id=1, name='Geromel')
-
-# As Dog is composed of Animal
-# Any Dog object can be used an Animal object
-
-let whatIsMyName = (animal: Animal)
-    return animal.name
-
-echo(whatIsMyName(dog))
-
-### Objects can be destructed
-#
-let { name } = dog;
-
-# You can capture the value
-#
-let name = user?.name ?? ''; # type of name == string
-
-###
-    Modules
-    Each file is a module
-    To export something inside a file you need to use the keyword pub
-###
-
-pub let echo = (str: string) -> void
-    io.write(std.out, str)
-
-# To import use the keyword use
-
-let { echo } = use('modules/io');
-echo('Hello');
-
-# You can also define module namespaces
-#
-pub mod io {
-    let echo = (str: string) -> void
-        io.write(std.out, str)
-
-    struct File
-        name: string
-}
-
-let { io } = use('modules/io');
-
-let file = io.File(name="Geromel")
-io.echo('Hello');
 

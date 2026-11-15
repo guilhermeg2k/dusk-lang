@@ -1,0 +1,13 @@
+union Shape
+    circle: float
+    square: float
+
+    func area(self: @) -> float
+        return 1.0
+    end
+end
+
+func main() -> void
+    let s: Shape = Shape(circle = 2.0)
+    let f = s.area
+end

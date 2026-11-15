@@ -1,0 +1,13 @@
+struct ~Key
+    id: int
+end
+
+func ~open(key: Key) -> void
+end
+
+struct Door
+    ~keys: []Key = []
+end
+
+func main() -> void
+end

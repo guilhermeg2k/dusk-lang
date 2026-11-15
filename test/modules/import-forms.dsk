@@ -1,0 +1,11 @@
+import std/string
+import std/array: len, append
+import std/math: sqrt as square_root,
+    PI
+import jsonc
+import @/physics
+import @/ui/button as btn
+import std/buffer as bytes: new
+
+func main() -> void
+end

@@ -1,0 +1,92 @@
+import std/array: len, append
+
+error ParseError
+    Odd
+end
+
+func add(a: int, b: int) -> return a + b
+func sub(a: int, b: int) -> return a - b
+func id[T](x: T) -> T
+    return x
+end
+
+func half(x: int) -> ParseError!int
+    if x % 2 == 1 then
+        return ParseError.Odd
+    end
+    return x // 2
+end
+
+func run_half(f: func(int) -> ParseError!int, x: int) -> ParseError!int
+    return try f(x)
+end
+
+struct Button
+    label: string
+    on_click: func(int, int) -> int
+end
+
+func apply(f: func(int, int) -> int, a: int, b: int) -> int
+    return f(a, b)
+end
+
+func pick(is_add: bool) -> func(int, int) -> int
+    if is_add then
+        return add
+    end
+    return sub
+end
+
+func grow(mut xs: []int) -> void
+    append(xs, 9)
+end
+
+func twice[T](x: T, f: func(T) -> T) -> T
+    return f(f(x))
+end
+
+func inc(x: int) -> return x + 1
+func shout(s: string) -> return "$s!"
+
+func main() -> void
+    let f = add
+    assert(f(1, 2) == 3)
+
+    let ops: []func(int, int) -> int = [add, sub]
+    assert(ops[1](10, 4) == 6)
+    assert(apply(sub, 5, 3) == 2)
+    assert(pick(false)(7, 2) == 5)
+
+    let b = Button(label = "x", on_click = add)
+    assert(b.on_click(20, 22) == 42)
+
+    let g: func(int) -> int = id
+    assert(g(41) == 41)
+    let s: func(string) -> string = id
+    assert(s("dusk") == "dusk")
+
+    let h: func(int) -> ParseError!int = half
+    assert((h(8) catch -1) == 4)
+    assert((h(3) catch -1) == -1)
+    assert((run_half(half, 3) catch -1) == -1)
+
+    let mut maybe: ?func(int, int) -> int = null
+    assert(maybe == null)
+    echo(maybe)
+    maybe = add
+    if maybe: m then
+        assert(m(2, 2) == 4)
+    end
+
+    echo(f)
+    echo("value: $f")
+    echo(ops)
+
+    let gr: func(mut []int) -> void = grow
+    let mut xs = [1]
+    gr(xs)
+    assert(len(xs) == 2)
+
+    assert(twice(1, inc) == 3)
+    assert(twice("hi", shout) == "hi!!")
+end

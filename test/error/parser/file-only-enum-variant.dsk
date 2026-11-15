@@ -1,0 +1,5 @@
+enum Color
+    ~Red
+end
+func main() -> void
+end

@@ -1,4 +1,6 @@
+import std/string
+
 func main() -> void
     let s: ?string = "a"
-    echo(str_len(s))
+    echo(string::len(s))
 end

@@ -1,3 +1,6 @@
+import std/string
+import std/buffer
+
 func main() -> !void
-    let s = string_from(try new_buffer(1))
+    let s = string::from_bytes(try buffer::new(1))
 end

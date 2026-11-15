@@ -1,3 +1,5 @@
+import std/array: len, append
+
 func swap(mut arr: []int, i: int, j: int) -> void
     let t: int = arr[i]
     arr[i] = arr[j]

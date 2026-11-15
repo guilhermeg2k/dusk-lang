@@ -1,0 +1,14 @@
+error BufferError
+    NegativeSize
+end
+
+extern func len(data: buffer) -> int
+extern func ~unchecked_new(size: int) -> buffer
+extern func from_string(text: string) -> buffer
+
+func new(size: int) -> BufferError!buffer
+    if size < 0 then
+        return BufferError.NegativeSize
+    end
+    return unchecked_new(size)
+end

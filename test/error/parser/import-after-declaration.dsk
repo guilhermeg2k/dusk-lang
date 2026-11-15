@@ -1,0 +1,5 @@
+func helper() -> void
+end
+import std/string
+func main() -> void
+end

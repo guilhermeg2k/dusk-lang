@@ -1,0 +1,8 @@
+union U
+    a: int
+    b: string
+end
+
+func main() -> void
+    let a = U.a
+end

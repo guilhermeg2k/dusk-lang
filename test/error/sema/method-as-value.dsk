@@ -1,0 +1,10 @@
+struct C
+    n: int
+    func get(self: @) -> int
+        return self.n
+    end
+end
+func main() -> void
+    let c = C(n = 1)
+    let g = c.get
+end

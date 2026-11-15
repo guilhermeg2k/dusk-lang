@@ -1,11 +1,14 @@
+import std/string
+import std/buffer
+
 struct Packet
     data: buffer
 end
 
 func utf8_reason(data: buffer) -> string
-    let text = string_from(data) catch e then
+    let text = string::from_bytes(data) catch e then
         return when e
-            StringError.InvalidUtf8 then "invalid utf-8" end
+            string::StringError.InvalidUtf8 then "invalid utf-8" end
             else then "other" end
         end
     end
@@ -13,9 +16,9 @@ func utf8_reason(data: buffer) -> string
 end
 
 func main() -> !void
-    let mut buf = try new_buffer(4)
+    let mut buf = try buffer::new(4)
     echo(buf)
-    echo(buffer_len(buf))
+    echo(buffer::len(buf))
     buf[0] = 'h'
     buf[1] = 105
     buf[3] = try to_byte(200 + 55)
@@ -23,11 +26,11 @@ func main() -> !void
     let x = buf[0]
     echo(x)
     assert(x == 'h')
-    let copy = buffer_from("olá")
+    let copy = buffer::from_string("olá")
     echo(copy)
-    echo(buffer_len(copy))
-    echo(string_from(copy) catch "invalid")
-    echo(string_from(buf) catch "invalid")
+    echo(buffer::len(copy))
+    echo(string::from_bytes(copy) catch "invalid")
+    echo(string::from_bytes(buf) catch "invalid")
     let mut total = 0
     for copy: b, i do
         total = total + b
@@ -36,16 +39,16 @@ func main() -> !void
     echo("buf=$buf")
     let maybe: ?buffer = null
     echo(maybe)
-    echo(buf |> buffer_len())
-    let bufs = [try new_buffer(1), try new_buffer(2)]
+    echo(buf |> buffer::len())
+    let bufs = [try buffer::new(1), try buffer::new(2)]
     echo(bufs)
-    let empty = try new_buffer(0)
+    let empty = try buffer::new(0)
     echo(empty)
-    echo(string_from(empty) catch "x")
-    let mut p = Packet(data = try new_buffer(2))
+    echo(string::from_bytes(empty) catch "x")
+    let mut p = Packet(data = try buffer::new(2))
     p.data[1] = 9
     echo(p.data)
-    echo(buffer_len(p.data))
+    echo(buffer::len(p.data))
     echo(utf8_reason(buf))
-    echo(utf8_reason(buffer_from("fine")))
+    echo(utf8_reason(buffer::from_string("fine")))
 end

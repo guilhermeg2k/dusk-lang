@@ -1,0 +1,9 @@
+struct ~Key
+    id: int
+end
+
+func open(key: Key) -> void
+end
+
+func main() -> void
+end

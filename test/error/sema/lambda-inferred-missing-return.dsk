@@ -1,0 +1,7 @@
+func main() -> void
+    let f = func(n: int)
+        if n > 0 then
+            return 1
+        end
+    end
+end

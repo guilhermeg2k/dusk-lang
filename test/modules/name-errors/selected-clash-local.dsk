@@ -1,0 +1,8 @@
+import @/shapes: area
+
+func area() -> void
+end
+
+func main() -> void
+
+end

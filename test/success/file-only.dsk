@@ -1,0 +1,68 @@
+import std/array: len, append, remove
+import std/string
+
+let ~LIMIT = 3
+
+error ~ParseError
+    Empty
+end
+
+trait ~Named
+    func name(self: @) -> string
+end
+
+enum ~Color
+    Red
+    Green
+end
+
+union ~Shape
+    circle: float
+    square: float
+end
+
+struct ~Counter
+    count: int
+    ~history: []int = []
+
+    func increment(mut self: @) -> void
+        self.trim()
+        append(self.history, self.count)
+        self.count = self.count + 1
+    end
+
+    func ~trim(mut self: @) -> void
+        if len(self.history) >= LIMIT then
+            remove(self.history, 0) catch 0
+        end
+    end
+
+    func name(self: @) -> string
+        return "counter"
+    end
+end
+
+func ~describe[T: Named](item: T) -> string
+    return item.name()
+end
+
+func ~parse(text: string) -> ParseError!int
+    if string::len(text) == 0 then
+        return ParseError.Empty
+    end
+    return 1
+end
+
+func main() -> void
+    let mut c = Counter(count = 0)
+    for 1..5: _ do
+        c.increment()
+    end
+    assert(c.count == 5)
+    assert(len(c.history) == LIMIT)
+    assert(describe(c) == "counter")
+    assert((parse("") catch -1) == -1)
+    let s: Shape = Shape(circle = 1.0)
+    assert(s.circle != null)
+    assert(Color.Green != Color.Red)
+end

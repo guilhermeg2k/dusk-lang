@@ -1,0 +1,29 @@
+error ConversionError
+    Invalid
+    Overflow
+end
+
+extern func echo(msgs: dynamic) -> void
+extern func ~unchecked_to_byte(value: int) -> byte
+extern func ~unchecked_to_int(value: float) -> int
+extern func to_float[T: int | byte | float](value: T) -> float
+extern func assert(cond: bool) -> void
+extern func copy[T](value: T) -> T
+extern func spawn[T, E: error](body: func() -> E!T) -> Task[T, E]
+extern func await[T, E: error](task: Task[T, E]) -> E!T
+extern func ~strings_equal(a: ?string, b: ?string) -> bool
+
+func to_byte(value: int) -> ConversionError!byte
+    if value < 0 or value > 255 then
+        return ConversionError.Overflow
+    end
+    return unchecked_to_byte(value)
+end
+
+func to_int(value: float) -> ConversionError!int
+    let is_out_of_range = value != value or value < -9223372036854775808.0 or value >= 9223372036854775808.0
+    if is_out_of_range then
+        return ConversionError.Overflow
+    end
+    return unchecked_to_int(value)
+end

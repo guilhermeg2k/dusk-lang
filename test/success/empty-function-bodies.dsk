@@ -1,0 +1,19 @@
+struct Counter
+    count: int
+
+    func reset(self: @) -> void
+    end
+end
+
+func nothing() -> void
+end
+
+func main() -> void
+    nothing()
+    let c = Counter(count = 3)
+    c.reset()
+    let f = func() -> void
+    end
+    f()
+    assert(c.count == 3)
+end

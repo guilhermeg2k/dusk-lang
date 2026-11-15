@@ -1,0 +1,27 @@
+error StringError
+    OutOfRange
+    NegativeCount
+    InvalidUtf8
+end
+
+extern func len(text: string) -> int
+extern func from_bytes(data: buffer) -> StringError!string
+extern func char_count(text: string) -> int
+extern func concat(a: string, b: string) -> string
+extern func join(parts: []string, sep: string = "") -> string
+extern func to_int(text: string) -> ConversionError!int
+extern func to_float(text: string) -> ConversionError!float
+extern func find(text: string, needle: string) -> ?int
+extern func contains(text: string, needle: string) -> bool
+extern func starts_with(text: string, prefix: string) -> bool
+extern func ends_with(text: string, suffix: string) -> bool
+extern func count(text: string, needle: string) -> int
+extern func byte_at(text: string, index: int) -> StringError!byte
+extern func char_at(text: string, index: int) -> StringError!string
+extern func trim(text: string) -> string
+extern func split(text: string, separator: string) -> []string
+extern func replace(text: string, old: string, new: string) -> string
+extern func upper(text: string) -> string
+extern func lower(text: string) -> string
+extern func slice(text: string, start: int, stop: int) -> StringError!string
+extern func repeat(text: string, count: int) -> StringError!string

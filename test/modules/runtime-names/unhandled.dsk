@@ -1,0 +1,6 @@
+import @/util
+
+func main() -> !void
+    let n = try util::fail_empty()
+    echo(n)
+end

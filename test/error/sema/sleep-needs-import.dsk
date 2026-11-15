@@ -1,0 +1,3 @@
+func main() -> void
+    sleep(1)
+end

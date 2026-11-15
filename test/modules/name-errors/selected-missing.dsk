@@ -1,0 +1,5 @@
+import @/shapes: nope
+
+func main() -> void
+
+end

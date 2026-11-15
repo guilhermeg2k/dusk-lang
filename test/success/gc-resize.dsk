@@ -1,3 +1,5 @@
+import std/array: len, append
+
 func main() -> void
     let mut arr: []int = []
     let mut i = 0

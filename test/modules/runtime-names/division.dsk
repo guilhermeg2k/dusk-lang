@@ -1,0 +1,5 @@
+import @/util
+
+func main() -> void
+    echo(util::divide(1, 0))
+end

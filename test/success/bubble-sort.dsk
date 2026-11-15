@@ -1,3 +1,5 @@
+import std/array: len
+
 func bubble_sort(mut arr: []int) -> void
     let n: int = len(arr)
     let mut i: int = 0

@@ -1,0 +1,90 @@
+import std/array: len, append
+import std/string
+
+struct Button
+    on_click: func(int) -> string
+end
+
+func keep[T](xs: []T, ok: func(T) -> bool) -> []T
+    let mut out: []T = []
+    for xs: x do
+        if ok(x) then
+            append(out, copy(x))
+        end
+    end
+    return out
+end
+
+func map_to[T, U](xs: []T, f: func(T) -> U) -> []U
+    let mut out: []U = []
+    for xs: x do
+        append(out, f(x))
+    end
+    return out
+end
+
+func fold[T, A](xs: []T, start: A, f: func(A, T) -> A) -> A
+    let mut acc = start
+    for xs: x do
+        acc = f(acc, x)
+    end
+    return acc
+end
+
+func apply(f: func(int, int) -> int) -> int
+    return f(3, 4)
+end
+
+func pick() -> func(string) -> int
+    return func(s) -> return string::len(s)
+end
+
+struct Handler[T]
+    on: func(T) -> string
+    value: T
+end
+
+func grow(f: func(mut []int) -> void, mut xs: []int) -> void
+    f(xs)
+end
+
+func main() -> void
+    let double: func(int) -> int = func(x) -> return x * 2
+    assert(double(21) == 42)
+    assert(apply(func(a, b) -> return a * b) == 12)
+    let b = Button(on_click = func(n) -> return "clicked $n")
+    assert(b.on_click(2) == "clicked 2")
+    let fns: []func(int) -> bool = [func(x) -> return x > 1, func(x) -> return x < 1]
+    assert(fns[0](2))
+    assert(pick()("abc") == 3)
+
+    let limit = 2
+    let kept = keep([1, 2, 3, 4], func(x) -> return x > limit)
+    assert(len(kept) == 2)
+    assert(kept[0] == 3)
+
+    let labels = map_to([1, 2, 3], func(x) -> return "<$x>")
+    assert(labels[2] == "<3>")
+    let sizes = map_to(["a", "bb"], func(s) -> return string::len(s))
+    assert(sizes[1] == 2)
+
+    assert(fold([1, 2, 3], 0, func(acc, x) -> return acc + x) == 6)
+    assert(fold(["x", "y"], "", func(acc, s) -> return "$acc$s") == "xy")
+
+    let lengths = map_to(["one", "three"], func(s) -> int
+        return string::len(s)
+    end)
+    assert(lengths[1] == 5)
+
+    let mut total = 0
+    let mut items = [1]
+    grow(func(mut xs) -> void
+        append(xs, 2)
+        total = total + len(xs)
+    end, items)
+    assert(total == 2)
+    assert(len(items) == 2)
+
+    let handler = Handler(on = func(x) -> return "got $x", value = 3)
+    assert(handler.on(handler.value) == "got 3")
+end

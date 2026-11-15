@@ -1,0 +1,10 @@
+func map[T, U](items: []T, f: func(T) -> U) -> []U
+    return []
+end
+
+func main() -> void
+    let map = 1
+    let m: map[string, int] = {"a": map}
+    let n = {1: map}
+    let o: map[int, map[int, int]] = {1: n}
+end

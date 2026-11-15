@@ -1,0 +1,6 @@
+struct Box[T]
+    item: T
+end
+func main() -> void
+    let b: Box[none] = @(item = 1)
+end

@@ -1,26 +1,29 @@
+import std/array: append
+import std/string
+
 let name = "Dusk"
 
 func main() -> void
-    let greeting = str_concat("Hello, ", name)
+    let greeting = string::concat("Hello, ", name)
     echo(greeting)
-    assert(str_equal(greeting, "Hello, Dusk"))
-    assert(str_equal(str_concat("", ""), ""))
-    assert(str_equal(str_concat("a", ""), "a"))
-    assert(str_equal(str_concat("", "b"), "b"))
-    assert(str_equal("ol" |> str_concat("á") |> str_concat(" 🌙"), "olá 🌙"))
-    assert(str_len(str_concat("ab", "cd")) == 4)
-    echo(str_join(["a", "b", "c"], ", "))
-    echo(str_join(["only"], ", "))
+    assert(greeting == "Hello, Dusk")
+    assert(string::concat("", "") == "")
+    assert(string::concat("a", "") == "a")
+    assert(string::concat("", "b") == "b")
+    assert(("ol" |> string::concat("á") |> string::concat(" 🌙")) == "olá 🌙")
+    assert(string::len(string::concat("ab", "cd")) == 4)
+    echo(string::join(["a", "b", "c"], ", "))
+    echo(string::join(["only"], ", "))
     let empty: []string = []
-    echo("[${str_join(empty, ", ")}]")
-    echo(str_join(["", "", ""], "-"))
-    echo(str_join(["x", "y"], ""))
+    echo("[${string::join(empty, ", ")}]")
+    echo(string::join(["", "", ""], "-"))
+    echo(string::join(["x", "y"], ""))
     let mut words: []string = []
     append(words, "grow")
     append(words, "the")
     append(words, "array")
-    echo(words |> str_join(" "))
-    echo(str_join(["a", "b", "c"]))
-    echo(["x", "y"] |> str_join())
-    echo(str_join(parts = ["p", "q"], sep = "+"))
+    echo(words |> string::join(" "))
+    echo(string::join(["a", "b", "c"]))
+    echo(["x", "y"] |> string::join())
+    echo(string::join(parts = ["p", "q"], sep = "+"))
 end

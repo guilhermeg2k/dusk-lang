@@ -1,0 +1,528 @@
+const std = @import("std");
+const err = @import("compile_error.zig");
+
+const LexerError = err.CompileError;
+
+pub const Lexer = struct {
+    const Self = @This();
+
+    const keywords = std.StaticStringMap(Tag).initComptime(.{
+        .{ "let", Tag.let_kw },
+        .{ "mut", Tag.mut_kw },
+        .{ "int", Tag.int_kw },
+        .{ "byte", Tag.byte_kw },
+        .{ "float", Tag.float_kw },
+        .{ "string", Tag.string_kw },
+        .{ "buffer", Tag.buffer_kw },
+        .{ "bool", Tag.bool_kw },
+        .{ "void", Tag.void_kw },
+        .{ "struct", Tag.struct_kw },
+        .{ "enum", Tag.enum_kw },
+        .{ "union", Tag.union_kw },
+        .{ "error", Tag.error_kw },
+        .{ "trait", Tag.trait_kw },
+        .{ "if", Tag.if_kw },
+        .{ "else", Tag.else_kw },
+        .{ "elif", Tag.elif_kw },
+        .{ "when", Tag.when_kw },
+        .{ "and", Tag.and_kw },
+        .{ "or", Tag.or_kw },
+        .{ "orelse", Tag.orelse_kw },
+        .{ "for", Tag.for_kw },
+        .{ "continue", Tag.continue_kw },
+        .{ "break", Tag.break_kw },
+        .{ "true", Tag.true_literal },
+        .{ "false", Tag.false_literal },
+        .{ "func", Tag.func_kw },
+        .{ "extern", Tag.extern_kw },
+        .{ "return", Tag.return_kw },
+        .{ "try", Tag.try_kw },
+        .{ "catch", Tag.catch_kw },
+        .{ "null", Tag.null_literal },
+        .{ "then", Tag.then_kw },
+        .{ "do", Tag.do_kw },
+        .{ "end", Tag.end_kw },
+        .{ "import", Tag.import_kw },
+        .{ "as", Tag.as_kw },
+    });
+
+    allocator: std.mem.Allocator,
+    src: []const u8 = "",
+    err_reporter: err.CompileErrorReporter,
+    cur_index: usize = 0,
+    end_index: usize,
+
+    pub fn init(allocator: std.mem.Allocator, src: []const u8) Self {
+        return Self{
+            .allocator = allocator,
+            .src = src,
+            .end_index = src.len,
+            .err_reporter = .{ .allocator = allocator, .src = src },
+        };
+    }
+
+    pub fn list(self: *Self) err.CompileError!std.ArrayList(Token) {
+        var tokens: std.ArrayList(Token) = .empty;
+
+        while (true) {
+            const tkn = try self.next();
+
+            if (tkn.tag == Tag.err) {
+                return self.err_reporter.unexpectedToken(tkn);
+            }
+
+            try tokens.append(self.allocator, tkn);
+            if (tkn.tag == Tag.eof) break;
+        }
+
+        return tokens;
+    }
+
+    fn next(self: *Self) LexerError!Token {
+        while (true) {
+            self.readWhiteSpaces();
+            const is_eof = self.cur_index >= self.end_index;
+            if (is_eof) {
+                return Token.init(Tag.eof, self.cur_index, self.cur_index);
+            }
+
+            defer self.walk();
+            const cur_char = self.peekCurrent();
+            switch (cur_char) {
+                '#' => {
+                    if (self.peekNext() == '=') {
+                        try self.readMultilineComment();
+                        continue;
+                    }
+                    while (self.cur_index < self.end_index and self.peekCurrent() != '\n') {
+                        self.walk();
+                    }
+                },
+                '\n' => {
+                    continue;
+                },
+                '{' => return Token.init(Tag.l_brace, self.cur_index, self.cur_index),
+                '}' => return Token.init(Tag.r_brace, self.cur_index, self.cur_index),
+                '(' => {
+                    return Token.init(Tag.l_paren, self.cur_index, self.cur_index);
+                },
+                ')' => {
+                    return Token.init(Tag.r_paren, self.cur_index, self.cur_index);
+                },
+                '[' => {
+                    return Token.init(Tag.l_bracket, self.cur_index, self.cur_index);
+                },
+                ']' => {
+                    return Token.init(Tag.r_bracket, self.cur_index, self.cur_index);
+                },
+                ':' => {
+                    return self.readComplexSymbol(':', Tag.double_colon, Tag.colon);
+                },
+                '~' => {
+                    return Token.init(Tag.tilde, self.cur_index, self.cur_index);
+                },
+                ',' => {
+                    return Token.init(Tag.comma, self.cur_index, self.cur_index);
+                },
+                '+' => {
+                    return Token.init(Tag.plus, self.cur_index, self.cur_index);
+                },
+                '-' => {
+                    return self.readComplexSymbol('>', Tag.arrow, Tag.minus);
+                },
+                '@' => {
+                    return Token.init(Tag.at, self.cur_index, self.cur_index);
+                },
+                '?' => {
+                    return self.readComplexSymbol('.', Tag.question_mark_dot, Tag.question_mark);
+                },
+                '.' => {
+                    return self.readComplexSymbol('.', Tag.range, Tag.dot);
+                },
+                '*' => {
+                    return Token.init(Tag.star, self.cur_index, self.cur_index);
+                },
+                '/' => {
+                    return self.readComplexSymbol('/', Tag.double_slash, Tag.slash);
+                },
+                '%' => {
+                    return Token.init(Tag.percent, self.cur_index, self.cur_index);
+                },
+                '=' => {
+                    return self.readComplexSymbol('=', Tag.double_eq, Tag.eq);
+                },
+                '>' => {
+                    return self.readComplexSymbol('=', Tag.ge, Tag.gt);
+                },
+                '<' => {
+                    return self.readComplexSymbol('=', Tag.le, Tag.lt);
+                },
+                '!' => {
+                    return self.readComplexSymbol('=', Tag.not_eq, Tag.not);
+                },
+                '|' => {
+                    return self.readComplexSymbol('>', Tag.pipe, Tag.bar);
+                },
+                'a'...'z', 'A'...'Z', '_' => {
+                    return self.readWord();
+                },
+                '0'...'9' => {
+                    return self.readNumberLiteral();
+                },
+                '"' => {
+                    if (self.peekNext() == '"' and self.peekAt(2) == '"') return self.readMultilineStringLiteral();
+                    return self.readStringLiteral();
+                },
+                '\'' => {
+                    return self.readByteLiteral();
+                },
+                else => {
+                    return Token.init(Tag.err, self.cur_index, self.cur_index);
+                },
+            }
+        }
+    }
+
+    fn readWhiteSpaces(self: *Self) void {
+        var cur_char = self.peekCurrent();
+        while (cur_char == ' ') : (cur_char = self.peekCurrent()) {
+            self.walk();
+        }
+    }
+
+    fn readMultilineComment(self: *Self) LexerError!void {
+        const start = self.cur_index;
+        self.cur_index += 2;
+        var depth: usize = 1;
+
+        while (self.cur_index < self.end_index) {
+            if (self.peekCurrent() == '#' and self.peekNext() == '=') {
+                depth += 1;
+                self.cur_index += 2;
+                continue;
+            }
+            if (self.peekCurrent() == '=' and self.peekNext() == '#') {
+                depth -= 1;
+                if (depth == 0) {
+                    self.walk();
+                    return;
+                }
+                self.cur_index += 2;
+                continue;
+            }
+            self.walk();
+        }
+
+        self.err_reporter.log("Unterminated multiline comment: expected '=#'", .{ .start = start, .end = start + 1 });
+        return error.LexerError;
+    }
+
+    fn readNumberLiteral(self: *Self) Token {
+        const start = self.cur_index;
+        var next_char = self.peekNext();
+        var is_float = false;
+
+        while (std.ascii.isDigit(next_char) or next_char == '.') {
+            if (next_char == '.') {
+                const is_range_start = self.cur_index + 2 < self.end_index and self.src[self.cur_index + 2] == '.';
+                if (is_range_start) break;
+                is_float = true;
+            }
+
+            self.walk();
+            next_char = self.peekNext();
+        }
+
+        const token_type = if (is_float) Tag.float_literal else Tag.int_literal;
+        return Token.init(token_type, start, self.cur_index);
+    }
+
+    fn readStringLiteral(self: *Self) LexerError!Token {
+        const start = self.cur_index;
+        self.walk();
+        while (self.cur_index < self.end_index) {
+            if (self.peekCurrent() == '"') {
+                const token = Token.init(Tag.string_literal, start, self.cur_index);
+                if (!std.unicode.utf8ValidateSlice(token.value(self.src))) {
+                    self.err_reporter.log("String literal must contain valid UTF-8", token.loc);
+                    return error.LexerError;
+                }
+                return token;
+            }
+            if (self.peekCurrent() == '$' and self.peekNext() == '{') {
+                _ = try self.readInterpolation();
+                continue;
+            }
+            if (self.peekCurrent() == '\\') {
+                self.walk();
+                if (self.cur_index >= self.end_index) break;
+            }
+            if (self.peekCurrent() == '\n') break;
+            self.walk();
+        }
+
+        self.err_reporter.log("Unterminated string literal: expected closing quote (use \"\"\" for multiline strings)", .{ .start = start, .end = start });
+        return error.LexerError;
+    }
+
+    fn readByteLiteral(self: *Self) LexerError!Token {
+        const start = self.cur_index;
+        self.walk();
+        while (self.cur_index < self.end_index) {
+            if (self.peekCurrent() == '\'') return Token.init(Tag.byte_literal, start, self.cur_index);
+            if (self.peekCurrent() == '\n') break;
+            if (self.peekCurrent() == '\\') {
+                self.walk();
+                if (self.cur_index >= self.end_index or self.peekCurrent() == '\n') break;
+            }
+            self.walk();
+        }
+
+        self.err_reporter.log("Unterminated byte literal: expected closing \"'\"", .{ .start = start, .end = start });
+        return error.LexerError;
+    }
+
+    fn readMultilineStringLiteral(self: *Self) LexerError!Token {
+        const start = self.cur_index;
+        self.cur_index += 3;
+        while (self.peekCurrent() == ' ') self.walk();
+        if (self.peekCurrent() != '\n') {
+            self.err_reporter.log("Multiline string must start on a new line after '\"\"\"'", .{ .start = start, .end = start + 3 });
+            return error.LexerError;
+        }
+        self.walk();
+
+        var line_starts: std.ArrayList(usize) = .empty;
+        defer line_starts.deinit(self.allocator);
+        try line_starts.append(self.allocator, self.cur_index);
+
+        while (self.cur_index < self.end_index) {
+            const is_closing = self.peekCurrent() == '"' and self.peekNext() == '"' and self.peekAt(2) == '"';
+            if (is_closing) return self.finishMultilineStringLiteral(start, line_starts.items);
+            if (self.peekCurrent() == '$' and self.peekNext() == '{') {
+                _ = try self.readInterpolation();
+                continue;
+            }
+            if (self.peekCurrent() == '\\') {
+                self.walk();
+                if (self.cur_index >= self.end_index) break;
+            }
+            if (self.peekCurrent() == '\n') try line_starts.append(self.allocator, self.cur_index + 1);
+            self.walk();
+        }
+
+        self.err_reporter.log("Unterminated multiline string: expected closing '\"\"\"'", .{ .start = start, .end = start + 3 });
+        return error.LexerError;
+    }
+
+    fn finishMultilineStringLiteral(self: *Self, start: usize, line_starts: []const usize) LexerError!Token {
+        const closing = self.cur_index;
+        const closing_line_start = line_starts[line_starts.len - 1];
+        const indent = self.src[closing_line_start..closing];
+        if (std.mem.indexOfNone(u8, indent, " ") != null) {
+            self.err_reporter.log("Closing '\"\"\"' must be on its own line", .{ .start = closing, .end = closing + 3 });
+            return error.LexerError;
+        }
+
+        for (line_starts[0 .. line_starts.len - 1]) |line_start| {
+            const line_end = std.mem.indexOfScalarPos(u8, self.src, line_start, '\n') orelse closing;
+            const line = self.src[line_start..line_end];
+            const is_blank = std.mem.indexOfNone(u8, line, " ") == null;
+            if (is_blank or std.mem.startsWith(u8, line, indent)) continue;
+            self.err_reporter.log("Insufficient indentation in multiline string: lines must start with the closing '\"\"\"' indentation", .{ .start = line_start, .end = line_end });
+            return error.LexerError;
+        }
+
+        self.cur_index = closing + 2;
+        const token = Token.init(Tag.multiline_string_literal, start, self.cur_index);
+        if (!std.unicode.utf8ValidateSlice(self.src[start .. self.cur_index + 1])) {
+            self.err_reporter.log("String literal must contain valid UTF-8", token.loc);
+            return error.LexerError;
+        }
+        return token;
+    }
+
+    pub fn readInterpolation(self: *Self) LexerError!usize {
+        const start = self.cur_index;
+        self.cur_index += 2;
+        var depth: usize = 1;
+        while (true) {
+            const token = try self.next();
+            switch (token.tag) {
+                .l_brace => depth += 1,
+                .r_brace => {
+                    depth -= 1;
+                    if (depth == 0) return token.loc.start;
+                },
+                .eof => {
+                    self.err_reporter.log("Unterminated string interpolation: expected '}'", .{ .start = start, .end = start + 1 });
+                    return error.LexerError;
+                },
+                .err => return self.err_reporter.unexpectedToken(token),
+                else => {},
+            }
+        }
+    }
+
+    fn readWord(self: *Self) Token {
+        const start = self.cur_index;
+
+        var next_char = self.peekNext();
+        while (std.ascii.isAlphanumeric(next_char) or next_char == '_') {
+            self.walk();
+            next_char = self.peekNext();
+        }
+
+        const word = self.src[start .. self.cur_index + 1];
+
+        if (keywords.get(word)) |tag| {
+            return Token.init(tag, start, self.cur_index);
+        }
+
+        return Token.init(Tag.identifier, start, self.cur_index);
+    }
+
+    fn readComplexSymbol(self: *Self, expected_next: u8, return_tag: Tag, fallback_tag: Tag) Token {
+        if (self.peekNext() == expected_next) {
+            const start = self.cur_index;
+            self.walk();
+            return Token.init(return_tag, start, self.cur_index);
+        }
+        return Token.init(fallback_tag, self.cur_index, self.cur_index);
+    }
+
+    fn walk(self: *Self) void {
+        self.cur_index += 1;
+    }
+
+    fn peekCurrent(self: *Self) u8 {
+        if (self.cur_index >= self.end_index) {
+            return 0;
+        }
+        return self.src[self.cur_index];
+    }
+
+    fn peekAt(self: *Self, offset: usize) u8 {
+        if (self.cur_index + offset >= self.end_index) {
+            return 0;
+        }
+        return self.src[self.cur_index + offset];
+    }
+
+    fn peekNext(self: *Self) u8 {
+        if (self.cur_index + 1 >= self.end_index) {
+            return 0;
+        }
+        return self.src[self.cur_index + 1];
+    }
+};
+
+pub const Token = struct {
+    const Self = @This();
+    tag: Tag,
+    loc: Loc,
+
+    pub fn value(self: Token, src: []const u8) []const u8 {
+        if (self.tag == Tag.eof) {
+            return "EOF";
+        }
+
+        if (self.tag == Tag.string_literal) {
+            return src[self.loc.start + 1 .. self.loc.end];
+        }
+
+        return src[self.loc.start .. self.loc.end + 1];
+    }
+
+    pub fn init(tag: Tag, start: usize, end: usize) Self {
+        return Self{
+            .tag = tag,
+            .loc = .{ .start = start, .end = end },
+        };
+    }
+};
+
+pub const Tag = enum {
+    identifier,
+    let_kw,
+    mut_kw,
+    string_kw,
+    buffer_kw,
+    float_kw,
+    int_kw,
+    byte_kw,
+    void_kw,
+    bool_kw,
+    struct_kw,
+    enum_kw,
+    union_kw,
+    error_kw,
+    trait_kw,
+    if_kw,
+    else_kw,
+    elif_kw,
+    when_kw,
+    for_kw,
+    continue_kw,
+    break_kw,
+    and_kw,
+    or_kw,
+    orelse_kw,
+    func_kw,
+    extern_kw,
+    return_kw,
+    try_kw,
+    catch_kw,
+    then_kw,
+    do_kw,
+    end_kw,
+    import_kw,
+    as_kw,
+    string_literal,
+    multiline_string_literal,
+    byte_literal,
+    int_literal,
+    float_literal,
+    true_literal,
+    false_literal,
+    null_literal,
+    eq,
+    double_eq,
+    not,
+    not_eq,
+    colon,
+    double_colon,
+    tilde,
+    comma,
+    lt,
+    le,
+    gt,
+    ge,
+    at,
+    dot,
+    range,
+    question_mark,
+    question_mark_dot,
+    l_bracket,
+    r_bracket,
+    l_brace,
+    r_brace,
+    l_paren,
+    r_paren,
+    arrow,
+    plus,
+    minus,
+    star,
+    slash,
+    double_slash,
+    percent,
+    pipe,
+    bar,
+    eof,
+    err,
+};
+
+pub const Loc = struct {
+    start: usize,
+    end: usize,
+};

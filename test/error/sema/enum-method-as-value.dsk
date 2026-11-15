@@ -1,0 +1,12 @@
+enum Color
+    Red
+
+    func name(self: @) -> string
+        return "red"
+    end
+end
+
+func main() -> void
+    let c = Color.Red
+    let f = c.name
+end

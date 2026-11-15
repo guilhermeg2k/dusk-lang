@@ -1,0 +1,7 @@
+struct Square
+    size: float
+end
+
+func area(size: float) -> float
+    return size * size
+end

@@ -1,0 +1,10 @@
+enum ~Mode
+    Fast
+end
+
+func mode() -> ?Mode
+    return null
+end
+
+func main() -> void
+end

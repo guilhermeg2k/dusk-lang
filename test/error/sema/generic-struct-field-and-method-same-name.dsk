@@ -1,0 +1,11 @@
+struct Box[T]
+    value: T
+
+    func value(self: @) -> T
+        return self.value
+    end
+end
+
+func main() -> void
+    let b = Box(value = 1)
+end

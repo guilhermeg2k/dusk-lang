@@ -1,3 +1,5 @@
+import std/string
+
 func main() -> void
-    echo(str_trim(1))
+    echo(string::trim(1))
 end

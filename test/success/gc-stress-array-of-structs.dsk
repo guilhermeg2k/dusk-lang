@@ -1,3 +1,5 @@
+import std/array: len
+
 func main() -> void
     # GC stress: array of structs survives many collection cycles
     # tests GC tracing through array elements that are heap-typed (structs)
