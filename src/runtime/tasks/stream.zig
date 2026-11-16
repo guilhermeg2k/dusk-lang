@@ -13,6 +13,10 @@ const HandshakeWaiter = @import("tls_layer.zig").HandshakeWaiter;
 const cipher_chunk_size = @import("tls_layer.zig").cipher_chunk_size;
 const netErrorFromHandshake = @import("tls_layer.zig").netErrorFromHandshake;
 const NetError = @import("tcp.zig").NetError;
+const HttpReader = @import("http_reader.zig").HttpReader;
+const HttpError = @import("http.zig").HttpError;
+const httpErrorFromIo = @import("http_reader.zig").httpErrorFromIo;
+const max_http_head_size = @import("http_reader.zig").max_head_size;
 const onHandleClosed = @import("event_loop.zig").onHandleClosed;
 
 const handle_alignment = std.mem.Alignment.@"16";
@@ -49,6 +53,7 @@ pub const Stream = struct {
     requests_in_flight: usize = 0,
     peer: ?uv.SocketAddress = null,
     tls_layer: ?*TlsLayer = null,
+    http_reader: ?*HttpReader = null,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
 
@@ -122,6 +127,9 @@ pub const Stream = struct {
         if (self.tls_layer) |layer| {
             layer.destroy();
         }
+        if (self.http_reader) |reader| {
+            reader.destroy();
+        }
         self.buffered.deinit(self.allocator);
         if (self.handle_memory.len > 0) {
             self.allocator.free(self.handle_memory);
@@ -166,7 +174,7 @@ pub const Stream = struct {
             self.waiter = null;
             self.stopTimer();
             self.event_loop.pending_operations -= 1;
-            self.scheduler.wake(waiter.task, failureResult(.Closed)) catch |failure| {
+            self.scheduler.wake(waiter.task, waiter.mode.wakeFailure(.Closed)) catch |failure| {
                 self.event_loop.callback_failure = failure;
             };
         }
@@ -226,13 +234,16 @@ pub const Stream = struct {
         self.read_offset = 0;
     }
 
-    pub fn readyOutcome(self: *const Self, mode: ReadMode) ?ReadOutcome {
+    pub fn readyOutcome(self: *Self, mode: ReadMode) ?ReadOutcome {
         return switch (mode) {
             .bytes => |max| self.bytesOutcome(max),
             .exact => |count| self.exactOutcome(count),
             .line => |max| self.lineOutcome(max),
             .all_text => self.allOutcome(true),
             .all_bytes => self.allOutcome(false),
+            .http_head => self.httpHeadOutcome(),
+            .http_body => |max| self.httpBodyOutcome(max),
+            .http_whole_body => |cap| self.httpWholeBodyOutcome(cap),
         };
     }
 
@@ -294,6 +305,101 @@ pub const Stream = struct {
             return .{ .result = .end };
         }
         return null;
+    }
+
+    pub fn startHttpResponse(self: *Self, is_head_request: bool) !void {
+        if (self.http_reader) |reader| {
+            return reader.startResponse(is_head_request);
+        }
+        self.http_reader = try HttpReader.create(self.allocator, is_head_request);
+    }
+
+    fn httpHeadOutcome(self: *Self) ?ReadOutcome {
+        const reader = self.http_reader orelse return httpFailure(.Other);
+        const available = self.bufferedBytes();
+        switch (reader.feedHead(available)) {
+            .done => |length| {
+                if (length > max_http_head_size) {
+                    return httpFailure(.HeadersTooLarge);
+                }
+                return .{ .result = .{ .data = available[0..length] }, .consumed = length };
+            },
+            .failure => |failure| return httpFailure(failure),
+            .want_more => {},
+        }
+        if (available.len > max_http_head_size) {
+            return httpFailure(.HeadersTooLarge);
+        }
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (!self.has_ended) {
+            return null;
+        }
+        if (available.len == 0) {
+            return .{ .result = .end };
+        }
+        return httpFailure(.InvalidResponse);
+    }
+
+    fn httpBodyOutcome(self: *Self, max: usize) ?ReadOutcome {
+        const reader = self.http_reader orelse return httpFailure(.Other);
+        reader.body.clearRetainingCapacity();
+        if (self.feedHttpBody(reader, max)) |failure| {
+            return httpFailure(failure);
+        }
+        if (reader.body.items.len > 0) {
+            return .{ .result = .{ .data = reader.body.items } };
+        }
+        if (reader.isMessageComplete()) {
+            return .{ .result = .end };
+        }
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (!self.has_ended) {
+            return null;
+        }
+        if (reader.finishBody()) {
+            return .{ .result = .end };
+        }
+        return httpFailure(.InvalidResponse);
+    }
+
+    fn feedHttpBody(self: *Self, reader: *HttpReader, max: usize) ?HttpError {
+        while (!reader.isMessageComplete()) {
+            const available = self.bufferedBytes();
+            const room = max -| reader.body.items.len;
+            const used = reader.feedBody(available[0..@min(available.len, room)]) catch |failure| {
+                return if (failure == error.OutOfMemory) .Other else .InvalidResponse;
+            };
+            self.consume(used);
+            if (used == 0) break;
+        }
+        return null;
+    }
+
+    fn httpWholeBodyOutcome(self: *Self, cap: usize) ?ReadOutcome {
+        const reader = self.http_reader orelse return httpFailure(.Other);
+        if (self.feedHttpBody(reader, cap + 1)) |failure| {
+            return httpFailure(failure);
+        }
+        if (reader.body.items.len > cap) {
+            return httpFailure(.BodyTooLarge);
+        }
+        if (reader.isMessageComplete()) {
+            return .{ .result = .{ .data = reader.body.items } };
+        }
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (!self.has_ended) {
+            return null;
+        }
+        if (reader.finishBody()) {
+            return .{ .result = .{ .data = reader.body.items } };
+        }
+        return httpFailure(.InvalidResponse);
     }
 
     pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode, timeout_ms: ?u64) !void {
@@ -413,7 +519,8 @@ pub const Stream = struct {
                 break :result .{ .value = v.NULL_VALUE, .kind = waiter.mode.valueKind(), .payload = .{ .bytes = bytes } };
             },
             .end => .{ .value = v.NULL_VALUE, .kind = .null },
-            .failure => |failure| failureResult(failure),
+            .failure => |failure| waiter.mode.wakeFailure(failure),
+            .http_failure => |failure| httpFailureResult(failure),
         };
         self.consume(outcome.consumed);
         self.waiter = null;
@@ -764,11 +871,21 @@ pub const ReadMode = union(enum) {
     line: ?usize,
     all_text,
     all_bytes,
+    http_head,
+    http_body: usize,
+    http_whole_body: usize,
 
     pub fn valueKind(self: ReadMode) v.ValueType {
         return switch (self) {
             .line, .all_text => .string,
-            .bytes, .exact, .all_bytes => .buffer,
+            .bytes, .exact, .all_bytes, .http_head, .http_body, .http_whole_body => .buffer,
+        };
+    }
+
+    pub fn wakeFailure(self: ReadMode, failure: IoError) WakeResult {
+        return switch (self) {
+            .http_head, .http_body, .http_whole_body => httpFailureResult(httpErrorFromIo(failure)),
+            else => failureResult(failure),
         };
     }
 };
@@ -778,9 +895,14 @@ pub const ReadOutcome = struct {
         data: []const u8,
         end,
         failure: IoError,
+        http_failure: HttpError,
     },
     consumed: usize = 0,
 };
+
+fn httpFailure(failure: HttpError) ReadOutcome {
+    return .{ .result = .{ .http_failure = failure } };
+}
 
 fn lineFrom(raw: []const u8, consumed: usize, max: ?usize) ReadOutcome {
     const has_carriage_return = raw.len > 0 and raw[raw.len - 1] == '\r';
@@ -839,6 +961,10 @@ fn netFailureResult(failure: NetError) WakeResult {
     return .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
 }
 
+fn httpFailureResult(failure: HttpError) WakeResult {
+    return .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+}
+
 fn doneResult() WakeResult {
     return .{ .value = v.NULL_VALUE, .kind = .null };
 }
@@ -853,7 +979,7 @@ fn onReadTimeout(timer: *uv.Handle) callconv(.c) void {
     const waiter = stream.waiter orelse return;
     stream.waiter = null;
     stream.event_loop.pending_operations -= 1;
-    stream.scheduler.wake(waiter.task, failureResult(.TimedOut)) catch |failure| {
+    stream.scheduler.wake(waiter.task, waiter.mode.wakeFailure(.TimedOut)) catch |failure| {
         stream.event_loop.callback_failure = failure;
     };
     stream.applyBackpressure();

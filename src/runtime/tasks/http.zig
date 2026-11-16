@@ -10,6 +10,30 @@ pub const Status = enum(c_int) {
 
 pub const offsets_per_header = 4;
 
+pub const HttpError = enum {
+    InvalidUrl,
+    UnsupportedScheme,
+    InvalidMethod,
+    InvalidHeader,
+    HostNotFound,
+    ConnectionRefused,
+    NetworkUnreachable,
+    TimedOut,
+    HandshakeFailed,
+    UntrustedCertificate,
+    ExpiredCertificate,
+    WrongHostCertificate,
+    InvalidCertificate,
+    ConnectionReset,
+    InvalidResponse,
+    HeadersTooLarge,
+    BodyTooLarge,
+    TooManyRedirects,
+    InvalidUtf8,
+    Closed,
+    Other,
+};
+
 pub extern fn dusk_http_response_parser_new(is_head_request: c_int) ?*Parser;
 pub extern fn dusk_http_parser_free(parser: *Parser) void;
 pub extern fn dusk_http_feed_head(parser: *Parser, data: [*]const u8, length: usize, used: *usize) Status;

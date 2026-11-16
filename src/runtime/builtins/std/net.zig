@@ -44,7 +44,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_handshake", Binding{ .native = &streamHandshake } },
 });
 
-fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return openTcp(vm, args, .connect, timeoutArg(args[2].int64));
 }
 
@@ -133,7 +133,7 @@ fn listenerUseTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .null = {} });
 }
 
-fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
     if (stream.isTls()) {
         return RuntimeErrorReporter.tlsAlreadyStarted();

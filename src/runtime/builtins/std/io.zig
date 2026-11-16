@@ -105,6 +105,7 @@ fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Na
                 stream.consume(outcome.consumed);
                 return fail(failure);
             },
+            .http_failure => return fail(IoError.Other),
         }
     }
     const is_stdin = vm.event_loop.stdin_handle == @as(usize, @intCast(handle));

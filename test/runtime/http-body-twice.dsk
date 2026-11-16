@@ -1,0 +1,6 @@
+import std/buffer
+import std/http
+
+func main() -> !void
+    let resp = try http::request("http://127.0.0.1:9/", method = "POST", body = "text", body_bytes = buffer::from_string("bytes"))
+end

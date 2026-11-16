@@ -1,0 +1,303 @@
+import std/array: append, len
+import std/buffer
+import std/io
+import std/map
+import std/net
+import std/string
+import std/time
+import std/url
+
+error HttpError
+    InvalidUrl
+    UnsupportedScheme
+    InvalidMethod
+    InvalidHeader
+    HostNotFound
+    ConnectionRefused
+    NetworkUnreachable
+    TimedOut
+    HandshakeFailed
+    UntrustedCertificate
+    ExpiredCertificate
+    WrongHostCertificate
+    InvalidCertificate
+    ConnectionReset
+    InvalidResponse
+    HeadersTooLarge
+    BodyTooLarge
+    TooManyRedirects
+    InvalidUtf8
+    Closed
+    Other
+end
+
+struct Header
+    name: string
+    value: string
+end
+
+struct Headers
+    ~items: []Header
+    ~lowered: []string
+
+    func get(self: @, name: string) -> ?string
+        let wanted = string::lower(name)
+        for self.lowered: lowered, index do
+            if lowered == wanted then
+                return self.items[index].value
+            end
+        end
+        return null
+    end
+
+    func get_all(self: @, name: string) -> []string
+        let wanted = string::lower(name)
+        let mut values: []string = []
+        for self.lowered: lowered, index do
+            if lowered == wanted then
+                append(values, self.items[index].value)
+            end
+        end
+        return values
+    end
+
+    func has(self: @, name: string) -> bool
+        return self.get(name) != null
+    end
+
+    func entries(self: @) -> []Header
+        return copy(self.items)
+    end
+end
+
+struct Response
+    status: int
+    reason: string
+    headers: Headers
+    body: buffer
+    url: string
+
+    func text(self: @) -> HttpError!string
+        return string::from_bytes(self.body) catch e then
+            return HttpError.InvalidUtf8
+        end
+    end
+
+    func is_success(self: @) -> bool
+        return self.status >= 200 and self.status < 300
+    end
+end
+
+extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> net::NetError!int
+extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
+extern func ~stream_write(handle: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_close(handle: int) -> void
+extern func ~stream_read_head(handle: int, is_head_request: bool, timeout_ms: int) -> HttpError!?buffer
+extern func ~stream_read_whole_body(handle: int, cap: int, timeout_ms: int) -> HttpError!buffer
+extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
+extern func ~is_method(text: string) -> bool
+extern func ~is_header_name(text: string) -> bool
+extern func ~is_header_value(text: string) -> bool
+extern func ~body_given_twice() -> void
+
+let ~USER_AGENT = "dusk/0.16"
+
+struct ~Exchange
+    method: string
+    headers: map[string, string]
+    body: ?string
+    body_bytes: ?buffer
+    max_body: int
+    timeout_ms: int
+    started_ns: int
+    ca: ?string
+    verify: bool
+end
+
+func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
+    if body != null and body_bytes != null then
+        body_given_twice()
+    end
+    let started_ns = time::monotonic_ns()
+    let target = try parse_target(url, query)
+    if !is_method(method) then
+        return HttpError.InvalidMethod
+    end
+    try check_headers(headers)
+    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = started_ns, ca = ca, verify = verify)
+    return try send(target, exchange)
+end
+
+func ~parse_target(text: string, query: map[string, string]) -> HttpError!url::Url
+    let mut target = url::parse(text) catch e then
+        return HttpError.InvalidUrl
+    end
+    let is_http = target.scheme == "http" or target.scheme == "https"
+    if !is_http then
+        return HttpError.UnsupportedScheme
+    end
+    if map::len(query) == 0 then
+        return target
+    end
+    let extra = url::query(query)
+    let existing = target.query orelse ""
+    target.query = if existing == "" then extra else "$existing&$extra" end
+    return target
+end
+
+func ~check_headers(headers: map[string, string]) -> HttpError!void
+    for headers: value, name do
+        let is_valid = is_header_name(name) and is_header_value(value)
+        if !is_valid or string::lower(name) == "transfer-encoding" then
+            return HttpError.InvalidHeader
+        end
+    end
+end
+
+func ~send(target: url::Url, exchange: Exchange) -> HttpError!Response
+    let handle = try open_connection(target, exchange)
+    let response = receive(handle, target, exchange) catch e then
+        stream_close(handle)
+        return e
+    end
+    stream_close(handle)
+    return response
+end
+
+func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
+    let is_tls = target.scheme == "https"
+    let port = target.port orelse (if is_tls then 443 else 80 end)
+    let handle = tcp_connect_handle(target.host, port, remaining_ms(exchange)) catch e then
+        return from_net(e)
+    end
+    if !is_tls then
+        return handle
+    end
+    stream_start_tls(handle, target.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+        stream_close(handle)
+        return from_net(e)
+    end
+    return handle
+end
+
+func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Response
+    stream_write(handle, request_head(target, exchange)) catch e then
+        return from_io(e)
+    end
+    if exchange.body: text then
+        stream_write(handle, text) catch e then
+            return from_io(e)
+        end
+    end
+    if exchange.body_bytes: data then
+        stream_write_bytes(handle, data) catch e then
+            return from_io(e)
+        end
+    end
+    let is_head_request = exchange.method == "HEAD"
+    let head = try stream_read_head(handle, is_head_request, remaining_ms(exchange))
+    if head: received then
+        let parts = try parse_head(received, is_head_request)
+        let body = try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange))
+        return Response(status = string::to_int(parts[0]) catch 0, reason = parts[1], headers = headers_of(parts), body = body, url = target.to_string())
+    end
+    return HttpError.ConnectionReset
+end
+
+func ~request_head(target: url::Url, exchange: Exchange) -> string
+    let mut lines: []string = []
+    let path = if target.query: query then "${target.path}?$query" else target.path end
+    append(lines, "${exchange.method} $path HTTP/1.1")
+    let mut given: map[string, bool] = {}
+    for exchange.headers: value, name do
+        let lowered = string::lower(name)
+        given[lowered] = true
+        if lowered != "content-length" then
+            append(lines, "$name: $value")
+        end
+    end
+    if !map::has(given, "host") then
+        append(lines, "Host: ${host_header(target)}")
+    end
+    if !map::has(given, "user-agent") then
+        append(lines, "User-Agent: $USER_AGENT")
+    end
+    if !map::has(given, "connection") then
+        append(lines, "Connection: close")
+    end
+    let length = body_length(exchange)
+    if length >= 0 then
+        append(lines, "Content-Length: $length")
+    end
+    return "${string::join(lines, "\r\n")}\r\n\r\n"
+end
+
+func ~host_header(target: url::Url) -> string
+    let host = if string::contains(target.host, ":") then "[${target.host}]" else target.host end
+    let default_port = if target.scheme == "https" then 443 else 80 end
+    if target.port: port then
+        if port != default_port then
+            return "$host:$port"
+        end
+    end
+    return host
+end
+
+func ~body_length(exchange: Exchange) -> int
+    if exchange.body: text then
+        return string::len(text)
+    end
+    if exchange.body_bytes: data then
+        return buffer::len(data)
+    end
+    let needs_length = exchange.method == "POST" or exchange.method == "PUT" or exchange.method == "PATCH"
+    return if needs_length then 0 else -1 end
+end
+
+func ~headers_of(parts: []string) -> Headers
+    let mut items: []Header = []
+    let mut lowered: []string = []
+    let mut index = 2
+    for index < len(parts) do
+        append(items, Header(name = parts[index], value = parts[index + 1]))
+        append(lowered, string::lower(parts[index]))
+        index = index + 2
+    end
+    return Headers(items = items, lowered = lowered)
+end
+
+func ~remaining_ms(exchange: Exchange) -> int
+    if exchange.timeout_ms < 0 then
+        return -1
+    end
+    let left = exchange.timeout_ms - (time::monotonic_ns() - exchange.started_ns) // 1000000
+    return if left > 0 then left else 0 end
+end
+
+func ~from_net(failure: net::NetError) -> HttpError
+    return when failure
+        net::NetError.HostNotFound then HttpError.HostNotFound end
+        net::NetError.ConnectionRefused then HttpError.ConnectionRefused end
+        net::NetError.NetworkUnreachable then HttpError.NetworkUnreachable end
+        net::NetError.TimedOut then HttpError.TimedOut end
+        net::NetError.HandshakeFailed then HttpError.HandshakeFailed end
+        net::NetError.UntrustedCertificate then HttpError.UntrustedCertificate end
+        net::NetError.ExpiredCertificate then HttpError.ExpiredCertificate end
+        net::NetError.WrongHostCertificate then HttpError.WrongHostCertificate end
+        net::NetError.InvalidCertificate then HttpError.InvalidCertificate end
+        net::NetError.InvalidAddress then HttpError.InvalidUrl end
+        else then HttpError.Other end
+    end
+end
+
+func ~from_io(failure: io::IoError) -> HttpError
+    return when failure
+        io::IoError.Closed then HttpError.Closed end
+        io::IoError.BrokenPipe then HttpError.ConnectionReset end
+        io::IoError.ConnectionReset then HttpError.ConnectionReset end
+        io::IoError.TimedOut then HttpError.TimedOut end
+        io::IoError.HandshakeFailed then HttpError.HandshakeFailed end
+        else then HttpError.Other end
+    end
+end

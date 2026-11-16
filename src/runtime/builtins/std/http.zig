@@ -1,0 +1,165 @@
+const std = @import("std");
+const v = @import("../../value.zig");
+const VM = @import("../../vm.zig").VM;
+const native = @import("../native.zig");
+const io = @import("io.zig");
+const net = @import("net.zig");
+const http = @import("../../tasks/http.zig");
+const ReadMode = @import("../../tasks/stream.zig").ReadMode;
+const httpErrorFromIo = @import("../../tasks/http_reader.zig").httpErrorFromIo;
+const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
+const Binding = native.Binding;
+const NativeResult = native.NativeResult;
+const ok = native.ok;
+const fail = native.fail;
+const bytesArg = native.bytesArg;
+
+pub const HttpError = http.HttpError;
+pub const error_sets = .{HttpError};
+
+const replacement_character = "\u{FFFD}";
+
+pub const bindings = native.BindingMap.initComptime(.{
+    .{ "tcp_connect_handle", Binding{ .native = &net.tcpConnect } },
+    .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
+    .{ "stream_write", Binding{ .native = &io.streamWrite } },
+    .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
+    .{ "stream_close", Binding{ .native = &io.streamClose } },
+    .{ "stream_read_head", Binding{ .native = &streamReadHead } },
+    .{ "stream_read_whole_body", Binding{ .native = &streamReadWholeBody } },
+    .{ "parse_head", Binding{ .native = &parseHead } },
+    .{ "is_method", Binding{ .native = &isMethod } },
+    .{ "is_header_name", Binding{ .native = &isHeaderName } },
+    .{ "is_header_value", Binding{ .native = &isHeaderValue } },
+    .{ "body_given_twice", Binding{ .native = &bodyGivenTwice } },
+});
+
+fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(HttpError.Closed);
+    if (stream.waiter != null) {
+        return fail(HttpError.Other);
+    }
+    stream.startHttpResponse(args[1].bool) catch return fail(HttpError.Other);
+    return readHttp(vm, args[0].int64, .http_head, args[2].int64);
+}
+
+fn streamReadWholeBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const cap: usize = @intCast(@max(args[1].int64, 0));
+    return readHttp(vm, args[0].int64, .{ .http_whole_body = cap }, args[2].int64);
+}
+
+fn readHttp(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(handle) orelse return fail(HttpError.Closed);
+    if (stream.waiter != null) {
+        return fail(HttpError.Other);
+    }
+    stream.ensureHandshakeStarted();
+    if (stream.readyOutcome(mode)) |outcome| {
+        switch (outcome.result) {
+            .data => |data| {
+                const value = try vm.allocBytesValue(data, .buffer);
+                stream.consume(outcome.consumed);
+                return ok(value);
+            },
+            .end => return ok(v.NULL_VALUE),
+            .failure => |failure| {
+                stream.consume(outcome.consumed);
+                return fail(httpErrorFromIo(failure));
+            },
+            .http_failure => |failure| return fail(failure),
+        }
+    }
+    const current = vm.running_task.?;
+    const timeout: ?u64 = if (timeout_ms < 0) null else @intCast(timeout_ms);
+    stream.parkReader(current, mode, timeout) catch return fail(HttpError.Other);
+    current.park();
+    return native.parked();
+}
+
+fn parseHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const head = try allocator.dupe(u8, bytesArg(args, 0));
+    const parser = http.dusk_http_response_parser_new(@intFromBool(args[1].bool)) orelse return error.OutOfMemory;
+    defer http.dusk_http_parser_free(parser);
+    var used: usize = 0;
+    if (http.dusk_http_feed_head(parser, head.ptr, head.len, &used) != .done) {
+        return fail(HttpError.InvalidResponse);
+    }
+    const header_count = http.dusk_http_header_count(parser);
+    const parts = try allocator.alloc([]const u8, 2 + header_count * 2);
+    parts[0] = try std.fmt.allocPrint(allocator, "{d}", .{http.dusk_http_status_code(parser)});
+    var reason_start: usize = 0;
+    var reason_end: usize = 0;
+    http.dusk_http_reason_span(parser, &reason_start, &reason_end);
+    parts[1] = try validText(allocator, head[reason_start..reason_end]);
+    const offsets = http.dusk_http_header_offsets(parser);
+    for (0..header_count) |i| {
+        const entry = offsets.?[i * http.offsets_per_header ..][0..http.offsets_per_header];
+        parts[2 + i * 2] = head[entry[0]..entry[1]];
+        parts[3 + i * 2] = try validText(allocator, head[entry[2]..entry[3]]);
+    }
+    return ok(try vm.allocStringArray(parts));
+}
+
+fn validText(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {
+    if (std.unicode.utf8ValidateSlice(bytes)) {
+        return bytes;
+    }
+    var text: std.ArrayList(u8) = .empty;
+    var index: usize = 0;
+    while (index < bytes.len) {
+        const length = std.unicode.utf8ByteSequenceLength(bytes[index]) catch 0;
+        const is_valid_sequence = length > 0 and index + length <= bytes.len and std.unicode.utf8ValidateSlice(bytes[index .. index + length]);
+        if (!is_valid_sequence) {
+            try text.appendSlice(allocator, replacement_character);
+            index += 1;
+            continue;
+        }
+        try text.appendSlice(allocator, bytes[index .. index + length]);
+        index += length;
+    }
+    return text.items;
+}
+
+fn isMethod(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const method = bytesArg(args, 0);
+    for (method) |char| {
+        if (!isTokenCharacter(char) or std.ascii.isLower(char)) {
+            return ok(.{ .bool = false });
+        }
+    }
+    return ok(.{ .bool = method.len > 0 });
+}
+
+fn isHeaderName(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const name = bytesArg(args, 0);
+    for (name) |char| {
+        if (!isTokenCharacter(char)) {
+            return ok(.{ .bool = false });
+        }
+    }
+    return ok(.{ .bool = name.len > 0 });
+}
+
+fn isTokenCharacter(char: u8) bool {
+    if (std.ascii.isAlphanumeric(char)) {
+        return true;
+    }
+    return std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", char) != null;
+}
+
+fn isHeaderValue(_: *VM, args: []v.Value) anyerror!NativeResult {
+    for (bytesArg(args, 0)) |char| {
+        const is_control = (char < ' ' and char != '\t') or char == 0x7f;
+        if (is_control) {
+            return ok(.{ .bool = false });
+        }
+    }
+    return ok(.{ .bool = true });
+}
+
+fn bodyGivenTwice(_: *VM, _: []v.Value) anyerror!NativeResult {
+    return RuntimeErrorReporter.httpBodyGivenTwice();
+}

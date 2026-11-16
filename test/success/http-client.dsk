@@ -1,0 +1,295 @@
+import std/array: append, len
+import std/buffer
+import std/http
+import std/io
+import std/net
+import std/string
+import std/task
+
+struct Received
+    lines: []string
+    body: string
+end
+
+func read_request(conn: net::TcpConn) -> !Received
+    let mut lines: []string = []
+    let mut length = 0
+    for true do
+        let line = try conn.read_line() orelse ""
+        if line == "" then
+            break
+        end
+        append(lines, line)
+        if string::starts_with(string::lower(line), "content-length: ") then
+            length = try string::to_int(try string::slice(line, 16, string::len(line)))
+        end
+    end
+    if length == 0 then
+        return Received(lines = lines, body = "")
+    end
+    let data = try conn.read_exact(length) orelse buffer::from_string("")
+    return Received(lines = lines, body = try string::from_bytes(data))
+end
+
+func answer(listener: net::TcpListener, response: string) -> !Received
+    let conn = try listener.accept()
+    let received = try read_request(conn)
+    try conn.write(response)
+    conn.close()
+    return received
+end
+
+func answer_bytes(listener: net::TcpListener, response: buffer) -> !Received
+    let conn = try listener.accept()
+    let received = try read_request(conn)
+    try conn.write_bytes(response)
+    conn.close()
+    return received
+end
+
+func serve_bytes_once(listener: net::TcpListener, response: buffer) -> Task[Received]
+    return spawn(func() -> Received
+        return answer_bytes(listener, response) catch e then
+            return Received(lines = [], body = "")
+        end
+    end)
+end
+
+func serve_once(listener: net::TcpListener, response: string) -> Task[Received]
+    return spawn(func() -> Received
+        return answer(listener, response) catch e then
+            return Received(lines = [], body = "")
+        end
+    end)
+end
+
+func accept_and_wait(listener: net::TcpListener, response: string, wait_ms: int) -> Task[void]
+    return spawn(func() -> void
+        let conn = listener.accept() catch e then
+            return
+        end
+        read_request(conn) catch e then
+            conn.close()
+            return
+        end
+        conn.write(response) catch e then
+        end
+        task::sleep(wait_ms)
+        conn.close()
+    end)
+end
+
+func has_line(received: Received, wanted: string) -> bool
+    for received.lines: line do
+        if line == wanted then
+            return true
+        end
+    end
+    return false
+end
+
+func expect_error(expected: http::HttpError, call: func() -> http::HttpError!http::Response) -> void
+    call() catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func base(listener: net::TcpListener) -> string
+    return "http://127.0.0.1:${listener.port()}"
+end
+
+func check_get(listener: net::TcpListener) -> !void
+    let server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nSet-Cookie: a=1\r\nset-cookie: b=2\r\nContent-Length: 5\r\n\r\nhello")
+    let resp = try http::request("${base(listener)}/items?sort=name#top", query = {"q": "dusk lang", "page": "2"}, headers = {"Accept": "text/plain", "X-Trace": "abc"})
+    let received = await(server)
+    assert(received.lines[0] == "GET /items?sort=name&q=dusk%20lang&page=2 HTTP/1.1")
+    assert(has_line(received, "Accept: text/plain"))
+    assert(has_line(received, "X-Trace: abc"))
+    assert(has_line(received, "Host: 127.0.0.1:${listener.port()}"))
+    assert(has_line(received, "User-Agent: dusk/0.16"))
+    assert(has_line(received, "Connection: close"))
+    assert(!has_line(received, "Content-Length: 0"))
+    assert(resp.status == 200)
+    assert(resp.reason == "OK")
+    assert(resp.is_success())
+    assert(try resp.text() == "hello")
+    assert(buffer::len(resp.body) == 5)
+    assert(resp.headers.get("CONTENT-TYPE") == "text/plain")
+    assert(resp.headers.has("content-length"))
+    assert(!resp.headers.has("x-missing"))
+    assert(resp.headers.get("x-missing") == null)
+    let cookies = resp.headers.get_all("Set-Cookie")
+    assert(len(cookies) == 2)
+    assert(cookies[0] == "a=1")
+    assert(cookies[1] == "b=2")
+    let entries = resp.headers.entries()
+    assert(len(entries) == 4)
+    assert(entries[2].name == "set-cookie")
+    assert(resp.url == "${base(listener)}/items?sort=name&q=dusk%20lang&page=2#top")
+end
+
+func check_request_bodies(listener: net::TcpListener) -> !void
+    let created = "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n"
+    let text_server = serve_once(listener, created)
+    let text_response = try http::request(base(listener), method = "POST", body = "{\"name\":\"ada\"}", headers = {"Content-Type": "application/json", "Content-Length": "999"})
+    let text_request = await(text_server)
+    assert(text_response.status == 201)
+    assert(text_request.lines[0] == "POST / HTTP/1.1")
+    assert(has_line(text_request, "Content-Type: application/json"))
+    assert(has_line(text_request, "Content-Length: 14"))
+    assert(!has_line(text_request, "Content-Length: 999"))
+    assert(text_request.body == "{\"name\":\"ada\"}")
+
+    let bytes_server = serve_once(listener, created)
+    let bytes_response = try http::request(base(listener), method = "PUT", body_bytes = buffer::from_string("raw"))
+    let bytes_request = await(bytes_server)
+    assert(bytes_response.status == 201)
+    assert(has_line(bytes_request, "Content-Length: 3"))
+    assert(bytes_request.body == "raw")
+
+    let empty_server = serve_once(listener, created)
+    let empty_response = try http::request(base(listener), method = "POST")
+    assert(empty_response.status == 201)
+    assert(has_line(await(empty_server), "Content-Length: 0"))
+
+    let custom_server = serve_once(listener, created)
+    let custom_response = try http::request(base(listener), method = "DELETE", headers = {"Host": "api.example", "User-Agent": "tests/1", "Connection": "keep-alive"})
+    let custom_request = await(custom_server)
+    assert(custom_response.status == 201)
+    assert(custom_request.lines[0] == "DELETE / HTTP/1.1")
+    assert(has_line(custom_request, "Host: api.example"))
+    assert(has_line(custom_request, "User-Agent: tests/1"))
+    assert(has_line(custom_request, "Connection: keep-alive"))
+    assert(!has_line(custom_request, "Connection: close"))
+end
+
+func check_response_bodies(listener: net::TcpListener) -> !void
+    let chunked_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n")
+    let chunked = try http::request(base(listener))
+    assert(try chunked.text() == "Wikipedia")
+    await(chunked_server)
+
+    let until_close_server = serve_once(listener, "HTTP/1.1 200 OK\r\n\r\nuntil the end")
+    let until_close = try http::request(base(listener))
+    assert(try until_close.text() == "until the end")
+    await(until_close_server)
+
+    let head_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+    let head = try http::request(base(listener), method = "HEAD")
+    assert(head.status == 200)
+    assert(buffer::len(head.body) == 0)
+    assert(head.headers.get("content-length") == "1000")
+    assert(await(head_server).lines[0] == "HEAD / HTTP/1.1")
+
+    let no_content_server = serve_once(listener, "HTTP/1.1 204 No Content\r\n\r\n")
+    let no_content = try http::request(base(listener), method = "DELETE")
+    assert(no_content.status == 204)
+    assert(buffer::len(no_content.body) == 0)
+    await(no_content_server)
+
+    let continue_server = serve_once(listener, "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\nnope")
+    let missing = try http::request(base(listener))
+    assert(missing.status == 404)
+    assert(missing.reason == "Not Found")
+    assert(!missing.is_success())
+    assert(try missing.text() == "nope")
+    await(continue_server)
+
+    let exact_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nfour")
+    let exact = try http::request(base(listener), max_body = 4)
+    assert(try exact.text() == "four")
+    await(exact_server)
+
+    let mut raw = buffer::from_string("HTTP/1.1 200 Ok#\r\nContent-Length: 2\r\n\r\n##")
+    raw[15] = 233
+    raw[buffer::len(raw) - 2] = 255
+    raw[buffer::len(raw) - 1] = 254
+    let binary_server = serve_bytes_once(listener, raw)
+    let binary = try http::request(base(listener))
+    assert(binary.reason == "Ok\u{FFFD}")
+    assert(buffer::len(binary.body) == 2)
+    assert(binary.body[0] == 255)
+    let mut text_failure: ?http::HttpError = null
+    binary.text() catch e then
+        text_failure = e
+    end
+    assert(text_failure == http::HttpError.InvalidUtf8)
+    await(binary_server)
+end
+
+func check_bad_responses(listener: net::TcpListener) -> void
+    let large = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 4))
+    await(large)
+
+    let large_chunked = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 5))
+    await(large_chunked)
+
+    let huge_head = serve_once(listener, "HTTP/1.1 200 OK\r\nX-Big: ${string::repeat("a", 70000) catch ""}\r\n\r\n")
+    expect_error(http::HttpError.HeadersTooLarge, func() -> return try http::request(base(listener)))
+    await(huge_head)
+
+    let garbage = serve_once(listener, "SMTP ready\r\n\r\n")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(garbage)
+
+    let smuggling = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(smuggling)
+
+    let cut_short = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(cut_short)
+
+    let cut_head = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-")
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(cut_head)
+
+    let silent = serve_once(listener, "")
+    expect_error(http::HttpError.ConnectionReset, func() -> return try http::request(base(listener)))
+    await(silent)
+end
+
+func check_request_checks() -> void
+    let target = "http://127.0.0.1:9/"
+    expect_error(http::HttpError.InvalidUrl, func() -> return try http::request("not a url"))
+    expect_error(http::HttpError.InvalidUrl, func() -> return try http::request("http://host:99999/"))
+    expect_error(http::HttpError.UnsupportedScheme, func() -> return try http::request("ftp://example.com/file"))
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(target, method = "get"))
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(target, method = ""))
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(target, method = "GE T"))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"Bad Name": "x"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"X-Inject": "a\r\nHost: evil"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"X-Null": "a\u{0}b"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"": "x"}))
+    expect_error(http::HttpError.InvalidHeader, func() -> return try http::request(target, headers = {"Transfer-Encoding": "chunked"}))
+end
+
+func check_timeouts_and_refusals(listener: net::TcpListener) -> !void
+    let stalled = accept_and_wait(listener, "", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try http::request(base(listener), timeout_ms = 100))
+    await(stalled)
+
+    let stalled_body = accept_and_wait(listener, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try http::request(base(listener), timeout_ms = 100))
+    await(stalled_body)
+
+    let closed = try net::tcp_listen("127.0.0.1", 0)
+    let closed_port = closed.port()
+    closed.close()
+    expect_error(http::HttpError.ConnectionRefused, func() -> return try http::request("http://127.0.0.1:$closed_port/"))
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    try check_get(listener)
+    try check_request_bodies(listener)
+    try check_response_bodies(listener)
+    check_bad_responses(listener)
+    check_request_checks()
+    try check_timeouts_and_refusals(listener)
+    listener.close()
+end

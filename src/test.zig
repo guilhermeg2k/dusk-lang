@@ -377,6 +377,11 @@ test "url: parse, resolve (RFC 3986 examples), encode, decode and query" {
     try runCase("url.dsk");
 }
 
+test "http: requests over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts)" {
+    try runCase("http-client.dsk");
+    try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
+}
+
 test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {
     try runCase("net-tls.dsk");
     try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
@@ -3717,6 +3722,7 @@ test "builtins: each native error enum matches its error set, names and order" {
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("url"), @import("runtime/builtins/std/url.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {

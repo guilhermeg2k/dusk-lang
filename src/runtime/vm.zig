@@ -151,7 +151,7 @@ pub const VM = struct {
         return .{ .heap_obj = &result.obj };
     }
 
-    fn allocStringArray(self: *Self, strings: []const []const u8) !v.Value {
+    pub fn allocStringArray(self: *Self, strings: []const []const u8) !v.Value {
         const capacity = @max(strings.len, 1);
         var total = v.Array.calc_size(capacity);
         for (strings) |text| {

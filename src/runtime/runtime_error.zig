@@ -22,6 +22,7 @@ pub const RuntimeError = error{
     ClockFailed,
     ClockOutOfRange,
     TlsAlreadyStarted,
+    HttpBodyGivenTwice,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -40,6 +41,11 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn tlsAlreadyStarted() RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.TlsAlreadyStarted, "start_tls on a connection that already uses TLS", .{});
+    }
+
+    pub noinline fn httpBodyGivenTwice() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.HttpBodyGivenTwice, "http request with both body and body_bytes", .{});
     }
 
     pub noinline fn invalidReadSize(max: i64) RuntimeError {
