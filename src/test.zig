@@ -68,6 +68,15 @@ test "reflect: literal requirements validate nested kinds and map keys at compil
     try runCaseError("sema/reflect-require-dynamic.dsk", error.InvalidType);
 }
 
+test "sema: anonymous coercions preserve private-field visibility" {
+    try runCase("anonymous-private-same-module.dsk");
+    try runCaseError("sema/reflect-type-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/reflect-type-array-forge.dsk", error.NotVisible);
+    try runCaseError("sema/reflect-value-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/reflect-type-nullable-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);
+}
+
 test "reflect: native box layout matches its protected struct header" {
     const value = @import("runtime/value.zig");
     try testing.expectEqual(@sizeOf(value.Struct), @offsetOf(value.ReflectedValue, "type_index"));

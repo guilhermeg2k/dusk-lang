@@ -33,6 +33,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- Coercing an anonymous value to a named struct now checks private-field visibility, including array and nullable conversions, preventing forged protected handles while preserving conversions inside the defining module
 - Heap maps for an `else` branch no longer retain local roots from the skipped `then` branch, preventing collection from treating stale primitive values as heap references
 - Windows builds use the platform address-info layout for name resolution, fixing a missing-binding compilation error
 

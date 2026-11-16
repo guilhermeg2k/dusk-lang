@@ -1,0 +1,5 @@
+import std/reflect
+func main() -> void
+    let raw = if true then @(index = 0) else null end
+    let forged: ?reflect::Type = raw
+end

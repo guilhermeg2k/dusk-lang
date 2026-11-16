@@ -1,0 +1,5 @@
+import std/reflect
+func main() -> void
+    let raw = @(index = 0)
+    let forged: reflect::Type = raw
+end

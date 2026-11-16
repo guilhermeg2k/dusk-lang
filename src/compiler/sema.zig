@@ -557,25 +557,56 @@ pub const SemaAnalyzer = struct {
     }
 
     fn canCoerce(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) !bool {
-        if (self.type_table.canCoerce(from, to)) return true;
-        if (try self.canCoerceThroughTypeList(from, to)) return true;
+        if (self.type_table.canCoerce(from, to)) {
+            try self.checkAnonymousCoercionVisible(from, to, loc);
+            return true;
+        }
+        if (try self.canCoerceThroughTypeList(from, to)) {
+            return true;
+        }
 
         const from_is_nullable = self.type_table.getTypePtrById(from).is_nullable;
         const to_is_nullable = self.type_table.getTypePtrById(to).is_nullable;
-        if (from_is_nullable and !to_is_nullable) return false;
+        if (from_is_nullable and !to_is_nullable) {
+            return false;
+        }
 
         const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
         const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
         const from_kind = self.type_table.getTypePtrById(from_base).kind;
         const to_kind = self.type_table.getTypePtrById(to_base).kind;
-        if (from_kind == .task and to_kind == .task) {
+        const are_tasks = from_kind == .task and to_kind == .task;
+        if (are_tasks) {
             return self.canCoerceTask(from_kind.task, to_kind.task, loc);
         }
-        if (!self.type_table.isErrorSet(from_base) or !self.type_table.isErrorSet(to_base)) return false;
-        if (self.errorSetOf(from_base).kind != .inferred or self.errorSetOf(to_base).kind == .inferred) return false;
+        const are_error_sets = self.type_table.isErrorSet(from_base) and self.type_table.isErrorSet(to_base);
+        if (!are_error_sets) {
+            return false;
+        }
+        const can_infer_errors = self.errorSetOf(from_base).kind == .inferred and self.errorSetOf(to_base).kind != .inferred;
+        if (!can_infer_errors) {
+            return false;
+        }
 
         try self.addErrorEdge(from_base, to_base, loc);
         return true;
+    }
+
+    fn checkAnonymousCoercionVisible(self: *Self, from: tt.TypeId, to: tt.TypeId, loc: err.Loc) CompileError!void {
+        if (from == to) return;
+        const from_base = self.type_table.typeIdByNullableTypeId.get(from) orelse from;
+        const to_base = self.type_table.typeIdByNullableTypeId.get(to) orelse to;
+        const from_kind = self.type_table.getTypePtrById(from_base).kind;
+        const to_kind = self.type_table.getTypePtrById(to_base).kind;
+        const are_arrays = from_kind == .array and to_kind == .array;
+        if (are_arrays) {
+            return self.checkAnonymousCoercionVisible(from_kind.array, to_kind.array, loc);
+        }
+        if (!self.type_table.isAnonymousStructForNamedStruct(from, to)) return;
+        for (from_kind.@"struct".fields_in_order, to_kind.@"struct".fields_in_order) |source, target| {
+            try self.checkMemberVisible(to_base, target.identifier, target.is_file_only, loc);
+            try self.checkAnonymousCoercionVisible(source.type_id, target.type_id, loc);
+        }
     }
 
     fn canCoerceTask(self: *Self, from: tt.TaskType, to: tt.TaskType, loc: err.Loc) CompileError!bool {
