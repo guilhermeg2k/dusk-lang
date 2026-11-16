@@ -1,6 +1,14 @@
 # Reflection, safe construction and JSON migration
 
-Status: proposed design, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline at `7aa6591`; see [results](../benchmarks/json-baseline.md). Reflection implementation and JSON migration follow as separate tasks. API names below illustrate the design and are not implemented syntax.
+Status: implementation started after approval, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline at `7aa6591`; see [results](../benchmarks/json-baseline.md). Reflection implementation and JSON migration follow as separate tasks. Read-only type inspection is implemented as documented in the language reference. Checked values, construction, capability validation and JSON migration below remain planned; their API names illustrate the design.
+
+## Implementation progress
+
+- Baseline recorded at `7aa6591`; benchmark sources remain unchanged.
+- Read-only `std/reflect` implemented: protected `Type` handles; explicit/inferred concrete targets; identity, names and kinds; tagged descriptions; independent public-field, enum and union snapshots; recursive descriptor references. Resolved generic arguments are retained in IR calls, so zero-argument generic reflection needs no syntax change.
+- Descriptor authority uses private-field wrappers and immutable runtime program tables. Public snapshots cannot modify those tables. Private fields are hidden regardless of the caller's module; structs with hidden fields expose a flag.
+- Unresolved types in reflected anonymous fields are rejected in sema rather than reaching code generation.
+- Checked values, safe builders/default sessions, the independent decoder, capability validation and JSON migration remain upcoming work. No JSON behavior or benchmark workload has changed.
 
 ## Goal
 

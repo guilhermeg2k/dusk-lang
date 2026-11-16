@@ -1,0 +1,150 @@
+import std/array
+
+struct Type
+    ~index: int
+end
+
+enum Kind
+    Int
+    Byte
+    Float
+    Bool
+    String
+    Buffer
+    Nullable
+    Array
+    Map
+    Struct
+    Enum
+    Union
+    Function
+    Task
+    Error
+    Void
+    Null
+end
+
+struct Field
+    name: string
+    type: Type
+    has_default: bool
+end
+
+struct StructInfo
+    fields: []Field
+    has_private_fields: bool
+end
+
+struct MapInfo
+    key: Type
+    value: Type
+end
+
+struct EnumVariant
+    name: string
+    value: int
+end
+
+struct UnionVariant
+    name: string
+    type: Type
+end
+
+union TypeInfo
+    scalar: Kind
+    nullable: Type
+    array: Type
+    map: MapInfo
+    structure: StructInfo
+    enumeration: []EnumVariant
+    tagged_union: []UnionVariant
+    opaque: Kind
+end
+
+extern func type_of[T]() -> Type
+extern func type_of_value[T](value: T) -> Type
+extern func name(type: Type) -> string
+extern func kind(type: Type) -> Kind
+extern func is_same(left: Type, right: Type) -> bool
+extern func ~child_type(type: Type, is_key: bool) -> Type
+extern func ~member_count(type: Type) -> int
+extern func ~member_name(type: Type, index: int) -> string
+extern func ~member_type(type: Type, index: int) -> Type
+extern func ~member_has_default(type: Type, index: int) -> bool
+extern func ~member_value(type: Type, index: int) -> int
+extern func ~has_private_fields(type: Type) -> bool
+
+func describe(type: Type) -> TypeInfo
+    let type_kind = kind(type)
+    when type_kind
+        Kind.Nullable then
+            return TypeInfo(nullable = child_type(type, false))
+        end
+        Kind.Array then
+            return TypeInfo(array = child_type(type, false))
+        end
+        Kind.Map then
+            return TypeInfo(map = MapInfo(child_type(type, true), child_type(type, false)))
+        end
+        Kind.Struct then
+            return TypeInfo(structure = StructInfo(fields(type), has_private_fields(type)))
+        end
+        Kind.Enum then
+            return TypeInfo(enumeration = enum_variants(type))
+        end
+        Kind.Union then
+            return TypeInfo(tagged_union = union_variants(type))
+        end
+        Kind.Buffer, Kind.Function, Kind.Task, Kind.Error, Kind.Void, Kind.Null then
+            return TypeInfo(opaque = type_kind)
+        end
+        else then
+            return TypeInfo(scalar = type_kind)
+        end
+    end
+end
+
+func fields(type: Type) -> []Field
+    let mut result: []Field = []
+    if kind(type) != Kind.Struct then
+        return result
+    end
+    let count = member_count(type)
+    if count == 0 then
+        return result
+    end
+    for 0..count - 1: i do
+        array::append(result, Field(member_name(type, i), member_type(type, i), member_has_default(type, i)))
+    end
+    return result
+end
+
+func enum_variants(type: Type) -> []EnumVariant
+    let mut result: []EnumVariant = []
+    if kind(type) != Kind.Enum then
+        return result
+    end
+    let count = member_count(type)
+    if count == 0 then
+        return result
+    end
+    for 0..count - 1: i do
+        array::append(result, EnumVariant(member_name(type, i), member_value(type, i)))
+    end
+    return result
+end
+
+func union_variants(type: Type) -> []UnionVariant
+    let mut result: []UnionVariant = []
+    if kind(type) != Kind.Union then
+        return result
+    end
+    let count = member_count(type)
+    if count == 0 then
+        return result
+    end
+    for 0..count - 1: i do
+        array::append(result, UnionVariant(member_name(type, i), member_type(type, i)))
+    end
+    return result
+end

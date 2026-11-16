@@ -309,6 +309,7 @@ pub const UnaryOp = struct {
 };
 
 pub const FnCall = struct {
+    type_arguments: []const TypeId = &.{},
     fn_uid: usize,
     identifier: []const u8,
     args: []const *Value,

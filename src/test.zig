@@ -44,6 +44,16 @@ test "gc: scoped native roots survive collection and root-list growth" {
     try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
 }
 
+test "reflect: concrete descriptors, recursive metadata and protected identities" {
+    try runCase("reflect-types.dsk");
+    try runCase("reflect-imports.dsk");
+    try runCaseError("sema/reflect-type-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/reflect-type-field.dsk", error.NotVisible);
+    try runCaseError("sema/reflect-type-inference.dsk", error.CantInferSlot);
+    try runCaseError("sema/reflect-unknown-field-type.dsk", error.InvalidType);
+    try runCaseError("sema/reflect-unknown-array-type.dsk", error.CantInferArrayLiteralType);
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");

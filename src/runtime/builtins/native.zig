@@ -8,7 +8,12 @@ pub const Binding = union(enum) {
     native: NativeFnPtr,
     intrinsic: Intrinsic,
     json: JsonOperation,
+    reflection: ReflectionBinding,
 };
+
+pub const ReflectionBinding = struct { operation: ReflectionOperation, func: NativeFnPtr };
+
+pub const ReflectionOperation = enum { type_of };
 
 pub const JsonOperation = enum { encode, decode };
 

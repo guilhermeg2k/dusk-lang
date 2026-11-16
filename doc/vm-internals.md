@@ -781,6 +781,12 @@ The native engine in `json_codec.zig` consumes scanner tokens directly into Dusk
 
 Diagnostics are caller-owned Dusk structs. Paths and optional position boxes are written through refreshed roots; no scanner pointers or global last-error state escape. Path tracking is enabled only when a diagnostic is supplied; line and column calculation occurs on failure. Successful calls clear supplied diagnostics.
 
+### Type reflection
+
+`Program.reflection_types` separately owns format-neutral descriptors emitted on demand by `getReflectionType`. Each concrete type gets a canonical index reserved before walking child references. Descriptors contain a kind, exact type name, storage kind, public field slots/default-presence flags, collection child references and ordered enum/union variants. Private fields are omitted and flagged on the containing descriptor. The runtime has no compiler imports.
+
+`Binding.reflection` carries a native function and reflection operation. Sema retains resolved generic arguments on IR calls, so zero-argument `reflect::type_of[T]()` has its concrete target available to codegen. Calls pass the type index and result-wrapper descriptor as hidden scalar arguments through an ordinary `CALL`. Type handles are ordinary one-field structs with a file-only index; native child queries reuse their wrapper layout. Public description functions build independent metadata snapshots in Dusk, leaving program-owned descriptors immutable. Reflection does not change parser syntax or interpreter dispatch.
+
 ## 13. Known issues and observations
 
 ### 13.1 Fixed: the GC copied call arguments twice

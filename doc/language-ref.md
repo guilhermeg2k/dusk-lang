@@ -2379,6 +2379,43 @@ Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`
 | `InvalidCertificate` | `certificate` got text that isn't a valid PEM certificate or key, or a key that doesn't match; or `ca` isn't valid PEM |
 | `Other` | Any other failure |
 
+### std/reflect
+
+`import std/reflect` provides read-only descriptions of concrete types. `reflect::type_of[T]()` needs no value; `reflect::type_of_value(value)` infers its type and evaluates the argument normally. Both work inside generic functions. A `reflect::Type` is a protected handle: compare identities with `reflect::is_same(a, b)`, inspect its name with `reflect::name(type)` and its kind with `reflect::kind(type)`. Matching names or runtime layouts do not establish type identity.
+
+```dusk
+import std/reflect
+
+struct User
+    name: string
+    age: int = 30
+end
+
+let type = reflect::type_of[User]()
+let fields = reflect::fields(type)
+assert(fields[0].name == "name")
+assert(reflect::is_same(fields[0].type, reflect::type_of[string]()))
+assert(fields[1].has_default)
+```
+
+`reflect::describe(type)` returns a `TypeInfo` union:
+
+| Variant | Payload |
+| --- | --- |
+| `scalar` | A primitive `Kind`: `Int`, `Byte`, `Float`, `Bool` or `String` |
+| `nullable`, `array` | The child `Type` |
+| `map` | `MapInfo` with `key` and `value` types |
+| `structure` | `StructInfo` with `fields` and `has_private_fields` |
+| `enumeration` | Ordered `EnumVariant` entries, each with `name` and `value` |
+| `tagged_union` | Ordered `UnionVariant` entries, each with `name` and payload `type` |
+| `opaque` | A `Kind` identifying `Buffer`, `Function`, `Task`, `Error`, `Void` or `Null` |
+
+`reflect::fields(type)`, `reflect::enum_variants(type)` and `reflect::union_variants(type)` return their corresponding member lists, or an empty list for another kind. Field entries contain `name`, `type` and `has_default`. Only public instance fields participate; private fields, static fields and methods are excluded. `has_private_fields` indicates that the struct also contains private instance fields. Inspecting a type does not execute its field defaults.
+
+Lists and descriptions are independent snapshots; changing them does not modify the type. Child type handles preserve identity, including references back to recursive types. Enum aliases retain their declared names and values in declaration order. Reflection does not grant access to private members or turn runtime type handles into generic type arguments.
+
+This initial surface describes types. Reflected values and construction are planned separately; descriptions alone do not construct a value of a runtime-discovered type.
+
 ### std/json
 
 `json::encode(value, options = @()) -> JsonError!string` writes compact JSON. `json::decode[T](text, mut diagnostic = null, options = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type:

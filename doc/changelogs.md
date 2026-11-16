@@ -27,6 +27,8 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 - `std/json` adds typed `encode` and `decode`, with explicit or inferred decode types, recursive structs and collections, enum-name strings, one-member union objects, declared field defaults, strict numeric conversion, duplicate-key rejection, configurable depth/unknown-field checks and caller-owned path/location diagnostics
 
+- `std/reflect` adds protected concrete type handles, type identity and tagged descriptions of public fields, collection children, enum names/values and union variants, including generic and recursive types
+
 ### Fixes
 
 - Windows builds use the platform address-info layout for name resolution, fixing a missing-binding compilation error

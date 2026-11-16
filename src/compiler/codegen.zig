@@ -5,6 +5,7 @@ const tt = @import("type_table.zig");
 const bc = @import("../runtime/bytecode.zig");
 const native = @import("../runtime/builtins/native.zig");
 const err = @import("compile_error.zig");
+const reflection_format = @import("../runtime/reflection_format.zig");
 const json_format = @import("../runtime/json_format.zig");
 
 pub const BytecodeGen = struct {
@@ -48,6 +49,9 @@ pub const BytecodeGen = struct {
     current_function_loc: ?err.Loc = null,
     err_reporter: err.CompileErrorReporter,
     extern_count: usize = 0,
+    reflection_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.ReflectionOperation) = .empty,
+    reflection_types: std.ArrayList(reflection_format.Descriptor) = .empty,
+    reflection_type_by_id: std.AutoHashMapUnmanaged(tt.TypeId, u32) = .empty,
     json_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.JsonOperation) = .empty,
     json_codecs: std.ArrayList(json_format.Codec) = .empty,
     json_codec_by_type: std.AutoHashMapUnmanaged(tt.TypeId, u32) = .empty,
@@ -160,6 +164,7 @@ pub const BytecodeGen = struct {
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
             .error_names = try self.copyErrorNames(program.error_names),
+            .reflection_types = try self.reflection_types.toOwnedSlice(self.allocator),
             .json_codecs = try self.json_codecs.toOwnedSlice(self.allocator),
         };
     }
@@ -168,6 +173,10 @@ pub const BytecodeGen = struct {
         const num_args: u8 = @intCast(ext.params.len);
         const kind: bc.FunctionKind = switch (ext.binding) {
             .native => |func| .{ .native = .{ .func = func, .num_args = num_args, .error_base = ext.error_base } },
+            .reflection => |binding| blk: {
+                try self.reflection_operation_by_uid.put(self.allocator, ext.uid, binding.operation);
+                break :blk .{ .native = .{ .func = binding.func, .num_args = num_args + 2, .error_base = ext.error_base } };
+            },
             .json => |operation| blk: {
                 try self.json_operation_by_uid.put(self.allocator, ext.uid, operation);
                 break :blk .{ .native = .{
@@ -1177,11 +1186,21 @@ pub const BytecodeGen = struct {
             const payload = self.type_table.getTypePtrById(value.type_id).kind.error_union.payload;
             const json_type = if (operation == .encode) fc.args[0].type_id else self.type_table.getTypePtrById(payload).kind.@"struct".fields_in_order[0].type_id;
             const codec = try self.getJsonCodec(json_type);
-            try self.genJsonIndex(codec);
+            try self.genMetadataIndex(codec);
             hidden_count = 1;
             if (operation == .decode) {
-                try self.genJsonIndex(try self.jsonStructDescriptor(payload));
+                try self.genMetadataIndex(try self.getStructDescriptor(payload));
                 hidden_count += 1;
+            }
+        }
+
+        if (self.reflection_operation_by_uid.get(fc.fn_uid)) |operation| {
+            switch (operation) {
+                .type_of => {
+                    try self.genMetadataIndex(try self.getReflectionType(fc.type_arguments[0]));
+                    try self.genMetadataIndex(try self.getStructDescriptor(value.type_id));
+                    hidden_count = 2;
+                },
             }
         }
 
@@ -1199,10 +1218,97 @@ pub const BytecodeGen = struct {
         self.register_types[target_reg] = value.type_id;
     }
 
-    fn genJsonIndex(self: *Self, index: u32) !void {
+    fn genMetadataIndex(self: *Self, index: u32) !void {
         const reg = try self.consumeRegister();
         try self.genLoadConst(.{ .value = .{ .int64 = index }, .type = .int64 }, reg);
         self.register_types[reg] = self.type_table.getPrimitive(.int);
+    }
+
+    fn getReflectionType(self: *Self, type_id: tt.TypeId) anyerror!u32 {
+        if (self.reflection_type_by_id.get(type_id)) |index| {
+            return index;
+        }
+        const index: u32 = @intCast(self.reflection_types.items.len);
+        try self.reflection_type_by_id.put(self.allocator, type_id, index);
+        try self.reflection_types.append(self.allocator, undefined);
+        const source = self.type_table.getTypePtrById(type_id).*;
+        var result = reflection_format.Descriptor{
+            .name = try self.allocator.dupe(u8, try self.type_table.syntaxName(type_id, self.allocator)),
+            .kind = undefined,
+            .storage = valueTypeFromTypeId(self.type_table, type_id),
+        };
+        if (source.is_nullable) {
+            result.kind = .Nullable;
+            result.child = try self.getReflectionType(self.type_table.typeIdByNullableTypeId.get(type_id).?);
+            self.reflection_types.items[index] = result;
+            return index;
+        }
+        result.kind = switch (source.kind) {
+            .int => .Int,
+            .byte => .Byte,
+            .float => .Float,
+            .boolean => .Bool,
+            .string => .String,
+            .buffer => .Buffer,
+            .void => .Void,
+            .null => .Null,
+            .function, .func_type => .Function,
+            .task => .Task,
+            .array => |child| blk: {
+                result.child = try self.getReflectionType(child);
+                break :blk .Array;
+            },
+            .map => |map| blk: {
+                result.key = try self.getReflectionType(map.key);
+                result.child = try self.getReflectionType(map.value);
+                break :blk .Map;
+            },
+            .@"struct" => |structure| blk: {
+                var fields: std.ArrayList(reflection_format.Field) = .empty;
+                for (structure.fields_in_order, 0..) |field, slot| {
+                    if (field.is_file_only) {
+                        result.has_private_fields = true;
+                        continue;
+                    }
+                    try fields.append(self.allocator, .{
+                        .name = try self.allocator.dupe(u8, field.identifier),
+                        .type_index = try self.getReflectionType(field.type_id),
+                        .slot = @intCast(slot),
+                        .has_default = field.default_value != null,
+                    });
+                }
+                result.fields = try fields.toOwnedSlice(self.allocator);
+                result.object_descriptor = try self.getStructDescriptor(type_id);
+                break :blk .Struct;
+            },
+            .@"enum" => |enumeration| blk: {
+                if (enumeration.error_set != null) {
+                    break :blk .Error;
+                }
+                const variants = try self.allocator.alloc(reflection_format.Variant, enumeration.variants_in_order.len);
+                for (enumeration.variants_in_order, variants) |name, *variant| {
+                    variant.* = .{ .name = try self.allocator.dupe(u8, name), .value = enumeration.variants.get(name).? };
+                }
+                result.variants = variants;
+                break :blk .Enum;
+            },
+            .@"union" => |tagged| blk: {
+                const variants = try self.allocator.alloc(reflection_format.Variant, tagged.variants_in_order.len);
+                for (tagged.variants_in_order, variants) |name, *variant| {
+                    variant.* = .{
+                        .name = try self.allocator.dupe(u8, name),
+                        .value = try self.unionTagIndex(type_id, name),
+                        .type_index = try self.getReflectionType(tagged.variants.get(name).?),
+                    };
+                }
+                result.variants = variants;
+                result.object_descriptor = try self.getOrCreateUnionDescriptor(type_id);
+                break :blk .Union;
+            },
+            else => return error.UnsupportedReflectedType,
+        };
+        self.reflection_types.items[index] = result;
+        return index;
     }
 
     fn getJsonCodec(self: *Self, type_id: tt.TypeId) anyerror!u32 {
@@ -1241,7 +1347,7 @@ pub const BytecodeGen = struct {
                         output.default_function = try self.addJsonDefault(type_id, field.identifier, field.type_id, value);
                     }
                 }
-                break :blk .{ .structure = .{ .descriptor = try self.jsonStructDescriptor(type_id), .fields = fields } };
+                break :blk .{ .structure = .{ .descriptor = try self.getStructDescriptor(type_id), .fields = fields } };
             },
             .@"enum" => |enumeration| blk: {
                 const variants = try self.allocator.alloc(json_format.EnumVariant, enumeration.variants_in_order.len);
@@ -1268,7 +1374,7 @@ pub const BytecodeGen = struct {
         return index;
     }
 
-    fn jsonStructDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
+    fn getStructDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
         const structure = self.type_table.getTypePtrById(type_id).kind.@"struct";
         const keys = try self.allocator.alloc([]const u8, structure.fields_in_order.len);
         for (structure.fields_in_order, keys) |field, *key| {
