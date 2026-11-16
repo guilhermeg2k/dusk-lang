@@ -1,0 +1,19 @@
+import std/string
+
+func choose(should_make_array: bool) -> !int
+    if true then
+        let previous = 5
+    end
+    if should_make_array then
+        let items = [1, 2, 3]
+        return items[0]
+    else
+        let text = try string::repeat("x", 2000000)
+        return string::len(text)
+    end
+end
+
+func main() -> !void
+    assert((try choose(false)) == 2000000)
+    assert((try choose(true)) == 1)
+end

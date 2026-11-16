@@ -31,6 +31,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- Heap maps for an `else` branch no longer retain local roots from the skipped `then` branch, preventing collection from treating stale primitive values as heap references
 - Windows builds use the platform address-info layout for name resolution, fixing a missing-binding compilation error
 
 - `import std/math` now loads the math module instead of failing with `UnknownStdModule`
