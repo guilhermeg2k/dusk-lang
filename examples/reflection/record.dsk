@@ -1,0 +1,202 @@
+import std/reflect
+import std/string
+
+error DecodeError
+    InvalidInput
+    UnknownField
+    UnsupportedType
+end
+
+struct ~Parser
+    source: string
+    position: int
+    session: reflect::Session
+end
+
+func decode[T](text: string) -> !T
+    let mut session = reflect::begin_session()
+    let mut parser = Parser(text, 0, session)
+    let result = try parse_value(parser, reflect::type_of[T]())
+    try skip_space(parser)
+    if parser.position != string::len(text) then
+        return DecodeError.InvalidInput
+    end
+    try reflect::complete_session(session)
+    return try reflect::cast[T](result)
+end
+
+func ~parse_value(mut parser: Parser, type: reflect::Type) -> !reflect::Value
+    try skip_space(parser)
+    let type_kind = reflect::kind(type)
+    when type_kind
+        reflect::Kind.Struct then
+            return try parse_record(parser, type)
+        end
+        reflect::Kind.Array then
+            return try parse_array(parser, type)
+        end
+        reflect::Kind.Nullable then
+            return try parse_nullable(parser, type)
+        end
+        else then
+        end
+    end
+    let atom = try read_atom(parser)
+    when type_kind
+        reflect::Kind.Int then
+            return reflect::value(try string::to_int(atom))
+        end
+        reflect::Kind.Byte then
+            return reflect::value(try to_byte(try string::to_int(atom)))
+        end
+        reflect::Kind.Float then
+            return reflect::value(try string::to_float(atom))
+        end
+        reflect::Kind.Bool then
+            if atom == "true" then
+                return reflect::value(true)
+            end
+            if atom == "false" then
+                return reflect::value(false)
+            end
+            return DecodeError.InvalidInput
+        end
+        reflect::Kind.String then
+            return reflect::value(atom)
+        end
+        reflect::Kind.Enum then
+            let mut builder = try reflect::builder_in(parser.session, type)
+            try reflect::select_enum(builder, atom)
+            return try reflect::defer_finish(builder)
+        end
+        else then
+            return DecodeError.UnsupportedType
+        end
+    end
+end
+
+func ~parse_record(mut parser: Parser, type: reflect::Type) -> !reflect::Value
+    try expect_byte(parser, 123)
+    let mut builder = try reflect::builder_in(parser.session, type)
+    try skip_space(parser)
+    if (try peek(parser)) == 125 then
+        parser.position = parser.position + 1
+        return try reflect::defer_finish(builder)
+    end
+    for true do
+        let name = try read_atom(parser)
+        try expect_byte(parser, 61)
+        let field_type = try find_field_type(type, name)
+        let value = try parse_value(parser, field_type)
+        try reflect::set_value(builder, name, value)
+        try skip_space(parser)
+        if (try peek(parser)) == 125 then
+            parser.position = parser.position + 1
+            return try reflect::defer_finish(builder)
+        end
+        try expect_byte(parser, 59)
+    end
+    return DecodeError.InvalidInput
+end
+
+func ~find_field_type(type: reflect::Type, name: string) -> !reflect::Type
+    for reflect::fields(type): field do
+        if field.name == name then
+            return field.type
+        end
+    end
+    return DecodeError.UnknownField
+end
+
+func ~parse_array(mut parser: Parser, type: reflect::Type) -> !reflect::Value
+    let child = try child_type(type)
+    try expect_byte(parser, 91)
+    let mut builder = try reflect::builder_in(parser.session, type)
+    try skip_space(parser)
+    if (try peek(parser)) == 93 then
+        parser.position = parser.position + 1
+        return try reflect::defer_finish(builder)
+    end
+    for true do
+        try reflect::append_value(builder, try parse_value(parser, child))
+        try skip_space(parser)
+        if (try peek(parser)) == 93 then
+            parser.position = parser.position + 1
+            return try reflect::defer_finish(builder)
+        end
+        try expect_byte(parser, 44)
+    end
+    return DecodeError.InvalidInput
+end
+
+func ~parse_nullable(mut parser: Parser, type: reflect::Type) -> !reflect::Value
+    let child = try child_type(type)
+    let mut builder = try reflect::builder_in(parser.session, type)
+    let position = parser.position
+    let current_byte = try peek(parser)
+    let is_container = current_byte == 123 or current_byte == 91
+    if !is_container then
+        let atom = try read_atom(parser)
+        if atom == "null" then
+            try reflect::set_null(builder)
+            return try reflect::defer_finish(builder)
+        end
+        parser.position = position
+    end
+    try reflect::set_present_value(builder, try parse_value(parser, child))
+    return try reflect::defer_finish(builder)
+end
+
+func ~child_type(type: reflect::Type) -> !reflect::Type
+    let description = reflect::describe(type)
+    if description.array: child then
+        return child
+    end
+    if description.nullable: child then
+        return child
+    end
+    return DecodeError.UnsupportedType
+end
+
+func ~read_atom(mut parser: Parser) -> !string
+    try skip_space(parser)
+    let start = parser.position
+    for !is_separator(try peek(parser)) do
+        parser.position = parser.position + 1
+    end
+    let atom = string::trim(try string::slice(parser.source, start, parser.position))
+    if string::len(atom) == 0 then
+        return DecodeError.InvalidInput
+    end
+    return atom
+end
+
+func ~is_separator(current_byte: byte) -> bool
+    return current_byte == 0 or current_byte == 61 or current_byte == 59 or current_byte == 44 or current_byte == 123 or current_byte == 125 or current_byte == 91 or current_byte == 93
+end
+
+func ~expect_byte(mut parser: Parser, expected: byte) -> !void
+    try skip_space(parser)
+    if (try peek(parser)) != expected then
+        return DecodeError.InvalidInput
+    end
+    parser.position = parser.position + 1
+end
+
+func ~skip_space(mut parser: Parser) -> !void
+    for parser.position < string::len(parser.source) do
+        let current_byte = try peek(parser)
+        let is_space = current_byte == 32 or current_byte == 9 or current_byte == 10 or current_byte == 13
+        if !is_space then
+            return
+        end
+        parser.position = parser.position + 1
+    end
+end
+
+func ~peek(parser: Parser) -> !byte
+    if parser.position >= string::len(parser.source) then
+        return 0
+    end
+    return try string::byte_at(parser.source, parser.position)
+end

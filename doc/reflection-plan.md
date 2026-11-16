@@ -10,7 +10,8 @@ Status: implementation started after approval, 2026-11-15. The first delivery ad
 - Unresolved types in reflected anonymous fields are rejected in sema rather than reaching code generation.
 - Checked reflected values now use snapshot capture and copying typed casts; traversal produces protected shared views. A dedicated traced heap object owns payloads and optional session references. Public-field/value restrictions prevent private or native state from being reinterpreted through reflection; identity-based struct map keys remain unsupported for value snapshots.
 - Builders/session state uses protected traced handles whose identity survives explicit copies. Public setters validate exact types; completion publishes only initialized values. Deferred sessions queue ordinary captured default callbacks, preserve child-before-parent ordering and permit parking. Other tasks cannot read pending values while completion is parked. Defaults and IR collection were generalized from JSON to `field_defaults` and callback functions are deduplicated.
-- The independent decoder, general capability validation, JSON migration and comparison remain upcoming work. Existing JSON semantics and benchmark sources are unchanged.
+- Independent decoder proof: `examples/reflection/record.dsk` implements a nested record notation using public APIs only, with explicit/inferred generic roots, arrays, enums, nullable values, defaults and complete-input/error checks. `examples/reflection-decode.dsk` runs it; a module-aware test checks its result. No compiler/native changes were required for this format.
+- General capability validation, JSON migration and comparison remain upcoming work. Existing JSON semantics and benchmark sources are unchanged.
 
 ## Goal
 

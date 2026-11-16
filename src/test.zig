@@ -44,6 +44,19 @@ test "gc: scoped native roots survive collection and root-list growth" {
     try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
 }
 
+test "reflect: an ordinary module decodes a format through public construction APIs" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    const path = "examples/reflection-decode.dsk";
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, arena.allocator(), .unlimited);
+    var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .custom = &output.writer } }, .io = testing.io };
+    const program = try dusk.compileEntry(source, EntryFile.fromPath(path));
+    try dusk.runProgram(&program);
+    try testing.expectEqualStrings("Ana, Porto, 3 scores, age 30\n", output.written());
+}
+
 test "reflect: native box layout matches its protected struct header" {
     const value = @import("runtime/value.zig");
     try testing.expectEqual(@sizeOf(value.Struct), @offsetOf(value.ReflectedValue, "type_index"));

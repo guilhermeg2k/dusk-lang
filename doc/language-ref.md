@@ -2483,6 +2483,8 @@ After the whole document validates and every builder has been deferred, call `tr
 
 Abandoning a session executes no defaults. A decoder should call `complete_session` only after validating the complete input. No incomplete typed object is exposed to user code.
 
+A complete decoder built from these public APIs is in [the reflection example](../examples/reflection-decode.dsk), with its [ordinary module](../examples/reflection/record.dsk).
+
 Failures are payload-free `ReflectError` variants: `TypeMismatch`, `UnknownField`, `OutOfRange`, `MissingField`, `DuplicateAssignment`, `InvalidBuilderState`, `UnknownVariant` and `UnsupportedType`.
 
 

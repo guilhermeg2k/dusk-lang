@@ -1,0 +1,77 @@
+import @/reflection/record
+import std/reflect
+import std/array
+import std/io
+import std/task
+
+func default_age() -> int
+    task::sleep(0)
+    return 30
+end
+
+struct Profile
+    city: string
+end
+
+enum Role
+    Reader
+    Writer
+end
+
+struct User
+    name: string
+    profile: Profile
+    scores: []int
+    role: Role
+    email: ?string
+    age: int = default_age()
+end
+
+struct Box[T]
+    value: T
+end
+
+func main() -> !void
+    let text = "{name=Ana;profile={city=Porto};scores=[3,5,8];role=Writer;email=null}"
+    let user: User = try record::decode(text)
+    assert(user.name == "Ana")
+    assert(user.profile.city == "Porto")
+    assert(user.scores[2] == 8)
+    assert(user.role == Role.Writer)
+    assert(user.email == null)
+    assert(user.age == 30)
+    let boxed = try record::decode[Box[Profile]]("{value={city=Recife}}")
+    assert(boxed.value.city == "Recife")
+    let users = try record::decode[[]User]("[$text,$text]")
+    assert(array::len(users) == 2)
+    assert(users[1].age == 30)
+    assert((try record::decode[int]("42")) == 42)
+    assert((try record::decode[byte]("255")) == 255)
+    assert((try record::decode[float]("1.5")) == 1.5)
+    assert((try record::decode[bool]("true")))
+    assert((try record::decode[?int]("7")) == 7)
+    assert((try record::decode[?int]("null")) == null)
+    let mut has_failed = false
+    record::decode[Profile]("{city=Porto} trailing") catch err then
+        has_failed = true
+    end
+    assert(has_failed)
+    has_failed = false
+    record::decode[Profile]("{city=Porto;city=Recife}") catch err then
+        assert(err == reflect::ReflectError.DuplicateAssignment)
+        has_failed = true
+    end
+    assert(has_failed)
+    has_failed = false
+    record::decode[Profile]("{}") catch err then
+        assert(err == reflect::ReflectError.MissingField)
+        has_failed = true
+    end
+    assert(has_failed)
+    has_failed = false
+    record::decode[Profile]("{unknown=Porto}") catch err then
+        has_failed = true
+    end
+    assert(has_failed)
+    io::println("${user.name}, ${user.profile.city}, ${array::len(user.scores)} scores, age ${user.age}")
+end
