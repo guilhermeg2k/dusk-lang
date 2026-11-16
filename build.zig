@@ -6,6 +6,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const libuv = b.dependency("libuv", .{ .target = target, .optimize = optimize }).artifact("uv");
     const mbedtls = b.dependency("mbedtls", .{ .target = target, .optimize = optimize }).artifact("mbedtls");
+    const llhttp = b.dependency("llhttp", .{ .target = target, .optimize = optimize }).artifact("llhttp");
+    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp };
 
     const exe = b.addExecutable(.{
         .name = "dusk",
@@ -16,7 +18,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    linkRuntimeLibraries(b, exe.root_module, libuv, mbedtls);
+    linkRuntimeLibraries(b, exe.root_module, libraries);
 
     exe.root_module.addAnonymousImport("build_zon", .{
         .root_source_file = b.path("build.zig.zon"),
@@ -40,7 +42,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
-    linkRuntimeLibraries(b, tests.root_module, libuv, mbedtls);
+    linkRuntimeLibraries(b, tests.root_module, libraries);
 
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run tests");
@@ -52,8 +54,17 @@ pub fn build(b: *std.Build) void {
     clean_step.dependOn(&b.addSystemCommand(&.{ "rm", "-rf", "zig-out" }).step);
 }
 
-fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libuv: *std.Build.Step.Compile, mbedtls: *std.Build.Step.Compile) void {
-    module.linkLibrary(libuv);
-    module.linkLibrary(mbedtls);
-    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/tls_glue.c"), .flags = &.{ "-std=c99", "-fno-strict-aliasing" } });
+const RuntimeLibraries = struct {
+    libuv: *std.Build.Step.Compile,
+    mbedtls: *std.Build.Step.Compile,
+    llhttp: *std.Build.Step.Compile,
+};
+
+fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: RuntimeLibraries) void {
+    module.linkLibrary(libraries.libuv);
+    module.linkLibrary(libraries.mbedtls);
+    module.linkLibrary(libraries.llhttp);
+    const flags = &[_][]const u8{ "-std=c99", "-fno-strict-aliasing" };
+    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/tls_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/http_glue.c"), .flags = flags });
 }

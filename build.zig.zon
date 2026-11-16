@@ -12,6 +12,10 @@
             .url = "https://github.com/duskilang/mbedtls/archive/refs/tags/v4.1.1-dusk.tar.gz",
             .hash = "mbedtls-4.1.1-RluRKQiIbQDfocMXv4cMObkWlweVIMs3s98Ko-iC0JwE",
         },
+        .llhttp = .{
+            .url = "https://github.com/duskilang/llhttp/archive/refs/tags/v9.4.3-dusk.tar.gz",
+            .hash = "llhttp-9.4.3-PXnmywK8BQA9CMSCWW8dRGE6ThGTbo7k6wIqGIMRR4ON",
+        },
     },
     .paths = .{
         "build.zig",

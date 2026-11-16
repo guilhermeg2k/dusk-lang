@@ -3868,3 +3868,214 @@ test "tls: a certificate whose key doesn't match, or that isn't PEM, is invalid"
     try testing.expect(tls.dusk_tls_certificate_new(garbage, garbage.len, wrong_key.ptr, wrong_key.len, &status) == null);
     try testing.expectEqual(tls.Status.invalid, status);
 }
+
+const http = @import("runtime/tasks/http.zig");
+
+const ParsedResponse = struct {
+    status: c_int,
+    reason: []const u8,
+    headers: [][2][]const u8,
+    body: []const u8,
+    head_length: usize,
+    message_length: usize,
+    is_complete: bool,
+    can_keep_alive: bool,
+};
+
+const ResponseFeed = struct {
+    pieces: []const []const u8,
+    is_head_request: bool = false,
+    has_connection_ended: bool = false,
+};
+
+fn feedResponse(allocator: std.mem.Allocator, feed: ResponseFeed) !ParsedResponse {
+    const parser = http.dusk_http_response_parser_new(@intFromBool(feed.is_head_request)) orelse return error.OutOfMemory;
+    defer http.dusk_http_parser_free(parser);
+    var received: std.ArrayList(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
+    var fed: usize = 0;
+    var head_length: ?usize = null;
+    for (feed.pieces) |piece| {
+        try received.appendSlice(allocator, piece);
+        if (head_length == null) {
+            var used: usize = 0;
+            const status = http.dusk_http_feed_head(parser, received.items[fed..].ptr, received.items.len - fed, &used);
+            fed += used;
+            if (status == .want_more) continue;
+            if (status != .done) {
+                return error.InvalidResponse;
+            }
+            head_length = fed;
+        }
+        try feedBody(allocator, parser, received.items, &fed, &body);
+    }
+    if (head_length == null) {
+        return error.IncompleteHead;
+    }
+    try feedBody(allocator, parser, received.items, &fed, &body);
+    if (feed.has_connection_ended) {
+        if (http.dusk_http_finish_body(parser) != .done) {
+            return error.InvalidResponse;
+        }
+    }
+    return .{
+        .status = http.dusk_http_status_code(parser),
+        .reason = reasonOf(parser, received.items),
+        .headers = try headersOf(allocator, parser, received.items),
+        .body = body.items,
+        .head_length = head_length.?,
+        .message_length = fed,
+        .is_complete = http.dusk_http_is_message_complete(parser) != 0,
+        .can_keep_alive = http.dusk_http_can_keep_alive(parser) != 0,
+    };
+}
+
+fn feedBody(allocator: std.mem.Allocator, parser: *http.Parser, received: []const u8, fed: *usize, body: *std.ArrayList(u8)) !void {
+    const input = received[fed.*..];
+    const out = try allocator.alloc(u8, input.len);
+    var used: usize = 0;
+    var produced: usize = 0;
+    const status = http.dusk_http_feed_body(parser, input.ptr, input.len, out.ptr, &used, &produced);
+    if (status == .invalid or status == .out_of_memory) {
+        return error.InvalidResponse;
+    }
+    fed.* += used;
+    try body.appendSlice(allocator, out[0..produced]);
+}
+
+fn reasonOf(parser: *const http.Parser, received: []const u8) []const u8 {
+    var start: usize = 0;
+    var end: usize = 0;
+    http.dusk_http_reason_span(parser, &start, &end);
+    return received[start..end];
+}
+
+fn headersOf(allocator: std.mem.Allocator, parser: *const http.Parser, received: []const u8) ![][2][]const u8 {
+    const count = http.dusk_http_header_count(parser);
+    const headers = try allocator.alloc([2][]const u8, count);
+    const offsets = http.dusk_http_header_offsets(parser) orelse return headers;
+    for (headers, 0..) |*header, i| {
+        const entry = offsets[i * http.offsets_per_header ..][0..http.offsets_per_header];
+        header.* = .{ received[entry[0]..entry[1]], received[entry[2]..entry[3]] };
+    }
+    return headers;
+}
+
+fn splitIntoBytes(allocator: std.mem.Allocator, text: []const u8) ![]const []const u8 {
+    const pieces = try allocator.alloc([]const u8, text.len);
+    for (pieces, 0..) |*piece, i| {
+        piece.* = text[i .. i + 1];
+    }
+    return pieces;
+}
+
+fn expectHeaders(expected: []const [2][]const u8, actual: []const [2][]const u8) !void {
+    try testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |want, got| {
+        try testing.expectEqualStrings(want[0], got[0]);
+        try testing.expectEqualStrings(want[1], got[1]);
+    }
+}
+
+test "http parser: a Content-Length response stops at its end and keeps the connection" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const message = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello";
+    const response = try feedResponse(allocator, .{ .pieces = &.{message ++ "HTTP/1.1 204 No Content\r\n\r\n"} });
+    try testing.expectEqual(@as(c_int, 200), response.status);
+    try testing.expectEqualStrings("OK", response.reason);
+    try expectHeaders(&.{ .{ "Content-Type", "text/plain" }, .{ "Content-Length", "5" } }, response.headers);
+    try testing.expectEqualStrings("hello", response.body);
+    try testing.expectEqual(message.len - 5, response.head_length);
+    try testing.expectEqual(message.len, response.message_length);
+    try testing.expect(response.is_complete);
+    try testing.expect(response.can_keep_alive);
+}
+
+test "http parser: a chunked response with extensions and trailers, fed one byte at a time" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const message = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4;name=value\r\nWiki\r\n5\r\npedia\r\n0\r\nExpires: never\r\n\r\n";
+    const response = try feedResponse(allocator, .{ .pieces = try splitIntoBytes(allocator, message) });
+    try testing.expectEqualStrings("Wikipedia", response.body);
+    try testing.expectEqual(message.len, response.message_length);
+    try testing.expect(response.is_complete);
+    try testing.expect(response.can_keep_alive);
+}
+
+test "http parser: a body that runs until the connection closes, and one cut short" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const until_close = try feedResponse(allocator, .{ .pieces = &.{ "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nfirst ", "second" }, .has_connection_ended = true });
+    try testing.expectEqualStrings("first second", until_close.body);
+    try testing.expect(until_close.is_complete);
+    try testing.expect(!until_close.can_keep_alive);
+
+    const open = try feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\npartial"} });
+    try testing.expect(!open.is_complete);
+
+    const cut_short = feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"}, .has_connection_ended = true });
+    try testing.expectError(error.InvalidResponse, cut_short);
+    const cut_chunk = feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nab"}, .has_connection_ended = true });
+    try testing.expectError(error.InvalidResponse, cut_chunk);
+}
+
+test "http parser: HEAD, 204 and 304 responses have no body, 1xx responses are skipped" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const head = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
+    const head_response = try feedResponse(allocator, .{ .pieces = &.{head}, .is_head_request = true });
+    try testing.expect(head_response.is_complete);
+    try testing.expectEqual(head.len, head_response.message_length);
+    try testing.expectEqualStrings("", head_response.body);
+
+    const no_content = try feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 204 No Content\r\n\r\n"} });
+    try testing.expect(no_content.is_complete);
+    const not_modified = try feedResponse(allocator, .{ .pieces = &.{"HTTP/1.1 304 Not Modified\r\nContent-Length: 50\r\n\r\n"} });
+    try testing.expect(not_modified.is_complete);
+    try testing.expect(not_modified.can_keep_alive);
+
+    const pieces = &.{ "HTTP/1.1 100 Continue\r\nX-First: yes\r\n\r\n", "HTTP/1.1 201 Created\r\nLocation: /items/7\r\nContent-Length: 2\r\n\r\nok" };
+    const created = try feedResponse(allocator, .{ .pieces = pieces });
+    try testing.expectEqual(@as(c_int, 201), created.status);
+    try testing.expectEqualStrings("Created", created.reason);
+    try expectHeaders(&.{ .{ "Location", "/items/7" }, .{ "Content-Length", "2" } }, created.headers);
+    try testing.expectEqualStrings("ok", created.body);
+}
+
+test "http parser: repeated headers, empty values, an empty reason and a head split across feeds" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const message = "HTTP/1.1 404 \r\nSet-Cookie: a=1\r\nX-Empty:\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+    const response = try feedResponse(allocator, .{ .pieces = &.{ message[0..7], message[7..20], message[20..41], message[41..] } });
+    try testing.expectEqual(@as(c_int, 404), response.status);
+    try testing.expectEqualStrings("", response.reason);
+    try expectHeaders(&.{ .{ "Set-Cookie", "a=1" }, .{ "X-Empty", "" }, .{ "Set-Cookie", "b=2" }, .{ "Content-Length", "0" } }, response.headers);
+    try testing.expect(response.is_complete);
+}
+
+test "http parser: smuggling shapes and malformed heads are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const rejected = [_][]const u8{
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        "HTTP/1.1 200 OK\r\nContent-Length : 5\r\n\r\nhello",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n",
+        "HTTP/1.1 200 OK\nContent-Length: 5\n\nhello",
+        "HTTP/1.1 2000 OK\r\n\r\n",
+        "HTTX/1.1 200 OK\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nBad Header: x\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nX-Value: a\x00b\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding:\r\n\r\n",
+    };
+    for (rejected) |message| {
+        try testing.expectError(error.InvalidResponse, feedResponse(allocator, .{ .pieces = &.{message} }));
+    }
+}
