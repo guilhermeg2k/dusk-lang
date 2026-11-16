@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.16 (in development: std/io output and stdin streams, fs jobs on libuv's thread pool, TCP, TLS and the HTTP client). The language itself is described in [language-ref.md](language-ref.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.16 (in development: std/io output and stdin streams, fs jobs on libuv's thread pool, TCP, TLS and HTTP). The language itself is described in [language-ref.md](language-ref.md).
 
 The source files involved:
 
@@ -33,6 +33,7 @@ The source files involved:
 | `src/runtime/tasks/http.zig` | The `dusk_http_*` functions and their `Status` codes, declared by hand, and the Zig mirror of `http::HttpError` |
 | `src/runtime/tasks/http_reader.zig` | `HttpReader` (a stream's current response: its parser and decoded body) (section 11.9) |
 | `src/runtime/tasks/connection_pool.zig` | `ConnectionPool`: idle HTTP connections by server, for reuse (section 11.9) |
+| `src/runtime/tasks/http_server.zig` | `ServerState`: an HTTP server's closing flag and the connections waiting for their next request (section 11.9) |
 
 Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.
 
@@ -767,7 +768,7 @@ A `Stream` lives in C memory: the bytes read so far (a byte array and a read off
 
 **The trust store.** The first verifying `start_tls` without `ca` parks in `TrustStore.waiters` and starts a `LoadJob` on libuv's thread pool. The job makes its own `std.Io.Threaded` and fills a Zig `std.crypto.Certificate.Bundle` from `SSL_CERT_FILE` / `SSL_CERT_DIR` when set, else from the system (`Bundle.rescan`: the distribution's bundle paths on Linux, the system keychains on macOS, the ROOT store on Windows); it touches only its own memory and calls no mbedTLS. Back on the loop thread, `finishLoading` adds each DER certificate to one shared client config and continues every waiter with `startClientTls`; the task stays parked and moves to the handshake waiters. At exit, a job still running finishes and is freed without waking anyone.
 
-### 11.9 HTTP client
+### 11.9 HTTP client and server
 
 `std/http` (`std/http.dsk` + `http.zig`) is mostly Dusk code over the same stream natives `TcpConn` uses, redeclared in `http.dsk` with their own error sets: building the URL and the request head, checking methods and headers (`~is_method`, `~is_header_name`, `~is_header_value`), the deadline (`time::monotonic_ns` plus a `remaining_ms` per step), redirects (a recursive `~follow`, at most `max_redirects` deep) and the retry on a stale connection. What's native is parsing, decompression and the pool. `std/url` is separate (`url.dsk` + `url.zig`): parsing, `resolve` and percent-encoding are byte loops in Zig that return offsets or strings, and the `Url` struct is built in Dusk.
 
@@ -784,6 +785,15 @@ A plain-mode failure is an `IoError`; the head and whole-body modes fail with `H
 **gzip.** Only `http::request` asks for it. After the whole body arrives, `~gunzip` decompresses it with Zig's `std.compress.flate` (gzip container), counting `max_body` on the output, and checks the footer's CRC-32 and size itself, since Zig reads them without checking. Zig's decompressor pulls from a reader, so it can't be fed piece by piece; that's why `http::open` doesn't ask for compression.
 
 **The pool.** `EventLoop.connection_pool` maps a key (`scheme://host:port`, plus `verify` and `ca` for `https`) to idle stream handles, newest last, at most 8 per key (adding a ninth closes the oldest). `~pool_put` checks `Stream.isReusable` (no waiter, open, not ended or failed, nothing buffered, the TLS handshake done, the message complete with keep-alive) and closes the stream otherwise; a reusable one gets `pool_key`, drops its buffers, keeps reading, and starts its timer with `onIdleTimeout` (30 s). Anything that arrives while it's idle, data or the end, makes it unusable, and `onRead` evicts it (`evictIfUnusable`): it leaves the pool and closes. Idle streams don't count as pending operations, so they never keep the program running; but since the loop isn't polled while nothing is pending, a close by the server can go unnoticed, so `~pool_take` runs one non-blocking poll before checking `isReusable` on the newest entry. On the Dusk side, a request takes from the pool first; if a reused connection fails with `ConnectionReset` (nothing arrived, or a reset), an idempotent request (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) is sent once more on a new connection. A followed redirect's body is read (up to 64 KiB) so its connection can go back, and a `ResponseStream` calls `~pool_put` on `close()`.
+
+**The server.** `http::listen` is `net::tcp_listen` / `net::tls_listen` plus a `ServerState` in `EventLoop.http_servers` (its index in the `Server`'s file-only `state`). `http::serve` is a Dusk accept loop that spawns `serve_connection` for each `TcpConn` and counts them, so it can wait for them to finish after `close()`. Since `TcpConn`'s handle is file-only to `std/net`, `~conn_handle` reads it from the struct's first slot. A connection loops over requests:
+
+1. **Wait.** The connection is marked idle in its `ServerState`, then `~stream_wait_data` (the `any_data` read mode: completes as soon as one byte is buffered, consuming nothing) waits `head_timeout_ms` for a new connection, `idle_timeout_ms` for a kept one. `server.close()` sets the closing flag and closes every idle stream, which wakes those waits with `Closed`; a connection in the middle of a request isn't idle, so it finishes.
+2. **Head.** `~stream_read_request_head` starts a request parser on the stream (`HttpReader.startMessage(.request)`: `dusk_http_request_parser_new`, which also records the target span and reports the method, version and keep-alive) and reads the head with `head_timeout_ms`; `~parse_request_head` gives `[method, target, version, keeps_alive, name, value...]`. Failures become `400`, `431` or `408` and close the connection.
+3. **Handler.** The `Request` is built in Dusk (the path decoded with `url::decode`; an absolute-form target goes through `url::parse`). Body reads are the client's modes on the request parser (`http_whole_body` for `text` / `bytes`, `http_body` for `read_bytes`), failing with `InvalidRequest` because the reader knows its kind. The reader also records whether `100 Continue` went out (`~claim_continue`, sent on the first body read) and whether the body was too large or broken (`~request_body_failure`), which turns an escaping handler error into `413` or `400` instead of `500`.
+4. **Response.** `~request_body_state` says whether the body is complete, unread (then drained up to 64 KiB with `~stream_drain_request_body`), waiting for `100 Continue`, or failed; only complete or drained bodies keep the connection, along with the client's keep-alive and the server not closing. The head is built in Dusk (reason phrases, `Date` from `~http_date`, `Content-Length`) and sent with the stream writes, then the body.
+
+libuv hands the server one pending connection per loop iteration (it stops watching the socket until `uv_accept`), so bursts wait in the listen backlog; `http::listen` defaults to 1024.
 
 ### 11.10 Freeing tasks
 

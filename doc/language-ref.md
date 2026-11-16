@@ -2390,6 +2390,7 @@ Reads and builds URLs.
 | `encode(text)` | `string` | Percent-encodes every byte except letters, digits and `- . _ ~`, for one path segment or one query value: `url::encode("a b/c")` is `a%20b%2Fc`. |
 | `decode(text)` | `UrlError!string` | Reverses `encode`. `+` stays `+`. |
 | `query(params)` | `string` | Builds a query string from a `map[string, string]`, in the map's order, encoding keys and values: `url::query({"q": "dusk lang", "page": "2"})` is `q=dusk%20lang&page=2`. |
+| `parse_query(text)` | `UrlError!map[string, []string]` | Reads a query string or a form body (`a=1&tag=x&tag=y`): every value of each key, in order, decoded, with `+` read as a space. |
 
 ```nim
 struct Url
@@ -2429,7 +2430,7 @@ end
 
 ### std/http
 
-An HTTP/1.1 client. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. Like every network call, they only make the calling task wait (see [Tasks](#13-tasks)).
+HTTP/1.1 clients and servers. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. `http::listen` and `http::serve` answer requests (see Serving HTTP below). Like every network call, they only make the calling task wait (see [Tasks](#13-tasks)).
 
 ```nim
 import std/http
@@ -2497,6 +2498,7 @@ A status code is never an error: a `404` or a `500` is a normal `Response`. Call
 | `get_all(name)` | `[]string` | Every value of that header, in order (`Set-Cookie` can come several times). |
 | `has(name)` | `bool` | Whether the header is there. |
 | `entries()` | `[]Header` | Every header, as `Header(name, value)`, in order. |
+| `set(name, value)`, `add(name, value)`, `remove(name)` | `void` | Change the headers (see Building responses). |
 
 **`ResponseStream`**, from `http::open`, has `status`, `reason`, `headers` and `url` like a `Response`, and reads its body like a `TcpConn`. Each read takes its own `timeout_ms`, and reading fails with `io::IoError` like any connection, so a `ResponseStream` fits `io::Reader` and works with `io::copy`.
 
@@ -2538,6 +2540,94 @@ A body that ends before its announced length, or that breaks the chunked format,
 
 **Compression.** `request` asks for gzip (`Accept-Encoding: gzip`) and decompresses a gzip body, so `body` and `text()` are the original content; `max_body` counts the decompressed bytes. The `Content-Encoding` and `Content-Length` headers stay as the server sent them. Setting `Accept-Encoding` in `headers` turns this off: the body is returned as it came.
 
+**Serving HTTP.** `http::listen` opens a server and `http::serve` answers its requests with a handler function, a `func(http::Request) -> E!http::Response`. Each connection runs in its own task, so a slow handler only holds up its own client.
+
+```nim
+import std/http
+import std/io
+import std/json
+
+struct User
+    name: string
+    email: string
+end
+
+func main() -> !void
+    let server = try http::listen("0.0.0.0", 8080)
+    io::println("listening on ${server.port()}")
+    http::serve(server, func(req: http::Request) -> !http::Response
+        when req.path
+            "/" then return http::text("hello ${req.query_param("name") orelse "world"}") end
+            "/users" then
+                if req.method != "POST" then
+                    return http::status(405)
+                end
+                let user = try json::decode[User](try req.text())
+                return http::json_text(try json::encode(user), status = 201)
+            end
+            else then return http::status(404) end
+        end
+    end)
+end
+```
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. |
+| `serve(server, handler)` | `void` | Accepts connections until `server.close()`, calls `handler` for each request, and returns once every connection is done. |
+
+`Server` has `port()` and `close()`. `close()` stops accepting and closes the connections that are waiting for their next request; requests already being handled finish, and their responses close the connection. Calling it again does nothing.
+
+**`Request`**
+
+| Field or method | Type | Description |
+| :-------------- | :--- | :---------- |
+| `method` | `string` | `"GET"`, `"POST"`... |
+| `target` | `string` | The path and query as sent: `"/users/7?full=1"`. |
+| `path` | `string` | The path, percent-decoded: `"/users/7"`. |
+| `query` | `?string` | The query as sent, without the `?`: `"full=1"`; `null` when there's none. |
+| `headers` | `Headers` | The request headers. |
+| `remote_address` | `net::Address` | The client's address. |
+| `query_param(name)` | `?string` | The first value of a query parameter, decoded, with `+` read as a space. |
+| `text(timeout_ms = -1)` | `HttpError!string` | The body as text (`InvalidUtf8` when it isn't valid UTF-8). |
+| `bytes(timeout_ms = -1)` | `HttpError!buffer` | The body as bytes. |
+| `read_bytes(max, timeout_ms = -1)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. |
+
+The body is read only when the handler asks for it. `text` and `bytes` fail with `BodyTooLarge` past `max_body` bytes, and with `InvalidRequest` when the client sends a broken body.
+
+**Building responses.** A handler returns a `Response`, the same type `http::request` returns, usually made with one of these:
+
+| Function | Response |
+| :------- | :------- |
+| `text(body, status = 200)` | `body` with `Content-Type: text/plain; charset=utf-8` |
+| `json_text(body, status = 200)` | `body` with `Content-Type: application/json` |
+| `html(body, status = 200)` | `body` with `Content-Type: text/html; charset=utf-8` |
+| `bytes(data, content_type = "application/octet-stream", status = 200)` | the bytes of a `buffer` |
+| `status(code)` | an empty body |
+| `redirect(location, status = 302)` | an empty body with `Location` |
+
+Headers change through `Headers` methods on a `let mut` response: `set(name, value)` replaces every value of that header, `add(name, value)` adds one more, and `remove(name)` drops them all.
+
+```nim
+let mut response = http::text("created", status = 201)
+response.headers.set("Location", "/users/7")
+response.headers.add("Set-Cookie", "session=abc; HttpOnly")
+return response
+```
+
+A `reason` left empty is filled from the status code (`"Not Found"`). The server adds `Date` (unless set), `Content-Length` (except for `1xx`, `204` and `304`) and `Connection: close` when the connection is closing; `Content-Length`, `Transfer-Encoding`, `Connection` and `Keep-Alive` set by the handler are replaced. A `Response` from `http::request` can be returned as it is (a proxy), but its body is already decompressed: remove its `Content-Encoding` header first.
+
+**What the server does on its own:**
+
+- An error that escapes the handler becomes a `500` with an empty body, and a line on stderr: `http: GET /path failed: <error>`. A `BodyTooLarge` that escapes becomes a `413`, and a broken body a `400`. A response header that can't be sent (a line break in a value, a bad name) also becomes a `500`.
+- A request that isn't valid HTTP/1.1 (bad framing, `Content-Length` together with `Transfer-Encoding`, bad characters, an unknown method, a path whose `%` escapes don't decode) gets `400`, a head over 64 KiB gets `431`, and the handler isn't called. The connection then closes.
+- A client has `head_timeout_ms` to start sending a request on a new connection and `head_timeout_ms` to finish its head (`408` otherwise). Between requests on a kept connection, it may stay quiet for `idle_timeout_ms` before the server closes it.
+- Connections are kept for the next request unless the client asks to close (`Connection: close`, or HTTP/1.0 without `keep-alive`) or the handler sets `Connection: close`. Requests on one connection are answered in order.
+- A body the handler didn't read is read and dropped after the response if it's at most 64 KiB; a bigger one closes the connection.
+- `Expect: 100-continue`: the client gets `100 Continue` when the handler first reads the body. If it never does, the response goes out and the connection closes, so the client never sends a body nobody wants.
+- A `HEAD` request runs the handler like a `GET` (`req.method` is `"HEAD"`); the body isn't sent, and `Content-Length` keeps its size.
+- With `cert`, each connection's TLS handshake runs in its own task; a client that fails it is just disconnected.
+
 | `http::HttpError` | When |
 | :---------------- | :--- |
 | `InvalidUrl` | The URL isn't valid (see [std/url](#stdurl)) |
@@ -2554,6 +2644,8 @@ A body that ends before its announced length, or that breaks the chunked format,
 | `TooManyRedirects` | More than `max_redirects` redirects |
 | `InvalidUtf8` | `text()` on a body that isn't valid UTF-8 |
 | `Closed` | The connection was closed |
+| `InvalidRequest` | A request body the client sent broken (bad chunks, or shorter than announced), read with `text` or `bytes` |
+| `AddressInUse`, `PermissionDenied` | `listen` failed, as in `net::NetError` |
 | `Other` | Any other failure |
 
 ### std/reflect
@@ -2710,5 +2802,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
-- **HTTP**: a client only, for HTTP/1.1: no HTTP server yet, no HTTP/2 and no WebSocket. Proxies aren't used (`HTTP_PROXY` and similar variables are ignored), cookies aren't stored between requests, there are no client certificates, and request bodies are sent whole (no streamed uploads). Only `http::request` decompresses, and only gzip.
+- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client doesn't use proxies (`HTTP_PROXY` and similar variables are ignored), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); only `http::request` decompresses, and only gzip. The server has no router (handlers match `req.path` themselves), sends response bodies whole (no streaming, no server-sent events), doesn't compress responses, and has no limit on the number of connections. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
 - **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
