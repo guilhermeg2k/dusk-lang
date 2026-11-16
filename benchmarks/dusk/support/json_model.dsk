@@ -1,0 +1,27 @@
+import std/array
+import std/string
+
+struct Profile
+    city: string
+    score: float
+end
+
+struct Record
+    id: int
+    name: string
+    is_active: bool
+    email: ?string
+    tags: []string
+    counts: map[string, int]
+    profile: Profile
+end
+
+let record_text = "{\"id\":42,\"name\":\"Ada\\nLovelace\",\"is_active\":true,\"email\":null,\"tags\":[\"compiler\",\"runtime\"],\"counts\":{\"views\":7,\"likes\":3},\"profile\":{\"city\":\"Porto\",\"score\":1.5}}"
+
+func bulk_text() -> string
+    let mut rows: []string = []
+    for 0..255: i do
+        array::append(rows, record_text)
+    end
+    return "[${string::join(rows, ",")}]"
+end
