@@ -4,6 +4,7 @@ import std/io
 import std/map
 import std/net
 import std/string
+import std/task
 import std/time
 import std/url
 
@@ -71,6 +72,30 @@ struct Headers
     func entries(self: @) -> []Header
         return copy(self.items)
     end
+
+    func set(mut self: @, name: string, value: string) -> void
+        self.remove(name)
+        self.add(name, value)
+    end
+
+    func add(mut self: @, name: string, value: string) -> void
+        append(self.items, Header(name = name, value = value))
+        append(self.lowered, string::lower(name))
+    end
+
+    func remove(mut self: @, name: string) -> void
+        let wanted = string::lower(name)
+        let mut items: []Header = []
+        let mut lowered: []string = []
+        for self.lowered: existing, index do
+            if existing != wanted then
+                append(items, copy(self.items[index]))
+                append(lowered, existing)
+            end
+        end
+        self.items = items
+        self.lowered = lowered
+    end
 end
 
 struct Response
@@ -120,6 +145,46 @@ struct ResponseStream
     end
 end
 
+struct Server
+    ~listener: net::TcpListener
+    ~state: int
+    ~max_body: int
+    ~head_timeout_ms: int
+    ~idle_timeout_ms: int
+
+    func port(self: @) -> int
+        return self.listener.port()
+    end
+
+    func close(self: @) -> void
+        server_close(self.state)
+        self.listener.close()
+    end
+end
+
+struct Request
+    method: string
+    target: string
+    path: string
+    query: ?string
+    headers: Headers
+    remote_address: net::Address
+    ~handle: int
+    ~keeps_alive: bool
+
+    func query_param(self: @, name: string) -> ?string
+        if self.query: text then
+            let params = url::parse_query(text) catch e then
+                return null
+            end
+            if params[name]: values then
+                return values[0]
+            end
+        end
+        return null
+    end
+end
+
 extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> net::NetError!int
 extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
@@ -135,6 +200,16 @@ extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]stri
 extern func ~gunzip(data: buffer, cap: int) -> HttpError!buffer
 extern func ~pool_take(key: string) -> int
 extern func ~pool_put(key: string, handle: int) -> void
+extern func ~conn_handle(conn: net::TcpConn) -> int
+extern func ~stream_wait_data(handle: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_request_head(handle: int, timeout_ms: int) -> HttpError!?buffer
+extern func ~stream_drain_request_body(handle: int, cap: int, timeout_ms: int) -> HttpError!buffer
+extern func ~parse_request_head(head: buffer) -> HttpError![]string
+extern func ~http_date() -> string
+extern func ~server_state_new() -> int
+extern func ~server_set_idle(state: int, handle: int, is_idle: bool) -> bool
+extern func ~server_close(state: int) -> void
+extern func ~server_is_closing(state: int) -> bool
 extern func ~is_method(text: string) -> bool
 extern func ~is_header_name(text: string) -> bool
 extern func ~is_header_value(text: string) -> bool
@@ -142,6 +217,7 @@ extern func ~body_given_twice() -> void
 
 let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
+let ~REQUEST_DRAIN_LIMIT = 65536
 
 struct ~Exchange
     method: string
@@ -461,10 +537,10 @@ func ~body_length(exchange: Exchange) -> int
     return if needs_length then 0 else -1 end
 end
 
-func ~headers_of(parts: []string) -> Headers
+func ~headers_of(parts: []string, first: int = 2) -> Headers
     let mut items: []Header = []
     let mut lowered: []string = []
-    let mut index = 2
+    let mut index = first
     for index < len(parts) do
         append(items, Header(name = parts[index], value = parts[index + 1]))
         append(lowered, string::lower(parts[index]))
@@ -493,6 +569,8 @@ func ~from_net(failure: net::NetError) -> HttpError
         net::NetError.WrongHostCertificate then HttpError.WrongHostCertificate end
         net::NetError.InvalidCertificate then HttpError.InvalidCertificate end
         net::NetError.InvalidAddress then HttpError.InvalidUrl end
+        net::NetError.AddressInUse then HttpError.AddressInUse end
+        net::NetError.PermissionDenied then HttpError.PermissionDenied end
         else then HttpError.Other end
     end
 end
@@ -505,5 +583,249 @@ func ~from_io(failure: io::IoError) -> HttpError
         io::IoError.TimedOut then HttpError.TimedOut end
         io::IoError.HandshakeFailed then HttpError.HandshakeFailed end
         else then HttpError.Other end
+    end
+end
+
+func text(body: string, status: int = 200) -> Response
+    return response_with(status, "text/plain; charset=utf-8", buffer::from_string(body))
+end
+
+func json_text(body: string, status: int = 200) -> Response
+    return response_with(status, "application/json", buffer::from_string(body))
+end
+
+func html(body: string, status: int = 200) -> Response
+    return response_with(status, "text/html; charset=utf-8", buffer::from_string(body))
+end
+
+func bytes(data: buffer, content_type: string = "application/octet-stream", status: int = 200) -> Response
+    return response_with(status, content_type, data)
+end
+
+func status(code: int) -> Response
+    return Response(status = code, reason = "", headers = Headers(items = [], lowered = []), body = buffer::from_string(""), url = "")
+end
+
+func redirect(location: string, status: int = 302) -> Response
+    return Response(status = status, reason = "", headers = Headers(items = [Header(name = "Location", value = location)], lowered = ["location"]), body = buffer::from_string(""), url = "")
+end
+
+func ~response_with(code: int, content_type: string, body: buffer) -> Response
+    return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
+end
+
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 128) -> HttpError!Server
+    let listener = open_listener(host, port, cert, backlog) catch e then
+        return from_net(e)
+    end
+    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms)
+end
+
+func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener
+    if cert: certificate then
+        return try net::tls_listen(host, port, certificate, backlog)
+    end
+    return try net::tcp_listen(host, port, backlog)
+end
+
+func serve[E: error](server: Server, handler: func(Request) -> E!Response) -> void
+    let mut active = 0
+    for true do
+        let conn = server.listener.accept() catch e then
+            if e == io::IoError.Closed then
+                break
+            end
+            task::sleep(10)
+            continue
+        end
+        active = active + 1
+        spawn(func() -> void
+            serve_connection(server, conn, handler)
+            active = active - 1
+        end)
+    end
+    for active > 0 do
+        task::sleep(10)
+    end
+end
+
+func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response) -> void
+    let handle = conn_handle(conn)
+    let mut is_first = true
+    for serve_request(server, conn, handle, handler, is_first) do
+        is_first = false
+    end
+    conn.close()
+end
+
+func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, handler: func(Request) -> E!Response, is_first: bool) -> bool
+    let received = next_head(server, handle, is_first) catch e then
+        reject(handle, e)
+        return false
+    end
+    if received: head then
+        let request = request_of(head, conn, handle) catch e then
+            reject(handle, HttpError.InvalidRequest)
+            return false
+        end
+        let response = handler(request) catch e then
+            io::eprintln("http: ${request.method} ${request.path} failed: $e")
+            return finish(server, request, status(500))
+        end
+        return finish(server, request, response)
+    end
+    return false
+end
+
+func ~next_head(server: Server, handle: int, is_first: bool) -> HttpError!?buffer
+    if !server_set_idle(server.state, handle, true) then
+        return null
+    end
+    let wait_ms = if is_first then server.head_timeout_ms else server.idle_timeout_ms end
+    let ready = stream_wait_data(handle, wait_ms) catch e then
+        server_set_idle(server.state, handle, false)
+        return null
+    end
+    server_set_idle(server.state, handle, false)
+    if ready == null then
+        return null
+    end
+    return try stream_read_request_head(handle, server.head_timeout_ms)
+end
+
+func ~reject(handle: int, failure: HttpError) -> void
+    let code = when failure
+        HttpError.InvalidRequest then 400 end
+        HttpError.HeadersTooLarge then 431 end
+        HttpError.TimedOut then 408 end
+        else then 0 end
+    end
+    if code == 0 then
+        return
+    end
+    stream_write(handle, "HTTP/1.1 $code ${reason_phrase(code)}\r\nDate: ${http_date()}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") catch e then
+    end
+end
+
+func ~request_of(head: buffer, conn: net::TcpConn, handle: int) -> HttpError!Request
+    let parts = try parse_request_head(head)
+    let target = parts[1]
+    let mut raw_path = target
+    let mut query: ?string = null
+    if string::starts_with(target, "/") then
+        let question = string::find(target, "?") orelse -1
+        if question >= 0 then
+            raw_path = string::slice(target, 0, question) catch target
+            query = string::slice(target, question + 1, string::len(target)) catch ""
+        end
+    elif target != "*" then
+        let absolute = url::parse(target) catch e then
+            return HttpError.InvalidRequest
+        end
+        raw_path = absolute.path
+        query = absolute.query
+    end
+    let path = url::decode(raw_path) catch e then
+        return HttpError.InvalidRequest
+    end
+    return Request(method = parts[0], target = target, path = path, query = query, headers = headers_of(parts, first = 4), remote_address = conn.remote_address(), handle = handle, keeps_alive = parts[3] == "1")
+end
+
+func ~finish(server: Server, request: Request, response: Response) -> bool
+    let is_body_read = stream_drain_request_body(request.handle, REQUEST_DRAIN_LIMIT, server.head_timeout_ms) catch e then
+        return write_response(request, checked_response(request, response), false) and false
+    end
+    let wants_close = string::lower(response.headers.get("connection") orelse "") == "close"
+    let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.state)
+    return write_response(request, checked_response(request, response), keeps_alive) and keeps_alive
+end
+
+func ~checked_response(request: Request, response: Response) -> Response
+    for response.headers.items: header do
+        let is_valid = is_header_name(header.name) and is_header_value(header.value)
+        if !is_valid then
+            io::eprintln("http: ${request.method} ${request.path} failed: invalid response header '${header.name}'")
+            return status(500)
+        end
+    end
+    return response
+end
+
+func ~write_response(request: Request, response: Response, keeps_alive: bool) -> bool
+    let code = response.status
+    let reason = if response.reason == "" then reason_phrase(code) else response.reason end
+    let mut lines: []string = ["HTTP/1.1 $code $reason"]
+    for response.headers.items: header do
+        if !is_managed_header(response.headers, header.name) then
+            append(lines, "${header.name}: ${header.value}")
+        end
+    end
+    if !response.headers.has("date") then
+        append(lines, "Date: ${http_date()}")
+    end
+    let has_body = !(code < 200 or code == 204 or code == 304)
+    if has_body then
+        append(lines, "Content-Length: ${buffer::len(response.body)}")
+    end
+    if !keeps_alive then
+        append(lines, "Connection: close")
+    end
+    stream_write(request.handle, "${string::join(lines, "\r\n")}\r\n\r\n") catch e then
+        return false
+    end
+    let sends_body = has_body and request.method != "HEAD" and buffer::len(response.body) > 0
+    if sends_body then
+        stream_write_bytes(request.handle, response.body) catch e then
+            return false
+        end
+    end
+    return true
+end
+
+func ~is_managed_header(headers: Headers, name: string) -> bool
+    let lowered = string::lower(name)
+    return lowered == "content-length" or lowered == "transfer-encoding" or lowered == "connection" or lowered == "keep-alive"
+end
+
+func ~reason_phrase(code: int) -> string
+    return when code
+        100 then "Continue" end
+        101 then "Switching Protocols" end
+        200 then "OK" end
+        201 then "Created" end
+        202 then "Accepted" end
+        204 then "No Content" end
+        206 then "Partial Content" end
+        301 then "Moved Permanently" end
+        302 then "Found" end
+        303 then "See Other" end
+        304 then "Not Modified" end
+        307 then "Temporary Redirect" end
+        308 then "Permanent Redirect" end
+        400 then "Bad Request" end
+        401 then "Unauthorized" end
+        403 then "Forbidden" end
+        404 then "Not Found" end
+        405 then "Method Not Allowed" end
+        406 then "Not Acceptable" end
+        408 then "Request Timeout" end
+        409 then "Conflict" end
+        410 then "Gone" end
+        411 then "Length Required" end
+        412 then "Precondition Failed" end
+        413 then "Content Too Large" end
+        414 then "URI Too Long" end
+        415 then "Unsupported Media Type" end
+        417 then "Expectation Failed" end
+        422 then "Unprocessable Content" end
+        426 then "Upgrade Required" end
+        429 then "Too Many Requests" end
+        431 then "Request Header Fields Too Large" end
+        500 then "Internal Server Error" end
+        501 then "Not Implemented" end
+        502 then "Bad Gateway" end
+        503 then "Service Unavailable" end
+        504 then "Gateway Timeout" end
+        else then "Unknown" end
     end
 end

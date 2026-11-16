@@ -248,6 +248,7 @@ pub const Stream = struct {
             .line => |max| self.readSource().lineOutcome(max),
             .all_text => self.readSource().allOutcome(true),
             .all_bytes => self.readSource().allOutcome(false),
+            .any_data => self.readSource().anyDataOutcome(),
             .http_head => self.httpHeadOutcome(),
             .http_body => |read| self.httpBodyOutcome(read),
             .http_whole_body => |cap| self.httpWholeBodyOutcome(cap),
@@ -863,6 +864,7 @@ pub const ReadMode = union(enum) {
     line: ?usize,
     all_text,
     all_bytes,
+    any_data,
     http_head,
     http_body: BodyRead,
     http_whole_body: usize,
@@ -870,7 +872,7 @@ pub const ReadMode = union(enum) {
     pub fn valueKind(self: ReadMode) v.ValueType {
         return switch (self) {
             .line, .all_text => .string,
-            .bytes, .exact, .all_bytes, .http_head, .http_whole_body => .buffer,
+            .bytes, .exact, .all_bytes, .any_data, .http_head, .http_whole_body => .buffer,
             .http_body => |read| switch (read) {
                 .line, .all_text => .string,
                 .bytes, .all_bytes => .buffer,
@@ -956,6 +958,13 @@ const ReadSource = struct {
             return .{ .result = .{ .failure = .InvalidUtf8 }, .consumed = available.len };
         }
         return .{ .result = .{ .data = available }, .consumed = available.len };
+    }
+
+    fn anyDataOutcome(self: ReadSource) ?ReadOutcome {
+        if (self.available.len > 0) {
+            return .{ .result = .{ .data = self.available[0..0] } };
+        }
+        return self.endOutcome();
     }
 
     fn endOutcome(self: ReadSource) ?ReadOutcome {

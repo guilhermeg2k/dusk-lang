@@ -1,0 +1,238 @@
+import std/array: append, len
+import std/buffer
+import std/http
+import std/io
+import std/net
+import std/string
+import std/task
+import std/url
+
+error AppError
+    Broken
+end
+
+func route(req: http::Request) -> AppError!http::Response
+    when req.path
+        "/" then
+            return http::text("hello ${req.query_param("name") orelse "world"}")
+        end
+        "/echo" then
+            let mut response = http::text("${req.method} ${req.target} ${req.headers.get("x-trace") orelse "-"}")
+            response.headers.set("X-Seen", "1")
+            response.headers.add("X-Many", "a")
+            response.headers.add("X-Many", "b")
+            response.headers.add("X-Gone", "soon")
+            response.headers.remove("x-gone")
+            return response
+        end
+        "/json" then return http::json_text("{\"ok\":true}", status = 201) end
+        "/html" then return http::html("<p>hi</p>") end
+        "/bytes" then return http::bytes(buffer::from_string("raw"), content_type = "application/x-test") end
+        "/empty" then return http::status(204) end
+        "/moved" then return http::redirect("/", status = 301) end
+        "/fail" then return AppError.Broken end
+        "/bad-header" then
+            let mut response = http::text("never")
+            response.headers.set("X-Bad", "a\r\nInjected: yes")
+            return response
+        end
+        "/peer" then return http::text("${req.remote_address.port}") end
+        "/space here" then return http::text("decoded") end
+        "/close" then
+            let mut response = http::text("bye")
+            response.headers.set("Connection", "close")
+            return response
+        end
+        "*" then return http::text("star ${req.method}") end
+        else then return http::status(404) end
+    end
+end
+
+func start(server: http::Server) -> Task[void]
+    return spawn(func() -> void
+        http::serve(server, func(req: http::Request) -> AppError!http::Response
+            return try route(req)
+        end)
+    end)
+end
+
+func raw_exchange(port: int, text: string) -> !string
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    try conn.write(text)
+    let answer = try conn.read_all(timeout_ms = 3000)
+    conn.close()
+    return answer
+end
+
+func check_routing(base: string) -> !void
+    let hello = try http::request("$base/?name=dusk+lang")
+    assert(hello.status == 200)
+    assert(try hello.text() == "hello dusk lang")
+    assert(hello.headers.get("content-type") == "text/plain; charset=utf-8")
+    assert(hello.headers.get("content-length") == "15")
+    assert(string::ends_with(hello.headers.get("date") orelse "", " GMT"))
+
+    let echo = try http::request("$base/echo?a=1", method = "PUT", headers = {"X-Trace": "t-1"})
+    assert(try echo.text() == "PUT /echo?a=1 t-1")
+    assert(echo.headers.get("x-seen") == "1")
+    let many = echo.headers.get_all("x-many")
+    assert(len(many) == 2)
+    assert(many[1] == "b")
+    assert(!echo.headers.has("x-gone"))
+
+    let json = try http::request("$base/json")
+    assert(json.status == 201)
+    assert(json.reason == "Created")
+    assert(json.headers.get("content-type") == "application/json")
+    assert(try json.text() == "{\"ok\":true}")
+    assert((try http::request("$base/html")).headers.get("content-type") == "text/html; charset=utf-8")
+    let raw = try http::request("$base/bytes")
+    assert(raw.headers.get("content-type") == "application/x-test")
+    assert(try raw.text() == "raw")
+
+    let empty = try http::request("$base/empty")
+    assert(empty.status == 204)
+    assert(!empty.headers.has("content-length"))
+    let moved = try http::request("$base/moved", max_redirects = 0)
+    assert(moved.status == 301)
+    assert(moved.headers.get("location") == "/")
+    let followed = try http::request("$base/moved")
+    assert(try followed.text() == "hello world")
+
+    let missing = try http::request("$base/nowhere")
+    assert(missing.status == 404)
+    assert(missing.reason == "Not Found")
+    assert(try (try http::request("$base/space%20here")).text() == "decoded")
+end
+
+func check_failures(base: string) -> !void
+    let failed = try http::request("$base/fail")
+    assert(failed.status == 500)
+    assert(failed.reason == "Internal Server Error")
+    assert(try failed.text() == "")
+    let bad_header = try http::request("$base/bad-header")
+    assert(bad_header.status == 500)
+    assert(!bad_header.headers.has("injected"))
+    let after = try http::request("$base/")
+    assert(after.status == 200)
+end
+
+func check_head_and_keep_alive(base: string) -> !void
+    let head = try http::request("$base/?name=x", method = "HEAD")
+    assert(head.status == 200)
+    assert(buffer::len(head.body) == 0)
+    assert(head.headers.get("content-length") == "7")
+
+    let first = try http::request("$base/peer")
+    let second = try http::request("$base/peer")
+    assert(try first.text() == try second.text())
+
+    let posted = try http::request("$base/echo", method = "POST", body = "ignored body")
+    assert(try posted.text() == "POST /echo -")
+    let after_post = try http::request("$base/peer")
+    assert(try after_post.text() == try first.text())
+
+    let closing = try http::request("$base/close")
+    assert(closing.headers.get("connection") == "close")
+    let after_close = try http::request("$base/peer")
+    assert(try after_close.text() != try first.text())
+end
+
+func check_raw(port: int) -> !void
+    let malformed = try raw_exchange(port, "GARBAGE\r\n\r\n")
+    assert(string::starts_with(malformed, "HTTP/1.1 400 Bad Request\r\n"))
+    assert(string::contains(malformed, "Connection: close"))
+
+    let smuggled = try raw_exchange(port, "POST / HTTP/1.1\r\nContent-Length: 3\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
+    assert(string::starts_with(smuggled, "HTTP/1.1 400 "))
+
+    let bad_path = try raw_exchange(port, "GET /%zz HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert(string::starts_with(bad_path, "HTTP/1.1 400 "))
+
+    let huge = try raw_exchange(port, "GET / HTTP/1.1\r\nX-Big: ${string::repeat("a", 70000) catch ""}\r\n\r\n")
+    assert(string::starts_with(huge, "HTTP/1.1 431 Request Header Fields Too Large\r\n"))
+
+    let pipelined = try raw_exchange(port, "GET /?name=one HTTP/1.1\r\nHost: x\r\n\r\nGET /?name=two HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    let one = string::find(pipelined, "hello one") orelse -1
+    let two = string::find(pipelined, "hello two") orelse -1
+    assert(one > 0)
+    assert(two > one)
+    assert(string::count(pipelined, "HTTP/1.1 200 OK") == 2)
+
+    let old = try raw_exchange(port, "GET /?name=old HTTP/1.0\r\n\r\n")
+    assert(string::starts_with(old, "HTTP/1.1 200 OK\r\n"))
+    assert(string::contains(old, "Connection: close"))
+    assert(string::ends_with(old, "hello old"))
+
+    let absolute = try raw_exchange(port, "GET http://example.com/?name=abs HTTP/1.1\r\nConnection: close\r\n\r\n")
+    assert(string::ends_with(absolute, "hello abs"))
+    let star = try raw_exchange(port, "OPTIONS * HTTP/1.1\r\nConnection: close\r\n\r\n")
+    assert(string::ends_with(star, "star OPTIONS"))
+end
+
+func check_timeouts() -> !void
+    let server = try http::listen("127.0.0.1", 0, head_timeout_ms = 200, idle_timeout_ms = 200)
+    let running = start(server)
+    let port = server.port()
+
+    let slow = try net::tcp_connect("127.0.0.1", port)
+    try slow.write("GET / HTTP/1.1\r\n")
+    let slow_answer = try slow.read_all(timeout_ms = 3000)
+    assert(string::starts_with(slow_answer, "HTTP/1.1 408 Request Timeout\r\n"))
+    slow.close()
+
+    let silent = try net::tcp_connect("127.0.0.1", port)
+    assert(try silent.read_all(timeout_ms = 3000) == "")
+    silent.close()
+
+    let idle = try net::tcp_connect("127.0.0.1", port)
+    try idle.write("GET /?name=idle HTTP/1.1\r\nHost: x\r\n\r\n")
+    let idle_answer = try idle.read_all(timeout_ms = 3000)
+    assert(string::ends_with(idle_answer, "hello idle"))
+    assert(!string::contains(idle_answer, "Connection: close"))
+    idle.close()
+
+    server.close()
+    await(running)
+end
+
+func check_shutdown() -> !void
+    let server = try http::listen("127.0.0.1", 0)
+    let running = start(server)
+    let base = "http://127.0.0.1:${server.port()}"
+    let first = try http::request("$base/")
+    assert(first.status == 200)
+    server.close()
+    server.close()
+    await(running)
+    let mut refused = false
+    http::request("$base/", timeout_ms = 1000) catch e then
+        refused = e == http::HttpError.ConnectionRefused or e == http::HttpError.ConnectionReset
+    end
+    assert(refused)
+end
+
+func check_listen_errors() -> !void
+    let taken = try http::listen("127.0.0.1", 0)
+    let mut failure: ?http::HttpError = null
+    http::listen("127.0.0.1", taken.port()) catch e then
+        failure = e
+    end
+    assert(failure == http::HttpError.AddressInUse)
+    taken.close()
+end
+
+func main() -> !void
+    let server = try http::listen("127.0.0.1", 0)
+    let running = start(server)
+    let base = "http://127.0.0.1:${server.port()}"
+    try check_routing(base)
+    try check_failures(base)
+    try check_head_and_keep_alive(base)
+    try check_raw(server.port())
+    server.close()
+    await(running)
+    try check_timeouts()
+    try check_shutdown()
+    try check_listen_errors()
+end

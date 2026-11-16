@@ -1,3 +1,4 @@
+import std/array: len
 import std/url
 
 func expect_parse_error(text: string, expected: url::UrlError) -> void
@@ -134,9 +135,32 @@ func check_encoding() -> !void
     assert(url::query({}) == "")
 end
 
+func check_parse_query() -> !void
+    let params = try url::parse_query("q=dusk+lang&tag=a&tag=b%26c&empty=&flag&=x&&e%3Dq=1%2B1")
+    let q = params["q"] orelse []
+    assert(len(q) == 1)
+    assert(q[0] == "dusk lang")
+    let tags = params["tag"] orelse []
+    assert(len(tags) == 2)
+    assert(tags[0] == "a")
+    assert(tags[1] == "b&c")
+    assert((params["empty"] orelse ["missing"])[0] == "")
+    assert((params["flag"] orelse ["missing"])[0] == "")
+    assert((params[""] orelse ["missing"])[0] == "x")
+    assert((params["e=q"] orelse ["missing"])[0] == "1+1")
+    let empty = try url::parse_query("")
+    assert(params["missing"] == null)
+    url::parse_query("bad=%zz") catch e then
+        assert(e == url::UrlError.InvalidEncoding)
+        return
+    end
+    assert(false)
+end
+
 func main() -> !void
     try check_parse()
     check_parse_errors()
     try check_resolve()
     try check_encoding()
+    try check_parse_query()
 end

@@ -373,13 +373,17 @@ test "net: read_exact and remote_address" {
     try runCase("net-tcp-extras.dsk");
 }
 
-test "url: parse, resolve (RFC 3986 examples), encode, decode and query" {
+test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
     try runCase("url.dsk");
 }
 
 test "http: requests, response streams and the connection pool over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https, reuse and retry, gzip)" {
     try runCase("http-client.dsk");
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
+}
+
+test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw and malformed requests, timeouts, shutdown" {
+    try runCase("http-server.dsk");
 }
 
 test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {

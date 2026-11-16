@@ -6,6 +6,7 @@ const io = @import("io.zig");
 const net = @import("net.zig");
 const http = @import("../../tasks/http.zig");
 const ReadMode = @import("../../tasks/stream.zig").ReadMode;
+const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
 const httpErrorFromIo = @import("../../tasks/http_reader.zig").httpErrorFromIo;
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const Binding = native.Binding;
@@ -34,6 +35,16 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_body_all", Binding{ .native = &streamBodyAll } },
     .{ "stream_body_all_bytes", Binding{ .native = &streamBodyAllBytes } },
     .{ "parse_head", Binding{ .native = &parseHead } },
+    .{ "conn_handle", Binding{ .native = &connHandle } },
+    .{ "stream_wait_data", Binding{ .native = &streamWaitData } },
+    .{ "stream_read_request_head", Binding{ .native = &streamReadRequestHead } },
+    .{ "stream_drain_request_body", Binding{ .native = &streamDrainRequestBody } },
+    .{ "parse_request_head", Binding{ .native = &parseRequestHead } },
+    .{ "http_date", Binding{ .native = &httpDate } },
+    .{ "server_state_new", Binding{ .native = &serverStateNew } },
+    .{ "server_set_idle", Binding{ .native = &serverSetIdle } },
+    .{ "server_close", Binding{ .native = &serverClose } },
+    .{ "server_is_closing", Binding{ .native = &serverIsClosing } },
     .{ "gunzip", Binding{ .native = &gunzip } },
     .{ "pool_take", Binding{ .native = &poolTake } },
     .{ "pool_put", Binding{ .native = &poolPut } },
@@ -50,6 +61,29 @@ fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     stream.startHttpMessage(if (args[1].bool) .head_response else .response) catch return fail(HttpError.Other);
     return readHttp(vm, args[0].int64, .http_head, args[2].int64);
+}
+
+fn connHandle(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const conn = v.HeapValue.getParentPtr(v.Struct, args[0].heap_obj);
+    return ok(conn.get(0));
+}
+
+fn streamWaitData(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return io.readStream(vm, args[0].int64, .any_data, args[1].int64);
+}
+
+fn streamReadRequestHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(HttpError.Closed);
+    if (stream.waiter != null) {
+        return fail(HttpError.Other);
+    }
+    stream.startHttpMessage(.request) catch return fail(HttpError.Other);
+    return readHttp(vm, args[0].int64, .http_head, args[1].int64);
+}
+
+fn streamDrainRequestBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const cap: usize = @intCast(@max(args[1].int64, 0));
+    return readHttp(vm, args[0].int64, .{ .http_whole_body = cap }, args[2].int64);
 }
 
 fn streamReadWholeBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -206,6 +240,86 @@ fn parseHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
         parts[3 + i * 2] = try validText(allocator, head[entry[2]..entry[3]]);
     }
     return ok(try vm.allocStringArray(parts));
+}
+
+fn parseRequestHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var arena = std.heap.ArenaAllocator.init(std.heap.smp_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const head = try allocator.dupe(u8, bytesArg(args, 0));
+    const parser = http.dusk_http_request_parser_new() orelse return error.OutOfMemory;
+    defer http.dusk_http_parser_free(parser);
+    var used: usize = 0;
+    if (http.dusk_http_feed_head(parser, head.ptr, head.len, &used) != .done) {
+        return fail(HttpError.InvalidRequest);
+    }
+    const header_count = http.dusk_http_header_count(parser);
+    const parts = try allocator.alloc([]const u8, 4 + header_count * 2);
+    parts[0] = std.mem.span(http.dusk_http_method_name(parser));
+    var target_start: usize = 0;
+    var target_end: usize = 0;
+    http.dusk_http_url_span(parser, &target_start, &target_end);
+    parts[1] = head[target_start..target_end];
+    parts[2] = try std.fmt.allocPrint(allocator, "{d}", .{http.dusk_http_version(parser)});
+    parts[3] = if (http.dusk_http_head_keeps_alive(parser) != 0) "1" else "0";
+    const offsets = http.dusk_http_header_offsets(parser);
+    for (0..header_count) |i| {
+        const entry = offsets.?[i * http.offsets_per_header ..][0..http.offsets_per_header];
+        parts[4 + i * 2] = head[entry[0]..entry[1]];
+        parts[5 + i * 2] = try validText(allocator, head[entry[2]..entry[3]]);
+    }
+    return ok(try vm.allocStringArray(parts));
+}
+
+fn serverStateNew(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    return ok(.{ .int64 = @intCast(try vm.event_loop.addHttpServer()) });
+}
+
+fn serverSetIdle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const server = vm.event_loop.httpServerAt(args[0].int64) orelse return ok(.{ .bool = false });
+    const is_kept = try server.setIdle(vm.event_loop.allocator, @intCast(args[1].int64), args[2].bool);
+    return ok(.{ .bool = is_kept });
+}
+
+fn serverClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const server = vm.event_loop.httpServerAt(args[0].int64) orelse return ok(.{ .null = {} });
+    server.is_closing = true;
+    var idle = server.takeIdleStreams();
+    defer idle.deinit(vm.event_loop.allocator);
+    for (idle.keys()) |handle| {
+        vm.event_loop.closeStream(@intCast(handle));
+    }
+    return ok(.{ .null = {} });
+}
+
+fn serverIsClosing(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const server = vm.event_loop.httpServerAt(args[0].int64) orelse return ok(.{ .bool = true });
+    return ok(.{ .bool = server.is_closing });
+}
+
+fn httpDate(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    const seconds: u64 = @intCast(@max(@divFloor(try EventLoop.wallTimeMilliseconds(), 1000), 0));
+    var text: [29]u8 = undefined;
+    return ok(try vm.allocBytesValue(formatHttpDate(seconds, &text), .string));
+}
+
+fn formatHttpDate(seconds: u64, text: *[29]u8) []const u8 {
+    const day_names = [_][]const u8{ "Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed" };
+    const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = seconds };
+    const epoch_day = epoch_seconds.getEpochDay();
+    const year_day = epoch_day.calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch_seconds.getDaySeconds();
+    return std.fmt.bufPrint(text, "{s}, {d:0>2} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} GMT", .{
+        day_names[epoch_day.day % 7],
+        month_day.day_index + 1,
+        month_names[month_day.month.numeric() - 1],
+        year_day.year,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    }) catch unreachable;
 }
 
 fn validText(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {

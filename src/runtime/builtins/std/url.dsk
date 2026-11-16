@@ -1,4 +1,4 @@
-import std/array: append
+import std/array: append, len
 import std/string
 
 error UrlError
@@ -60,4 +60,22 @@ func query(params: map[string, string]) -> string
         append(pieces, "${encode(key)}=${encode(value)}")
     end
     return string::join(pieces, "&")
+end
+
+func parse_query(text: string) -> UrlError!map[string, []string]
+    let mut params: map[string, []string] = {}
+    for string::split(text, "&"): pair do
+        if pair == "" then
+            continue
+        end
+        let parts = string::split(pair, "=", limit = 2)
+        let key = try decode(string::replace(parts[0], "+", " "))
+        let value = if len(parts) > 1 then try decode(string::replace(parts[1], "+", " ")) else "" end
+        if params[key]: mut values then
+            append(values, value)
+        else
+            params[key] = [value]
+        end
+    end
+    return params
 end

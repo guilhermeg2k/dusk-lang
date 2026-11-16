@@ -10,6 +10,7 @@ const OpenRequest = @import("tcp.zig").OpenRequest;
 const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const TrustStore = @import("trust_store.zig").TrustStore;
 const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
+const ServerState = @import("http_server.zig").ServerState;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
@@ -28,6 +29,7 @@ pub const EventLoop = struct {
     certificates: std.ArrayList(*ServerCertificate) = .empty,
     trust_store: TrustStore = .{},
     connection_pool: ConnectionPool = .{},
+    http_servers: std.ArrayList(ServerState) = .empty,
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -44,6 +46,7 @@ pub const EventLoop = struct {
         defer self.listeners.deinit(self.allocator);
         defer self.freeCertificates();
         defer self.connection_pool.deinit(self.allocator);
+        defer self.freeHttpServers();
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -181,6 +184,26 @@ pub const EventLoop = struct {
         const stream = self.streamAt(handle) orelse return;
         self.streams.items[@intCast(handle)] = null;
         stream.close();
+    }
+
+    pub fn addHttpServer(self: *Self) !usize {
+        try self.http_servers.append(self.allocator, .{});
+        return self.http_servers.items.len - 1;
+    }
+
+    pub fn httpServerAt(self: *Self, handle: i64) ?*ServerState {
+        const is_valid = handle >= 0 and handle < self.http_servers.items.len;
+        if (!is_valid) {
+            return null;
+        }
+        return &self.http_servers.items[@intCast(handle)];
+    }
+
+    fn freeHttpServers(self: *Self) void {
+        for (self.http_servers.items) |*server| {
+            server.deinit(self.allocator);
+        }
+        self.http_servers.deinit(self.allocator);
     }
 
     pub fn streamAt(self: *Self, handle: i64) ?*Stream {
