@@ -2379,6 +2379,183 @@ Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`
 | `InvalidCertificate` | `certificate` got text that isn't a valid PEM certificate or key, or a key that doesn't match; or `ca` isn't valid PEM |
 | `Other` | Any other failure |
 
+### std/url
+
+Reads and builds URLs.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `parse(text)` | `UrlError!Url` | Reads an absolute URL like `https://example.com:8443/docs?page=2#intro`. |
+| `resolve(base, reference)` | `UrlError!Url` | The URL that `reference` points to when read from `base`: a full URL, `//host/path`, `/path`, `path`, `../path`, `?query` or `#fragment`. `.` and `..` segments are removed. |
+| `encode(text)` | `string` | Percent-encodes every byte except letters, digits and `- . _ ~`, for one path segment or one query value: `url::encode("a b/c")` is `a%20b%2Fc`. |
+| `decode(text)` | `UrlError!string` | Reverses `encode`. `+` stays `+`. |
+| `query(params)` | `string` | Builds a query string from a `map[string, string]`, in the map's order, encoding keys and values: `url::query({"q": "dusk lang", "page": "2"})` is `q=dusk%20lang&page=2`. |
+
+```nim
+struct Url
+    scheme: string      # "https", lowercase
+    host: string        # "example.com", lowercase; "::1" for http://[::1]/
+    port: ?int          # null when the URL has none
+    path: string        # "/docs", or "/" when the URL has no path
+    query: ?string      # "page=2", without the "?"; "" for a "?" with nothing after it
+    fragment: ?string   # "intro", without the "#"
+
+    func to_string(self: @) -> string
+end
+```
+
+```nim
+import std/io
+import std/url
+
+func main() -> !void
+    let page = try url::parse("https://example.com/docs/guide/intro?lang=en")
+    io::println(page.host)                                      # example.com
+    let next = try url::resolve(page, "../api/list?page=2")
+    io::println(next.to_string())                               # https://example.com/docs/api/list?page=2
+    io::println("/search?${url::query({"q": "dusk lang"})}")    # /search?q=dusk%20lang
+end
+```
+
+- `parse` only takes absolute URLs with `scheme://`. The path, query and fragment are kept as written, already encoded: they may hold printable ASCII characters other than space, `"`, `<`, `>`, `\`, `^`, the backquote, `{`, `|` and `}`, and `%` must be followed by two hex digits. Text with spaces or non-ASCII characters has to be encoded first (`url::encode`).
+- A user name and password in the URL (`https://user:secret@host/`) aren't supported: `parse` fails with `Invalid`.
+- Ports go from `1` to `65535`.
+
+| `url::UrlError` | When |
+| :-------------- | :--- |
+| `Invalid` | Not an absolute URL, an empty or invalid host, a user name and password, or a character that must be encoded |
+| `InvalidPort` | A port that isn't a number from `1` to `65535` |
+| `InvalidEncoding` | `decode` got a `%` without two hex digits after it, or bytes that aren't valid UTF-8 |
+
+### std/http
+
+An HTTP/1.1 client. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. Like every network call, they only make the calling task wait (see [Tasks](#13-tasks)).
+
+```nim
+import std/http
+import std/io
+import std/json
+
+struct User
+    name: string
+    email: string
+end
+
+func main() -> !void
+    let resp = try http::request("https://api.example.com/users/1", timeout_ms = 5000)
+    if !resp.is_success() then
+        io::println("failed: ${resp.status}")
+        return
+    end
+    let user = try json::decode[User](try resp.text())
+
+    let created = try http::request("https://api.example.com/users", method = "POST",
+        body = try json::encode(user),
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer secret"})
+    io::println("${created.status} ${created.headers.get("location") orelse "-"}")
+end
+```
+
+| Function | Returns |
+| :------- | :------ |
+| `request(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, max_body = 67108864, ca = null, verify = true)` | `HttpError!Response` |
+| `open(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, ca = null, verify = true)` | `HttpError!ResponseStream` |
+
+| Parameter | Description |
+| :-------- | :---------- |
+| `method` | Any HTTP method, in uppercase: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"`... Lowercase letters, spaces and other characters fail with `InvalidMethod`. |
+| `headers` | Request headers, as a `map[string, string]`. Names and values are checked before anything is sent: a name with spaces or other characters a header name can't have, or a value with a line break or another control character, fails with `InvalidHeader`. |
+| `body` | Text to send. |
+| `body_bytes` | Bytes to send. Giving both `body` and `body_bytes` is a runtime error. |
+| `query` | Entries to add to the URL's query, encoded with `url::encode`: `query = {"q": "dusk lang"}` on `https://example.com/search?lang=en` asks for `/search?lang=en&q=dusk%20lang`. |
+| `timeout_ms` | The time the whole call may take: looking up the name, connecting, the TLS handshake, sending the request, every redirect, and for `request`, reading the whole body. `-1` waits forever. |
+| `max_redirects` | How many redirects to follow (see below). |
+| `max_body` | The largest body `request` reads, in bytes, after decompression (64 MiB by default). A larger one fails with `BodyTooLarge`. |
+| `ca`, `verify` | How `https` servers are checked, as for `net::tls_connect` (see [TLS](#tls)): `ca` trusts only the authorities in that PEM text, `verify = false` skips the check. |
+
+The request gets `Host`, `User-Agent: dusk/0.16` and `Content-Length` (when there's a body, and `0` for a `POST`, `PUT` or `PATCH` without one) unless `headers` has them, plus `Accept-Encoding: gzip` for `request` (see Compression). A `Content-Length` in `headers` is replaced by the real length, and `Transfer-Encoding` isn't allowed (`InvalidHeader`). The URL's `#fragment` is never sent. `Content-Type` is never guessed: set it for the body you send.
+
+**`Response`**
+
+| Field or method | Type | Description |
+| :-------------- | :--- | :---------- |
+| `status` | `int` | The status code: `200`, `404`... |
+| `reason` | `string` | The text after the code: `"OK"`, `"Not Found"`. |
+| `headers` | `Headers` | The response headers. |
+| `body` | `buffer` | The body's bytes (decompressed, see Compression). Empty for `HEAD` requests and for `204` and `304` responses. |
+| `url` | `string` | The URL the response came from, after redirects. |
+| `text()` | `HttpError!string` | The body as text; fails with `InvalidUtf8` when it isn't valid UTF-8. |
+| `is_success()` | `bool` | Whether `status` is from `200` to `299`. |
+
+A status code is never an error: a `404` or a `500` is a normal `Response`. Calls fail only when the request can't be made or the response is broken.
+
+**`Headers`** keeps the response headers in the order they came, with their names as sent. Lookups ignore case.
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `get(name)` | `?string` | The first value of that header, or `null`. |
+| `get_all(name)` | `[]string` | Every value of that header, in order (`Set-Cookie` can come several times). |
+| `has(name)` | `bool` | Whether the header is there. |
+| `entries()` | `[]Header` | Every header, as `Header(name, value)`, in order. |
+
+**`ResponseStream`**, from `http::open`, has `status`, `reason`, `headers` and `url` like a `Response`, and reads its body like a `TcpConn`. Each read takes its own `timeout_ms`, and reading fails with `io::IoError` like any connection, so a `ResponseStream` fits `io::Reader` and works with `io::copy`.
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `read_bytes(max, timeout_ms = -1)` | `io::IoError!?buffer` | Up to `max` bytes of the body; `null` once the body is over. |
+| `read_line(max = -1, timeout_ms = -1)` | `io::IoError!?string` | The next line of the body, without its `\n` or `\r\n`; `null` once the body is over. |
+| `read_all(timeout_ms = -1)` | `io::IoError!string` | The rest of the body, as text. |
+| `read_all_bytes(timeout_ms = -1)` | `io::IoError!buffer` | The rest of the body, as bytes. |
+| `close()` | `void` | Done with the response. Reads after it fail with `Closed`. |
+
+```nim
+import std/http
+import std/io
+
+func main() -> !void
+    let mut events = try http::open("https://example.com/log", timeout_ms = 5000)
+    for true do
+        let next = try events.read_line(timeout_ms = 30000)
+        if next: line then
+            io::println(line)
+        else
+            break
+        end
+    end
+    events.close()
+end
+```
+
+A body that ends before its announced length, or that breaks the chunked format, fails with `UnexpectedEnd` or `Other`. `http::open` doesn't ask for compression, so the body comes as the server sent it.
+
+**Redirects.** A `301`, `302`, `303`, `307` or `308` response with a `Location` header is followed, up to `max_redirects` times; one more fails with `TooManyRedirects`. With `max_redirects = 0`, the redirect itself is returned. A `Location` relative to the current URL works, and a redirect to a URL that isn't `http` or `https` fails with `UnsupportedScheme`.
+
+- A `303`, and a `301` or `302` after any method but `GET` or `HEAD`, is followed with a `GET` without the body (and without `Content-Type`). A `307` or `308` sends the same method and body again.
+- When a redirect goes to another scheme, host or port, `Authorization`, `Cookie` and a given `Host` header are left out, so credentials meant for one server don't reach another.
+- `response.url` is where the final response came from.
+
+**Connections.** After a response, its connection is kept open for the next request to the same scheme, host and port (and, for `https`, the same `ca` and `verify`), which skips connecting and the TLS handshake. Up to 8 idle connections are kept per server. An idle connection closes after 30 seconds, or as soon as the server closes it, and never keeps the program running. A `ResponseStream` gives its connection back on `close()` when the whole response has arrived; otherwise, the connection is closed. If a kept connection turns out to be closed when it's reused, before any answer arrives, a `GET`, `HEAD`, `PUT`, `DELETE` or `OPTIONS` request is sent again on a new connection; a `POST` or `PATCH` fails with `ConnectionReset` instead, since the server may already have acted on it.
+
+**Compression.** `request` asks for gzip (`Accept-Encoding: gzip`) and decompresses a gzip body, so `body` and `text()` are the original content; `max_body` counts the decompressed bytes. The `Content-Encoding` and `Content-Length` headers stay as the server sent them. Setting `Accept-Encoding` in `headers` turns this off: the body is returned as it came.
+
+| `http::HttpError` | When |
+| :---------------- | :--- |
+| `InvalidUrl` | The URL isn't valid (see [std/url](#stdurl)) |
+| `UnsupportedScheme` | The URL, or a redirect, isn't `http` or `https` |
+| `InvalidMethod` | `method` isn't an uppercase HTTP method |
+| `InvalidHeader` | A header name or value that can't be sent, or a `Transfer-Encoding` header |
+| `HostNotFound`, `ConnectionRefused`, `NetworkUnreachable` | As in `net::NetError` |
+| `TimedOut` | The call didn't finish within `timeout_ms` |
+| `HandshakeFailed`, `UntrustedCertificate`, `ExpiredCertificate`, `WrongHostCertificate`, `InvalidCertificate` | As in `net::NetError`, for `https` |
+| `ConnectionReset` | The server closed or reset the connection before answering |
+| `InvalidResponse` | The server's answer isn't valid HTTP, ends too early, or has a broken gzip body |
+| `HeadersTooLarge` | The response head is over 64 KiB |
+| `BodyTooLarge` | The body is over `max_body` |
+| `TooManyRedirects` | More than `max_redirects` redirects |
+| `InvalidUtf8` | `text()` on a body that isn't valid UTF-8 |
+| `Closed` | The connection was closed |
+| `Other` | Any other failure |
+
 ### std/reflect
 
 `import std/reflect` provides read-only descriptions of concrete types. `reflect::type_of[T]()` needs no value; `reflect::type_of_value(value)` infers its type and evaluates the argument normally. Both work inside generic functions. A `reflect::Type` is a protected handle: compare identities with `reflect::is_same(a, b)`, inspect its name with `reflect::name(type)` and its kind with `reflect::kind(type)`. Matching names or runtime layouts do not establish type identity.
@@ -2533,4 +2710,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
+- **HTTP**: a client only, for HTTP/1.1: no HTTP server yet, no HTTP/2 and no WebSocket. Proxies aren't used (`HTTP_PROXY` and similar variables are ignored), cookies aren't stored between requests, there are no client certificates, and request bodies are sent whole (no streamed uploads). Only `http::request` decompresses, and only gzip.
 - **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

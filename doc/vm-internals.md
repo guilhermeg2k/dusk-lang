@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.16 (in development: std/io output and stdin streams, fs jobs on libuv's thread pool). The language itself is described in [language-ref.md](language-ref.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, and the garbage collector. It describes the code as of v0.16 (in development: std/io output and stdin streams, fs jobs on libuv's thread pool, TCP, TLS and the HTTP client). The language itself is described in [language-ref.md](language-ref.md).
 
 The source files involved:
 
@@ -29,6 +29,10 @@ The source files involved:
 | `src/runtime/tasks/tls.zig` | The `dusk_tls_*` functions and their `Status` codes, declared by hand |
 | `src/runtime/tasks/tls_layer.zig` | `TlsLayer` (a stream's TLS state), `ServerCertificate`, client configs (section 11.8) |
 | `src/runtime/tasks/trust_store.zig` | `TrustStore`: the system's root certificates, loaded once on libuv's thread pool (section 11.8) |
+| `src/runtime/tasks/http_glue.c` | The only code that calls llhttp: a response parser that records the head as offsets and copies decoded body bytes out, behind a few `dusk_http_*` functions (section 11.9) |
+| `src/runtime/tasks/http.zig` | The `dusk_http_*` functions and their `Status` codes, declared by hand, and the Zig mirror of `http::HttpError` |
+| `src/runtime/tasks/http_reader.zig` | `HttpReader` (a stream's current response: its parser and decoded body) (section 11.9) |
+| `src/runtime/tasks/connection_pool.zig` | `ConnectionPool`: idle HTTP connections by server, for reuse (section 11.9) |
 
 Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.
 
@@ -719,7 +723,7 @@ Every `std/fs` call is one `FsJob` (`src/runtime/tasks/fs_job.zig`), run with `u
 
 A `Stream` lives in C memory: the bytes read so far (a byte array and a read offset; consumed bytes are dropped by moving the rest down once the offset passes half), the end and failure flags, at most one `waiter` (the parked task and what it asked for), and an optional timer.
 
-**One rule for every read.** `Stream.readyOutcome(mode)` decides whether a read (`bytes`, `exact`, `line`, `all_text`, `all_bytes`) can complete now, and returns the data (a slice of the buffer and how much to consume), the end, or an error. The native calls it first and, when it's ready, builds the string or buffer right there with no park. That's the common case when lines come from a pipe. Otherwise it parks the task as the waiter (or fails with `Busy` if there already is one), turns reading on, starts the timer for `timeout_ms`, and counts one pending operation. Before parking on stdin, it flushes stdout, so prompts show up.
+**One rule for every read.** `Stream.readyOutcome(mode)` decides whether a read (`bytes`, `exact`, `line`, `all_text`, `all_bytes`, and the HTTP modes of 11.9) can complete now, and returns the data (a slice of the buffer and how much to consume), the end, or an error. The rules themselves live on `ReadSource` (the available bytes, whether the input ended, its failure), so the same code reads a socket's buffer and an HTTP body after decoding. The native calls it first and, when it's ready, builds the string or buffer right there with no park. That's the common case when lines come from a pipe. Otherwise it parks the task as the waiter (or fails with `Busy` if there already is one), turns reading on, starts the timer for `timeout_ms`, and counts one pending operation. Before parking on stdin, it flushes stdout, so prompts show up.
 
 **Callbacks.** libuv's `onAlloc` hands out free space at the end of the buffer, and `onRead` appends to it, or records the end (`UV_EOF`) or a failure. A finished `read_chunk` job does the same through `Stream.finishChunk`. Then `serveWaiter` runs `readyOutcome` for the waiter: if the read can complete, it copies the result into a payload (11.3), consumes it, stops the timer and wakes the task. If no task waits and 1 MiB or more is buffered, reading stops (`uv_read_stop`), so a fast writer fills the OS pipe and slows down instead of filling memory. The next read turns it back on.
 
@@ -763,7 +767,25 @@ A `Stream` lives in C memory: the bytes read so far (a byte array and a read off
 
 **The trust store.** The first verifying `start_tls` without `ca` parks in `TrustStore.waiters` and starts a `LoadJob` on libuv's thread pool. The job makes its own `std.Io.Threaded` and fills a Zig `std.crypto.Certificate.Bundle` from `SSL_CERT_FILE` / `SSL_CERT_DIR` when set, else from the system (`Bundle.rescan`: the distribution's bundle paths on Linux, the system keychains on macOS, the ROOT store on Windows); it touches only its own memory and calls no mbedTLS. Back on the loop thread, `finishLoading` adds each DER certificate to one shared client config and continues every waiter with `startClientTls`; the task stays parked and moves to the handshake waiters. At exit, a job still running finishes and is freed without waking anyone.
 
-### 11.9 Freeing tasks
+### 11.9 HTTP client
+
+`std/http` (`std/http.dsk` + `http.zig`) is mostly Dusk code over the same stream natives `TcpConn` uses, redeclared in `http.dsk` with their own error sets: building the URL and the request head, checking methods and headers (`~is_method`, `~is_header_name`, `~is_header_value`), the deadline (`time::monotonic_ns` plus a `remaining_ms` per step), redirects (a recursive `~follow`, at most `max_redirects` deep) and the retry on a stale connection. What's native is parsing, decompression and the pool. `std/url` is separate (`url.dsk` + `url.zig`): parsing, `resolve` and percent-encoding are byte loops in Zig that return offsets or strings, and the `Url` struct is built in Dusk.
+
+**llhttp through a C glue file.** llhttp 9.4.3 comes from the `duskilang/llhttp` fork like the other C libraries. `http_glue.c` owns the `llhttp_t` and its settings and exposes a response parser: `feed_head` runs the parser until it pauses in `on_headers_complete` and reports how many bytes the head took (bytes after it stay untouched); the status, reason and each header name and value are recorded as offsets from the first byte ever fed, since the stream's buffer moves; 1xx heads are skipped (`on_message_begin` clears what was recorded). `feed_body` copies `on_body` spans into an output buffer and pauses in `on_message_complete`, so bytes after the message are never consumed; `finish_body` completes a body that runs until the connection closes, or fails a cut-short one. For a response to `HEAD`, `on_headers_complete` returns "no body" and the pause moves to `on_message_complete`, at the same position. Strict mode, no lenient flags: `Content-Length` with `Transfer-Encoding`, two different lengths, bad header characters and bad chunk sizes are all rejected by llhttp. A body-less message (`Content-Length: 0`, `204`) completes only when the parser is fed once more, even with zero bytes, so body reads always feed.
+
+**Reading responses.** A stream's `HttpReader` holds the parser of its current response and the decoded body (`body` from `body_offset`). Three read modes sit next to the plain ones in `readyOutcome`, and unlike them they change the stream as they go:
+
+- `http_head`: feeds what's buffered and isn't fed yet (`head_fed`), and returns the head's bytes once complete (over 64 KiB is `HeadersTooLarge`; the end of input before any byte is the end, after some bytes `InvalidResponse`). `~parse_head` then re-parses those few hundred bytes with a fresh parser into a flat `[]string` (status, reason, name, value...), turning invalid UTF-8 into U+FFFD.
+- `http_whole_body: cap`: decodes everything that arrives into `body`, consuming the framing bytes right away, until the message completes or `cap` is passed (`BodyTooLarge`).
+- `http_body: BodyRead` (for `ResponseStream`: bytes, line, all text, all bytes): decodes what arrived, then applies the `ReadSource` rules to the decoded bytes, with "ended" meaning the message is complete. The outcome's `consumed` is kept as `taken` and dropped at the start of the next read, so the returned slice stays valid until the native copied it.
+
+A plain-mode failure is an `IoError`; the head and whole-body modes fail with `HttpError` instead (`ReadOutcome.http_failure`, and `ReadMode.wakeFailure` maps a stream's `IoError` for a parked HTTP read), because those natives declare `HttpError` and the wake's relative id is added to its base (11.3). Body reads of a `ResponseStream` keep `IoError`, so it fits `io::Reader`.
+
+**gzip.** Only `http::request` asks for it. After the whole body arrives, `~gunzip` decompresses it with Zig's `std.compress.flate` (gzip container), counting `max_body` on the output, and checks the footer's CRC-32 and size itself, since Zig reads them without checking. Zig's decompressor pulls from a reader, so it can't be fed piece by piece; that's why `http::open` doesn't ask for compression.
+
+**The pool.** `EventLoop.connection_pool` maps a key (`scheme://host:port`, plus `verify` and `ca` for `https`) to idle stream handles, newest last, at most 8 per key (adding a ninth closes the oldest). `~pool_put` checks `Stream.isReusable` (no waiter, open, not ended or failed, nothing buffered, the TLS handshake done, the message complete with keep-alive) and closes the stream otherwise; a reusable one gets `pool_key`, drops its buffers, keeps reading, and starts its timer with `onIdleTimeout` (30 s). Anything that arrives while it's idle, data or the end, makes it unusable, and `onRead` evicts it (`evictIfUnusable`): it leaves the pool and closes. Idle streams don't count as pending operations, so they never keep the program running; but since the loop isn't polled while nothing is pending, a close by the server can go unnoticed, so `~pool_take` runs one non-blocking poll before checking `isReusable` on the newest entry. On the Dusk side, a request takes from the pool first; if a reused connection fails with `ConnectionReset` (nothing arrived, or a reset), an idempotent request (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`) is sent once more on a new connection. A followed redirect's body is read (up to 64 KiB) so its connection can go back, and a `ResponseStream` calls `~pool_put` on `close()`.
+
+### 11.10 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 
