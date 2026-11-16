@@ -1,0 +1,7 @@
+import std/reflect
+struct User
+    payload: buffer
+end
+func main() -> void
+    reflect::require_value[User]([reflect::Kind.Struct, reflect::Kind.String])
+end

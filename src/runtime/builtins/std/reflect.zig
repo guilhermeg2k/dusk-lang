@@ -7,6 +7,7 @@ const native = @import("../native.zig");
 pub const error_sets = .{reflection.ReflectError};
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "require_value", native.Binding{ .reflection = .{ .operation = .require_value, .func = &reflection.requireValue } } },
     .{ "share_state", native.Binding{ .native = &reflection.shareState } },
     .{ "can_construct", native.Binding{ .native = &reflection.canConstruct } },
     .{ "can_attach", native.Binding{ .native = &reflection.canAttach } },

@@ -793,6 +793,14 @@ Builder/session state uses ordinary protected structs tagged `reflection_state`.
 
 The public construction operations and session lifecycle are implemented in Dusk. Native `construct` allocates typed structs, arrays, maps, enum values, unions and nullable boxes from checked reflected inputs, validating descriptor identities again. Missing fields queue captured default closures on the session. `complete_session` changes the session from open to completing, invokes callbacks through ordinary Dusk calls, then marks it complete and clears callbacks. Pending values can be attached only within their session and refuse reads/casts until completion, including while a default is parked. Invalid construction marks the session failed. The compiler's `field_defaults` and deduplicated `$field-default` functions are shared with the existing JSON codec.
 
+### Reflection JSON comparison backend
+
+The `json-backend` build option chooses the standard JSON module source and bindings. `native` remains the default. `reflection` selects `json_reflected.dsk`, whose typed decoder, encoder traversal, duplicate/unknown-field policies, diagnostics, depth checks and cycle detection use public `std/reflect` facilities. Programs compiled with this source emit no `Program.json_codecs` plans and use no `Binding.json` calls. The native codec and its compiler paths remain available for the default and controlled comparisons until a backend selection is made.
+
+The lexical adapter in `std/json_reflected.zig` retains the standard scanner and writer. Scanning produces a private flat array of decoded-string/number token records plus byte offsets. A lexical failure becomes an invalid token at its detection offset, preserving earlier semantic-error precedence when the Dusk decoder visits the prefix. Scanner memory and input copies are native temporary allocations; returned token objects/strings are ordinary rooted heap values. No typed destination struct is allocated by the scanner. A numeric-token helper preserves exponent parsing and rounding without changing `std/string` conversion policy. Scalar formatting uses the same writer behavior as the native codec.
+
+`Binding.reflection.result_type` supplies a format-neutral result descriptor graph to native factories, so the token adapter needs no JSON-specific compiler rules. `require_value[T]` validates literal kind/key policies in sema and is erased before its argument expressions are emitted. JSON uses it to preserve compile-time rejection of unsupported targets. The reflection backend's `encode` is an ordinary generic Dusk function and can also be used as a function value with its full signature.
+
 ## 13. Known issues and observations
 
 ### 13.1 Fixed: the GC copied call arguments twice

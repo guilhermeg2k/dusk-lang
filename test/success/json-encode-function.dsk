@@ -1,0 +1,6 @@
+import std/json
+
+func main() -> !void
+    let encode: func(int, json::EncodeOptions) -> json::JsonError!string = json::encode
+    assert((try encode(7, json::EncodeOptions())) == "7")
+end

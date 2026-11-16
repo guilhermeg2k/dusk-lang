@@ -2416,6 +2416,16 @@ end
 
 Lists and descriptions are independent snapshots; changing them does not modify the type. Child type handles preserve identity, including references back to recursive types. Enum aliases retain their declared names and values in declaration order. Reflection does not grant access to private members or turn runtime type handles into generic type arguments.
 
+**Compile-time requirements.** A library can restrict the types accepted by a generic operation:
+
+```dusk
+func require_record[T]() -> void
+    reflect::require_value[T]([reflect::Kind.Struct, reflect::Kind.String, reflect::Kind.Int])
+end
+```
+
+The allowed kinds must be a literal list. The check walks nullable children, collection entries, struct fields and union payloads, including recursive types. `reflect::MapKeys.Immutable` is the default key policy; pass `reflect::MapKeys.String` as the second argument to require string keys. Unsupported reflected values and types excluded by the policy fail during compilation. The check emits no runtime validation or list allocation. This restricted policy check does not evaluate arbitrary functions at compile time.
+
 **Reflected values.** `reflect::value(input)` makes a snapshot of a typed value and returns a protected `Value`. `reflect::value_type(value)` gives its exact type. `try reflect::cast[T](value)` checks that type and returns an independent typed copy. Modifying the original after taking a snapshot, or modifying the result of a cast, does not change the snapshot. Sharing and cycles inside the copied graph are preserved.
 
 Snapshots support primitives, strings, buffers, nullables, arrays, maps with immutable keys, public-field structs, enums and unions. Private fields, functions, tasks, error values and struct map keys are rejected at compile time. Metadata inspection supports more kinds than value traversal does.

@@ -39,6 +39,13 @@ enum Kind
     Null
 end
 
+enum MapKeys
+    Immutable
+    String
+end
+
+extern func require_value[T](allowed: []Kind, map_keys: MapKeys = MapKeys.Immutable) -> void
+
 struct Field
     name: string
     type: Type

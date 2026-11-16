@@ -1,5 +1,6 @@
 const std = @import("std");
 const native = @import("native.zig");
+const should_use_reflection_json = @import("build_options").json_backend == .reflection;
 
 pub const Module = struct {
     path: []const u8,
@@ -9,7 +10,7 @@ pub const Module = struct {
 
 pub const modules = [_]Module{
     .{ .path = "reflect", .source = @embedFile("std/reflect.dsk"), .bindings = &@import("std/reflect.zig").bindings },
-    .{ .path = "json", .source = @embedFile("std/json.dsk"), .bindings = &@import("std/json.zig").bindings },
+    .{ .path = "json", .source = if (should_use_reflection_json) @embedFile("std/json_reflected.dsk") else @embedFile("std/json.dsk"), .bindings = if (should_use_reflection_json) &@import("std/json_reflected.zig").bindings else &@import("std/json.zig").bindings },
     .{ .path = "math", .source = @embedFile("std/math.dsk"), .bindings = &@import("std/math.zig").bindings },
     .{ .path = "buffer", .source = @embedFile("std/buffer.dsk"), .bindings = &@import("std/buffer.zig").bindings },
     .{ .path = "string", .source = @embedFile("std/string.dsk"), .bindings = &@import("std/string.zig").bindings },

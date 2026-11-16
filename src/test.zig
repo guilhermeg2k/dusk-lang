@@ -61,6 +61,13 @@ test "reflect: an ordinary module decodes a format through public construction A
     try testing.expectEqualStrings("Ana, Porto, 3 scores, age 30\n", output.written());
 }
 
+test "reflect: literal requirements validate nested kinds and map keys at compile time" {
+    try runCase("reflect-requirements.dsk");
+    try runCaseError("sema/reflect-require-buffer.dsk", error.InvalidType);
+    try runCaseError("sema/reflect-require-map-key.dsk", error.InvalidType);
+    try runCaseError("sema/reflect-require-dynamic.dsk", error.InvalidType);
+}
+
 test "reflect: native box layout matches its protected struct header" {
     const value = @import("runtime/value.zig");
     try testing.expectEqual(@sizeOf(value.Struct), @offsetOf(value.ReflectedValue, "type_index"));
@@ -98,6 +105,25 @@ test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCaseOutput("json-defaults.dsk", "name\nitems\nname\nitems\nname\nitems\nname\nitems\n");
 }
 
+test "json: the selected backend uses its declared type metadata" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile(
+        \\import std/json
+        \\func main() -> !void
+        \\    let text = try json::encode(7)
+        \\    let value = try json::decode[int](text)
+        \\end
+    );
+    if (@import("build_options").json_backend == .reflection) {
+        try testing.expectEqual(@as(usize, 0), program.json_codecs.len);
+        try testing.expect(program.reflection_types.len > 0);
+    } else {
+        try testing.expect(program.json_codecs.len > 0);
+    }
+}
+
 test "json: native entry points reject invalid UTF-8" {
     const value = @import("runtime/value.zig");
     const VM = @import("runtime/vm.zig").VM;
@@ -105,29 +131,17 @@ test "json: native entry points reject invalid UTF-8" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
-    const program = try dusk.compile(
-        \\import std/json
-        \\func main() -> !void
-        \\    let text = try json::encode("")
-        \\    let parsed = try json::decode[string](text)
-        \\end
-    );
+    var program = try dusk.compile("func main() -> void end");
+    program.json_codecs = &.{.{ .kind = .string, .shape = .string }};
+    program.struct_descriptors = &.{
+        .{ .field_count = 1, .heap_bitmap = 0 },
+        .{ .field_count = 2, .heap_bitmap = 0 },
+    };
     var vm = VM.init(&program, .{});
     defer vm.deinit();
-    const codec_index = for (program.json_codecs, 0..) |codec, i| {
-        if (codec.shape == .string) break i;
-    } else return error.TestUnexpectedResult;
-    var encode_descriptor: u16 = 0;
-    var decode_descriptor: u16 = 0;
-    for (program.struct_descriptors, 0..) |descriptor, i| {
-        if (descriptor.heap_bitmap != 0) continue;
-        if (descriptor.field_count == 1) {
-            encode_descriptor = @intCast(i);
-        }
-        if (descriptor.field_count == 2) {
-            decode_descriptor = @intCast(i);
-        }
-    }
+    const codec_index: usize = 0;
+    const encode_descriptor: u16 = 0;
+    const decode_descriptor: u16 = 1;
     const encode_options = try value.Struct.init(vm.getCurrentHeapAllocator(), 1, encode_descriptor);
     encode_options.set(0, .{ .int64 = 128 });
     const invalid_text = try vm.allocBytesValue(&.{0xff}, .string);
@@ -154,7 +168,11 @@ test "json: unsupported types and context-free calls are compile errors" {
     try runCaseError("sema/json-private-field.dsk", error.InvalidType);
     try runCaseError("sema/json-nested-private-field.dsk", error.InvalidType);
     try runCaseError("sema/json-untyped-decode.dsk", error.CantInferSlot);
-    try runCaseError("sema/json-encode-as-value.dsk", error.BuiltinAsValue);
+    if (@import("build_options").json_backend == .native) {
+        try runCaseError("sema/json-encode-as-value.dsk", error.BuiltinAsValue);
+    } else {
+        try runCase("json-encode-function.dsk");
+    }
 }
 
 test "math: constants, numeric functions and errors" {

@@ -85,9 +85,9 @@ def git(*args: str, cwd: Path = ROOT) -> str:
     return res.stdout.strip()
 
 
-def build(src_dir: Path, out_bin: Path) -> None:
+def build(src_dir: Path, out_bin: Path, build_args: list[str] | None = None) -> None:
     log(f"[build] {src_dir} (ReleaseFast)")
-    res = subprocess.run(["zig", "build", "-Doptimize=ReleaseFast"], cwd=str(src_dir),
+    res = subprocess.run(["zig", "build", "-Doptimize=ReleaseFast", *(build_args or [])], cwd=str(src_dir),
                          capture_output=True, text=True)
     if res.returncode != 0:
         raise SystemExit(f"[build] failed in {src_dir}:\n{res.stdout}{res.stderr}")
@@ -184,7 +184,11 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=2, help="unmeasured runs first (default: 2)")
     parser.add_argument("--json", action="store_true", help="print only the JSON result to stdout")
     parser.add_argument("--save", metavar="NAME", help="also write benchmarks/history/NAME.json")
+    parser.add_argument("--build-arg", action="append", default=[], metavar="ARG", help="extra current build argument; use --build-arg=-Dname=value")
+    parser.add_argument("--base-build-arg", action="append", default=[], metavar="ARG", help="extra comparison build argument")
     args = parser.parse_args()
+    if args.base_build_arg and not args.compare:
+        parser.error("--base-build-arg requires --compare")
 
     known = {b["key"]: b for b in BENCHMARKS}
     unknown = [n for n in args.names if n not in known]
@@ -203,7 +207,7 @@ def main() -> None:
             "os": machine.get("OS", "unknown"),
             "zig": subprocess.run(["zig", "version"], capture_output=True, text=True).stdout.strip(),
         },
-        "settings": {"runs": args.runs, "warmup": args.warmup},
+        "settings": {"runs": args.runs, "warmup": args.warmup, "build_args": args.build_arg, "base_build_args": args.base_build_arg},
         "benchmarks": {},
     }
 
@@ -211,7 +215,7 @@ def main() -> None:
         tmp = Path(tmp_str)
         binaries = {"current": tmp / "dusk-current"}
         bench_dirs = {"current": BENCH_DIR / "dusk"}
-        build(ROOT, binaries["current"])
+        build(ROOT, binaries["current"], args.build_arg)
 
         if args.compare:
             base_commit = git("rev-parse", "--short", args.compare)
@@ -219,7 +223,7 @@ def main() -> None:
             git("worktree", "add", "--detach", str(worktree), args.compare)
             try:
                 binaries["base"] = tmp / "dusk-base"
-                build(worktree, binaries["base"])
+                build(worktree, binaries["base"], args.base_build_arg)
                 bench_dirs["base"] = tmp / "base-benchmarks"
                 shutil.copytree(worktree / "benchmarks" / "dusk", bench_dirs["base"])
             finally:

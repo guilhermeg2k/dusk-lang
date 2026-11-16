@@ -18,11 +18,14 @@ pub const ReflectionOperation = enum {
     value,
     cast,
     result_descriptor,
+    result_type,
+    require_value,
 
     pub fn hiddenArgumentCount(self: ReflectionOperation) u8 {
         return switch (self) {
             .type_of, .value => 2,
-            .cast, .result_descriptor => 1,
+            .cast, .result_descriptor, .result_type => 1,
+            .require_value => 0,
         };
     }
 };

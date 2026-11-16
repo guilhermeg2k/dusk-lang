@@ -1,0 +1,715 @@
+import std/reflect
+import std/array
+import std/string
+import std/map
+import std/math
+
+error JsonError
+    InvalidJson
+    TypeMismatch
+    MissingField
+    UnknownField
+    DuplicateKey
+    NumberOutOfRange
+    UnknownVariant
+    InvalidUnion
+    NonFiniteNumber
+    DepthExceeded
+    CycleDetected
+    InvalidOptions
+end
+
+struct Diagnostic
+    path: string = ""
+    byte_offset: ?int = null
+    line: ?int = null
+    column: ?int = null
+end
+
+struct DecodeOptions
+    should_reject_unknown_fields: bool = false
+    max_depth: int = 128
+end
+
+struct EncodeOptions
+    max_depth: int = 128
+end
+
+enum ~TokenKind
+    ObjectBegin
+    ObjectEnd
+    ArrayBegin
+    ArrayEnd
+    String
+    Number
+    True
+    False
+    Null
+    End
+    Invalid
+end
+
+struct ~Token
+    kind: TokenKind
+    text: string
+    offset: int
+end
+
+struct ~Parser
+    source: string
+    tokens: []Token
+    index: int
+    offset: int
+    path: string
+    session: reflect::Session
+    diagnostic: ?Diagnostic
+    options: DecodeOptions
+end
+
+extern func ~scan(text: string) -> []Token
+extern func ~format_string(text: string) -> JsonError!string
+extern func ~format_int(value: int) -> string
+extern func ~parse_float(text: string) -> JsonError!float
+extern func ~format_float(value: float) -> JsonError!string
+
+func decode[T](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
+    require_json[T]()
+    reset_diagnostic(diagnostic)
+    if !is_valid_depth(options.max_depth) then
+        if diagnostic: mut target then
+            write_position(target, text, "", 0)
+        end
+        return JsonError.InvalidOptions
+    end
+    let mut tokens = scan(text)
+    let mut session = reflect::begin_session()
+    let mut parser = Parser(text, tokens, 0, 0, "", session, diagnostic, copy(options))
+    let result = decode_document(parser, reflect::type_of[T]()) catch err then
+        if diagnostic: mut target then
+            write_position(target, text, parser.path, parser.offset)
+        end
+        return err
+    end
+    complete(session) catch err then
+        if diagnostic: mut target then
+            write_position(target, text, parser.path, parser.offset)
+        end
+        return err
+    end
+    return try cast_value[T](result)
+end
+
+func ~require_json[T]() -> void
+    reflect::require_value[T]([reflect::Kind.Int, reflect::Kind.Byte, reflect::Kind.Float, reflect::Kind.Bool, reflect::Kind.String, reflect::Kind.Nullable, reflect::Kind.Array, reflect::Kind.Map, reflect::Kind.Struct, reflect::Kind.Enum, reflect::Kind.Union], reflect::MapKeys.String)
+end
+
+func ~is_valid_depth(depth: int) -> bool
+    return depth >= 1 and depth <= 512
+end
+
+func ~reset_diagnostic(mut diagnostic: ?Diagnostic) -> void
+    if diagnostic: mut target then
+        target.path = ""
+        target.byte_offset = null
+        target.line = null
+        target.column = null
+    end
+end
+
+func ~write_position(mut diagnostic: Diagnostic, source: string, path: string, offset: int) -> void
+    diagnostic.path = path
+    let limit = if offset < string::len(source) then offset else string::len(source) end
+    let mut line = 1
+    let mut column = 1
+    if limit > 0 then
+        for 0..limit - 1: i do
+            let current = string::byte_at(source, i) catch 0
+            if current == 10 then
+                line = line + 1
+                column = 1
+            else
+                column = column + 1
+            end
+        end
+    end
+    diagnostic.byte_offset = limit
+    diagnostic.line = line
+    diagnostic.column = column
+end
+
+func ~decode_document(mut parser: Parser, type: reflect::Type) -> JsonError!reflect::Value
+    let result = try decode_value(parser, type, 0)
+    if (try peek(parser)) != TokenKind.End then
+        return JsonError.InvalidJson
+    end
+    let end_token = try next(parser)
+    return result
+end
+
+func ~decode_value(mut parser: Parser, type: reflect::Type, depth: int) -> JsonError!reflect::Value
+    let type_kind = reflect::kind(type)
+    when type_kind
+        reflect::Kind.Nullable then
+            let mut builder = try new_builder(parser.session, type)
+            if (try peek(parser)) == TokenKind.Null then
+                let token = try next(parser)
+                try put_null(builder)
+            else
+                let description = reflect::describe(type)
+                if description.nullable: child then
+                    try put_present(builder, try decode_value(parser, child, depth))
+                else
+                    return JsonError.TypeMismatch
+                end
+            end
+            return try defer_builder(builder)
+        end
+        reflect::Kind.Int, reflect::Kind.Byte then
+            let text = try read_text(parser, TokenKind.Number)
+            let has_fraction_or_exponent = string::contains(text, ".") or string::contains(text, "e") or string::contains(text, "E")
+            if has_fraction_or_exponent then
+                return JsonError.TypeMismatch
+            end
+            let number = string::to_int(text) catch err then
+                return JsonError.NumberOutOfRange
+            end
+            if type_kind == reflect::Kind.Byte then
+                let narrowed = to_byte(number) catch err then
+                    return JsonError.NumberOutOfRange
+                end
+                return reflect::value(narrowed)
+            end
+            return reflect::value(number)
+        end
+        reflect::Kind.Float then
+            let text = try read_text(parser, TokenKind.Number)
+            let number = try parse_float(text)
+            if !math::is_finite(number) then
+                return JsonError.NumberOutOfRange
+            end
+            return reflect::value(number)
+        end
+        reflect::Kind.Bool then
+            let token = try next(parser)
+            if token.kind == TokenKind.True then
+                return reflect::value(true)
+            end
+            if token.kind == TokenKind.False then
+                return reflect::value(false)
+            end
+            return JsonError.TypeMismatch
+        end
+        reflect::Kind.String then
+            return reflect::value(try read_text(parser, TokenKind.String))
+        end
+        reflect::Kind.Struct then
+            return try read_struct(parser, type, depth)
+        end
+        reflect::Kind.Array then
+            return try read_array(parser, type, depth)
+        end
+        reflect::Kind.Map then
+            return try read_map(parser, type, depth)
+        end
+        reflect::Kind.Enum then
+            let name = try read_text(parser, TokenKind.String)
+            let mut builder = try new_builder(parser.session, type)
+            try choose_enum(builder, name)
+            return try defer_builder(builder)
+        end
+        reflect::Kind.Union then
+            return try read_union(parser, type, depth)
+        end
+        else then
+            return JsonError.TypeMismatch
+        end
+    end
+end
+
+func ~read_struct(mut parser: Parser, type: reflect::Type, depth: int) -> JsonError!reflect::Value
+    try enter_container(parser, TokenKind.ObjectBegin, depth)
+    let mut builder = try new_builder(parser.session, type)
+    let fields = reflect::fields(type)
+    let mut keys: map[string, bool] = {}
+    for (try peek(parser)) != TokenKind.ObjectEnd do
+        let key = try object_key(parser, keys)
+        let base = parser.path
+        try append_field_path(parser, key, false)
+        let mut has_field = false
+        for fields: field do
+            if field.name != key then
+                continue
+            end
+            let value = try decode_value(parser, field.type, depth + 1)
+            try put_field(builder, key, value)
+            has_field = true
+            break
+        end
+        if !has_field then
+            if parser.options.should_reject_unknown_fields then
+                return JsonError.UnknownField
+            end
+            try skip_value(parser, depth + 1)
+        end
+        parser.path = base
+    end
+    let end_token = try next(parser)
+    for fields: field do
+        let is_missing_required = !field.has_default and !map::has(keys, field.name)
+        if is_missing_required then
+            try append_field_path(parser, field.name, false)
+            return JsonError.MissingField
+        end
+    end
+    return try defer_builder(builder)
+end
+
+func ~read_array(mut parser: Parser, type: reflect::Type, depth: int) -> JsonError!reflect::Value
+    try enter_container(parser, TokenKind.ArrayBegin, depth)
+    let description = reflect::describe(type)
+    if description.array: child then
+        let mut builder = try new_builder(parser.session, type)
+        let mut index = 0
+        for (try peek(parser)) != TokenKind.ArrayEnd do
+            let base = parser.path
+            append_index_path(parser, index)
+            try append_item(builder, try decode_value(parser, child, depth + 1))
+            parser.path = base
+            index = index + 1
+        end
+        let end_token = try next(parser)
+        return try defer_builder(builder)
+    end
+    return JsonError.TypeMismatch
+end
+
+func ~read_map(mut parser: Parser, type: reflect::Type, depth: int) -> JsonError!reflect::Value
+    try enter_container(parser, TokenKind.ObjectBegin, depth)
+    let description = reflect::describe(type)
+    if description.map: mapping then
+        let mut builder = try new_builder(parser.session, type)
+        let mut keys: map[string, bool] = {}
+        for (try peek(parser)) != TokenKind.ObjectEnd do
+            let key = try object_key(parser, keys)
+            let base = parser.path
+            try append_field_path(parser, key, true)
+            let value = try decode_value(parser, mapping.value, depth + 1)
+            try insert_entry(builder, reflect::value(key), value)
+            parser.path = base
+        end
+        let end_token = try next(parser)
+        return try defer_builder(builder)
+    end
+    return JsonError.TypeMismatch
+end
+
+func ~read_union(mut parser: Parser, type: reflect::Type, depth: int) -> JsonError!reflect::Value
+    try enter_container(parser, TokenKind.ObjectBegin, depth)
+    if (try peek(parser)) == TokenKind.ObjectEnd then
+        return JsonError.InvalidUnion
+    end
+    let mut keys: map[string, bool] = {}
+    let key = try object_key(parser, keys)
+    let base = parser.path
+    try append_field_path(parser, key, false)
+    for reflect::union_variants(type): variant do
+        if variant.name != key then
+            continue
+        end
+        let value = try decode_value(parser, variant.type, depth + 1)
+        if (try peek(parser)) != TokenKind.ObjectEnd then
+            let extra = try object_key(parser, keys)
+            return JsonError.InvalidUnion
+        end
+        let end_token = try next(parser)
+        let mut builder = try new_builder(parser.session, type)
+        try choose_union(builder, key, value)
+        let result = try defer_builder(builder)
+        parser.path = base
+        return result
+    end
+    return JsonError.UnknownVariant
+end
+
+func ~object_key(mut parser: Parser, mut keys: map[string, bool]) -> JsonError!string
+    let name = try read_text(parser, TokenKind.String)
+    if map::has(keys, name) then
+        try append_field_path(parser, name, true)
+        return JsonError.DuplicateKey
+    end
+    keys[name] = true
+    return name
+end
+
+func ~skip_value(mut parser: Parser, depth: int) -> JsonError!void
+    when try peek(parser)
+        TokenKind.ObjectBegin then
+            try enter_container(parser, TokenKind.ObjectBegin, depth)
+            let mut keys: map[string, bool] = {}
+            for (try peek(parser)) != TokenKind.ObjectEnd do
+                let key = try object_key(parser, keys)
+                let base = parser.path
+                try append_field_path(parser, key, false)
+                try skip_value(parser, depth + 1)
+                parser.path = base
+            end
+            let end_token = try next(parser)
+        end
+        TokenKind.ArrayBegin then
+            try enter_container(parser, TokenKind.ArrayBegin, depth)
+            let mut index = 0
+            for (try peek(parser)) != TokenKind.ArrayEnd do
+                let base = parser.path
+                append_index_path(parser, index)
+                try skip_value(parser, depth + 1)
+                parser.path = base
+                index = index + 1
+            end
+            let end_token = try next(parser)
+        end
+        TokenKind.String, TokenKind.Number, TokenKind.True, TokenKind.False, TokenKind.Null then
+            let token = try next(parser)
+        end
+        else then
+            return JsonError.InvalidJson
+        end
+    end
+end
+
+func ~peek(mut parser: Parser) -> JsonError!TokenKind
+    let token = parser.tokens[parser.index]
+    if token.kind == TokenKind.Invalid then
+        parser.offset = token.offset
+        return JsonError.InvalidJson
+    end
+    return token.kind
+end
+
+func ~next(mut parser: Parser) -> JsonError!Token
+    let kind = try peek(parser)
+    let token = parser.tokens[parser.index]
+    parser.offset = token.offset
+    parser.index = parser.index + 1
+    return token
+end
+
+func ~read_text(mut parser: Parser, expected: TokenKind) -> JsonError!string
+    let token = try next(parser)
+    if token.kind != expected then
+        return JsonError.TypeMismatch
+    end
+    return token.text
+end
+
+func ~enter_container(mut parser: Parser, expected: TokenKind, depth: int) -> JsonError!void
+    let token = try next(parser)
+    if token.kind != expected then
+        return JsonError.TypeMismatch
+    end
+    if depth >= parser.options.max_depth then
+        return JsonError.DepthExceeded
+    end
+end
+
+func ~append_index_path(mut parser: Parser, index: int) -> void
+    if parser.diagnostic == null then
+        return
+    end
+    parser.path = "${parser.path}[$index]"
+end
+
+func ~append_field_path(mut parser: Parser, name: string, is_map_key: bool) -> JsonError!void
+    if parser.diagnostic == null then
+        return
+    end
+    let can_use_identifier = is_identifier(name) and !is_map_key
+    if can_use_identifier then
+        if string::len(parser.path) > 0 then
+            parser.path = "${parser.path}.$name"
+        else
+            parser.path = name
+        end
+        return
+    end
+    let quoted = try format_string(name)
+    parser.path = "${parser.path}[$quoted]"
+end
+
+func ~is_identifier(name: string) -> bool
+    let size = string::len(name)
+    if size == 0 then
+        return false
+    end
+    for 0..size - 1: i do
+        let current = string::byte_at(name, i) catch 0
+        let is_letter = (current >= 65 and current <= 90) or (current >= 97 and current <= 122) or current == 95
+        let is_digit = i > 0 and current >= 48 and current <= 57
+        if !is_letter and !is_digit then
+            return false
+        end
+    end
+    return true
+end
+
+func encode[T](value: T, options: EncodeOptions = @()) -> JsonError!string
+    require_json[T]()
+    if !is_valid_depth(options.max_depth) then
+        return JsonError.InvalidOptions
+    end
+    let snapshot = reflect::value(value)
+    let mut parts: []string = []
+    let mut ancestors: []reflect::Value = []
+    try encode_value(snapshot, 0, options.max_depth, parts, ancestors)
+    return string::join(parts, "")
+end
+
+func ~encode_value(value: reflect::Value, depth: int, max_depth: int, mut parts: []string, mut ancestors: []reflect::Value) -> JsonError!void
+    let type = reflect::value_type(value)
+    let kind = reflect::kind(type)
+    if kind == reflect::Kind.Nullable then
+        if try is_null(value) then
+            array::append(parts, "null")
+            return
+        end
+        try encode_value(try unwrap_value(value), depth, max_depth, parts, ancestors)
+        return
+    end
+    let is_container = kind == reflect::Kind.Struct or kind == reflect::Kind.Array or kind == reflect::Kind.Map or kind == reflect::Kind.Union
+    if is_container then
+        if depth >= max_depth then
+            return JsonError.DepthExceeded
+        end
+        for ancestors: ancestor do
+            if try are_same_objects(ancestor, value) then
+                return JsonError.CycleDetected
+            end
+        end
+        array::append(ancestors, copy(value))
+    end
+    when kind
+        reflect::Kind.Int then
+            array::append(parts, format_int(try cast_value[int](value)))
+        end
+        reflect::Kind.Byte then
+            let narrowed = try cast_value[byte](value)
+            array::append(parts, format_int(narrowed))
+        end
+        reflect::Kind.Float then
+            array::append(parts, try format_float(try cast_value[float](value)))
+        end
+        reflect::Kind.Bool then
+            let is_true = try cast_value[bool](value)
+            array::append(parts, if is_true then "true" else "false" end)
+        end
+        reflect::Kind.String then
+            array::append(parts, try format_string(try cast_value[string](value)))
+        end
+        reflect::Kind.Enum then
+            array::append(parts, try format_string(try variant_name(value)))
+        end
+        reflect::Kind.Struct then
+            array::append(parts, "{")
+            let mut is_first = true
+            for reflect::fields(type): field do
+                if !is_first then
+                    array::append(parts, ",")
+                end
+                is_first = false
+                array::append(parts, try format_string(field.name))
+                array::append(parts, ":")
+                try encode_value(try field_value(value, field.name), depth + 1, max_depth, parts, ancestors)
+            end
+            array::append(parts, "}")
+        end
+        reflect::Kind.Array then
+            array::append(parts, "[")
+            let size = try value_length(value)
+            if size > 0 then
+                for 0..size - 1: i do
+                    if i > 0 then
+                        array::append(parts, ",")
+                    end
+                    try encode_value(try element_value(value, i), depth + 1, max_depth, parts, ancestors)
+                end
+            end
+            array::append(parts, "]")
+        end
+        reflect::Kind.Map then
+            array::append(parts, "{")
+            let size = try value_length(value)
+            if size > 0 then
+                for 0..size - 1: i do
+                    if i > 0 then
+                        array::append(parts, ",")
+                    end
+                    let key = try cast_value[string](try map_key_at(value, i))
+                    array::append(parts, try format_string(key))
+                    array::append(parts, ":")
+                    try encode_value(try map_value_at(value, i), depth + 1, max_depth, parts, ancestors)
+                end
+            end
+            array::append(parts, "}")
+        end
+        reflect::Kind.Union then
+            array::append(parts, "{")
+            array::append(parts, try format_string(try variant_name(value)))
+            array::append(parts, ":")
+            try encode_value(try union_payload(value), depth + 1, max_depth, parts, ancestors)
+            array::append(parts, "}")
+        end
+        else then
+            return JsonError.TypeMismatch
+        end
+    end
+    if is_container then
+        let removed = array::pop(ancestors) catch err then
+            return JsonError.TypeMismatch
+        end
+    end
+end
+
+func ~reflection_error(err: reflect::ReflectError) -> JsonError
+    when err
+        reflect::ReflectError.MissingField then
+            return JsonError.MissingField
+        end
+        reflect::ReflectError.UnknownField then
+            return JsonError.UnknownField
+        end
+        reflect::ReflectError.DuplicateAssignment then
+            return JsonError.DuplicateKey
+        end
+        reflect::ReflectError.UnknownVariant then
+            return JsonError.UnknownVariant
+        end
+        else then
+            return JsonError.TypeMismatch
+        end
+    end
+end
+
+func ~cast_value[T](value: reflect::Value) -> JsonError!T
+    return reflect::cast[T](value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~new_builder(mut session: reflect::Session, type: reflect::Type) -> JsonError!reflect::Builder
+    return reflect::builder_in(session, type) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~complete(mut session: reflect::Session) -> JsonError!void
+    reflect::complete_session(session) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~defer_builder(mut builder: reflect::Builder) -> JsonError!reflect::Value
+    return reflect::defer_finish(builder) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~put_field(mut builder: reflect::Builder, name: string, value: reflect::Value) -> JsonError!void
+    reflect::set_value(builder, name, value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~append_item(mut builder: reflect::Builder, value: reflect::Value) -> JsonError!void
+    reflect::append_value(builder, value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~insert_entry(mut builder: reflect::Builder, key: reflect::Value, value: reflect::Value) -> JsonError!void
+    reflect::insert_value(builder, key, value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~choose_enum(mut builder: reflect::Builder, name: string) -> JsonError!void
+    reflect::select_enum(builder, name) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~choose_union(mut builder: reflect::Builder, name: string, value: reflect::Value) -> JsonError!void
+    reflect::select_value(builder, name, value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~put_null(mut builder: reflect::Builder) -> JsonError!void
+    reflect::set_null(builder) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~put_present(mut builder: reflect::Builder, value: reflect::Value) -> JsonError!void
+    reflect::set_present_value(builder, value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~is_null(value: reflect::Value) -> JsonError!bool
+    return reflect::is_null(value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~unwrap_value(value: reflect::Value) -> JsonError!reflect::Value
+    return reflect::unwrap(value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~are_same_objects(left: reflect::Value, right: reflect::Value) -> JsonError!bool
+    return reflect::is_same_object(left, right) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~variant_name(value: reflect::Value) -> JsonError!string
+    return reflect::variant_name(value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~field_value(value: reflect::Value, name: string) -> JsonError!reflect::Value
+    return reflect::field(value, name) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~value_length(value: reflect::Value) -> JsonError!int
+    return reflect::length(value) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~element_value(value: reflect::Value, index: int) -> JsonError!reflect::Value
+    return reflect::element(value, index) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~map_key_at(value: reflect::Value, index: int) -> JsonError!reflect::Value
+    return reflect::map_key(value, index) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~map_value_at(value: reflect::Value, index: int) -> JsonError!reflect::Value
+    return reflect::map_value(value, index) catch err then
+        return reflection_error(err)
+    end
+end
+
+func ~union_payload(value: reflect::Value) -> JsonError!reflect::Value
+    return reflect::payload(value) catch err then
+        return reflection_error(err)
+    end
+end

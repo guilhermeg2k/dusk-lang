@@ -4,6 +4,7 @@ const ast = @import("ast.zig");
 const tt = @import("type_table.zig");
 const modules = @import("modules.zig");
 const native = @import("../runtime/builtins/native.zig");
+const reflection_format = @import("../runtime/reflection_format.zig");
 const prelude_bindings = &@import("../runtime/builtins/prelude.zig").bindings;
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
@@ -4775,9 +4776,26 @@ pub const SemaAnalyzer = struct {
         if (self.reflection_operation_by_uid.get(uid)) |operation| {
             var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
             try self.checkReflectionType(type_arguments[0], &visited, exp.loc);
-            if (operation == .value or operation == .cast) {
+            const needs_value_access = operation == .value or operation == .cast or operation == .require_value;
+            if (needs_value_access) {
                 visited.clearRetainingCapacity();
                 try self.checkReflectionValueType(type_arguments[0], &visited, exp.loc);
+            }
+            if (operation == .require_value) {
+                const requirements = fn_call_arguments_values.items;
+                const are_constant_requirements = requirements[0].data == .i_array and requirements[1].data == .i_int;
+                if (!are_constant_requirements) {
+                    return self.err_reporter.invalidType("literal reflection requirements", "runtime requirements", exp.loc);
+                }
+                var allowed: u32 = 0;
+                for (requirements[0].data.i_array.values) |kind| {
+                    if (kind.data != .i_int) {
+                        return self.err_reporter.invalidType("literal reflection kinds", "a runtime kind", exp.loc);
+                    }
+                    allowed |= @as(u32, 1) << @intCast(kind.data.i_int);
+                }
+                visited.clearRetainingCapacity();
+                try self.checkReflectionRequirements(type_arguments[0], allowed, requirements[1].data.i_int == 1, "", &visited, exp.loc);
             }
         }
 
@@ -4872,6 +4890,64 @@ pub const SemaAnalyzer = struct {
             else => {},
         }
         return self.err_reporter.invalidType("a supported reflected value type", try self.type_table.syntaxName(type_id, self.allocator), loc);
+    }
+
+    fn checkReflectionRequirements(self: *Self, type_id: tt.TypeId, allowed: u32, needs_string_keys: bool, path: []const u8, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void), loc: err.Loc) CompileError!void {
+        if (visited.contains(type_id)) return;
+        try visited.put(self.allocator, type_id, {});
+        const source = self.type_table.getTypePtrById(type_id).*;
+        if (source.kind == .slot) return;
+        const kind: reflection_format.Kind = if (source.is_nullable) .Nullable else switch (source.kind) {
+            .int => .Int,
+            .byte => .Byte,
+            .float => .Float,
+            .boolean => .Bool,
+            .string => .String,
+            .buffer => .Buffer,
+            .array => .Array,
+            .map => .Map,
+            .@"struct" => .Struct,
+            .@"enum" => .Enum,
+            .@"union" => .Union,
+            else => unreachable,
+        };
+        const is_allowed = allowed & (@as(u32, 1) << @intFromEnum(kind)) != 0;
+        if (!is_allowed) {
+            return self.reflectionRequirementError(type_id, path, loc);
+        }
+        if (source.is_nullable) {
+            return self.checkReflectionRequirements(self.type_table.typeIdByNullableTypeId.get(type_id).?, allowed, needs_string_keys, path, visited, loc);
+        }
+        switch (source.kind) {
+            .array => |child| try self.checkReflectionRequirements(child, allowed, needs_string_keys, try allocPrint(self.allocator, "{s}[]", .{path}), visited, loc),
+            .map => |map| {
+                const has_required_keys = !needs_string_keys or map.key == self.type_table.getPrimitive(.string);
+                if (!has_required_keys) {
+                    return self.reflectionRequirementError(type_id, path, loc);
+                }
+                try self.checkReflectionRequirements(map.key, allowed, needs_string_keys, path, visited, loc);
+                try self.checkReflectionRequirements(map.value, allowed, needs_string_keys, try allocPrint(self.allocator, "{s}[]", .{path}), visited, loc);
+            },
+            .@"struct" => |structure| {
+                for (structure.fields_in_order) |field| {
+                    const field_path = if (path.len == 0) field.identifier else try allocPrint(self.allocator, "{s}.{s}", .{ path, field.identifier });
+                    try self.checkReflectionRequirements(field.type_id, allowed, needs_string_keys, field_path, visited, loc);
+                }
+            },
+            .@"union" => |tagged| {
+                for (tagged.variants_in_order) |name| {
+                    const variant_path = if (path.len == 0) name else try allocPrint(self.allocator, "{s}.{s}", .{ path, name });
+                    try self.checkReflectionRequirements(tagged.variants.get(name).?, allowed, needs_string_keys, variant_path, visited, loc);
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn reflectionRequirementError(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError {
+        const name = try self.type_table.syntaxName(type_id, self.allocator);
+        const found = if (path.len == 0) name else try allocPrint(self.allocator, "{s} at '{s}'", .{ name, path });
+        return self.err_reporter.invalidType("a type allowed by reflection requirements", found, loc);
     }
 
     fn checkJsonType(self: *Self, type_id: tt.TypeId, path: []const u8, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void), loc: err.Loc) CompileError!void {

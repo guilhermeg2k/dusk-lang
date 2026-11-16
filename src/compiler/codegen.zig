@@ -1173,6 +1173,14 @@ pub const BytecodeGen = struct {
             return;
         }
 
+        if (self.reflection_operation_by_uid.get(fc.fn_uid)) |operation| {
+            if (operation == .require_value) {
+                try self.genLoadConst(.{ .value = v.NULL_VALUE, .type = .null }, target_reg);
+                self.register_types[target_reg] = value.type_id;
+                return;
+            }
+        }
+
         for (fc.args) |arg| {
             _ = try self.genValue(arg, try self.consumeRegister());
         }
@@ -1206,12 +1214,14 @@ pub const BytecodeGen = struct {
                     try self.genMetadataIndex(try self.getReflectionType(fc.type_arguments[0]));
                     hidden_count = 1;
                 },
-                .result_descriptor => {
+                .result_descriptor, .result_type => {
                     const return_type = self.type_table.getTypePtrById(value.type_id);
                     const payload = if (return_type.kind == .error_union) return_type.kind.error_union.payload else value.type_id;
-                    try self.genMetadataIndex(try self.getStructDescriptor(payload));
+                    const index = if (operation == .result_descriptor) try self.getStructDescriptor(payload) else try self.getReflectionType(payload);
+                    try self.genMetadataIndex(index);
                     hidden_count = 1;
                 },
+                .require_value => unreachable,
             }
         }
 

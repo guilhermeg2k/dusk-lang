@@ -1,0 +1,16 @@
+import std/reflect
+
+struct Node
+    value: int
+    next: ?Node = null
+end
+
+func require_node[T]() -> void
+    reflect::require_value[T]([reflect::Kind.Struct, reflect::Kind.Int, reflect::Kind.Nullable])
+end
+
+func main() -> void
+    reflect::require_value[int]([reflect::Kind.Int])
+    reflect::require_value[map[string, int]]([reflect::Kind.Map, reflect::Kind.String, reflect::Kind.Int], reflect::MapKeys.String)
+    require_node[Node]()
+end

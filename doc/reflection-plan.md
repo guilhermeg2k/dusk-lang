@@ -1,6 +1,6 @@
 # Reflection, safe construction and JSON migration
 
-Status: implementation started after approval, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline at `7aa6591`; see [results](../benchmarks/json-baseline.md). Reflection implementation and JSON migration follow as separate tasks. Type inspection, checked values and safe construction are implemented as documented in the language reference. Capability validation, the independent decoder proof and JSON migration below remain planned. API sketches below record the original design; the language reference defines delivered signatures.
+Status: implementation and compatibility verification complete through the opt-in JSON candidate, 2026-11-16. Baseline source is `7aa6591`; see [baseline results](../benchmarks/json-baseline.md). Type inspection, checked values, safe construction, literal capability policies and an independent user-module decoder are implemented. Both JSON backends pass compatibility checks. Benchmark comparison and the backend selection decision remain; native stays the default.
 
 ## Implementation progress
 
@@ -11,7 +11,9 @@ Status: implementation started after approval, 2026-11-15. The first delivery ad
 - Checked reflected values now use snapshot capture and copying typed casts; traversal produces protected shared views. A dedicated traced heap object owns payloads and optional session references. Public-field/value restrictions prevent private or native state from being reinterpreted through reflection; identity-based struct map keys remain unsupported for value snapshots.
 - Builders/session state uses protected traced handles whose identity survives explicit copies. Public setters validate exact types; completion publishes only initialized values. Deferred sessions queue ordinary captured default callbacks, preserve child-before-parent ordering and permit parking. Other tasks cannot read pending values while completion is parked. Defaults and IR collection were generalized from JSON to `field_defaults` and callback functions are deduplicated.
 - Independent decoder proof: `examples/reflection/record.dsk` implements a nested record notation using public APIs only, with explicit/inferred generic roots, arrays, enums, nullable values, defaults and complete-input/error checks. `examples/reflection-decode.dsk` runs it; a module-aware test checks its result. No compiler/native changes were required for this format.
-- General capability validation, JSON migration and comparison remain upcoming work. Existing JSON semantics and benchmark sources are unchanged.
+- General literal capability validation is implemented as `require_value[T](allowed, map_keys)` and erased by codegen. It restricts nested kinds/key policy without format-specific compiler rules.
+- `-Djson-backend=reflection` selects the JSON candidate using public reflection; the native scanner returns a flat private token array and writer helpers format scalars. Typed conversion/traversal/policies/diagnostics are Dusk code. The default remains native until measured cost is assessed. Reflection programs emit no JSON codec plans. The old native engine/compiler paths are intentionally retained for comparison and a possible fast path.
+- The candidate preserves current JSON contracts under the existing tests. Its generic encode function additionally supports function values, as ordinary Dusk code does. Tokenization is batched, so its allocation costs are part of the comparison. Benchmark workload sources remain unchanged.
 
 ## Goal
 
@@ -172,7 +174,7 @@ Store the machine, toolchain, source commit, settings, median, spread, peak memo
 After migration, run the same cases alternately against the baseline source commit:
 
 ```
-python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --compare 7aa6591 --runs 30 --warmup 3 --save json-reflection-comparison
+python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --compare 7aa6591 --build-arg=-Djson-backend=reflection --runs 30 --warmup 3 --save json-reflection-comparison
 ```
 
 `--compare` uses each commit's own workload, so explicitly verify that the benchmark sources and shared model are identical. Pin the baseline commit that includes these files, not the earlier JSON feature commit. Build and compare on the same machine/toolchain with no competing benchmark or heavy build work.
@@ -197,7 +199,13 @@ The requested direction is reflection plus safe construction, followed by JSON m
 
 - Resolved: snapshot capture owns a copy; field/collection views share protected storage; typed casts produce copies. Builders and sessions retain shared handle identity across copies.
 - Resolved: begin_session, builder_in, defer_finish and complete_session provide a public format-neutral default barrier; pending values carry a traced session reference and remain unreadable until completion.
-- The format-neutral compile-time capability-validation surface.
+- Resolved: require_value[T] takes a literal list of allowed Kind variants and a literal MapKeys policy. Sema checks the concrete graph and codegen erases the check; arbitrary compile-time execution is not introduced.
 - Resolved: descriptors remain private-index handles backed by program tables; checked values have traced native payloads, and builders/sessions use protected traced shared-state structs.
 
 These are implementation gates, not claims that ordinary generic specialization already solves dynamic typed construction.
+
+## Candidate measurement protocol
+
+The runner accepts repeated `--build-arg=...` arguments for the current binary and `--base-build-arg=...` arguments for the comparison binary. It records both in result settings. Workload inputs and counts remain unchanged.
+
+In addition to comparing the candidate with baseline `7aa6591`, compare it with the native configuration from the same candidate source commit. This second control separates the backend change from other compiler/runtime/build changes since the baseline. Use `--compare <candidate-source-commit> --build-arg=-Djson-backend=reflection`; the comparison build defaults to native. Preserve all results, settings, noise flags and any reruns. The native default is retained until the performance decision is made.

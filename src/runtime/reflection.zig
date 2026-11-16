@@ -15,6 +15,10 @@ pub const ReflectError = enum {
     UnsupportedType,
 };
 
+pub fn requireValue(_: *VM, _: []v.Value) anyerror!native.NativeResult {
+    return native.ok(v.NULL_VALUE);
+}
+
 pub fn captureValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     const type_index: u32 = @intCast(args[1].int64);
     const wrapper: u16 = @intCast(args[2].int64);

@@ -4,6 +4,9 @@ pub fn build(b: *std.Build) void {
     // run
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const json_backend = b.option(JsonBackend, "json-backend", "JSON codec implementation for comparison") orelse .native;
+    const options = b.addOptions();
+    options.addOption(JsonBackend, "json_backend", json_backend);
     const libuv = b.dependency("libuv", .{ .target = target, .optimize = optimize }).artifact("uv");
     const mbedtls = b.dependency("mbedtls", .{ .target = target, .optimize = optimize }).artifact("mbedtls");
     const llhttp = b.dependency("llhttp", .{ .target = target, .optimize = optimize }).artifact("llhttp");
@@ -19,6 +22,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     linkRuntimeLibraries(b, exe.root_module, libraries);
+    exe.root_module.addOptions("build_options", options);
 
     exe.root_module.addAnonymousImport("build_zon", .{
         .root_source_file = b.path("build.zig.zon"),
@@ -43,6 +47,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     linkRuntimeLibraries(b, tests.root_module, libraries);
+    tests.root_module.addOptions("build_options", options);
 
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run tests");
@@ -53,6 +58,8 @@ pub fn build(b: *std.Build) void {
     clean_step.dependOn(&b.addSystemCommand(&.{ "rm", "-rf", ".zig-cache" }).step);
     clean_step.dependOn(&b.addSystemCommand(&.{ "rm", "-rf", "zig-out" }).step);
 }
+
+const JsonBackend = enum { native, reflection };
 
 const RuntimeLibraries = struct {
     libuv: *std.Build.Step.Compile,
