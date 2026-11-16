@@ -1,0 +1,16 @@
+import @/lib
+
+func main() -> !void
+    let doubled = try lib::run(func(item: lib::Item) -> lib::Fault!int
+        if item.value < 0 then
+            return lib::Fault.Negative
+        end
+        return item.value * 2
+    end)
+    assert(doubled == 42)
+    let untyped = lib::run(func(item) -> return item.value + 1)
+    assert(untyped == 22)
+    assert(lib::map_item(lib::Item(value = 3), func(item) -> return "${item.value}") == "3")
+    let holder = lib::Holder(make = func(item: lib::Item) -> return item.value * 10)
+    assert(lib::use_holder(holder) == 50)
+end

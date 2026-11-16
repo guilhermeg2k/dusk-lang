@@ -1759,7 +1759,7 @@ pub const SemaAnalyzer = struct {
             for (func_stmt.def.params, 0..) |param, param_index| {
                 const annotation = param.type_annotation orelse continue;
                 const arg_exp = matched[param_index] orelse continue;
-                try self.inferSlotsFromLambda(annotation, arg_exp, func_stmt.slots, bindings, inferred_values);
+                try self.inferSlotsFromLambda(annotation, arg_exp, func_stmt.slots, bindings, inferred_values, self.generic_functions.items[index].module);
             }
         }
         try self.inferSlotsFromExpectedType(func_stmt, expected_type, bindings, loc);
@@ -1789,22 +1789,25 @@ pub const SemaAnalyzer = struct {
         slots: []const ast.Slot,
         bindings: []?tt.TypeId,
         inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
+        declaring_module: *ModuleScope,
     ) CompileError!void {
         if (arg_exp.data != .lambda) return;
         if (areMentionedSlotsBound(annotation, slots, bindings)) return;
-        const hints = try self.lambdaHints(annotation, slots, bindings, arg_exp.loc);
+        const hints = try self.lambdaHints(annotation, slots, bindings, declaring_module, arg_exp.loc);
         const value = try self.evalLambda(arg_exp, hints);
         try self.exp_types.put(self.allocator, arg_exp, value.type_id);
         try inferred_values.put(self.allocator, arg_exp, value);
         try self.inferSlots(annotation, value.type_id, slots, bindings, arg_exp.loc);
     }
 
-    fn lambdaHints(self: *Self, annotation: *const ast.TypeAnnotation, slots: []const ast.Slot, bindings: []const ?tt.TypeId, loc: err.Loc) CompileError!?LambdaHints {
+    fn lambdaHints(self: *Self, annotation: *const ast.TypeAnnotation, slots: []const ast.Slot, bindings: []const ?tt.TypeId, declaring_module: *ModuleScope, loc: err.Loc) CompileError!?LambdaHints {
         if (annotation.type != .function) {
             return null;
         }
         const func = annotation.type.function;
         const hints = try self.allocator.alloc(?tt.FuncTypeParam, func.params.len);
+        const saved_module = self.enterModuleContext(declaring_module);
+        defer self.exitModuleContext(saved_module);
         const saved_table = try self.enterBoundSlotScope(slots, bindings);
         defer self.scope.symbol_table = saved_table;
         for (func.params, hints) |param, *hint| {
@@ -2105,7 +2108,7 @@ pub const SemaAnalyzer = struct {
                     for (struct_def.fields, 0..) |field, field_index| {
                         const annotation = field.type orelse continue;
                         const arg_exp = matched[field_index] orelse continue;
-                        try self.inferSlotsFromLambda(annotation, arg_exp, generic.slots, bindings, inferred_values);
+                        try self.inferSlotsFromLambda(annotation, arg_exp, generic.slots, bindings, inferred_values, generic.module);
                     }
                 }
             },
@@ -2163,6 +2166,8 @@ pub const SemaAnalyzer = struct {
         const copy_index = generic.copies.items.len - 1;
         try self.copied_types.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .generic = index, .args = args });
 
+        const saved_module = self.enterModuleContext(generic.module);
+        defer self.exitModuleContext(saved_module);
         const saved_table = try self.enterSlotScope(generic.slots, args);
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;

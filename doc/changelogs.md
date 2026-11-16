@@ -33,6 +33,8 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- Generic functions and types from another module can name that module's other types in their signatures: a generic struct with a field like `make: func(Item) -> T`, or a generic function taking `func(Item) -> E!int`, used from another file, failed with `Invalid type 'Item'` (the copy, and a lambda's parameter types, were resolved in the caller's module)
+
 - Windows builds use the platform address-info layout for name resolution, fixing a missing-binding compilation error
 
 - `import std/math` now loads the math module instead of failing with `UnknownStdModule`

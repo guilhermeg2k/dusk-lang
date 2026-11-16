@@ -3582,6 +3582,7 @@ test "generics: calls fill the slots from the arguments and compile one copy per
 test "generics: explicit call types and indexed function calls" {
     try runCase("generics-explicit-calls.dsk");
     try runModuleCase("generic-calls/main.dsk");
+    try runModuleCase("generic-lambdas/main.dsk");
     try runCaseError("sema/generic-call-value-as-type.dsk", error.InvalidType);
     try runCaseError("sema/generic-call-nested-value-as-type.dsk", error.InvalidType);
     try runCaseError("sema/generic-call-wrong-result-constraint.dsk", error.TypeDoesntFitSlot);
