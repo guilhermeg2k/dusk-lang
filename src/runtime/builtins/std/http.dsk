@@ -94,6 +94,7 @@ struct ResponseStream
     headers: Headers
     url: string
     ~handle: int
+    ~pool_key: string
 
     func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
         return try stream_body_bytes(self.handle, max, timeout_ms)
@@ -112,7 +113,7 @@ struct ResponseStream
     end
 
     func close(mut self: @) -> void
-        stream_close(self.handle)
+        pool_put(self.pool_key, self.handle)
     end
 end
 
@@ -128,12 +129,15 @@ extern func ~stream_body_line(handle: int, max: int, timeout_ms: int) -> io::IoE
 extern func ~stream_body_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_body_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
+extern func ~pool_take(key: string) -> int
+extern func ~pool_put(key: string, handle: int) -> void
 extern func ~is_method(text: string) -> bool
 extern func ~is_header_name(text: string) -> bool
 extern func ~is_header_value(text: string) -> bool
 extern func ~body_given_twice() -> void
 
 let ~USER_AGENT = "dusk/0.16"
+let ~REDIRECT_DRAIN_LIMIT = 65536
 
 struct ~Exchange
     method: string
@@ -152,6 +156,7 @@ end
 struct ~Opened
     response: Response
     handle: int
+    pool_key: string
 end
 
 func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
@@ -164,7 +169,7 @@ func open(url: string, method: string = "GET", headers: map[string, string] = {}
     let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = false)
     let opened = try start(url, query, exchange, max_redirects)
     let response = opened.response
-    return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle)
+    return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key)
 end
 
 func ~start(url: string, query: map[string, string], exchange: Exchange, max_redirects: int) -> HttpError!Opened
@@ -275,16 +280,66 @@ func ~check_headers(headers: map[string, string]) -> HttpError!void
 end
 
 func ~send(target: url::Url, exchange: Exchange) -> HttpError!Opened
+    let key = pool_key_of(target, exchange)
+    let reused = pool_take(key)
+    if reused >= 0 then
+        let answered = try exchange_on_reused(reused, target, exchange, key)
+        if answered: opened then
+            return opened
+        end
+    end
     let handle = try open_connection(target, exchange)
+    return try exchange_on(handle, target, exchange, key)
+end
+
+func ~pool_key_of(target: url::Url, exchange: Exchange) -> string
+    let origin = "${target.scheme}://${target.host}:${port_of(target)}"
+    if target.scheme != "https" then
+        return origin
+    end
+    return "$origin|${exchange.verify}|${exchange.ca orelse ""}"
+end
+
+func ~exchange_on_reused(handle: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!?Opened
+    let opened = exchange_on(handle, target, exchange, key) catch e then
+        let can_retry = e == HttpError.ConnectionReset and is_idempotent(exchange.method)
+        if can_retry then
+            return null
+        end
+        return e
+    end
+    return opened
+end
+
+func ~is_idempotent(method: string) -> bool
+    return method == "GET" or method == "HEAD" or method == "PUT" or method == "DELETE" or method == "OPTIONS"
+end
+
+func ~exchange_on(handle: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!Opened
     let response = receive(handle, target, exchange) catch e then
         stream_close(handle)
         return e
     end
-    let keeps_open = !exchange.reads_body and !is_followed(response.status, response.headers, exchange)
-    if !keeps_open then
-        stream_close(handle)
+    let opened = Opened(response = response, handle = handle, pool_key = key)
+    if is_followed(response.status, response.headers, exchange) then
+        if drain(handle, exchange) then
+            pool_put(key, handle)
+        else
+            stream_close(handle)
+        end
+        return opened
     end
-    return Opened(response = response, handle = handle)
+    if exchange.reads_body then
+        pool_put(key, handle)
+    end
+    return opened
+end
+
+func ~drain(handle: int, exchange: Exchange) -> bool
+    stream_read_whole_body(handle, REDIRECT_DRAIN_LIMIT, remaining_ms(exchange)) catch e then
+        return false
+    end
+    return true
 end
 
 func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
@@ -350,9 +405,6 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     end
     if !map::has(given, "user-agent") then
         append(lines, "User-Agent: $USER_AGENT")
-    end
-    if !map::has(given, "connection") then
-        append(lines, "Connection: close")
     end
     let length = body_length(exchange)
     if length >= 0 then

@@ -35,9 +35,26 @@ end
 func answer(listener: net::TcpListener, response: string) -> !Received
     let conn = try listener.accept()
     let received = try read_request(conn)
-    try conn.write(response)
+    try conn.write(closing(response))
     conn.close()
     return received
+end
+
+func closing(response: string) -> string
+    let head_end = string::find(response, "\r\n\r\n") orelse -1
+    let is_informational = string::starts_with(response, "HTTP/1.1 1") and head_end >= 0
+    if is_informational then
+        let informational = string::slice(response, 0, head_end + 4) catch ""
+        let rest = string::slice(response, head_end + 4, string::len(response)) catch ""
+        return "$informational${closing(rest)}"
+    end
+    let line_end = string::find(response, "\r\n") orelse -1
+    if line_end < 0 then
+        return response
+    end
+    let status_line = string::slice(response, 0, line_end) catch ""
+    let rest = string::slice(response, line_end + 2, string::len(response)) catch ""
+    return "$status_line\r\nConnection: close\r\n$rest"
 end
 
 func answer_bytes(listener: net::TcpListener, response: buffer) -> !Received
@@ -110,7 +127,7 @@ func check_get(listener: net::TcpListener) -> !void
     assert(has_line(received, "X-Trace: abc"))
     assert(has_line(received, "Host: 127.0.0.1:${listener.port()}"))
     assert(has_line(received, "User-Agent: dusk/0.16"))
-    assert(has_line(received, "Connection: close"))
+    assert(!has_header_named(received, "connection"))
     assert(!has_line(received, "Content-Length: 0"))
     assert(resp.status == 200)
     assert(resp.reason == "OK")
@@ -126,8 +143,8 @@ func check_get(listener: net::TcpListener) -> !void
     assert(cookies[0] == "a=1")
     assert(cookies[1] == "b=2")
     let entries = resp.headers.entries()
-    assert(len(entries) == 4)
-    assert(entries[2].name == "set-cookie")
+    assert(len(entries) == 5)
+    assert(entries[3].name == "set-cookie")
     assert(resp.url == "${base(listener)}/items?sort=name&q=dusk%20lang&page=2#top")
 end
 
@@ -163,7 +180,6 @@ func check_request_bodies(listener: net::TcpListener) -> !void
     assert(has_line(custom_request, "Host: api.example"))
     assert(has_line(custom_request, "User-Agent: tests/1"))
     assert(has_line(custom_request, "Connection: keep-alive"))
-    assert(!has_line(custom_request, "Connection: close"))
 end
 
 func check_response_bodies(listener: net::TcpListener) -> !void
@@ -577,6 +593,106 @@ func check_stream_errors(listener: net::TcpListener) -> !void
     assert(failed == http::HttpError.InvalidMethod)
 end
 
+func answer_on_one_connection(listener: net::TcpListener, responses: []string, reads_one_more: bool) -> ![]Received
+    let conn = try listener.accept()
+    let mut all: []Received = []
+    for responses: response do
+        append(all, try read_request(conn))
+        try conn.write(response)
+    end
+    if reads_one_more then
+        append(all, try read_request(conn))
+    end
+    conn.close()
+    return all
+end
+
+func serve_connection(listener: net::TcpListener, responses: []string, reads_one_more: bool) -> Task[[]Received]
+    return spawn(func() -> []Received
+        return answer_on_one_connection(listener, responses, reads_one_more) catch e then
+            return []
+        end
+    end)
+end
+
+func serve_dropped_then_fresh(listener: net::TcpListener, first: string, fresh: string) -> Task[[]Received]
+    return spawn(func() -> []Received
+        let mut all = answer_on_one_connection(listener, [first], true) catch e then
+            return []
+        end
+        let mut retried = answer(listener, fresh) catch e then
+            return all
+        end
+        append(all, retried)
+        return all
+    end)
+end
+
+func check_pool(listener: net::TcpListener) -> !void
+    let kept = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nkept"
+    let reuse = serve_connection(listener, [kept, kept], false)
+    let first = try http::request("${base(listener)}/one", timeout_ms = 2000)
+    let second = try http::request("${base(listener)}/two", timeout_ms = 2000)
+    let reuse_requests = await(reuse)
+    assert(try first.text() == "kept")
+    assert(try second.text() == "kept")
+    assert(len(reuse_requests) == 2)
+    assert(reuse_requests[1].lines[0] == "GET /two HTTP/1.1")
+
+    let after_close = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfresh")
+    let fresh = try http::request(base(listener), timeout_ms = 2000)
+    assert(try fresh.text() == "fresh")
+    await(after_close)
+
+    let retry = serve_dropped_then_fresh(listener, kept, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nretried")
+    let before_retry = try http::request("${base(listener)}/a", timeout_ms = 2000)
+    let retried = try http::request("${base(listener)}/b", timeout_ms = 2000)
+    let retry_requests = await(retry)
+    assert(try before_retry.text() == "kept")
+    assert(try retried.text() == "retried")
+    assert(len(retry_requests) == 3)
+    assert(retry_requests[1].lines[0] == "GET /b HTTP/1.1")
+    assert(retry_requests[2].lines[0] == "GET /b HTTP/1.1")
+
+    let no_retry = serve_connection(listener, [kept], true)
+    let before_post = try http::request(base(listener), timeout_ms = 2000)
+    assert(try before_post.text() == "kept")
+    expect_error(http::HttpError.ConnectionReset, func() -> return try http::request(base(listener), method = "POST", body = "once", timeout_ms = 2000))
+    let no_retry_requests = await(no_retry)
+    assert(len(no_retry_requests) == 2)
+    assert(no_retry_requests[1].body == "once")
+
+    let streamed = serve_connection(listener, [kept, kept], false)
+    let mut stream = try http::open(base(listener), timeout_ms = 2000)
+    assert(try stream.read_all() == "kept")
+    stream.close()
+    let after_stream = try http::request(base(listener), timeout_ms = 2000)
+    assert(try after_stream.text() == "kept")
+    assert(len(await(streamed)) == 2)
+
+    let partial = serve_connection(listener, ["HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123"], true)
+    let mut unfinished = try http::open(base(listener), timeout_ms = 2000)
+    assert(try string::from_bytes(try unfinished.read_bytes(3) orelse buffer::from_string("")) == "012")
+    unfinished.close()
+    let partial_requests = await(partial)
+    assert(len(partial_requests) == 2)
+    assert(len(partial_requests[1].lines) == 0)
+
+    let arrived = serve_connection(listener, ["HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789", kept], false)
+    let mut skimmed = try http::open(base(listener), timeout_ms = 2000)
+    let skimmed_start = try skimmed.read_bytes(3)
+    skimmed.close()
+    let after_skim = try http::request(base(listener), timeout_ms = 2000)
+    assert(try after_skim.text() == "kept")
+    assert(len(await(arrived)) == 2)
+
+    let redirect = serve_connection(listener, [redirect_to(302, "/landed"), kept], false)
+    let landed = try http::request(base(listener), timeout_ms = 2000)
+    assert(landed.url == "${base(listener)}/landed")
+    assert(try landed.text() == "kept")
+    assert(len(await(redirect)) == 2)
+end
+
 func main() -> !void
     let listener = try net::tcp_listen("127.0.0.1", 0)
     try check_get(listener)
@@ -588,6 +704,7 @@ func main() -> !void
     try check_redirects(listener)
     try check_streams(listener)
     try check_stream_errors(listener)
+    try check_pool(listener)
     listener.close()
     try check_https()
 end

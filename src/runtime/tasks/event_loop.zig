@@ -9,6 +9,7 @@ const Listener = @import("tcp.zig").Listener;
 const OpenRequest = @import("tcp.zig").OpenRequest;
 const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const TrustStore = @import("trust_store.zig").TrustStore;
+const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
@@ -26,6 +27,7 @@ pub const EventLoop = struct {
     listeners: std.ArrayList(?*Listener) = .empty,
     certificates: std.ArrayList(*ServerCertificate) = .empty,
     trust_store: TrustStore = .{},
+    connection_pool: ConnectionPool = .{},
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -41,6 +43,7 @@ pub const EventLoop = struct {
         defer self.streams.deinit(self.allocator);
         defer self.listeners.deinit(self.allocator);
         defer self.freeCertificates();
+        defer self.connection_pool.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -125,6 +128,7 @@ pub const EventLoop = struct {
         try self.streams.ensureUnusedCapacity(self.allocator, 1);
         const stream = try Stream.openTcp(self.allocator, self, scheduler, loop);
         const handle = self.streams.items.len;
+        stream.table_index = handle;
         self.streams.appendAssumeCapacity(stream);
         return handle;
     }

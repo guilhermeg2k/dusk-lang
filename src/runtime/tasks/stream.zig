@@ -17,6 +17,7 @@ const HttpReader = @import("http_reader.zig").HttpReader;
 const HttpError = @import("http.zig").HttpError;
 const httpErrorFromIo = @import("http_reader.zig").httpErrorFromIo;
 const max_http_head_size = @import("http_reader.zig").max_head_size;
+const idle_timeout_ms = @import("connection_pool.zig").idle_timeout_ms;
 const onHandleClosed = @import("event_loop.zig").onHandleClosed;
 
 const handle_alignment = std.mem.Alignment.@"16";
@@ -54,6 +55,8 @@ pub const Stream = struct {
     peer: ?uv.SocketAddress = null,
     tls_layer: ?*TlsLayer = null,
     http_reader: ?*HttpReader = null,
+    table_index: usize = 0,
+    pool_key: ?[]u8 = null,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
 
@@ -129,6 +132,9 @@ pub const Stream = struct {
         }
         if (self.http_reader) |reader| {
             reader.destroy();
+        }
+        if (self.pool_key) |key| {
+            self.allocator.free(key);
         }
         self.buffered.deinit(self.allocator);
         if (self.handle_memory.len > 0) {
@@ -256,6 +262,44 @@ pub const Stream = struct {
             return reader.startResponse(is_head_request);
         }
         self.http_reader = try HttpReader.create(self.allocator, is_head_request);
+    }
+
+    pub fn isReusable(self: *const Self) bool {
+        const reader = self.http_reader orelse return false;
+        const is_idle = self.waiter == null and !self.is_closed and !self.has_ended and self.failure == null and self.bufferedBytes().len == 0;
+        const is_tls_ready = if (self.tls_layer) |layer| layer.handshake == .done else true;
+        return is_idle and is_tls_ready and reader.isMessageComplete() and reader.canKeepAlive();
+    }
+
+    pub fn enterPool(self: *Self, key: []const u8) !void {
+        self.pool_key = try self.allocator.dupe(u8, key);
+        self.buffered.clearAndFree(self.allocator);
+        self.read_offset = 0;
+        if (self.http_reader) |reader| {
+            reader.releaseBody();
+        }
+        try self.startReading();
+        try self.startTimerHandle(&self.timer_memory, &self.timer_owner, onIdleTimeout, idle_timeout_ms);
+        self.is_timer_running = true;
+    }
+
+    pub fn leavePool(self: *Self) void {
+        const key = self.pool_key orelse return;
+        self.allocator.free(key);
+        self.pool_key = null;
+        self.stopTimer();
+    }
+
+    fn evictIfUnusable(self: *Self) void {
+        if (self.pool_key == null or self.isReusable()) return;
+        self.evictFromPool();
+    }
+
+    fn evictFromPool(self: *Self) void {
+        const key = self.pool_key orelse return;
+        self.event_loop.connection_pool.remove(key, self.table_index);
+        self.leavePool();
+        self.event_loop.closeStream(@intCast(self.table_index));
     }
 
     fn httpHeadOutcome(self: *Self) ?ReadOutcome {
@@ -997,6 +1041,12 @@ fn streamOf(handle: *uv.Handle) *Stream {
     return @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
 }
 
+fn onIdleTimeout(timer: *uv.Handle) callconv(.c) void {
+    const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", HandleOwner.of(timer)));
+    stream.is_timer_running = false;
+    stream.evictFromPool();
+}
+
 fn onReadTimeout(timer: *uv.Handle) callconv(.c) void {
     const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", HandleOwner.of(timer)));
     stream.is_timer_running = false;
@@ -1036,6 +1086,7 @@ fn onRead(handle: *uv.Handle, read_count: isize, _: *const uv.Buffer) callconv(.
     const stream = streamOf(handle);
     if (stream.tls_layer) |layer| {
         stream.receiveTlsRead(layer, read_count);
+        stream.evictIfUnusable();
         return;
     }
     if (read_count > 0) {
@@ -1050,4 +1101,5 @@ fn onRead(handle: *uv.Handle, read_count: isize, _: *const uv.Buffer) callconv(.
     }
     stream.serveWaiter();
     stream.applyBackpressure();
+    stream.evictIfUnusable();
 }

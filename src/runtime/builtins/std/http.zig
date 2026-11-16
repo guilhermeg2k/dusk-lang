@@ -32,6 +32,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_body_all", Binding{ .native = &streamBodyAll } },
     .{ "stream_body_all_bytes", Binding{ .native = &streamBodyAllBytes } },
     .{ "parse_head", Binding{ .native = &parseHead } },
+    .{ "pool_take", Binding{ .native = &poolTake } },
+    .{ "pool_put", Binding{ .native = &poolPut } },
     .{ "is_method", Binding{ .native = &isMethod } },
     .{ "is_header_name", Binding{ .native = &isHeaderName } },
     .{ "is_header_value", Binding{ .native = &isHeaderValue } },
@@ -100,6 +102,48 @@ fn readHttp(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Nati
     stream.parkReader(current, mode, timeout) catch return fail(HttpError.Other);
     current.park();
     return native.parked();
+}
+
+fn poolTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const event_loop = &vm.event_loop;
+    try event_loop.poll();
+    const key = bytesArg(args, 0);
+    while (event_loop.connection_pool.takeNewest(key)) |handle| {
+        const stream = event_loop.streamAt(@intCast(handle)) orelse continue;
+        stream.leavePool();
+        if (!stream.isReusable()) {
+            event_loop.closeStream(@intCast(handle));
+            continue;
+        }
+        return ok(.{ .int64 = @intCast(handle) });
+    }
+    return ok(.{ .int64 = -1 });
+}
+
+fn poolPut(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const event_loop = &vm.event_loop;
+    const handle = args[1].int64;
+    const stream = event_loop.streamAt(handle) orelse return ok(.{ .null = {} });
+    if (!stream.isReusable()) {
+        event_loop.closeStream(handle);
+        return ok(.{ .null = {} });
+    }
+    stream.enterPool(bytesArg(args, 0)) catch {
+        stream.leavePool();
+        event_loop.closeStream(handle);
+        return ok(.{ .null = {} });
+    };
+    const evicted = event_loop.connection_pool.add(event_loop.allocator, bytesArg(args, 0), @intCast(handle)) catch {
+        stream.leavePool();
+        event_loop.closeStream(handle);
+        return ok(.{ .null = {} });
+    };
+    const oldest = evicted orelse return ok(.{ .null = {} });
+    if (event_loop.streamAt(@intCast(oldest))) |oldest_stream| {
+        oldest_stream.leavePool();
+    }
+    event_loop.closeStream(@intCast(oldest));
+    return ok(.{ .null = {} });
 }
 
 fn parseHead(vm: *VM, args: []v.Value) anyerror!NativeResult {

@@ -38,6 +38,12 @@ pub const HttpReader = struct {
         self.taken = 0;
     }
 
+    pub fn releaseBody(self: *Self) void {
+        self.body.clearAndFree(self.allocator);
+        self.body_offset = 0;
+        self.taken = 0;
+    }
+
     pub fn pendingBody(self: *const Self) []const u8 {
         return self.body.items[self.body_offset..];
     }
