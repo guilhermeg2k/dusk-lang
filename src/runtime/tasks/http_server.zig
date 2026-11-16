@@ -15,7 +15,9 @@ pub const ServerState = struct {
             _ = self.idle_streams.swapRemove(handle);
             return true;
         }
-        if (self.is_closing) return false;
+        if (self.is_closing) {
+            return false;
+        }
         try self.idle_streams.put(allocator, handle, {});
         return true;
     }

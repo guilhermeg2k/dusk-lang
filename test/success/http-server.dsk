@@ -1,5 +1,6 @@
 import std/array: append, len
 import std/buffer
+import std/fs
 import std/http
 import std/io
 import std/net
@@ -37,6 +38,10 @@ func route(req: http::Request) -> AppError!http::Response
             return response
         end
         "/peer" then return http::text("${req.remote_address.port}") end
+        "/slow" then
+            task::sleep(300)
+            return http::text("slow done")
+        end
         "/space here" then return http::text("decoded") end
         "/close" then
             let mut response = http::text("bye")
@@ -340,6 +345,54 @@ func check_listen_errors() -> !void
     taken.close()
 end
 
+func fixture(name: string) -> !string
+    return try fs::read("test/fixtures/tls/$name")
+end
+
+func check_https() -> !void
+    let cert = try net::certificate(try fixture("server.pem"), try fixture("server.key"))
+    let server = try http::listen("127.0.0.1", 0, cert = cert)
+    let running = start(server)
+    let base = "https://localhost:${server.port()}"
+    let ca = try fixture("ca.pem")
+    let hello = try http::request("$base/?name=tls", ca = ca)
+    assert(try hello.text() == "hello tls")
+    let posted = try http::request("$base/upload", method = "POST", body = "secret", ca = ca)
+    assert(try posted.text() == "got 6: secret")
+    let first = try http::request("$base/peer", ca = ca)
+    let second = try http::request("$base/peer", ca = ca)
+    assert(try first.text() == try second.text())
+
+    let mut untrusted: ?http::HttpError = null
+    http::request("$base/", ca = try fixture("self-signed.pem")) catch e then
+        untrusted = e
+    end
+    assert(untrusted == http::HttpError.UntrustedCertificate)
+    let plain = try raw_exchange(server.port(), "GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert(!string::contains(plain, "HTTP/1.1 200"))
+    let still = try http::request("$base/?name=again", ca = ca)
+    assert(try still.text() == "hello again")
+    server.close()
+    await(running)
+end
+
+func check_shutdown_in_flight() -> !void
+    let server = try http::listen("127.0.0.1", 0)
+    let running = start(server)
+    let base = "http://127.0.0.1:${server.port()}"
+    let warm = try http::request("$base/")
+    assert(warm.status == 200)
+    let closer = spawn(func() -> void
+        task::sleep(100)
+        server.close()
+    end)
+    let slow = try http::request("$base/slow", timeout_ms = 3000)
+    assert(try slow.text() == "slow done")
+    assert(slow.headers.get("connection") == "close")
+    await(closer)
+    await(running)
+end
+
 func main() -> !void
     let server = try http::listen("127.0.0.1", 0)
     let running = start(server)
@@ -354,5 +407,7 @@ func main() -> !void
     try check_body_limits()
     try check_timeouts()
     try check_shutdown()
+    try check_shutdown_in_flight()
+    try check_https()
     try check_listen_errors()
 end
