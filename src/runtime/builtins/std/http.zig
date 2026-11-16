@@ -18,6 +18,8 @@ pub const HttpError = http.HttpError;
 pub const error_sets = .{HttpError};
 
 const replacement_character = "\u{FFFD}";
+const flate = std.compress.flate;
+const gunzip_chunk_size = 16 * 1024;
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "tcp_connect_handle", Binding{ .native = &net.tcpConnect } },
@@ -32,6 +34,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_body_all", Binding{ .native = &streamBodyAll } },
     .{ "stream_body_all_bytes", Binding{ .native = &streamBodyAllBytes } },
     .{ "parse_head", Binding{ .native = &parseHead } },
+    .{ "gunzip", Binding{ .native = &gunzip } },
     .{ "pool_take", Binding{ .native = &poolTake } },
     .{ "pool_put", Binding{ .native = &poolPut } },
     .{ "is_method", Binding{ .native = &isMethod } },
@@ -102,6 +105,38 @@ fn readHttp(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Nati
     stream.parkReader(current, mode, timeout) catch return fail(HttpError.Other);
     current.park();
     return native.parked();
+}
+
+fn gunzip(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const allocator = std.heap.smp_allocator;
+    const cap: usize = @intCast(@max(args[1].int64, 0));
+    const window = try allocator.alloc(u8, flate.max_window_len);
+    defer allocator.free(window);
+    var input: std.Io.Reader = .fixed(bytesArg(args, 0));
+    var decompress: flate.Decompress = .init(&input, .gzip, window);
+    var plain: std.ArrayList(u8) = .empty;
+    defer plain.deinit(allocator);
+    var chunk: [gunzip_chunk_size]u8 = undefined;
+    while (true) {
+        const count = decompress.reader.readSliceShort(&chunk) catch return fail(HttpError.InvalidResponse);
+        if (count == 0) break;
+        if (plain.items.len + count > cap) {
+            return fail(HttpError.BodyTooLarge);
+        }
+        try plain.appendSlice(allocator, chunk[0..count]);
+    }
+    if (!matchesGzipFooter(&decompress, plain.items)) {
+        return fail(HttpError.InvalidResponse);
+    }
+    return ok(try vm.allocBytesValue(plain.items, .buffer));
+}
+
+fn matchesGzipFooter(decompress: *const flate.Decompress, plain: []const u8) bool {
+    if (decompress.state != .end) {
+        return false;
+    }
+    const footer = decompress.container_metadata.gzip;
+    return footer.crc == std.hash.Crc32.hash(plain) and footer.count == @as(u32, @truncate(plain.len));
 }
 
 fn poolTake(vm: *VM, args: []v.Value) anyerror!NativeResult {

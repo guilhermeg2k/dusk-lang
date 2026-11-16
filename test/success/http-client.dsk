@@ -693,6 +693,84 @@ func check_pool(listener: net::TcpListener) -> !void
     assert(len(await(redirect)) == 2)
 end
 
+func answer_with_body(listener: net::TcpListener, head: string, body: buffer) -> !Received
+    let conn = try listener.accept()
+    let received = try read_request(conn)
+    try conn.write(head)
+    try conn.write_bytes(body)
+    conn.close()
+    return received
+end
+
+func serve_body_once(listener: net::TcpListener, head: string, body: buffer) -> Task[Received]
+    return spawn(func() -> Received
+        return answer_with_body(listener, head, body) catch e then
+            return Received(lines = [], body = "")
+        end
+    end)
+end
+
+func encoded_head(encoding: string, body: buffer) -> string
+    return "HTTP/1.1 200 OK\r\nContent-Encoding: $encoding\r\nContent-Length: ${buffer::len(body)}\r\nConnection: close\r\n\r\n"
+end
+
+func check_gzip(listener: net::TcpListener) -> !void
+    let hello = try fs::read_bytes("test/fixtures/http/hello.gz")
+    let zeros = try fs::read_bytes("test/fixtures/http/zeros.gz")
+    let broken = try fs::read_bytes("test/fixtures/http/broken.gz")
+    let expected = string::repeat("hello from gzip\n", 64) catch ""
+
+    let plain_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let plain = try http::request(base(listener))
+    let plain_request = await(plain_server)
+    assert(has_line(plain_request, "Accept-Encoding: gzip"))
+    assert(try plain.text() == expected)
+    assert(plain.headers.get("content-encoding") == "gzip")
+    assert(plain.headers.get("content-length") == "${buffer::len(hello)}")
+
+    let shouting_server = serve_body_once(listener, encoded_head("X-GZIP ", hello), hello)
+    let shouting = try http::request(base(listener))
+    assert(try shouting.text() == expected)
+    await(shouting_server)
+
+    let raw_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let raw = try http::request(base(listener), headers = {"accept-encoding": "gzip"})
+    let raw_request = await(raw_server)
+    assert(buffer::len(raw.body) == buffer::len(hello))
+    assert(has_line(raw_request, "accept-encoding: gzip"))
+    assert(!has_line(raw_request, "Accept-Encoding: gzip"))
+
+    let bomb_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 100000))
+    await(bomb_server)
+
+    let zeros_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let unpacked = try http::request(base(listener))
+    assert(buffer::len(unpacked.body) == 1048576)
+    assert(unpacked.body[1048575] == 0)
+    await(zeros_server)
+
+    let broken_server = serve_body_once(listener, encoded_head("gzip", broken), broken)
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(broken_server)
+
+    let unknown_server = serve_body_once(listener, encoded_head("br", hello), hello)
+    let unknown = try http::request(base(listener))
+    assert(buffer::len(unknown.body) == buffer::len(hello))
+    await(unknown_server)
+
+    let streamed_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut streamed = try http::open(base(listener))
+    assert(buffer::len(try streamed.read_all_bytes()) == buffer::len(hello))
+    streamed.close()
+    assert(!has_header_named(await(streamed_server), "accept-encoding"))
+
+    let head_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 45\r\n\r\n")
+    let head = try http::request(base(listener), method = "HEAD")
+    assert(buffer::len(head.body) == 0)
+    assert(!has_header_named(await(head_server), "accept-encoding"))
+end
+
 func main() -> !void
     let listener = try net::tcp_listen("127.0.0.1", 0)
     try check_get(listener)
@@ -705,6 +783,7 @@ func main() -> !void
     try check_streams(listener)
     try check_stream_errors(listener)
     try check_pool(listener)
+    try check_gzip(listener)
     listener.close()
     try check_https()
 end

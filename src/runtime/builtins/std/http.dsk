@@ -129,6 +129,7 @@ extern func ~stream_body_line(handle: int, max: int, timeout_ms: int) -> io::IoE
 extern func ~stream_body_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_body_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
+extern func ~gunzip(data: buffer, cap: int) -> HttpError!buffer
 extern func ~pool_take(key: string) -> int
 extern func ~pool_put(key: string, handle: int) -> void
 extern func ~is_method(text: string) -> bool
@@ -383,7 +384,9 @@ func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Re
         let headers = headers_of(parts)
         let skips_body = !exchange.reads_body or is_followed(status, headers, exchange)
         let body = if skips_body then buffer::from_string("") else try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange)) end
-        return Response(status = status, reason = parts[1], headers = headers, body = body, url = target.to_string())
+        let is_gzip = asks_for_gzip(exchange) and is_gzip_encoding(headers.get("content-encoding") orelse "")
+        let plain = if is_gzip and !skips_body then try gunzip(body, exchange.max_body) else body end
+        return Response(status = status, reason = parts[1], headers = headers, body = plain, url = target.to_string())
     end
     return HttpError.ConnectionReset
 end
@@ -406,11 +409,31 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     if !map::has(given, "user-agent") then
         append(lines, "User-Agent: $USER_AGENT")
     end
+    if asks_for_gzip(exchange) then
+        append(lines, "Accept-Encoding: gzip")
+    end
     let length = body_length(exchange)
     if length >= 0 then
         append(lines, "Content-Length: $length")
     end
     return "${string::join(lines, "\r\n")}\r\n\r\n"
+end
+
+func ~asks_for_gzip(exchange: Exchange) -> bool
+    if !exchange.reads_body or exchange.method == "HEAD" then
+        return false
+    end
+    for exchange.headers: value, name do
+        if string::lower(name) == "accept-encoding" then
+            return false
+        end
+    end
+    return true
+end
+
+func ~is_gzip_encoding(value: string) -> bool
+    let encoding = string::lower(string::trim(value))
+    return encoding == "gzip" or encoding == "x-gzip"
 end
 
 func ~host_header(target: url::Url) -> string
