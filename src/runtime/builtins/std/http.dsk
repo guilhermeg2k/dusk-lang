@@ -648,7 +648,7 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 128) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024) -> HttpError!Server
     let listener = open_listener(host, port, cert, backlog) catch e then
         return from_net(e)
     end
