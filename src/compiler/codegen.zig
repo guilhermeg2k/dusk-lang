@@ -55,9 +55,10 @@ pub const BytecodeGen = struct {
     json_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.JsonOperation) = .empty,
     json_codecs: std.ArrayList(json_format.Codec) = .empty,
     json_codec_by_type: std.AutoHashMapUnmanaged(tt.TypeId, u32) = .empty,
-    json_defaults: std.AutoHashMapUnmanaged(tt.TypeId, []const ?*ir.Value) = .empty,
-    json_default_functions: std.ArrayList(ir.Func) = .empty,
-    json_default_base: usize = 0,
+    field_defaults: std.AutoHashMapUnmanaged(tt.TypeId, []const ?*ir.Value) = .empty,
+    field_default_functions: std.ArrayList(ir.Func) = .empty,
+    field_default_base: usize = 0,
+    field_default_by_name: std.StringHashMapUnmanaged(u16) = .empty,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
@@ -92,7 +93,7 @@ pub const BytecodeGen = struct {
         var funcs: std.ArrayList(bc.Function) = .empty;
         self.extern_count = program.externs.len;
         self.cell_var_uids = program.cell_var_uids;
-        self.json_defaults = program.json_defaults;
+        self.field_defaults = program.field_defaults;
 
         for (program.externs) |ext| {
             try self.fn_index_by_uid.put(ext.uid, @intCast(funcs.items.len));
@@ -117,7 +118,7 @@ pub const BytecodeGen = struct {
             next_fn_index += 1;
         }
 
-        self.json_default_base = @as(usize, next_fn_index) + 1;
+        self.field_default_base = @as(usize, next_fn_index) + 1;
         const main_func = try self.genMainFunc(program);
 
         for (program.defined_types) |dt| {
@@ -141,8 +142,8 @@ pub const BytecodeGen = struct {
         const main_index = funcs.items.len;
         try funcs.append(self.allocator, main_func);
         var default_index: usize = 0;
-        while (default_index < self.json_default_functions.items.len) : (default_index += 1) {
-            const function = self.json_default_functions.items[default_index];
+        while (default_index < self.field_default_functions.items.len) : (default_index += 1) {
+            const function = self.field_default_functions.items[default_index];
             try funcs.append(self.allocator, try self.genFunction(function));
         }
 
@@ -175,7 +176,7 @@ pub const BytecodeGen = struct {
             .native => |func| .{ .native = .{ .func = func, .num_args = num_args, .error_base = ext.error_base } },
             .reflection => |binding| blk: {
                 try self.reflection_operation_by_uid.put(self.allocator, ext.uid, binding.operation);
-                break :blk .{ .native = .{ .func = binding.func, .num_args = num_args + 2, .error_base = ext.error_base } };
+                break :blk .{ .native = .{ .func = binding.func, .num_args = num_args + binding.operation.hiddenArgumentCount(), .error_base = ext.error_base } };
             },
             .json => |operation| blk: {
                 try self.json_operation_by_uid.put(self.allocator, ext.uid, operation);
@@ -1196,10 +1197,20 @@ pub const BytecodeGen = struct {
 
         if (self.reflection_operation_by_uid.get(fc.fn_uid)) |operation| {
             switch (operation) {
-                .type_of => {
+                .type_of, .value => {
                     try self.genMetadataIndex(try self.getReflectionType(fc.type_arguments[0]));
                     try self.genMetadataIndex(try self.getStructDescriptor(value.type_id));
                     hidden_count = 2;
+                },
+                .cast => {
+                    try self.genMetadataIndex(try self.getReflectionType(fc.type_arguments[0]));
+                    hidden_count = 1;
+                },
+                .result_descriptor => {
+                    const return_type = self.type_table.getTypePtrById(value.type_id);
+                    const payload = if (return_type.kind == .error_union) return_type.kind.error_union.payload else value.type_id;
+                    try self.genMetadataIndex(try self.getStructDescriptor(payload));
+                    hidden_count = 1;
                 },
             }
         }
@@ -1275,6 +1286,7 @@ pub const BytecodeGen = struct {
                         .type_index = try self.getReflectionType(field.type_id),
                         .slot = @intCast(slot),
                         .has_default = field.default_value != null,
+                        .default_function = try self.getFieldDefault(type_id, field, slot),
                     });
                 }
                 result.fields = try fields.toOwnedSlice(self.allocator);
@@ -1335,17 +1347,12 @@ pub const BytecodeGen = struct {
             .map => |map| .{ .map = try self.getJsonCodec(map.value) },
             .@"struct" => |structure| blk: {
                 const fields = try self.allocator.alloc(json_format.Field, structure.fields_in_order.len);
-                const defaults = self.json_defaults.get(type_id);
                 for (structure.fields_in_order, fields, 0..) |field, *output, i| {
                     output.* = .{
                         .name = try self.allocator.dupe(u8, field.identifier),
                         .codec = try self.getJsonCodec(field.type_id),
-                        .default_function = null,
+                        .default_function = try self.getFieldDefault(type_id, field, i),
                     };
-                    const default = if (defaults) |values| values[i] else null;
-                    if (default) |value| {
-                        output.default_function = try self.addJsonDefault(type_id, field.identifier, field.type_id, value);
-                    }
                 }
                 break :blk .{ .structure = .{ .descriptor = try self.getStructDescriptor(type_id), .fields = fields } };
             },
@@ -1383,8 +1390,19 @@ pub const BytecodeGen = struct {
         return self.getOrCreateStructDescriptor(&.{ .type_id = type_id, .data = .{ .struct_init = .{ .keys = keys, .values = &.{} } } });
     }
 
-    fn addJsonDefault(self: *Self, owner_type: tt.TypeId, field_name: []const u8, field_type: tt.TypeId, value: *ir.Value) !u16 {
-        const function_index: u16 = @intCast(self.json_default_base + self.json_default_functions.items.len);
+    fn getFieldDefault(self: *Self, owner_type: tt.TypeId, field: tt.TypedIdentifier, slot: usize) !?u16 {
+        const defaults = self.field_defaults.get(owner_type) orelse return null;
+        const value = defaults[slot] orelse return null;
+        return try self.addFieldDefault(owner_type, field.identifier, field.type_id, value);
+    }
+
+    fn addFieldDefault(self: *Self, owner_type: tt.TypeId, field_name: []const u8, field_type: tt.TypeId, value: *ir.Value) !u16 {
+        const key = try std.fmt.allocPrint(self.allocator, "{d}:{s}", .{ owner_type, field_name });
+        if (self.field_default_by_name.get(key)) |index| {
+            return index;
+        }
+        const function_index: u16 = @intCast(self.field_default_base + self.field_default_functions.items.len);
+        try self.field_default_by_name.put(self.allocator, key, function_index);
         const owner = try ir.Value.init(self.allocator, .{ .type_id = owner_type, .data = .{ .capture_ref = .{ .index = 0, .is_cell = false } } });
         const name = try ir.Value.init(self.allocator, .{ .type_id = self.type_table.getPrimitive(.string), .data = .{ .i_string = field_name } });
         const target = try ir.Value.init(self.allocator, .{ .type_id = field_type, .data = .{ .indexed = .{ .target = owner, .index = name } } });
@@ -1392,9 +1410,9 @@ pub const BytecodeGen = struct {
         body[0] = .{ .update_indexed = .{ .target = target, .value = value } };
         const captures = try self.allocator.alloc(ir.Capture, 1);
         captures[0] = .{ .type_id = owner_type, .is_cell = false };
-        try self.json_default_functions.append(self.allocator, .{
+        try self.field_default_functions.append(self.allocator, .{
             .uid = 0,
-            .identifier = "$json-default",
+            .identifier = "$field-default",
             .params = &.{},
             .return_type = self.type_table.getPrimitive(.void),
             .captures = captures,

@@ -35,6 +35,8 @@ const HeapValueType = enum(u8) {
     task,
     map,
     map_storage,
+    reflected_value,
+    reflection_state,
 };
 
 pub const HeapValue = extern struct {
@@ -670,6 +672,34 @@ pub const Cell = extern struct {
 
     pub fn calc_size() usize {
         return @sizeOf(Self);
+    }
+};
+
+pub const ReflectedValue = extern struct {
+    header: Struct,
+    type_index: Value,
+    value: Value,
+    value_kind: ValueType,
+    session: Value,
+
+    pub fn init(allocator: std.mem.Allocator, wrapper_descriptor: u16, type_index: u32, value: Value, value_kind: ValueType, session: Value) !*ReflectedValue {
+        const result = try allocator.create(ReflectedValue);
+        result.* = .{
+            .header = .{ .obj = .{ .kind = .reflected_value }, .descriptor_id = wrapper_descriptor, .field_count = 1, .identity = 0 },
+            .type_index = .{ .int64 = type_index },
+            .value = value,
+            .value_kind = value_kind,
+            .session = session,
+        };
+        return result;
+    }
+
+    pub fn fromHeap(object: *HeapValue) *ReflectedValue {
+        return @ptrCast(@alignCast(object));
+    }
+
+    pub fn clone(self: *const ReflectedValue, allocator: std.mem.Allocator) !*ReflectedValue {
+        return init(allocator, self.header.descriptor_id, @intCast(self.type_index.int64), self.value, self.value_kind, self.session);
     }
 };
 

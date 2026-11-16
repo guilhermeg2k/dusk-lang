@@ -44,6 +44,25 @@ test "gc: scoped native roots survive collection and root-list growth" {
     try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
 }
 
+test "reflect: native box layout matches its protected struct header" {
+    const value = @import("runtime/value.zig");
+    try testing.expectEqual(@sizeOf(value.Struct), @offsetOf(value.ReflectedValue, "type_index"));
+    try testing.expectEqual(@as(usize, 0), @offsetOf(value.ReflectedValue, "header"));
+}
+
+test "reflect: checked snapshots, typed builders and deferred sessions" {
+    try runCase("reflect-values.dsk");
+    try runCase("reflect-builders.dsk");
+    try runCase("reflect-sessions.dsk");
+    try runCase("gc-reflect.dsk");
+    try runCaseOutput("reflect-defaults.dsk", "child\nparent\n");
+    try runCaseError("sema/reflect-value-private.dsk", error.InvalidType);
+    try runCaseError("sema/reflect-value-forge.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/reflect-builder-forge.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/reflect-value-function.dsk", error.InvalidType);
+    try runCaseError("sema/reflect-value-identity-key.dsk", error.InvalidType);
+}
+
 test "reflect: concrete descriptors, recursive metadata and protected identities" {
     try runCase("reflect-types.dsk");
     try runCase("reflect-imports.dsk");
@@ -3707,6 +3726,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("reflect"), @import("runtime/builtins/std/reflect.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("json"), @import("runtime/builtins/std/json.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);

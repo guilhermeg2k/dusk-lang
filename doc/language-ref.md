@@ -1787,7 +1787,7 @@ The **prelude** is always available. Everything else is in the **standard librar
 
 The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`).
 
-`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
+`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. Reflection `Value` snapshots are immutable handles and remain shared by `copy`; reflection `Builder` and `Session` handles also retain their shared construction state. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
 ### std/array
 
@@ -2381,7 +2381,7 @@ Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`
 
 ### std/reflect
 
-`import std/reflect` provides read-only descriptions of concrete types. `reflect::type_of[T]()` needs no value; `reflect::type_of_value(value)` infers its type and evaluates the argument normally. Both work inside generic functions. A `reflect::Type` is a protected handle: compare identities with `reflect::is_same(a, b)`, inspect its name with `reflect::name(type)` and its kind with `reflect::kind(type)`. Matching names or runtime layouts do not establish type identity.
+`import std/reflect` provides descriptions of concrete types, checked reflected values and safe construction. `reflect::type_of[T]()` needs no value; `reflect::type_of_value(value)` infers its type and evaluates the argument normally. Both work inside generic functions. A `reflect::Type` is a protected handle: compare identities with `reflect::is_same(a, b)`, inspect its name with `reflect::name(type)` and its kind with `reflect::kind(type)`. Matching names or runtime layouts do not establish type identity.
 
 ```dusk
 import std/reflect
@@ -2391,11 +2391,13 @@ struct User
     age: int = 30
 end
 
-let type = reflect::type_of[User]()
-let fields = reflect::fields(type)
-assert(fields[0].name == "name")
-assert(reflect::is_same(fields[0].type, reflect::type_of[string]()))
-assert(fields[1].has_default)
+func main() -> void
+    let type = reflect::type_of[User]()
+    let fields = reflect::fields(type)
+    assert(fields[0].name == "name")
+    assert(reflect::is_same(fields[0].type, reflect::type_of[string]()))
+    assert(fields[1].has_default)
+end
 ```
 
 `reflect::describe(type)` returns a `TypeInfo` union:
@@ -2414,7 +2416,75 @@ assert(fields[1].has_default)
 
 Lists and descriptions are independent snapshots; changing them does not modify the type. Child type handles preserve identity, including references back to recursive types. Enum aliases retain their declared names and values in declaration order. Reflection does not grant access to private members or turn runtime type handles into generic type arguments.
 
-This initial surface describes types. Reflected values and construction are planned separately; descriptions alone do not construct a value of a runtime-discovered type.
+**Reflected values.** `reflect::value(input)` makes a snapshot of a typed value and returns a protected `Value`. `reflect::value_type(value)` gives its exact type. `try reflect::cast[T](value)` checks that type and returns an independent typed copy. Modifying the original after taking a snapshot, or modifying the result of a cast, does not change the snapshot. Sharing and cycles inside the copied graph are preserved.
+
+Snapshots support primitives, strings, buffers, nullables, arrays, maps with immutable keys, public-field structs, enums and unions. Private fields, functions, tasks, error values and struct map keys are rejected at compile time. Metadata inspection supports more kinds than value traversal does.
+
+| Operation | Result |
+| --- | --- |
+| `field(value, name)` | A struct field as a reflected value |
+| `length(value)` | Array length or map entry count |
+| `element(value, index)` | An array element |
+| `map_key(value, index)`, `map_value(value, index)` | A map entry in insertion order, skipping removed entries |
+| `is_null(value)` | Whether the value is a nullable containing null |
+| `unwrap(value)` | A present nullable's child |
+| `variant_name(value)` | An enum name or active union variant; enum aliases use the first declared name |
+| `variant_value(value)` | An enum's numeric value |
+| `payload(value)` | The active union payload |
+| `is_same_object(left, right)` | Whether two reflected views refer to the same non-null heap object of the same type |
+
+Every operation in the table returns `ReflectError!` and needs `try` or `catch`. Field and collection reads produce protected views into the snapshot; they do not grant mutable access. Use `cast` to recover a typed copy. Map absence is distinguished from an entry holding null by entry count and indexed iteration. `is_same_object` returns false for primitive values and different concrete types; it permits cycle detection without exposing addresses.
+
+**Builders.** A builder records supplied values and publishes a complete result only after required fields and defaults have been handled:
+
+```dusk
+import std/reflect
+
+struct User
+    name: string
+    age: int = 30
+end
+
+func make[T]() -> reflect::ReflectError!T
+    let mut builder = try reflect::builder[T]()
+    try reflect::set(builder, "name", "Ana")
+    return try reflect::finish_as[T](builder)
+end
+
+func main() -> !void
+    let user = try make[User]()
+    assert(user.name == "Ana")
+    assert(user.age == 30)
+end
+```
+
+`builder_for(type)` accepts a runtime type handle. Both factories return `ReflectError!Builder`. Builders support structs, arrays, maps, enums, unions and nullables whose nested types support reflected values. Private-field structs cannot be constructed. Use `value` directly for primitive and buffer values.
+
+| Operation | Target |
+| --- | --- |
+| `set(mut builder, name, input)` | Supply a typed struct field |
+| `set_value(mut builder, name, value)` | Supply an already reflected field |
+| `append(mut builder, input)`, `append_value(mut builder, value)` | Append an array item |
+| `insert(mut builder, key, input)`, `insert_value(mut builder, key, value)` | Supply a map entry |
+| `select(mut builder, name, input)`, `select_value(mut builder, name, value)` | Select one union variant and payload |
+| `select_enum(mut builder, name)` | Select a declared enum name, including an alias |
+| `set_null(mut builder)` | Supply nullable null |
+| `set_present(mut builder, input)`, `set_present_value(mut builder, value)` | Supply a nullable's child |
+| `finish(mut builder)` | Complete construction and return a reflected value |
+| `finish_as[T](mut builder)` | Complete construction and recover an independent typed result; `T` can be inferred from the expected result |
+
+All builder operations return `ReflectError!`. Supplied values must match exact field or child types; there are no implicit numeric or nullable conversions. Typed setters take snapshots. Duplicate struct fields and repeated variant/nullable selection fail; duplicate map keys fail when the map is finished. Missing fields use explicit declared defaults only: a nullable field without a default still has to be supplied. Empty arrays, maps and fieldless structs can be finished.
+
+Builders and sessions are handles. Assignment and `copy` refer to the same construction state; they do not fork it. Finishing consumes a builder across every alias. A failed finish invalidates its session; an invalid setter leaves the builder available for correction. A wrong `finish_as` target is rejected before construction or defaults execute.
+
+**Construction sessions.** A decoder must often validate the entire input before executing defaults. `begin_session()` creates a session; `builder_in(mut session, type)` creates builders within it. `defer_finish(mut builder)` validates one builder and returns a pending reflected value without executing defaults. Pending values can be attached to builders in the same session, but cannot be read, cast or attached to another open session.
+
+After the whole document validates and every builder has been deferred, call `try complete_session(mut session)`. Defaults execute in the order builders were deferred, with each struct's fields in declaration order. Deferring children before parents provides child-before-parent defaults. Default functions can allocate, construct further values and wait for tasks. Pending values remain unreadable while completion is in progress. Successful completion makes them readable; completion cannot run twice. A standalone builder's `finish` performs both steps automatically, provided it is the only unfinished builder in its session.
+
+Abandoning a session executes no defaults. A decoder should call `complete_session` only after validating the complete input. No incomplete typed object is exposed to user code.
+
+Failures are payload-free `ReflectError` variants: `TypeMismatch`, `UnknownField`, `OutOfRange`, `MissingField`, `DuplicateAssignment`, `InvalidBuilderState`, `UnknownVariant` and `UnsupportedType`.
+
 
 ### std/json
 

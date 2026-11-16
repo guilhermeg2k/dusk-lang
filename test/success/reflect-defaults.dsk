@@ -1,0 +1,77 @@
+import std/reflect
+import std/io
+import std/task
+
+func child_number() -> int
+    task::sleep(0)
+    io::println("child")
+    return 7
+end
+
+struct Tiny
+    value: int = 9
+end
+
+func parent_number() -> int
+    let mut nested = reflect::builder[Tiny]() catch err then
+        return -1
+    end
+    let result = reflect::finish_as[Tiny](nested) catch err then
+        return -1
+    end
+    io::println("parent")
+    return result.value
+end
+
+struct Child
+    number: int = child_number()
+    tags: []string = ["fresh"]
+end
+
+struct Parent
+    child: Child
+    number: int = parent_number()
+end
+
+func observe(pending: reflect::Value) -> int
+    reflect::cast[Child](pending) catch err then
+        assert(err == reflect::ReflectError.InvalidBuilderState)
+        return 1
+    end
+    assert(false)
+    return 0
+end
+
+func main() -> !void
+    let mut abandoned_session = reflect::begin_session()
+    let mut abandoned = try reflect::builder_in(abandoned_session, reflect::type_of[Child]())
+    let abandoned_value = try reflect::defer_finish(abandoned)
+    let mut failed_session = reflect::begin_session()
+    let mut failed_child = try reflect::builder_in(failed_session, reflect::type_of[Child]())
+    let failed_value = try reflect::defer_finish(failed_child)
+    let mut failed_parent = try reflect::builder_in(failed_session, reflect::type_of[Parent]())
+    let mut has_failed = false
+    reflect::defer_finish(failed_parent) catch err then
+        assert(err == reflect::ReflectError.MissingField)
+        has_failed = true
+    end
+    assert(has_failed)
+    reflect::complete_session(failed_session) catch err then
+        assert(err == reflect::ReflectError.InvalidBuilderState)
+    end
+    let mut session = reflect::begin_session()
+    let mut child = try reflect::builder_in(session, reflect::type_of[Child]())
+    let pending = try reflect::defer_finish(child)
+    let mut parent = try reflect::builder_in(session, reflect::type_of[Parent]())
+    try reflect::set_value(parent, "child", pending)
+    let root = try reflect::defer_finish(parent)
+    let observer = spawn(func() -> return observe(pending))
+    try reflect::complete_session(session)
+    assert((await(observer)) == 1)
+    let result = try reflect::cast[Parent](root)
+    assert(result.child.number == 7)
+    assert(result.number == 9)
+    let mut explicit = try reflect::builder[Child]()
+    try reflect::set(explicit, "number", 42)
+    assert((try reflect::finish_as[Child](explicit)).number == 42)
+end

@@ -1,0 +1,7 @@
+import std/reflect
+struct Key
+    id: int
+end
+func main() -> void
+    let value = reflect::value({Key(1): 2})
+end

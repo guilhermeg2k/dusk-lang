@@ -41,7 +41,7 @@ pub const SemaAnalyzer = struct {
     extern_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     reflection_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.ReflectionOperation) = .empty,
     json_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.JsonOperation) = .empty,
-    json_defaults: std.AutoHashMapUnmanaged(tt.TypeId, []const ?*ir.Value) = .empty,
+    field_defaults: std.AutoHashMapUnmanaged(tt.TypeId, []const ?*ir.Value) = .empty,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
     constants: std.ArrayList(Constant) = .empty,
@@ -126,7 +126,7 @@ pub const SemaAnalyzer = struct {
             .instructions = instructions,
             .externs = try self.externs.toOwnedSlice(self.allocator),
             .cell_var_uids = self.cell_var_uids,
-            .json_defaults = self.json_defaults,
+            .field_defaults = self.field_defaults,
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
@@ -4772,9 +4772,13 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        if (self.reflection_operation_by_uid.contains(uid)) {
+        if (self.reflection_operation_by_uid.get(uid)) |operation| {
             var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
             try self.checkReflectionType(type_arguments[0], &visited, exp.loc);
+            if (operation == .value or operation == .cast) {
+                visited.clearRetainingCapacity();
+                try self.checkReflectionValueType(type_arguments[0], &visited, exp.loc);
+            }
         }
 
         if (self.json_operation_by_uid.get(uid)) |operation| {
@@ -4812,10 +4816,16 @@ pub const SemaAnalyzer = struct {
                 try self.checkReflectionType(map.value, visited, loc);
             },
             .@"struct" => |structure| {
-                for (structure.fields_in_order) |field| {
+                const defaults = try self.allocator.alloc(?*ir.Value, structure.fields_in_order.len);
+                @memset(defaults, null);
+                for (structure.fields_in_order, 0..) |field, slot| {
                     if (field.is_file_only) continue;
                     try self.checkReflectionType(field.type_id, visited, loc);
+                    if (field.default_value) |value| {
+                        defaults[slot] = try self.coerceValue(value, field.type_id, loc);
+                    }
                 }
+                try self.field_defaults.put(self.allocator, base, defaults);
             },
             .@"union" => |tagged| {
                 for (tagged.variants_in_order) |name| {
@@ -4824,6 +4834,44 @@ pub const SemaAnalyzer = struct {
             },
             else => {},
         }
+    }
+
+    fn checkReflectionValueType(self: *Self, type_id: tt.TypeId, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void), loc: err.Loc) CompileError!void {
+        if (visited.contains(type_id)) return;
+        try visited.put(self.allocator, type_id, {});
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const source = self.type_table.getTypePtrById(base).kind;
+        switch (source) {
+            .slot, .int, .byte, .float, .boolean, .string, .buffer => return,
+            .array => |child| return self.checkReflectionValueType(child, visited, loc),
+            .map => |map| {
+                if (self.type_table.getTypePtrById(map.key).kind == .@"struct") {
+                    return self.err_reporter.invalidType("a reflected value with immutable map keys", try self.type_table.syntaxName(type_id, self.allocator), loc);
+                }
+                try self.checkReflectionValueType(map.key, visited, loc);
+                return self.checkReflectionValueType(map.value, visited, loc);
+            },
+            .@"struct" => |structure| {
+                for (structure.fields_in_order) |field| {
+                    if (field.is_file_only) {
+                        return self.err_reporter.invalidType("a reflected value with public fields", try self.type_table.syntaxName(type_id, self.allocator), loc);
+                    }
+                    try self.checkReflectionValueType(field.type_id, visited, loc);
+                }
+                return;
+            },
+            .@"union" => |tagged| {
+                for (tagged.variants_in_order) |name| {
+                    try self.checkReflectionValueType(tagged.variants.get(name).?, visited, loc);
+                }
+                return;
+            },
+            .@"enum" => |enumeration| {
+                if (enumeration.error_set == null) return;
+            },
+            else => {},
+        }
+        return self.err_reporter.invalidType("a supported reflected value type", try self.type_table.syntaxName(type_id, self.allocator), loc);
     }
 
     fn checkJsonType(self: *Self, type_id: tt.TypeId, path: []const u8, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void), loc: err.Loc) CompileError!void {
@@ -4857,7 +4905,7 @@ pub const SemaAnalyzer = struct {
                     try self.checkJsonType(field.type_id, field_path, visited, loc);
                     default.* = if (field.default_value) |value| try self.coerceValue(value, field.type_id, loc) else null;
                 }
-                try self.json_defaults.put(self.allocator, base, defaults);
+                try self.field_defaults.put(self.allocator, base, defaults);
             },
             .@"union" => |tagged| {
                 for (tagged.variants_in_order) |name| {

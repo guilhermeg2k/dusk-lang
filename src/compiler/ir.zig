@@ -11,7 +11,7 @@ pub const Program = struct {
     defined_types: []const DefinedType,
     error_names: []const []const u8,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
-    json_defaults: std.AutoHashMapUnmanaged(TypeId, []const ?*Value) = .empty,
+    field_defaults: std.AutoHashMapUnmanaged(TypeId, []const ?*Value) = .empty,
 };
 
 pub const Block = []const Instruction;

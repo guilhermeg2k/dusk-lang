@@ -13,7 +13,19 @@ pub const Binding = union(enum) {
 
 pub const ReflectionBinding = struct { operation: ReflectionOperation, func: NativeFnPtr };
 
-pub const ReflectionOperation = enum { type_of };
+pub const ReflectionOperation = enum {
+    type_of,
+    value,
+    cast,
+    result_descriptor,
+
+    pub fn hiddenArgumentCount(self: ReflectionOperation) u8 {
+        return switch (self) {
+            .type_of, .value => 2,
+            .cast, .result_descriptor => 1,
+        };
+    }
+};
 
 pub const JsonOperation = enum { encode, decode };
 

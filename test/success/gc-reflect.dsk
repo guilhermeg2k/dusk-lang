@@ -1,0 +1,35 @@
+import std/reflect
+import std/task
+
+func default_name() -> string
+    task::sleep(0)
+    return "fresh"
+end
+
+struct Item
+    id: int
+    name: string = default_name()
+    values: []int = [1, 2, 3]
+end
+
+func worker(base: int) -> !int
+    let mut total = 0
+    for 0..999: i do
+        let mut builder = try reflect::builder[Item]()
+        try reflect::set(builder, "id", base + i)
+        let item = try reflect::finish_as[Item](builder)
+        assert(item.name == "fresh")
+        assert(item.values[2] == 3)
+        let snapshot = reflect::value(item)
+        assert((try reflect::cast[int](try reflect::field(snapshot, "id"))) == base + i)
+        total = total + item.id
+    end
+    return total
+end
+
+func main() -> !void
+    let first = spawn(func() -> return try worker(0))
+    let second = spawn(func() -> return try worker(1000))
+    assert((try await(first)) == 499500)
+    assert((try await(second)) == 1499500)
+end

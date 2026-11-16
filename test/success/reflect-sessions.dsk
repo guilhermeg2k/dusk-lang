@@ -1,0 +1,79 @@
+import std/reflect
+import std/array
+import std/task
+
+struct Counter
+    calls: int = 0
+end
+
+struct Item
+    counter: Counter
+    number: int = 7
+    tags: []string = ["fresh"]
+end
+
+struct Parent
+    child: Item
+    number: int = 8
+end
+
+func expect_failure(action: func() -> reflect::ReflectError!void, expected: reflect::ReflectError) -> void
+    action() catch err then
+        assert(err == expected)
+        return
+    end
+    assert(false)
+end
+
+func main() -> !void
+    let mut session = reflect::begin_session()
+    let mut session_alias = copy(session)
+    let mut child = try reflect::builder_in(session, reflect::type_of[Item]())
+    let counter = Counter()
+    try reflect::set(child, "counter", counter)
+    let pending = try reflect::defer_finish(child)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::cast[Item](pending)
+    end, reflect::ReflectError.InvalidBuilderState)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::field(pending, "number")
+    end, reflect::ReflectError.InvalidBuilderState)
+    let mut unrelated = try reflect::builder[Parent]()
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::set_value(unrelated, "child", pending)
+    end, reflect::ReflectError.InvalidBuilderState)
+    let mut parent = try reflect::builder_in(session, reflect::type_of[Parent]())
+    try reflect::set_value(parent, "child", copy(pending))
+    let root = try reflect::defer_finish(parent)
+    try reflect::complete_session(session_alias)
+    let mut result = try reflect::cast[Parent](root)
+    assert(result.child.number == 7)
+    assert(result.number == 8)
+    result.child.tags[0] = "changed"
+    assert((try reflect::cast[Item](pending)).tags[0] == "fresh")
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::complete_session(session)
+    end, reflect::ReflectError.InvalidBuilderState)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::builder_in(session, reflect::type_of[Item]())
+    end, reflect::ReflectError.InvalidBuilderState)
+    let mut unfinished_session = reflect::begin_session()
+    let mut unfinished = try reflect::builder_in(unfinished_session, reflect::type_of[[]int]())
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::complete_session(unfinished_session)
+    end, reflect::ReflectError.InvalidBuilderState)
+    let empty = try reflect::defer_finish(unfinished)
+    try reflect::complete_session(unfinished_session)
+    assert((try reflect::length(empty)) == 0)
+    for 0..2999: i do
+        let mut fresh = try reflect::builder[Item]()
+        try reflect::set(fresh, "counter", Counter(i))
+        let current = try reflect::finish_as[Item](fresh)
+        assert(current.counter.calls == i)
+        assert(current.tags[0] == "fresh")
+        if i % 100 == 0 then
+            task::sleep(0)
+        end
+    end
+    assert((try reflect::cast[Parent](root)).child.number == 7)
+end

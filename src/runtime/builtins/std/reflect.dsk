@@ -1,5 +1,20 @@
 import std/array
 
+error ReflectError
+    TypeMismatch
+    UnknownField
+    OutOfRange
+    MissingField
+    DuplicateAssignment
+    InvalidBuilderState
+    UnknownVariant
+    UnsupportedType
+end
+
+struct Value
+    ~type_index: int
+end
+
 struct Type
     ~index: int
 end
@@ -147,4 +162,250 @@ func union_variants(type: Type) -> []UnionVariant
         array::append(result, UnionVariant(member_name(type, i), member_type(type, i)))
     end
     return result
+end
+
+extern func value[T](value: T) -> Value
+extern func cast[T](value: Value) -> ReflectError!T
+extern func ~value_type_index(value: Value) -> int
+extern func field(value: Value, name: string) -> ReflectError!Value
+extern func element(value: Value, index: int) -> ReflectError!Value
+extern func length(value: Value) -> ReflectError!int
+extern func is_same_object(left: Value, right: Value) -> ReflectError!bool
+extern func is_null(value: Value) -> ReflectError!bool
+extern func unwrap(value: Value) -> ReflectError!Value
+extern func variant_name(value: Value) -> ReflectError!string
+extern func variant_value(value: Value) -> ReflectError!int
+extern func payload(value: Value) -> ReflectError!Value
+extern func map_key(value: Value, index: int) -> ReflectError!Value
+extern func map_value(value: Value, index: int) -> ReflectError!Value
+
+func value_type(value: Value) -> Type
+    return Type(value_type_index(value))
+end
+
+struct Session
+    ~state: int
+    ~defaults: []func() -> void
+    ~pending_builders: int
+end
+
+struct Builder
+    ~type: Type
+    ~session: Session
+    ~values: []Value
+    ~names: []string
+    ~keys: []Value
+    ~is_finished: bool
+end
+
+extern func ~share_state[T](mut state: T) -> void
+extern func ~can_construct(type: Type) -> bool
+extern func ~can_attach(session: Session, value: Value) -> bool
+extern func ~construct(mut builder: Builder) -> ReflectError!Value
+
+func begin_session() -> Session
+    let mut session = Session(0, [], 0)
+    share_state(session)
+    return session
+end
+
+func builder[T]() -> ReflectError!Builder
+    return try builder_for(type_of[T]())
+end
+
+func builder_for(type: Type) -> ReflectError!Builder
+    let mut session = begin_session()
+    return try builder_in(session, type)
+end
+
+func builder_in(mut session: Session, type: Type) -> ReflectError!Builder
+    if session.state != 0 then
+        return ReflectError.InvalidBuilderState
+    end
+    let type_kind = kind(type)
+    let is_container = type_kind == Kind.Struct or type_kind == Kind.Array or type_kind == Kind.Map or type_kind == Kind.Nullable or type_kind == Kind.Enum or type_kind == Kind.Union
+    if !is_container or !can_construct(type) then
+        return ReflectError.UnsupportedType
+    end
+    let mut result = Builder(copy(type), session, [], [], [], false)
+    share_state(result)
+    session.pending_builders = session.pending_builders + 1
+    return result
+end
+
+func set[T](mut builder: Builder, name: string, input: T) -> ReflectError!void
+    try set_value(builder, name, value(input))
+end
+
+func set_value(mut builder: Builder, name: string, input: Value) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Struct then
+        return ReflectError.TypeMismatch
+    end
+    for fields(builder.type): field do
+        if field.name != name then
+            continue
+        end
+        try check_input(builder, input, field.type)
+        for builder.names: existing do
+            if existing == name then
+                return ReflectError.DuplicateAssignment
+            end
+        end
+        array::append(builder.names, name)
+        array::append(builder.values, copy(input))
+        return
+    end
+    return ReflectError.UnknownField
+end
+
+func append[T](mut builder: Builder, input: T) -> ReflectError!void
+    try append_value(builder, value(input))
+end
+
+func append_value(mut builder: Builder, input: Value) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Array then
+        return ReflectError.TypeMismatch
+    end
+    try check_input(builder, input, child_type(builder.type, false))
+    array::append(builder.values, copy(input))
+end
+
+func insert[K, V](mut builder: Builder, key: K, input: V) -> ReflectError!void
+    try insert_value(builder, value(key), value(input))
+end
+
+func insert_value(mut builder: Builder, key: Value, input: Value) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Map then
+        return ReflectError.TypeMismatch
+    end
+    try check_input(builder, key, child_type(builder.type, true))
+    try check_input(builder, input, child_type(builder.type, false))
+    array::append(builder.keys, copy(key))
+    array::append(builder.values, copy(input))
+end
+
+func select[T](mut builder: Builder, name: string, input: T) -> ReflectError!void
+    try select_value(builder, name, value(input))
+end
+
+func select_value(mut builder: Builder, name: string, input: Value) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Union then
+        return ReflectError.TypeMismatch
+    end
+    if array::len(builder.names) != 0 then
+        return ReflectError.DuplicateAssignment
+    end
+    for union_variants(builder.type): variant do
+        if variant.name != name then
+            continue
+        end
+        try check_input(builder, input, variant.type)
+        array::append(builder.names, name)
+        array::append(builder.values, copy(input))
+        return
+    end
+    return ReflectError.UnknownVariant
+end
+
+func select_enum(mut builder: Builder, name: string) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Enum then
+        return ReflectError.TypeMismatch
+    end
+    if array::len(builder.names) != 0 then
+        return ReflectError.DuplicateAssignment
+    end
+    for enum_variants(builder.type): variant do
+        if variant.name == name then
+            array::append(builder.names, name)
+            return
+        end
+    end
+    return ReflectError.UnknownVariant
+end
+
+func set_null(mut builder: Builder) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Nullable then
+        return ReflectError.TypeMismatch
+    end
+    if array::len(builder.values) + array::len(builder.names) != 0 then
+        return ReflectError.DuplicateAssignment
+    end
+    array::append(builder.names, "null")
+end
+
+func set_present[T](mut builder: Builder, input: T) -> ReflectError!void
+    try set_present_value(builder, value(input))
+end
+
+func set_present_value(mut builder: Builder, input: Value) -> ReflectError!void
+    try ensure_builder(builder)
+    if kind(builder.type) != Kind.Nullable then
+        return ReflectError.TypeMismatch
+    end
+    if array::len(builder.values) + array::len(builder.names) != 0 then
+        return ReflectError.DuplicateAssignment
+    end
+    try check_input(builder, input, child_type(builder.type, false))
+    array::append(builder.values, copy(input))
+end
+
+func defer_finish(mut builder: Builder) -> ReflectError!Value
+    try ensure_builder(builder)
+    builder.is_finished = true
+    let result = construct(builder) catch err then
+        builder.session.state = 3
+        return err
+    end
+    builder.session.pending_builders = builder.session.pending_builders - 1
+    return result
+end
+
+func complete_session(mut session: Session) -> ReflectError!void
+    if session.state != 0 or session.pending_builders != 0 then
+        return ReflectError.InvalidBuilderState
+    end
+    session.state = 1
+    for session.defaults: apply_default do
+        apply_default()
+    end
+    session.state = 2
+    array::clear(session.defaults)
+end
+
+func finish(mut builder: Builder) -> ReflectError!Value
+    try ensure_builder(builder)
+    if builder.session.pending_builders != 1 then
+        return ReflectError.InvalidBuilderState
+    end
+    let result = try defer_finish(builder)
+    try complete_session(builder.session)
+    return result
+end
+
+func finish_as[T](mut builder: Builder) -> ReflectError!T
+    if !is_same(builder.type, type_of[T]()) then
+        return ReflectError.TypeMismatch
+    end
+    return try cast[T](try finish(builder))
+end
+
+func ~ensure_builder(builder: Builder) -> ReflectError!void
+    if builder.is_finished or builder.session.state != 0 then
+        return ReflectError.InvalidBuilderState
+    end
+end
+
+func ~check_input(builder: Builder, input: Value, expected: Type) -> ReflectError!void
+    if !is_same(value_type(input), expected) then
+        return ReflectError.TypeMismatch
+    end
+    if !can_attach(builder.session, input) then
+        return ReflectError.InvalidBuilderState
+    end
 end

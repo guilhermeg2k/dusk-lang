@@ -37,6 +37,7 @@ pub const Field = struct {
     type_index: u32,
     slot: u8,
     has_default: bool,
+    default_function: ?u16 = null,
 };
 
 pub const Variant = struct {

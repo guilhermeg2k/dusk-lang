@@ -1,9 +1,30 @@
 const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
 const format = @import("../../reflection_format.zig");
+const reflection = @import("../../reflection.zig");
 const native = @import("../native.zig");
 
+pub const error_sets = .{reflection.ReflectError};
+
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "share_state", native.Binding{ .native = &reflection.shareState } },
+    .{ "can_construct", native.Binding{ .native = &reflection.canConstruct } },
+    .{ "can_attach", native.Binding{ .native = &reflection.canAttach } },
+    .{ "construct", native.Binding{ .reflection = .{ .operation = .result_descriptor, .func = &reflection.construct } } },
+    .{ "value", native.Binding{ .reflection = .{ .operation = .value, .func = &reflection.captureValue } } },
+    .{ "cast", native.Binding{ .reflection = .{ .operation = .cast, .func = &reflection.castValue } } },
+    .{ "value_type_index", native.Binding{ .native = &reflection.valueTypeIndex } },
+    .{ "field", native.Binding{ .native = &reflection.readField } },
+    .{ "element", native.Binding{ .native = &reflection.readElement } },
+    .{ "length", native.Binding{ .native = &reflection.valueLength } },
+    .{ "is_same_object", native.Binding{ .native = &reflection.areSameObjects } },
+    .{ "is_null", native.Binding{ .native = &reflection.isNull } },
+    .{ "unwrap", native.Binding{ .native = &reflection.unwrapValue } },
+    .{ "variant_name", native.Binding{ .native = &reflection.variantName } },
+    .{ "variant_value", native.Binding{ .native = &reflection.variantValue } },
+    .{ "payload", native.Binding{ .native = &reflection.unionPayload } },
+    .{ "map_key", native.Binding{ .native = &reflection.mapKey } },
+    .{ "map_value", native.Binding{ .native = &reflection.mapValue } },
     .{ "type_of", native.Binding{ .reflection = .{ .operation = .type_of, .func = &typeOf } } },
     .{ "type_of_value", native.Binding{ .reflection = .{ .operation = .type_of, .func = &typeOf } } },
     .{ "name", native.Binding{ .native = &typeName } },

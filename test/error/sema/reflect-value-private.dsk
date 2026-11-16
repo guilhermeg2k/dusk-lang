@@ -1,0 +1,7 @@
+import std/reflect
+struct Hidden
+    ~secret: int
+end
+func main() -> void
+    let value = reflect::value(Hidden(7))
+end

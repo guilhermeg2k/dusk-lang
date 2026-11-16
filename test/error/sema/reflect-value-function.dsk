@@ -1,0 +1,4 @@
+import std/reflect
+func main() -> void
+    let value = reflect::value(func() -> int return 1 end)
+end

@@ -1,0 +1,139 @@
+import std/reflect
+import std/array
+import std/time
+
+struct User
+    name: string
+    age: int = 30
+    tags: []string = ["fresh"]
+    email: ?string = null
+end
+
+struct RequiredNullable
+    value: ?int
+end
+
+struct OtherUser
+    name: string
+    age: int = 30
+    tags: []string = ["fresh"]
+    email: ?string = null
+end
+
+struct Empty
+end
+
+struct Box[T]
+    value: T
+end
+
+enum Color
+    Red = 3
+    Crimson = 3
+    Blue = 7
+end
+
+union Choice
+    user: User
+    number: int
+end
+
+func expect_failure(action: func() -> reflect::ReflectError!void, expected: reflect::ReflectError) -> void
+    action() catch err then
+        assert(err == expected)
+        return
+    end
+    assert(false)
+end
+
+func make[T]() -> reflect::ReflectError!T
+    let mut builder = try reflect::builder[T]()
+    try reflect::set(builder, "name", "Ana")
+    return try reflect::finish_as[T](builder)
+end
+
+func main() -> !void
+    let mut user = try make[User]()
+    assert(user.name == "Ana")
+    assert(user.age == 30)
+    assert(user.email == null)
+    user.tags[0] = "changed"
+    assert((try make[User]()).tags[0] == "fresh")
+    let mut builder = try reflect::builder_for(reflect::type_of[User]())
+    let mut alias = copy(builder)
+    try reflect::set(alias, "name", "Bea")
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::set(builder, "name", "duplicate")
+    end, reflect::ReflectError.DuplicateAssignment)
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::set(builder, "age", "wrong")
+    end, reflect::ReflectError.TypeMismatch)
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::set(builder, "absent", 1)
+    end, reflect::ReflectError.UnknownField)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::finish_as[OtherUser](builder)
+    end, reflect::ReflectError.TypeMismatch)
+    assert((try reflect::finish_as[User](builder)).name == "Bea")
+    expect_failure(func() -> reflect::ReflectError!void
+        try reflect::set(alias, "age", 31)
+    end, reflect::ReflectError.InvalidBuilderState)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::finish(alias)
+    end, reflect::ReflectError.InvalidBuilderState)
+    let mut missing = try reflect::builder[RequiredNullable]()
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::finish(missing)
+    end, reflect::ReflectError.MissingField)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::finish(missing)
+    end, reflect::ReflectError.InvalidBuilderState)
+    let mut required = try reflect::builder[RequiredNullable]()
+    let null_value: ?int = null
+    try reflect::set(required, "value", null_value)
+    assert((try reflect::finish_as[RequiredNullable](required)).value == null)
+    let mut numbers = try reflect::builder[[]int]()
+    for 0..39: i do
+        try reflect::append(numbers, i)
+    end
+    let result: []int = try reflect::finish_as(numbers)
+    assert(array::len(result) == 40)
+    assert(result[39] == 39)
+    let mut empty_array = try reflect::builder[[]int]()
+    assert(array::len(try reflect::finish_as[[]int](empty_array)) == 0)
+    let mut mapping = try reflect::builder[map[string, ?int]]()
+    let answer: ?int = 42
+    try reflect::insert(mapping, "empty", null_value)
+    try reflect::insert(mapping, "answer", answer)
+    let map_value = try reflect::finish(mapping)
+    assert((try reflect::length(map_value)) == 2)
+    assert((try reflect::cast[string](try reflect::map_key(map_value, 0))) == "empty")
+    assert((try reflect::cast[map[string, ?int]](map_value))["answer"] == 42)
+    let mut duplicate = try reflect::builder[map[int, int]]()
+    try reflect::insert(duplicate, 1, 3)
+    try reflect::insert(duplicate, 1, 4)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::finish(duplicate)
+    end, reflect::ReflectError.DuplicateAssignment)
+    let mut color = try reflect::builder[Color]()
+    try reflect::select_enum(color, "Crimson")
+    assert((try reflect::finish_as[Color](color)) == Color.Red)
+    let mut choice = try reflect::builder[Choice]()
+    try reflect::select(choice, "number", 7)
+    let selected = try reflect::finish_as[Choice](choice)
+    assert(selected.number == 7)
+    let mut nullable = try reflect::builder[?int]()
+    try reflect::set_present(nullable, 9)
+    assert((try reflect::finish_as[?int](nullable)) == 9)
+    let mut absent = try reflect::builder[?User]()
+    try reflect::set_null(absent)
+    assert((try reflect::finish_as[?User](absent)) == null)
+    let mut empty = try reflect::builder[Empty]()
+    let empty_value = try reflect::finish_as[Empty](empty)
+    let mut box = try reflect::builder[Box[User]]()
+    try reflect::set(box, "value", try make[User]())
+    assert((try reflect::finish_as[Box[User]](box)).value.name == "Ana")
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::builder[time::Timestamp]()
+    end, reflect::ReflectError.UnsupportedType)
+end

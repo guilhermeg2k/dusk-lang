@@ -919,17 +919,25 @@ pub const VM = struct {
     }
 
     noinline fn deepCopy(self: *Self, source_index: usize) !v.Value {
-        if (@as(u64, @bitCast(self.stack[source_index])) == 0) {
-            return self.stack[source_index];
+        return self.copyValue(self.stack[source_index], .nullable);
+    }
+
+    pub fn copyValue(self: *Self, source: v.Value, kind: v.ValueType) !v.Value {
+        const is_heap_value = kind.isHeapType() and @as(u64, @bitCast(source)) != 0;
+        if (!is_heap_value) {
+            return source;
         }
-        try self.maybeCollectGarbage(gc.heapObjectSize(self.stack[source_index].heap_obj));
+        const root_count = self.heap.temporary_roots.items.len;
+        defer self.heap.restoreRootCount(root_count);
+        const root = try self.heap.protectValue(source, kind);
+        try self.maybeCollectGarbage(gc.heapObjectSize(source.heap_obj));
 
         var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
         defer copies.deinit(self.allocator);
         var pending: std.ArrayList(*v.HeapValue) = .empty;
         defer pending.deinit(self.allocator);
 
-        var result = self.stack[source_index];
+        var result = self.heap.protectedValue(root);
         try self.deepCopySlot(&result, &copies, &pending);
         while (pending.pop()) |copy| {
             switch (copy.kind) {
@@ -962,7 +970,7 @@ pub const VM = struct {
                     if (!storage.value_type.isHeapType()) continue;
                     for (storage.usedEntries()) |*entry| try self.deepCopySlot(&entry.value, &copies, &pending);
                 },
-                .string, .buffer, .null_box, .closure, .cell, .task => {},
+                .string, .buffer, .null_box, .closure, .cell, .task, .reflected_value, .reflection_state => {},
             }
         }
         return result;
@@ -972,7 +980,7 @@ pub const VM = struct {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
         const is_immutable = switch (current.kind) {
-            .string, .null_box, .closure, .cell, .task => true,
+            .string, .null_box, .closure, .cell, .task, .reflected_value, .reflection_state => true,
             else => false,
         };
         if (is_immutable) {

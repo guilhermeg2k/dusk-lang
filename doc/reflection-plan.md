@@ -1,6 +1,6 @@
 # Reflection, safe construction and JSON migration
 
-Status: implementation started after approval, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline at `7aa6591`; see [results](../benchmarks/json-baseline.md). Reflection implementation and JSON migration follow as separate tasks. Read-only type inspection is implemented as documented in the language reference. Checked values, construction, capability validation and JSON migration below remain planned; their API names illustrate the design.
+Status: implementation started after approval, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline at `7aa6591`; see [results](../benchmarks/json-baseline.md). Reflection implementation and JSON migration follow as separate tasks. Type inspection, checked values and safe construction are implemented as documented in the language reference. Capability validation, the independent decoder proof and JSON migration below remain planned. API sketches below record the original design; the language reference defines delivered signatures.
 
 ## Implementation progress
 
@@ -8,7 +8,9 @@ Status: implementation started after approval, 2026-11-15. The first delivery ad
 - Read-only `std/reflect` implemented: protected `Type` handles; explicit/inferred concrete targets; identity, names and kinds; tagged descriptions; independent public-field, enum and union snapshots; recursive descriptor references. Resolved generic arguments are retained in IR calls, so zero-argument generic reflection needs no syntax change.
 - Descriptor authority uses private-field wrappers and immutable runtime program tables. Public snapshots cannot modify those tables. Private fields are hidden regardless of the caller's module; structs with hidden fields expose a flag.
 - Unresolved types in reflected anonymous fields are rejected in sema rather than reaching code generation.
-- Checked values, safe builders/default sessions, the independent decoder, capability validation and JSON migration remain upcoming work. No JSON behavior or benchmark workload has changed.
+- Checked reflected values now use snapshot capture and copying typed casts; traversal produces protected shared views. A dedicated traced heap object owns payloads and optional session references. Public-field/value restrictions prevent private or native state from being reinterpreted through reflection; identity-based struct map keys remain unsupported for value snapshots.
+- Builders/session state uses protected traced handles whose identity survives explicit copies. Public setters validate exact types; completion publishes only initialized values. Deferred sessions queue ordinary captured default callbacks, preserve child-before-parent ordering and permit parking. Other tasks cannot read pending values while completion is parked. Defaults and IR collection were generalized from JSON to `field_defaults` and callback functions are deduplicated.
+- The independent decoder, general capability validation, JSON migration and comparison remain upcoming work. Existing JSON semantics and benchmark sources are unchanged.
 
 ## Goal
 
@@ -192,9 +194,9 @@ Each phase updates task tracking and gets its own commit. Reflection and migrati
 
 The requested direction is reflection plus safe construction, followed by JSON migration and comparison. The exact API above remains proposed. Before implementation, settle:
 
-- Owned reflected values versus borrowed views and where a copy is required to preserve mutability.
-- The smallest public deferred-completion/session API that preserves default semantics for independent decoders.
+- Resolved: snapshot capture owns a copy; field/collection views share protected storage; typed casts produce copies. Builders and sessions retain shared handle identity across copies.
+- Resolved: begin_session, builder_in, defer_finish and complete_session provide a public format-neutral default barrier; pending values carry a traced session reference and remain unreadable until completion.
 - The format-neutral compile-time capability-validation surface.
-- The protected runtime representation for descriptors, values and builders.
+- Resolved: descriptors remain private-index handles backed by program tables; checked values have traced native payloads, and builders/sessions use protected traced shared-state structs.
 
 These are implementation gates, not claims that ordinary generic specialization already solves dynamic typed construction.
