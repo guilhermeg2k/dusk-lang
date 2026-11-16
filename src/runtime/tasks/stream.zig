@@ -364,7 +364,11 @@ pub const Stream = struct {
             const available = self.bufferedBytes();
             const room = max -| reader.body.items.len;
             const used = reader.feedBody(available[0..@min(available.len, room)]) catch |failure| {
-                return if (failure == error.OutOfMemory) .Other else reader.invalidMessage();
+                if (failure == error.OutOfMemory) {
+                    return .Other;
+                }
+                reader.was_body_invalid = true;
+                return reader.invalidMessage();
             };
             self.consume(used);
             if (used == 0) break;
@@ -378,6 +382,7 @@ pub const Stream = struct {
             return httpFailure(failure);
         }
         if (reader.body.items.len > cap) {
+            reader.was_body_too_large = true;
             return httpFailure(.BodyTooLarge);
         }
         if (reader.isMessageComplete()) {

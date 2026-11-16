@@ -382,7 +382,7 @@ test "http: requests, response streams and the connection pool over loopback (he
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
-test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw and malformed requests, timeouts, shutdown" {
+test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw and malformed requests, request bodies, limits, 100-continue, timeouts, shutdown" {
     try runCase("http-server.dsk");
 }
 

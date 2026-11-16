@@ -171,6 +171,8 @@ struct Request
     remote_address: net::Address
     ~handle: int
     ~keeps_alive: bool
+    ~max_body: int
+    ~expects_continue: bool
 
     func query_param(self: @, name: string) -> ?string
         if self.query: text then
@@ -182,6 +184,31 @@ struct Request
             end
         end
         return null
+    end
+
+    func text(self: @, timeout_ms: int = -1) -> HttpError!string
+        let data = try self.bytes(timeout_ms)
+        return string::from_bytes(data) catch e then
+            return HttpError.InvalidUtf8
+        end
+    end
+
+    func bytes(self: @, timeout_ms: int = -1) -> HttpError!buffer
+        self.send_continue() catch e then
+            return from_io(e)
+        end
+        return try stream_read_whole_body(self.handle, self.max_body, timeout_ms)
+    end
+
+    func read_bytes(self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        try self.send_continue()
+        return try stream_body_bytes(self.handle, max, timeout_ms)
+    end
+
+    func ~send_continue(self: @) -> io::IoError!void
+        if self.expects_continue and claim_continue(self.handle) then
+            try stream_write(self.handle, "HTTP/1.1 100 Continue\r\n\r\n")
+        end
     end
 end
 
@@ -206,6 +233,9 @@ extern func ~stream_read_request_head(handle: int, timeout_ms: int) -> HttpError
 extern func ~stream_drain_request_body(handle: int, cap: int, timeout_ms: int) -> HttpError!buffer
 extern func ~parse_request_head(head: buffer) -> HttpError![]string
 extern func ~http_date() -> string
+extern func ~claim_continue(handle: int) -> bool
+extern func ~request_body_state(handle: int, expects_continue: bool) -> int
+extern func ~request_body_failure(handle: int) -> int
 extern func ~server_state_new() -> int
 extern func ~server_set_idle(state: int, handle: int, is_idle: bool) -> bool
 extern func ~server_close(state: int) -> void
@@ -218,6 +248,10 @@ extern func ~body_given_twice() -> void
 let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
 let ~REQUEST_DRAIN_LIMIT = 65536
+let ~BODY_COMPLETE = 0
+let ~BODY_UNREAD = 1
+let ~BODY_TOO_LARGE = 1
+let ~BODY_INVALID = 2
 
 struct ~Exchange
     method: string
@@ -664,11 +698,18 @@ func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, h
         return false
     end
     if received: head then
-        let request = request_of(head, conn, handle) catch e then
+        let request = request_of(head, conn, handle, server) catch e then
             reject(handle, HttpError.InvalidRequest)
             return false
         end
         let response = handler(request) catch e then
+            let body_failure = request_body_failure(handle)
+            if body_failure == BODY_TOO_LARGE then
+                return finish(server, request, status(413))
+            end
+            if body_failure == BODY_INVALID then
+                return finish(server, request, status(400))
+            end
             io::eprintln("http: ${request.method} ${request.path} failed: $e")
             return finish(server, request, status(500))
         end
@@ -707,7 +748,7 @@ func ~reject(handle: int, failure: HttpError) -> void
     end
 end
 
-func ~request_of(head: buffer, conn: net::TcpConn, handle: int) -> HttpError!Request
+func ~request_of(head: buffer, conn: net::TcpConn, handle: int, server: Server) -> HttpError!Request
     let parts = try parse_request_head(head)
     let target = parts[1]
     let mut raw_path = target
@@ -728,16 +769,27 @@ func ~request_of(head: buffer, conn: net::TcpConn, handle: int) -> HttpError!Req
     let path = url::decode(raw_path) catch e then
         return HttpError.InvalidRequest
     end
-    return Request(method = parts[0], target = target, path = path, query = query, headers = headers_of(parts, first = 4), remote_address = conn.remote_address(), handle = handle, keeps_alive = parts[3] == "1")
+    let headers = headers_of(parts, first = 4)
+    let expects_continue = string::lower(string::trim(headers.get("expect") orelse "")) == "100-continue"
+    return Request(method = parts[0], target = target, path = path, query = query, headers = headers, remote_address = conn.remote_address(), handle = handle, keeps_alive = parts[3] == "1", max_body = server.max_body, expects_continue = expects_continue)
 end
 
 func ~finish(server: Server, request: Request, response: Response) -> bool
-    let is_body_read = stream_drain_request_body(request.handle, REQUEST_DRAIN_LIMIT, server.head_timeout_ms) catch e then
+    let body_state = request_body_state(request.handle, request.expects_continue)
+    let is_body_done = body_state == BODY_COMPLETE or (body_state == BODY_UNREAD and drain_request(server, request))
+    if !is_body_done then
         return write_response(request, checked_response(request, response), false) and false
     end
     let wants_close = string::lower(response.headers.get("connection") orelse "") == "close"
     let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.state)
     return write_response(request, checked_response(request, response), keeps_alive) and keeps_alive
+end
+
+func ~drain_request(server: Server, request: Request) -> bool
+    stream_drain_request_body(request.handle, REQUEST_DRAIN_LIMIT, server.head_timeout_ms) catch e then
+        return false
+    end
+    return true
 end
 
 func ~checked_response(request: Request, response: Response) -> Response

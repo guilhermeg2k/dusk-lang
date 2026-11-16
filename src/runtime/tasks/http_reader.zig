@@ -15,6 +15,9 @@ pub const HttpReader = struct {
     body: std.ArrayList(u8) = .empty,
     body_offset: usize = 0,
     taken: usize = 0,
+    has_sent_continue: bool = false,
+    was_body_too_large: bool = false,
+    was_body_invalid: bool = false,
 
     pub fn create(allocator: std.mem.Allocator, kind: MessageKind) !*Self {
         const reader = try allocator.create(Self);
@@ -38,6 +41,9 @@ pub const HttpReader = struct {
         self.body.clearRetainingCapacity();
         self.body_offset = 0;
         self.taken = 0;
+        self.has_sent_continue = false;
+        self.was_body_too_large = false;
+        self.was_body_invalid = false;
     }
 
     pub fn releaseBody(self: *Self) void {

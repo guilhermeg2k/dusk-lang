@@ -41,6 +41,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_drain_request_body", Binding{ .native = &streamDrainRequestBody } },
     .{ "parse_request_head", Binding{ .native = &parseRequestHead } },
     .{ "http_date", Binding{ .native = &httpDate } },
+    .{ "claim_continue", Binding{ .native = &claimContinue } },
+    .{ "request_body_state", Binding{ .native = &requestBodyState } },
+    .{ "request_body_failure", Binding{ .native = &requestBodyFailure } },
     .{ "server_state_new", Binding{ .native = &serverStateNew } },
     .{ "server_set_idle", Binding{ .native = &serverSetIdle } },
     .{ "server_close", Binding{ .native = &serverClose } },
@@ -83,7 +86,40 @@ fn streamReadRequestHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn streamDrainRequestBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const cap: usize = @intCast(@max(args[1].int64, 0));
+    if (vm.event_loop.streamAt(args[0].int64)) |stream| {
+        if (stream.http_reader) |reader| {
+            reader.releaseBody();
+        }
+    }
     return readHttp(vm, args[0].int64, .{ .http_whole_body = cap }, args[2].int64);
+}
+
+fn claimContinue(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .bool = false });
+    const reader = stream.http_reader orelse return ok(.{ .bool = false });
+    const can_claim = !reader.has_sent_continue and !reader.isMessageComplete();
+    reader.has_sent_continue = true;
+    return ok(.{ .bool = can_claim });
+}
+
+const RequestBodyState = enum(i64) { complete, unread, waiting_for_continue, failed, gone };
+const RequestBodyFailure = enum(i64) { none, too_large, invalid };
+
+fn requestBodyState(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return ok(.{ .int64 = @intFromEnum(bodyStateOf(vm, args[0].int64, args[1].bool)) });
+}
+
+fn bodyStateOf(vm: *VM, handle: i64, expects_continue: bool) RequestBodyState {
+    const stream = vm.event_loop.streamAt(handle) orelse return .gone;
+    const reader = stream.http_reader orelse return .gone;
+    if (reader.isMessageComplete()) {
+        return .complete;
+    }
+    if (reader.was_body_too_large or reader.was_body_invalid) {
+        return .failed;
+    }
+    const waits_for_continue = expects_continue and !reader.has_sent_continue;
+    return if (waits_for_continue) .waiting_for_continue else .unread;
 }
 
 fn streamReadWholeBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -269,6 +305,15 @@ fn parseRequestHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
         parts[5 + i * 2] = try validText(allocator, head[entry[2]..entry[3]]);
     }
     return ok(try vm.allocStringArray(parts));
+}
+
+fn requestBodyFailure(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const failure: RequestBodyFailure = blk: {
+        const stream = vm.event_loop.streamAt(args[0].int64) orelse break :blk .none;
+        const reader = stream.http_reader orelse break :blk .none;
+        break :blk if (reader.was_body_too_large) .too_large else if (reader.was_body_invalid) .invalid else .none;
+    };
+    return ok(.{ .int64 = @intFromEnum(failure) });
 }
 
 fn serverStateNew(vm: *VM, _: []v.Value) anyerror!NativeResult {

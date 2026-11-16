@@ -44,8 +44,58 @@ func route(req: http::Request) -> AppError!http::Response
             return response
         end
         "*" then return http::text("star ${req.method}") end
+        "/upload" then
+            let body = req.text() catch e then
+                if e == http::HttpError.BodyTooLarge and req.query_param("custom") != null then
+                    return http::text("custom too large", status = 400)
+                end
+                return AppError.Broken
+            end
+            return http::text("got ${string::len(body)}: $body")
+        end
+        "/upload-strict" then
+            let body = try_text(req) catch e then
+                return AppError.Broken
+            end
+            return http::text("${string::len(body)}")
+        end
+        "/upload-bytes" then
+            let data = req.bytes() catch e then
+                return AppError.Broken
+            end
+            return http::text("bytes ${buffer::len(data)}")
+        end
+        "/stream" then
+            let mut total = 0
+            let mut pieces = 0
+            for true do
+                let next = req.read_bytes(1000) catch e then
+                    return AppError.Broken
+                end
+                if next: piece then
+                    total = total + buffer::len(piece)
+                    pieces = pieces + 1
+                else
+                    break
+                end
+            end
+            return http::text("streamed $total")
+        end
         else then return http::status(404) end
     end
+end
+
+func try_text(req: http::Request) -> http::HttpError!string
+    return try req.text()
+end
+
+func start_strict(server: http::Server) -> Task[void]
+    return spawn(func() -> void
+        http::serve(server, func(req: http::Request) -> http::HttpError!http::Response
+            let body = try req.text()
+            return http::text("${string::len(body)}")
+        end)
+    end)
 end
 
 func start(server: http::Server) -> Task[void]
@@ -170,6 +220,74 @@ func check_raw(port: int) -> !void
     assert(string::ends_with(star, "star OPTIONS"))
 end
 
+func check_bodies(base: string, port: int) -> !void
+    let posted = try http::request("$base/upload", method = "POST", body = "hello server")
+    assert(try posted.text() == "got 12: hello server")
+    let bytes = try http::request("$base/upload-bytes", method = "PUT", body_bytes = buffer::from_string("abcdef"))
+    assert(try bytes.text() == "bytes 6")
+    let empty = try http::request("$base/upload", method = "POST")
+    assert(try empty.text() == "got 0: ")
+    let big = string::repeat("x", 300000) catch ""
+    let streamed = try http::request("$base/stream", method = "POST", body = big)
+    assert(try streamed.text() == "streamed 300000")
+
+    let chunked = try raw_exchange(port, "POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n")
+    assert(string::ends_with(chunked, "got 11: hello world"))
+
+    let broken = try raw_exchange(port, "POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n")
+    assert(string::starts_with(broken, "HTTP/1.1 400 Bad Request\r\n"))
+    assert(string::contains(broken, "Connection: close"))
+
+    let unread_small = try http::request("$base/peer", method = "POST", body = "small and ignored")
+    let after_small = try http::request("$base/peer")
+    assert(try unread_small.text() == try after_small.text())
+    let unread_big = try http::request("$base/peer", method = "POST", body = big)
+    assert(unread_big.headers.get("connection") == "close")
+
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    try conn.write("POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n")
+    assert(try conn.read_line(timeout_ms = 3000) == "HTTP/1.1 100 Continue")
+    assert(try conn.read_line(timeout_ms = 3000) == "")
+    try conn.write("ping")
+    assert(try conn.read_line(timeout_ms = 3000) == "HTTP/1.1 200 OK")
+    conn.close()
+
+    let skipped = try raw_exchange(port, "POST /?name=nobody HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\n\r\n")
+    assert(!string::contains(skipped, "100 Continue"))
+    assert(string::contains(skipped, "Connection: close"))
+    assert(string::ends_with(skipped, "hello nobody"))
+end
+
+func check_body_limits() -> !void
+    let server = try http::listen("127.0.0.1", 0, max_body = 10)
+    let running = start(server)
+    let base = "http://127.0.0.1:${server.port()}"
+    let fits = try http::request("$base/upload", method = "POST", body = "0123456789")
+    assert(try fits.text() == "got 10: 0123456789")
+    let custom = try http::request("$base/upload?custom=1", method = "POST", body = "01234567890")
+    assert(custom.status == 400)
+    assert(try custom.text() == "custom too large")
+    let partial = try net::tcp_connect("127.0.0.1", server.port())
+    try partial.write("POST /upload?custom=1 HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n0123456789abc")
+    let partial_answer = try partial.read_all(timeout_ms = 3000)
+    assert(string::starts_with(partial_answer, "HTTP/1.1 400 Bad Request\r\n"))
+    assert(string::contains(partial_answer, "Connection: close"))
+    partial.close()
+    server.close()
+    await(running)
+
+    let strict = try http::listen("127.0.0.1", 0, max_body = 10)
+    let strict_running = start_strict(strict)
+    let strict_base = "http://127.0.0.1:${strict.port()}"
+    let too_large = try http::request(strict_base, method = "POST", body = "01234567890")
+    assert(too_large.status == 413)
+    assert(too_large.reason == "Content Too Large")
+    let ok = try http::request(strict_base, method = "POST", body = "0123")
+    assert(try ok.text() == "4")
+    strict.close()
+    await(strict_running)
+end
+
 func check_timeouts() -> !void
     let server = try http::listen("127.0.0.1", 0, head_timeout_ms = 200, idle_timeout_ms = 200)
     let running = start(server)
@@ -230,8 +348,10 @@ func main() -> !void
     try check_failures(base)
     try check_head_and_keep_alive(base)
     try check_raw(server.port())
+    try check_bodies(base, server.port())
     server.close()
     await(running)
+    try check_body_limits()
     try check_timeouts()
     try check_shutdown()
     try check_listen_errors()
