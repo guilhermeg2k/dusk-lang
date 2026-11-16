@@ -23,10 +23,10 @@ Reproduce:
 python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --runs 15 --warmup 3 --save json-native-baseline
 ```
 
-After the reflection migration, compare against the source baseline:
+The completed migration comparison is in [the final results](json-reflection-results.md). Reproduce its reflection configuration against the source baseline:
 
 ```
-python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --compare 7aa6591 --runs 30 --warmup 3 --save json-reflection-comparison
+python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --compare 7aa6591 --build-arg=-Djson-backend=reflection --runs 5 --warmup 1 --save json-reflection-final-comparison
 ```
 
 Use the same machine and toolchain and verify that the four workload sources and shared model match the baseline. The runner alternates current and baseline binaries. Retain noise flags and investigate repeatable time or memory regressions above 5% before choosing the default implementation.

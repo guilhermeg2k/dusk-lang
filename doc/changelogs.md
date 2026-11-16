@@ -29,7 +29,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 - `std/reflect` adds protected concrete type handles, type identity and tagged descriptions of public fields, collection children, enum names/values and union variants, including generic and recursive types; literal `require_value[T]` policies reject unsupported nested kinds and map keys at compile time; checked value snapshots and typed casts support safe traversal, and builders construct complete values with declared defaults, including deferred sessions whose defaults may wait for tasks
 
-- An experimental `-Djson-backend=reflection` build keeps the `std/json` API while performing typed conversion and traversal in Dusk through public reflection. Native scanner and scalar formatting helpers remain; the existing codec is the default pending performance comparison
+- An experimental `-Djson-backend=reflection` build keeps the `std/json` API while performing typed conversion and traversal in Dusk through public reflection. Native scanner and scalar formatting helpers remain; native streaming remains the default after performance comparison
 
 ### Fixes
 

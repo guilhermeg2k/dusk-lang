@@ -1,0 +1,83 @@
+{
+  "commit": "13f65af",
+  "dirty": false,
+  "date": "2026-11-16T05:02:28Z",
+  "machine": {
+    "cpu": "AMD Ryzen 5 5600X 6-Core Processor",
+    "os": "Fedora Linux 44 (Workstation Edition)",
+    "zig": "0.16.0"
+  },
+  "settings": {
+    "runs": 15,
+    "warmup": 3,
+    "build_args": [],
+    "base_build_args": []
+  },
+  "benchmarks": {
+    "json_decode": {
+      "runs": 15,
+      "median_ms": 208.47,
+      "min_ms": 203.24,
+      "max_ms": 211.81,
+      "stddev_ms": 2.06,
+      "peak_mem_kib": 18568,
+      "noisy": false
+    },
+    "json_decode_bulk": {
+      "runs": 15,
+      "median_ms": 504.04,
+      "min_ms": 499.14,
+      "max_ms": 522.9,
+      "stddev_ms": 5.78,
+      "peak_mem_kib": 18568,
+      "noisy": false
+    },
+    "json_encode": {
+      "runs": 15,
+      "median_ms": 111.29,
+      "min_ms": 108.79,
+      "max_ms": 112.48,
+      "stddev_ms": 1.02,
+      "peak_mem_kib": 18568,
+      "noisy": false
+    },
+    "json_defaults": {
+      "runs": 15,
+      "median_ms": 58.51,
+      "min_ms": 57.27,
+      "max_ms": 62.4,
+      "stddev_ms": 1.41,
+      "peak_mem_kib": 18568,
+      "noisy": false
+    }
+  },
+  "compare": {
+    "against": "7aa6591@7aa6591",
+    "benchmarks": {
+      "json_decode": {
+        "base_median_ms": 207.73,
+        "change_pct": 0.4,
+        "verdict": "same",
+        "noisy": false
+      },
+      "json_decode_bulk": {
+        "base_median_ms": 503.33,
+        "change_pct": 0.1,
+        "verdict": "same",
+        "noisy": false
+      },
+      "json_encode": {
+        "base_median_ms": 111.13,
+        "change_pct": 0.1,
+        "verdict": "same",
+        "noisy": false
+      },
+      "json_defaults": {
+        "base_median_ms": 57.91,
+        "change_pct": 1.0,
+        "verdict": "same",
+        "noisy": false
+      }
+    }
+  }
+}
