@@ -377,7 +377,7 @@ test "url: parse, resolve (RFC 3986 examples), encode, decode and query" {
     try runCase("url.dsk");
 }
 
-test "http: requests over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https)" {
+test "http: requests and response streams over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https)" {
     try runCase("http-client.dsk");
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }

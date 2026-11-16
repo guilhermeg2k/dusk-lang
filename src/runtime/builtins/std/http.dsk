@@ -88,6 +88,34 @@ struct Response
     end
 end
 
+struct ResponseStream
+    status: int
+    reason: string
+    headers: Headers
+    url: string
+    ~handle: int
+
+    func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        return try stream_body_bytes(self.handle, max, timeout_ms)
+    end
+
+    func read_line(mut self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
+        return try stream_body_line(self.handle, max, timeout_ms)
+    end
+
+    func read_all(mut self: @, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_body_all(self.handle, timeout_ms)
+    end
+
+    func read_all_bytes(mut self: @, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_body_all_bytes(self.handle, timeout_ms)
+    end
+
+    func close(mut self: @) -> void
+        stream_close(self.handle)
+    end
+end
+
 extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> net::NetError!int
 extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
@@ -95,6 +123,10 @@ extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
 extern func ~stream_read_head(handle: int, is_head_request: bool, timeout_ms: int) -> HttpError!?buffer
 extern func ~stream_read_whole_body(handle: int, cap: int, timeout_ms: int) -> HttpError!buffer
+extern func ~stream_body_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_body_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
+extern func ~stream_body_all(handle: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_body_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
 extern func ~is_method(text: string) -> bool
 extern func ~is_header_name(text: string) -> bool
@@ -114,27 +146,45 @@ struct ~Exchange
     ca: ?string
     verify: bool
     follows_redirects: bool
+    reads_body: bool
+end
+
+struct ~Opened
+    response: Response
+    handle: int
 end
 
 func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
-    if body != null and body_bytes != null then
+    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = true)
+    let opened = try start(url, query, exchange, max_redirects)
+    return opened.response
+end
+
+func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true) -> HttpError!ResponseStream
+    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = false)
+    let opened = try start(url, query, exchange, max_redirects)
+    let response = opened.response
+    return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle)
+end
+
+func ~start(url: string, query: map[string, string], exchange: Exchange, max_redirects: int) -> HttpError!Opened
+    if exchange.body != null and exchange.body_bytes != null then
         body_given_twice()
     end
-    let started_ns = time::monotonic_ns()
     let target = try parse_target(url, query)
-    if !is_method(method) then
+    if !is_method(exchange.method) then
         return HttpError.InvalidMethod
     end
-    try check_headers(headers)
-    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = started_ns, ca = ca, verify = verify, follows_redirects = max_redirects > 0)
+    try check_headers(exchange.headers)
     return try follow(target, exchange, max_redirects)
 end
 
-func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Response
-    let response = try send(target, exchange)
+func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Opened
+    let opened = try send(target, exchange)
+    let response = opened.response
     let location = redirect_location(response, exchange) orelse ""
     if location == "" then
-        return response
+        return opened
     end
     if redirects_left == 0 then
         return HttpError.TooManyRedirects
@@ -175,9 +225,9 @@ func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Excha
     end
     let headers = without_headers(exchange.headers, dropped)
     if becomes_get then
-        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true)
+        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body)
     end
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body)
 end
 
 func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
@@ -224,14 +274,21 @@ func ~check_headers(headers: map[string, string]) -> HttpError!void
     end
 end
 
-func ~send(target: url::Url, exchange: Exchange) -> HttpError!Response
+func ~send(target: url::Url, exchange: Exchange) -> HttpError!Opened
     let handle = try open_connection(target, exchange)
     let response = receive(handle, target, exchange) catch e then
         stream_close(handle)
         return e
     end
-    stream_close(handle)
-    return response
+    let keeps_open = !exchange.reads_body and !is_followed(response.status, response.headers, exchange)
+    if !keeps_open then
+        stream_close(handle)
+    end
+    return Opened(response = response, handle = handle)
+end
+
+func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
+    return exchange.follows_redirects and is_redirect_status(status) and headers.has("location")
 end
 
 func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
@@ -269,8 +326,8 @@ func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Re
         let parts = try parse_head(received, is_head_request)
         let status = string::to_int(parts[0]) catch 0
         let headers = headers_of(parts)
-        let is_followed = exchange.follows_redirects and is_redirect_status(status) and headers.has("location")
-        let body = if is_followed then buffer::from_string("") else try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange)) end
+        let skips_body = !exchange.reads_body or is_followed(status, headers, exchange)
+        let body = if skips_body then buffer::from_string("") else try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange)) end
         return Response(status = status, reason = parts[1], headers = headers, body = body, url = target.to_string())
     end
     return HttpError.ConnectionReset

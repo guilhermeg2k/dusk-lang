@@ -451,6 +451,132 @@ func check_https() -> !void
     self_signed.close()
 end
 
+struct Collector
+    total: int
+    last: string
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        self.total = self.total + string::len(text)
+        self.last = text
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        self.total = self.total + buffer::len(data)
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+    end
+end
+
+func expect_read_error(expected: io::IoError, call: func() -> io::IoError!string) -> void
+    call() catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func check_streams(listener: net::TcpListener) -> !void
+    let lines_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-Kind: lines\r\n\r\n2\r\nli\r\n9\r\nne1\nline2\r\n6\r\n\r\nlast\r\n0\r\n\r\n")
+    let mut lines = try http::open("${base(listener)}/lines")
+    assert(lines.status == 200)
+    assert(lines.headers.get("x-kind") == "lines")
+    assert(lines.url == "${base(listener)}/lines")
+    assert(try lines.read_line() == "line1")
+    assert(try lines.read_line() == "line2")
+    assert(try lines.read_line() == "last")
+    assert(try lines.read_line() == null)
+    assert(try lines.read_bytes(10) == null)
+    lines.close()
+    assert(await(lines_server).lines[0] == "GET /lines HTTP/1.1")
+
+    let pieces_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789")
+    let mut pieces = try http::open(base(listener))
+    let first = try pieces.read_bytes(4) orelse buffer::from_string("")
+    assert(buffer::len(first) == 4)
+    assert(try string::from_bytes(first) == "0123")
+    assert(try pieces.read_all() == "456789")
+    assert(try pieces.read_all() == "")
+    pieces.close()
+    await(pieces_server)
+
+    let big = string::repeat("x", 300000) catch ""
+    let big_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 300000\r\n\r\n$big")
+    let mut download = try http::open(base(listener))
+    let mut collector = Collector(total = 0, last = "")
+    assert(try io::copy(download, collector) == 300000)
+    assert(collector.total == 300000)
+    download.close()
+    await(big_server)
+
+    let bytes_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
+    let mut all_bytes = try http::open(base(listener))
+    assert(buffer::len(try all_bytes.read_all_bytes()) == 6)
+    all_bytes.close()
+    await(bytes_server)
+
+    let empty_server = serve_once(listener, "HTTP/1.1 204 No Content\r\n\r\n")
+    let mut empty = try http::open(base(listener), method = "DELETE")
+    assert(empty.status == 204)
+    assert(try empty.read_bytes(10) == null)
+    empty.close()
+    await(empty_server)
+
+    let redirect_server = serve_sequence(listener, [redirect_to(302, "/final"), "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfinal"])
+    let mut redirected = try http::open(base(listener))
+    assert(redirected.url == "${base(listener)}/final")
+    assert(try redirected.read_all() == "final")
+    redirected.close()
+    assert(len(await(redirect_server)) == 2)
+
+    let raw_server = serve_once(listener, redirect_to(301, "/next"))
+    let mut raw = try http::open(base(listener), max_redirects = 0)
+    assert(raw.status == 301)
+    assert(try raw.read_all() == "ignore me")
+    raw.close()
+    await(raw_server)
+end
+
+func check_stream_errors(listener: net::TcpListener) -> !void
+    let early_server = accept_and_wait(listener, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nstart", 300)
+    let mut early = try http::open(base(listener))
+    assert(try string::from_bytes(try early.read_bytes(5) orelse buffer::from_string("")) == "start")
+    early.close()
+    expect_read_error(io::IoError.Closed, func() -> return try early.read_all())
+    await(early_server)
+
+    let stalled_server = accept_and_wait(listener, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nabc", 400)
+    let mut stalled = try http::open(base(listener))
+    expect_read_error(io::IoError.TimedOut, func() -> return try stalled.read_all(timeout_ms = 100))
+    stalled.close()
+    await(stalled_server)
+
+    let truncated_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nabc")
+    let mut truncated = try http::open(base(listener))
+    expect_read_error(io::IoError.UnexpectedEnd, func() -> return try truncated.read_all())
+    truncated.close()
+    await(truncated_server)
+
+    let bad_chunk_server = serve_once(listener, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n")
+    let mut bad_chunk = try http::open(base(listener))
+    expect_read_error(io::IoError.Other, func() -> return try bad_chunk.read_all())
+    bad_chunk.close()
+    await(bad_chunk_server)
+
+    let long_line_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nmuch too long")
+    let mut long_line = try http::open(base(listener))
+    expect_read_error(io::IoError.LineTooLong, func() -> return try long_line.read_line(max = 4) orelse "")
+    long_line.close()
+    await(long_line_server)
+
+    expect_error(http::HttpError.InvalidMethod, func() -> return try http::request(base(listener), method = "bad method"))
+    let mut failed: ?http::HttpError = null
+    http::open(base(listener), method = "bad method") catch e then
+        failed = e
+    end
+    assert(failed == http::HttpError.InvalidMethod)
+end
+
 func main() -> !void
     let listener = try net::tcp_listen("127.0.0.1", 0)
     try check_get(listener)
@@ -460,6 +586,8 @@ func main() -> !void
     check_request_checks()
     try check_timeouts_and_refusals(listener)
     try check_redirects(listener)
+    try check_streams(listener)
+    try check_stream_errors(listener)
     listener.close()
     try check_https()
 end

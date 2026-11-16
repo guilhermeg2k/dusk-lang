@@ -27,6 +27,10 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_close", Binding{ .native = &io.streamClose } },
     .{ "stream_read_head", Binding{ .native = &streamReadHead } },
     .{ "stream_read_whole_body", Binding{ .native = &streamReadWholeBody } },
+    .{ "stream_body_bytes", Binding{ .native = &streamBodyBytes } },
+    .{ "stream_body_line", Binding{ .native = &streamBodyLine } },
+    .{ "stream_body_all", Binding{ .native = &streamBodyAll } },
+    .{ "stream_body_all_bytes", Binding{ .native = &streamBodyAllBytes } },
     .{ "parse_head", Binding{ .native = &parseHead } },
     .{ "is_method", Binding{ .native = &isMethod } },
     .{ "is_header_name", Binding{ .native = &isHeaderName } },
@@ -46,6 +50,28 @@ fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn streamReadWholeBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const cap: usize = @intCast(@max(args[1].int64, 0));
     return readHttp(vm, args[0].int64, .{ .http_whole_body = cap }, args[2].int64);
+}
+
+fn streamBodyBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const max = args[1].int64;
+    if (max < 1) {
+        return RuntimeErrorReporter.invalidReadSize(max);
+    }
+    return io.readStream(vm, args[0].int64, .{ .http_body = .{ .bytes = @intCast(max) } }, args[2].int64);
+}
+
+fn streamBodyLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const max = args[1].int64;
+    const limit: ?usize = if (max < 0) null else @intCast(max);
+    return io.readStream(vm, args[0].int64, .{ .http_body = .{ .line = limit } }, args[2].int64);
+}
+
+fn streamBodyAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return io.readStream(vm, args[0].int64, .{ .http_body = .all_text }, args[1].int64);
+}
+
+fn streamBodyAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return io.readStream(vm, args[0].int64, .{ .http_body = .all_bytes }, args[1].int64);
 }
 
 fn readHttp(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {

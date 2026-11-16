@@ -236,75 +236,19 @@ pub const Stream = struct {
 
     pub fn readyOutcome(self: *Self, mode: ReadMode) ?ReadOutcome {
         return switch (mode) {
-            .bytes => |max| self.bytesOutcome(max),
-            .exact => |count| self.exactOutcome(count),
-            .line => |max| self.lineOutcome(max),
-            .all_text => self.allOutcome(true),
-            .all_bytes => self.allOutcome(false),
+            .bytes => |max| self.readSource().bytesOutcome(max),
+            .exact => |count| self.readSource().exactOutcome(count),
+            .line => |max| self.readSource().lineOutcome(max),
+            .all_text => self.readSource().allOutcome(true),
+            .all_bytes => self.readSource().allOutcome(false),
             .http_head => self.httpHeadOutcome(),
-            .http_body => |max| self.httpBodyOutcome(max),
+            .http_body => |read| self.httpBodyOutcome(read),
             .http_whole_body => |cap| self.httpWholeBodyOutcome(cap),
         };
     }
 
-    fn bytesOutcome(self: *const Self, max: usize) ?ReadOutcome {
-        const available = self.bufferedBytes();
-        if (available.len > 0) {
-            const count = @min(available.len, max);
-            return .{ .result = .{ .data = available[0..count] }, .consumed = count };
-        }
-        return self.endOutcome();
-    }
-
-    fn exactOutcome(self: *const Self, count: usize) ?ReadOutcome {
-        const available = self.bufferedBytes();
-        if (available.len >= count) {
-            return .{ .result = .{ .data = available[0..count] }, .consumed = count };
-        }
-        const has_ended_partway = self.has_ended and available.len > 0 and self.failure == null;
-        if (has_ended_partway) {
-            return .{ .result = .{ .failure = .UnexpectedEnd } };
-        }
-        return self.endOutcome();
-    }
-
-    fn lineOutcome(self: *const Self, max: ?usize) ?ReadOutcome {
-        const available = self.bufferedBytes();
-        if (std.mem.indexOfScalar(u8, available, '\n')) |newline| {
-            return lineFrom(available[0..newline], newline + 1, max);
-        }
-        if (max) |limit| {
-            if (available.len > limit) {
-                return .{ .result = .{ .failure = .LineTooLong } };
-            }
-        }
-        const is_last_line = available.len > 0 and self.has_ended;
-        if (is_last_line) {
-            return lineFrom(available, available.len, max);
-        }
-        return self.endOutcome();
-    }
-
-    fn allOutcome(self: *const Self, needs_utf8: bool) ?ReadOutcome {
-        if (self.failure) |failure| {
-            return .{ .result = .{ .failure = failure } };
-        }
-        if (!self.has_ended) return null;
-        const available = self.bufferedBytes();
-        if (needs_utf8 and !std.unicode.utf8ValidateSlice(available)) {
-            return .{ .result = .{ .failure = .InvalidUtf8 }, .consumed = available.len };
-        }
-        return .{ .result = .{ .data = available }, .consumed = available.len };
-    }
-
-    fn endOutcome(self: *const Self) ?ReadOutcome {
-        if (self.failure) |failure| {
-            return .{ .result = .{ .failure = failure } };
-        }
-        if (self.has_ended) {
-            return .{ .result = .end };
-        }
-        return null;
+    fn readSource(self: *const Self) ReadSource {
+        return .{ .available = self.bufferedBytes(), .has_ended = self.has_ended, .failure = self.failure };
     }
 
     pub fn startHttpResponse(self: *Self, is_head_request: bool) !void {
@@ -342,28 +286,31 @@ pub const Stream = struct {
         return httpFailure(.InvalidResponse);
     }
 
-    fn httpBodyOutcome(self: *Self, max: usize) ?ReadOutcome {
-        const reader = self.http_reader orelse return httpFailure(.Other);
-        reader.body.clearRetainingCapacity();
-        if (self.feedHttpBody(reader, max)) |failure| {
-            return httpFailure(failure);
+    fn httpBodyOutcome(self: *Self, read: BodyRead) ?ReadOutcome {
+        const reader = self.http_reader orelse return .{ .result = .{ .failure = .Other } };
+        reader.dropTakenBody();
+        if (self.feedHttpBody(reader, std.math.maxInt(usize)) != null) {
+            return .{ .result = .{ .failure = .Other } };
         }
-        if (reader.body.items.len > 0) {
-            return .{ .result = .{ .data = reader.body.items } };
+        var has_ended = reader.isMessageComplete();
+        const has_no_more_input = self.has_ended and self.bufferedBytes().len == 0;
+        if (!has_ended and has_no_more_input) {
+            if (!reader.finishBody()) {
+                return .{ .result = .{ .failure = .UnexpectedEnd } };
+            }
+            has_ended = true;
         }
-        if (reader.isMessageComplete()) {
-            return .{ .result = .end };
-        }
-        if (self.failure) |failure| {
-            return .{ .result = .{ .failure = failure } };
-        }
-        if (!self.has_ended) {
-            return null;
-        }
-        if (reader.finishBody()) {
-            return .{ .result = .end };
-        }
-        return httpFailure(.InvalidResponse);
+        const source: ReadSource = .{ .available = reader.pendingBody(), .has_ended = has_ended, .failure = if (has_ended) null else self.failure };
+        const found = switch (read) {
+            .bytes => |max| source.bytesOutcome(max),
+            .line => |max| source.lineOutcome(max),
+            .all_text => source.allOutcome(true),
+            .all_bytes => source.allOutcome(false),
+        };
+        var outcome = found orelse return null;
+        reader.taken = outcome.consumed;
+        outcome.consumed = 0;
+        return outcome;
     }
 
     fn feedHttpBody(self: *Self, reader: *HttpReader, max: usize) ?HttpError {
@@ -872,22 +819,33 @@ pub const ReadMode = union(enum) {
     all_text,
     all_bytes,
     http_head,
-    http_body: usize,
+    http_body: BodyRead,
     http_whole_body: usize,
 
     pub fn valueKind(self: ReadMode) v.ValueType {
         return switch (self) {
             .line, .all_text => .string,
-            .bytes, .exact, .all_bytes, .http_head, .http_body, .http_whole_body => .buffer,
+            .bytes, .exact, .all_bytes, .http_head, .http_whole_body => .buffer,
+            .http_body => |read| switch (read) {
+                .line, .all_text => .string,
+                .bytes, .all_bytes => .buffer,
+            },
         };
     }
 
     pub fn wakeFailure(self: ReadMode, failure: IoError) WakeResult {
         return switch (self) {
-            .http_head, .http_body, .http_whole_body => httpFailureResult(httpErrorFromIo(failure)),
+            .http_head, .http_whole_body => httpFailureResult(httpErrorFromIo(failure)),
             else => failureResult(failure),
         };
     }
+};
+
+pub const BodyRead = union(enum) {
+    bytes: usize,
+    line: ?usize,
+    all_text,
+    all_bytes,
 };
 
 pub const ReadOutcome = struct {
@@ -898,6 +856,72 @@ pub const ReadOutcome = struct {
         http_failure: HttpError,
     },
     consumed: usize = 0,
+};
+
+const ReadSource = struct {
+    available: []const u8,
+    has_ended: bool,
+    failure: ?IoError,
+
+    fn bytesOutcome(self: ReadSource, max: usize) ?ReadOutcome {
+        const available = self.available;
+        if (available.len > 0) {
+            const count = @min(available.len, max);
+            return .{ .result = .{ .data = available[0..count] }, .consumed = count };
+        }
+        return self.endOutcome();
+    }
+
+    fn exactOutcome(self: ReadSource, count: usize) ?ReadOutcome {
+        const available = self.available;
+        if (available.len >= count) {
+            return .{ .result = .{ .data = available[0..count] }, .consumed = count };
+        }
+        const has_ended_partway = self.has_ended and available.len > 0 and self.failure == null;
+        if (has_ended_partway) {
+            return .{ .result = .{ .failure = .UnexpectedEnd } };
+        }
+        return self.endOutcome();
+    }
+
+    fn lineOutcome(self: ReadSource, max: ?usize) ?ReadOutcome {
+        const available = self.available;
+        if (std.mem.indexOfScalar(u8, available, '\n')) |newline| {
+            return lineFrom(available[0..newline], newline + 1, max);
+        }
+        if (max) |limit| {
+            if (available.len > limit) {
+                return .{ .result = .{ .failure = .LineTooLong } };
+            }
+        }
+        const is_last_line = available.len > 0 and self.has_ended;
+        if (is_last_line) {
+            return lineFrom(available, available.len, max);
+        }
+        return self.endOutcome();
+    }
+
+    fn allOutcome(self: ReadSource, needs_utf8: bool) ?ReadOutcome {
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (!self.has_ended) return null;
+        const available = self.available;
+        if (needs_utf8 and !std.unicode.utf8ValidateSlice(available)) {
+            return .{ .result = .{ .failure = .InvalidUtf8 }, .consumed = available.len };
+        }
+        return .{ .result = .{ .data = available }, .consumed = available.len };
+    }
+
+    fn endOutcome(self: ReadSource) ?ReadOutcome {
+        if (self.failure) |failure| {
+            return .{ .result = .{ .failure = failure } };
+        }
+        if (self.has_ended) {
+            return .{ .result = .end };
+        }
+        return null;
+    }
 };
 
 fn httpFailure(failure: HttpError) ReadOutcome {

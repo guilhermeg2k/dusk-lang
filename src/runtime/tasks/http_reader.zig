@@ -12,6 +12,8 @@ pub const HttpReader = struct {
     parser: *http.Parser,
     head_fed: usize = 0,
     body: std.ArrayList(u8) = .empty,
+    body_offset: usize = 0,
+    taken: usize = 0,
 
     pub fn create(allocator: std.mem.Allocator, is_head_request: bool) !*Self {
         const reader = try allocator.create(Self);
@@ -32,6 +34,22 @@ pub const HttpReader = struct {
         self.parser = parser;
         self.head_fed = 0;
         self.body.clearRetainingCapacity();
+        self.body_offset = 0;
+        self.taken = 0;
+    }
+
+    pub fn pendingBody(self: *const Self) []const u8 {
+        return self.body.items[self.body_offset..];
+    }
+
+    pub fn dropTakenBody(self: *Self) void {
+        self.body_offset += self.taken;
+        self.taken = 0;
+        if (self.body_offset == 0) return;
+        const remaining = self.body.items.len - self.body_offset;
+        std.mem.copyForwards(u8, self.body.items[0..remaining], self.body.items[self.body_offset..]);
+        self.body.shrinkRetainingCapacity(remaining);
+        self.body_offset = 0;
     }
 
     pub fn feedHead(self: *Self, available: []const u8) HeadStep {

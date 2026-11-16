@@ -87,7 +87,7 @@ pub fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return readStream(vm, args[0].int64, .all_bytes, args[1].int64);
 }
 
-fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
+pub fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(handle) orelse return fail(IoError.Closed);
     if (stream.waiter != null) {
         return fail(IoError.Busy);
