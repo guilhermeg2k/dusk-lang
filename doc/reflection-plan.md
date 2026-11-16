@@ -1,6 +1,6 @@
 # Reflection, safe construction and JSON migration
 
-Status: proposed design, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline. Reflection implementation and JSON migration follow as separate tasks. API names below illustrate the design and are not implemented syntax.
+Status: proposed design, 2026-11-15. The first delivery adds JSON benchmark workloads and records the current implementation's baseline at `7aa6591`; see [results](../benchmarks/json-baseline.md). Reflection implementation and JSON migration follow as separate tasks. API names below illustrate the design and are not implemented syntax.
 
 ## Goal
 
@@ -161,7 +161,7 @@ Store the machine, toolchain, source commit, settings, median, spread, peak memo
 After migration, run the same cases alternately against the baseline source commit:
 
 ```
-python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --compare <baseline-commit> --runs 30 --warmup 3 --save json-reflection-comparison
+python3 bench.py --json json_decode json_decode_bulk json_encode json_defaults --compare 7aa6591 --runs 30 --warmup 3 --save json-reflection-comparison
 ```
 
 `--compare` uses each commit's own workload, so explicitly verify that the benchmark sources and shared model are identical. Pin the baseline commit that includes these files, not the earlier JSON feature commit. Build and compare on the same machine/toolchain with no competing benchmark or heavy build work.

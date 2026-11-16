@@ -1,0 +1,52 @@
+{
+  "commit": "7aa6591",
+  "dirty": false,
+  "date": "2026-11-16T01:47:59Z",
+  "machine": {
+    "cpu": "AMD Ryzen 5 5600X 6-Core Processor",
+    "os": "Fedora Linux 44 (Workstation Edition)",
+    "zig": "0.16.0"
+  },
+  "settings": {
+    "runs": 15,
+    "warmup": 3
+  },
+  "benchmarks": {
+    "json_decode": {
+      "runs": 15,
+      "median_ms": 206.65,
+      "min_ms": 203.97,
+      "max_ms": 213.21,
+      "stddev_ms": 2.25,
+      "peak_mem_kib": 18404,
+      "noisy": false
+    },
+    "json_decode_bulk": {
+      "runs": 15,
+      "median_ms": 501.84,
+      "min_ms": 497.65,
+      "max_ms": 508.8,
+      "stddev_ms": 2.55,
+      "peak_mem_kib": 18404,
+      "noisy": false
+    },
+    "json_encode": {
+      "runs": 15,
+      "median_ms": 110.5,
+      "min_ms": 109.44,
+      "max_ms": 112.86,
+      "stddev_ms": 1.01,
+      "peak_mem_kib": 18404,
+      "noisy": false
+    },
+    "json_defaults": {
+      "runs": 15,
+      "median_ms": 59.08,
+      "min_ms": 58.56,
+      "max_ms": 61.34,
+      "stddev_ms": 0.74,
+      "peak_mem_kib": 18404,
+      "noisy": false
+    }
+  }
+}
