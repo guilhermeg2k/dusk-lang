@@ -1442,7 +1442,9 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, jump_into_else);
         const jump_into_else_idx = self.chunk_instructions.items.len - 1;
 
+        const branch_next_free = self.next_free_register;
         try self.genInstructionBlock(ifStmt.then_block);
+        self.freeRegisterN(self.next_free_register - branch_next_free);
 
         if (ifStmt.else_block.len > 0) {
             const jump_pass_else = bc.Instruction{

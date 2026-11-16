@@ -19,6 +19,10 @@ fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     try testing.expectEqualStrings(expected, output.written());
 }
 
+test "gc: else branches do not retain roots from the skipped then branch" {
+    try runCase("gc-if-branches.dsk");
+}
+
 test "gc: scoped native roots survive collection and root-list growth" {
     const VM = @import("runtime/vm.zig").VM;
     const value = @import("runtime/value.zig");
