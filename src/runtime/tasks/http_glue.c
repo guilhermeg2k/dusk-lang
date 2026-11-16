@@ -26,6 +26,7 @@ typedef struct {
     size_t chunk_base;
     size_t fed;
     Span status;
+    Span url;
     Span field;
     Span value;
     size_t *header_offsets;
@@ -38,6 +39,7 @@ typedef struct {
     int is_head_complete;
     int is_message_complete;
     int is_paused;
+    int is_paused_for_upgrade;
     int can_keep_alive;
     int has_failed_allocation;
 } DuskHttpParser;
@@ -63,6 +65,7 @@ static int on_message_begin(llhttp_t *parser) {
     DuskHttpParser *self = parser_of(parser);
     self->header_count = 0;
     self->status = (Span){0};
+    self->url = (Span){0};
     self->field = (Span){0};
     self->value = (Span){0};
     return 0;
@@ -71,6 +74,12 @@ static int on_message_begin(llhttp_t *parser) {
 static int on_status(llhttp_t *parser, const char *at, size_t length) {
     DuskHttpParser *self = parser_of(parser);
     extend_span(self, &self->status, at, length);
+    return 0;
+}
+
+static int on_url(llhttp_t *parser, const char *at, size_t length) {
+    DuskHttpParser *self = parser_of(parser);
+    extend_span(self, &self->url, at, length);
     return 0;
 }
 
@@ -149,7 +158,7 @@ static int on_message_complete(llhttp_t *parser) {
     return HPE_PAUSED;
 }
 
-DuskHttpParser *dusk_http_response_parser_new(int is_head_request) {
+static DuskHttpParser *new_parser(llhttp_type_t type) {
     DuskHttpParser *self = calloc(1, sizeof(DuskHttpParser));
     if (self == NULL) {
         return NULL;
@@ -157,16 +166,29 @@ DuskHttpParser *dusk_http_response_parser_new(int is_head_request) {
     llhttp_settings_init(&self->settings);
     self->settings.on_message_begin = on_message_begin;
     self->settings.on_status = on_status;
+    self->settings.on_url = on_url;
     self->settings.on_header_field = on_header_field;
     self->settings.on_header_value = on_header_value;
     self->settings.on_header_value_complete = on_header_value_complete;
     self->settings.on_headers_complete = on_headers_complete;
     self->settings.on_body = on_body;
     self->settings.on_message_complete = on_message_complete;
-    llhttp_init(&self->parser, HTTP_RESPONSE, &self->settings);
+    llhttp_init(&self->parser, type, &self->settings);
     self->parser.data = self;
+    return self;
+}
+
+DuskHttpParser *dusk_http_response_parser_new(int is_head_request) {
+    DuskHttpParser *self = new_parser(HTTP_RESPONSE);
+    if (self == NULL) {
+        return NULL;
+    }
     self->is_head_request = is_head_request;
     return self;
+}
+
+DuskHttpParser *dusk_http_request_parser_new(void) {
+    return new_parser(HTTP_REQUEST);
 }
 
 void dusk_http_parser_free(DuskHttpParser *self) {
@@ -174,16 +196,25 @@ void dusk_http_parser_free(DuskHttpParser *self) {
     free(self);
 }
 
+static void resume_parser(DuskHttpParser *self) {
+    if (self->is_paused_for_upgrade) {
+        llhttp_resume_after_upgrade(&self->parser);
+    } else if (self->is_paused) {
+        llhttp_resume(&self->parser);
+    }
+    self->is_paused = 0;
+    self->is_paused_for_upgrade = 0;
+}
+
 static int run_parser(DuskHttpParser *self, const char *data, size_t length, size_t *used) {
     self->chunk = data;
     self->chunk_base = self->fed;
-    if (self->is_paused) {
-        llhttp_resume(&self->parser);
-        self->is_paused = 0;
-    }
+    resume_parser(self);
     llhttp_errno_t result = llhttp_execute(&self->parser, data, length);
-    if (result == HPE_PAUSED) {
+    int is_pause = result == HPE_PAUSED || result == HPE_PAUSED_UPGRADE;
+    if (is_pause) {
         self->is_paused = 1;
+        self->is_paused_for_upgrade = result == HPE_PAUSED_UPGRADE;
         *used = (size_t)(llhttp_get_error_pos(&self->parser) - data);
         self->fed += *used;
         return DUSK_HTTP_DONE;
@@ -236,10 +267,7 @@ int dusk_http_finish_body(DuskHttpParser *self) {
     if (!self->is_head_complete) {
         return DUSK_HTTP_INVALID;
     }
-    if (self->is_paused) {
-        llhttp_resume(&self->parser);
-        self->is_paused = 0;
-    }
+    resume_parser(self);
     llhttp_errno_t result = llhttp_finish(&self->parser);
     int has_finished = result == HPE_OK || result == HPE_PAUSED;
     if (!has_finished || !self->is_message_complete) {
@@ -256,6 +284,23 @@ int dusk_http_status_code(const DuskHttpParser *self) {
 void dusk_http_reason_span(const DuskHttpParser *self, size_t *start, size_t *end) {
     *start = self->status.start;
     *end = self->status.is_open ? self->status.end : self->status.start;
+}
+
+void dusk_http_url_span(const DuskHttpParser *self, size_t *start, size_t *end) {
+    *start = self->url.start;
+    *end = self->url.is_open ? self->url.end : self->url.start;
+}
+
+const char *dusk_http_method_name(const DuskHttpParser *self) {
+    return llhttp_method_name((llhttp_method_t)self->parser.method);
+}
+
+int dusk_http_version(const DuskHttpParser *self) {
+    return self->parser.http_major * 10 + self->parser.http_minor;
+}
+
+int dusk_http_head_keeps_alive(const DuskHttpParser *self) {
+    return llhttp_should_keep_alive(&self->parser);
 }
 
 size_t dusk_http_header_count(const DuskHttpParser *self) {

@@ -28,6 +28,9 @@ error HttpError
     TooManyRedirects
     InvalidUtf8
     Closed
+    InvalidRequest
+    AddressInUse
+    PermissionDenied
     Other
 end
 

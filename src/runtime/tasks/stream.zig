@@ -14,6 +14,7 @@ const cipher_chunk_size = @import("tls_layer.zig").cipher_chunk_size;
 const netErrorFromHandshake = @import("tls_layer.zig").netErrorFromHandshake;
 const NetError = @import("tcp.zig").NetError;
 const HttpReader = @import("http_reader.zig").HttpReader;
+const MessageKind = @import("http_reader.zig").MessageKind;
 const HttpError = @import("http.zig").HttpError;
 const httpErrorFromIo = @import("http_reader.zig").httpErrorFromIo;
 const max_http_head_size = @import("http_reader.zig").max_head_size;
@@ -257,11 +258,11 @@ pub const Stream = struct {
         return .{ .available = self.bufferedBytes(), .has_ended = self.has_ended, .failure = self.failure };
     }
 
-    pub fn startHttpResponse(self: *Self, is_head_request: bool) !void {
+    pub fn startHttpMessage(self: *Self, kind: MessageKind) !void {
         if (self.http_reader) |reader| {
-            return reader.startResponse(is_head_request);
+            return reader.startMessage(kind);
         }
-        self.http_reader = try HttpReader.create(self.allocator, is_head_request);
+        self.http_reader = try HttpReader.create(self.allocator, kind);
     }
 
     pub fn isReusable(self: *const Self) bool {
@@ -327,7 +328,7 @@ pub const Stream = struct {
         if (available.len == 0) {
             return .{ .result = .end };
         }
-        return httpFailure(.InvalidResponse);
+        return httpFailure(reader.invalidMessage());
     }
 
     fn httpBodyOutcome(self: *Self, read: BodyRead) ?ReadOutcome {
@@ -362,7 +363,7 @@ pub const Stream = struct {
             const available = self.bufferedBytes();
             const room = max -| reader.body.items.len;
             const used = reader.feedBody(available[0..@min(available.len, room)]) catch |failure| {
-                return if (failure == error.OutOfMemory) .Other else .InvalidResponse;
+                return if (failure == error.OutOfMemory) .Other else reader.invalidMessage();
             };
             self.consume(used);
             if (used == 0) break;
@@ -390,7 +391,7 @@ pub const Stream = struct {
         if (reader.finishBody()) {
             return .{ .result = .{ .data = reader.body.items } };
         }
-        return httpFailure(.InvalidResponse);
+        return httpFailure(reader.invalidMessage());
     }
 
     pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode, timeout_ms: ?u64) !void {

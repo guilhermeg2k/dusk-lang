@@ -31,16 +31,24 @@ pub const HttpError = enum {
     TooManyRedirects,
     InvalidUtf8,
     Closed,
+    InvalidRequest,
+    AddressInUse,
+    PermissionDenied,
     Other,
 };
 
 pub extern fn dusk_http_response_parser_new(is_head_request: c_int) ?*Parser;
+pub extern fn dusk_http_request_parser_new() ?*Parser;
 pub extern fn dusk_http_parser_free(parser: *Parser) void;
 pub extern fn dusk_http_feed_head(parser: *Parser, data: [*]const u8, length: usize, used: *usize) Status;
 pub extern fn dusk_http_feed_body(parser: *Parser, data: [*]const u8, length: usize, out: [*]u8, used: *usize, produced: *usize) Status;
 pub extern fn dusk_http_finish_body(parser: *Parser) Status;
 pub extern fn dusk_http_status_code(parser: *const Parser) c_int;
 pub extern fn dusk_http_reason_span(parser: *const Parser, start: *usize, end: *usize) void;
+pub extern fn dusk_http_url_span(parser: *const Parser, start: *usize, end: *usize) void;
+pub extern fn dusk_http_method_name(parser: *const Parser) [*:0]const u8;
+pub extern fn dusk_http_version(parser: *const Parser) c_int;
+pub extern fn dusk_http_head_keeps_alive(parser: *const Parser) c_int;
 pub extern fn dusk_http_header_count(parser: *const Parser) usize;
 pub extern fn dusk_http_header_offsets(parser: *const Parser) ?[*]const usize;
 pub extern fn dusk_http_is_message_complete(parser: *const Parser) c_int;

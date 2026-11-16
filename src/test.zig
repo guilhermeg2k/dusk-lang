@@ -4100,3 +4100,130 @@ test "http parser: smuggling shapes and malformed heads are rejected" {
         try testing.expectError(error.InvalidResponse, feedResponse(allocator, .{ .pieces = &.{message} }));
     }
 }
+
+const ParsedRequest = struct {
+    method: []const u8,
+    target: []const u8,
+    version: c_int,
+    keeps_alive: bool,
+    headers: [][2][]const u8,
+    body: []const u8,
+    message_length: usize,
+    is_complete: bool,
+};
+
+fn feedRequest(allocator: std.mem.Allocator, pieces: []const []const u8) !ParsedRequest {
+    const parser = http.dusk_http_request_parser_new() orelse return error.OutOfMemory;
+    defer http.dusk_http_parser_free(parser);
+    var received: std.ArrayList(u8) = .empty;
+    var body: std.ArrayList(u8) = .empty;
+    var fed: usize = 0;
+    var has_head = false;
+    for (pieces) |piece| {
+        try received.appendSlice(allocator, piece);
+        if (!has_head) {
+            var used: usize = 0;
+            const status = http.dusk_http_feed_head(parser, received.items[fed..].ptr, received.items.len - fed, &used);
+            fed += used;
+            if (status == .want_more) continue;
+            if (status != .done) {
+                return error.InvalidRequest;
+            }
+            has_head = true;
+        }
+        feedBody(allocator, parser, received.items, &fed, &body) catch return error.InvalidRequest;
+    }
+    if (!has_head) {
+        return error.IncompleteHead;
+    }
+    feedBody(allocator, parser, received.items, &fed, &body) catch return error.InvalidRequest;
+    var target_start: usize = 0;
+    var target_end: usize = 0;
+    http.dusk_http_url_span(parser, &target_start, &target_end);
+    return .{
+        .method = try allocator.dupe(u8, std.mem.span(http.dusk_http_method_name(parser))),
+        .target = received.items[target_start..target_end],
+        .version = http.dusk_http_version(parser),
+        .keeps_alive = http.dusk_http_head_keeps_alive(parser) != 0,
+        .headers = try headersOf(allocator, parser, received.items),
+        .body = body.items,
+        .message_length = fed,
+        .is_complete = http.dusk_http_is_message_complete(parser) != 0,
+    };
+}
+
+test "http request parser: a GET with headers, a POST body fed one byte at a time, a chunked upload" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const get = try feedRequest(allocator, &.{"GET /items?sort=name HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n"});
+    try testing.expectEqualStrings("GET", get.method);
+    try testing.expectEqualStrings("/items?sort=name", get.target);
+    try testing.expectEqual(@as(c_int, 11), get.version);
+    try testing.expect(get.keeps_alive);
+    try expectHeaders(&.{ .{ "Host", "example.com" }, .{ "Accept", "*/*" } }, get.headers);
+    try testing.expect(get.is_complete);
+    try testing.expectEqualStrings("", get.body);
+
+    const post_text = "POST /users HTTP/1.1\r\nHost: x\r\nContent-Length: 11\r\n\r\n{\"id\":1234}";
+    const post = try feedRequest(allocator, try splitIntoBytes(allocator, post_text));
+    try testing.expectEqualStrings("POST", post.method);
+    try testing.expectEqualStrings("{\"id\":1234}", post.body);
+    try testing.expectEqual(post_text.len, post.message_length);
+    try testing.expect(post.is_complete);
+
+    const upload = try feedRequest(allocator, &.{ "PUT /file HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n", "2;x=y\r\nde\r\n0\r\nChecksum: 1\r\n\r\n" });
+    try testing.expectEqualStrings("abcde", upload.body);
+    try testing.expect(upload.is_complete);
+}
+
+test "http request parser: pipelined requests, keep-alive rules, other targets and methods, upgrades" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const first_text = "GET /a HTTP/1.1\r\nHost: x\r\n\r\n";
+    const both = first_text ++ "DELETE /b HTTP/1.1\r\nHost: x\r\n\r\n";
+    const first = try feedRequest(allocator, &.{both});
+    try testing.expectEqualStrings("/a", first.target);
+    try testing.expectEqual(first_text.len, first.message_length);
+    const second = try feedRequest(allocator, &.{both[first.message_length..]});
+    try testing.expectEqualStrings("DELETE", second.method);
+    try testing.expectEqualStrings("/b", second.target);
+
+    try testing.expect(!(try feedRequest(allocator, &.{"GET / HTTP/1.0\r\n\r\n"})).keeps_alive);
+    try testing.expect((try feedRequest(allocator, &.{"GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"})).keeps_alive);
+    try testing.expect(!(try feedRequest(allocator, &.{"GET / HTTP/1.1\r\nConnection: close\r\n\r\n"})).keeps_alive);
+    try testing.expectEqual(@as(c_int, 10), (try feedRequest(allocator, &.{"GET / HTTP/1.0\r\n\r\n"})).version);
+
+    try testing.expectEqualStrings("http://example.com/x?y=1", (try feedRequest(allocator, &.{"GET http://example.com/x?y=1 HTTP/1.1\r\n\r\n"})).target);
+    const options = try feedRequest(allocator, &.{"OPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n"});
+    try testing.expectEqualStrings("OPTIONS", options.method);
+    try testing.expectEqualStrings("*", options.target);
+    try testing.expectEqualStrings("PROPFIND", (try feedRequest(allocator, &.{"PROPFIND /dav HTTP/1.1\r\nContent-Length: 0\r\n\r\n"})).method);
+
+    const upgrade = try feedRequest(allocator, &.{"GET /chat HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"});
+    try testing.expectEqualStrings("/chat", upgrade.target);
+    try testing.expect(upgrade.is_complete);
+}
+
+test "http request parser: smuggling shapes, unknown methods and malformed heads are rejected" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const rejected = [_][]const u8{
+        "POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+        "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        "POST / HTTP/1.1\r\nContent-Length : 5\r\n\r\nhello",
+        "POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\nabc",
+        "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n",
+        "GET / HTTP/1.1\nHost: x\n\n",
+        "GE T / HTTP/1.1\r\n\r\n",
+        "FOO / HTTP/1.1\r\n\r\n",
+        "GET /a\x01b HTTP/1.1\r\n\r\n",
+        "GET / HTTP/2.5\r\n\r\n",
+        "GET / HTTP/1.1\r\nBad Header: x\r\n\r\n",
+    };
+    for (rejected) |message| {
+        try testing.expectError(error.InvalidRequest, feedRequest(allocator, &.{message}));
+    }
+}

@@ -48,7 +48,7 @@ fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (stream.waiter != null) {
         return fail(HttpError.Other);
     }
-    stream.startHttpResponse(args[1].bool) catch return fail(HttpError.Other);
+    stream.startHttpMessage(if (args[1].bool) .head_response else .response) catch return fail(HttpError.Other);
     return readHttp(vm, args[0].int64, .http_head, args[2].int64);
 }
 

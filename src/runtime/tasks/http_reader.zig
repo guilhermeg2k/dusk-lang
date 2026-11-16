@@ -10,15 +10,16 @@ pub const HttpReader = struct {
 
     allocator: std.mem.Allocator,
     parser: *http.Parser,
+    is_request: bool,
     head_fed: usize = 0,
     body: std.ArrayList(u8) = .empty,
     body_offset: usize = 0,
     taken: usize = 0,
 
-    pub fn create(allocator: std.mem.Allocator, is_head_request: bool) !*Self {
+    pub fn create(allocator: std.mem.Allocator, kind: MessageKind) !*Self {
         const reader = try allocator.create(Self);
         errdefer allocator.destroy(reader);
-        reader.* = .{ .allocator = allocator, .parser = try newParser(is_head_request) };
+        reader.* = .{ .allocator = allocator, .parser = try newParser(kind), .is_request = kind == .request };
         return reader;
     }
 
@@ -28,10 +29,11 @@ pub const HttpReader = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn startResponse(self: *Self, is_head_request: bool) !void {
-        const parser = try newParser(is_head_request);
+    pub fn startMessage(self: *Self, kind: MessageKind) !void {
+        const parser = try newParser(kind);
         http.dusk_http_parser_free(self.parser);
         self.parser = parser;
+        self.is_request = kind == .request;
         self.head_fed = 0;
         self.body.clearRetainingCapacity();
         self.body_offset = 0;
@@ -70,8 +72,12 @@ pub const HttpReader = struct {
             .done => .{ .done = self.head_fed },
             .want_more => .want_more,
             .out_of_memory => .{ .failure = .Other },
-            else => .{ .failure = .InvalidResponse },
+            else => .{ .failure = self.invalidMessage() },
         };
+    }
+
+    pub fn invalidMessage(self: *const Self) HttpError {
+        return if (self.is_request) .InvalidRequest else .InvalidResponse;
     }
 
     pub fn feedBody(self: *Self, input: []const u8) error{ InvalidResponse, OutOfMemory }!usize {
@@ -101,14 +107,21 @@ pub const HttpReader = struct {
     }
 };
 
+pub const MessageKind = enum { request, response, head_response };
+
 pub const HeadStep = union(enum) {
     done: usize,
     want_more,
     failure: HttpError,
 };
 
-fn newParser(is_head_request: bool) error{OutOfMemory}!*http.Parser {
-    return http.dusk_http_response_parser_new(@intFromBool(is_head_request)) orelse error.OutOfMemory;
+fn newParser(kind: MessageKind) error{OutOfMemory}!*http.Parser {
+    const parser = switch (kind) {
+        .request => http.dusk_http_request_parser_new(),
+        .response => http.dusk_http_response_parser_new(0),
+        .head_response => http.dusk_http_response_parser_new(1),
+    };
+    return parser orelse error.OutOfMemory;
 }
 
 pub fn httpErrorFromIo(failure: IoError) HttpError {
