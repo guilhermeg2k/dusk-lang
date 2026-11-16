@@ -3,6 +3,7 @@ import std/array
 import std/map
 import std/buffer
 import std/task
+import std/string
 
 struct User
     name: string
@@ -106,6 +107,10 @@ func main() -> !void
     expect_failure(func() -> reflect::ReflectError!void
         let wrong = try reflect::length(snapshot)
     end, reflect::ReflectError.TypeMismatch)
+    let identity_key = reflect::value(7)
+    let indexed: map[reflect::Value, int] = {identity_key: 99}
+    let pressure = try string::repeat("x", 2000000)
+    assert(indexed[identity_key] == 99)
     for 0..9999: i do
         let current = reflect::value(User("user$i", i, ["tag"]))
         assert((try reflect::cast[int](try reflect::field(current, "age"))) == i)
@@ -114,4 +119,5 @@ func main() -> !void
         end
     end
     assert((try reflect::cast[User](snapshot)).age == 30)
+    assert(indexed[identity_key] == 99)
 end

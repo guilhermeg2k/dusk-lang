@@ -699,7 +699,9 @@ pub const ReflectedValue = extern struct {
     }
 
     pub fn clone(self: *const ReflectedValue, allocator: std.mem.Allocator) !*ReflectedValue {
-        return init(allocator, self.header.descriptor_id, @intCast(self.type_index.int64), self.value, self.value_kind, self.session);
+        const result = try init(allocator, self.header.descriptor_id, @intCast(self.type_index.int64), self.value, self.value_kind, self.session);
+        result.header.identity = self.header.identity;
+        return result;
     }
 };
 
