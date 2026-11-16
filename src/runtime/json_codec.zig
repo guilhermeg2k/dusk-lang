@@ -1,7 +1,7 @@
 const std = @import("std");
 const v = @import("value.zig");
 const VM = @import("vm.zig").VM;
-const json_format = @import("json_format.zig");
+const reflection_format = @import("reflection_format.zig");
 const native = @import("builtins/native.zig");
 
 pub const JsonError = enum {
@@ -56,19 +56,19 @@ const Encoder = struct {
     max_depth: usize,
     ancestors: std.ArrayList(*v.HeapValue) = .empty,
 
-    fn encodeValue(self: *Encoder, codec_index: u32, value: v.Value, depth: usize) anyerror!void {
-        const codec = self.vm.program.json_codecs[codec_index];
-        if (codec.shape == .nullable) {
+    fn encodeValue(self: *Encoder, type_index: u32, value: v.Value, depth: usize) anyerror!void {
+        const descriptor = &self.vm.program.reflection_types[type_index];
+        if (descriptor.kind == .Nullable) {
             if (@as(u64, @bitCast(value)) == 0) {
                 try self.writer.write(null);
                 return;
             }
-            const inner = self.vm.program.json_codecs[codec.shape.nullable];
-            const unwrapped = if (inner.kind.isHeapType()) value else v.HeapValue.getParentPtr(v.NullBox, value.heap_obj).value;
-            return self.encodeValue(codec.shape.nullable, unwrapped, depth);
+            const inner = &self.vm.program.reflection_types[descriptor.child.?];
+            const unwrapped = if (inner.storage.isHeapType()) value else v.HeapValue.getParentPtr(v.NullBox, value.heap_obj).value;
+            return self.encodeValue(descriptor.child.?, unwrapped, depth);
         }
-        const is_container = switch (codec.shape) {
-            .array, .map, .structure, .tagged_union => true,
+        const is_container = switch (descriptor.kind) {
+            .Array, .Map, .Struct, .Union => true,
             else => false,
         };
         if (is_container) {
@@ -86,17 +86,18 @@ const Encoder = struct {
         defer if (is_container) {
             _ = self.ancestors.pop();
         };
-        switch (codec.shape) {
-            .int, .byte => try self.writer.write(value.int64),
-            .float => {
+        switch (descriptor.kind) {
+            .Int, .Byte => try self.writer.write(value.int64),
+            .Float => {
                 if (!std.math.isFinite(value.float64)) {
                     return error.NonFiniteNumber;
                 }
                 try self.writer.write(value.float64);
             },
-            .boolean => try self.writer.write(value.bool),
-            .string => try self.writeString(bytes(value)),
-            .enumeration => |variants| {
+            .Bool => try self.writer.write(value.bool),
+            .String => try self.writeString(bytes(value)),
+            .Enum => {
+                const variants = descriptor.variants;
                 for (variants) |variant| {
                     if (variant.value != value.int64) continue;
                     try self.writer.write(variant.name);
@@ -104,16 +105,18 @@ const Encoder = struct {
                 }
                 return error.UnknownVariant;
             },
-            .structure => |structure| {
+            .Struct => {
+                const structure = descriptor;
                 const object = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
                 try self.writer.beginObject();
-                for (structure.fields, 0..) |field, i| {
+                for (structure.fields) |field| {
                     try self.writer.objectField(field.name);
-                    try self.encodeValue(field.codec, object.get(i), depth + 1);
+                    try self.encodeValue(field.type_index, object.get(field.slot), depth + 1);
                 }
                 try self.writer.endObject();
             },
-            .array => |child| {
+            .Array => {
+                const child = descriptor.child.?;
                 const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
                 try self.writer.beginArray();
                 for (array.getDataPtr()[0..array.len]) |item| {
@@ -121,7 +124,8 @@ const Encoder = struct {
                 }
                 try self.writer.endArray();
             },
-            .map => |child| {
+            .Map => {
+                const child = descriptor.child.?;
                 const map = v.HeapValue.getParentPtr(v.Map, value.heap_obj);
                 try self.writer.beginObject();
                 if (map.getStorage()) |storage| {
@@ -137,19 +141,21 @@ const Encoder = struct {
                 }
                 try self.writer.endObject();
             },
-            .tagged_union => |tagged| {
+            .Union => {
+                const tagged = descriptor;
                 const object = v.HeapValue.getParentPtr(v.Union, value.heap_obj);
                 for (tagged.variants) |variant| {
-                    if (object.active_tag != variant.tag) continue;
+                    if (object.active_tag != variant.value) continue;
                     try self.writer.beginObject();
                     try self.writer.objectField(variant.name);
-                    try self.encodeValue(variant.codec, object.get(variant.tag), depth + 1);
+                    try self.encodeValue(variant.type_index.?, object.get(@intCast(variant.value)), depth + 1);
                     try self.writer.endObject();
                     return;
                 }
                 return error.InvalidUnion;
             },
-            .nullable => unreachable,
+            .Nullable => unreachable,
+            else => return error.TypeMismatch,
         }
     }
 
@@ -213,11 +219,11 @@ const Decoder = struct {
     path: std.ArrayList(u8) = .empty,
     defaults: std.ArrayList(DefaultAction) = .empty,
 
-    fn decodeDocument(self: *Decoder, codec: u32, result_descriptor: u16) !v.Value {
+    fn decodeDocument(self: *Decoder, type_index: u32, result_descriptor: u16) !v.Value {
         if (self.max_depth == 0) {
             return error.InvalidOptions;
         }
-        const value = try self.decodeValue(codec, 0);
+        const value = try self.decodeValue(type_index, 0);
         if (try self.peekToken() != .end_of_document) {
             return error.InvalidJson;
         }
@@ -238,35 +244,35 @@ const Decoder = struct {
         return self.vm.heap.protectedValue(result);
     }
 
-    fn decodeValue(self: *Decoder, codec_index: u32, depth: usize) anyerror!usize {
-        const codec = self.vm.program.json_codecs[codec_index];
-        if (codec.shape == .nullable) {
+    fn decodeValue(self: *Decoder, type_index: u32, depth: usize) anyerror!usize {
+        const descriptor = &self.vm.program.reflection_types[type_index];
+        if (descriptor.kind == .Nullable) {
             if (try self.peekToken() == .null) {
                 _ = try self.nextToken();
                 return self.vm.heap.protectValue(v.NULL_VALUE, .nullable);
             }
-            const child = try self.decodeValue(codec.shape.nullable, depth);
-            const inner = self.vm.program.json_codecs[codec.shape.nullable];
-            if (inner.kind.isHeapType()) {
+            const child = try self.decodeValue(descriptor.child.?, depth);
+            const inner = &self.vm.program.reflection_types[descriptor.child.?];
+            if (inner.storage.isHeapType()) {
                 return child;
             }
-            const boxed = try self.vm.allocNullBox(self.vm.heap.protectedValue(child), inner.kind);
+            const boxed = try self.vm.allocNullBox(self.vm.heap.protectedValue(child), inner.storage);
             return self.vm.heap.protectValue(boxed, .nullable);
         }
-        switch (codec.shape) {
-            .int, .byte => {
+        switch (descriptor.kind) {
+            .Int, .Byte => {
                 const text = try self.readNumberText();
                 if (std.mem.indexOfAny(u8, text, ".eE") != null) {
                     return error.TypeMismatch;
                 }
                 const number = std.fmt.parseInt(i64, text, 10) catch return error.NumberOutOfRange;
-                const is_byte_out_of_range = codec.shape == .byte and (number < 0 or number > 255);
+                const is_byte_out_of_range = descriptor.kind == .Byte and (number < 0 or number > 255);
                 if (is_byte_out_of_range) {
                     return error.NumberOutOfRange;
                 }
                 return self.vm.heap.protectValue(.{ .int64 = number }, .int64);
             },
-            .float => {
+            .Float => {
                 const text = try self.readNumberText();
                 const number = std.fmt.parseFloat(f64, text) catch return error.NumberOutOfRange;
                 if (!std.math.isFinite(number)) {
@@ -274,7 +280,7 @@ const Decoder = struct {
                 }
                 return self.vm.heap.protectValue(.{ .float64 = number }, .float64);
             },
-            .boolean => {
+            .Bool => {
                 const item = try self.nextToken();
                 const is_true = switch (item) {
                     .true => true,
@@ -283,12 +289,13 @@ const Decoder = struct {
                 };
                 return self.vm.heap.protectValue(.{ .bool = is_true }, .bool);
             },
-            .string => {
+            .String => {
                 const text = try self.readStringText();
                 const value = try self.vm.allocBytesValue(text, .string);
                 return self.vm.heap.protectValue(value, .string);
             },
-            .enumeration => |variants| {
+            .Enum => {
+                const variants = descriptor.variants;
                 const text = try self.readStringText();
                 for (variants) |variant| {
                     if (!std.mem.eql(u8, variant.name, text)) continue;
@@ -296,9 +303,10 @@ const Decoder = struct {
                 }
                 return error.UnknownVariant;
             },
-            .array => |child| {
+            .Array => {
+                const child = descriptor.child.?;
                 try self.enterContainer(.array_begin, depth);
-                const array = try self.allocRootedArray(self.vm.program.json_codecs[child].kind);
+                const array = try self.allocRootedArray(self.vm.program.reflection_types[child].storage);
                 var i: usize = 0;
                 while (try self.peekToken() != .array_end) : (i += 1) {
                     const path_base = self.path.items.len;
@@ -310,10 +318,11 @@ const Decoder = struct {
                 _ = try self.nextToken();
                 return array;
             },
-            .structure => |shape| return self.readStruct(shape, depth),
-            .map => |child| return self.readMap(child, depth),
-            .tagged_union => |shape| return self.readUnion(shape, depth),
-            .nullable => unreachable,
+            .Struct => return self.readStruct(descriptor, depth),
+            .Map => return self.readMap(descriptor.child.?, depth),
+            .Union => return self.readUnion(descriptor, depth),
+            .Nullable => unreachable,
+            else => return error.TypeMismatch,
         }
     }
 
@@ -340,23 +349,23 @@ const Decoder = struct {
         }
     }
 
-    fn readStruct(self: *Decoder, shape: json_format.Structure, depth: usize) !usize {
+    fn readStruct(self: *Decoder, descriptor: *const reflection_format.Descriptor, depth: usize) !usize {
         try self.enterContainer(.object_begin, depth);
-        const object = try self.allocRootedStruct(shape.descriptor);
-        const seen_fields = try self.allocator.alloc(bool, shape.fields.len);
+        const object = try self.allocRootedStruct(descriptor.object_descriptor.?);
+        const seen_fields = try self.allocator.alloc(bool, descriptor.fields.len);
         @memset(seen_fields, false);
         var keys = std.StringHashMap(void).init(self.allocator);
         while (try self.peekToken() != .object_end) {
             const key = try self.readObjectKey(&keys);
             const path_base = self.path.items.len;
             try self.appendFieldPath(key, false);
-            const field_index = for (shape.fields, 0..) |field, i| {
+            const field_index = for (descriptor.fields, 0..) |field, i| {
                 if (std.mem.eql(u8, field.name, key)) break i;
             } else null;
             if (field_index) |i| {
                 seen_fields[i] = true;
-                const item = try self.decodeValue(shape.fields[i].codec, depth + 1);
-                self.rootedStruct(object).set(i, self.vm.heap.protectedValue(item));
+                const item = try self.decodeValue(descriptor.fields[i].type_index, depth + 1);
+                self.rootedStruct(object).set(descriptor.fields[i].slot, self.vm.heap.protectedValue(item));
             } else {
                 if (self.should_reject_unknown_fields) {
                     return error.UnknownField;
@@ -366,7 +375,7 @@ const Decoder = struct {
             self.path.shrinkRetainingCapacity(path_base);
         }
         _ = try self.nextToken();
-        for (shape.fields, 0..) |field, i| {
+        for (descriptor.fields, 0..) |field, i| {
             if (seen_fields[i]) continue;
             if (field.default_function) |function| {
                 try self.defaults.append(self.allocator, .{ .object = object, .function = function });
@@ -380,7 +389,7 @@ const Decoder = struct {
 
     fn readMap(self: *Decoder, child: u32, depth: usize) !usize {
         try self.enterContainer(.object_begin, depth);
-        const value = try self.vm.newMap(.string, self.vm.program.json_codecs[child].kind);
+        const value = try self.vm.newMap(.string, self.vm.program.reflection_types[child].storage);
         const map = try self.vm.heap.protectValue(value, .map);
         var keys = std.StringHashMap(void).init(self.allocator);
         while (try self.peekToken() != .object_end) {
@@ -397,7 +406,7 @@ const Decoder = struct {
         return map;
     }
 
-    fn readUnion(self: *Decoder, shape: json_format.TaggedUnion, depth: usize) !usize {
+    fn readUnion(self: *Decoder, descriptor: *const reflection_format.Descriptor, depth: usize) !usize {
         try self.enterContainer(.object_begin, depth);
         if (try self.peekToken() == .object_end) {
             return error.InvalidUnion;
@@ -406,10 +415,10 @@ const Decoder = struct {
         const key = try self.readObjectKey(&keys);
         const path_base = self.path.items.len;
         try self.appendFieldPath(key, false);
-        const variant = for (shape.variants) |candidate| {
+        const variant = for (descriptor.variants) |candidate| {
             if (std.mem.eql(u8, candidate.name, key)) break candidate;
         } else return error.UnknownVariant;
-        const item = try self.decodeValue(variant.codec, depth + 1);
+        const item = try self.decodeValue(variant.type_index.?, depth + 1);
         if (try self.peekToken() != .object_end) {
             _ = try self.readObjectKey(&keys);
             return error.InvalidUnion;
@@ -417,9 +426,9 @@ const Decoder = struct {
         _ = try self.nextToken();
         const size = v.Union.calc_size();
         try self.vm.maybeCollectGarbage(size);
-        const object = try v.Union.init(self.vm.getCurrentHeapAllocator(), shape.descriptor);
+        const object = try v.Union.init(self.vm.getCurrentHeapAllocator(), descriptor.object_descriptor.?);
         self.vm.increaseHeapAllocationCount(size);
-        object.set(variant.tag, self.vm.heap.protectedValue(item));
+        object.set(@intCast(variant.value), self.vm.heap.protectedValue(item));
         const result = try self.vm.heap.protectValue(.{ .heap_obj = &object.obj }, .@"union");
         self.path.shrinkRetainingCapacity(path_base);
         return result;

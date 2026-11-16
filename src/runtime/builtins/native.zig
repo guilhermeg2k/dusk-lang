@@ -1,20 +1,39 @@
 const std = @import("std");
 const v = @import("../value.zig");
 const VM = @import("../vm.zig").VM;
+const reflection_format = @import("../reflection_format.zig");
 
 pub const BindingMap = std.StaticStringMap(Binding);
 
 pub const Binding = union(enum) {
     native: NativeFnPtr,
     intrinsic: Intrinsic,
-    json: JsonOperation,
     reflection: ReflectionBinding,
 };
 
-pub const ReflectionBinding = struct { operation: ReflectionOperation, func: NativeFnPtr };
+pub const ReflectionBinding = struct {
+    operation: ReflectionOperation,
+    func: NativeFnPtr,
+    requirements: ?ValueRequirements = null,
+};
+
+pub const ValueRequirements = struct {
+    allowed_kinds: u32,
+    needs_string_keys: bool,
+
+    pub fn init(comptime kinds: []const reflection_format.Kind, needs_string_keys: bool) ValueRequirements {
+        var mask: u32 = 0;
+        for (kinds) |kind| {
+            mask |= @as(u32, 1) << @intFromEnum(kind);
+        }
+        return .{ .allowed_kinds = mask, .needs_string_keys = needs_string_keys };
+    }
+};
 
 pub const ReflectionOperation = enum {
     type_of,
+    type_metadata,
+    type_and_result_descriptor,
     value,
     cast,
     result_descriptor,
@@ -23,14 +42,12 @@ pub const ReflectionOperation = enum {
 
     pub fn hiddenArgumentCount(self: ReflectionOperation) u8 {
         return switch (self) {
-            .type_of, .value => 2,
-            .cast, .result_descriptor, .result_type => 1,
+            .type_of, .value, .type_and_result_descriptor => 2,
+            .cast, .result_descriptor, .result_type, .type_metadata => 1,
             .require_value => 0,
         };
     }
 };
-
-pub const JsonOperation = enum { encode, decode };
 
 pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
 

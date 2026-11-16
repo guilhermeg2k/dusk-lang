@@ -125,12 +125,7 @@ test "json: the selected backend uses its declared type metadata" {
         \\    let value = try json::decode[int](text)
         \\end
     );
-    if (@import("build_options").json_backend == .reflection) {
-        try testing.expectEqual(@as(usize, 0), program.json_codecs.len);
-        try testing.expect(program.reflection_types.len > 0);
-    } else {
-        try testing.expect(program.json_codecs.len > 0);
-    }
+    try testing.expect(program.reflection_types.len > 0);
 }
 
 test "json: native entry points reject invalid UTF-8" {
@@ -141,7 +136,7 @@ test "json: native entry points reject invalid UTF-8" {
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
     var program = try dusk.compile("func main() -> void end");
-    program.json_codecs = &.{.{ .kind = .string, .shape = .string }};
+    program.reflection_types = &.{.{ .name = "string", .kind = .String, .storage = .string }};
     program.struct_descriptors = &.{
         .{ .field_count = 1, .heap_bitmap = 0 },
         .{ .field_count = 2, .heap_bitmap = 0 },

@@ -40,8 +40,7 @@ pub const SemaAnalyzer = struct {
     file_only_methods: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty,
     intrinsic_by_uid: std.AutoHashMapUnmanaged(usize, native.Intrinsic) = .empty,
     extern_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
-    reflection_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.ReflectionOperation) = .empty,
-    json_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.JsonOperation) = .empty,
+    reflection_binding_by_uid: std.AutoHashMapUnmanaged(usize, native.ReflectionBinding) = .empty,
     field_defaults: std.AutoHashMapUnmanaged(tt.TypeId, []const ?*ir.Value) = .empty,
     error_edges: std.ArrayList(ErrorEdge) = .empty,
     pending_when_checks: std.ArrayList(PendingWhenCheck) = .empty,
@@ -224,10 +223,7 @@ pub const SemaAnalyzer = struct {
             if (symbol.kind == .generic_function) {
                 const generic_extern = try self.genericExtern(symbol.kind.generic_function, binding);
                 if (binding == .reflection) {
-                    try self.reflection_operation_by_uid.put(self.allocator, generic_extern.uid, binding.reflection.operation);
-                }
-                if (binding == .json) {
-                    try self.json_operation_by_uid.put(self.allocator, generic_extern.uid, binding.json);
+                    try self.reflection_binding_by_uid.put(self.allocator, generic_extern.uid, binding.reflection);
                 }
                 try self.extern_uids.put(self.allocator, generic_extern.uid, {});
                 try self.externs.append(self.allocator, generic_extern);
@@ -4804,13 +4800,18 @@ pub const SemaAnalyzer = struct {
             });
         }
 
-        if (self.reflection_operation_by_uid.get(uid)) |operation| {
+        if (self.reflection_binding_by_uid.get(uid)) |binding| {
+            const operation = binding.operation;
             var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
             try self.checkReflectionType(type_arguments[0], &visited, exp.loc);
-            const needs_value_access = operation == .value or operation == .cast or operation == .require_value;
+            const needs_value_access = operation == .value or operation == .cast or operation == .require_value or binding.requirements != null;
             if (needs_value_access) {
                 visited.clearRetainingCapacity();
                 try self.checkReflectionValueType(type_arguments[0], &visited, exp.loc);
+            }
+            if (binding.requirements) |requirements| {
+                visited.clearRetainingCapacity();
+                try self.checkReflectionRequirements(type_arguments[0], requirements.allowed_kinds, requirements.needs_string_keys, "", &visited, exp.loc);
             }
             if (operation == .require_value) {
                 const requirements = fn_call_arguments_values.items;
@@ -4828,13 +4829,6 @@ pub const SemaAnalyzer = struct {
                 visited.clearRetainingCapacity();
                 try self.checkReflectionRequirements(type_arguments[0], allowed, requirements[1].data.i_int == 1, "", &visited, exp.loc);
             }
-        }
-
-        if (self.json_operation_by_uid.get(uid)) |operation| {
-            const payload = self.type_table.getTypePtrById(return_type).kind.error_union.payload;
-            const json_type = if (operation == .encode) fn_call_arguments_values.items[0].type_id else self.type_table.getTypePtrById(payload).kind.@"struct".fields_in_order[0].type_id;
-            var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
-            try self.checkJsonType(json_type, "", &visited, exp.loc);
         }
 
         return ir.Value.init(
@@ -4979,55 +4973,6 @@ pub const SemaAnalyzer = struct {
         const name = try self.type_table.syntaxName(type_id, self.allocator);
         const found = if (path.len == 0) name else try allocPrint(self.allocator, "{s} at '{s}'", .{ name, path });
         return self.err_reporter.invalidType("a type allowed by reflection requirements", found, loc);
-    }
-
-    fn checkJsonType(self: *Self, type_id: tt.TypeId, path: []const u8, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void), loc: err.Loc) CompileError!void {
-        if (visited.contains(type_id)) return;
-        try visited.put(self.allocator, type_id, {});
-        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
-        const kind = self.type_table.getTypePtrById(base).kind;
-        switch (kind) {
-            .int, .byte, .float, .boolean, .string, .slot => return,
-            .array => |child| return self.checkJsonType(child, try allocPrint(self.allocator, "{s}[]", .{path}), visited, loc),
-            .map => |map| {
-                const key = self.type_table.getTypePtrById(map.key);
-                const is_string_key = key.kind == .string and !key.is_nullable;
-                if (!is_string_key) {
-                    return self.jsonTypeError(type_id, path, loc);
-                }
-                return self.checkJsonType(map.value, try allocPrint(self.allocator, "{s}[]", .{path}), visited, loc);
-            },
-            .@"enum" => |enumeration| {
-                if (enumeration.error_set != null) {
-                    return self.jsonTypeError(type_id, path, loc);
-                }
-            },
-            .@"struct" => |structure| {
-                const defaults = try self.allocator.alloc(?*ir.Value, structure.fields_in_order.len);
-                for (structure.fields_in_order, defaults) |field, *default| {
-                    const field_path = if (path.len == 0) field.identifier else try allocPrint(self.allocator, "{s}.{s}", .{ path, field.identifier });
-                    if (field.is_file_only) {
-                        return self.jsonTypeError(type_id, field_path, loc);
-                    }
-                    try self.checkJsonType(field.type_id, field_path, visited, loc);
-                    default.* = if (field.default_value) |value| try self.coerceValue(value, field.type_id, loc) else null;
-                }
-                try self.field_defaults.put(self.allocator, base, defaults);
-            },
-            .@"union" => |tagged| {
-                for (tagged.variants_in_order) |name| {
-                    const variant_path = if (path.len == 0) name else try allocPrint(self.allocator, "{s}.{s}", .{ path, name });
-                    try self.checkJsonType(tagged.variants.get(name).?, variant_path, visited, loc);
-                }
-            },
-            else => return self.jsonTypeError(type_id, path, loc),
-        }
-    }
-
-    fn jsonTypeError(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError {
-        const name = try self.type_table.syntaxName(type_id, self.allocator);
-        const found = if (path.len == 0) name else try allocPrint(self.allocator, "{s} at '{s}'", .{ name, path });
-        return self.err_reporter.invalidType("a JSON-compatible type with public fields", found, loc);
     }
 
     fn resolveCallTypeArguments(self: *Self, original: ast.FnCall, loc: err.Loc) CompileError!ast.FnCall {

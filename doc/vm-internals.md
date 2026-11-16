@@ -12,7 +12,7 @@ The source files involved:
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
 | `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the work on them that doesn't allocate (array items; map hashing, lookup, insert and removal, section 6.8) |
 | `src/runtime/format.zig` | Formatting values (interpolation, `TO_STRING`) |
-| `src/runtime/json_format.zig`, `json_codec.zig` | Runtime-owned JSON codec plans and native encode/decode engine (section 12) |
+| `src/runtime/reflection_format.zig`, `reflection.zig`, `json_codec.zig` | Shared type descriptions, safe reflection construction and native JSON conversion (section 12) |
 | `src/runtime/stdio.zig` | Writing to stdout and stderr (`Stdio.writeBytes`, flush rules) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
@@ -55,7 +55,7 @@ Program
 ├── struct_descriptors: []StructDescriptor
 ├── union_descriptors: []UnionDescriptor
 ├── error_names: [][]const u8      error id -> name, for unhandled-error messages
-├── json_codecs: []Codec           type-specific JSON conversion plans
+├── reflection_types: []Descriptor shared concrete type graph
 └── main_func_index
 ```
 
@@ -769,9 +769,9 @@ A task that isn't done is never freed, even with no handle left (a task nobody k
 
 ## 12. JSON codecs
 
-`Program.json_codecs` owns a graph of runtime-only descriptors (`json_format.zig`). Codegen reserves an index before walking child types, so recursive types refer back to existing entries. Plans contain runtime value kinds, child indices, ordered field/variant names, enum values, object descriptor ids and optional default callback function indices. Names and descriptors outlive the compilation arena. The runtime imports none of the compiler's type or IR definitions.
+`Program.reflection_types` owns the shared runtime-only concrete type graph (`reflection_format.zig`). Reflection inspection, public builders and both JSON backends use the same canonical descriptors and field-default callbacks. Indices are reserved before visiting children so recursive types terminate. There is no separate JSON plan format or table. Names and descriptors outlive the compilation arena; runtime code imports no compiler definitions.
 
-`Binding.json` identifies encode/decode operations by binding identity. Sema checks the concrete type and rejects unsupported members with their field path. Codegen emits ordinary native `CALL`s with hidden integer arguments: a plan index, and for decode the result-wrapper descriptor. Native argument counts include these hidden arguments. Error ids still use the extern's ordinary `error_base`; no JSON-specific opcode or dispatch path is needed.
+The native JSON module supplies a general `Binding.reflection` operation, native function pointer and literal value requirements. Its policy allows JSON-compatible kinds and requires string map keys; the general checker rejects other concrete graphs. Codegen emits ordinary native `CALL`s with a type index, and for decoding a result-wrapper descriptor. Generic arguments already retained on IR calls identify the type directly. No JSON-specific binding tag, sema checker, codec emitter, opcode or dispatch path remains. Error ids still use the extern's ordinary `error_base`.
 
 The native engine in `json_codec.zig` consumes scanner tokens directly into Dusk values and drives the JSON writer directly from values. Decode owns a stable copy of the input and a temporary arena for scanner strings, duplicate-key sets, paths and pending defaults. Conversion uses bounded recursion, with `max_depth` limited to 1..512. Encoding tracks active ancestors, so sharing is permitted and cycles fail. It allocates the final Dusk string after writing finishes.
 
@@ -795,7 +795,7 @@ The public construction operations and session lifecycle are implemented in Dusk
 
 ### Reflection JSON comparison backend
 
-The `json-backend` build option chooses the standard JSON module source and bindings. `native` remains the default. `reflection` selects `json_reflected.dsk`, whose typed decoder, encoder traversal, duplicate/unknown-field policies, diagnostics, depth checks and cycle detection use public `std/reflect` facilities. Programs compiled with this source emit no `Program.json_codecs` plans and use no `Binding.json` calls. The native codec and its compiler paths remain available for the default and controlled comparisons until a backend selection is made.
+The `json-backend` build option chooses the standard JSON module source and bindings. `native` remains the default. `reflection` selects `json_reflected.dsk`, whose typed decoder, encoder traversal, duplicate/unknown-field policies, diagnostics, depth checks and cycle detection use public `std/reflect` facilities. Both configurations use the shared reflection graph; neither needs a JSON-specific compiler path. The streaming native codec remains the default for performance, and the Dusk conversion candidate is available for controlled comparisons.
 
 The lexical adapter in `std/json_reflected.zig` retains the standard scanner and writer. Scanning produces a private flat array of decoded-string/number token records plus byte offsets. A lexical failure becomes an invalid token at its detection offset, preserving earlier semantic-error precedence when the Dusk decoder visits the prefix. Scanner memory and input copies are native temporary allocations; returned token objects/strings are ordinary rooted heap values. No typed destination struct is allocated by the scanner. A numeric-token helper preserves exponent parsing and rounding without changing `std/string` conversion policy. Scalar formatting uses the same writer behavior as the native codec.
 
