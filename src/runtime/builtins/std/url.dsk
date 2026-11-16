@@ -1,0 +1,63 @@
+import std/array: append
+import std/string
+
+error UrlError
+    Invalid
+    InvalidPort
+    InvalidEncoding
+end
+
+struct Url
+    scheme: string
+    host: string
+    port: ?int
+    path: string
+    query: ?string
+    fragment: ?string
+
+    func to_string(self: @) -> string
+        let host = if string::contains(self.host, ":") then "[${self.host}]" else self.host end
+        let mut text = "${self.scheme}://$host"
+        if self.port: port then
+            text = "$text:$port"
+        end
+        text = "$text${self.path}"
+        if self.query: query then
+            text = "$text?$query"
+        end
+        if self.fragment: fragment then
+            text = "$text#$fragment"
+        end
+        return text
+    end
+end
+
+extern func ~parse_offsets(text: string) -> UrlError![]int
+extern func ~resolve_text(base: string, reference: string) -> UrlError!string
+extern func encode(text: string) -> string
+extern func decode(text: string) -> UrlError!string
+
+func parse(text: string) -> UrlError!Url
+    let n = try parse_offsets(text)
+    let port: ?int = if n[3] < 0 then null else n[3] end
+    let path = if n[4] == n[5] then "/" else part(text, n[4], n[5]) end
+    let query: ?string = if n[6] < 0 then null else part(text, n[6], n[7]) end
+    let fragment: ?string = if n[8] < 0 then null else part(text, n[8], n[9]) end
+    return Url(scheme = string::lower(part(text, 0, n[0])), host = string::lower(part(text, n[1], n[2])), port = port, path = path, query = query, fragment = fragment)
+end
+
+func ~part(text: string, start: int, stop: int) -> string
+    return string::slice(text, start, stop) catch ""
+end
+
+func resolve(base: Url, reference: string) -> UrlError!Url
+    return try parse(try resolve_text(base.to_string(), reference))
+end
+
+func query(params: map[string, string]) -> string
+    let mut pieces: []string = []
+    for params: value, key do
+        append(pieces, "${encode(key)}=${encode(value)}")
+    end
+    return string::join(pieces, "&")
+end

@@ -169,7 +169,7 @@ pub const VM = struct {
         return .{ .heap_obj = &array.obj };
     }
 
-    fn allocIntArray(self: *Self, ints: []const i64) !v.Value {
+    pub fn allocIntArray(self: *Self, ints: []const i64) !v.Value {
         const capacity = @max(ints.len, 1);
         const size = v.Array.calc_size(capacity);
         try self.maybeCollectGarbage(size);
