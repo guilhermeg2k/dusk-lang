@@ -1,4 +1,4 @@
-import std/array: append, len
+import std/array: append, contains, len
 import std/buffer
 import std/io
 import std/map
@@ -113,6 +113,7 @@ struct ~Exchange
     started_ns: int
     ca: ?string
     verify: bool
+    follows_redirects: bool
 end
 
 func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
@@ -125,8 +126,76 @@ func request(url: string, method: string = "GET", headers: map[string, string] =
         return HttpError.InvalidMethod
     end
     try check_headers(headers)
-    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = started_ns, ca = ca, verify = verify)
-    return try send(target, exchange)
+    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = started_ns, ca = ca, verify = verify, follows_redirects = max_redirects > 0)
+    return try follow(target, exchange, max_redirects)
+end
+
+func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Response
+    let response = try send(target, exchange)
+    let location = redirect_location(response, exchange) orelse ""
+    if location == "" then
+        return response
+    end
+    if redirects_left == 0 then
+        return HttpError.TooManyRedirects
+    end
+    let next = url::resolve(target, location) catch e then
+        return HttpError.InvalidResponse
+    end
+    let is_http = next.scheme == "http" or next.scheme == "https"
+    if !is_http then
+        return HttpError.UnsupportedScheme
+    end
+    return try follow(next, redirected(exchange, response.status, is_same_origin(target, next)), redirects_left - 1)
+end
+
+func ~redirect_location(response: Response, exchange: Exchange) -> ?string
+    if !exchange.follows_redirects or !is_redirect_status(response.status) then
+        return null
+    end
+    return response.headers.get("location")
+end
+
+func ~is_redirect_status(status: int) -> bool
+    return status == 301 or status == 302 or status == 303 or status == 307 or status == 308
+end
+
+func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Exchange
+    let keeps_method = status == 307 or status == 308 or exchange.method == "HEAD"
+    let becomes_get = !keeps_method and (status == 303 or exchange.method != "GET")
+    let mut dropped: []string = []
+    if becomes_get then
+        append(dropped, "content-type")
+        append(dropped, "content-length")
+    end
+    if !is_same_origin then
+        append(dropped, "authorization")
+        append(dropped, "cookie")
+        append(dropped, "host")
+    end
+    let headers = without_headers(exchange.headers, dropped)
+    if becomes_get then
+        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true)
+    end
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true)
+end
+
+func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
+    let mut kept: map[string, string] = {}
+    for headers: value, name do
+        if !contains(dropped, string::lower(name)) then
+            kept[name] = value
+        end
+    end
+    return kept
+end
+
+func ~is_same_origin(a: url::Url, b: url::Url) -> bool
+    return a.scheme == b.scheme and a.host == b.host and port_of(a) == port_of(b)
+end
+
+func ~port_of(target: url::Url) -> int
+    return target.port orelse (if target.scheme == "https" then 443 else 80 end)
 end
 
 func ~parse_target(text: string, query: map[string, string]) -> HttpError!url::Url
@@ -167,8 +236,7 @@ end
 
 func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
     let is_tls = target.scheme == "https"
-    let port = target.port orelse (if is_tls then 443 else 80 end)
-    let handle = tcp_connect_handle(target.host, port, remaining_ms(exchange)) catch e then
+    let handle = tcp_connect_handle(target.host, port_of(target), remaining_ms(exchange)) catch e then
         return from_net(e)
     end
     if !is_tls then
@@ -199,8 +267,11 @@ func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Re
     let head = try stream_read_head(handle, is_head_request, remaining_ms(exchange))
     if head: received then
         let parts = try parse_head(received, is_head_request)
-        let body = try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange))
-        return Response(status = string::to_int(parts[0]) catch 0, reason = parts[1], headers = headers_of(parts), body = body, url = target.to_string())
+        let status = string::to_int(parts[0]) catch 0
+        let headers = headers_of(parts)
+        let is_followed = exchange.follows_redirects and is_redirect_status(status) and headers.has("location")
+        let body = if is_followed then buffer::from_string("") else try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange)) end
+        return Response(status = status, reason = parts[1], headers = headers, body = body, url = target.to_string())
     end
     return HttpError.ConnectionReset
 end

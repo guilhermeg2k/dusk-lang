@@ -1,5 +1,6 @@
 import std/array: append, len
 import std/buffer
+import std/fs
 import std/http
 import std/io
 import std/net
@@ -283,6 +284,173 @@ func check_timeouts_and_refusals(listener: net::TcpListener) -> !void
     expect_error(http::HttpError.ConnectionRefused, func() -> return try http::request("http://127.0.0.1:$closed_port/"))
 end
 
+func answer_all(listener: net::TcpListener, responses: []string) -> ![]Received
+    let mut all: []Received = []
+    for responses: response do
+        append(all, try answer(listener, response))
+    end
+    return all
+end
+
+func serve_sequence(listener: net::TcpListener, responses: []string) -> Task[[]Received]
+    return spawn(func() -> []Received
+        return answer_all(listener, responses) catch e then
+            return []
+        end
+    end)
+end
+
+func has_header_named(received: Received, lowered_name: string) -> bool
+    for received.lines: line do
+        if string::starts_with(string::lower(line), "$lowered_name:") then
+            return true
+        end
+    end
+    return false
+end
+
+func redirect_to(status: int, location: string) -> string
+    return "HTTP/1.1 $status Moved\r\nLocation: $location\r\nContent-Length: 9\r\n\r\nignore me"
+end
+
+func check_redirects(listener: net::TcpListener) -> !void
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let relative = serve_sequence(listener, [redirect_to(302, "../new/place?x=1"), done])
+    let followed = try http::request("${base(listener)}/old/path", headers = {"Authorization": "Bearer t", "Cookie": "s=1"})
+    let relative_requests = await(relative)
+    assert(len(relative_requests) == 2)
+    assert(relative_requests[0].lines[0] == "GET /old/path HTTP/1.1")
+    assert(relative_requests[1].lines[0] == "GET /new/place?x=1 HTTP/1.1")
+    assert(has_line(relative_requests[1], "Authorization: Bearer t"))
+    assert(has_line(relative_requests[1], "Cookie: s=1"))
+    assert(followed.status == 200)
+    assert(try followed.text() == "done")
+    assert(followed.url == "${base(listener)}/new/place?x=1")
+
+    let see_other = serve_sequence(listener, [redirect_to(303, "/result"), done])
+    let posted = try http::request("${base(listener)}/form", method = "POST", body = "a=1", headers = {"Content-Type": "application/x-www-form-urlencoded", "X-Keep": "yes"})
+    let see_other_requests = await(see_other)
+    assert(posted.status == 200)
+    assert(see_other_requests[0].body == "a=1")
+    assert(see_other_requests[1].lines[0] == "GET /result HTTP/1.1")
+    assert(see_other_requests[1].body == "")
+    assert(!has_header_named(see_other_requests[1], "content-type"))
+    assert(!has_header_named(see_other_requests[1], "content-length"))
+    assert(has_line(see_other_requests[1], "X-Keep: yes"))
+
+    let moved = serve_sequence(listener, [redirect_to(301, "/moved"), done])
+    let moved_response = try http::request(base(listener), method = "DELETE")
+    assert(moved_response.status == 200)
+    assert(await(moved)[1].lines[0] == "GET /moved HTTP/1.1")
+
+    let temporary = serve_sequence(listener, [redirect_to(307, "/again"), done])
+    let temporary_response = try http::request(base(listener), method = "POST", body = "keep me")
+    let temporary_requests = await(temporary)
+    assert(temporary_response.status == 200)
+    assert(temporary_requests[1].lines[0] == "POST /again HTTP/1.1")
+    assert(temporary_requests[1].body == "keep me")
+
+    let permanent = serve_sequence(listener, [redirect_to(308, "/forever"), done])
+    let permanent_response = try http::request(base(listener), method = "PUT", body_bytes = buffer::from_string("bytes"))
+    let permanent_requests = await(permanent)
+    assert(permanent_response.status == 200)
+    assert(permanent_requests[1].lines[0] == "PUT /forever HTTP/1.1")
+    assert(permanent_requests[1].body == "bytes")
+
+    let head = serve_sequence(listener, [redirect_to(303, "/head"), "HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\n"])
+    let head_response = try http::request(base(listener), method = "HEAD")
+    assert(head_response.status == 200)
+    assert(await(head)[1].lines[0] == "HEAD /head HTTP/1.1")
+
+    let other_host = serve_sequence(listener, [redirect_to(302, "http://localhost:${listener.port()}/elsewhere"), done])
+    let crossed = try http::request(base(listener), headers = {"Authorization": "Bearer t", "Cookie": "s=1", "Host": "api.example", "X-Keep": "yes"})
+    let other_host_requests = await(other_host)
+    assert(crossed.status == 200)
+    assert(crossed.url == "http://localhost:${listener.port()}/elsewhere")
+    assert(has_line(other_host_requests[0], "Authorization: Bearer t"))
+    assert(!has_header_named(other_host_requests[1], "authorization"))
+    assert(!has_header_named(other_host_requests[1], "cookie"))
+    assert(has_line(other_host_requests[1], "Host: localhost:${listener.port()}"))
+    assert(has_line(other_host_requests[1], "X-Keep: yes"))
+
+    let not_followed = serve_once(listener, redirect_to(302, "/next"))
+    let raw = try http::request(base(listener), max_redirects = 0)
+    assert(raw.status == 302)
+    assert(raw.headers.get("location") == "/next")
+    assert(try raw.text() == "ignore me")
+    await(not_followed)
+
+    let no_location = serve_once(listener, "HTTP/1.1 302 Found\r\nContent-Length: 2\r\n\r\nhi")
+    let unmoved = try http::request(base(listener))
+    assert(unmoved.status == 302)
+    assert(try unmoved.text() == "hi")
+    await(no_location)
+
+    let looping = serve_sequence(listener, [redirect_to(302, "/a"), redirect_to(302, "/b"), redirect_to(302, "/c")])
+    expect_error(http::HttpError.TooManyRedirects, func() -> return try http::request(base(listener), max_redirects = 2))
+    assert(len(await(looping)) == 3)
+
+    let to_ftp = serve_once(listener, redirect_to(302, "ftp://example.com/file"))
+    expect_error(http::HttpError.UnsupportedScheme, func() -> return try http::request(base(listener)))
+    await(to_ftp)
+end
+
+func fixture(name: string) -> !string
+    return try fs::read("test/fixtures/tls/$name")
+end
+
+func tls_listener(cert_name: string) -> !net::TcpListener
+    let cert = try net::certificate(try fixture(cert_name), try fixture("server.key"))
+    return try net::tls_listen("127.0.0.1", 0, cert)
+end
+
+func check_https() -> !void
+    let ca = try fixture("ca.pem")
+    let secure = try tls_listener("server.pem")
+    let secure_base = "https://localhost:${secure.port()}"
+    let server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecret")
+    let resp = try http::request("$secure_base/private", ca = ca, headers = {"Authorization": "Bearer t"})
+    let received = await(server)
+    assert(try resp.text() == "secret")
+    assert(resp.url == "$secure_base/private")
+    assert(received.lines[0] == "GET /private HTTP/1.1")
+    assert(has_line(received, "Host: localhost:${secure.port()}"))
+
+    let hops = serve_sequence(secure, [redirect_to(302, "/next"), "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"])
+    let hopped = try http::request("$secure_base/", ca = ca)
+    assert(try hopped.text() == "ok")
+    assert(len(await(hops)) == 2)
+
+    let other_ca = try fixture("self-signed.pem")
+    let untrusted = serve_once(secure, "")
+    expect_error(http::HttpError.UntrustedCertificate, func() -> return try http::request("$secure_base/", ca = other_ca))
+    await(untrusted)
+    let bad_ca = serve_once(secure, "")
+    expect_error(http::HttpError.InvalidCertificate, func() -> return try http::request("$secure_base/", ca = "not a certificate"))
+    await(bad_ca)
+    secure.close()
+
+    let other_host = try tls_listener("other-host.pem")
+    let other_host_server = serve_once(other_host, "")
+    expect_error(http::HttpError.WrongHostCertificate, func() -> return try http::request("https://localhost:${other_host.port()}/", ca = ca))
+    await(other_host_server)
+    other_host.close()
+
+    let expired = try tls_listener("expired.pem")
+    let expired_server = serve_once(expired, "")
+    expect_error(http::HttpError.ExpiredCertificate, func() -> return try http::request("https://localhost:${expired.port()}/", ca = ca))
+    await(expired_server)
+    expired.close()
+
+    let self_signed_cert = try net::certificate(try fixture("self-signed.pem"), try fixture("self-signed.key"))
+    let self_signed = try net::tls_listen("127.0.0.1", 0, self_signed_cert)
+    let lab_server = serve_once(self_signed, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nlab")
+    let lab = try http::request("https://localhost:${self_signed.port()}/", verify = false)
+    assert(try lab.text() == "lab")
+    await(lab_server)
+    self_signed.close()
+end
+
 func main() -> !void
     let listener = try net::tcp_listen("127.0.0.1", 0)
     try check_get(listener)
@@ -291,5 +459,7 @@ func main() -> !void
     check_bad_responses(listener)
     check_request_checks()
     try check_timeouts_and_refusals(listener)
+    try check_redirects(listener)
     listener.close()
+    try check_https()
 end
