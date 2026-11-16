@@ -29,7 +29,6 @@ The source files involved:
 | `src/runtime/tasks/tls.zig` | The `dusk_tls_*` functions and their `Status` codes, declared by hand |
 | `src/runtime/tasks/tls_layer.zig` | `TlsLayer` (a stream's TLS state), `ServerCertificate`, client configs (section 11.8) |
 | `src/runtime/tasks/trust_store.zig` | `TrustStore`: the system's root certificates, loaded once on libuv's thread pool (section 11.8) |
-| `libs/mbedtls/` | Vendored mbedTLS 4.1.1 (LTS), only the files the build compiles; see its README |
 
 Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.
 
@@ -752,7 +751,7 @@ A `Stream` lives in C memory: the bytes read so far (a byte array and a read off
 
 ### 11.8 TLS
 
-**mbedTLS through a C glue file.** mbedTLS 4.1.1 (the long-term-support line) is vendored in `libs/mbedtls/`, because its releases are `.tar.bz2` files Zig's package fetcher can't read and its git tags lack the generated sources; `build.zig` (`addMbedtls`) compiles it with the default configuration. Its structs have sizes and layouts only C knows (they depend on the configuration), and its constants are macros, so Zig never touches them: `tls_glue.c` owns every mbedTLS object (`mbedtls_ssl_context`, `mbedtls_ssl_config`, certificates, keys, the session-ticket key) and exposes about 20 functions with opaque pointers and its own `DUSK_TLS_*` status codes (done, want more, failed, untrusted, expired, wrong host, out of memory, invalid, end). `tls.zig` declares them by hand, like `uv.zig`. `psa_crypto_init` runs once, on the first TLS call. mbedTLS isn't built thread-safe, so it's only called from the loop thread.
+**mbedTLS through a C glue file.** mbedTLS 4.1.1 (the long-term-support line) comes from the `duskilang/mbedtls` fork through `build.zig.zon`, like libuv (`duskilang/libuv`): its releases are `.tar.bz2` files Zig's package fetcher can't read and its git tags lack the generated sources, so the fork's `dusk/v4.1.1` branch holds the release contents unchanged plus a `build.zig`, which compiles it with the default configuration (`DUSK.md` there has the upgrade steps). Its structs have sizes and layouts only C knows (they depend on the configuration), and its constants are macros, so Zig never touches them: `tls_glue.c` owns every mbedTLS object (`mbedtls_ssl_context`, `mbedtls_ssl_config`, certificates, keys, the session-ticket key) and exposes about 20 functions with opaque pointers and its own `DUSK_TLS_*` status codes (done, want more, failed, untrusted, expired, wrong host, out of memory, invalid, end). `tls.zig` declares them by hand, like `uv.zig`. `psa_crypto_init` runs once, on the first TLS call. mbedTLS isn't built thread-safe, so it's only called from the loop thread.
 
 **Memory I/O.** Each session has two byte queues in the glue, given to `mbedtls_ssl_set_bio`: encrypted bytes from the socket go into `input` (`dusk_tls_feed`), and mbedTLS's output collects in `output`, which Zig sends and then consumes. mbedTLS never touches the socket. When mbedTLS returns "want read" while `input` still holds bytes, it means "call again" (it does that after a TLS 1.3 post-handshake message such as a session ticket), so `dusk_tls_read` and `dusk_tls_handshake` call again while input is queued, up to 8 calls in a row without progress.
 

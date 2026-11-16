@@ -5,15 +5,18 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .libuv = .{
-            .url = "https://github.com/libuv/libuv/archive/refs/tags/v1.53.0.tar.gz",
-            .hash = "N-V-__8AAJDFRwBAOnHfjLo8JKU56CoS83XDbuaNIxTM_WXo",
+            .url = "https://github.com/duskilang/libuv/archive/refs/tags/v1.53.0-dusk.tar.gz",
+            .hash = "libuv-1.53.0-QDiZxwLiGwA6a2ix6PbZDYBFPIkzrogxPaagys6M1KV9",
+        },
+        .mbedtls = .{
+            .url = "https://github.com/duskilang/mbedtls/archive/refs/tags/v4.1.1-dusk.tar.gz",
+            .hash = "mbedtls-4.1.1-RluRKQiIbQDfocMXv4cMObkWlweVIMs3s98Ko-iC0JwE",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
-        "libs",
         "LICENSE",
         "README.md",
     },
