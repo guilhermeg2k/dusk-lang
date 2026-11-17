@@ -62,6 +62,33 @@ BENCHMARKS = SHARED_BENCHMARKS + [
         "desc": "Decode 100,000 records with three omitted fields and mutable defaults.",
         "expected": "4700000",
         "numeric": False,
+    },    {
+        "key": "json_dusk_decode",
+        "title": "JSON Small Decode (Dusk path)",
+        "desc": "Same as json_decode. Through json::Reader/json::Writer and derived code.",
+        "expected": "5200000",
+        "numeric": False,
+    },
+    {
+        "key": "json_dusk_decode_bulk",
+        "title": "JSON Bulk Decode (Dusk path)",
+        "desc": "Same as json_decode_bulk. Through json::Reader/json::Writer and derived code.",
+        "expected": "15104000",
+        "numeric": False,
+    },
+    {
+        "key": "json_dusk_encode",
+        "title": "JSON Bulk Encode (Dusk path)",
+        "desc": "Same as json_encode. Through json::Reader/json::Writer and derived code.",
+        "expected": "1000",
+        "numeric": False,
+    },
+    {
+        "key": "json_dusk_defaults",
+        "title": "JSON Defaults Decode (Dusk path)",
+        "desc": "Same as json_defaults. Through json::Reader/json::Writer and derived code.",
+        "expected": "4700000",
+        "numeric": False,
     },
 ]
 

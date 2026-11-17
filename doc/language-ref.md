@@ -2891,6 +2891,8 @@ Encoding includes null fields (unless the schema says `omit_null`) and fields eq
 
 **Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. Types without proxies are handled by a fast built-in engine. A type whose schema uses `via` anywhere inside it goes through the code `std/serialization` writes instead, with the same results, only slower; a `from` that fails makes decoding fail with `InvalidValue`, and a cycle shows up as `DepthExceeded`.
 
+`json::reader(text, options = @())` and `json::writer(options = @())` return the Dusk reader and writer behind that second path, a `json::Reader` and `json::Writer` that fit the `std/serialization` traits, so `serialization::decode_document[User, json::Reader](reader)` and `serialization::encode(user, writer)` (then `writer.text()`) work with any type. Errors then come back as `SerializationError`.
+
 **Options.** `DecodeOptions` has `should_reject_unknown_fields: bool = false` and `max_depth: int = 128`. `EncodeOptions` has `max_depth: int = 128`. A depth limit must be between 1 and 512, otherwise the operation fails with `InvalidOptions`. Each array or object adds one level; nullable wrappers and scalar values do not. Ignored values use the same limit.
 
 ```dusk

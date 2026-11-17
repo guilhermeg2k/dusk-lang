@@ -1,0 +1,18 @@
+import std/json
+import std/serialization
+import std/io
+import @/support/json_model: Record, bulk_text
+
+func main() -> !void
+    let expected = bulk_text()
+    let records = try json::decode[[]Record](expected)
+    let mut total = 0
+    for 0..999: i do
+        let mut writer = json::writer()
+        try serialization::encode(records, writer)
+        let text = writer.text()
+        assert(text == expected)
+        total = total + 1
+    end
+    io::println("$total")
+end

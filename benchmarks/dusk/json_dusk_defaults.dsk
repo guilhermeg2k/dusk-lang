@@ -1,0 +1,24 @@
+import std/json
+import std/serialization
+import std/io
+import std/array
+
+struct Record
+    id: int
+    name: string = "Ada"
+    email: ?string = null
+    tags: []string = ["default", "fresh"]
+end
+
+func main() -> !void
+    let mut total = 0
+    for 0..99999: i do
+        let mut reader = json::reader("{\"id\":42}")
+        let mut record = try serialization::decode_document[Record, json::Reader](reader)
+        assert(record.name == "Ada")
+        assert(record.email == null)
+        array::append(record.tags, "added")
+        total = total + record.id + array::len(record.tags) + 2
+    end
+    io::println("$total")
+end
