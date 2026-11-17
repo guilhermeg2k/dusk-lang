@@ -1,5 +1,9 @@
 # Completed
 
+## std/os read-only environment scope (2026-11-17)
+
+- Removed set_env/unset_env from v0.17 by user request; removed mutation implementation/audit requirements and recorded future work in backlog. No runtime changes.
+
 ## std/os backend planning correction (2026-11-17)
 
 - Applied user preference for Zig std; checked installed Zig 0.16 environment and cwd APIs. Libuv remains for signals.
