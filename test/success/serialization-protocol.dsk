@@ -1,0 +1,49 @@
+import std/serialization
+
+struct Point
+    x: int
+    y: int
+    label: ?string = null
+end
+
+enum Color
+    Red
+    Green
+    Blue
+end
+
+union Shape
+    circle: int
+    square: Point
+end
+
+func main() -> void
+    let point = serialization::plan_of[Point]()
+    assert(serialization::field_count(point) == 3)
+    assert(serialization::field_name(point, 0) == "x")
+    assert(serialization::field_name(point, 2) == "label")
+    assert(serialization::field_name(point, 3) == "")
+    assert(serialization::find_field(point, "y") == 1)
+    assert(serialization::find_field(point, "z") == -1)
+    assert(serialization::find_field_in(point, "{\"label\":1}", 2, 7) == 2)
+    assert(serialization::find_field_in(point, "label", 3, 99) == -1)
+    assert(serialization::plan_of[Point]() == point)
+
+    let color = serialization::plan_of[Color]()
+    assert(serialization::variant_count(color) == 3)
+    assert(serialization::variant_name(color, 1) == "Green")
+    assert(serialization::find_variant(color, "Blue") == 2)
+    assert(serialization::find_variant_in(color, "xRedx", 1, 4) == 0)
+    assert(serialization::field_count(color) == 0)
+
+    let shape = serialization::plan_of[Shape]()
+    assert(serialization::variant_count(shape) == 2)
+    assert(serialization::variant_name(shape, 1) == "square")
+    assert(serialization::find_variant(shape, "circle") == 0)
+    assert(serialization::variant_count(point) == 0)
+
+    assert(serialization::field_count(-1) == 0)
+    assert(serialization::field_name(100000, 0) == "")
+    assert(serialization::find_variant(100000, "Red") == -1)
+    assert(serialization::variant_name(-5, 0) == "")
+end

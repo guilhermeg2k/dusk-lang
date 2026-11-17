@@ -122,6 +122,10 @@ test "json: unsupported types and context-free calls are compile errors" {
     try runCaseError("sema/json-untyped-decode.dsk", error.CantInferSlot);
 }
 
+test "serialization: plan natives read field and variant names" {
+    try runCase("serialization-protocol.dsk");
+}
+
 test "serialization spike: derived decode and encode through a format written in Dusk" {
     try runCase("serialization-spike.dsk");
     try runCaseError("sema/serialization-missing-capability.dsk", error.DoesntFitTrait);

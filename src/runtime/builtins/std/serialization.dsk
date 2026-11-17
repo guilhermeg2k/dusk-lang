@@ -1,4 +1,5 @@
 import std/array
+import std/map
 
 error SerializationError
     InvalidInput
@@ -35,6 +36,20 @@ trait ArrayReader
     func has_item(mut self: @) -> SerializationError!bool
 end
 
+trait MapReader
+    func begin_map(mut self: @) -> SerializationError!void
+    func next_key(mut self: @) -> SerializationError!?string
+end
+
+trait EnumReader
+    func read_variant(mut self: @, variants: int) -> SerializationError!int
+end
+
+trait UnionReader
+    func begin_union(mut self: @, variants: int) -> SerializationError!int
+    func end_union(mut self: @) -> SerializationError!void
+end
+
 trait ScalarWriter
     func write_int(mut self: @, value: int) -> SerializationError!void
     func write_float(mut self: @, value: float) -> SerializationError!void
@@ -58,10 +73,29 @@ trait ArrayWriter
     func end_array(mut self: @) -> SerializationError!void
 end
 
+trait MapWriter
+    func begin_map(mut self: @, length: int) -> SerializationError!void
+    func key(mut self: @, name: string) -> SerializationError!void
+    func end_map(mut self: @) -> SerializationError!void
+end
+
+trait EnumWriter
+    func write_variant(mut self: @, variants: int, index: int) -> SerializationError!void
+end
+
+trait UnionWriter
+    func begin_union(mut self: @, variants: int, index: int) -> SerializationError!void
+    func end_union(mut self: @) -> SerializationError!void
+end
+
 extern func field_count(fields: int) -> int
 extern func field_name(fields: int, index: int) -> string
 extern func find_field(fields: int, name: string) -> int
 extern func find_field_in(fields: int, text: string, start: int, stop: int) -> int
+extern func variant_count(variants: int) -> int
+extern func variant_name(variants: int, index: int) -> string
+extern func find_variant(variants: int, name: string) -> int
+extern func find_variant_in(variants: int, text: string, start: int, stop: int) -> int
 
 extern func plan_of[T]() -> int
 
