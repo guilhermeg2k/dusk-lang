@@ -130,8 +130,10 @@ test "serialization: derived code for enums, unions, maps, bytes, roots and dept
     try runCase("serialization-derive.dsk");
 }
 
-test "serialization spike: derived decode and encode through a format written in Dusk" {
-    try runCase("serialization-spike.dsk");
+test "serialization: reference formats written in Dusk (JSON-like, record notation, rows)" {
+    try runCase("serialization-json-like-format.dsk");
+    try runCase("serialization-record-format.dsk");
+    try runCase("serialization-rows.dsk");
     try runCaseError("sema/serialization-missing-capability.dsk", error.FormatLacksMethod);
 }
 

@@ -1,0 +1,251 @@
+import std/serialization
+import std/string
+import std/buffer
+import std/array
+
+struct RecordReader
+    text: string
+    data: buffer
+    pos: int = 0
+
+    func peek(mut self: @) -> byte
+        for self.pos < buffer::len(self.data) and self.data[self.pos] == ' ' do
+            self.pos = self.pos + 1
+        end
+        if self.pos >= buffer::len(self.data) then
+            return 0
+        end
+        return self.data[self.pos]
+    end
+
+    func expect(mut self: @, c: byte) -> serialization::SerializationError!void
+        if self.peek() != c then
+            return serialization::SerializationError.InvalidInput
+        end
+        self.pos = self.pos + 1
+    end
+
+    func atom(mut self: @) -> serialization::SerializationError!string
+        let first = self.peek()
+        let start = self.pos
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let ends_atom = c == ',' or c == '}' or c == ']' or c == ' ' or c == '='
+            if ends_atom then
+                break
+            end
+            self.pos = self.pos + 1
+        end
+        if self.pos == start then
+            return serialization::SerializationError.InvalidInput
+        end
+        let text = string::slice(self.text, start, self.pos) catch ""
+        return text
+    end
+
+    func read_int(mut self: @) -> serialization::SerializationError!int
+        let text = try self.atom()
+        let number = string::to_int(text) catch e then
+            return serialization::SerializationError.TypeMismatch
+        end
+        return number
+    end
+
+    func read_float(mut self: @) -> serialization::SerializationError!float
+        let text = try self.atom()
+        let number = string::to_float(text) catch e then
+            return serialization::SerializationError.TypeMismatch
+        end
+        return number
+    end
+
+    func read_bool(mut self: @) -> serialization::SerializationError!bool
+        let text = try self.atom()
+        if text == "yes" then
+            return true
+        end
+        if text == "no" then
+            return false
+        end
+        return serialization::SerializationError.TypeMismatch
+    end
+
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        return try self.atom()
+    end
+
+    func read_null(mut self: @) -> serialization::SerializationError!bool
+        let start = self.pos
+        if self.peek() != 'n' then
+            return false
+        end
+        let text = try self.atom()
+        if text == "none" then
+            return true
+        end
+        self.pos = start
+        return false
+    end
+
+    func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
+        try self.expect('{')
+    end
+
+    func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
+        let c = self.peek()
+        if c == '}' then
+            self.pos = self.pos + 1
+            return -1
+        end
+        if c == ',' then
+            self.pos = self.pos + 1
+        end
+        let name = try self.atom()
+        try self.expect('=')
+        let index = serialization::find_field(fields, name)
+        if index < 0 then
+            return serialization::SerializationError.UnknownField
+        end
+        return index
+    end
+
+    func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        return serialization::SerializationError.MissingField
+    end
+
+    func begin_array(mut self: @) -> serialization::SerializationError!void
+        try self.expect('[')
+    end
+
+    func has_item(mut self: @) -> serialization::SerializationError!bool
+        let c = self.peek()
+        if c == ']' then
+            self.pos = self.pos + 1
+            return false
+        end
+        if c == ',' then
+            self.pos = self.pos + 1
+        end
+        return true
+    end
+
+    func read_variant(mut self: @, variants: int) -> serialization::SerializationError!int
+        let index = serialization::find_variant(variants, try self.atom())
+        if index < 0 then
+            return serialization::SerializationError.UnknownVariant
+        end
+        return index
+    end
+end
+
+struct RecordWriter
+    parts: []string = []
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        array::append(self.parts, if value then "yes" else "no" end)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        array::append(self.parts, value)
+    end
+
+    func write_null(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "none")
+    end
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+        array::append(self.parts, "{")
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, ", ")
+        end
+        array::append(self.parts, "${serialization::field_name(fields, index)} = ")
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "}")
+    end
+
+    func begin_array(mut self: @, length: int) -> serialization::SerializationError!void
+        array::append(self.parts, "[")
+    end
+
+    func item(mut self: @, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, ", ")
+        end
+    end
+
+    func end_array(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "]")
+    end
+
+    func write_variant(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
+        array::append(self.parts, serialization::variant_name(variants, index))
+    end
+end
+
+func from_record[T](text: string) -> serialization::SerializationError!T
+    let mut reader = RecordReader(text = text, data = buffer::from_string(text))
+    let value = try serialization::decode[T, RecordReader](reader)
+    if reader.peek() != 0 then
+        return serialization::SerializationError.InvalidInput
+    end
+    return value
+end
+
+func to_record[T](value: T) -> serialization::SerializationError!string
+    let mut writer = RecordWriter()
+    try serialization::encode(value, writer)
+    return string::join(writer.parts)
+end
+
+enum Role
+    Admin
+    Guest
+end
+
+struct Address
+    city: string
+    floor: ?int
+end
+
+struct Person
+    name: string
+    age: int = 30
+    is_active: bool
+    role: Role
+    scores: []int
+    address: Address
+    nickname: ?string
+end
+
+func main() -> !void
+    let person: Person = try from_record("{name = Ana, is_active = yes, role = Admin, scores = [1, 2, 3], address = {city = Porto, floor = none}, nickname = none}")
+    assert(person.name == "Ana")
+    assert(person.age == 30)
+    assert(person.role == Role.Admin)
+    assert(array::len(person.scores) == 3)
+    assert(person.address.floor == null)
+    let text = try to_record(person)
+    assert(text == "{name = Ana, age = 30, is_active = yes, role = Admin, scores = [1, 2, 3], address = {city = Porto, floor = none}, nickname = none}")
+    let again: Person = try from_record(text)
+    assert((try to_record(again)) == text)
+    let people: []Person = try from_record("[{name = Bo, age = 41, is_active = no, role = Guest, scores = [], address = {city = Braga, floor = 2}, nickname = B}]")
+    assert(people[0].address.floor == 2 and people[0].nickname == "B")
+    let broken = from_record[Person]("{name = Ana, colour = red}") catch e then
+        assert(e == serialization::SerializationError.UnknownField)
+        return
+    end
+    assert(false)
+end
