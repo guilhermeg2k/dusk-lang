@@ -31,6 +31,8 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 - An experimental `-Djson-backend=reflection` build keeps the `std/json` API while performing typed conversion and traversal in Dusk through public reflection. Native scanner and scalar formatting helpers remain; native streaming remains the default after performance comparison
 
+- `copy` of arrays, structs, unions and maps no longer asks the operating system for memory on every call, so copying a small value is about 100 times faster. `std/reflect` checked values and builders, which copy internally, speed up the same way, and builders look fields and variants up by name without rebuilding the type's member list
+
 ### Fixes
 
 - Reflected value handles retain their identity through garbage collection, so using a handle as a map key keeps finding its entry after objects move

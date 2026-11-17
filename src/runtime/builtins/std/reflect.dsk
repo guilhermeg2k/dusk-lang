@@ -94,6 +94,7 @@ extern func ~member_name(type: Type, index: int) -> string
 extern func ~member_type(type: Type, index: int) -> Type
 extern func ~member_has_default(type: Type, index: int) -> bool
 extern func ~member_value(type: Type, index: int) -> int
+extern func ~member_index(type: Type, name: string) -> int
 extern func ~has_private_fields(type: Type) -> bool
 
 func describe(type: Type) -> TypeInfo
@@ -249,21 +250,18 @@ func set_value(mut builder: Builder, name: string, input: Value) -> ReflectError
     if kind(builder.type) != Kind.Struct then
         return ReflectError.TypeMismatch
     end
-    for fields(builder.type): field do
-        if field.name != name then
-            continue
-        end
-        try check_input(builder, input, field.type)
-        for builder.names: existing do
-            if existing == name then
-                return ReflectError.DuplicateAssignment
-            end
-        end
-        array::append(builder.names, name)
-        array::append(builder.values, copy(input))
-        return
+    let index = member_index(builder.type, name)
+    if index < 0 then
+        return ReflectError.UnknownField
     end
-    return ReflectError.UnknownField
+    try check_input(builder, input, member_type(builder.type, index))
+    for builder.names: existing do
+        if existing == name then
+            return ReflectError.DuplicateAssignment
+        end
+    end
+    array::append(builder.names, name)
+    array::append(builder.values, copy(input))
 end
 
 func append[T](mut builder: Builder, input: T) -> ReflectError!void
@@ -306,16 +304,13 @@ func select_value(mut builder: Builder, name: string, input: Value) -> ReflectEr
     if array::len(builder.names) != 0 then
         return ReflectError.DuplicateAssignment
     end
-    for union_variants(builder.type): variant do
-        if variant.name != name then
-            continue
-        end
-        try check_input(builder, input, variant.type)
-        array::append(builder.names, name)
-        array::append(builder.values, copy(input))
-        return
+    let index = member_index(builder.type, name)
+    if index < 0 then
+        return ReflectError.UnknownVariant
     end
-    return ReflectError.UnknownVariant
+    try check_input(builder, input, member_type(builder.type, index))
+    array::append(builder.names, name)
+    array::append(builder.values, copy(input))
 end
 
 func select_enum(mut builder: Builder, name: string) -> ReflectError!void
@@ -326,13 +321,10 @@ func select_enum(mut builder: Builder, name: string) -> ReflectError!void
     if array::len(builder.names) != 0 then
         return ReflectError.DuplicateAssignment
     end
-    for enum_variants(builder.type): variant do
-        if variant.name == name then
-            array::append(builder.names, name)
-            return
-        end
+    if member_index(builder.type, name) < 0 then
+        return ReflectError.UnknownVariant
     end
-    return ReflectError.UnknownVariant
+    array::append(builder.names, name)
 end
 
 func set_null(mut builder: Builder) -> ReflectError!void

@@ -1,3 +1,4 @@
+const std = @import("std");
 const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
 const format = @import("../../reflection_format.zig");
@@ -37,6 +38,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "member_type", native.Binding{ .native = &memberType } },
     .{ "member_has_default", native.Binding{ .native = &memberHasDefault } },
     .{ "member_value", native.Binding{ .native = &memberValue } },
+    .{ "member_index", native.Binding{ .native = &memberIndex } },
     .{ "has_private_fields", native.Binding{ .native = &hasPrivateFields } },
 });
 
@@ -105,6 +107,25 @@ fn memberHasDefault(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 
 fn memberValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     return native.ok(.{ .int64 = descriptor(vm, args[0]).variants[@intCast(args[1].int64)].value });
+}
+
+fn memberIndex(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const source = descriptor(vm, args[0]);
+    const name = native.bytesArg(args, 1);
+    if (source.kind == .Struct) {
+        for (source.fields, 0..) |field, i| {
+            if (std.mem.eql(u8, field.name, name)) {
+                return native.ok(.{ .int64 = @intCast(i) });
+            }
+        }
+        return native.ok(.{ .int64 = -1 });
+    }
+    for (source.variants, 0..) |variant, i| {
+        if (std.mem.eql(u8, variant.name, name)) {
+            return native.ok(.{ .int64 = @intCast(i) });
+        }
+    }
+    return native.ok(.{ .int64 = -1 });
 }
 
 fn hasPrivateFields(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
