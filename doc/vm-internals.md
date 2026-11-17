@@ -17,6 +17,8 @@ The source files involved:
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
 | `src/runtime/builtins/std.zig`, `std/*.zig` | Standard library registry and each module's natives |
 | `src/runtime/builtins/native.zig` | Shared native types (`Binding`, `NativeResult`, the `Intrinsic` table) and helpers |
+| `src/runtime/serialization_plan.zig` | The serialization plan format read by natives (section 12) |
+| `src/runtime/json_codec.zig` | The native JSON engine for `std/json`, driven by plans (section 12) |
 | `src/runtime/builtins/prelude.dsk` | The builtins' signatures, compiled before the user's file |
 | `src/runtime/tasks/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
 | `src/runtime/tasks/event_loop.zig` | `EventLoop`: the libuv loop, timers for `sleep`, queuing fs jobs, and immediate clock helpers |
@@ -53,12 +55,13 @@ Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the 
 
 ```
 Program
-├── functions: []Function          one per extern, method, function and lambda, then $main last
+├── functions: []Function          one per extern, method, function and lambda, $main, then field-default closures
 ├── static_closures: []Closure     one per function, same index (see 3.2)
 ├── string_pool: StringPool        every string literal of the program
 ├── struct_descriptors: []StructDescriptor
 ├── union_descriptors: []UnionDescriptor
 ├── error_names: [][]const u8      error id -> name, for unhandled-error messages
+├── serialization_plans: []Plan    one per (type, schema) a program serializes (section 12)
 └── main_func_index
 ```
 
@@ -797,9 +800,21 @@ libuv hands the server one pending connection per loop iteration (it stops watch
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 
-## 12. Known issues and observations
+## 12. Serialization plans and derived code
 
-### 12.1 Fixed: the GC copied call arguments twice
+`std/serialization` turns values into formats without runtime reflection: the compiler describes each type once and writes typed code for it.
+
+**Plans.** `SemaAnalyzer.planIndex(type, schema)` builds an `ir.Plan` for every type reachable from a serialized type, memoized by (type, schema) and reserved before its children so recursive types end. Building a plan is the single serializability check (private fields, functions, buffers, tasks, error values and non-string map keys are `InvalidType` with the field path). A struct plan lists its written fields with their outside name, accepted aliases, `omit_null`, declared slot and child plan, plus skipped fields with their defaults; enum and union plans list variant names, aliases and declared names; a type with a whole-type `via` becomes a `.proxy` plan pointing at the other type's plan. Codegen turns `ir.Plan` into `serialization_plan.Plan` (`buildSerializationPlans`), adding struct and union descriptors and one `$field-default` closure function per defaulted field, appended after `$main`. `serialization::plan_of[T, S]()` is replaced by the plan's index at compile time; natives (`field_name`, `find_field`, `variant_name`...) and the JSON engine read `vm.program.serialization_plans` by index and bounds-check it.
+
+**Schemas.** A `schema` declaration is a type of kind `.schema` (the default schema is one with no index), so it fills `S: schema` slots like any type argument; an unfilled schema slot gets the default. Member rules come from the type's own `schema` sections (`type_sections`, recorded when the type is filled in, so generic copies have them) and the schema's blocks; `validateSchemaRules` checks every section and block once, and `planStructure` applies names (`externalName` does the case conversion), aliases, skips and proxies.
+
+**Derived code.** `serialization::decode` and `encode` are Dusk functions calling hidden externs (`derive_decode`, `derive_encode`) whose binding is `.serialization`: they never reach codegen. When sema meets one with concrete types, `instantiateDerivedFunction` checks the format has every method the plan needs (`FormatLacksMethod`, naming the field), then `derivedFunctionName` writes one function per (operation, type, schema, proxy) as Dusk source (`derivedSource`), parses it with `ModuleLoader.parse` in a copy of the `std/serialization` module scope whose source is the generated text, and registers it as a generic function over the format. The generated code reaches user types and `via` functions through hidden file-only names (`derived_type_N`, `derived_function_N`) in that module's root table, and two more hidden externs replaced at compile time: `blank[T]()` (a struct with every slot zeroed by `STRUCT_INIT`, filled field by field and returned only once complete) and `field_default[T, F](index)` (the field's default IR, coerced). Decoding branches on `next_field` with `when` (a `JUMP_TABLE`), keeps a `has_N` flag per field, sets literal defaults inline and queues the others as closures in `pending`, which `decode` runs after the whole input. Every derived function takes a `depth` and fails past `MAX_DEPTH` (512).
+
+**std/json.** `json::encode` and `decode` check `serialization::is_native[T, S]()`, a compile-time bool that is false when the plan graph has a proxy. `lowerIf` lowers only the taken branch of an `if` on that call (outside opaque checks), so a type without proxies never gets derived JSON code: it goes to the native engine (`json_codec.zig`, the plan-driven scanner and writer, defaults queued as closures in a `mut defaults` array the Dusk wrapper runs). Types with proxies go through `json::~Reader` / `~Writer`, Dusk code over native lexing helpers (`skip_space`, `string_end`, `number_end`, `string_value`, `quote`, `format_float`) with the same JSON rules, through `serialization::decode_document`, so trailing input fails before defaults run.
+
+## 13. Known issues and observations
+
+### 13.1 Fixed: the GC copied call arguments twice
 
 Fixed in v0.15 (section 9.2); `test/success/gc-heap-arguments.dsk` covers it. It's kept here because the failure mode is worth knowing when changing frame layout or root scanning.
 
@@ -828,7 +843,7 @@ end
 
 This segfaulted in `copyHeapValue`. Now each caller frame scans only up to its call register, so every slot has one owner and is copied once.
 
-### 12.2 Observations
+### 13.2 Observations
 
 - **A missing heap map is silent.** If an instruction has no heap map, its frame gets bitmap `0` and its roots aren't kept. A debug assertion in `Collector.copyTaskRoots` when `binarySearch` finds nothing would catch codegen mistakes right away.
 - **Extra moves.** Codegen copies variables into temporaries before using them (`LOAD R[3] R[1]` before `I_LT R[2] R[3] R[4]`), and moves a call result through more than one register after a `try`. Reading variables in place in binary operations, or a small peephole pass, would remove many instructions.

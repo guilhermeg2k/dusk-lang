@@ -1362,6 +1362,21 @@ let ready: Job[int, none] = @(run = func() -> return 1)
 io::println("${ready.go()}")                                    # 1
 ```
 
+### Schema slots
+
+A slot marked `: schema` holds a [schema](#stdserialization): a named set of outside names for a type, used by `std/serialization` and `std/json`. Only schema names fill it, and a schema can't be used as an ordinary type (`let x: Api` is an error).
+
+```nim
+func load[T, S: schema](text: string) -> json::JsonError!T
+    return try json::decode[T, S](text)
+end
+
+let user = try load[User, Api](text)
+let plain = try load[User](text)
+```
+
+A schema slot that nothing fills means the names as declared, so `json::decode[User](text)` needs no schema. It's the only kind of slot with a default, and an explicit type list may leave trailing schema slots out.
+
 ### Traits
 
 A trait lists methods a type must have. Its methods are signatures without a body, take `self: @` or `mut self: @` first, and `@` stands for the type that fits the trait. `[T: Shape]` lets the generic code call them.
@@ -1947,6 +1962,9 @@ Clocks and timestamp values. Import with `import std/time`.
 | :------- | :------ | :---------- |
 | `now()` | `Timestamp` | A timestamp from the current wall-clock reading. |
 | `from_unix_ms(milliseconds)` | `Timestamp` | A timestamp from any `int` epoch-millisecond value, including negative values. |
+| `to_unix_ms(timestamp)` | `int` | The timestamp's epoch milliseconds, like `timestamp.unix_ms()`. |
+| `to_iso(timestamp)` | `string` | The same text as `timestamp.to_string()`. |
+| `from_iso(text)` | `TimeError!Timestamp` | Reads `YYYY-MM-DDTHH:MM:SS` with an optional fraction and a final `Z`, such as `2024-02-29T12:30:00.250Z`. Digits after the third fractional one are dropped. Anything else, including impossible dates, fails with `TimeError.InvalidTimestamp`. |
 | `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
 | `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
 
@@ -1990,7 +2008,9 @@ let modified = time::from_unix_ms(info.modified_ms)
 
 The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
 
-The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Parsing, date arithmetic and timestamp comparison methods are not provided. Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
+The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Date arithmetic and timestamp comparison methods are not provided; `from_iso` only reads the UTC form above, not offsets or expanded years.
+
+`to_iso` / `from_iso` and `to_unix_ms` / `from_unix_ms` are pairs of plain functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
 
 ### std/task
 
@@ -2635,6 +2655,264 @@ A `reason` left empty is filled from the status code (`"Not Found"`). The server
 | `AddressInUse`, `PermissionDenied` | `listen` failed, as in `net::NetError` |
 | `Other` | Any other failure |
 
+### std/serialization
+
+Turns values into an outside format and back, through code the compiler writes for each type. A format (JSON, rows from a database, a config file syntax) is an ordinary struct with methods; `std/json` is one, and any module can add its own. Import with `import std/serialization`.
+
+```nim
+let mut writer = QueryWriter()
+try serialization::encode(user, writer)
+let mut reader = RowReader(row)
+let user: User = try serialization::decode(reader)
+```
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `encode[T, W, S: schema](value, mut writer)` | `SerializationError!void` | Writes `value` through `writer`. |
+| `decode[T, R, S: schema](mut reader)` | `SerializationError!T` | Reads a `T` from `reader`. |
+| `decode_document[T, R, S: schema](mut reader)` | `SerializationError!T` | Like `decode`, then calls `reader.end_document()` before any default runs, so a format can reject trailing input first. |
+| `plan_of[T, S: schema]()` | `int` | The id of `T`'s plan, the description formats read field and variant names from. Known when compiling. |
+| `is_native[T, S: schema]()` | `bool` | Whether `T`'s plan avoids proxies, so code written in another language can handle it (`std/json` uses this). Known when compiling: an `if` on it only compiles the branch taken. |
+
+For each type, the compiler writes one decode and one encode function that read and fill fields directly, and checks at compile time that the format has every method the type needs. Types must have public instance fields only; functions, tasks, buffers, error values and maps with keys other than `string` can't be written, anywhere inside the type (`InvalidType`, naming the path, such as `Hidden at 'inner[].value'`). Enums are written by variant name; aliases decode by their own names and encode as the first variant with that value.
+
+**Defaults.** A field missing from the input takes its declared default. Defaults made of literals (`0`, `""`, `[]`, `null`) are set right away; defaults that call functions run after the whole input has been read, children before their parents, so they never run for input that turns out to be invalid. They can allocate and make the task wait. A field without a default is required, even when it's nullable (`MissingField`). A field given twice is `DuplicateField`.
+
+Values nested deeper than 512 levels fail with `DepthExceeded`, when reading or writing. Writing a value that contains itself also ends in `DepthExceeded`.
+
+`SerializationError` contains `InvalidInput`, `TypeMismatch`, `MissingField`, `UnknownField`, `DuplicateField`, `OutOfRange`, `InvalidValue`, `UnknownVariant`, `DepthExceeded` and `CycleDetected`. Formats map their own failures to these and can keep details (a position, a message) in their own fields.
+
+#### Schemas
+
+A schema is a named set of outside names for one consumer: an API, a database table, a config file. The same type can have several. Without a schema, fields and variants use their declared names.
+
+```nim
+schema Api(case = "snake")
+    time::Timestamp: via(time::to_iso, time::from_iso)
+
+    struct models::Address
+        zipCode: "postcode"
+    end
+end
+
+schema Db end
+
+struct User
+    userId: int
+    displayName: string
+    password: string = ""
+    nickname: ?string = null
+    createdAt: time::Timestamp
+
+    schema Api
+        userId: "user_id", "legacy_id"
+        password: skip
+        nickname: omit_null
+    end
+
+    schema Db
+        userId: "id"
+    end
+end
+
+let text = try json::encode[User, Api](user)
+let row = try serialization::decode[User, RowReader, Db](reader)
+let plain = try json::encode(user)
+```
+
+- `schema Name(case = "...") ... end` declares a schema at the top of a file. `case` is `"snake"` (`user_id`), `"camel"` (`userId`), `"kebab"` (`user-id`), `"pascal"` (`UserId`) or `"exact"`, the default. An empty schema is `schema Db end`.
+- Inside a struct, enum or union, `schema Name ... end` (after the fields or variants, before the methods) sets that type's names for that schema.
+- Inside a schema, a `struct`, `enum` or `union` block does the same for a type declared elsewhere, such as in another module. The keyword must match the type. A generic type is written without its slots, and the rules apply to every version of it.
+- A member can have rules in only one place for a given schema. Schemas reach public fields only.
+- Nested values follow the same schema: encoding a `User` with `Api` uses `Api`'s names for the `Address` inside it.
+
+| Rule | Meaning |
+| :--- | :------ |
+| `userId: "user_id"` | The outside name. |
+| `userId: "user_id", "legacy_id"` | The first name is written; every name is accepted when reading. Getting two of them is a duplicate. |
+| `password: skip` | Never read or written; the field takes its default, so it must have one. |
+| `nickname: omit_null` | Not written when `null`. Only for nullable fields. |
+| `createdAt: "created", via(to, from)` | The field is written as another type (see Proxies). Rules combine with commas. |
+| `OnHold: "on-hold"` | A variant's outside name, in an enum or union. Variants only take names. |
+| `time::Timestamp: via(to, from)` | Directly inside a schema: every value of that type is written as another type. |
+
+Names are worked out when compiling, never by changing incoming text. `case` applies first, then explicit names. It splits a name at `_`, `-`, a capital after a lowercase letter or digit, and the last capital of a run of capitals before a lowercase letter: `userID` becomes `user_id`, `HTTPServer` becomes `http_server`, `line2` stays one word. Letters outside ASCII don't change case. Two members ending up with the same name, an unknown member, `skip` without a default and `omit_null` on a field that can't be null are compile errors (`InvalidSchema`).
+
+#### Proxies
+
+`via(to, from)` writes a value as another type through two functions: `to` takes the value and returns the other type, and `from` takes it back, returning the value or failing. The other type can be anything serializable, including a struct with its own schema sections. A `from` that fails makes reading fail with `InvalidValue`.
+
+```nim
+func ms_to_seconds(milliseconds: int) -> int
+    return milliseconds // 1000
+end
+
+func seconds_to_ms(seconds: int) -> int
+    return seconds * 1000
+end
+
+struct Job
+    timeoutMs: int
+
+    schema Api
+        timeoutMs: "timeout_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+```
+
+Proxies are how a type with private fields, such as `time::Timestamp`, gets written. Both functions must be named functions, not lambdas or generic functions. A whole-type proxy can't return its own type, since it would apply again.
+
+#### Writing a format
+
+A format is a struct whose methods match traits in `std/serialization`. A type only needs the traits for what it contains: a format without `write_null` can't write a type with nullable fields, and that's a compile error naming the field (`'QueryWriter' can't encode 'User': 'User.nickname' is nullable and it has no method 'write_null'`).
+
+| Writer trait | Methods |
+| :----------- | :------ |
+| `ScalarWriter` | `write_int(int)`, `write_float(float)`, `write_bool(bool)`, `write_string(string)` |
+| `NullWriter` | `write_null()` |
+| `StructWriter` | `begin_struct(fields, count)`, `field(fields, index)`, `end_struct()` |
+| `ArrayWriter` | `begin_array(length)`, `item(index)`, `end_array()` |
+| `MapWriter` | `begin_map(length)`, `key(name)`, `end_map()` |
+| `EnumWriter` | `write_variant(variants, index)` |
+| `UnionWriter` | `begin_union(variants, index)`, `end_union()` |
+
+| Reader trait | Methods |
+| :----------- | :------ |
+| `ScalarReader` | `read_int()`, `read_float()`, `read_bool()`, `read_string()` |
+| `NullReader` | `read_null() -> bool`: `true` when the next value is null, which it consumes |
+| `StructReader` | `begin_struct(fields)`, `next_field(fields) -> int`, `missing_field(fields, index)` |
+| `ArrayReader` | `begin_array()`, `has_item() -> bool` |
+| `MapReader` | `begin_map()`, `next_key() -> ?string` |
+| `EnumReader` | `read_variant(variants) -> int` |
+| `UnionReader` | `begin_union(variants) -> int`, `end_union()` |
+| `DocumentReader` | `end_document()`, for `decode_document` |
+
+Every method takes `mut self: @` and returns `SerializationError!` its result. `byte` values go through `read_int` / `write_int` and are checked against `0..255` (`OutOfRange`).
+
+`fields` and `variants` are plan ids. Read names with `field_count(fields)`, `field_name(fields, index)`, `variant_count(variants)` and `variant_name(variants, index)`, and match input with `find_field(fields, name)` and `find_variant(variants, name)`, which accept every outside name, aliases included, and return an index or `-1`. `find_field_in(fields, text, start, stop)` and `find_variant_in` match a slice of the input without copying it. `next_field` returns the index of the next known field, or `-1` when the struct ends; unknown names are the format's choice to skip or reject. A format reading rows can match column names once per result and then answer `next_field` by position.
+
+```nim
+import std/serialization
+import std/array
+import std/string
+import std/url
+
+struct QueryWriter
+    parts: []string = []
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        array::append(self.parts, if value then "1" else "0" end)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        array::append(self.parts, url::encode(value))
+    end
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, "&")
+        end
+        array::append(self.parts, "${serialization::field_name(fields, index)}=")
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+    end
+end
+
+struct Search
+    term: string
+    page: int = 1
+end
+
+func main() -> !void
+    let mut writer = QueryWriter()
+    try serialization::encode(Search(term = "dusk lang"), writer)
+    assert(string::join(writer.parts) == "term=dusk%20lang&page=1")
+end
+```
+
+### std/json
+
+`json::encode[T, S: schema](value, options = @()) -> JsonError!string` writes compact JSON. `json::decode[T, S: schema](text, mut diagnostic = null, options = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type, and the schema is optional (see [Schemas](#schemas)):
+
+```dusk
+import std/json
+
+struct User
+    name: string
+    age: int
+    email: ?string = null
+end
+
+func main() -> !void
+    let text = "{\"name\":\"Ada\",\"age\":42}"
+    let user: User = try json::decode(text)
+    let another = try json::decode[User](text)
+    assert(user.name == another.name)
+    assert(user.email == null)
+    assert((try json::encode(user)) == "{\"name\":\"Ada\",\"age\":42,\"email\":null}")
+end
+```
+
+Supported types, at the root and inside other values, are the ones `std/serialization` supports:
+
+| Dusk type | JSON representation |
+| :--- | :--- |
+| `int`, `byte`, `float` | Number |
+| `bool` | Boolean |
+| `string` | String |
+| `?T` | Null or the representation of `T` |
+| `[]T` | Array |
+| `map[string, T]` | Object |
+| Struct | Object with the field names (or the schema's names) |
+| Enum | Variant name as a string |
+| Union | Object with exactly one variant-named member and its payload |
+
+Concrete generic and recursive types work. A union built as `Response(success = value)` uses `{"success": ...}`. Static fields and methods do not participate.
+
+**Fields and numbers.** Missing fields and defaults follow `std/serialization`: an absent field uses its declared default or fails with `MissingField`, and defaults that call functions run only after the whole document passed. Explicit JSON null is accepted only for nullable fields, regardless of defaults.
+
+Unknown fields are ignored by default, but their values must still be valid JSON. Duplicate keys fail everywhere, including ignored objects; escaped spellings of the same key, and two accepted names of the same field, count as duplicates. String input must be valid UTF-8, with valid escape sequences and paired surrogate escapes. Encoding also rejects invalid UTF-8.
+
+`int` and `byte` accept integer-form tokens only: `42` works, while `42.0`, `42e0` and `"42"` fail with `TypeMismatch`. Integers preserve their full range; `byte` is checked against `0..255`. Floats accept integer, decimal and exponent forms and round to their representable precision; overflow fails, and sufficiently small values can underflow to signed zero. Encoding NaN or infinity fails with `NonFiniteNumber`.
+
+Encoding includes null fields (unless the schema says `omit_null`) and fields equal to their defaults. Struct fields appear in declaration order, and map entries in insertion order. Shared objects are written independently wherever they occur; cycles fail with `CycleDetected`. Decoding does not restore sharing between separate JSON objects.
+
+**Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. Types without proxies are handled by a fast built-in engine. A type whose schema uses `via` anywhere inside it goes through the code `std/serialization` writes instead, with the same results, only slower; a `from` that fails makes decoding fail with `InvalidValue`, and a cycle shows up as `DepthExceeded`.
+
+**Options.** `DecodeOptions` has `should_reject_unknown_fields: bool = false` and `max_depth: int = 128`. `EncodeOptions` has `max_depth: int = 128`. A depth limit must be between 1 and 512, otherwise the operation fails with `InvalidOptions`. Each array or object adds one level; nullable wrappers and scalar values do not. Ignored values use the same limit.
+
+```dusk
+let user = try json::decode[User](text,
+    options = json::DecodeOptions(should_reject_unknown_fields = true))
+let encoded = try json::encode(user, json::EncodeOptions(max_depth = 64))
+```
+
+**Diagnostics.** Pass a mutable `json::Diagnostic()` as the second decode argument when the error's field path or location is needed. It contains `path: string`, `byte_offset: ?int`, `line: ?int` and `column: ?int`. The object is cleared before each call; a successful call leaves an empty path and null positions. Each caller owns its diagnostic object.
+
+```dusk
+let mut diagnostic = json::Diagnostic()
+let user: User = json::decode(text, diagnostic) catch e then
+    io::eprintln("invalid user at ${diagnostic.path}, byte ${diagnostic.byte_offset}")
+    return e
+end
+```
+
+Paths use forms such as `users[2].age`; map keys and field names containing punctuation are quoted, as in `["a.b"][0]`. The root path is empty. Byte offsets start at zero; lines and byte columns start at one. Missing fields point to the closing object; lexical errors report where the invalid input was detected.
+
+`JsonError` contains `InvalidJson`, `TypeMismatch`, `MissingField`, `UnknownField`, `DuplicateKey`, `NumberOutOfRange`, `UnknownVariant`, `InvalidUnion`, `NonFiniteNumber`, `DepthExceeded`, `CycleDetected`, `InvalidOptions` and `InvalidValue`. Errors have no payload; diagnostics are separate. Pretty printing and streaming are not supported.
+
 ### Errors from builtins
 
 Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name.
@@ -2649,6 +2927,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
+| `TimeError.InvalidTimestamp` | `time::from_iso` with text that isn't a valid `YYYY-MM-DDTHH:MM:SSZ` UTC timestamp. |
 
 ## 16. Errors
 
@@ -2684,4 +2963,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
 - **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client doesn't use proxies (`HTTP_PROXY` and similar variables are ignored), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); only `http::request` decompresses, and only gzip. The server has no router (handlers match `req.path` themselves), sends response bodies whole (no streaming, no server-sent events), doesn't compress responses, and has no limit on the number of connections. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
-- **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
+- **Serialization**: map keys must be strings, and schemas have no flattening of nested structs and no unions written without their variant name. `via` takes named, non-generic functions. Values written through `std/serialization` are read field by field into the type, never into a general tree of values.
+- **Generics**: an explicit type-argument list must fill every slot, except trailing schema slots; other partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
