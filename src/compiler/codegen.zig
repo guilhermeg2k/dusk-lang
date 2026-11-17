@@ -1818,6 +1818,7 @@ pub const BytecodeGen = struct {
             .nullable => |child| .{ .nullable = @intCast(child) },
             .array => |child| .{ .array = @intCast(child) },
             .map => |child| .{ .map = @intCast(child) },
+            .proxy => |proxy| .{ .proxy = @intCast(proxy.plan) },
             .scalar => switch (type_ptr.kind) {
                 .int => .int,
                 .byte => .byte,

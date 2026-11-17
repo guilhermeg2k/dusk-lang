@@ -17,6 +17,7 @@ pub const JsonError = enum {
     DepthExceeded,
     CycleDetected,
     InvalidOptions,
+    InvalidValue,
 };
 
 pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
@@ -152,7 +153,7 @@ const Encoder = struct {
                 }
                 return error.InvalidUnion;
             },
-            .nullable => unreachable,
+            .nullable, .proxy => unreachable,
         }
     }
 
@@ -313,7 +314,7 @@ const Decoder = struct {
             .structure => |shape| return self.readStruct(shape, depth),
             .map => |child| return self.readMap(child, depth),
             .tagged_union => |shape| return self.readUnion(shape, depth),
-            .nullable => unreachable,
+            .nullable, .proxy => unreachable,
         }
     }
 

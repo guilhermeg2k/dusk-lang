@@ -75,6 +75,9 @@ pub const SemaAnalyzer = struct {
     type_sections: std.AutoHashMapUnmanaged(tt.TypeId, TypeSections) = .empty,
     can_resolve_schema: bool = false,
     derive_schema: tt.TypeId = 0,
+    proxies: std.ArrayList(Proxy) = .empty,
+    proxy_by_rule: std.AutoHashMapUnmanaged(usize, usize) = .empty,
+    derived_function_aliases: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -2814,6 +2817,15 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.invalidType("boolean", try self.type_table.name(condition_value_type, self.allocator), if_stmt.condition.loc);
         }
 
+        const can_choose_branch = result == null and !self.is_checking_opaque and self.isNativeCheck(if_stmt.condition);
+        if (can_choose_branch) {
+            if (condition_value.data.i_bool) {
+                return .{ .block = (try self.visitBranchBlock(&if_stmt.then_block, null)).block };
+            }
+            const else_block = if_stmt.else_block orelse return .{ .block = &.{} };
+            return .{ .block = (try self.visitBranchBlock(&else_block, null)).block };
+        }
+
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
             .then_block = (try self.visitBranchBlock(&if_stmt.then_block, result)).block,
@@ -4647,7 +4659,7 @@ pub const SemaAnalyzer = struct {
                 fn_identifier = symbol.identifier;
 
                 if (self.serialization_operation_by_uid.get(symbol.uid)) |operation| {
-                    const is_compile_time_value = operation == .blank or operation == .field_default or operation == .plan_of;
+                    const is_compile_time_value = operation == .blank or operation == .field_default or operation == .plan_of or operation == .is_native;
                     if (is_compile_time_value) {
                         return self.evalSerializationValue(operation, fn_call, exp.loc);
                     }
@@ -5011,6 +5023,13 @@ pub const SemaAnalyzer = struct {
                 const index: i64 = if (is_opaque) 0 else @intCast(try self.planIndex(type_id, schema, "", loc));
                 return ir.Value.init(self.allocator, .{ .data = .{ .i_int = index }, .type_id = self.type_table.getPrimitive(.int) });
             },
+            .is_native => {
+                const schema = if (fn_call.type_arguments.len > 1) try self.resolveSchemaArgument(fn_call.type_arguments[1]) else try self.defaultSchemaType();
+                const is_opaque = self.typeContainsSlot(type_id) or self.typeContainsSlot(schema);
+                var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
+                const is_native = is_opaque or try self.isNativePlan(try self.planIndex(type_id, schema, "", loc), &visited);
+                return ir.Value.init(self.allocator, .{ .data = .{ .i_bool = is_native }, .type_id = self.type_table.getPrimitive(.boolean) });
+            },
             .blank => return self.blankStruct(type_id, self.type_table.getTypePtrById(type_id).kind.@"struct"),
             .field_default => {
                 const index_value = try self.evalExp(fn_call.arguments[0].exp);
@@ -5136,7 +5155,14 @@ pub const SemaAnalyzer = struct {
         if (is_container) {
             try out.appendSlice(self.allocator, "if depth > MAX_DEPTH then\nreturn SerializationError.DepthExceeded\nend\n");
         }
-        if (key.operation == .derive_decode) {
+        const proxy: ?Proxy = if (key.proxy > 0) self.proxies.items[key.proxy - 1] else null;
+        if (proxy) |found| {
+            if (key.operation == .derive_decode) {
+                try self.emitProxyDecode(&out, found, loc);
+            } else {
+                try self.emitProxyEncode(&out, found, loc);
+            }
+        } else if (key.operation == .derive_decode) {
             try self.emitDecodeBody(&out, key.type_id, type_text, loc);
         } else {
             try self.emitEncodeBody(&out, key.type_id, type_text, loc);
@@ -5184,7 +5210,7 @@ pub const SemaAnalyzer = struct {
             for (structure.fields, 0..) |plan_field, i| {
                 const field = struct_fields[plan_field.field_index];
                 try self.emit(out, "{d} then\nif has_{d} then\nreturn SerializationError.DuplicateField\nend\n", .{ i, i });
-                try self.emitDecodeInto(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, loc);
+                try self.emitFieldDecode(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, plan_field.proxy, loc);
                 try self.emit(out, "has_{d} = true\nend\n", .{i});
             }
             try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownField\nend\nend\n");
@@ -5282,6 +5308,28 @@ pub const SemaAnalyzer = struct {
         }
         try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
     }
+    fn emitFieldDecode(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, proxy: ?usize, loc: err.Loc) CompileError!void {
+        const index = proxy orelse return self.emitDecodeInto(out, target, type_id, loc);
+        const name = try self.derivedFunctionName(self.proxyKey(.derive_decode, self.nonNullType(type_id), index), loc);
+        const expression = try allocPrint(self.allocator, "try {s}(reader, pending, depth + 1)", .{name});
+        if (!self.type_table.getTypePtrById(type_id).is_nullable) {
+            try self.emit(out, "{s} = {s}\n", .{ target, expression });
+            return;
+        }
+        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nend\n", .{ target, expression });
+    }
+
+    fn emitFieldEncode(self: *Self, out: *std.ArrayList(u8), source: []const u8, type_id: tt.TypeId, proxy: ?usize, number: usize, loc: err.Loc) CompileError!void {
+        const index = proxy orelse return self.emitEncode(out, source, type_id, number, loc);
+        const name = try self.derivedFunctionName(self.proxyKey(.derive_encode, self.nonNullType(type_id), index), loc);
+        if (!self.type_table.getTypePtrById(type_id).is_nullable) {
+            try self.emit(out, "try {s}({s}, writer, depth + 1)\n", .{ name, source });
+            return;
+        }
+        const capture = try allocPrint(self.allocator, "present_{d}", .{number});
+        try self.emit(out, "if {s}: {s} then\ntry {s}({s}, writer, depth + 1)\nelse\ntry writer.write_null()\nend\n", .{ source, capture, name, capture });
+    }
+
     fn emitDecodeInto(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
         const type_ptr = self.type_table.getTypePtrById(type_id);
         if (!type_ptr.is_nullable) {
@@ -5293,6 +5341,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn decodeExpression(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        if (try self.typeProxy(type_id, self.derive_schema)) |proxy| {
+            return allocPrint(self.allocator, "try {s}(reader, pending, depth + 1)", .{try self.derivedFunctionName(self.proxyKey(.derive_decode, type_id, proxy), loc)});
+        }
         return switch (self.type_table.getTypePtrById(type_id).kind) {
             .int => "try reader.read_int()",
             .float => "try reader.read_float()",
@@ -5332,7 +5383,7 @@ pub const SemaAnalyzer = struct {
                 try self.emit(out, "if {s} != null then\n", .{source});
             }
             try self.emit(out, "try writer.field({d}, {d})\n", .{ plan, i });
-            try self.emitEncode(out, source, field.type_id, i, loc);
+            try self.emitFieldEncode(out, source, field.type_id, plan_field.proxy, i, loc);
             if (plan_field.omits_null) {
                 try out.appendSlice(self.allocator, "end\n");
             }
@@ -5389,6 +5440,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn encodeStatement(self: *Self, source: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        if (try self.typeProxy(type_id, self.derive_schema)) |proxy| {
+            return allocPrint(self.allocator, "try {s}({s}, writer, depth + 1)", .{ try self.derivedFunctionName(self.proxyKey(.derive_encode, type_id, proxy), loc), source });
+        }
         const method = switch (self.type_table.getTypePtrById(type_id).kind) {
             .int, .byte => "write_int",
             .float => "write_float",
@@ -5432,6 +5486,9 @@ pub const SemaAnalyzer = struct {
             const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
             return .{ .nullable = try self.planIndex(base, schema, path, loc) };
         }
+        if (try self.typeProxy(type_id, schema)) |proxy| {
+            return .{ .proxy = .{ .proxy = proxy, .plan = try self.planIndex(self.proxies.items[proxy].proxy_type, schema, path, loc) } };
+        }
         switch (type_ptr.kind) {
             .int, .byte, .float, .boolean, .string => return .scalar,
             .array => |item_type| return .{ .array = try self.planIndex(item_type, schema, try allocPrint(self.allocator, "{s}[]", .{path}), loc) },
@@ -5471,13 +5528,16 @@ pub const SemaAnalyzer = struct {
                 try skipped.append(self.allocator, .{ .field_index = @intCast(i), .default_value = default_value.? });
                 continue;
             }
+            const proxy: ?usize = if (naming.via) |rule| try self.resolveProxy(rule, rules.get(field.identifier).?.module, self.nonNullType(field.type_id), false) else null;
+            const field_plan_type = if (proxy) |index| try self.proxiedFieldType(field.type_id, self.proxies.items[index].proxy_type) else field.type_id;
             try fields.append(self.allocator, .{
                 .name = naming.name,
                 .aliases = naming.aliases,
                 .omits_null = naming.omits_null,
                 .field_index = @intCast(i),
-                .plan = try self.planIndex(field.type_id, schema, field_path, loc),
+                .plan = try self.planIndex(field_plan_type, schema, field_path, loc),
                 .default_value = default_value,
+                .proxy = proxy,
             });
         }
         try self.checkDistinctNames(type_id, schema, fields.items, loc);
@@ -5509,7 +5569,7 @@ pub const SemaAnalyzer = struct {
         const rules = member orelse return naming;
         var has_explicit_name = false;
         var aliases: std.ArrayList([]const u8) = .empty;
-        for (rules.rules) |rule| {
+        for (rules.rules) |*rule| {
             switch (rule.kind) {
                 .name => |name| {
                     if (has_explicit_name) {
@@ -5521,7 +5581,7 @@ pub const SemaAnalyzer = struct {
                 },
                 .skip => naming.is_skipped = true,
                 .omit_null => naming.omits_null = true,
-                .via => {},
+                .via => naming.via = rule,
             }
         }
         naming.aliases = aliases.items;
@@ -5652,6 +5712,7 @@ pub const SemaAnalyzer = struct {
             }
         }
         for (self.schemas.items) |schema| {
+            try self.validateTypeRules(schema);
             for (schema.stmt.blocks) |block| {
                 const type_id = try self.blockType(block, schema.module);
                 _ = try self.validatedRules(type_id, schema.type_id);
@@ -5692,7 +5753,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn checkFieldRules(self: *Self, struct_name: []const u8, field: tt.TypedIdentifier, member: MemberRules) CompileError!void {
-        for (member.rules) |rule| {
+        for (member.rules) |*rule| {
             switch (rule.kind) {
                 .skip => {
                     if (field.default_value == null) {
@@ -5704,7 +5765,8 @@ pub const SemaAnalyzer = struct {
                         return self.schemaError(member.module, try allocPrint(self.allocator, "'{s}.{s}' can't use omit_null: it isn't nullable", .{ struct_name, field.identifier }), rule.loc);
                     }
                 },
-                .name, .via => {},
+                .via => _ = try self.resolveProxy(rule, member.module, self.nonNullType(field.type_id), false),
+                .name => {},
             }
         }
     }
@@ -5803,6 +5865,187 @@ pub const SemaAnalyzer = struct {
         return self.err_reporter.invalidSchema(message, loc);
     }
 
+    fn resolveProxy(self: *Self, rule: *const ast.SchemaRule, module: *ModuleScope, value_type: tt.TypeId, is_type_level: bool) CompileError!usize {
+        if (self.proxy_by_rule.get(@intFromPtr(rule))) |index| {
+            return index;
+        }
+        const via = rule.kind.via;
+        const to = try self.proxyFunction(via.to, module, "to");
+        const from = try self.proxyFunction(via.from, module, "from");
+        const to_type = self.type_table.getTypePtrById(to.type_id).kind.function;
+        const from_type = self.type_table.getTypePtrById(from.type_id).kind.function;
+        const value_name = try self.type_table.syntaxName(value_type, self.allocator);
+        const is_to_valid = to_type.params.len == 1 and to_type.params[0].type_id == value_type;
+        if (!is_to_valid) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' must take one '{s}'", .{ to.identifier, value_name }), via.to.loc);
+        }
+        const proxy_type = to_type.return_type_id;
+        const proxy_kind = self.type_table.getTypePtrById(proxy_type).kind;
+        const would_loop = is_type_level and proxy_type == value_type;
+        const is_proxy_valid = proxy_kind != .error_union and proxy_kind != .void and !would_loop;
+        if (!is_proxy_valid) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' must return another type, not '{s}'", .{ to.identifier, try self.type_table.syntaxName(proxy_type, self.allocator) }), via.to.loc);
+        }
+        const from_result = self.type_table.getTypePtrById(from_type.return_type_id);
+        const can_fail = from_result.kind == .error_union;
+        const from_value = if (can_fail) from_result.kind.error_union.payload else from_type.return_type_id;
+        const is_from_valid = from_type.params.len == 1 and from_type.params[0].type_id == proxy_type and from_value == value_type;
+        if (!is_from_valid) {
+            const proxy_name = try self.type_table.syntaxName(proxy_type, self.allocator);
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' must take one '{s}' and return '{s}'", .{ from.identifier, proxy_name, value_name }), via.from.loc);
+        }
+        const index = self.proxies.items.len;
+        try self.proxies.append(self.allocator, .{ .to = to, .from = from, .value_type = value_type, .proxy_type = proxy_type, .can_fail = can_fail });
+        try self.proxy_by_rule.put(self.allocator, @intFromPtr(rule), index);
+        return index;
+    }
+
+    fn proxyFunction(self: *Self, exp: *const ast.ExpNode, module: *ModuleScope, role: []const u8) CompileError!Symbol {
+        if (exp.data != .identifier) {
+            return self.schemaError(module, try allocPrint(self.allocator, "via's '{s}' must name a function", .{role}), exp.loc);
+        }
+        const name = exp.data.identifier;
+        const symbol = module.root.get(name) orelse {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't defined", .{name}), exp.loc);
+        };
+        if (symbol.kind != .function) {
+            return self.schemaError(module, try allocPrint(self.allocator, "'{s}' isn't a function: via takes two functions", .{name}), exp.loc);
+        }
+        return symbol;
+    }
+
+    fn typeProxy(self: *Self, type_id: tt.TypeId, schema: tt.TypeId) CompileError!?usize {
+        const entry = self.schemaEntryOf(schema) orelse return null;
+        for (entry.stmt.type_rules) |*type_rule| {
+            const symbol = entry.module.root.get(type_rule.type_name) orelse continue;
+            const is_match = switch (symbol.kind) {
+                .defined_type => |defined| defined.blueprint_type_id == type_id,
+                .generic_type => |index| if (self.copied_types.get(type_id)) |copy| copy.generic == index else false,
+                else => false,
+            };
+            if (!is_match) continue;
+            const rule = try self.typeRuleVia(type_rule, entry.module);
+            return try self.resolveProxy(rule, entry.module, type_id, true);
+        }
+        return null;
+    }
+
+    fn typeRuleVia(self: *Self, type_rule: *const ast.SchemaTypeRule, module: *ModuleScope) CompileError!*const ast.SchemaRule {
+        const is_single_via = type_rule.rules.len == 1 and type_rule.rules[0].kind == .via;
+        if (!is_single_via) {
+            return self.schemaError(module, "a type line in a schema only takes via(to, from): put member rules in a struct, enum or union block", type_rule.loc);
+        }
+        return &type_rule.rules[0];
+    }
+
+    fn validateTypeRules(self: *Self, schema: SchemaEntry) CompileError!void {
+        for (schema.stmt.type_rules) |*type_rule| {
+            const symbol = schema.module.root.get(type_rule.type_name) orelse {
+                return self.schemaError(schema.module, try allocPrint(self.allocator, "Type '{s}' isn't defined", .{type_rule.type_name}), type_rule.loc);
+            };
+            const type_id = switch (symbol.kind) {
+                .defined_type => |defined| defined.blueprint_type_id,
+                else => {
+                    _ = try self.typeRuleVia(type_rule, schema.module);
+                    continue;
+                },
+            };
+            const rule = try self.typeRuleVia(type_rule, schema.module);
+            _ = try self.resolveProxy(rule, schema.module, type_id, true);
+        }
+    }
+
+    fn nonNullType(self: *Self, type_id: tt.TypeId) tt.TypeId {
+        return self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+    }
+
+    fn proxiedFieldType(self: *Self, field_type: tt.TypeId, proxy_type: tt.TypeId) CompileError!tt.TypeId {
+        if (!self.type_table.getTypePtrById(field_type).is_nullable) {
+            return proxy_type;
+        }
+        return self.type_table.getOrAddNullable(proxy_type);
+    }
+
+    fn isNativePlan(self: *Self, plan_index: usize, visited: *std.AutoHashMapUnmanaged(usize, void)) CompileError!bool {
+        if (visited.contains(plan_index)) {
+            return true;
+        }
+        try visited.put(self.allocator, plan_index, {});
+        return switch (self.serialization_plans.items[plan_index].shape) {
+            .scalar, .enumeration => true,
+            .proxy => false,
+            .nullable, .array, .map => |child| try self.isNativePlan(child, visited),
+            .structure => |structure| blk: {
+                for (structure.fields) |field| {
+                    const is_native_field = field.proxy == null and try self.isNativePlan(field.plan, visited);
+                    if (!is_native_field) {
+                        break :blk false;
+                    }
+                }
+                break :blk true;
+            },
+            .tagged_union => |variants| blk: {
+                for (variants) |variant| {
+                    if (!try self.isNativePlan(variant.plan.?, visited)) {
+                        break :blk false;
+                    }
+                }
+                break :blk true;
+            },
+        };
+    }
+
+    fn isNativeCheck(self: *Self, exp: *const ast.ExpNode) bool {
+        if (exp.data != .fn_call) {
+            return false;
+        }
+        const target = exp.data.fn_call.target;
+        if (target.data != .identifier) {
+            return false;
+        }
+        const symbol = self.scope.symbol_table.get(target.data.identifier) orelse return false;
+        const operation = self.serialization_operation_by_uid.get(symbol.uid) orelse return false;
+        return operation == .is_native;
+    }
+
+    fn derivedFunctionAlias(self: *Self, symbol: Symbol) CompileError![]const u8 {
+        if (self.derived_function_aliases.get(symbol.uid)) |name| {
+            return name;
+        }
+        const module = self.serialization_module orelse @panic("derivedFunctionAlias: std/serialization isn't loaded");
+        const name = try allocPrint(self.allocator, "derived_function_{d}", .{self.derived_function_aliases.count()});
+        var alias = symbol;
+        alias.identifier = name;
+        alias.is_file_only = true;
+        try module.root.put(alias);
+        try self.derived_function_aliases.put(self.allocator, symbol.uid, name);
+        return name;
+    }
+
+    fn proxyKey(self: *Self, operation: native.SerializationOperation, type_id: tt.TypeId, proxy: usize) DerivedKey {
+        return .{ .operation = operation, .type_id = type_id, .schema = self.derive_schema, .proxy = proxy + 1 };
+    }
+
+    fn emitProxyDecode(self: *Self, out: *std.ArrayList(u8), proxy: Proxy, loc: err.Loc) CompileError!void {
+        if (self.type_table.getTypePtrById(proxy.proxy_type).is_nullable) {
+            try self.emit(out, "let mut proxy: {s} = null\n", .{try self.derivedTypeText(proxy.proxy_type, loc)});
+            try self.emitDecodeInto(out, "proxy", proxy.proxy_type, loc);
+        } else {
+            try self.emit(out, "let proxy = {s}\n", .{try self.decodeExpression(proxy.proxy_type, loc)});
+        }
+        const from = try self.derivedFunctionAlias(proxy.from);
+        if (!proxy.can_fail) {
+            try self.emit(out, "return {s}(proxy)\n", .{from});
+            return;
+        }
+        try self.emit(out, "let converted = {s}(proxy) catch e then\nreturn SerializationError.InvalidValue\nend\nreturn converted\n", .{from});
+    }
+
+    fn emitProxyEncode(self: *Self, out: *std.ArrayList(u8), proxy: Proxy, loc: err.Loc) CompileError!void {
+        try self.emit(out, "let proxy = {s}(value)\n", .{try self.derivedFunctionAlias(proxy.to)});
+        try self.emitEncode(out, "proxy", proxy.proxy_type, 0, loc);
+    }
+
     fn unserializableType(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError {
         const saved_reporter = self.err_reporter;
         defer self.err_reporter = saved_reporter;
@@ -5833,7 +6076,8 @@ pub const SemaAnalyzer = struct {
     fn capabilitiesOf(self: *Self, key: DerivedKey, loc: err.Loc) CompileError!Capabilities {
         var capabilities = Capabilities{};
         var visited: std.AutoHashMapUnmanaged(usize, void) = .empty;
-        const plan = try self.planIndex(key.type_id, key.schema, "", loc);
+        const plan_type = if (key.proxy > 0) self.proxies.items[key.proxy - 1].proxy_type else key.type_id;
+        const plan = try self.planIndex(plan_type, key.schema, "", loc);
         try self.collectCapabilities(plan, try self.type_table.syntaxName(key.type_id, self.allocator), &capabilities, &visited);
         return capabilities;
     }
@@ -5843,6 +6087,7 @@ pub const SemaAnalyzer = struct {
         const plan = self.serialization_plans.items[plan_index];
         switch (plan.shape) {
             .scalar => {},
+            .proxy => |proxy| try self.collectCapabilities(proxy.plan, path, capabilities, visited),
             .nullable => |child| {
                 if (capabilities.null_path == null) {
                     capabilities.null_path = path;
@@ -7413,6 +7658,15 @@ const DerivedKey = struct {
     operation: native.SerializationOperation,
     type_id: tt.TypeId,
     schema: tt.TypeId,
+    proxy: usize = 0,
+};
+
+const Proxy = struct {
+    to: Symbol,
+    from: Symbol,
+    value_type: tt.TypeId,
+    proxy_type: tt.TypeId,
+    can_fail: bool,
 };
 
 const PlanKey = struct {
@@ -7447,6 +7701,7 @@ const MemberNaming = struct {
     aliases: []const []const u8 = &.{},
     omits_null: bool = false,
     is_skipped: bool = false,
+    via: ?*const ast.SchemaRule = null,
 };
 
 const Capabilities = struct {

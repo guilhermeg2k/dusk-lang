@@ -145,6 +145,13 @@ test "serialization: schemas rename, alias, skip and omit fields for each consum
     try runCaseError("sema/schema-block-kind.dsk", error.InvalidSchema);
 }
 
+test "serialization: proxies convert values through two functions" {
+    try runCase("serialization-proxies.dsk");
+    try runCaseError("sema/schema-via-wrong-signature.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-via-not-function.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-type-line-rule.dsk", error.InvalidSchema);
+}
+
 test "serialization: reference formats written in Dusk (JSON-like, record notation, rows)" {
     try runCase("serialization-json-like-format.dsk");
     try runCase("serialization-record-format.dsk");
@@ -3759,6 +3766,7 @@ test "builtins: each native error enum matches its error set, names and order" {
     try expectErrorEnumsMatchSets(dusk.stdSource("url"), @import("runtime/builtins/std/url.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("json"), @import("runtime/builtins/std/json.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("time"), @import("runtime/builtins/std/time.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {

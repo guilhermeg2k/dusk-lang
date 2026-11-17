@@ -18,6 +18,7 @@ pub const Shape = union(enum) {
     structure: Structure,
     enumeration: []const EnumVariant,
     tagged_union: TaggedUnion,
+    proxy: u32,
 };
 
 pub const Structure = struct {

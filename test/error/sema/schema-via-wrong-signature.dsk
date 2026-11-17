@@ -1,0 +1,20 @@
+func to_text(value: string) -> string
+    return value
+end
+
+func from_text(text: string) -> int
+    return 1
+end
+
+schema Api end
+
+struct Item
+    count: int
+
+    schema Api
+        count: via(to_text, from_text)
+    end
+end
+
+func main() -> void
+end

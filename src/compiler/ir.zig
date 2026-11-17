@@ -27,6 +27,12 @@ pub const PlanShape = union(enum) {
     structure: PlanStructure,
     enumeration: []const PlanVariant,
     tagged_union: []const PlanVariant,
+    proxy: PlanProxy,
+};
+
+pub const PlanProxy = struct {
+    proxy: usize,
+    plan: usize,
 };
 
 pub const PlanStructure = struct {
@@ -41,6 +47,7 @@ pub const PlanField = struct {
     field_index: u8,
     plan: usize,
     default_value: ?*Value,
+    proxy: ?usize = null,
 };
 
 pub const PlanSkip = struct {

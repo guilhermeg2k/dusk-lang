@@ -16,6 +16,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "find_variant", Binding{ .native = &findVariant } },
     .{ "find_variant_in", Binding{ .native = &findVariantIn } },
     .{ "plan_of", Binding{ .serialization = .plan_of } },
+    .{ "is_native", Binding{ .serialization = .is_native } },
     .{ "derive_decode", Binding{ .serialization = .derive_decode } },
     .{ "derive_encode", Binding{ .serialization = .derive_encode } },
     .{ "blank", Binding{ .serialization = .blank } },

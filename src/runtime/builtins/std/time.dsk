@@ -1,3 +1,7 @@
+error TimeError
+    InvalidTimestamp
+end
+
 struct Timestamp
     ~milliseconds: int
 
@@ -21,3 +25,17 @@ end
 extern func now_ms() -> int
 extern func monotonic_ns() -> int
 extern func ~format_timestamp(milliseconds: int) -> string
+
+func to_iso(timestamp: Timestamp) -> string
+    return format_timestamp(timestamp.milliseconds)
+end
+
+func from_iso(text: string) -> TimeError!Timestamp
+    return from_unix_ms(try parse_timestamp(text))
+end
+
+func to_unix_ms(timestamp: Timestamp) -> int
+    return timestamp.milliseconds
+end
+
+extern func ~parse_timestamp(text: string) -> TimeError!int

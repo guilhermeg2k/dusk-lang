@@ -52,6 +52,10 @@ trait UnionReader
     func end_union(mut self: @) -> SerializationError!void
 end
 
+trait DocumentReader
+    func end_document(mut self: @) -> SerializationError!void
+end
+
 trait ScalarWriter
     func write_int(mut self: @, value: int) -> SerializationError!void
     func write_float(mut self: @, value: float) -> SerializationError!void
@@ -100,6 +104,7 @@ extern func find_variant(variants: int, name: string) -> int
 extern func find_variant_in(variants: int, text: string, start: int, stop: int) -> int
 
 extern func plan_of[T, S: schema]() -> int
+extern func is_native[T, S: schema]() -> bool
 
 extern func ~derive_decode[T, R: ScalarReader, S: schema](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!T
 extern func ~derive_encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W, depth: int) -> SerializationError!void
@@ -109,6 +114,16 @@ extern func ~field_default[T, F](index: int) -> F
 func decode[T, R: ScalarReader, S: schema](mut reader: R) -> SerializationError!T
     let mut pending: []func() -> void = []
     let value = try derive_decode[T, R, S](reader, pending, 0)
+    for pending: apply_default do
+        apply_default()
+    end
+    return value
+end
+
+func decode_document[T, R: ScalarReader + DocumentReader, S: schema](mut reader: R) -> SerializationError!T
+    let mut pending: []func() -> void = []
+    let value = try derive_decode[T, R, S](reader, pending, 0)
+    try reader.end_document()
     for pending: apply_default do
         apply_default()
     end
