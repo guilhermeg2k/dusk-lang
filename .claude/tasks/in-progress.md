@@ -4,6 +4,7 @@
 
 - Branch `v017std`, worktree `dusk-lang-codex`, based on `v017` at `1225e8e`.
 - Initial proposal: `.claude/v0.17-os-plan.md`; scope and API awaiting discussion.
+- Platform identification added to scope by user request (2026-11-17); proposed `platform() -> Platform` enum, representation pending discussion.
 - Next: agree arguments/environment/cwd, exit policy, and whether signals and process-global mutations belong in the first slice. Implementation has not started.
 
 ## v0.16 - Shigeo: std/fs slice A

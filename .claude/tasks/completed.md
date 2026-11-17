@@ -1,5 +1,9 @@
 # Completed
 
+## std/os platform planning addition (2026-11-17)
+
+- Added user-requested platform identification to the v0.17 std/os proposal, including enum representation, runtime-target semantics and validation scope. No implementation.
+
 ## v0.17 std/os initial planning draft (2026-11-17)
 
 - Created `v017std` from `v017` in the existing clean Codex worktree; main checkout changes left untouched.
