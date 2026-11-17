@@ -15,158 +15,197 @@ pub const ReflectError = enum {
     UnsupportedType,
 };
 
+const type_slot = 0;
+const bits_slot = 1;
+const object_slot = 2;
+const session_slot = 3;
+const session_phase_slot = 0;
+const session_handle_slot = 3;
+const complete_phase = 2;
+
 pub fn requireValue(_: *VM, _: []v.Value) anyerror!native.NativeResult {
     return native.ok(v.NULL_VALUE);
 }
 
-pub fn captureValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+pub fn wrapCapturedValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     const type_index: u32 = @intCast(args[1].int64);
-    const wrapper: u16 = @intCast(args[2].int64);
-    const kind = vm.program.reflection_types[type_index].storage;
-    const copied = try vm.copyValue(args[0], kind);
-    return native.ok(try wrapValue(vm, type_index, copied, v.NULL_VALUE, wrapper));
+    const descriptor_id: u16 = @intCast(args[2].int64);
+    return native.ok(try wrapValue(vm, type_index, args[0], v.NULL_VALUE, descriptor_id));
 }
 
-pub fn wrapValue(vm: *VM, type_index: u32, value: v.Value, session: v.Value, wrapper: u16) !v.Value {
+fn wrapValue(vm: *VM, type_index: u32, value: v.Value, session: v.Value, descriptor_id: u16) !v.Value {
     const root_count = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_count);
     const kind = vm.program.reflection_types[type_index].storage;
     const value_root = try vm.heap.protectValue(value, kind);
-    const session_root = try vm.heap.protectValue(session, .@"struct");
-    const size = @sizeOf(v.ReflectedValue);
+    const session_root = try vm.heap.protectValue(session, .nullable);
+    const object_root = try vm.heap.protectValue(v.NULL_VALUE, .nullable);
+    const has_object = kind.isHeapType() and @as(u64, @bitCast(value)) != 0;
+    if (has_object) {
+        const cell_size = v.Cell.calc_size();
+        try vm.maybeCollectGarbage(cell_size);
+        const cell = try v.Cell.init(vm.getCurrentHeapAllocator(), vm.heap.protectedValue(value_root), kind);
+        vm.increaseHeapAllocationCount(cell_size);
+        vm.heap.temporary_roots.items[object_root].value = .{ .heap_obj = &cell.obj };
+    }
+    const field_count = vm.program.struct_descriptors[descriptor_id].field_count;
+    const size = v.Struct.calc_size(field_count);
     try vm.maybeCollectGarbage(size);
-    const result = try v.ReflectedValue.init(vm.getCurrentHeapAllocator(), wrapper, type_index, vm.heap.protectedValue(value_root), kind, vm.heap.protectedValue(session_root));
+    const handle = try v.Struct.init(vm.getCurrentHeapAllocator(), field_count, descriptor_id);
     vm.increaseHeapAllocationCount(size);
-    return .{ .heap_obj = &result.header.obj };
+    const bits: v.Value = if (kind.isHeapType()) .{ .int64 = 0 } else vm.heap.protectedValue(value_root);
+    handle.set(type_slot, .{ .int64 = type_index });
+    handle.set(bits_slot, bits);
+    handle.set(object_slot, vm.heap.protectedValue(object_root));
+    handle.set(session_slot, vm.heap.protectedValue(session_root));
+    return .{ .heap_obj = &handle.obj };
 }
 
-pub fn castValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+pub fn viewValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    if (reflected.type_index.int64 != args[1].int64) {
+    if (handle.get(type_slot).int64 != args[1].int64) {
         return native.fail(ReflectError.TypeMismatch);
     }
-    return native.ok(try vm.copyValue(reflected.value, reflected.value_kind));
+    return native.ok(payloadOf(vm, handle));
 }
 
-pub fn reflectedValue(value: v.Value) *v.ReflectedValue {
-    return v.ReflectedValue.fromHeap(value.heap_obj);
+fn handleOf(value: v.Value) *v.Struct {
+    return v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
 }
 
-pub fn isReady(value: *const v.ReflectedValue) bool {
-    if (@as(u64, @bitCast(value.session)) == 0) {
-        return true;
+fn isReady(handle: *const v.Struct) bool {
+    const session = sessionStateOf(handle) orelse return true;
+    return session.get(session_phase_slot).int64 == complete_phase;
+}
+
+fn sessionStateOf(handle: *const v.Struct) ?*v.Struct {
+    const session = handle.get(session_slot);
+    if (@as(u64, @bitCast(session)) == 0) {
+        return null;
     }
-    return v.HeapValue.getParentPtr(v.Struct, value.session.heap_obj).get(0).int64 == 2;
+    const cell = v.HeapValue.getParentPtr(v.Cell, session.heap_obj);
+    return v.HeapValue.getParentPtr(v.Struct, cell.value.heap_obj);
 }
 
-pub fn valueDescriptor(vm: *VM, value: *const v.ReflectedValue) format.Descriptor {
-    return vm.program.reflection_types[@intCast(value.type_index.int64)];
+fn payloadOf(vm: *VM, handle: *const v.Struct) v.Value {
+    if (!handleDescriptor(vm, handle).storage.isHeapType()) {
+        return handle.get(bits_slot);
+    }
+    const object = handle.get(object_slot);
+    if (@as(u64, @bitCast(object)) == 0) {
+        return v.NULL_VALUE;
+    }
+    return v.HeapValue.getParentPtr(v.Cell, object.heap_obj).value;
 }
 
-pub fn valueTypeIndex(_: *VM, args: []v.Value) anyerror!native.NativeResult {
-    return native.ok(reflectedValue(args[0]).type_index);
+fn handleDescriptor(vm: *VM, handle: *const v.Struct) format.Descriptor {
+    return vm.program.reflection_types[@intCast(handle.get(type_slot).int64)];
 }
 
 pub fn readField(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
+    const source = handleDescriptor(vm, handle);
     if (source.kind != .Struct) {
         return native.fail(ReflectError.TypeMismatch);
     }
     const name = native.bytesArg(args, 1);
     for (source.fields) |field| {
         if (!std.mem.eql(u8, name, field.name)) continue;
-        const object = v.HeapValue.getParentPtr(v.Struct, reflected.value.heap_obj);
-        return native.ok(try wrapValue(vm, field.type_index, object.get(field.slot), reflected.session, reflected.header.descriptor_id));
+        const object = v.HeapValue.getParentPtr(v.Struct, payloadOf(vm, handle).heap_obj);
+        return native.ok(try wrapValue(vm, field.type_index, object.get(field.slot), handle.get(session_slot), handle.descriptor_id));
     }
     return native.fail(ReflectError.UnknownField);
 }
 
 pub fn readElement(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
+    const source = handleDescriptor(vm, handle);
     if (source.kind != .Array) {
         return native.fail(ReflectError.TypeMismatch);
     }
-    const array = v.HeapValue.getParentPtr(v.Array, reflected.value.heap_obj.followRelocated());
+    const array = v.HeapValue.getParentPtr(v.Array, payloadOf(vm, handle).heap_obj.followRelocated());
     const index = args[1].int64;
     const is_in_range = index >= 0 and index < array.len;
     if (!is_in_range) {
         return native.fail(ReflectError.OutOfRange);
     }
-    return native.ok(try wrapValue(vm, source.child.?, array.getDataPtr()[@intCast(index)], reflected.session, reflected.header.descriptor_id));
+    return native.ok(try wrapValue(vm, source.child.?, array.getDataPtr()[@intCast(index)], handle.get(session_slot), handle.descriptor_id));
 }
 
 pub fn valueLength(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
-    const length = switch (source.kind) {
-        .Array => v.HeapValue.getParentPtr(v.Array, reflected.value.heap_obj.followRelocated()).len,
-        .Map => v.HeapValue.getParentPtr(v.Map, reflected.value.heap_obj).count(),
+    const payload = payloadOf(vm, handle);
+    const length = switch (handleDescriptor(vm, handle).kind) {
+        .Array => v.HeapValue.getParentPtr(v.Array, payload.heap_obj.followRelocated()).len,
+        .Map => v.HeapValue.getParentPtr(v.Map, payload.heap_obj).count(),
         else => return native.fail(ReflectError.TypeMismatch),
     };
     return native.ok(.{ .int64 = @intCast(length) });
 }
 
-pub fn areSameObjects(_: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const left = reflectedValue(args[0]);
-    const right = reflectedValue(args[1]);
+pub fn areSameObjects(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const left = handleOf(args[0]);
+    const right = handleOf(args[1]);
     const are_ready = isReady(left) and isReady(right);
     if (!are_ready) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const can_compare_identity = left.type_index.int64 == right.type_index.int64 and left.value_kind.isHeapType() and @as(u64, @bitCast(left.value)) != 0 and @as(u64, @bitCast(right.value)) != 0;
+    const left_payload = payloadOf(vm, left);
+    const right_payload = payloadOf(vm, right);
+    const can_compare_identity = left.get(type_slot).int64 == right.get(type_slot).int64 and handleDescriptor(vm, left).storage.isHeapType() and @as(u64, @bitCast(left_payload)) != 0 and @as(u64, @bitCast(right_payload)) != 0;
     if (!can_compare_identity) {
         return native.ok(.{ .bool = false });
     }
-    return native.ok(.{ .bool = left.value.heap_obj.followRelocated() == right.value.heap_obj.followRelocated() });
+    return native.ok(.{ .bool = left_payload.heap_obj.followRelocated() == right_payload.heap_obj.followRelocated() });
 }
 
 pub fn isNull(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const has_null_value = valueDescriptor(vm, reflected).kind == .Nullable and @as(u64, @bitCast(reflected.value)) == 0;
+    const has_null_value = handleDescriptor(vm, handle).kind == .Nullable and @as(u64, @bitCast(payloadOf(vm, handle))) == 0;
     return native.ok(.{ .bool = has_null_value });
 }
 
 pub fn unwrapValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
-    const has_value = source.kind == .Nullable and @as(u64, @bitCast(reflected.value)) != 0;
+    const source = handleDescriptor(vm, handle);
+    const payload = payloadOf(vm, handle);
+    const has_value = source.kind == .Nullable and @as(u64, @bitCast(payload)) != 0;
     if (!has_value) {
         return native.fail(ReflectError.TypeMismatch);
     }
     const child = vm.program.reflection_types[source.child.?];
-    const value = if (child.storage.isHeapType()) reflected.value else v.HeapValue.getParentPtr(v.NullBox, reflected.value.heap_obj).value;
-    return native.ok(try wrapValue(vm, source.child.?, value, reflected.session, reflected.header.descriptor_id));
+    const value = if (child.storage.isHeapType()) payload else v.HeapValue.getParentPtr(v.NullBox, payload.heap_obj).value;
+    return native.ok(try wrapValue(vm, source.child.?, value, handle.get(session_slot), handle.descriptor_id));
 }
 
 pub fn variantName(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
+    const source = handleDescriptor(vm, handle);
+    const payload = payloadOf(vm, handle);
     const variant_value = switch (source.kind) {
-        .Enum => reflected.value.int64,
-        .Union => v.HeapValue.getParentPtr(v.Union, reflected.value.heap_obj).active_tag,
+        .Enum => payload.int64,
+        .Union => v.HeapValue.getParentPtr(v.Union, payload.heap_obj).active_tag,
         else => return native.fail(ReflectError.TypeMismatch),
     };
     for (source.variants) |variant| {
@@ -177,29 +216,29 @@ pub fn variantName(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 }
 
 pub fn variantValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    if (valueDescriptor(vm, reflected).kind != .Enum) {
+    if (handleDescriptor(vm, handle).kind != .Enum) {
         return native.fail(ReflectError.TypeMismatch);
     }
-    return native.ok(reflected.value);
+    return native.ok(payloadOf(vm, handle));
 }
 
 pub fn unionPayload(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
+    const source = handleDescriptor(vm, handle);
     if (source.kind != .Union) {
         return native.fail(ReflectError.TypeMismatch);
     }
-    const object = v.HeapValue.getParentPtr(v.Union, reflected.value.heap_obj);
+    const object = v.HeapValue.getParentPtr(v.Union, payloadOf(vm, handle).heap_obj);
     for (source.variants) |variant| {
         if (variant.value != object.active_tag) continue;
-        return native.ok(try wrapValue(vm, variant.type_index.?, object.get(object.active_tag), reflected.session, reflected.header.descriptor_id));
+        return native.ok(try wrapValue(vm, variant.type_index.?, object.get(object.active_tag), handle.get(session_slot), handle.descriptor_id));
     }
     return native.fail(ReflectError.UnknownVariant);
 }
@@ -213,15 +252,15 @@ pub fn mapValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 }
 
 fn mapEntry(vm: *VM, args: []v.Value, should_read_key: bool) !native.NativeResult {
-    const reflected = reflectedValue(args[0]);
-    if (!isReady(reflected)) {
+    const handle = handleOf(args[0]);
+    if (!isReady(handle)) {
         return native.fail(ReflectError.InvalidBuilderState);
     }
-    const source = valueDescriptor(vm, reflected);
+    const source = handleDescriptor(vm, handle);
     if (source.kind != .Map) {
         return native.fail(ReflectError.TypeMismatch);
     }
-    const map = v.HeapValue.getParentPtr(v.Map, reflected.value.heap_obj);
+    const map = v.HeapValue.getParentPtr(v.Map, payloadOf(vm, handle).heap_obj);
     const index = args[1].int64;
     const is_in_range = index >= 0 and index < map.count();
     if (!is_in_range) {
@@ -233,16 +272,11 @@ fn mapEntry(vm: *VM, args: []v.Value, should_read_key: bool) !native.NativeResul
         if (position == index) {
             const child = if (should_read_key) source.key.? else source.child.?;
             const value = if (should_read_key) entry.key else entry.value;
-            return native.ok(try wrapValue(vm, child, value, reflected.session, reflected.header.descriptor_id));
+            return native.ok(try wrapValue(vm, child, value, handle.get(session_slot), handle.descriptor_id));
         }
         position += 1;
     }
     unreachable;
-}
-
-pub fn shareState(_: *VM, args: []v.Value) anyerror!native.NativeResult {
-    args[0].heap_obj.kind = .reflection_state;
-    return native.ok(v.NULL_VALUE);
 }
 
 pub fn canConstruct(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
@@ -295,11 +329,11 @@ fn canConstructType(vm: *VM, index: u32, visited: *std.AutoHashMapUnmanaged(u32,
 }
 
 pub fn canAttach(_: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const value = reflectedValue(args[1]);
-    if (isReady(value)) {
+    const handle = handleOf(args[1]);
+    if (isReady(handle)) {
         return native.ok(.{ .bool = true });
     }
-    return native.ok(.{ .bool = value.session.heap_obj == args[0].heap_obj });
+    return native.ok(.{ .bool = &sessionStateOf(handle).?.obj == args[0].heap_obj });
 }
 
 pub fn construct(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
@@ -318,7 +352,22 @@ pub fn construct(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
         }
         return native.fail(std.meta.stringToEnum(ReflectError, @errorName(failure)) orelse .InvalidBuilderState);
     };
-    return native.ok(try wrapValue(vm, type_index, vm.heap.protectedValue(result), vm.heap.protectedValue(session), @intCast(args[1].int64)));
+    const session_handle = try sessionHandle(vm, session);
+    return native.ok(try wrapValue(vm, type_index, vm.heap.protectedValue(result), session_handle, @intCast(args[1].int64)));
+}
+
+fn sessionHandle(vm: *VM, session_root: usize) !v.Value {
+    const existing = v.HeapValue.getParentPtr(v.Struct, vm.heap.protectedValue(session_root).heap_obj).get(session_handle_slot);
+    if (@as(u64, @bitCast(existing)) != 0) {
+        return existing;
+    }
+    const size = v.Cell.calc_size();
+    try vm.maybeCollectGarbage(size);
+    const cell = try v.Cell.init(vm.getCurrentHeapAllocator(), vm.heap.protectedValue(session_root), .@"struct");
+    vm.increaseHeapAllocationCount(size);
+    const handle: v.Value = .{ .heap_obj = &cell.obj };
+    v.HeapValue.getParentPtr(v.Struct, vm.heap.protectedValue(session_root).heap_obj).set(session_handle_slot, handle);
+    return handle;
 }
 
 const Construction = struct {
@@ -444,17 +493,17 @@ const Construction = struct {
         if (index >= items.len) {
             return error.MissingField;
         }
-        const value = reflectedValue(items.getDataPtr()[index]);
-        if (value.type_index.int64 != expected) {
+        const handle = handleOf(items.getDataPtr()[index]);
+        if (handle.get(type_slot).int64 != expected) {
             return error.TypeMismatch;
         }
-        if (!isReady(value)) {
-            const is_same_session = value.session.heap_obj == self.vm.heap.protectedValue(self.session).heap_obj;
+        if (!isReady(handle)) {
+            const is_same_session = &sessionStateOf(handle).?.obj == self.vm.heap.protectedValue(self.session).heap_obj;
             if (!is_same_session) {
                 return error.InvalidBuilderState;
             }
         }
-        return value.value;
+        return payloadOf(self.vm, handle);
     }
 
     fn queueDefault(self: *Construction, object: usize, function: u16) !void {

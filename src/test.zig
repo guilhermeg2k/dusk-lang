@@ -77,12 +77,6 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);
 }
 
-test "reflect: native box layout matches its protected struct header" {
-    const value = @import("runtime/value.zig");
-    try testing.expectEqual(@sizeOf(value.Struct), @offsetOf(value.ReflectedValue, "type_index"));
-    try testing.expectEqual(@as(usize, 0), @offsetOf(value.ReflectedValue, "header"));
-}
-
 test "reflect: checked snapshots, typed builders and deferred sessions" {
     try runCase("reflect-values.dsk");
     try runCase("reflect-builders.dsk");

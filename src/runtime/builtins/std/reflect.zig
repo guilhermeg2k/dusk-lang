@@ -9,13 +9,11 @@ pub const error_sets = .{reflection.ReflectError};
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "require_value", native.Binding{ .reflection = .{ .operation = .require_value, .func = &reflection.requireValue } } },
-    .{ "share_state", native.Binding{ .native = &reflection.shareState } },
     .{ "can_construct", native.Binding{ .native = &reflection.canConstruct } },
     .{ "can_attach", native.Binding{ .native = &reflection.canAttach } },
     .{ "construct", native.Binding{ .reflection = .{ .operation = .result_descriptor, .func = &reflection.construct } } },
-    .{ "value", native.Binding{ .reflection = .{ .operation = .value, .func = &reflection.captureValue } } },
-    .{ "cast", native.Binding{ .reflection = .{ .operation = .cast, .func = &reflection.castValue } } },
-    .{ "value_type_index", native.Binding{ .native = &reflection.valueTypeIndex } },
+    .{ "wrap_value", native.Binding{ .reflection = .{ .operation = .value, .func = &reflection.wrapCapturedValue } } },
+    .{ "view_as", native.Binding{ .reflection = .{ .operation = .cast, .func = &reflection.viewValue } } },
     .{ "field", native.Binding{ .native = &reflection.readField } },
     .{ "element", native.Binding{ .native = &reflection.readElement } },
     .{ "length", native.Binding{ .native = &reflection.valueLength } },

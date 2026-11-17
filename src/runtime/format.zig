@@ -64,7 +64,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) std.I
                 .string => try printValue(writer, value, .string),
                 .buffer => try printValue(writer, value, .buffer),
                 .array => try printValue(writer, value, .array),
-                .@"struct", .reflected_value, .reflection_state => try printValue(writer, value, .@"struct"),
+                .@"struct" => try printValue(writer, value, .@"struct"),
                 .@"union" => try printValue(writer, value, .@"union"),
                 .closure => try printValue(writer, value, .function),
                 .task => try printValue(writer, value, .task),

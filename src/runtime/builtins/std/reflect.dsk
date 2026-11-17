@@ -13,6 +13,9 @@ end
 
 struct Value
     ~type_index: int
+    ~bits: int
+    ~object: ?int
+    ~session: ?int
 end
 
 struct Type
@@ -172,9 +175,8 @@ func union_variants(type: Type) -> []UnionVariant
     return result
 end
 
-extern func value[T](value: T) -> Value
-extern func cast[T](value: Value) -> ReflectError!T
-extern func ~value_type_index(value: Value) -> int
+extern func ~wrap_value[T](input: T) -> Value
+extern func ~view_as[T](value: Value) -> ReflectError!T
 extern func field(value: Value, name: string) -> ReflectError!Value
 extern func element(value: Value, index: int) -> ReflectError!Value
 extern func length(value: Value) -> ReflectError!int
@@ -187,34 +189,58 @@ extern func payload(value: Value) -> ReflectError!Value
 extern func map_key(value: Value, index: int) -> ReflectError!Value
 extern func map_value(value: Value, index: int) -> ReflectError!Value
 
+func value[T](input: T) -> Value
+    return wrap_value[T](copy(input))
+end
+
+func cast[T](value: Value) -> ReflectError!T
+    return copy(try view_as[T](value))
+end
+
 func value_type(value: Value) -> Type
-    return Type(value_type_index(value))
+    return Type(value.type_index)
+end
+
+enum ~SessionPhase
+    Open
+    Completing
+    Complete
+    Failed
+end
+
+struct ~SessionState
+    phase: SessionPhase
+    defaults: []func() -> void
+    pending_builders: int
+    handle: ?int
 end
 
 struct Session
-    ~state: int
-    ~defaults: []func() -> void
-    ~pending_builders: int
+    ~shared: func() -> SessionState
+end
+
+struct ~BuilderState
+    type: Type
+    session: SessionState
+    values: []Value
+    names: []string
+    keys: []Value
+    is_finished: bool
 end
 
 struct Builder
-    ~type: Type
-    ~session: Session
-    ~values: []Value
-    ~names: []string
-    ~keys: []Value
-    ~is_finished: bool
+    ~shared: func() -> BuilderState
 end
 
-extern func ~share_state[T](mut state: T) -> void
 extern func ~can_construct(type: Type) -> bool
-extern func ~can_attach(session: Session, value: Value) -> bool
-extern func ~construct(mut builder: Builder) -> ReflectError!Value
+extern func ~can_attach(session: SessionState, value: Value) -> bool
+extern func ~construct(mut builder: BuilderState) -> ReflectError!Value
 
 func begin_session() -> Session
-    let mut session = Session(0, [], 0)
-    share_state(session)
-    return session
+    let mut state = SessionState(SessionPhase.Open, [], 0, null)
+    return Session(func() -> SessionState
+        return state
+    end)
 end
 
 func builder[T]() -> ReflectError!Builder
@@ -227,7 +253,8 @@ func builder_for(type: Type) -> ReflectError!Builder
 end
 
 func builder_in(mut session: Session, type: Type) -> ReflectError!Builder
-    if session.state != 0 then
+    let mut shared = session.shared()
+    if shared.phase != SessionPhase.Open then
         return ReflectError.InvalidBuilderState
     end
     let type_kind = kind(type)
@@ -235,10 +262,11 @@ func builder_in(mut session: Session, type: Type) -> ReflectError!Builder
     if !is_container or !can_construct(type) then
         return ReflectError.UnsupportedType
     end
-    let mut result = Builder(copy(type), session, [], [], [], false)
-    share_state(result)
-    session.pending_builders = session.pending_builders + 1
-    return result
+    let mut state = BuilderState(copy(type), shared, [], [], [], false)
+    shared.pending_builders = shared.pending_builders + 1
+    return Builder(func() -> BuilderState
+        return state
+    end)
 end
 
 func set[T](mut builder: Builder, name: string, input: T) -> ReflectError!void
@@ -246,22 +274,22 @@ func set[T](mut builder: Builder, name: string, input: T) -> ReflectError!void
 end
 
 func set_value(mut builder: Builder, name: string, input: Value) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Struct then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Struct then
         return ReflectError.TypeMismatch
     end
-    let index = member_index(builder.type, name)
+    let index = member_index(state.type, name)
     if index < 0 then
         return ReflectError.UnknownField
     end
-    try check_input(builder, input, member_type(builder.type, index))
-    for builder.names: existing do
+    try check_input(state, input, member_type(state.type, index))
+    for state.names: existing do
         if existing == name then
             return ReflectError.DuplicateAssignment
         end
     end
-    array::append(builder.names, name)
-    array::append(builder.values, copy(input))
+    array::append(state.names, name)
+    array::append(state.values, copy(input))
 end
 
 func append[T](mut builder: Builder, input: T) -> ReflectError!void
@@ -269,12 +297,12 @@ func append[T](mut builder: Builder, input: T) -> ReflectError!void
 end
 
 func append_value(mut builder: Builder, input: Value) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Array then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Array then
         return ReflectError.TypeMismatch
     end
-    try check_input(builder, input, child_type(builder.type, false))
-    array::append(builder.values, copy(input))
+    try check_input(state, input, child_type(state.type, false))
+    array::append(state.values, copy(input))
 end
 
 func insert[K, V](mut builder: Builder, key: K, input: V) -> ReflectError!void
@@ -282,14 +310,14 @@ func insert[K, V](mut builder: Builder, key: K, input: V) -> ReflectError!void
 end
 
 func insert_value(mut builder: Builder, key: Value, input: Value) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Map then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Map then
         return ReflectError.TypeMismatch
     end
-    try check_input(builder, key, child_type(builder.type, true))
-    try check_input(builder, input, child_type(builder.type, false))
-    array::append(builder.keys, copy(key))
-    array::append(builder.values, copy(input))
+    try check_input(state, key, child_type(state.type, true))
+    try check_input(state, input, child_type(state.type, false))
+    array::append(state.keys, copy(key))
+    array::append(state.values, copy(input))
 end
 
 func select[T](mut builder: Builder, name: string, input: T) -> ReflectError!void
@@ -297,45 +325,45 @@ func select[T](mut builder: Builder, name: string, input: T) -> ReflectError!voi
 end
 
 func select_value(mut builder: Builder, name: string, input: Value) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Union then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Union then
         return ReflectError.TypeMismatch
     end
-    if array::len(builder.names) != 0 then
+    if array::len(state.names) != 0 then
         return ReflectError.DuplicateAssignment
     end
-    let index = member_index(builder.type, name)
+    let index = member_index(state.type, name)
     if index < 0 then
         return ReflectError.UnknownVariant
     end
-    try check_input(builder, input, member_type(builder.type, index))
-    array::append(builder.names, name)
-    array::append(builder.values, copy(input))
+    try check_input(state, input, member_type(state.type, index))
+    array::append(state.names, name)
+    array::append(state.values, copy(input))
 end
 
 func select_enum(mut builder: Builder, name: string) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Enum then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Enum then
         return ReflectError.TypeMismatch
     end
-    if array::len(builder.names) != 0 then
+    if array::len(state.names) != 0 then
         return ReflectError.DuplicateAssignment
     end
-    if member_index(builder.type, name) < 0 then
+    if member_index(state.type, name) < 0 then
         return ReflectError.UnknownVariant
     end
-    array::append(builder.names, name)
+    array::append(state.names, name)
 end
 
 func set_null(mut builder: Builder) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Nullable then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Nullable then
         return ReflectError.TypeMismatch
     end
-    if array::len(builder.values) + array::len(builder.names) != 0 then
+    if array::len(state.values) + array::len(state.names) != 0 then
         return ReflectError.DuplicateAssignment
     end
-    array::append(builder.names, "null")
+    array::append(state.names, "null")
 end
 
 func set_present[T](mut builder: Builder, input: T) -> ReflectError!void
@@ -343,68 +371,77 @@ func set_present[T](mut builder: Builder, input: T) -> ReflectError!void
 end
 
 func set_present_value(mut builder: Builder, input: Value) -> ReflectError!void
-    try ensure_builder(builder)
-    if kind(builder.type) != Kind.Nullable then
+    let mut state = try open_state(builder)
+    if kind(state.type) != Kind.Nullable then
         return ReflectError.TypeMismatch
     end
-    if array::len(builder.values) + array::len(builder.names) != 0 then
+    if array::len(state.values) + array::len(state.names) != 0 then
         return ReflectError.DuplicateAssignment
     end
-    try check_input(builder, input, child_type(builder.type, false))
-    array::append(builder.values, copy(input))
+    try check_input(state, input, child_type(state.type, false))
+    array::append(state.values, copy(input))
 end
 
 func defer_finish(mut builder: Builder) -> ReflectError!Value
-    try ensure_builder(builder)
-    builder.is_finished = true
-    let result = construct(builder) catch err then
-        builder.session.state = 3
+    let mut state = try open_state(builder)
+    state.is_finished = true
+    let result = construct(state) catch err then
+        state.session.phase = SessionPhase.Failed
         return err
     end
-    builder.session.pending_builders = builder.session.pending_builders - 1
+    state.session.pending_builders = state.session.pending_builders - 1
     return result
 end
 
 func complete_session(mut session: Session) -> ReflectError!void
-    if session.state != 0 or session.pending_builders != 0 then
-        return ReflectError.InvalidBuilderState
-    end
-    session.state = 1
-    for session.defaults: apply_default do
-        apply_default()
-    end
-    session.state = 2
-    array::clear(session.defaults)
+    let mut state = session.shared()
+    try complete(state)
 end
 
 func finish(mut builder: Builder) -> ReflectError!Value
-    try ensure_builder(builder)
-    if builder.session.pending_builders != 1 then
+    let mut state = try open_state(builder)
+    if state.session.pending_builders != 1 then
         return ReflectError.InvalidBuilderState
     end
     let result = try defer_finish(builder)
-    try complete_session(builder.session)
+    try complete(state.session)
     return result
 end
 
 func finish_as[T](mut builder: Builder) -> ReflectError!T
-    if !is_same(builder.type, type_of[T]()) then
+    if !is_same(builder.shared().type, type_of[T]()) then
         return ReflectError.TypeMismatch
     end
     return try cast[T](try finish(builder))
 end
 
-func ~ensure_builder(builder: Builder) -> ReflectError!void
-    if builder.is_finished or builder.session.state != 0 then
+func ~open_state(builder: Builder) -> ReflectError!BuilderState
+    let state = builder.shared()
+    let is_closed = state.is_finished or state.session.phase != SessionPhase.Open
+    if is_closed then
+        return ReflectError.InvalidBuilderState
+    end
+    return state
+end
+
+func ~check_input(state: BuilderState, input: Value, expected: Type) -> ReflectError!void
+    if !is_same(value_type(input), expected) then
+        return ReflectError.TypeMismatch
+    end
+    if !can_attach(state.session, input) then
         return ReflectError.InvalidBuilderState
     end
 end
 
-func ~check_input(builder: Builder, input: Value, expected: Type) -> ReflectError!void
-    if !is_same(value_type(input), expected) then
-        return ReflectError.TypeMismatch
-    end
-    if !can_attach(builder.session, input) then
+func ~complete(mut session: SessionState) -> ReflectError!void
+    let can_complete = session.phase == SessionPhase.Open and session.pending_builders == 0
+    if !can_complete then
         return ReflectError.InvalidBuilderState
     end
+    session.phase = SessionPhase.Completing
+    for session.defaults: apply_default do
+        apply_default()
+    end
+    session.phase = SessionPhase.Complete
+    array::clear(session.defaults)
 end

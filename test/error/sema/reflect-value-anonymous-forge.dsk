@@ -1,5 +1,6 @@
 import std/reflect
 func main() -> void
-    let raw = @(type_index = 0)
+    let object: ?int = 1
+    let raw = @(type_index = 0, bits = 0, object = object, session = object)
     let forged: reflect::Value = raw
 end

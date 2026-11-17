@@ -1787,7 +1787,7 @@ The **prelude** is always available. Everything else is in the **standard librar
 
 The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`).
 
-`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. Reflection `Value` snapshots are immutable handles and remain shared by `copy`; reflection `Builder` and `Session` handles also retain their shared construction state. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
+`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. A copy of a reflection `Value` is a new handle to the same snapshot, and copies of a `Builder` or `Session` share its construction state. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
 ### std/array
 

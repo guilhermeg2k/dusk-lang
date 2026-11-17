@@ -170,7 +170,7 @@ const Collector = struct {
                     try self.copyHeapValue(item);
                 }
             },
-            .@"struct", .reflection_state => {
+            .@"struct" => {
                 const s = v.HeapValue.getParentPtr(v.Struct, obj);
                 const desc = self.program.struct_descriptors[s.descriptor_id];
                 const fields = s.getDataPtr()[0..s.field_count];
@@ -179,13 +179,6 @@ const Collector = struct {
                         try self.copyHeapValue(&fields[i]);
                     }
                 }
-            },
-            .reflected_value => {
-                const reflected = v.ReflectedValue.fromHeap(obj);
-                if (reflected.value_kind.isHeapType()) {
-                    try self.copyHeapValue(&reflected.value);
-                }
-                try self.copyHeapValue(&reflected.session);
             },
             .closure => {
                 const closure = v.HeapValue.getParentPtr(v.Closure, obj);
@@ -248,8 +241,7 @@ fn binarySearch(comptime T: type, comptime field: []const u8, items: []const T, 
 pub fn cloneHeapObj(allocator: std.mem.Allocator, obj_ptr: *v.HeapValue) !*v.HeapValue {
     return switch (obj_ptr.kind) {
         .array => &(try v.HeapValue.getParentPtr(v.Array, obj_ptr).clone(allocator)).obj,
-        .@"struct", .reflection_state => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
-        .reflected_value => &(try v.ReflectedValue.fromHeap(obj_ptr).clone(allocator)).header.obj,
+        .@"struct" => &(try v.HeapValue.getParentPtr(v.Struct, obj_ptr).clone(allocator)).obj,
         .@"union" => &(try v.HeapValue.getParentPtr(v.Union, obj_ptr).clone(allocator)).obj,
         .null_box => &(try v.HeapValue.getParentPtr(v.NullBox, obj_ptr).clone(allocator)).obj,
         .closure => &(try v.HeapValue.getParentPtr(v.Closure, obj_ptr).clone(allocator)).obj,
@@ -264,8 +256,7 @@ pub fn cloneHeapObj(allocator: std.mem.Allocator, obj_ptr: *v.HeapValue) !*v.Hea
 pub fn heapObjectSize(ptr: *v.HeapValue) usize {
     return switch (ptr.kind) {
         .array => v.Array.calc_size(v.HeapValue.getParentPtr(v.Array, ptr).capacity),
-        .reflected_value => @sizeOf(v.ReflectedValue),
-        .@"struct", .reflection_state => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
+        .@"struct" => v.Struct.calc_size(v.HeapValue.getParentPtr(v.Struct, ptr).field_count),
         .@"union" => v.Union.calc_size(),
         .null_box => v.NullBox.calc_size(),
         .closure => v.Closure.calc_size(v.HeapValue.getParentPtr(v.Closure, ptr).capture_count),
