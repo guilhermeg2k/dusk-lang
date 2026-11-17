@@ -10,6 +10,7 @@ pub const Descriptor = struct {
     variants: []const Variant = &.{},
     object_descriptor: ?u16 = null,
     has_private_fields: bool = false,
+    is_constructible: bool = false,
 };
 
 pub const Kind = enum {

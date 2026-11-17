@@ -235,6 +235,7 @@ end
 extern func ~can_construct(type: Type) -> bool
 extern func ~can_attach(session: SessionState, value: Value) -> bool
 extern func ~construct(mut builder: BuilderState) -> ReflectError!Value
+extern func ~append_handle(mut handles: []Value, input: Value) -> void
 
 func begin_session() -> Session
     let mut state = SessionState(SessionPhase.Open, [], 0, null)
@@ -289,7 +290,7 @@ func set_value(mut builder: Builder, name: string, input: Value) -> ReflectError
         end
     end
     array::append(state.names, name)
-    array::append(state.values, copy(input))
+    append_handle(state.values, input)
 end
 
 func append[T](mut builder: Builder, input: T) -> ReflectError!void
@@ -302,7 +303,7 @@ func append_value(mut builder: Builder, input: Value) -> ReflectError!void
         return ReflectError.TypeMismatch
     end
     try check_input(state, input, child_type(state.type, false))
-    array::append(state.values, copy(input))
+    append_handle(state.values, input)
 end
 
 func insert[K, V](mut builder: Builder, key: K, input: V) -> ReflectError!void
@@ -316,8 +317,8 @@ func insert_value(mut builder: Builder, key: Value, input: Value) -> ReflectErro
     end
     try check_input(state, key, child_type(state.type, true))
     try check_input(state, input, child_type(state.type, false))
-    array::append(state.keys, copy(key))
-    array::append(state.values, copy(input))
+    append_handle(state.keys, key)
+    append_handle(state.values, input)
 end
 
 func select[T](mut builder: Builder, name: string, input: T) -> ReflectError!void
@@ -338,7 +339,7 @@ func select_value(mut builder: Builder, name: string, input: Value) -> ReflectEr
     end
     try check_input(state, input, member_type(state.type, index))
     array::append(state.names, name)
-    array::append(state.values, copy(input))
+    append_handle(state.values, input)
 end
 
 func select_enum(mut builder: Builder, name: string) -> ReflectError!void
@@ -379,7 +380,7 @@ func set_present_value(mut builder: Builder, input: Value) -> ReflectError!void
         return ReflectError.DuplicateAssignment
     end
     try check_input(state, input, child_type(state.type, false))
-    array::append(state.values, copy(input))
+    append_handle(state.values, input)
 end
 
 func defer_finish(mut builder: Builder) -> ReflectError!Value

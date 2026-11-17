@@ -12,6 +12,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "can_construct", native.Binding{ .native = &reflection.canConstruct } },
     .{ "can_attach", native.Binding{ .native = &reflection.canAttach } },
     .{ "construct", native.Binding{ .reflection = .{ .operation = .result_descriptor, .func = &reflection.construct } } },
+    .{ "append_handle", native.Binding{ .native = &reflection.appendHandle } },
     .{ "wrap_value", native.Binding{ .reflection = .{ .operation = .value, .func = &reflection.wrapCapturedValue } } },
     .{ "view_as", native.Binding{ .reflection = .{ .operation = .cast, .func = &reflection.viewValue } } },
     .{ "field", native.Binding{ .native = &reflection.readField } },

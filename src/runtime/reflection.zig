@@ -280,52 +280,8 @@ fn mapEntry(vm: *VM, args: []v.Value, should_read_key: bool) !native.NativeResul
 }
 
 pub fn canConstruct(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    var visited: std.AutoHashMapUnmanaged(u32, void) = .empty;
-    defer visited.deinit(vm.allocator);
     const index: u32 = @intCast(v.HeapValue.getParentPtr(v.Struct, args[0].heap_obj).get(0).int64);
-    return native.ok(.{ .bool = try canConstructType(vm, index, &visited) });
-}
-
-fn canConstructType(vm: *VM, index: u32, visited: *std.AutoHashMapUnmanaged(u32, void)) !bool {
-    if (visited.contains(index)) {
-        return true;
-    }
-    try visited.put(vm.allocator, index, {});
-    const source = vm.program.reflection_types[index];
-    switch (source.kind) {
-        .Int, .Byte, .Float, .Bool, .String, .Buffer, .Enum => return true,
-        .Array, .Nullable => return canConstructType(vm, source.child.?, visited),
-        .Map => {
-            const is_identity_key = vm.program.reflection_types[source.key.?].kind == .Struct;
-            if (is_identity_key) {
-                return false;
-            }
-            if (!try canConstructType(vm, source.key.?, visited)) {
-                return false;
-            }
-            return canConstructType(vm, source.child.?, visited);
-        },
-        .Struct => {
-            if (source.has_private_fields) {
-                return false;
-            }
-            for (source.fields) |field| {
-                if (!try canConstructType(vm, field.type_index, visited)) {
-                    return false;
-                }
-            }
-            return true;
-        },
-        .Union => {
-            for (source.variants) |variant| {
-                if (!try canConstructType(vm, variant.type_index.?, visited)) {
-                    return false;
-                }
-            }
-            return true;
-        },
-        else => return false,
-    }
+    return native.ok(.{ .bool = vm.program.reflection_types[index].is_constructible });
 }
 
 pub fn canAttach(_: *VM, args: []v.Value) anyerror!native.NativeResult {
@@ -368,6 +324,15 @@ fn sessionHandle(vm: *VM, session_root: usize) !v.Value {
     const handle: v.Value = .{ .heap_obj = &cell.obj };
     v.HeapValue.getParentPtr(v.Struct, vm.heap.protectedValue(session_root).heap_obj).set(session_handle_slot, handle);
     return handle;
+}
+
+pub fn appendHandle(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    var array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj.followRelocated());
+    if (array.len == array.capacity) {
+        array = try vm.growArray(&args[0]);
+    }
+    try array.append(args[1]);
+    return native.ok(v.NULL_VALUE);
 }
 
 const Construction = struct {

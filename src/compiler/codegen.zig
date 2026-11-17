@@ -161,7 +161,7 @@ pub const BytecodeGen = struct {
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
             .error_names = try self.copyErrorNames(program.error_names),
-            .reflection_types = try self.reflection_types.toOwnedSlice(self.allocator),
+            .reflection_types = try self.markConstructibleTypes(),
         };
     }
 
@@ -1311,6 +1311,59 @@ pub const BytecodeGen = struct {
         };
         self.reflection_types.items[index] = result;
         return index;
+    }
+
+    fn markConstructibleTypes(self: *Self) ![]const reflection_format.Descriptor {
+        const types = self.reflection_types.items;
+        for (types) |*descriptor| {
+            descriptor.is_constructible = isConstructibleShape(types, descriptor.*);
+        }
+        var has_changed = true;
+        while (has_changed) {
+            has_changed = false;
+            for (types) |*descriptor| {
+                if (!descriptor.is_constructible) continue;
+                if (!areChildrenConstructible(types, descriptor.*)) {
+                    descriptor.is_constructible = false;
+                    has_changed = true;
+                }
+            }
+        }
+        return self.reflection_types.toOwnedSlice(self.allocator);
+    }
+
+    fn isConstructibleShape(types: []const reflection_format.Descriptor, descriptor: reflection_format.Descriptor) bool {
+        return switch (descriptor.kind) {
+            .Int, .Byte, .Float, .Bool, .String, .Buffer, .Enum, .Array, .Nullable, .Union => true,
+            .Struct => !descriptor.has_private_fields,
+            .Map => types[descriptor.key.?].kind != .Struct,
+            else => false,
+        };
+    }
+
+    fn areChildrenConstructible(types: []const reflection_format.Descriptor, descriptor: reflection_format.Descriptor) bool {
+        if (descriptor.child) |child| {
+            if (!types[child].is_constructible) {
+                return false;
+            }
+        }
+        if (descriptor.key) |key| {
+            if (!types[key].is_constructible) {
+                return false;
+            }
+        }
+        for (descriptor.fields) |field| {
+            if (!types[field.type_index].is_constructible) {
+                return false;
+            }
+        }
+        for (descriptor.variants) |variant| {
+            const type_index = variant.type_index orelse continue;
+            if (!types[type_index].is_constructible) {
+                return false;
+            }
+        }
+        return true;
     }
 
     fn getStructDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
