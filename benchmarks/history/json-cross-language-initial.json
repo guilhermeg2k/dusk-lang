@@ -1,0 +1,1101 @@
+{
+  "commit": "5a60d7b725a9d4feec594dbb18c98844c533287c",
+  "dirty": false,
+  "date": "2026-11-17T00:57:17Z",
+  "machine": {
+    "OS": "Fedora Linux 44 (Workstation Edition)",
+    "Kernel": "Linux 7.3.3-200.fc44.x86_64",
+    "Architecture": "x86_64",
+    "CPU": "AMD Ryzen 5 5600X 6-Core Processor",
+    "Cores / Threads": "6 cores / 12 threads",
+    "CPU max": "4.65 GHz",
+    "Memory": "31.2 GiB total",
+    "Date": "2026-11-17 00:57 UTC"
+  },
+  "versions": {
+    "go": "go version go1.26.10-X:nodwarf5 linux/amd64",
+    "java": "openjdk version \"25.0.5\" 2026-10-20\nOpenJDK Runtime Environment (Red_Hat-25.0.5.0.8-3) (build 25.0.5+8)\nOpenJDK 64-Bit Server VM (Red_Hat-25.0.5.0.8-3) (build 25.0.5+8, mixed mode, sharing)",
+    "bun": "1.4.4",
+    "python": "Python 3.14.10",
+    "ruby": "ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [x86_64-linux]",
+    "ruby_json": "2.19.9",
+    "jackson": "databind/core 2.20.1; annotations 2.20"
+  },
+  "settings": {
+    "runs": 5,
+    "warmup": 1,
+    "order": "rotate starting runtime each round",
+    "scope": "fresh process, compilation of Go/Java/Dusk executable excluded; Dusk source compilation included",
+    "commands": {
+      "native": [
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross/dusk-native"
+      ],
+      "reflection": [
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross/dusk-reflection"
+      ],
+      "go": [
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross/codec-go"
+      ],
+      "java": [
+        "java",
+        "-cp",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross:/tmp/dusk-json-cross-deps/*",
+        "JsonCodec"
+      ],
+      "bun": [
+        "/tmp/dusk-json-cross-deps/bun-linux-x64/bun",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/json_cross/codec.js"
+      ],
+      "python": [
+        "/usr/bin/python3",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/json_cross/codec.py"
+      ],
+      "ruby": [
+        "ruby",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/json_cross/codec.rb"
+      ]
+    }
+  },
+  "source_sha256": {
+    "benchmarks/json_cross/JsonCodec.java": "44b891184c90549cc757518f8f2e3184756f6f5891f1f13ed9cf50d906bf13fb",
+    "benchmarks/json_cross/README.md": "168bace98c0b01f667db9d5e3eae54c660cccc1efeb75396d8372dfbc1dbc8d2",
+    "benchmarks/json_cross/codec.go": "69615d8d8b1dfe16efa0818fc82b592300701e7cb4e25ca5602e9a154c2ffb9b",
+    "benchmarks/json_cross/codec.js": "dd0da5b9c231397e6d4a5b081e79f5cc68447ce1588547806ddfd3994ee58188",
+    "benchmarks/json_cross/codec.py": "8ba4c6f34844c3d7d418e1c38c098ce069bd9d73b3155dce87cd8a0ea76efff6",
+    "benchmarks/json_cross/codec.rb": "71ef6cff5e978daa9fa75d735088b63aacfa1f73f8502df561c60c46bf8aa0e8",
+    "benchmarks/json_compare.py": "03fa6c05fcfa18c5f7aa02a5c781508faa39288a9f17baedb1df6fc6d32621bc",
+    "benchmarks/dusk/json_decode.dsk": "5124955b2e46fda03e97586202acd7d53bbcb44cc3ab4ffdc6f82eaba67b3ed2",
+    "benchmarks/dusk/json_decode_bulk.dsk": "795b2e3abddbd7a053881e33dbeeb8634bea91107ea11e1f69331fc7aa0aae9e",
+    "benchmarks/dusk/json_defaults.dsk": "82c4b13b8a3c4485641d9374bc0bed59b35369d40817c7ee227b4475e8ae6efc",
+    "benchmarks/dusk/json_encode.dsk": "9272314c82025a0e9bdc1388dcd0334a2fc49e56cee0f8649eaf888e5243735c",
+    "benchmarks/dusk/support/json_model.dsk": "e36cac4792d82ef5aa595661803e0007b5d257fc705500c36b63d22fed1b85f1"
+  },
+  "dependency_sha256": {
+    "jackson-annotations.jar": "959a2ffb2d591436f51f183c6a521fc89347912f711bf0cae008cdf045d95319",
+    "jackson-core.jar": "ffab4d957daa2796cf24cb66d0b78a7090f1bcbe17c3a4578f09affaaf137089",
+    "jackson-databind.jar": "34bbeb4526fff4f8565b12106bf85a6afcbae858966d489b54214ac46b2e26e8"
+  },
+  "binary_sha256": {
+    "dusk-native": "50f48bfdca0843590e6fb340aa54b422e47d2dab9f8d7cebae61512b5660f80f",
+    "dusk-reflection": "aa9be10b54eee38135fdbcc766393451c26832736718943e445937928f87f3af",
+    "codec-go": "fe85e93ec5e6ac0277102769453305a590b3bf486694ee81e6d3ba7afef1c297"
+  },
+  "benchmarks": {
+    "json_decode": {
+      "native": {
+        "runs": 5,
+        "median_ms": 211.91,
+        "min_ms": 208.3,
+        "max_ms": 216.1,
+        "stddev_ms": 2.97,
+        "peak_mem_kib": 35788,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 216.10029700059386,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 208.2994239990512,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 211.91416200053936,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 211.03276000030746,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 214.0784809998877,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 14949.62,
+        "min_ms": 14753.99,
+        "max_ms": 15363.42,
+        "stddev_ms": 230.57,
+        "peak_mem_kib": 35788,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 14753.991770001448,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 14949.619658000302,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 15133.912562998376,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 15363.415308000185,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 14940.2191019999,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          }
+        ]
+      },
+      "go": {
+        "runs": 5,
+        "median_ms": 287.83,
+        "min_ms": 283.82,
+        "max_ms": 293.07,
+        "stddev_ms": 3.91,
+        "peak_mem_kib": 35788,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 293.07188500024495,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 287.8335950008477,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 283.82295300070837,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 291.75077699983376,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 285.787638000329,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          }
+        ]
+      },
+      "java": {
+        "runs": 5,
+        "median_ms": 475.28,
+        "min_ms": 467.93,
+        "max_ms": 499.35,
+        "stddev_ms": 12.3,
+        "peak_mem_kib": 173088,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 479.67203199914366,
+            "peak_mem_kib": 172708,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 475.2783340009046,
+            "peak_mem_kib": 173736,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 467.93222700034676,
+            "peak_mem_kib": 174960,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 499.3481620003877,
+            "peak_mem_kib": 173072,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 471.58320499875117,
+            "peak_mem_kib": 173088,
+            "output": "5200000"
+          }
+        ]
+      },
+      "bun": {
+        "runs": 5,
+        "median_ms": 42.02,
+        "min_ms": 40.65,
+        "max_ms": 43.06,
+        "stddev_ms": 0.91,
+        "peak_mem_kib": 35788,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 43.05683900020085,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 42.565092000586446,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 40.65221800010477,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 42.01719600132492,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 41.69839099995443,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          }
+        ]
+      },
+      "python": {
+        "runs": 5,
+        "median_ms": 252.27,
+        "min_ms": 249.04,
+        "max_ms": 257.89,
+        "stddev_ms": 3.86,
+        "peak_mem_kib": 35788,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 257.15486000081,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 251.11997000021802,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 249.04106199937814,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 252.2694559993397,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 257.8872489993955,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          }
+        ]
+      },
+      "ruby": {
+        "runs": 5,
+        "median_ms": 236.22,
+        "min_ms": 232.41,
+        "max_ms": 240.16,
+        "stddev_ms": 3.2,
+        "peak_mem_kib": 35788,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 232.41394300021057,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 236.21948400068504,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 234.18526599925826,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 240.16327600111254,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 238.86524800036568,
+            "peak_mem_kib": 35788,
+            "output": "5200000"
+          }
+        ]
+      }
+    },
+    "json_decode_bulk": {
+      "native": {
+        "runs": 5,
+        "median_ms": 505.04,
+        "min_ms": 500.19,
+        "max_ms": 508.05,
+        "stddev_ms": 3.57,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 500.4253660008544,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 505.04486699901463,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 506.46055600009277,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 500.18618300055095,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 508.0466769995837,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 35521.49,
+        "min_ms": 35276.54,
+        "max_ms": 36387.83,
+        "stddev_ms": 464.67,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 36387.82588899994,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 35428.7534289997,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 35521.49144500072,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 35276.54482700018,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 36031.84223199969,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          }
+        ]
+      },
+      "go": {
+        "runs": 5,
+        "median_ms": 650.46,
+        "min_ms": 647.38,
+        "max_ms": 656.29,
+        "stddev_ms": 3.43,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 656.2872760005121,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 650.4550789995847,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 647.3819590009953,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 648.9591790013947,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 652.2312630004308,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          }
+        ]
+      },
+      "java": {
+        "runs": 5,
+        "median_ms": 572.06,
+        "min_ms": 564.29,
+        "max_ms": 574.43,
+        "stddev_ms": 4.48,
+        "peak_mem_kib": 217160,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 564.2854999987321,
+            "peak_mem_kib": 217160,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 572.9369250002492,
+            "peak_mem_kib": 216572,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 566.1166240006423,
+            "peak_mem_kib": 217492,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 574.4315739993908,
+            "peak_mem_kib": 217076,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 572.0562529986637,
+            "peak_mem_kib": 218296,
+            "output": "15104000"
+          }
+        ]
+      },
+      "bun": {
+        "runs": 5,
+        "median_ms": 66.8,
+        "min_ms": 65.71,
+        "max_ms": 67.52,
+        "stddev_ms": 0.7,
+        "peak_mem_kib": 37620,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 67.29378999989422,
+            "peak_mem_kib": 37424,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 66.79757300116762,
+            "peak_mem_kib": 37760,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 66.65382099890849,
+            "peak_mem_kib": 37748,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 65.71361900023476,
+            "peak_mem_kib": 37440,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 67.52342300023884,
+            "peak_mem_kib": 37620,
+            "output": "15104000"
+          }
+        ]
+      },
+      "python": {
+        "runs": 5,
+        "median_ms": 383.06,
+        "min_ms": 369.59,
+        "max_ms": 387.47,
+        "stddev_ms": 7.05,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 383.06346500030486,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 379.80258100105857,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 385.5725869998423,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 369.5920770005614,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 387.47336300002644,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          }
+        ]
+      },
+      "ruby": {
+        "runs": 5,
+        "median_ms": 304.3,
+        "min_ms": 301.94,
+        "max_ms": 310.64,
+        "stddev_ms": 3.53,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 304.29586300124356,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 310.6393969992496,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 301.9353019990376,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 302.40077800044673,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 306.1626580001757,
+            "peak_mem_kib": 35824,
+            "output": "15104000"
+          }
+        ]
+      }
+    },
+    "json_encode": {
+      "native": {
+        "runs": 5,
+        "median_ms": 113.35,
+        "min_ms": 110.68,
+        "max_ms": 114.07,
+        "stddev_ms": 1.46,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 114.073857999756,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 113.34643800000777,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 111.78401700090035,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 110.68141299983836,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 113.84924499907356,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 2658.48,
+        "min_ms": 2620.68,
+        "max_ms": 2689.39,
+        "stddev_ms": 25.1,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 2620.6810570001835,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2669.9500089998764,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2656.2880990004487,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2658.480978001535,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2689.3928659992525,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          }
+        ]
+      },
+      "go": {
+        "runs": 5,
+        "median_ms": 152.96,
+        "min_ms": 149.62,
+        "max_ms": 159.48,
+        "stddev_ms": 3.75,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 149.62168800047948,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 151.59755399872665,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 152.9623829992488,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 154.75317500022356,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 159.48465800101985,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          }
+        ]
+      },
+      "java": {
+        "runs": 5,
+        "median_ms": 421.98,
+        "min_ms": 414.58,
+        "max_ms": 425.51,
+        "stddev_ms": 4.23,
+        "peak_mem_kib": 114696,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 414.57700099999784,
+            "peak_mem_kib": 114696,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 419.58730700025626,
+            "peak_mem_kib": 114136,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 425.5148359989107,
+            "peak_mem_kib": 115276,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 423.61469000024954,
+            "peak_mem_kib": 114660,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 421.98130900032993,
+            "peak_mem_kib": 116272,
+            "output": "1000"
+          }
+        ]
+      },
+      "bun": {
+        "runs": 5,
+        "median_ms": 64.45,
+        "min_ms": 64.26,
+        "max_ms": 65.96,
+        "stddev_ms": 0.73,
+        "peak_mem_kib": 39984,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 64.25519900039944,
+            "peak_mem_kib": 40056,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 65.10430099842779,
+            "peak_mem_kib": 39864,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 64.45302099928085,
+            "peak_mem_kib": 39672,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 64.28792100086866,
+            "peak_mem_kib": 40244,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 65.95602200104622,
+            "peak_mem_kib": 39984,
+            "output": "1000"
+          }
+        ]
+      },
+      "python": {
+        "runs": 5,
+        "median_ms": 314.48,
+        "min_ms": 311.29,
+        "max_ms": 318.03,
+        "stddev_ms": 2.83,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 318.0340749986499,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 311.28957600049034,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 313.64439600110927,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 317.61848899986944,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 314.483427999221,
+            "peak_mem_kib": 35824,
+            "output": "1000"
+          }
+        ]
+      },
+      "ruby": {
+        "runs": 5,
+        "median_ms": 152.34,
+        "min_ms": 151.19,
+        "max_ms": 155.11,
+        "stddev_ms": 1.56,
+        "peak_mem_kib": 39348,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 152.3377840003377,
+            "peak_mem_kib": 39360,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 151.19101799973578,
+            "peak_mem_kib": 39348,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 151.82542700131307,
+            "peak_mem_kib": 39516,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 153.59499099940876,
+            "peak_mem_kib": 39200,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 155.11125099874334,
+            "peak_mem_kib": 39296,
+            "output": "1000"
+          }
+        ]
+      }
+    },
+    "json_defaults": {
+      "native": {
+        "runs": 5,
+        "median_ms": 59.11,
+        "min_ms": 58.67,
+        "max_ms": 61.57,
+        "stddev_ms": 1.22,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 59.03424000098312,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 59.11163200107694,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 58.668904999649385,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 61.56644399925426,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 60.50170900016383,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 4630.01,
+        "min_ms": 4610.59,
+        "max_ms": 4751.9,
+        "stddev_ms": 58.68,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 4691.733668998495,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 4628.186527999787,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 4630.0101630004065,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 4610.593135999807,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 4751.903524000227,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          }
+        ]
+      },
+      "go": {
+        "runs": 5,
+        "median_ms": 45.75,
+        "min_ms": 45.06,
+        "max_ms": 46.65,
+        "stddev_ms": 0.57,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 45.05565599902184,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 45.78504499841074,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 45.64461300105904,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 45.75153500081797,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 46.648457000628696,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          }
+        ]
+      },
+      "java": {
+        "runs": 5,
+        "median_ms": 321.57,
+        "min_ms": 317.4,
+        "max_ms": 359.93,
+        "stddev_ms": 17.77,
+        "peak_mem_kib": 128112,
+        "noisy": true,
+        "samples": [
+          {
+            "elapsed_ms": 322.7550270003121,
+            "peak_mem_kib": 127068,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 317.4016670000128,
+            "peak_mem_kib": 129212,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 320.03125099981844,
+            "peak_mem_kib": 127204,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 321.5669019991765,
+            "peak_mem_kib": 128112,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 359.9306779997278,
+            "peak_mem_kib": 129688,
+            "output": "4700000"
+          }
+        ]
+      },
+      "bun": {
+        "runs": 5,
+        "median_ms": 16.23,
+        "min_ms": 15.77,
+        "max_ms": 17.71,
+        "stddev_ms": 0.76,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 15.767167999001686,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 16.231304998655105,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 16.019850998418406,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 16.456368000945076,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 17.71282400113705,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          }
+        ]
+      },
+      "python": {
+        "runs": 5,
+        "median_ms": 130.66,
+        "min_ms": 127.83,
+        "max_ms": 141.94,
+        "stddev_ms": 5.75,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 133.87123000029533,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 128.4905089996755,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 141.94406600108778,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 127.82617999982904,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 130.6599069994263,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          }
+        ]
+      },
+      "ruby": {
+        "runs": 5,
+        "median_ms": 181.06,
+        "min_ms": 179.52,
+        "max_ms": 184.38,
+        "stddev_ms": 2.1,
+        "peak_mem_kib": 35824,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 184.37780699969153,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 181.05873400054406,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 180.04981100057194,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 183.31756400039012,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 179.51958300000115,
+            "peak_mem_kib": 35824,
+            "output": "4700000"
+          }
+        ]
+      }
+    }
+  }
+}
