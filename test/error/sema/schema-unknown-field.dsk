@@ -1,0 +1,12 @@
+schema Api end
+
+struct User
+    name: string
+
+    schema Api
+        nmae: "full_name"
+    end
+end
+
+func main() -> void
+end

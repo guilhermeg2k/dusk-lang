@@ -1,0 +1,16 @@
+import std/json
+
+schema Api end
+
+struct User
+    first: string
+    second: string
+
+    schema Api
+        second: "first"
+    end
+end
+
+func main() -> !void
+    let text = try json::encode[User, Api](User(first = "a", second = "b"))
+end

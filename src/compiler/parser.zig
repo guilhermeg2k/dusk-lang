@@ -197,6 +197,16 @@ pub const Parser = struct {
                     .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
                 };
             },
+            .schema_kw => {
+                if (self.block_depth != 1) {
+                    return self.err_reporter.invalidSyntax("a schema only at the top of a file", tk);
+                }
+                const schema_stmt = try self.parseSchemaStmt();
+                return ast.StatementNode{
+                    .data = .{ .schema = schema_stmt },
+                    .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+                };
+            },
             .trait_kw => {
                 const trait_stmt = try self.parseTraitStmt();
                 return ast.StatementNode{
@@ -315,6 +325,9 @@ pub const Parser = struct {
         if (self.match(.error_kw)) {
             return .{ .identifier = identifier, .is_error_set = true, .loc = slot_token.loc };
         }
+        if (self.match(.schema_kw)) {
+            return .{ .identifier = identifier, .is_schema = true, .loc = slot_token.loc };
+        }
         return .{ .identifier = identifier, .constraint = try self.parseConstraint(), .loc = slot_token.loc };
     }
 
@@ -414,6 +427,119 @@ pub const Parser = struct {
             .is_file_only = is_file_only,
             .slots = slots,
         };
+    }
+
+    fn parseSchemaStmt(self: *Self) !ast.SchemaStmt {
+        _ = try self.expect(.schema_kw);
+        const identifier = (try self.expect(.identifier)).value(self.src);
+        var options: std.ArrayList(ast.SchemaOption) = .empty;
+        if (self.match(.l_paren)) {
+            while (!self.match(.r_paren)) {
+                const name_tk = try self.expect(.identifier);
+                _ = try self.expect(.eq);
+                const value = try self.parseExp(0);
+                try options.append(self.allocator, .{ .name = name_tk.value(self.src), .value = value, .loc = .{ .start = name_tk.loc.start, .end = value.loc.end } });
+                if (self.match(.r_paren)) break;
+                _ = try self.expect(.comma);
+            }
+        }
+        var type_rules: std.ArrayList(ast.SchemaTypeRule) = .empty;
+        var blocks: std.ArrayList(ast.SchemaBlock) = .empty;
+        while (true) {
+            const tk = self.peekCurrent();
+            switch (tk.tag) {
+                .end_kw => {
+                    self.walk();
+                    break;
+                },
+                .struct_kw, .enum_kw, .union_kw => {
+                    self.walk();
+                    const kind: ast.SchemaBlockKind = switch (tk.tag) {
+                        .struct_kw => .@"struct",
+                        .enum_kw => .@"enum",
+                        else => .@"union",
+                    };
+                    const type_name = try self.parseSchemaTypeName();
+                    const members = try self.parseSchemaMembers();
+                    try blocks.append(self.allocator, .{ .kind = kind, .type_name = type_name, .members = members, .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end } });
+                },
+                .identifier => {
+                    const type_name = try self.parseSchemaTypeName();
+                    _ = try self.expect(.colon);
+                    const rules = try self.parseSchemaRules();
+                    try type_rules.append(self.allocator, .{ .type_name = type_name, .rules = rules, .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end } });
+                },
+                .eof => return self.err_reporter.invalidSyntax("'end'", tk),
+                else => return self.err_reporter.invalidSyntax("struct, enum, union, a type name or 'end'", tk),
+            }
+        }
+        return .{
+            .identifier = identifier,
+            .options = try options.toOwnedSlice(self.allocator),
+            .type_rules = try type_rules.toOwnedSlice(self.allocator),
+            .blocks = try blocks.toOwnedSlice(self.allocator),
+        };
+    }
+
+    fn parseSchemaTypeName(self: *Self) CompileError![]const u8 {
+        const first = try self.expect(.identifier);
+        if (!self.match(.double_colon)) {
+            return first.value(self.src);
+        }
+        const member = try self.expect(.identifier);
+        return self.qualifiedName(first, member);
+    }
+
+    fn parseSchemaSection(self: *Self) CompileError!ast.SchemaSection {
+        const start = try self.expect(.schema_kw);
+        const schema_name = try self.parseSchemaTypeName();
+        const members = try self.parseSchemaMembers();
+        return .{ .schema_name = schema_name, .members = members, .loc = .{ .start = start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end } };
+    }
+
+    fn parseSchemaMembers(self: *Self) CompileError![]const ast.SchemaMember {
+        var members: std.ArrayList(ast.SchemaMember) = .empty;
+        while (!self.match(.end_kw)) {
+            const name_tk = try self.expect(.identifier);
+            _ = try self.expect(.colon);
+            const rules = try self.parseSchemaRules();
+            try members.append(self.allocator, .{ .name = name_tk.value(self.src), .rules = rules, .loc = .{ .start = name_tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end } });
+        }
+        return members.toOwnedSlice(self.allocator);
+    }
+
+    fn parseSchemaRules(self: *Self) CompileError![]const ast.SchemaRule {
+        var rules: std.ArrayList(ast.SchemaRule) = .empty;
+        while (true) {
+            try rules.append(self.allocator, try self.parseSchemaRule());
+            if (!self.match(.comma)) break;
+        }
+        return rules.toOwnedSlice(self.allocator);
+    }
+
+    fn parseSchemaRule(self: *Self) CompileError!ast.SchemaRule {
+        const tk = self.peekCurrent();
+        if (tk.tag == .string_literal) {
+            self.walk();
+            return .{ .kind = .{ .name = try self.decodeStringLiteral(tk.loc.start + 1, tk.loc.end, null) }, .loc = tk.loc };
+        }
+        const word = try self.expect(.identifier);
+        const text = word.value(self.src);
+        if (std.mem.eql(u8, text, "skip")) {
+            return .{ .kind = .skip, .loc = word.loc };
+        }
+        if (std.mem.eql(u8, text, "omit_null")) {
+            return .{ .kind = .omit_null, .loc = word.loc };
+        }
+        if (!std.mem.eql(u8, text, "via")) {
+            return self.err_reporter.invalidSyntax("a name in quotes, skip, omit_null or via(to, from)", word);
+        }
+        _ = try self.expect(.l_paren);
+        const to = try self.parseExp(0);
+        _ = try self.expect(.comma);
+        const from = try self.parseExp(0);
+        const close = try self.expect(.r_paren);
+        return .{ .kind = .{ .via = .{ .to = to, .from = from } }, .loc = .{ .start = word.loc.start, .end = close.loc.end } };
     }
 
     fn parseErrorSetStmt(self: *Self) !ast.ErrorSetStmt {
@@ -670,10 +796,12 @@ pub const Parser = struct {
         var static_fields: std.ArrayList(ast.Field) = .empty;
         var fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
+        var schema_sections: std.ArrayList(ast.SchemaSection) = .empty;
 
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
+                .schema_kw => try schema_sections.append(self.allocator, try self.parseSchemaSection()),
                 .let_kw => {
                     const let_stmt = try self.parseLetStmt(static_field_refusal);
                     try static_fields.append(self.allocator, .{
@@ -720,6 +848,7 @@ pub const Parser = struct {
             .funcs = try funcs.toOwnedSlice(self.allocator),
             .fields = try fields.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),
+            .schema_sections = try schema_sections.toOwnedSlice(self.allocator),
         };
     }
 
@@ -759,11 +888,13 @@ pub const Parser = struct {
         var variants: std.ArrayList(ast.EnumVariant) = .empty;
         var static_fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
+        var schema_sections: std.ArrayList(ast.SchemaSection) = .empty;
         var mode: enum { none, implicit, explicit } = .none;
 
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
+                .schema_kw => try schema_sections.append(self.allocator, try self.parseSchemaSection()),
                 .identifier => {
                     self.walk();
                     const identifier = tk.value(self.src);
@@ -846,6 +977,7 @@ pub const Parser = struct {
             .variants = try variants.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),
             .funcs = try funcs.toOwnedSlice(self.allocator),
+            .schema_sections = try schema_sections.toOwnedSlice(self.allocator),
         };
     }
 
@@ -853,10 +985,12 @@ pub const Parser = struct {
         var variants: std.ArrayList(ast.UnionVariant) = .empty;
         var static_fields: std.ArrayList(ast.Field) = .empty;
         var funcs: std.ArrayList(ast.StatementNode) = .empty;
+        var schema_sections: std.ArrayList(ast.SchemaSection) = .empty;
 
         while (true) {
             const tk = self.peekCurrent();
             switch (tk.tag) {
+                .schema_kw => try schema_sections.append(self.allocator, try self.parseSchemaSection()),
                 .identifier => {
                     self.walk();
                     const identifier = tk.value(self.src);
@@ -908,6 +1042,7 @@ pub const Parser = struct {
             .variants = try variants.toOwnedSlice(self.allocator),
             .static_fields = try static_fields.toOwnedSlice(self.allocator),
             .funcs = try funcs.toOwnedSlice(self.allocator),
+            .schema_sections = try schema_sections.toOwnedSlice(self.allocator),
         };
     }
 

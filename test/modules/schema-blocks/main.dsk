@@ -1,0 +1,15 @@
+import std/json
+import @/models
+
+schema Api(case = "snake")
+    struct models::Address
+        zipCode: "postcode"
+    end
+end
+
+func main() -> !void
+    let address = models::Address(zipCode = "N1", cityName = "London")
+    assert((try json::encode[models::Address, Api](address)) == "{\"postcode\":\"N1\",\"city_name\":\"London\"}")
+    let back = try json::decode[models::Address, Api]("{\"postcode\":\"P\",\"city_name\":\"Porto\"}")
+    assert(back.zipCode == "P")
+end

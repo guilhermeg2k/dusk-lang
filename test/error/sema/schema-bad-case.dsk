@@ -1,0 +1,4 @@
+schema Api(case = "shout") end
+
+func main() -> void
+end

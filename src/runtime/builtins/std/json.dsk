@@ -34,13 +34,13 @@ end
 extern func ~encode_value[T](value: T, options: EncodeOptions, plan: int) -> JsonError!string
 extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut defaults: []func() -> void) -> JsonError!T
 
-func encode[T](value: T, options: EncodeOptions = @()) -> JsonError!string
-    return try encode_value(value, options, serialization::plan_of[T]())
+func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string
+    return try encode_value(value, options, serialization::plan_of[T, S]())
 end
 
-func decode[T](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
+func decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
     let mut defaults: []func() -> void = []
-    let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T](), defaults)
+    let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T, S](), defaults)
     for defaults: apply_default do
         apply_default()
     end

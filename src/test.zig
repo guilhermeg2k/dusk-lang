@@ -130,6 +130,21 @@ test "serialization: derived code for enums, unions, maps, bytes, roots and dept
     try runCase("serialization-derive.dsk");
 }
 
+test "serialization: schemas rename, alias, skip and omit fields for each consumer" {
+    try runCase("serialization-schemas.dsk");
+    try runModuleCase("schema-blocks/main.dsk");
+    try runCaseError("sema/schema-unknown-field.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-skip-without-default.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-two-places.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-duplicate-name.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-not-a-schema.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-bad-case.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-slot-needs-schema.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-as-type.dsk", error.InvalidType);
+    try runCaseError("sema/schema-omit-null-not-nullable.dsk", error.InvalidSchema);
+    try runCaseError("sema/schema-block-kind.dsk", error.InvalidSchema);
+}
+
 test "serialization: reference formats written in Dusk (JSON-like, record notation, rows)" {
     try runCase("serialization-json-like-format.dsk");
     try runCase("serialization-record-format.dsk");

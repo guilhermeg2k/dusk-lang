@@ -114,7 +114,12 @@ fn variantNameAt(shape: serialization_plan.Shape, index: usize) []const u8 {
 
 fn indexOfVariant(shape: serialization_plan.Shape, text: []const u8) i64 {
     for (0..variantCountOf(shape)) |i| {
-        if (std.mem.eql(u8, variantNameAt(shape, i), text)) {
+        const is_named = switch (shape) {
+            .enumeration => |variants| variants[i].isNamed(text),
+            .tagged_union => |tagged| tagged.variants[i].isNamed(text),
+            else => false,
+        };
+        if (is_named) {
             return @intCast(i);
         }
     }
@@ -144,7 +149,7 @@ fn nameAt(vm: *VM, id: i64, index: i64) ?[]const u8 {
 
 fn indexOfName(fields: []const serialization_plan.Field, name: []const u8) i64 {
     for (fields, 0..) |field, i| {
-        if (std.mem.eql(u8, field.name, name)) {
+        if (field.isNamed(name)) {
             return @intCast(i);
         }
     }

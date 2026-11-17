@@ -24,20 +24,33 @@ pub const PlanShape = union(enum) {
     nullable: usize,
     array: usize,
     map: usize,
-    structure: []const PlanField,
+    structure: PlanStructure,
     enumeration: []const PlanVariant,
     tagged_union: []const PlanVariant,
 };
 
+pub const PlanStructure = struct {
+    fields: []const PlanField,
+    skipped: []const PlanSkip,
+};
+
 pub const PlanField = struct {
     name: []const u8,
+    aliases: []const []const u8,
+    omits_null: bool,
     field_index: u8,
     plan: usize,
     default_value: ?*Value,
 };
 
+pub const PlanSkip = struct {
+    field_index: u8,
+    default_value: *Value,
+};
+
 pub const PlanVariant = struct {
     name: []const u8,
+    aliases: []const []const u8,
     declared_name: []const u8,
     plan: ?usize,
 };

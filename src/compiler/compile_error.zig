@@ -553,6 +553,16 @@ pub const CompileErrorReporter = struct {
         return error.TraitRefersToItself;
     }
 
+    pub fn invalidSchema(self: *Self, message: []const u8, loc: Loc) CompileError {
+        self.log(message, loc);
+        return error.InvalidSchema;
+    }
+
+    pub fn slotNeedsSchema(self: *Self, slot: []const u8, found: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is a schema slot, so it must be a schema, not '{s}'", .{ slot, found }), loc);
+        return error.InvalidSchema;
+    }
+
     pub fn formatLacksMethod(self: *Self, format_name: []const u8, verb: []const u8, type_name: []const u8, reason: []const u8, method: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' can't {s} '{s}': {s} and it has no method '{s}'", .{ format_name, verb, type_name, reason, method }), loc);
         return error.FormatLacksMethod;
@@ -1161,6 +1171,7 @@ pub const CompileError = error{
     TraitUsedAsType,
     DoesntFitTrait,
     FormatLacksMethod,
+    InvalidSchema,
     TypeListWithTrait,
     NotATrait,
     ClashingTraitMethods,

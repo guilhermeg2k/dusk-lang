@@ -1826,15 +1826,16 @@ pub const BytecodeGen = struct {
                 .string => .string,
                 else => @panic("runtimePlanShape: scalar plan for a type that isn't a scalar"),
             },
-            .structure => |fields| .{ .structure = .{
+            .structure => |structure| .{ .structure = .{
                 .descriptor = try self.structDescriptorOf(plan.type_id),
-                .fields = try self.runtimePlanFields(plan.type_id, fields, funcs),
+                .fields = try self.runtimePlanFields(plan.type_id, structure.fields, funcs),
+                .skipped = try self.runtimeSkippedFields(plan.type_id, structure.skipped, funcs),
             } },
             .enumeration => |variants| blk: {
                 const enumeration = type_ptr.kind.@"enum";
                 const runtime_variants = try self.allocator.alloc(serialization_plan.EnumVariant, variants.len);
                 for (variants, runtime_variants) |variant, *runtime_variant| {
-                    runtime_variant.* = .{ .name = try self.allocator.dupe(u8, variant.name), .value = enumeration.variants.get(variant.declared_name).? };
+                    runtime_variant.* = .{ .name = try self.allocator.dupe(u8, variant.name), .aliases = try self.copyNames(variant.aliases), .value = enumeration.variants.get(variant.declared_name).? };
                 }
                 break :blk .{ .enumeration = runtime_variants };
             },
@@ -1843,6 +1844,7 @@ pub const BytecodeGen = struct {
                 for (variants, runtime_variants) |variant, *runtime_variant| {
                     runtime_variant.* = .{
                         .name = try self.allocator.dupe(u8, variant.name),
+                        .aliases = try self.copyNames(variant.aliases),
                         .plan = @intCast(variant.plan.?),
                         .tag = try self.unionTagIndex(plan.type_id, variant.declared_name),
                     };
@@ -1859,12 +1861,26 @@ pub const BytecodeGen = struct {
             const struct_field = struct_fields[field.field_index];
             runtime_field.* = .{
                 .name = try self.allocator.dupe(u8, field.name),
+                .aliases = try self.copyNames(field.aliases),
+                .omits_null = field.omits_null,
                 .slot = field.field_index,
                 .plan = @intCast(field.plan),
                 .default_function = if (field.default_value) |value| try self.addPlanDefault(owner_type, struct_field, value, funcs) else null,
             };
         }
         return runtime_fields;
+    }
+
+    fn runtimeSkippedFields(self: *Self, owner_type: tt.TypeId, skipped: []const ir.PlanSkip, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.SkippedField {
+        const struct_fields = self.type_table.getTypePtrById(owner_type).kind.@"struct".fields_in_order;
+        const runtime_skipped = try self.allocator.alloc(serialization_plan.SkippedField, skipped.len);
+        for (skipped, runtime_skipped) |skip, *runtime_skip| {
+            runtime_skip.* = .{
+                .slot = skip.field_index,
+                .default_function = try self.addPlanDefault(owner_type, struct_fields[skip.field_index], skip.default_value, funcs),
+            };
+        }
+        return runtime_skipped;
     }
 
     fn structDescriptorOf(self: *Self, type_id: tt.TypeId) !u16 {

@@ -108,8 +108,11 @@ const Encoder = struct {
                 const object = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
                 try self.writer.beginObject();
                 for (structure.fields) |field| {
+                    const item = object.get(field.slot);
+                    const is_omitted = field.omits_null and @as(u64, @bitCast(item)) == 0;
+                    if (is_omitted) continue;
                     try self.writer.objectField(field.name);
-                    try self.encodeValue(field.plan, object.get(field.slot), depth + 1);
+                    try self.encodeValue(field.plan, item, depth + 1);
                 }
                 try self.writer.endObject();
             },
@@ -288,7 +291,7 @@ const Decoder = struct {
             .enumeration => |variants| {
                 const text = try self.readStringText();
                 for (variants) |variant| {
-                    if (!std.mem.eql(u8, variant.name, text)) continue;
+                    if (!variant.isNamed(text)) continue;
                     return self.vm.heap.protectValue(.{ .int64 = variant.value }, .int64);
                 }
                 return error.UnknownVariant;
@@ -348,9 +351,14 @@ const Decoder = struct {
             const path_base = self.path.items.len;
             try self.appendFieldPath(key, false);
             const field_index = for (shape.fields, 0..) |field, i| {
-                if (std.mem.eql(u8, field.name, key)) break i;
+                if (field.isNamed(key)) {
+                    break i;
+                }
             } else null;
             if (field_index) |i| {
+                if (seen_fields[i]) {
+                    return error.DuplicateKey;
+                }
                 seen_fields[i] = true;
                 const item = try self.decodeValue(shape.fields[i].plan, depth + 1);
                 self.rootedStruct(object).set(shape.fields[i].slot, self.vm.heap.protectedValue(item));
@@ -363,6 +371,9 @@ const Decoder = struct {
             self.path.shrinkRetainingCapacity(path_base);
         }
         _ = try self.nextToken();
+        for (shape.skipped) |skip| {
+            try self.defaults.append(self.allocator, .{ .object = object, .function = skip.default_function });
+        }
         for (shape.fields, 0..) |field, i| {
             if (seen_fields[i]) continue;
             if (field.default_function) |function| {
@@ -404,7 +415,9 @@ const Decoder = struct {
         const path_base = self.path.items.len;
         try self.appendFieldPath(key, false);
         const variant = for (shape.variants) |candidate| {
-            if (std.mem.eql(u8, candidate.name, key)) break candidate;
+            if (candidate.isNamed(key)) {
+                break candidate;
+            }
         } else return error.UnknownVariant;
         const item = try self.decodeValue(variant.plan, depth + 1);
         if (try self.peekToken() != .object_end) {

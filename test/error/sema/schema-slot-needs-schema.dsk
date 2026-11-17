@@ -1,0 +1,9 @@
+import std/json
+
+struct User
+    name: string
+end
+
+func main() -> !void
+    let text = try json::encode[User, int](User(name = "a"))
+end
