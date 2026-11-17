@@ -8,7 +8,18 @@
 - std::net
 - std::math
 - std::time
+
+## Version 0.17 - Fujiwara
+- Expand std::time
+- Expand std::buffer
+- std::serialization
+- std::json
 - std::os
+- std::path
+- std::random
+- std::process
+- std::sqlite
+
 
 ## Backlog
 
