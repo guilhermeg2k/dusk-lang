@@ -1,5 +1,7 @@
 # JSON comparison across runtimes
 
+A newer [rerun after reflection optimizations](json-reflection-optimization-results.md) measures source `410286a`. This report preserves the original results.
+
 Both Dusk JSON backends were measured against Go, Java, Bun, Python and Ruby using the four unchanged JSON workload sizes and checksums. These are fresh-process, end-to-end measurements on one machine, rather than a general ranking of languages or a measurement of reflection alone.
 
 ## Median elapsed time
