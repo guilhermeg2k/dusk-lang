@@ -34,7 +34,7 @@ pub const VM = struct {
 
     pub fn init(program: *const bc.Program, stdio: Stdio) VM {
         return .{
-            .allocator = std.heap.page_allocator,
+            .allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
             .event_loop = .{ .allocator = std.heap.c_allocator },
             .frames = &.{},
