@@ -63,6 +63,7 @@ pub const Program = struct {
     struct_descriptors: []const StructDescriptor,
     union_descriptors: []const UnionDescriptor,
     error_names: []const []const u8,
+    serialization_plans: []const @import("serialization_plan.zig").Plan = &.{},
 };
 
 pub const NativeFn = struct {

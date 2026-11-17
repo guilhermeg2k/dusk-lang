@@ -1,0 +1,32 @@
+import std/serialization
+
+struct Plain
+    func read_int(mut self: @) -> serialization::SerializationError!int
+        return 1
+    end
+    func read_float(mut self: @) -> serialization::SerializationError!float
+        return 1.0
+    end
+    func read_bool(mut self: @) -> serialization::SerializationError!bool
+        return true
+    end
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        return ""
+    end
+    func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
+    end
+    func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
+        return -1
+    end
+    func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+    end
+end
+
+struct Item
+    name: ?string
+end
+
+func main() -> !void
+    let mut reader = Plain()
+    let item = try serialization::decode[Item, Plain](reader)
+end

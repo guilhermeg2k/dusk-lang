@@ -5,6 +5,7 @@ const tt = @import("type_table.zig");
 const modules = @import("modules.zig");
 const native = @import("../runtime/builtins/native.zig");
 const prelude_bindings = &@import("../runtime/builtins/prelude.zig").bindings;
+const Plan = @import("../runtime/serialization_plan.zig").Plan;
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
 
@@ -61,6 +62,14 @@ pub const SemaAnalyzer = struct {
     lambda_contexts: std.ArrayList(LambdaContext) = .empty,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
     lambda_binding: ?[]const u8 = null,
+    serialization_module: ?*ModuleScope = null,
+    serialization_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.SerializationOperation) = .empty,
+    serialization_operation_by_generic: std.AutoHashMapUnmanaged(usize, native.SerializationOperation) = .empty,
+    serialization_plans: std.ArrayList(Plan) = .empty,
+    plan_by_type: std.AutoHashMapUnmanaged(tt.TypeId, usize) = .empty,
+    derived_names: std.AutoHashMapUnmanaged(DerivedKey, []const u8) = .empty,
+    derived_functions: std.AutoHashMapUnmanaged(DerivedKey, usize) = .empty,
+    derived_type_names: std.AutoHashMapUnmanaged(tt.TypeId, []const u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -100,6 +109,9 @@ pub const SemaAnalyzer = struct {
                 module_scopes[i].qualifier = std.fs.path.basename(module.path);
             }
             root_table.module = module_scopes[i];
+            if (std.mem.eql(u8, module.path, "std/serialization")) {
+                self.serialization_module = module_scopes[i];
+            }
             _ = self.enterModuleContext(module_scopes[i]);
             self.scope.symbol_table = root_table;
             try self.bindImports(module, module_scopes);
@@ -126,6 +138,7 @@ pub const SemaAnalyzer = struct {
             .functions = try self.functions.toOwnedSlice(self.allocator),
             .defined_types = try self.defined_types.toOwnedSlice(self.allocator),
             .error_names = self.type_table.error_names.items,
+            .serialization_plans = try self.serialization_plans.toOwnedSlice(self.allocator),
         };
     }
 
@@ -214,6 +227,13 @@ pub const SemaAnalyzer = struct {
             };
             if (binding == .intrinsic) {
                 try self.intrinsic_by_uid.put(self.allocator, symbol.uid, binding.intrinsic);
+            }
+            if (binding == .serialization) {
+                try self.serialization_operation_by_uid.put(self.allocator, symbol.uid, binding.serialization);
+                if (symbol.kind == .generic_function) {
+                    try self.serialization_operation_by_generic.put(self.allocator, symbol.kind.generic_function, binding.serialization);
+                }
+                continue;
             }
             if (symbol.kind == .generic_function) {
                 const generic_extern = try self.genericExtern(symbol.kind.generic_function, binding);
@@ -1787,6 +1807,11 @@ pub const SemaAnalyzer = struct {
         const args = try self.allocator.alloc(tt.TypeId, bindings.len);
         for (bindings, func_stmt.slots, 0..) |binding, slot, slot_index| {
             args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, func_stmt.identifier, loc);
+        }
+        if (self.serialization_operation_by_generic.get(index)) |operation| {
+            if (!self.containsSlot(args)) {
+                return self.instantiateDerivedFunction(operation, args, loc);
+            }
         }
         return self.instantiateGenericFunction(index, args, loc);
     }
@@ -4583,6 +4608,13 @@ pub const SemaAnalyzer = struct {
 
                 fn_identifier = symbol.identifier;
 
+                if (self.serialization_operation_by_uid.get(symbol.uid)) |operation| {
+                    const is_compile_time_value = operation == .blank or operation == .field_default;
+                    if (is_compile_time_value) {
+                        return self.evalSerializationValue(operation, fn_call);
+                    }
+                }
+
                 if (self.intrinsic_by_uid.get(symbol.uid)) |intrinsic| {
                     if (try self.evalIntrinsicCall(intrinsic, symbol, fn_call)) |value| {
                         return value;
@@ -4929,6 +4961,316 @@ pub const SemaAnalyzer = struct {
             },
             .array_len, .bytes_len, .new_buffer, .to_byte, .to_int, .append, .task_spawn, .strings_equal => null,
         };
+    }
+
+    fn evalSerializationValue(self: *Self, operation: native.SerializationOperation, fn_call: ast.FnCall) CompileError!*ir.Value {
+        const type_id = try self.resolveTypeAnnotation(fn_call.type_arguments[0], null);
+        const struct_def = self.type_table.getTypePtrById(type_id).kind.@"struct";
+        switch (operation) {
+            .blank => return self.blankStruct(type_id, struct_def),
+            .field_default => {
+                const index_value = try self.evalExp(fn_call.arguments[0].exp);
+                const index: usize = @intCast(index_value.data.i_int);
+                return struct_def.fields_in_order[index].default_value.?;
+            },
+            .derive_decode, .derive_encode => @panic("evalSerializationValue: derive calls are instantiated, not evaluated"),
+        }
+    }
+
+    fn blankStruct(self: *Self, type_id: tt.TypeId, struct_def: tt.Struct) CompileError!*ir.Value {
+        const keys = try self.allocator.alloc([]const u8, struct_def.fields_in_order.len);
+        for (struct_def.fields_in_order, keys) |field, *key| {
+            key.* = field.identifier;
+        }
+        return ir.Value.init(self.allocator, .{ .data = .{ .struct_init = .{ .keys = keys, .values = &.{} } }, .type_id = type_id });
+    }
+
+    fn instantiateDerivedFunction(self: *Self, operation: native.SerializationOperation, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
+        const key = DerivedKey{ .operation = operation, .type_id = args[0] };
+        _ = try self.derivedFunctionName(key, loc);
+        const index = self.derived_functions.get(key) orelse @panic("instantiateDerivedFunction: derived function wasn't registered");
+        return self.instantiateGenericFunction(index, args[1..], loc);
+    }
+
+    fn derivedFunctionName(self: *Self, key: DerivedKey, loc: err.Loc) CompileError![]const u8 {
+        if (self.derived_names.get(key)) |name| {
+            return name;
+        }
+        const kind_name = if (key.operation == .derive_decode) "decode" else "encode";
+        const name = try allocPrint(self.allocator, "derived_{s}_{d}", .{ kind_name, self.derived_names.count() });
+        try self.derived_names.put(self.allocator, key, name);
+        const source = try self.derivedSource(key, name, loc);
+        const index = try self.registerDerivedFunction(source);
+        try self.derived_functions.put(self.allocator, key, index);
+        return name;
+    }
+
+    fn registerDerivedFunction(self: *Self, source: []const u8) CompileError!usize {
+        const module = self.serialization_module orelse @panic("registerDerivedFunction: std/serialization isn't loaded");
+        const saved_module = self.enterModuleContext(module);
+        defer self.exitModuleContext(saved_module);
+        const root = try self.allocator.create(ast.Root);
+        root.* = try modules.ModuleLoader.parse(self.allocator, source);
+        const stmt = &root.statements.items[0];
+        var symbol = try self.createGenericFuncSymbol(&stmt.data.func, stmt.loc);
+        symbol.is_file_only = true;
+        try module.root.put(symbol);
+        return symbol.kind.generic_function;
+    }
+
+    fn derivedSource(self: *Self, key: DerivedKey, name: []const u8, loc: err.Loc) CompileError![]const u8 {
+        const type_ptr = self.type_table.getTypePtrById(key.type_id);
+        const is_struct = !type_ptr.is_nullable and type_ptr.kind == .@"struct";
+        const is_array = !type_ptr.is_nullable and type_ptr.kind == .array;
+        if (!is_struct and !is_array) {
+            return self.err_reporter.invalidType("struct or array", try self.type_table.name(key.type_id, self.allocator), loc);
+        }
+        var out: std.ArrayList(u8) = .empty;
+        const type_text = try self.derivedTypeText(key.type_id, loc);
+        const bound = try self.derivedBound(key);
+        if (key.operation == .derive_decode) {
+            try self.emit(&out, "func ~{s}[R: {s}](mut reader: R, mut pending: []func() -> void) -> SerializationError!{s}\n", .{ name, bound, type_text });
+            if (is_struct) {
+                try self.emitStructDecode(&out, key.type_id, type_text, loc);
+            } else {
+                try self.emitArrayDecode(&out, type_ptr.kind.array, type_text, loc);
+            }
+        } else {
+            try self.emit(&out, "func ~{s}[W: {s}](value: {s}, mut writer: W) -> SerializationError!void\n", .{ name, bound, type_text });
+            if (is_struct) {
+                try self.emitStructEncode(&out, key.type_id, loc);
+            } else {
+                try self.emitArrayEncode(&out, type_ptr.kind.array, loc);
+            }
+        }
+        try out.appendSlice(self.allocator, "end\n");
+        return out.items;
+    }
+
+    fn emitStructDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const fields = (try self.serializableStruct(type_id, loc)).fields_in_order;
+        const plan = try self.planIndex(type_id);
+        try self.emit(out, "try reader.begin_struct({d})\nlet mut value = blank[{s}]()\n", .{ plan, type_text });
+        for (fields, 0..) |field, i| {
+            try self.emit(out, "let mut has_{d} = false\n", .{i});
+            if (!self.isConstantDefault(field)) continue;
+            try self.emit(out, "value.{s} = field_default[{s}, {s}]({d})\n", .{ field.identifier, type_text, try self.derivedTypeText(field.type_id, loc), i });
+        }
+        try self.emit(out, "for true do\nlet index = try reader.next_field({d})\nif index < 0 then\nbreak\nend\nwhen index\n", .{plan});
+        for (fields, 0..) |field, i| {
+            try self.emit(out, "{d} then\nif has_{d} then\nreturn SerializationError.DuplicateField\nend\n", .{ i, i });
+            try self.emitDecodeInto(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, loc);
+            try self.emit(out, "has_{d} = true\nend\n", .{i});
+        }
+        try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownField\nend\nend\nend\n");
+        for (fields, 0..) |field, i| {
+            if (field.default_value != null) continue;
+            try self.emit(out, "if !has_{d} then\ntry reader.missing_field({d}, {d})\nreturn SerializationError.MissingField\nend\n", .{ i, plan, i });
+        }
+        var has_deferred_default = false;
+        for (fields, 0..) |field, i| {
+            const is_deferred = field.default_value != null and !self.isConstantDefault(field);
+            if (!is_deferred) continue;
+            if (!has_deferred_default) {
+                try out.appendSlice(self.allocator, "let mut defaults_target = value\n");
+                has_deferred_default = true;
+            }
+            try self.emit(out, "if !has_{d} then\narray::append(pending, func() -> void\ndefaults_target.{s} = field_default[{s}, {s}]({d})\nend)\nend\n", .{ i, field.identifier, type_text, try self.derivedTypeText(field.type_id, loc), i });
+        }
+        try out.appendSlice(self.allocator, "return value\n");
+    }
+
+    fn emitArrayDecode(self: *Self, out: *std.ArrayList(u8), item_type: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        try self.emit(out, "let mut items: {s} = []\ntry reader.begin_array()\nfor true do\nif !(try reader.has_item()) then\nbreak\nend\n", .{type_text});
+        if (self.type_table.getTypePtrById(item_type).is_nullable) {
+            try self.emit(out, "let mut item: {s} = null\n", .{try self.derivedTypeText(item_type, loc)});
+            try self.emitDecodeInto(out, "item", item_type, loc);
+            try out.appendSlice(self.allocator, "array::append(items, item)\n");
+        } else {
+            try self.emit(out, "array::append(items, {s})\n", .{try self.decodeExpression(item_type, loc)});
+        }
+        try out.appendSlice(self.allocator, "end\nreturn items\n");
+    }
+
+    fn emitDecodeInto(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (!type_ptr.is_nullable) {
+            try self.emit(out, "{s} = {s}\n", .{ target, try self.decodeExpression(type_id, loc) });
+            return;
+        }
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        try self.emit(out, "if !(try reader.read_null()) then\n{s} = {s}\nend\n", .{ target, try self.decodeExpression(base, loc) });
+    }
+
+    fn decodeExpression(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .int => "try reader.read_int()",
+            .float => "try reader.read_float()",
+            .boolean => "try reader.read_bool()",
+            .string => "try reader.read_string()",
+            .@"struct", .array => try allocPrint(self.allocator, "try {s}(reader, pending)", .{try self.derivedFunctionName(.{ .operation = .derive_decode, .type_id = type_id }, loc)}),
+            else => self.err_reporter.invalidType("serializable type", try self.type_table.name(type_id, self.allocator), loc),
+        };
+    }
+
+    fn emitStructEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const fields = (try self.serializableStruct(type_id, loc)).fields_in_order;
+        const plan = try self.planIndex(type_id);
+        try self.emit(out, "try writer.begin_struct({d}, {d})\n", .{ plan, fields.len });
+        for (fields, 0..) |field, i| {
+            try self.emit(out, "try writer.field({d}, {d})\n", .{ plan, i });
+            try self.emitEncode(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, i, loc);
+        }
+        try out.appendSlice(self.allocator, "try writer.end_struct()\n");
+    }
+
+    fn emitArrayEncode(self: *Self, out: *std.ArrayList(u8), item_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        try out.appendSlice(self.allocator, "try writer.begin_array(array::len(value))\nlet mut index = 0\nfor value: item do\ntry writer.item(index)\n");
+        try self.emitEncode(out, "item", item_type, 0, loc);
+        try out.appendSlice(self.allocator, "index = index + 1\nend\ntry writer.end_array()\n");
+    }
+
+    fn emitEncode(self: *Self, out: *std.ArrayList(u8), source: []const u8, type_id: tt.TypeId, number: usize, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (!type_ptr.is_nullable) {
+            try self.emit(out, "{s}\n", .{try self.encodeStatement(source, type_id, loc)});
+            return;
+        }
+        const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const capture = try allocPrint(self.allocator, "present_{d}", .{number});
+        try self.emit(out, "if {s}: {s} then\n{s}\nelse\ntry writer.write_null()\nend\n", .{ source, capture, try self.encodeStatement(capture, base, loc) });
+    }
+
+    fn encodeStatement(self: *Self, source: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        const method = switch (self.type_table.getTypePtrById(type_id).kind) {
+            .int => "write_int",
+            .float => "write_float",
+            .boolean => "write_bool",
+            .string => "write_string",
+            .@"struct", .array => {
+                const name = try self.derivedFunctionName(.{ .operation = .derive_encode, .type_id = type_id }, loc);
+                return allocPrint(self.allocator, "try {s}({s}, writer)", .{ name, source });
+            },
+            else => return self.err_reporter.invalidType("serializable type", try self.type_table.name(type_id, self.allocator), loc),
+        };
+        return allocPrint(self.allocator, "try writer.{s}({s})", .{ method, source });
+    }
+
+    fn serializableStruct(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError!tt.Struct {
+        const struct_def = self.type_table.getTypePtrById(type_id).kind.@"struct";
+        for (struct_def.fields_in_order) |field| {
+            if (field.is_file_only) {
+                return self.err_reporter.invalidType("struct without private fields", struct_def.identifier, loc);
+            }
+        }
+        return struct_def;
+    }
+
+    fn isConstantDefault(self: *Self, field: tt.TypedIdentifier) bool {
+        _ = self;
+        const value = field.default_value orelse return false;
+        return switch (value.data) {
+            .i_int, .i_float, .i_bool, .i_string, .i_null => true,
+            .i_array => |array| array.values.len == 0,
+            else => false,
+        };
+    }
+
+    fn planIndex(self: *Self, type_id: tt.TypeId) CompileError!usize {
+        if (self.plan_by_type.get(type_id)) |index| {
+            return index;
+        }
+        const fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
+        const names = try self.allocator.alloc([]const u8, fields.len);
+        for (fields, names) |field, *name| {
+            name.* = field.identifier;
+        }
+        const index = self.serialization_plans.items.len;
+        try self.serialization_plans.append(self.allocator, .{ .names = names });
+        try self.plan_by_type.put(self.allocator, type_id, index);
+        return index;
+    }
+
+    fn derivedBound(self: *Self, key: DerivedKey) CompileError![]const u8 {
+        var capabilities = Capabilities{};
+        var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
+        try self.collectCapabilities(key.type_id, &capabilities, &visited);
+        const is_decode = key.operation == .derive_decode;
+        var bound: std.ArrayList(u8) = .empty;
+        try bound.appendSlice(self.allocator, if (is_decode) "ScalarReader" else "ScalarWriter");
+        if (capabilities.has_null) {
+            try bound.appendSlice(self.allocator, if (is_decode) " + NullReader" else " + NullWriter");
+        }
+        if (capabilities.has_struct) {
+            try bound.appendSlice(self.allocator, if (is_decode) " + StructReader" else " + StructWriter");
+        }
+        if (capabilities.has_array) {
+            try bound.appendSlice(self.allocator, if (is_decode) " + ArrayReader" else " + ArrayWriter");
+        }
+        return bound.items;
+    }
+
+    fn collectCapabilities(self: *Self, type_id: tt.TypeId, capabilities: *Capabilities, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void)) CompileError!void {
+        if (visited.contains(type_id)) return;
+        try visited.put(self.allocator, type_id, {});
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            capabilities.has_null = true;
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse return;
+            return self.collectCapabilities(base, capabilities, visited);
+        }
+        switch (type_ptr.kind) {
+            .@"struct" => |struct_def| {
+                capabilities.has_struct = true;
+                for (struct_def.fields_in_order) |field| {
+                    try self.collectCapabilities(field.type_id, capabilities, visited);
+                }
+            },
+            .array => |item_type| {
+                capabilities.has_array = true;
+                try self.collectCapabilities(item_type, capabilities, visited);
+            },
+            else => {},
+        }
+    }
+
+    fn derivedTypeText(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+            return allocPrint(self.allocator, "?{s}", .{try self.derivedTypeText(base, loc)});
+        }
+        return switch (type_ptr.kind) {
+            .int => "int",
+            .float => "float",
+            .boolean => "bool",
+            .string => "string",
+            .byte => "byte",
+            .array => |item_type| allocPrint(self.allocator, "[]{s}", .{try self.derivedTypeText(item_type, loc)}),
+            .@"struct", .@"enum", .@"union" => self.derivedTypeName(type_id),
+            else => self.err_reporter.invalidType("serializable type", try self.type_table.name(type_id, self.allocator), loc),
+        };
+    }
+
+    fn derivedTypeName(self: *Self, type_id: tt.TypeId) CompileError![]const u8 {
+        if (self.derived_type_names.get(type_id)) |name| {
+            return name;
+        }
+        const module = self.serialization_module orelse @panic("derivedTypeName: std/serialization isn't loaded");
+        const name = try allocPrint(self.allocator, "derived_type_{d}", .{type_id});
+        try module.root.put(.{
+            .identifier = name,
+            .uid = self.scope.genUid(),
+            .type_id = self.type_table.getPrimitive(.meta),
+            .kind = .{ .defined_type = .{ .blueprint_type_id = type_id } },
+            .is_file_only = true,
+        });
+        try self.derived_type_names.put(self.allocator, type_id, name);
+        return name;
+    }
+
+    fn emit(self: *Self, out: *std.ArrayList(u8), comptime format: []const u8, args: anytype) CompileError!void {
+        try out.appendSlice(self.allocator, try allocPrint(self.allocator, format, args));
     }
 
     fn methodOrError(self: *Self, type_id: tt.TypeId, name: []const u8, loc: err.Loc) CompileError!tt.TypeId {
@@ -6408,6 +6750,17 @@ const WhenSubject = struct {
     base_kind: @FieldType(tt.Type, "kind"),
     is_mutable: bool,
     exp: *const ast.ExpNode,
+};
+
+const DerivedKey = struct {
+    operation: native.SerializationOperation,
+    type_id: tt.TypeId,
+};
+
+const Capabilities = struct {
+    has_null: bool = false,
+    has_struct: bool = false,
+    has_array: bool = false,
 };
 
 const GenericFunction = struct {

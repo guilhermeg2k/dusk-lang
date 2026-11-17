@@ -20,6 +20,7 @@ pub const modules = [_]Module{
     .{ .path = "net", .source = @embedFile("std/net.dsk"), .bindings = &@import("std/net.zig").bindings },
     .{ .path = "url", .source = @embedFile("std/url.dsk"), .bindings = &@import("std/url.zig").bindings },
     .{ .path = "http", .source = @embedFile("std/http.dsk"), .bindings = &@import("std/http.zig").bindings },
+    .{ .path = "serialization", .source = @embedFile("std/serialization.dsk"), .bindings = &@import("std/serialization.zig").bindings },
 };
 
 pub fn find(path: []const u8) ?*const Module {

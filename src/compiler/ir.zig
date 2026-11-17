@@ -11,6 +11,7 @@ pub const Program = struct {
     defined_types: []const DefinedType,
     error_names: []const []const u8,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
+    serialization_plans: []const @import("../runtime/serialization_plan.zig").Plan = &.{},
 };
 
 pub const Block = []const Instruction;

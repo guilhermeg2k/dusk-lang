@@ -1,0 +1,233 @@
+import @/format
+import std/serialization
+import std/array
+import std/io
+
+func decode_strings(mut reader: format::JsonReader) -> serialization::SerializationError![]string
+    let mut items: []string = []
+    try reader.begin_array()
+    for try reader.has_item() do
+        array::append(items, try reader.read_string())
+    end
+    return items
+end
+
+func decode_ints(mut reader: format::JsonReader) -> serialization::SerializationError![]int
+    let mut items: []int = []
+    try reader.begin_array()
+    for try reader.has_item() do
+        array::append(items, try reader.read_int())
+    end
+    return items
+end
+
+func decode_address(mut reader: format::JsonReader, fields: int) -> serialization::SerializationError!format::Address
+    try reader.begin_struct(fields)
+    let mut city = ""
+    let mut zip: ?string = null
+    let mut has_city = false
+    let mut has_zip = false
+    for true do
+        let index = try reader.next_field(fields)
+        if index < 0 then
+            break
+        end
+        when index
+            0 then
+                if has_city then
+                    return serialization::SerializationError.DuplicateField
+                end
+                city = try reader.read_string()
+                has_city = true
+            end
+            1 then
+                if has_zip then
+                    return serialization::SerializationError.DuplicateField
+                end
+                if !(try reader.read_null()) then
+                    zip = try reader.read_string()
+                end
+                has_zip = true
+            end
+            else then
+                return serialization::SerializationError.UnknownField
+            end
+        end
+    end
+    if !has_city or !has_zip then
+        return serialization::SerializationError.MissingField
+    end
+    return format::Address(city = city, zip = zip)
+end
+
+func decode_addresses(mut reader: format::JsonReader, fields: int) -> serialization::SerializationError![]format::Address
+    let mut items: []format::Address = []
+    try reader.begin_array()
+    for try reader.has_item() do
+        array::append(items, try decode_address(reader, fields))
+    end
+    return items
+end
+
+func decode_user(mut reader: format::JsonReader, user_fields: int, address_fields: int, mut pending: []func() -> void) -> serialization::SerializationError!format::User
+    try reader.begin_struct(user_fields)
+    let mut id = 0
+    let mut name = ""
+    let mut score = 0.0
+    let mut is_active = false
+    let mut email: ?string = null
+    let mut address = format::Address(city = "", zip = null)
+    let mut tags: []string = []
+    let mut scores: []int = []
+    let mut friends: []format::Address = []
+    let mut created = 0
+    let mut has_id = false
+    let mut has_name = false
+    let mut has_score = false
+    let mut has_active = false
+    let mut has_email = false
+    let mut has_address = false
+    let mut has_created = false
+    for true do
+        let index = try reader.next_field(user_fields)
+        if index < 0 then
+            break
+        end
+        when index
+            0 then
+                id = try reader.read_int()
+                has_id = true
+            end
+            1 then
+                name = try reader.read_string()
+                has_name = true
+            end
+            2 then
+                score = try reader.read_float()
+                has_score = true
+            end
+            3 then
+                is_active = try reader.read_bool()
+                has_active = true
+            end
+            4 then
+                if !(try reader.read_null()) then
+                    email = try reader.read_string()
+                end
+                has_email = true
+            end
+            5 then
+                address = try decode_address(reader, address_fields)
+                has_address = true
+            end
+            6 then
+                tags = try decode_strings(reader)
+            end
+            7 then
+                scores = try decode_ints(reader)
+            end
+            8 then
+                friends = try decode_addresses(reader, address_fields)
+            end
+            9 then
+                created = try reader.read_int()
+                has_created = true
+            end
+            else then
+                return serialization::SerializationError.UnknownField
+            end
+        end
+    end
+    let has_required = has_id and has_name and has_score and has_active and has_email and has_address
+    if !has_required then
+        return serialization::SerializationError.MissingField
+    end
+    let mut user = format::User(id = id, name = name, score = score, is_active = is_active, email = email, address = address, tags = tags, scores = scores, friends = friends, created = created)
+    if !has_created then
+        array::append(pending, func() -> void
+            user.created = format::default_created()
+        end)
+    end
+    return user
+end
+
+func encode_address(address: format::Address, mut writer: format::JsonWriter, fields: int) -> serialization::SerializationError!void
+    try writer.begin_struct(fields, 2)
+    try writer.field(fields, 0)
+    try writer.write_string(address.city)
+    try writer.field(fields, 1)
+    if address.zip: zip then
+        try writer.write_string(zip)
+    else
+        try writer.write_null()
+    end
+    try writer.end_struct()
+end
+
+func encode_user(user: format::User, mut writer: format::JsonWriter, user_fields: int, address_fields: int) -> serialization::SerializationError!void
+    try writer.begin_struct(user_fields, 10)
+    try writer.field(user_fields, 0)
+    try writer.write_int(user.id)
+    try writer.field(user_fields, 1)
+    try writer.write_string(user.name)
+    try writer.field(user_fields, 2)
+    try writer.write_float(user.score)
+    try writer.field(user_fields, 3)
+    try writer.write_bool(user.is_active)
+    try writer.field(user_fields, 4)
+    if user.email: email then
+        try writer.write_string(email)
+    else
+        try writer.write_null()
+    end
+    try writer.field(user_fields, 5)
+    try encode_address(user.address, writer, address_fields)
+    try writer.field(user_fields, 6)
+    try writer.begin_array(array::len(user.tags))
+    for user.tags: tag, i do
+        try writer.item(i)
+        try writer.write_string(tag)
+    end
+    try writer.end_array()
+    try writer.field(user_fields, 7)
+    try writer.begin_array(array::len(user.scores))
+    for user.scores: score, i do
+        try writer.item(i)
+        try writer.write_int(score)
+    end
+    try writer.end_array()
+    try writer.field(user_fields, 8)
+    try writer.begin_array(array::len(user.friends))
+    for user.friends: friend, i do
+        try writer.item(i)
+        try encode_address(friend, writer, address_fields)
+    end
+    try writer.end_array()
+    try writer.field(user_fields, 9)
+    try writer.write_int(user.created)
+    try writer.end_struct()
+end
+
+func main() -> !void
+    let text = format::sample_text()
+    let user_fields = 0
+    let address_fields = 1
+    let mut checksum = 0
+    if checksum < 0 then
+        let mut unused_reader = format::reader_for(text)
+        let unused = try serialization::decode[format::User, format::JsonReader](unused_reader)
+    end
+    for 0..19999: i do
+        let mut reader = format::reader_for(text)
+        let mut pending: []func() -> void = []
+        let user = try decode_user(reader, user_fields, address_fields, pending)
+        for pending: apply_default do
+            apply_default()
+        end
+        checksum = checksum + user.id + array::len(user.friends) + user.created
+        let mut writer = format::JsonWriter()
+        try encode_user(user, writer, user_fields, address_fields)
+        checksum = checksum + array::len(writer.parts)
+    end
+    io::println("${checksum}")
+end

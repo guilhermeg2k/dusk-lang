@@ -1,0 +1,351 @@
+import std/serialization
+import std/string
+import std/buffer
+import std/array
+import std/task
+
+struct JsonReader
+    text: string
+    data: buffer
+    pos: int = 0
+
+    func skip_spaces(mut self: @) -> void
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let is_space = c == ' ' or c == '\n' or c == '\t' or c == '\r'
+            if !is_space then
+                break
+            end
+            self.pos = self.pos + 1
+        end
+    end
+
+    func peek(mut self: @) -> byte
+        self.skip_spaces()
+        if self.pos >= buffer::len(self.data) then
+            return 0
+        end
+        return self.data[self.pos]
+    end
+
+    func expect(mut self: @, c: byte) -> serialization::SerializationError!void
+        if self.peek() != c then
+            return serialization::SerializationError.InvalidInput
+        end
+        self.pos = self.pos + 1
+    end
+
+    func read_int(mut self: @) -> serialization::SerializationError!int
+        let mut is_negative = false
+        if self.peek() == '-' then
+            is_negative = true
+            self.pos = self.pos + 1
+        end
+        let start = self.pos
+        let mut number = 0
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let is_digit = c >= '0' and c <= '9'
+            if !is_digit then
+                break
+            end
+            number = number * 10 + (c - '0')
+            self.pos = self.pos + 1
+        end
+        if self.pos == start then
+            return serialization::SerializationError.InvalidInput
+        end
+        if is_negative then
+            return 0 - number
+        end
+        return number
+    end
+
+    func read_float(mut self: @) -> serialization::SerializationError!float
+        self.skip_spaces()
+        let start = self.pos
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            let is_number_part = (c >= '0' and c <= '9') or c == '.' or c == '-' or c == 'e' or c == 'E' or c == '+'
+            if !is_number_part then
+                break
+            end
+            self.pos = self.pos + 1
+        end
+        let text = string::slice(self.text, start, self.pos) catch "x"
+        let number = string::to_float(text) catch e then
+            return serialization::SerializationError.InvalidInput
+        end
+        return number
+    end
+
+    func read_bool(mut self: @) -> serialization::SerializationError!bool
+        let c = self.peek()
+        if c == 't' then
+            self.pos = self.pos + 4
+            return true
+        end
+        if c == 'f' then
+            self.pos = self.pos + 5
+            return false
+        end
+        return serialization::SerializationError.TypeMismatch
+    end
+
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        try self.expect('"')
+        let start = self.pos
+        for self.pos < buffer::len(self.data) and self.data[self.pos] != '"' do
+            self.pos = self.pos + 1
+        end
+        let text = string::slice(self.text, start, self.pos) catch ""
+        self.pos = self.pos + 1
+        return text
+    end
+
+    func read_null(mut self: @) -> serialization::SerializationError!bool
+        if self.peek() != 'n' then
+            return false
+        end
+        self.pos = self.pos + 4
+        return true
+    end
+
+    func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
+        try self.expect('{')
+    end
+
+    func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
+        for true do
+            let c = self.peek()
+            if c == '}' then
+                self.pos = self.pos + 1
+                return -1
+            end
+            if c == ',' then
+                self.pos = self.pos + 1
+            end
+            try self.expect('"')
+            let start = self.pos
+            for self.pos < buffer::len(self.data) and self.data[self.pos] != '"' do
+                self.pos = self.pos + 1
+            end
+            let stop = self.pos
+            self.pos = self.pos + 1
+            try self.expect(':')
+            let index = serialization::find_field_in(fields, self.text, start, stop)
+            if index >= 0 then
+                return index
+            end
+            self.skip_value()
+        end
+        return -1
+    end
+
+    func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        return serialization::SerializationError.MissingField
+    end
+
+    func begin_array(mut self: @) -> serialization::SerializationError!void
+        try self.expect('[')
+    end
+
+    func has_item(mut self: @) -> serialization::SerializationError!bool
+        let c = self.peek()
+        if c == ']' then
+            self.pos = self.pos + 1
+            return false
+        end
+        if c == ',' then
+            self.pos = self.pos + 1
+        end
+        return true
+    end
+
+    func skip_value(mut self: @) -> void
+        self.skip_spaces()
+        let mut depth = 0
+        let mut is_in_string = false
+        for self.pos < buffer::len(self.data) do
+            let c = self.data[self.pos]
+            if is_in_string then
+                if c == '"' then
+                    is_in_string = false
+                end
+                self.pos = self.pos + 1
+                continue
+            end
+            let is_open = c == '{' or c == '['
+            let is_close = c == '}' or c == ']'
+            if c == '"' then
+                is_in_string = true
+            elif is_open then
+                depth = depth + 1
+            elif is_close then
+                if depth == 0 then
+                    return
+                end
+                depth = depth - 1
+            elif c == ',' and depth == 0 then
+                return
+            end
+            self.pos = self.pos + 1
+        end
+    end
+end
+
+func reader_for(text: string) -> JsonReader
+    return JsonReader(text = text, data = buffer::from_string(text))
+end
+
+struct JsonWriter
+    parts: []string = []
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        array::append(self.parts, "${value}")
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        array::append(self.parts, if value then "true" else "false" end)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        array::append(self.parts, "\"${value}\"")
+    end
+
+    func write_null(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "null")
+    end
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+        array::append(self.parts, "{")
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, ",")
+        end
+        array::append(self.parts, "\"${serialization::field_name(fields, index)}\":")
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "}")
+    end
+
+    func begin_array(mut self: @, length: int) -> serialization::SerializationError!void
+        array::append(self.parts, "[")
+    end
+
+    func item(mut self: @, index: int) -> serialization::SerializationError!void
+        if index > 0 then
+            array::append(self.parts, ",")
+        end
+    end
+
+    func end_array(mut self: @) -> serialization::SerializationError!void
+        array::append(self.parts, "]")
+    end
+end
+
+func slow_default() -> int
+    task::sleep(1)
+    return 42
+end
+
+struct Address
+    city: string
+    zip: ?string
+end
+
+struct User
+    id: int
+    name: string
+    score: float
+    is_active: bool
+    email: ?string
+    address: Address
+    tags: []string = []
+    scores: []int = []
+    friends: []Address = []
+    previous: ?Address = null
+    created: int = slow_default()
+end
+
+struct Node
+    value: int
+    next: ?Node = null
+    children: []Node = []
+end
+
+func decode_user(text: string) -> serialization::SerializationError!User
+    let mut reader = reader_for(text)
+    return try serialization::decode[User, JsonReader](reader)
+end
+
+func decode_error(text: string) -> ?serialization::SerializationError
+    let user = decode_user(text) catch e then
+        return e
+    end
+    return null
+end
+
+func encode_user(user: User) -> serialization::SerializationError!string
+    let mut writer = JsonWriter()
+    try serialization::encode(user, writer)
+    return string::join(writer.parts)
+end
+
+func main() -> !void
+    let full = "{\"id\": 7, \"name\": \"Ada\", \"score\": 1.5, \"is_active\": true, \"email\": null, \"address\": {\"city\": \"Porto\", \"zip\": \"4000\"}, \"tags\": [\"a\", \"b\"], \"scores\": [1, -2, 3], \"friends\": [{\"city\": \"Lisbon\", \"zip\": null}], \"created\": 5}"
+    let user = try decode_user(full)
+    assert(user.id == 7)
+    assert(user.name == "Ada")
+    assert(user.score == 1.5)
+    assert(user.is_active)
+    assert(user.email == null)
+    assert(user.address.city == "Porto")
+    assert(user.address.zip == "4000")
+    assert(array::len(user.tags) == 2 and user.tags[1] == "b")
+    assert(user.scores[1] == -2)
+    assert(user.friends[0].city == "Lisbon" and user.friends[0].zip == null)
+    assert(user.previous == null)
+    assert(user.created == 5)
+
+    let minimal = "{\"unknown\": {\"deep\": [1, 2, {\"x\": \"y\"}]}, \"id\": 1, \"name\": \"B\", \"score\": 2, \"is_active\": false, \"email\": \"b@x\", \"address\": {\"city\": \"C\", \"zip\": null}}"
+    let mut first = try decode_user(minimal)
+    let second = try decode_user(minimal)
+    assert(first.created == 42)
+    assert(first.email == "b@x")
+    assert(array::len(first.tags) == 0)
+    array::append(first.tags, "changed")
+    assert(array::len(second.tags) == 0)
+
+    assert(decode_error("{\"id\": 1}") == serialization::SerializationError.MissingField)
+    assert(decode_error("{\"id\": 1, \"id\": 2}") == serialization::SerializationError.DuplicateField)
+    assert(decode_error("{\"id\": x}") == serialization::SerializationError.InvalidInput)
+
+    let text = try encode_user(user)
+    let again = try decode_user(text)
+    assert(again.name == user.name and again.address.zip == "4000" and again.friends[0].city == "Lisbon")
+    assert((try encode_user(again)) == text)
+
+    let tree_text = "{\"value\": 1, \"next\": {\"value\": 2, \"next\": {\"value\": 3}}, \"children\": [{\"value\": 4, \"children\": [{\"value\": 5}]}]}"
+    let mut tree_reader = reader_for(tree_text)
+    let tree: Node = try serialization::decode(tree_reader)
+    let mut tree_writer = JsonWriter()
+    try serialization::encode(tree, tree_writer)
+    assert(string::join(tree_writer.parts) == "{\"value\":1,\"next\":{\"value\":2,\"next\":{\"value\":3,\"next\":null,\"children\":[]},\"children\":[]},\"children\":[{\"value\":4,\"next\":null,\"children\":[{\"value\":5,\"next\":null,\"children\":[]}]}]}")
+
+    let long_name = try string::repeat("x", 5000)
+    let big = "{\"id\": 3, \"name\": \"${long_name}\", \"score\": 1, \"is_active\": true, \"email\": \"${long_name}\", \"address\": {\"city\": \"${long_name}\", \"zip\": \"z\"}, \"friends\": [{\"city\": \"a\", \"zip\": \"b\"}, {\"city\": \"c\", \"zip\": null}], \"created\": 1}"
+    let mut total = 0
+    for 0..1999: i do
+        let decoded = try decode_user(big)
+        total = total + string::len(decoded.name) + string::len(decoded.address.city) + array::len(decoded.friends)
+    end
+    assert(total == 2000 * 10002)
+end

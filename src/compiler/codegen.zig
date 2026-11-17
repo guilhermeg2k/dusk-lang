@@ -5,6 +5,7 @@ const tt = @import("type_table.zig");
 const bc = @import("../runtime/bytecode.zig");
 const native = @import("../runtime/builtins/native.zig");
 const err = @import("compile_error.zig");
+const Plan = @import("../runtime/serialization_plan.zig").Plan;
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -144,7 +145,8 @@ pub const BytecodeGen = struct {
             .static_closures = static_closures,
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
-            .error_names = try self.copyErrorNames(program.error_names),
+            .error_names = try self.copyNames(program.error_names),
+            .serialization_plans = try self.copySerializationPlans(program.serialization_plans),
         };
     }
 
@@ -156,6 +158,7 @@ pub const BytecodeGen = struct {
                 try self.intrinsic_by_uid.put(ext.uid, intrinsic);
                 break :blk .{ .intrinsic = intrinsic };
             },
+            .serialization => @panic("bindExtern: serialization externs are replaced by sema"),
         };
         return .{ .uid = ext.uid, .name = try self.allocator.dupe(u8, ext.identifier), .kind = kind };
     }
@@ -1788,12 +1791,20 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn copyErrorNames(self: *Self, error_names: []const []const u8) ![]const []const u8 {
-        const names = try self.allocator.alloc([]const u8, error_names.len);
-        for (error_names, 0..) |name, i| {
+    fn copyNames(self: *Self, source_names: []const []const u8) ![]const []const u8 {
+        const names = try self.allocator.alloc([]const u8, source_names.len);
+        for (source_names, 0..) |name, i| {
             names[i] = try self.allocator.dupe(u8, name);
         }
         return names;
+    }
+
+    fn copySerializationPlans(self: *Self, plans: []const Plan) ![]const Plan {
+        const copies = try self.allocator.alloc(Plan, plans.len);
+        for (plans, copies) |plan, *copy| {
+            copy.* = .{ .names = try self.copyNames(plan.names) };
+        }
+        return copies;
     }
 
     fn genArrayStore(self: *Self, array_reg: u8, index_value: *ir.Value, value: *ir.Value) !void {

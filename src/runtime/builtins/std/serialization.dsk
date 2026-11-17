@@ -1,0 +1,82 @@
+import std/array
+
+error SerializationError
+    InvalidInput
+    TypeMismatch
+    MissingField
+    UnknownField
+    DuplicateField
+    OutOfRange
+    InvalidValue
+    UnknownVariant
+    DepthExceeded
+    CycleDetected
+end
+
+trait ScalarReader
+    func read_int(mut self: @) -> SerializationError!int
+    func read_float(mut self: @) -> SerializationError!float
+    func read_bool(mut self: @) -> SerializationError!bool
+    func read_string(mut self: @) -> SerializationError!string
+end
+
+trait NullReader
+    func read_null(mut self: @) -> SerializationError!bool
+end
+
+trait StructReader
+    func begin_struct(mut self: @, fields: int) -> SerializationError!void
+    func next_field(mut self: @, fields: int) -> SerializationError!int
+    func missing_field(mut self: @, fields: int, index: int) -> SerializationError!void
+end
+
+trait ArrayReader
+    func begin_array(mut self: @) -> SerializationError!void
+    func has_item(mut self: @) -> SerializationError!bool
+end
+
+trait ScalarWriter
+    func write_int(mut self: @, value: int) -> SerializationError!void
+    func write_float(mut self: @, value: float) -> SerializationError!void
+    func write_bool(mut self: @, value: bool) -> SerializationError!void
+    func write_string(mut self: @, value: string) -> SerializationError!void
+end
+
+trait NullWriter
+    func write_null(mut self: @) -> SerializationError!void
+end
+
+trait StructWriter
+    func begin_struct(mut self: @, fields: int, count: int) -> SerializationError!void
+    func field(mut self: @, fields: int, index: int) -> SerializationError!void
+    func end_struct(mut self: @) -> SerializationError!void
+end
+
+trait ArrayWriter
+    func begin_array(mut self: @, length: int) -> SerializationError!void
+    func item(mut self: @, index: int) -> SerializationError!void
+    func end_array(mut self: @) -> SerializationError!void
+end
+
+extern func field_count(fields: int) -> int
+extern func field_name(fields: int, index: int) -> string
+extern func find_field(fields: int, name: string) -> int
+extern func find_field_in(fields: int, text: string, start: int, stop: int) -> int
+
+extern func ~derive_decode[T, R: ScalarReader](mut reader: R, mut pending: []func() -> void) -> SerializationError!T
+extern func ~derive_encode[T, W: ScalarWriter](value: T, mut writer: W) -> SerializationError!void
+extern func ~blank[T]() -> T
+extern func ~field_default[T, F](index: int) -> F
+
+func decode[T, R: ScalarReader](mut reader: R) -> SerializationError!T
+    let mut pending: []func() -> void = []
+    let value = try derive_decode[T, R](reader, pending)
+    for pending: apply_default do
+        apply_default()
+    end
+    return value
+end
+
+func encode[T, W: ScalarWriter](value: T, mut writer: W) -> SerializationError!void
+    try derive_encode[T, W](value, writer)
+end

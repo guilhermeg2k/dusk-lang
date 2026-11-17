@@ -55,6 +55,11 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "serialization spike: derived decode and encode through a format written in Dusk" {
+    try runCase("serialization-spike.dsk");
+    try runCaseError("sema/serialization-missing-capability.dsk", error.DoesntFitTrait);
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }

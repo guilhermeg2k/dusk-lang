@@ -7,6 +7,14 @@ pub const BindingMap = std.StaticStringMap(Binding);
 pub const Binding = union(enum) {
     native: NativeFnPtr,
     intrinsic: Intrinsic,
+    serialization: SerializationOperation,
+};
+
+pub const SerializationOperation = enum {
+    derive_decode,
+    derive_encode,
+    blank,
+    field_default,
 };
 
 pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
