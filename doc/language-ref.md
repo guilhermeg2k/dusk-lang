@@ -2435,12 +2435,6 @@ HTTP/1.1 clients and servers. `http::request` sends a request and reads the whol
 ```nim
 import std/http
 import std/io
-import std/json
-
-struct User
-    name: string
-    email: string
-end
 
 func main() -> !void
     let resp = try http::request("https://api.example.com/users/1", timeout_ms = 5000)
@@ -2448,10 +2442,10 @@ func main() -> !void
         io::println("failed: ${resp.status}")
         return
     end
-    let user = try json::decode[User](try resp.text())
+    let user = try resp.text()
 
     let created = try http::request("https://api.example.com/users", method = "POST",
-        body = try json::encode(user),
+        body = user,
         headers = {"Content-Type": "application/json", "Authorization": "Bearer secret"})
     io::println("${created.status} ${created.headers.get("location") orelse "-"}")
 end
@@ -2545,12 +2539,6 @@ A body that ends before its announced length, or that breaks the chunked format,
 ```nim
 import std/http
 import std/io
-import std/json
-
-struct User
-    name: string
-    email: string
-end
 
 func main() -> !void
     let server = try http::listen("0.0.0.0", 8080)
@@ -2562,8 +2550,7 @@ func main() -> !void
                 if req.method != "POST" then
                     return http::status(405)
                 end
-                let user = try json::decode[User](try req.text())
-                return http::json_text(try json::encode(user), status = 201)
+                return http::json_text(try req.text(), status = 201)
             end
             else then return http::status(404) end
         end
@@ -2647,112 +2634,6 @@ A `reason` left empty is filled from the status code (`"Not Found"`). The server
 | `InvalidRequest` | A request body the client sent broken (bad chunks, or shorter than announced), read with `text` or `bytes` |
 | `AddressInUse`, `PermissionDenied` | `listen` failed, as in `net::NetError` |
 | `Other` | Any other failure |
-
-### std/reflect
-
-`import std/reflect` provides read-only descriptions of concrete types. `reflect::type_of[T]()` needs no value; `reflect::type_of_value(value)` infers its type and evaluates the argument normally. Both work inside generic functions. A `reflect::Type` is a protected handle: compare identities with `reflect::is_same(a, b)`, inspect its name with `reflect::name(type)` and its kind with `reflect::kind(type)`. Matching names or runtime layouts do not establish type identity.
-
-```dusk
-import std/reflect
-
-struct User
-    name: string
-    age: int = 30
-end
-
-let type = reflect::type_of[User]()
-let fields = reflect::fields(type)
-assert(fields[0].name == "name")
-assert(reflect::is_same(fields[0].type, reflect::type_of[string]()))
-assert(fields[1].has_default)
-```
-
-`reflect::describe(type)` returns a `TypeInfo` union:
-
-| Variant | Payload |
-| --- | --- |
-| `scalar` | A primitive `Kind`: `Int`, `Byte`, `Float`, `Bool` or `String` |
-| `nullable`, `array` | The child `Type` |
-| `map` | `MapInfo` with `key` and `value` types |
-| `structure` | `StructInfo` with `fields` and `has_private_fields` |
-| `enumeration` | Ordered `EnumVariant` entries, each with `name` and `value` |
-| `tagged_union` | Ordered `UnionVariant` entries, each with `name` and payload `type` |
-| `opaque` | A `Kind` identifying `Buffer`, `Function`, `Task`, `Error`, `Void` or `Null` |
-
-`reflect::fields(type)`, `reflect::enum_variants(type)` and `reflect::union_variants(type)` return their corresponding member lists, or an empty list for another kind. Field entries contain `name`, `type` and `has_default`. Only public instance fields participate; private fields, static fields and methods are excluded. `has_private_fields` indicates that the struct also contains private instance fields. Inspecting a type does not execute its field defaults.
-
-Lists and descriptions are independent snapshots; changing them does not modify the type. Child type handles preserve identity, including references back to recursive types. Enum aliases retain their declared names and values in declaration order. Reflection does not grant access to private members or turn runtime type handles into generic type arguments.
-
-This initial surface describes types. Reflected values and construction are planned separately; descriptions alone do not construct a value of a runtime-discovered type.
-
-### std/json
-
-`json::encode(value, options = @()) -> JsonError!string` writes compact JSON. `json::decode[T](text, mut diagnostic = null, options = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type:
-
-```dusk
-import std/json
-
-struct User
-    name: string
-    age: int
-    email: ?string = null
-end
-
-func main() -> !void
-    let text = "{\"name\":\"Ada\",\"age\":42}"
-    let user: User = try json::decode(text)
-    let another = try json::decode[User](text)
-    assert(user.name == another.name)
-    assert(user.email == null)
-    assert((try json::encode(user)) == "{\"name\":\"Ada\",\"age\":42,\"email\":null}")
-end
-```
-
-Supported types, at the root and inside other values:
-
-| Dusk type | JSON representation |
-| :--- | :--- |
-| `int`, `byte`, `float` | Number |
-| `bool` | Boolean |
-| `string` | String |
-| `?T` | Null or the representation of `T` |
-| `[]T` | Array |
-| `map[string, T]` | Object |
-| Struct | Object with the instance field names |
-| Enum | Variant name as a string |
-| Union | Object with exactly one variant-named member and its payload |
-
-Concrete generic and recursive types work. A union built as `Response(success = value)` uses `{"success": ...}`. Enum aliases with the same number all decode by name; encoding chooses the first declared name. Buffers, functions, tasks, error values, non-string map keys and structs containing private instance fields are compile errors, including when nested. Static fields and methods do not participate.
-
-**Fields and numbers.** An absent struct field uses its declared default, or fails with `MissingField` if it has none. A nullable annotation alone does not make a field optional. Explicit JSON null is accepted only for nullable fields, regardless of defaults. Missing defaults are evaluated after the complete document passes decoding; present fields do not evaluate their defaults. Defaults can call ordinary functions. Within each object, missing defaults run in declaration order; decoded child objects complete before their containing object. Mutable defaults behave as they do in ordinary construction.
-
-Unknown fields are ignored by default, but their values must still be valid JSON. Duplicate keys fail everywhere, including ignored objects; escaped spellings of the same key count as duplicates. String input must be valid UTF-8, with valid escape sequences and paired surrogate escapes. Encoding also rejects invalid UTF-8.
-
-`int` and `byte` accept integer-form tokens only: `42` works, while `42.0`, `42e0` and `"42"` fail with `TypeMismatch`. Integers preserve their full range; `byte` is checked against `0..255`. Floats accept integer, decimal and exponent forms and round to their representable precision; overflow fails, and sufficiently small values can underflow to signed zero. Encoding NaN or infinity fails with `NonFiniteNumber`.
-
-Encoding includes null fields and fields equal to their defaults. Struct fields appear in declaration order, and map entries in insertion order. Shared objects are written independently wherever they occur; cycles fail with `CycleDetected`. Decoding does not restore sharing between separate JSON objects.
-
-**Options.** `DecodeOptions` has `should_reject_unknown_fields: bool = false` and `max_depth: int = 128`. `EncodeOptions` has `max_depth: int = 128`. A depth limit must be between 1 and 512, otherwise the operation fails with `InvalidOptions`. Each array or object adds one level; nullable wrappers and scalar values do not. Ignored values use the same limit.
-
-```dusk
-let user = try json::decode[User](text,
-    options = json::DecodeOptions(should_reject_unknown_fields = true))
-let encoded = try json::encode(user, json::EncodeOptions(max_depth = 64))
-```
-
-**Diagnostics.** Pass a mutable `json::Diagnostic()` as the second decode argument when the error's field path or location is needed. It contains `path: string`, `byte_offset: ?int`, `line: ?int` and `column: ?int`. The object is cleared before each call; a successful call leaves an empty path and null positions. Each caller owns its diagnostic object.
-
-```dusk
-let mut diagnostic = json::Diagnostic()
-let user: User = json::decode(text, diagnostic) catch e then
-    io::eprintln("invalid user at ${diagnostic.path}, byte ${diagnostic.byte_offset}")
-    return e
-end
-```
-
-Paths use forms such as `users[2].age`; map keys and field names containing punctuation are quoted, as in `["a.b"][0]`. The root path is empty. Byte offsets start at zero; lines and byte columns start at one. Missing fields point to the closing object; lexical errors report where the invalid input was detected.
-
-`JsonError` contains `InvalidJson`, `TypeMismatch`, `MissingField`, `UnknownField`, `DuplicateKey`, `NumberOutOfRange`, `UnknownVariant`, `InvalidUnion`, `NonFiniteNumber`, `DepthExceeded`, `CycleDetected` and `InvalidOptions`. Errors have no payload; diagnostics are separate. Field renaming, custom conversion methods, pretty printing and streaming are not supported.
 
 ### Errors from builtins
 

@@ -1,7 +1,0 @@
-import std/json
-struct Hidden
-    ~value: int = 1
-end
-func main() -> !void
-    let text = try json::encode(Hidden())
-end

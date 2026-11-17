@@ -28,10 +28,6 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - Generic function and constructor calls accept explicit type arguments: `empty[int]()`, `util::keep[User](user)`, `Box[int](value = 1)`. Supply every slot in declaration order, including error slots; constraints and argument types are checked as usual
 - Generic result types can be inferred through `try` and `catch`: a call returning `ParseError![]T` can fill `T` from `let xs: []int = try read_items(text)` or `let xs: []int = read_items(text) catch []`
 
-- `std/json` adds typed `encode` and `decode`, with explicit or inferred decode types, recursive structs and collections, enum-name strings, one-member union objects, declared field defaults, strict numeric conversion, duplicate-key rejection, configurable depth/unknown-field checks and caller-owned path/location diagnostics
-
-- `std/reflect` adds protected concrete type handles, type identity and tagged descriptions of public fields, collection children, enum names/values and union variants, including generic and recursive types
-
 ### Fixes
 
 - Generic functions and types from another module can name that module's other types in their signatures: a generic struct with a field like `make: func(Item) -> T`, or a generic function taking `func(Item) -> E!int`, used from another file, failed with `Invalid type 'Item'` (the copy, and a lambda's parameter types, were resolved in the caller's module)

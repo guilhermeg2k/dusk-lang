@@ -12,7 +12,6 @@ The source files involved:
 | `src/runtime/gc.zig` | The garbage collector: `Heap` (the two arenas, allocation counters, `collect`) |
 | `src/runtime/value.zig` | `Value`, `ValueType`, every heap object layout and the work on them that doesn't allocate (array items; map hashing, lookup, insert and removal, section 6.8) |
 | `src/runtime/format.zig` | Formatting values (interpolation, `TO_STRING`) |
-| `src/runtime/json_format.zig`, `json_codec.zig` | Runtime-owned JSON codec plans and native encode/decode engine (section 12) |
 | `src/runtime/stdio.zig` | Writing to stdout and stderr (`Stdio.writeBytes`, flush rules) |
 | `src/runtime/runtime_error.zig` | `RuntimeErrorReporter`, the runtime error messages |
 | `src/runtime/builtins/prelude.zig` | Prelude builtins written in Zig |
@@ -54,13 +53,12 @@ Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the 
 
 ```
 Program
-├── functions: []Function          externs, methods, functions/lambdas, $main and generated default callbacks
+├── functions: []Function          one per extern, method, function and lambda, then $main last
 ├── static_closures: []Closure     one per function, same index (see 3.2)
 ├── string_pool: StringPool        every string literal of the program
 ├── struct_descriptors: []StructDescriptor
 ├── union_descriptors: []UnionDescriptor
 ├── error_names: [][]const u8      error id -> name, for unhandled-error messages
-├── json_codecs: []Codec           type-specific JSON conversion plans
 └── main_func_index
 ```
 
@@ -72,7 +70,7 @@ A `Function` has a `uid`, a `name` and a `kind`:
 - `.native`: a Zig function pointer plus its argument count (`NativeFn`).
 - `.intrinsic`: a builtin that codegen expands inline (`len`, `append`, `copy`, ...). It is never called at runtime (section 7.3).
 
-Indexes for externs, methods and ordinary functions are fixed before bodies are generated. Externs come first, in prelude order, then methods of user types, then free functions and lambdas. `$main` follows those functions; generated JSON default callbacks follow it when present. `main_func_index` identifies the entry function. Default callback indexes are reserved as codec plans are generated. So `CALL FN[i]` and `LOAD_FUNC FN[i]` can refer to a function whose body hasn't been generated yet.
+Function indexes are fixed before any body is generated. Externs come first, in prelude order, then methods of user types, then free functions and lambdas. `$main` is always last. So `CALL FN[i]` and `LOAD_FUNC FN[i]` can refer to a function whose body hasn't been generated yet.
 
 ### Chunks
 
@@ -799,29 +797,9 @@ libuv hands the server one pending connection per loop iteration (it stops watch
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 
-## 12. JSON codecs
+## 12. Known issues and observations
 
-`Program.json_codecs` owns a graph of runtime-only descriptors (`json_format.zig`). Codegen reserves an index before walking child types, so recursive types refer back to existing entries. Plans contain runtime value kinds, child indices, ordered field/variant names, enum values, object descriptor ids and optional default callback function indices. Names and descriptors outlive the compilation arena. The runtime imports none of the compiler's type or IR definitions.
-
-`Binding.json` identifies encode/decode operations by binding identity. Sema checks the concrete type and rejects unsupported members with their field path. Codegen emits ordinary native `CALL`s with hidden integer arguments: a plan index, and for decode the result-wrapper descriptor. Native argument counts include these hidden arguments. Error ids still use the extern's ordinary `error_base`; no JSON-specific opcode or dispatch path is needed.
-
-The native engine in `json_codec.zig` consumes scanner tokens directly into Dusk values and drives the JSON writer directly from values. Decode owns a stable copy of the input and a temporary arena for scanner strings, duplicate-key sets, paths and pending defaults. Conversion uses bounded recursion, with `max_depth` limited to 1..512. Encoding tracks active ancestors, so sharing is permitted and cycles fail. It allocates the final Dusk string after writing finishes.
-
-**Native roots.** `Heap.temporary_roots` contains typed values held outside the VM stack. `protectValue` returns an index; native code keeps indices across list growth and reacquires object pointers after allocating. Collection copies these roots before scanning tasks. Every operation restores its saved root count on success and failure. JSON decode keeps the partially built values rooted through parser completion, callback construction and diagnostic writes. Object slots are initialized before collection can inspect them. Temporary native storage is released on every exit.
-
-**Defaults.** Field defaults can call arbitrary Dusk functions. Codegen emits a zero-argument closure function for each defaulted field, capturing the destination struct and performing the ordinary typed field assignment. Native decoding records only missing fields, then returns a private `Decoded[T]` containing the value and an array of those closures. The public Dusk `decode` wrapper invokes them through ordinary closure calls before returning the value. Defaults therefore support allocation, nested decode calls and task parking without re-entering `VM.execute` from a native. Invalid documents never execute defaults. Each decoded child object queues its defaults before its containing object; fields within an object use declaration order.
-
-Diagnostics are caller-owned Dusk structs. Paths and optional position boxes are written through refreshed roots; no scanner pointers or global last-error state escape. Path tracking is enabled only when a diagnostic is supplied; line and column calculation occurs on failure. Successful calls clear supplied diagnostics.
-
-### Type reflection
-
-`Program.reflection_types` separately owns format-neutral descriptors emitted on demand by `getReflectionType`. Each concrete type gets a canonical index reserved before walking child references. Descriptors contain a kind, exact type name, storage kind, public field slots/default-presence flags, collection child references and ordered enum/union variants. Private fields are omitted and flagged on the containing descriptor. The runtime has no compiler imports.
-
-`Binding.reflection` carries a native function and reflection operation. Sema retains resolved generic arguments on IR calls, so zero-argument `reflect::type_of[T]()` has its concrete target available to codegen. Calls pass the type index and result-wrapper descriptor as hidden scalar arguments through an ordinary `CALL`. Type handles are ordinary one-field structs with a file-only index; native child queries reuse their wrapper layout. Public description functions build independent metadata snapshots in Dusk, leaving program-owned descriptors immutable. Reflection does not change parser syntax or interpreter dispatch.
-
-## 13. Known issues and observations
-
-### 13.1 Fixed: the GC copied call arguments twice
+### 12.1 Fixed: the GC copied call arguments twice
 
 Fixed in v0.15 (section 9.2); `test/success/gc-heap-arguments.dsk` covers it. It's kept here because the failure mode is worth knowing when changing frame layout or root scanning.
 
@@ -850,7 +828,7 @@ end
 
 This segfaulted in `copyHeapValue`. Now each caller frame scans only up to its call register, so every slot has one owner and is copied once.
 
-### 13.2 Observations
+### 12.2 Observations
 
 - **A missing heap map is silent.** If an instruction has no heap map, its frame gets bitmap `0` and its roots aren't kept. A debug assertion in `Collector.copyTaskRoots` when `binarySearch` finds nothing would catch codegen mistakes right away.
 - **Extra moves.** Codegen copies variables into temporaries before using them (`LOAD R[3] R[1]` before `I_LT R[2] R[3] R[4]`), and moves a call result through more than one register after a `try`. Reading variables in place in binary operations, or a small peephole pass, would remove many instructions.

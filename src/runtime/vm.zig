@@ -850,7 +850,7 @@ pub const VM = struct {
         return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
     }
 
-    pub fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {
+    fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {
         const size = v.Map.calc_size();
         try self.maybeCollectGarbage(size);
         const map = try v.Map.init(self.getCurrentHeapAllocator(), key_type, value_type);
@@ -865,7 +865,7 @@ pub const VM = struct {
         return self.allocNullBox(value, map.value_type);
     }
 
-    pub fn setMapEntry(self: *Self, map_slot: *const v.Value, key_slot: *const v.Value, value_slot: *const v.Value) !void {
+    fn setMapEntry(self: *Self, map_slot: *const v.Value, key_slot: *const v.Value, value_slot: *const v.Value) !void {
         const hash = mapInSlot(map_slot).hashKey(key_slot.*);
         if (mapInSlot(map_slot).find(key_slot.*, hash)) |entry| {
             entry.value = value_slot.*;

@@ -11,7 +11,6 @@ pub const Program = struct {
     defined_types: []const DefinedType,
     error_names: []const []const u8,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
-    json_defaults: std.AutoHashMapUnmanaged(TypeId, []const ?*Value) = .empty,
 };
 
 pub const Block = []const Instruction;
@@ -309,7 +308,6 @@ pub const UnaryOp = struct {
 };
 
 pub const FnCall = struct {
-    type_arguments: []const TypeId = &.{},
     fn_uid: usize,
     identifier: []const u8,
     args: []const *Value,

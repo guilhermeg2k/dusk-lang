@@ -7,15 +7,7 @@ pub const BindingMap = std.StaticStringMap(Binding);
 pub const Binding = union(enum) {
     native: NativeFnPtr,
     intrinsic: Intrinsic,
-    json: JsonOperation,
-    reflection: ReflectionBinding,
 };
-
-pub const ReflectionBinding = struct { operation: ReflectionOperation, func: NativeFnPtr };
-
-pub const ReflectionOperation = enum { type_of };
-
-pub const JsonOperation = enum { encode, decode };
 
 pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;
 

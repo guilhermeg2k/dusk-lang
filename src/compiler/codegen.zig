@@ -5,8 +5,6 @@ const tt = @import("type_table.zig");
 const bc = @import("../runtime/bytecode.zig");
 const native = @import("../runtime/builtins/native.zig");
 const err = @import("compile_error.zig");
-const reflection_format = @import("../runtime/reflection_format.zig");
-const json_format = @import("../runtime/json_format.zig");
 
 pub const BytecodeGen = struct {
     const Self = @This();
@@ -49,15 +47,6 @@ pub const BytecodeGen = struct {
     current_function_loc: ?err.Loc = null,
     err_reporter: err.CompileErrorReporter,
     extern_count: usize = 0,
-    reflection_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.ReflectionOperation) = .empty,
-    reflection_types: std.ArrayList(reflection_format.Descriptor) = .empty,
-    reflection_type_by_id: std.AutoHashMapUnmanaged(tt.TypeId, u32) = .empty,
-    json_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.JsonOperation) = .empty,
-    json_codecs: std.ArrayList(json_format.Codec) = .empty,
-    json_codec_by_type: std.AutoHashMapUnmanaged(tt.TypeId, u32) = .empty,
-    json_defaults: std.AutoHashMapUnmanaged(tt.TypeId, []const ?*ir.Value) = .empty,
-    json_default_functions: std.ArrayList(ir.Func) = .empty,
-    json_default_base: usize = 0,
 
     pub fn init(alloc: std.mem.Allocator, type_table: *tt.TypeTable) Self {
         return Self{
@@ -92,7 +81,6 @@ pub const BytecodeGen = struct {
         var funcs: std.ArrayList(bc.Function) = .empty;
         self.extern_count = program.externs.len;
         self.cell_var_uids = program.cell_var_uids;
-        self.json_defaults = program.json_defaults;
 
         for (program.externs) |ext| {
             try self.fn_index_by_uid.put(ext.uid, @intCast(funcs.items.len));
@@ -117,7 +105,6 @@ pub const BytecodeGen = struct {
             next_fn_index += 1;
         }
 
-        self.json_default_base = @as(usize, next_fn_index) + 1;
         const main_func = try self.genMainFunc(program);
 
         for (program.defined_types) |dt| {
@@ -138,13 +125,7 @@ pub const BytecodeGen = struct {
             try self.addFunction(&funcs, func);
         }
 
-        const main_index = funcs.items.len;
         try funcs.append(self.allocator, main_func);
-        var default_index: usize = 0;
-        while (default_index < self.json_default_functions.items.len) : (default_index += 1) {
-            const function = self.json_default_functions.items[default_index];
-            try funcs.append(self.allocator, try self.genFunction(function));
-        }
 
         const functions = try funcs.toOwnedSlice(self.allocator);
         const static_closures = try self.allocator.alloc(v.Closure, functions.len);
@@ -158,14 +139,12 @@ pub const BytecodeGen = struct {
 
         return bc.Program{
             .string_pool = string_pool,
-            .main_func_index = main_index,
+            .main_func_index = functions.len - 1,
             .functions = functions,
             .static_closures = static_closures,
             .struct_descriptors = try self.struct_descriptors.toOwnedSlice(self.allocator),
             .union_descriptors = try self.union_descriptors.toOwnedSlice(self.allocator),
             .error_names = try self.copyErrorNames(program.error_names),
-            .reflection_types = try self.reflection_types.toOwnedSlice(self.allocator),
-            .json_codecs = try self.json_codecs.toOwnedSlice(self.allocator),
         };
     }
 
@@ -173,18 +152,6 @@ pub const BytecodeGen = struct {
         const num_args: u8 = @intCast(ext.params.len);
         const kind: bc.FunctionKind = switch (ext.binding) {
             .native => |func| .{ .native = .{ .func = func, .num_args = num_args, .error_base = ext.error_base } },
-            .reflection => |binding| blk: {
-                try self.reflection_operation_by_uid.put(self.allocator, ext.uid, binding.operation);
-                break :blk .{ .native = .{ .func = binding.func, .num_args = num_args + 2, .error_base = ext.error_base } };
-            },
-            .json => |operation| blk: {
-                try self.json_operation_by_uid.put(self.allocator, ext.uid, operation);
-                break :blk .{ .native = .{
-                    .func = if (operation == .encode) &@import("../runtime/json_codec.zig").encode else &@import("../runtime/json_codec.zig").decode,
-                    .num_args = num_args + (if (operation == .encode) @as(u8, 1) else @as(u8, 2)),
-                    .error_base = ext.error_base,
-                } };
-            },
             .intrinsic => |intrinsic| blk: {
                 try self.intrinsic_by_uid.put(ext.uid, intrinsic);
                 break :blk .{ .intrinsic = intrinsic };
@@ -1181,29 +1148,6 @@ pub const BytecodeGen = struct {
             return;
         }
 
-        var hidden_count: usize = 0;
-        if (self.json_operation_by_uid.get(fc.fn_uid)) |operation| {
-            const payload = self.type_table.getTypePtrById(value.type_id).kind.error_union.payload;
-            const json_type = if (operation == .encode) fc.args[0].type_id else self.type_table.getTypePtrById(payload).kind.@"struct".fields_in_order[0].type_id;
-            const codec = try self.getJsonCodec(json_type);
-            try self.genMetadataIndex(codec);
-            hidden_count = 1;
-            if (operation == .decode) {
-                try self.genMetadataIndex(try self.getStructDescriptor(payload));
-                hidden_count += 1;
-            }
-        }
-
-        if (self.reflection_operation_by_uid.get(fc.fn_uid)) |operation| {
-            switch (operation) {
-                .type_of => {
-                    try self.genMetadataIndex(try self.getReflectionType(fc.type_arguments[0]));
-                    try self.genMetadataIndex(try self.getStructDescriptor(value.type_id));
-                    hidden_count = 2;
-                },
-            }
-        }
-
         var fn_call = bc.Instruction{
             .op = .CALL,
             .a = target_reg,
@@ -1214,193 +1158,8 @@ pub const BytecodeGen = struct {
         try self.chunk_instructions.append(self.allocator, fn_call);
         try self.recordHeapMap();
 
-        self.freeRegisterN(fc.args.len + hidden_count);
+        self.freeRegisterN(fc.args.len);
         self.register_types[target_reg] = value.type_id;
-    }
-
-    fn genMetadataIndex(self: *Self, index: u32) !void {
-        const reg = try self.consumeRegister();
-        try self.genLoadConst(.{ .value = .{ .int64 = index }, .type = .int64 }, reg);
-        self.register_types[reg] = self.type_table.getPrimitive(.int);
-    }
-
-    fn getReflectionType(self: *Self, type_id: tt.TypeId) anyerror!u32 {
-        if (self.reflection_type_by_id.get(type_id)) |index| {
-            return index;
-        }
-        const index: u32 = @intCast(self.reflection_types.items.len);
-        try self.reflection_type_by_id.put(self.allocator, type_id, index);
-        try self.reflection_types.append(self.allocator, undefined);
-        const source = self.type_table.getTypePtrById(type_id).*;
-        var result = reflection_format.Descriptor{
-            .name = try self.allocator.dupe(u8, try self.type_table.syntaxName(type_id, self.allocator)),
-            .kind = undefined,
-            .storage = valueTypeFromTypeId(self.type_table, type_id),
-        };
-        if (source.is_nullable) {
-            result.kind = .Nullable;
-            result.child = try self.getReflectionType(self.type_table.typeIdByNullableTypeId.get(type_id).?);
-            self.reflection_types.items[index] = result;
-            return index;
-        }
-        result.kind = switch (source.kind) {
-            .int => .Int,
-            .byte => .Byte,
-            .float => .Float,
-            .boolean => .Bool,
-            .string => .String,
-            .buffer => .Buffer,
-            .void => .Void,
-            .null => .Null,
-            .function, .func_type => .Function,
-            .task => .Task,
-            .array => |child| blk: {
-                result.child = try self.getReflectionType(child);
-                break :blk .Array;
-            },
-            .map => |map| blk: {
-                result.key = try self.getReflectionType(map.key);
-                result.child = try self.getReflectionType(map.value);
-                break :blk .Map;
-            },
-            .@"struct" => |structure| blk: {
-                var fields: std.ArrayList(reflection_format.Field) = .empty;
-                for (structure.fields_in_order, 0..) |field, slot| {
-                    if (field.is_file_only) {
-                        result.has_private_fields = true;
-                        continue;
-                    }
-                    try fields.append(self.allocator, .{
-                        .name = try self.allocator.dupe(u8, field.identifier),
-                        .type_index = try self.getReflectionType(field.type_id),
-                        .slot = @intCast(slot),
-                        .has_default = field.default_value != null,
-                    });
-                }
-                result.fields = try fields.toOwnedSlice(self.allocator);
-                result.object_descriptor = try self.getStructDescriptor(type_id);
-                break :blk .Struct;
-            },
-            .@"enum" => |enumeration| blk: {
-                if (enumeration.error_set != null) {
-                    break :blk .Error;
-                }
-                const variants = try self.allocator.alloc(reflection_format.Variant, enumeration.variants_in_order.len);
-                for (enumeration.variants_in_order, variants) |name, *variant| {
-                    variant.* = .{ .name = try self.allocator.dupe(u8, name), .value = enumeration.variants.get(name).? };
-                }
-                result.variants = variants;
-                break :blk .Enum;
-            },
-            .@"union" => |tagged| blk: {
-                const variants = try self.allocator.alloc(reflection_format.Variant, tagged.variants_in_order.len);
-                for (tagged.variants_in_order, variants) |name, *variant| {
-                    variant.* = .{
-                        .name = try self.allocator.dupe(u8, name),
-                        .value = try self.unionTagIndex(type_id, name),
-                        .type_index = try self.getReflectionType(tagged.variants.get(name).?),
-                    };
-                }
-                result.variants = variants;
-                result.object_descriptor = try self.getOrCreateUnionDescriptor(type_id);
-                break :blk .Union;
-            },
-            else => return error.UnsupportedReflectedType,
-        };
-        self.reflection_types.items[index] = result;
-        return index;
-    }
-
-    fn getJsonCodec(self: *Self, type_id: tt.TypeId) anyerror!u32 {
-        if (self.json_codec_by_type.get(type_id)) |index| {
-            return index;
-        }
-        const index: u32 = @intCast(self.json_codecs.items.len);
-        try self.json_codec_by_type.put(self.allocator, type_id, index);
-        try self.json_codecs.append(self.allocator, undefined);
-        const type_info = self.type_table.getTypePtrById(type_id).*;
-        var codec = json_format.Codec{ .kind = valueTypeFromTypeId(self.type_table, type_id), .shape = undefined };
-        if (type_info.is_nullable) {
-            codec.shape = .{ .nullable = try self.getJsonCodec(self.type_table.typeIdByNullableTypeId.get(type_id).?) };
-            self.json_codecs.items[index] = codec;
-            return index;
-        }
-        codec.shape = switch (type_info.kind) {
-            .int => .int,
-            .byte => .byte,
-            .float => .float,
-            .boolean => .boolean,
-            .string => .string,
-            .array => |child| .{ .array = try self.getJsonCodec(child) },
-            .map => |map| .{ .map = try self.getJsonCodec(map.value) },
-            .@"struct" => |structure| blk: {
-                const fields = try self.allocator.alloc(json_format.Field, structure.fields_in_order.len);
-                const defaults = self.json_defaults.get(type_id);
-                for (structure.fields_in_order, fields, 0..) |field, *output, i| {
-                    output.* = .{
-                        .name = try self.allocator.dupe(u8, field.identifier),
-                        .codec = try self.getJsonCodec(field.type_id),
-                        .default_function = null,
-                    };
-                    const default = if (defaults) |values| values[i] else null;
-                    if (default) |value| {
-                        output.default_function = try self.addJsonDefault(type_id, field.identifier, field.type_id, value);
-                    }
-                }
-                break :blk .{ .structure = .{ .descriptor = try self.getStructDescriptor(type_id), .fields = fields } };
-            },
-            .@"enum" => |enumeration| blk: {
-                const variants = try self.allocator.alloc(json_format.EnumVariant, enumeration.variants_in_order.len);
-                for (enumeration.variants_in_order, variants) |name, *variant| {
-                    variant.* = .{ .name = try self.allocator.dupe(u8, name), .value = enumeration.variants.get(name).? };
-                }
-                break :blk .{ .enumeration = variants };
-            },
-            .@"union" => |tagged| blk: {
-                const descriptor = try self.getOrCreateUnionDescriptor(type_id);
-                const variants = try self.allocator.alloc(json_format.Variant, tagged.variants_in_order.len);
-                for (tagged.variants_in_order, variants) |name, *variant| {
-                    variant.* = .{
-                        .name = try self.allocator.dupe(u8, name),
-                        .codec = try self.getJsonCodec(tagged.variants.get(name).?),
-                        .tag = try self.unionTagIndex(type_id, name),
-                    };
-                }
-                break :blk .{ .tagged_union = .{ .descriptor = descriptor, .variants = variants } };
-            },
-            else => @panic("getJsonCodec: unsupported type passed validation"),
-        };
-        self.json_codecs.items[index] = codec;
-        return index;
-    }
-
-    fn getStructDescriptor(self: *Self, type_id: tt.TypeId) !u16 {
-        const structure = self.type_table.getTypePtrById(type_id).kind.@"struct";
-        const keys = try self.allocator.alloc([]const u8, structure.fields_in_order.len);
-        for (structure.fields_in_order, keys) |field, *key| {
-            key.* = field.identifier;
-        }
-        return self.getOrCreateStructDescriptor(&.{ .type_id = type_id, .data = .{ .struct_init = .{ .keys = keys, .values = &.{} } } });
-    }
-
-    fn addJsonDefault(self: *Self, owner_type: tt.TypeId, field_name: []const u8, field_type: tt.TypeId, value: *ir.Value) !u16 {
-        const function_index: u16 = @intCast(self.json_default_base + self.json_default_functions.items.len);
-        const owner = try ir.Value.init(self.allocator, .{ .type_id = owner_type, .data = .{ .capture_ref = .{ .index = 0, .is_cell = false } } });
-        const name = try ir.Value.init(self.allocator, .{ .type_id = self.type_table.getPrimitive(.string), .data = .{ .i_string = field_name } });
-        const target = try ir.Value.init(self.allocator, .{ .type_id = field_type, .data = .{ .indexed = .{ .target = owner, .index = name } } });
-        const body = try self.allocator.alloc(ir.Instruction, 1);
-        body[0] = .{ .update_indexed = .{ .target = target, .value = value } };
-        const captures = try self.allocator.alloc(ir.Capture, 1);
-        captures[0] = .{ .type_id = owner_type, .is_cell = false };
-        try self.json_default_functions.append(self.allocator, .{
-            .uid = 0,
-            .identifier = "$json-default",
-            .params = &.{},
-            .return_type = self.type_table.getPrimitive(.void),
-            .captures = captures,
-            .body = body,
-        });
-        return function_index;
     }
 
     fn genIntrinsicCall(self: *Self, intrinsic: native.Intrinsic, fc: ir.FnCall, value: *const ir.Value, target_reg: u8) !void {

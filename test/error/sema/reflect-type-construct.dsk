@@ -1,5 +1,0 @@
-import std/reflect
-
-func main() -> void
-    let forged = reflect::Type(0)
-end

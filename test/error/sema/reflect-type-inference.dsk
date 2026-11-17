@@ -1,5 +1,0 @@
-import std/reflect
-
-func main() -> void
-    let type = reflect::type_of()
-end

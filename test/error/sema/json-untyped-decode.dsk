@@ -1,4 +1,0 @@
-import std/json
-func main() -> !void
-    let value = try json::decode("{}")
-end
