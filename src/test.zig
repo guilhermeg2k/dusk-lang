@@ -126,9 +126,13 @@ test "serialization: plan natives read field and variant names" {
     try runCase("serialization-protocol.dsk");
 }
 
+test "serialization: derived code for enums, unions, maps, bytes, roots and depth" {
+    try runCase("serialization-derive.dsk");
+}
+
 test "serialization spike: derived decode and encode through a format written in Dusk" {
     try runCase("serialization-spike.dsk");
-    try runCaseError("sema/serialization-missing-capability.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/serialization-missing-capability.dsk", error.FormatLacksMethod);
 }
 
 test "math: constants, numeric functions and errors" {

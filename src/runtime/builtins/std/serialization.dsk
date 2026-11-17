@@ -1,6 +1,8 @@
 import std/array
 import std/map
 
+let MAX_DEPTH = 512
+
 error SerializationError
     InvalidInput
     TypeMismatch
@@ -99,14 +101,14 @@ extern func find_variant_in(variants: int, text: string, start: int, stop: int) 
 
 extern func plan_of[T]() -> int
 
-extern func ~derive_decode[T, R: ScalarReader](mut reader: R, mut pending: []func() -> void) -> SerializationError!T
-extern func ~derive_encode[T, W: ScalarWriter](value: T, mut writer: W) -> SerializationError!void
+extern func ~derive_decode[T, R: ScalarReader](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!T
+extern func ~derive_encode[T, W: ScalarWriter](value: T, mut writer: W, depth: int) -> SerializationError!void
 extern func ~blank[T]() -> T
 extern func ~field_default[T, F](index: int) -> F
 
 func decode[T, R: ScalarReader](mut reader: R) -> SerializationError!T
     let mut pending: []func() -> void = []
-    let value = try derive_decode[T, R](reader, pending)
+    let value = try derive_decode[T, R](reader, pending, 0)
     for pending: apply_default do
         apply_default()
     end
@@ -114,5 +116,13 @@ func decode[T, R: ScalarReader](mut reader: R) -> SerializationError!T
 end
 
 func encode[T, W: ScalarWriter](value: T, mut writer: W) -> SerializationError!void
-    try derive_encode[T, W](value, writer)
+    try derive_encode[T, W](value, writer, 0)
+end
+
+func ~read_byte[R: ScalarReader](mut reader: R) -> SerializationError!byte
+    let number = try reader.read_int()
+    let narrowed = to_byte(number) catch e then
+        return SerializationError.OutOfRange
+    end
+    return narrowed
 end

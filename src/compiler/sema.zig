@@ -69,6 +69,7 @@ pub const SemaAnalyzer = struct {
     derived_names: std.AutoHashMapUnmanaged(DerivedKey, []const u8) = .empty,
     derived_functions: std.AutoHashMapUnmanaged(DerivedKey, usize) = .empty,
     derived_type_names: std.AutoHashMapUnmanaged(tt.TypeId, []const u8) = .empty,
+    loaded_modules: []const *ModuleScope = &.{},
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -99,6 +100,7 @@ pub const SemaAnalyzer = struct {
         try self.loadPrelude(prelude);
 
         const module_scopes = try self.allocator.alloc(*ModuleScope, loaded_modules.len);
+        self.loaded_modules = module_scopes;
         for (loaded_modules, 0..) |*module, i| {
             const root_table = try SymbolTable.init(self.allocator, self.prelude_module.root, null);
             module_scopes[i] = try ModuleScope.create(self.allocator, module.path, module.src, root_table, false);
@@ -4989,9 +4991,53 @@ pub const SemaAnalyzer = struct {
 
     fn instantiateDerivedFunction(self: *Self, operation: native.SerializationOperation, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
         const key = DerivedKey{ .operation = operation, .type_id = args[0] };
+        _ = try self.planIndex(key.type_id, "", loc);
+        try self.checkFormatCapabilities(key, args[1], loc);
         _ = try self.derivedFunctionName(key, loc);
         const index = self.derived_functions.get(key) orelse @panic("instantiateDerivedFunction: derived function wasn't registered");
         return self.instantiateGenericFunction(index, args[1..], loc);
+    }
+
+    fn checkFormatCapabilities(self: *Self, key: DerivedKey, format_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        const capabilities = try self.capabilitiesOf(key.type_id);
+        const is_decode = key.operation == .derive_decode;
+        const needs = [_]FormatNeed{
+            .{ .path = capabilities.null_path, .reason = "is nullable", .methods = if (is_decode) &.{"read_null"} else &.{"write_null"} },
+            .{ .path = capabilities.struct_path, .reason = "is a struct", .methods = if (is_decode) &.{ "begin_struct", "next_field", "missing_field" } else &.{ "begin_struct", "field", "end_struct" } },
+            .{ .path = capabilities.array_path, .reason = "is an array", .methods = if (is_decode) &.{ "begin_array", "has_item" } else &.{ "begin_array", "item", "end_array" } },
+            .{ .path = capabilities.map_path, .reason = "is a map", .methods = if (is_decode) &.{ "begin_map", "next_key" } else &.{ "begin_map", "key", "end_map" } },
+            .{ .path = capabilities.enum_path, .reason = "is an enum", .methods = if (is_decode) &.{"read_variant"} else &.{"write_variant"} },
+            .{ .path = capabilities.union_path, .reason = "is a union", .methods = if (is_decode) &.{ "begin_union", "end_union" } else &.{ "begin_union", "end_union" } },
+        };
+        for (needs) |need| {
+            const path = need.path orelse continue;
+            for (need.methods) |method| {
+                if (self.methodOf(format_type, method) != null) continue;
+                const saved_reporter = self.err_reporter;
+                defer self.err_reporter = saved_reporter;
+                const format_name = try self.type_table.syntaxName(format_type, self.allocator);
+                const type_name = try self.type_table.syntaxName(key.type_id, self.allocator);
+                const reason = try allocPrint(self.allocator, "'{s}' {s}", .{ path, need.reason });
+                const verb = if (is_decode) "decode" else "encode";
+                return self.err_reporter.formatLacksMethod(format_name, verb, type_name, reason, method, self.reportAtUserCall(loc));
+            }
+        }
+    }
+
+    fn reportAtUserCall(self: *Self, loc: err.Loc) err.Loc {
+        const is_in_std = self.module.bindings != null;
+        if (!is_in_std) {
+            return loc;
+        }
+        const context = self.err_reporter.copy_context orelse return loc;
+        self.err_reporter.copy_context = null;
+        self.err_reporter.src = context.call_src;
+        self.err_reporter.file_path = null;
+        for (self.loaded_modules) |module| {
+            if (module.src.ptr != context.call_src.ptr) continue;
+            self.err_reporter.file_path = module.file_path;
+        }
+        return context.call_loc;
     }
 
     fn derivedFunctionName(self: *Self, key: DerivedKey, loc: err.Loc) CompileError![]const u8 {
@@ -5008,7 +5054,11 @@ pub const SemaAnalyzer = struct {
     }
 
     fn registerDerivedFunction(self: *Self, source: []const u8) CompileError!usize {
-        const module = self.serialization_module orelse @panic("registerDerivedFunction: std/serialization isn't loaded");
+        const serialization_module = self.serialization_module orelse @panic("registerDerivedFunction: std/serialization isn't loaded");
+        const module = try self.allocator.create(ModuleScope);
+        module.* = serialization_module.*;
+        module.src = source;
+        module.file_path = "generated serialization code";
         const saved_module = self.enterModuleContext(module);
         defer self.exitModuleContext(saved_module);
         const root = try self.allocator.create(ast.Root);
@@ -5021,32 +5071,46 @@ pub const SemaAnalyzer = struct {
     }
 
     fn derivedSource(self: *Self, key: DerivedKey, name: []const u8, loc: err.Loc) CompileError![]const u8 {
-        const type_ptr = self.type_table.getTypePtrById(key.type_id);
-        const is_struct = !type_ptr.is_nullable and type_ptr.kind == .@"struct";
-        const is_array = !type_ptr.is_nullable and type_ptr.kind == .array;
-        if (!is_struct and !is_array) {
-            return self.err_reporter.invalidType("struct or array", try self.type_table.name(key.type_id, self.allocator), loc);
-        }
         var out: std.ArrayList(u8) = .empty;
         const type_text = try self.derivedTypeText(key.type_id, loc);
         const bound = try self.derivedBound(key);
+        const type_ptr = self.type_table.getTypePtrById(key.type_id);
+        const is_container = !type_ptr.is_nullable and switch (type_ptr.kind) {
+            .@"struct", .array, .map, .@"union" => true,
+            else => false,
+        };
         if (key.operation == .derive_decode) {
-            try self.emit(&out, "func ~{s}[R: {s}](mut reader: R, mut pending: []func() -> void) -> SerializationError!{s}\n", .{ name, bound, type_text });
-            if (is_struct) {
-                try self.emitStructDecode(&out, key.type_id, type_text, loc);
-            } else {
-                try self.emitArrayDecode(&out, type_ptr.kind.array, type_text, loc);
-            }
+            try self.emit(&out, "func ~{s}[R: {s}](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!{s}\n", .{ name, bound, type_text });
         } else {
-            try self.emit(&out, "func ~{s}[W: {s}](value: {s}, mut writer: W) -> SerializationError!void\n", .{ name, bound, type_text });
-            if (is_struct) {
-                try self.emitStructEncode(&out, key.type_id, loc);
-            } else {
-                try self.emitArrayEncode(&out, type_ptr.kind.array, loc);
-            }
+            try self.emit(&out, "func ~{s}[W: {s}](value: {s}, mut writer: W, depth: int) -> SerializationError!void\n", .{ name, bound, type_text });
+        }
+        if (is_container) {
+            try out.appendSlice(self.allocator, "if depth > MAX_DEPTH then\nreturn SerializationError.DepthExceeded\nend\n");
+        }
+        if (key.operation == .derive_decode) {
+            try self.emitDecodeBody(&out, key.type_id, type_text, loc);
+        } else {
+            try self.emitEncodeBody(&out, key.type_id, type_text, loc);
         }
         try out.appendSlice(self.allocator, "end\n");
         return out.items;
+    }
+
+    fn emitDecodeBody(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+            try self.emit(out, "if (try reader.read_null()) then\nreturn null\nend\nreturn {s}\n", .{try self.decodeExpression(base, loc)});
+            return;
+        }
+        switch (type_ptr.kind) {
+            .@"struct" => try self.emitStructDecode(out, type_id, type_text, loc),
+            .array => |item_type| try self.emitArrayDecode(out, item_type, type_text, loc),
+            .map => |map| try self.emitMapDecode(out, map.value, type_text, loc),
+            .@"enum" => try self.emitEnumDecode(out, type_id, type_text, loc),
+            .@"union" => try self.emitUnionDecode(out, type_id, type_text, loc),
+            else => try self.emit(out, "return {s}\n", .{try self.decodeExpression(type_id, loc)}),
+        }
     }
 
     fn emitStructDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
@@ -5058,13 +5122,19 @@ pub const SemaAnalyzer = struct {
             if (!self.isConstantDefault(field)) continue;
             try self.emit(out, "value.{s} = field_default[{s}, {s}]({d})\n", .{ field.identifier, type_text, try self.derivedTypeText(field.type_id, loc), i });
         }
-        try self.emit(out, "for true do\nlet index = try reader.next_field({d})\nif index < 0 then\nbreak\nend\nwhen index\n", .{plan});
-        for (fields, 0..) |field, i| {
-            try self.emit(out, "{d} then\nif has_{d} then\nreturn SerializationError.DuplicateField\nend\n", .{ i, i });
-            try self.emitDecodeInto(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, loc);
-            try self.emit(out, "has_{d} = true\nend\n", .{i});
+        try self.emit(out, "for true do\nlet index = try reader.next_field({d})\nif index < 0 then\nbreak\nend\n", .{plan});
+        if (fields.len > 0) {
+            try out.appendSlice(self.allocator, "when index\n");
+            for (fields, 0..) |field, i| {
+                try self.emit(out, "{d} then\nif has_{d} then\nreturn SerializationError.DuplicateField\nend\n", .{ i, i });
+                try self.emitDecodeInto(out, try allocPrint(self.allocator, "value.{s}", .{field.identifier}), field.type_id, loc);
+                try self.emit(out, "has_{d} = true\nend\n", .{i});
+            }
+            try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownField\nend\nend\n");
+        } else {
+            try out.appendSlice(self.allocator, "return SerializationError.UnknownField\n");
         }
-        try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownField\nend\nend\nend\n");
+        try out.appendSlice(self.allocator, "end\n");
         for (fields, 0..) |field, i| {
             if (field.default_value != null) continue;
             try self.emit(out, "if !has_{d} then\ntry reader.missing_field({d}, {d})\nreturn SerializationError.MissingField\nend\n", .{ i, plan, i });
@@ -5094,6 +5164,53 @@ pub const SemaAnalyzer = struct {
         try out.appendSlice(self.allocator, "end\nreturn items\n");
     }
 
+    fn emitMapDecode(self: *Self, out: *std.ArrayList(u8), value_type: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        try self.emit(out, "let mut entries: {s} = {{}}\ntry reader.begin_map()\nfor true do\nlet next = try reader.next_key()\nif next: name then\n", .{type_text});
+        if (self.type_table.getTypePtrById(value_type).is_nullable) {
+            try self.emit(out, "let mut item: {s} = null\n", .{try self.derivedTypeText(value_type, loc)});
+            try self.emitDecodeInto(out, "item", value_type, loc);
+            try out.appendSlice(self.allocator, "entries[name] = item\n");
+        } else {
+            try self.emit(out, "entries[name] = {s}\n", .{try self.decodeExpression(value_type, loc)});
+        }
+        try out.appendSlice(self.allocator, "else\nbreak\nend\nend\nreturn entries\n");
+    }
+
+    fn emitEnumDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const variants = self.type_table.getTypePtrById(type_id).kind.@"enum".variants_in_order;
+        try self.emit(out, "let index = try reader.read_variant({d})\n", .{try self.planIndex(type_id, "", loc)});
+        if (variants.len > 0) {
+            try out.appendSlice(self.allocator, "when index\n");
+            for (variants, 0..) |variant, i| {
+                try self.emit(out, "{d} then\nreturn {s}.{s}\nend\n", .{ i, type_text, variant });
+            }
+            try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownVariant\nend\nend\n");
+        }
+        try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
+    }
+
+    fn emitUnionDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const tagged = self.type_table.getTypePtrById(type_id).kind.@"union";
+        try self.emit(out, "let index = try reader.begin_union({d})\n", .{try self.planIndex(type_id, "", loc)});
+        if (tagged.variants_in_order.len > 0) {
+            try out.appendSlice(self.allocator, "when index\n");
+            for (tagged.variants_in_order, 0..) |variant, i| {
+                const payload_type = tagged.variants.get(variant).?;
+                try self.emit(out, "{d} then\n", .{i});
+                if (self.type_table.getTypePtrById(payload_type).is_nullable) {
+                    try self.emit(out, "let mut payload: {s} = null\n", .{try self.derivedTypeText(payload_type, loc)});
+                    try self.emitDecodeInto(out, "payload", payload_type, loc);
+                    try self.emit(out, "let result = {s}({s} = payload)\n", .{ type_text, variant });
+                } else {
+                    try self.emit(out, "let result = {s}({s} = {s})\n", .{ type_text, variant, try self.decodeExpression(payload_type, loc) });
+                }
+                try out.appendSlice(self.allocator, "try reader.end_union()\nreturn result\nend\n");
+            }
+            try out.appendSlice(self.allocator, "else then\nreturn SerializationError.UnknownVariant\nend\nend\n");
+        }
+        try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
+    }
+
     fn emitDecodeInto(self: *Self, out: *std.ArrayList(u8), target: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError!void {
         const type_ptr = self.type_table.getTypePtrById(type_id);
         if (!type_ptr.is_nullable) {
@@ -5110,9 +5227,26 @@ pub const SemaAnalyzer = struct {
             .float => "try reader.read_float()",
             .boolean => "try reader.read_bool()",
             .string => "try reader.read_string()",
-            .@"struct", .array => try allocPrint(self.allocator, "try {s}(reader, pending)", .{try self.derivedFunctionName(.{ .operation = .derive_decode, .type_id = type_id }, loc)}),
-            else => self.err_reporter.invalidType("serializable type", try self.type_table.name(type_id, self.allocator), loc),
+            .byte => "try read_byte(reader)",
+            .@"struct", .array, .map, .@"enum", .@"union" => try allocPrint(self.allocator, "try {s}(reader, pending, depth + 1)", .{try self.derivedFunctionName(.{ .operation = .derive_decode, .type_id = type_id }, loc)}),
+            else => self.unserializableType(type_id, "", loc),
         };
+    }
+
+    fn emitEncodeBody(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            try self.emitEncode(out, "value", type_id, 0, loc);
+            return;
+        }
+        switch (type_ptr.kind) {
+            .@"struct" => try self.emitStructEncode(out, type_id, loc),
+            .array => |item_type| try self.emitArrayEncode(out, item_type, loc),
+            .map => |map| try self.emitMapEncode(out, map.value, loc),
+            .@"enum" => try self.emitEnumEncode(out, type_id, type_text, loc),
+            .@"union" => try self.emitUnionEncode(out, type_id, loc),
+            else => try self.emit(out, "{s}\n", .{try self.encodeStatement("value", type_id, loc)}),
+        }
     }
 
     fn emitStructEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, loc: err.Loc) CompileError!void {
@@ -5132,6 +5266,38 @@ pub const SemaAnalyzer = struct {
         try out.appendSlice(self.allocator, "index = index + 1\nend\ntry writer.end_array()\n");
     }
 
+    fn emitMapEncode(self: *Self, out: *std.ArrayList(u8), value_type: tt.TypeId, loc: err.Loc) CompileError!void {
+        try out.appendSlice(self.allocator, "try writer.begin_map(map::len(value))\nfor value: item, entry_key do\ntry writer.key(entry_key)\n");
+        try self.emitEncode(out, "item", value_type, 0, loc);
+        try out.appendSlice(self.allocator, "end\ntry writer.end_map()\n");
+    }
+
+    fn emitEnumEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
+        const enumeration = self.type_table.getTypePtrById(type_id).kind.@"enum";
+        const plan = try self.planIndex(type_id, "", loc);
+        var written_values: std.AutoHashMapUnmanaged(i64, void) = .empty;
+        for (enumeration.variants_in_order, 0..) |variant, i| {
+            const number = enumeration.variants.get(variant).?;
+            if (written_values.contains(number)) continue;
+            try written_values.put(self.allocator, number, {});
+            try self.emit(out, "if value == {s}.{s} then\ntry writer.write_variant({d}, {d})\nreturn\nend\n", .{ type_text, variant, plan, i });
+        }
+        try out.appendSlice(self.allocator, "return SerializationError.UnknownVariant\n");
+    }
+
+    fn emitUnionEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, loc: err.Loc) CompileError!void {
+        const tagged = self.type_table.getTypePtrById(type_id).kind.@"union";
+        const plan = try self.planIndex(type_id, "", loc);
+        if (tagged.variants_in_order.len == 0) return;
+        try out.appendSlice(self.allocator, "when value\n");
+        for (tagged.variants_in_order, 0..) |variant, i| {
+            try self.emit(out, "{s}: payload then\ntry writer.begin_union({d}, {d})\n", .{ variant, plan, i });
+            try self.emitEncode(out, "payload", tagged.variants.get(variant).?, 0, loc);
+            try out.appendSlice(self.allocator, "try writer.end_union()\nend\n");
+        }
+        try out.appendSlice(self.allocator, "end\n");
+    }
+
     fn emitEncode(self: *Self, out: *std.ArrayList(u8), source: []const u8, type_id: tt.TypeId, number: usize, loc: err.Loc) CompileError!void {
         const type_ptr = self.type_table.getTypePtrById(type_id);
         if (!type_ptr.is_nullable) {
@@ -5145,15 +5311,15 @@ pub const SemaAnalyzer = struct {
 
     fn encodeStatement(self: *Self, source: []const u8, type_id: tt.TypeId, loc: err.Loc) CompileError![]const u8 {
         const method = switch (self.type_table.getTypePtrById(type_id).kind) {
-            .int => "write_int",
+            .int, .byte => "write_int",
             .float => "write_float",
             .boolean => "write_bool",
             .string => "write_string",
-            .@"struct", .array => {
+            .@"struct", .array, .map, .@"enum", .@"union" => {
                 const name = try self.derivedFunctionName(.{ .operation = .derive_encode, .type_id = type_id }, loc);
-                return allocPrint(self.allocator, "try {s}({s}, writer)", .{ name, source });
+                return allocPrint(self.allocator, "try {s}({s}, writer, depth + 1)", .{ name, source });
             },
-            else => return self.err_reporter.invalidType("serializable type", try self.type_table.name(type_id, self.allocator), loc),
+            else => return self.unserializableType(type_id, "", loc),
         };
         return allocPrint(self.allocator, "try writer.{s}({s})", .{ method, source });
     }
@@ -5232,49 +5398,84 @@ pub const SemaAnalyzer = struct {
     }
 
     fn unserializableType(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError {
+        const saved_reporter = self.err_reporter;
+        defer self.err_reporter = saved_reporter;
         const name = try self.type_table.syntaxName(type_id, self.allocator);
         const found = if (path.len == 0) name else try allocPrint(self.allocator, "{s} at '{s}'", .{ name, path });
-        return self.err_reporter.invalidType("a serializable type with public fields", found, loc);
+        return self.err_reporter.invalidType("a serializable type with public fields", found, self.reportAtUserCall(loc));
     }
 
     fn derivedBound(self: *Self, key: DerivedKey) CompileError![]const u8 {
-        var capabilities = Capabilities{};
-        var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
-        try self.collectCapabilities(key.type_id, &capabilities, &visited);
+        const capabilities = try self.capabilitiesOf(key.type_id);
         const is_decode = key.operation == .derive_decode;
         var bound: std.ArrayList(u8) = .empty;
         try bound.appendSlice(self.allocator, if (is_decode) "ScalarReader" else "ScalarWriter");
-        if (capabilities.has_null) {
-            try bound.appendSlice(self.allocator, if (is_decode) " + NullReader" else " + NullWriter");
-        }
-        if (capabilities.has_struct) {
-            try bound.appendSlice(self.allocator, if (is_decode) " + StructReader" else " + StructWriter");
-        }
-        if (capabilities.has_array) {
-            try bound.appendSlice(self.allocator, if (is_decode) " + ArrayReader" else " + ArrayWriter");
+        const traits = [_]struct { path: ?[]const u8, reader: []const u8, writer: []const u8 }{
+            .{ .path = capabilities.null_path, .reader = "NullReader", .writer = "NullWriter" },
+            .{ .path = capabilities.struct_path, .reader = "StructReader", .writer = "StructWriter" },
+            .{ .path = capabilities.array_path, .reader = "ArrayReader", .writer = "ArrayWriter" },
+            .{ .path = capabilities.map_path, .reader = "MapReader", .writer = "MapWriter" },
+            .{ .path = capabilities.enum_path, .reader = "EnumReader", .writer = "EnumWriter" },
+            .{ .path = capabilities.union_path, .reader = "UnionReader", .writer = "UnionWriter" },
+        };
+        for (traits) |trait| {
+            if (trait.path == null) continue;
+            try self.emit(&bound, " + {s}", .{if (is_decode) trait.reader else trait.writer});
         }
         return bound.items;
     }
 
-    fn collectCapabilities(self: *Self, type_id: tt.TypeId, capabilities: *Capabilities, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void)) CompileError!void {
+    fn capabilitiesOf(self: *Self, type_id: tt.TypeId) CompileError!Capabilities {
+        var capabilities = Capabilities{};
+        var visited: std.AutoHashMapUnmanaged(tt.TypeId, void) = .empty;
+        try self.collectCapabilities(type_id, try self.type_table.syntaxName(type_id, self.allocator), &capabilities, &visited);
+        return capabilities;
+    }
+
+    fn collectCapabilities(self: *Self, type_id: tt.TypeId, path: []const u8, capabilities: *Capabilities, visited: *std.AutoHashMapUnmanaged(tt.TypeId, void)) CompileError!void {
         if (visited.contains(type_id)) return;
         try visited.put(self.allocator, type_id, {});
         const type_ptr = self.type_table.getTypePtrById(type_id);
         if (type_ptr.is_nullable) {
-            capabilities.has_null = true;
+            if (capabilities.null_path == null) {
+                capabilities.null_path = path;
+            }
             const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse return;
-            return self.collectCapabilities(base, capabilities, visited);
+            return self.collectCapabilities(base, path, capabilities, visited);
         }
         switch (type_ptr.kind) {
             .@"struct" => |struct_def| {
-                capabilities.has_struct = true;
+                if (capabilities.struct_path == null) {
+                    capabilities.struct_path = path;
+                }
                 for (struct_def.fields_in_order) |field| {
-                    try self.collectCapabilities(field.type_id, capabilities, visited);
+                    try self.collectCapabilities(field.type_id, try allocPrint(self.allocator, "{s}.{s}", .{ path, field.identifier }), capabilities, visited);
                 }
             },
             .array => |item_type| {
-                capabilities.has_array = true;
-                try self.collectCapabilities(item_type, capabilities, visited);
+                if (capabilities.array_path == null) {
+                    capabilities.array_path = path;
+                }
+                try self.collectCapabilities(item_type, try allocPrint(self.allocator, "{s}[]", .{path}), capabilities, visited);
+            },
+            .map => |map| {
+                if (capabilities.map_path == null) {
+                    capabilities.map_path = path;
+                }
+                try self.collectCapabilities(map.value, try allocPrint(self.allocator, "{s}[]", .{path}), capabilities, visited);
+            },
+            .@"enum" => {
+                if (capabilities.enum_path == null) {
+                    capabilities.enum_path = path;
+                }
+            },
+            .@"union" => |tagged| {
+                if (capabilities.union_path == null) {
+                    capabilities.union_path = path;
+                }
+                for (tagged.variants_in_order) |variant| {
+                    try self.collectCapabilities(tagged.variants.get(variant).?, try allocPrint(self.allocator, "{s}.{s}", .{ path, variant }), capabilities, visited);
+                }
             },
             else => {},
         }
@@ -5293,8 +5494,9 @@ pub const SemaAnalyzer = struct {
             .string => "string",
             .byte => "byte",
             .array => |item_type| allocPrint(self.allocator, "[]{s}", .{try self.derivedTypeText(item_type, loc)}),
+            .map => |map| allocPrint(self.allocator, "map[{s}, {s}]", .{ try self.derivedTypeText(map.key, loc), try self.derivedTypeText(map.value, loc) }),
             .@"struct", .@"enum", .@"union" => self.derivedTypeName(type_id),
-            else => self.err_reporter.invalidType("serializable type", try self.type_table.name(type_id, self.allocator), loc),
+            else => self.unserializableType(type_id, "", loc),
         };
     }
 
@@ -6804,9 +7006,18 @@ const DerivedKey = struct {
 };
 
 const Capabilities = struct {
-    has_null: bool = false,
-    has_struct: bool = false,
-    has_array: bool = false,
+    null_path: ?[]const u8 = null,
+    struct_path: ?[]const u8 = null,
+    array_path: ?[]const u8 = null,
+    map_path: ?[]const u8 = null,
+    enum_path: ?[]const u8 = null,
+    union_path: ?[]const u8 = null,
+};
+
+const FormatNeed = struct {
+    path: ?[]const u8,
+    reason: []const u8,
+    methods: []const []const u8,
 };
 
 const GenericFunction = struct {

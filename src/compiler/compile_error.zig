@@ -553,6 +553,11 @@ pub const CompileErrorReporter = struct {
         return error.TraitRefersToItself;
     }
 
+    pub fn formatLacksMethod(self: *Self, format_name: []const u8, verb: []const u8, type_name: []const u8, reason: []const u8, method: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' can't {s} '{s}': {s} and it has no method '{s}'", .{ format_name, verb, type_name, reason, method }), loc);
+        return error.FormatLacksMethod;
+    }
+
     pub fn doesntFitTrait(self: *Self, type_name: []const u8, slot: []const u8, reason: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "{s} doesn't fit {s}: {s}", .{ type_name, slot, reason }), loc);
         return error.DoesntFitTrait;
@@ -1155,6 +1160,7 @@ pub const CompileError = error{
     TraitRefersToItself,
     TraitUsedAsType,
     DoesntFitTrait,
+    FormatLacksMethod,
     TypeListWithTrait,
     NotATrait,
     ClashingTraitMethods,
