@@ -3,7 +3,7 @@
 ## v0.17: std/os planning
 
 - Branch `v017std`, worktree `dusk-lang-codex`, based on `v017` at `1225e8e`.
-- Initial proposal: `.claude/v0.17-os-plan.md`; scope and API awaiting discussion.
+- Implementation plan: `.claude/v0.17-os-plan.md`; P0 contract decisions, P1 module/platform/context, P2 arguments/environment/cwd, P3 exit status, P4 signals, P5 docs and final checks. Planning complete; implementation not started.
 - Platform identification added to scope by user request (2026-11-17); proposed `platform() -> Platform` enum, representation pending discussion.
 - Next: agree arguments/environment/cwd, exit policy, and whether signals and process-global mutations belong in the first slice. Implementation has not started.
 

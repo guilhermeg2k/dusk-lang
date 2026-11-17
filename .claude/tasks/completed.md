@@ -1,5 +1,10 @@
 # Completed
 
+## std/os implementation plan (2026-11-17)
+
+- Expanded `.claude/v0.17-os-plan.md` into phases P0-P5 with API recommendations, CLI/embedding integration, allocation rules, environment concurrency audit, signal ownership/liveness, and validation criteria.
+- User-approved platform scope is distinguished from recommended API details. Planning only; no implementation, tests or benchmarks.
+
 ## std/os platform planning addition (2026-11-17)
 
 - Added user-requested platform identification to the v0.17 std/os proposal, including enum representation, runtime-target semantics and validation scope. No implementation.
