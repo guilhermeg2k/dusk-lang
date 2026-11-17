@@ -1,0 +1,381 @@
+{
+  "commit": "5ebc550fbd5bda8430a911637031e3512ebce745",
+  "dirty": false,
+  "date": "2026-11-17T02:20:52Z",
+  "machine": {
+    "OS": "Fedora Linux 44 (Workstation Edition)",
+    "Kernel": "Linux 7.3.3-200.fc44.x86_64",
+    "Architecture": "x86_64",
+    "CPU": "AMD Ryzen 5 5600X 6-Core Processor",
+    "Cores / Threads": "6 cores / 12 threads",
+    "CPU max": "4.65 GHz",
+    "Memory": "31.2 GiB total",
+    "Date": "2026-11-17 02:20 UTC"
+  },
+  "versions": {
+    "go": "go version go1.26.10-X:nodwarf5 linux/amd64",
+    "java": "openjdk version \"25.0.5\" 2026-10-20\nOpenJDK Runtime Environment (Red_Hat-25.0.5.0.8-3) (build 25.0.5+8)\nOpenJDK 64-Bit Server VM (Red_Hat-25.0.5.0.8-3) (build 25.0.5+8, mixed mode, sharing)",
+    "bun": "1.4.4",
+    "python": "Python 3.14.10",
+    "ruby": "ruby 4.0.9 (2026-10-23 revision 3e93b23afc) +PRISM [x86_64-linux]",
+    "ruby_json": "2.19.9",
+    "jackson": "databind/core 2.20.1; annotations 2.20"
+  },
+  "settings": {
+    "runs": 5,
+    "warmup": 1,
+    "order": "rotate starting runtime each round",
+    "scope": "fresh process, compilation of Go/Java/Dusk executable excluded; Dusk source compilation included",
+    "commands": {
+      "native": [
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross/dusk-native"
+      ],
+      "reflection": [
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross/dusk-reflection"
+      ],
+      "go": [
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross/codec-go"
+      ],
+      "java": [
+        "java",
+        "-cp",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/build/json_cross:/tmp/dusk-json-cross-deps/*",
+        "JsonCodec"
+      ],
+      "bun": [
+        "/tmp/dusk-json-cross-deps/bun-linux-x64/bun",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/json_cross/codec.js"
+      ],
+      "python": [
+        "/usr/bin/python3",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/json_cross/codec.py"
+      ],
+      "ruby": [
+        "ruby",
+        "/home/gnascimento/Projects/dusk-lang-codex/benchmarks/json_cross/codec.rb"
+      ]
+    }
+  },
+  "source_sha256": {
+    "benchmarks/json_cross/JsonCodec.java": "44b891184c90549cc757518f8f2e3184756f6f5891f1f13ed9cf50d906bf13fb",
+    "benchmarks/json_cross/README.md": "168bace98c0b01f667db9d5e3eae54c660cccc1efeb75396d8372dfbc1dbc8d2",
+    "benchmarks/json_cross/codec.go": "69615d8d8b1dfe16efa0818fc82b592300701e7cb4e25ca5602e9a154c2ffb9b",
+    "benchmarks/json_cross/codec.js": "dd0da5b9c231397e6d4a5b081e79f5cc68447ce1588547806ddfd3994ee58188",
+    "benchmarks/json_cross/codec.py": "8ba4c6f34844c3d7d418e1c38c098ce069bd9d73b3155dce87cd8a0ea76efff6",
+    "benchmarks/json_cross/codec.rb": "71ef6cff5e978daa9fa75d735088b63aacfa1f73f8502df561c60c46bf8aa0e8",
+    "benchmarks/json_compare.py": "03fa6c05fcfa18c5f7aa02a5c781508faa39288a9f17baedb1df6fc6d32621bc",
+    "benchmarks/dusk/json_decode.dsk": "5124955b2e46fda03e97586202acd7d53bbcb44cc3ab4ffdc6f82eaba67b3ed2",
+    "benchmarks/dusk/json_decode_bulk.dsk": "795b2e3abddbd7a053881e33dbeeb8634bea91107ea11e1f69331fc7aa0aae9e",
+    "benchmarks/dusk/json_defaults.dsk": "82c4b13b8a3c4485641d9374bc0bed59b35369d40817c7ee227b4475e8ae6efc",
+    "benchmarks/dusk/json_encode.dsk": "9272314c82025a0e9bdc1388dcd0334a2fc49e56cee0f8649eaf888e5243735c",
+    "benchmarks/dusk/support/json_model.dsk": "e36cac4792d82ef5aa595661803e0007b5d257fc705500c36b63d22fed1b85f1"
+  },
+  "dependency_sha256": {
+    "jackson-annotations.jar": "959a2ffb2d591436f51f183c6a521fc89347912f711bf0cae008cdf045d95319",
+    "jackson-core.jar": "ffab4d957daa2796cf24cb66d0b78a7090f1bcbe17c3a4578f09affaaf137089",
+    "jackson-databind.jar": "34bbeb4526fff4f8565b12106bf85a6afcbae858966d489b54214ac46b2e26e8"
+  },
+  "binary_sha256": {
+    "dusk-native": "6e0b60cb9ba0994bbc23678452db0de6d71fb873d6bd69e6553299b270ffb891",
+    "dusk-reflection": "c2e29a87113e7b78edac7789d9a024fe4df3657e285c7c153c91e09f3f03eb75",
+    "codec-go": "fe85e93ec5e6ac0277102769453305a590b3bf486694ee81e6d3ba7afef1c297"
+  },
+  "benchmarks": {
+    "json_decode": {
+      "native": {
+        "runs": 5,
+        "median_ms": 212.17,
+        "min_ms": 210.22,
+        "max_ms": 213.19,
+        "stddev_ms": 1.24,
+        "peak_mem_kib": 35652,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 213.18510699893523,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 210.6137430000672,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 212.3269719995733,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 212.17349000107788,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 210.21882699824346,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 1666.01,
+        "min_ms": 1615.01,
+        "max_ms": 1675.48,
+        "stddev_ms": 25.72,
+        "peak_mem_kib": 35652,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 1637.2271290001663,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 1615.0067660000786,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 1675.4846599997109,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 1669.7349540008872,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          },
+          {
+            "elapsed_ms": 1666.0122520006553,
+            "peak_mem_kib": 35652,
+            "output": "5200000"
+          }
+        ]
+      }
+    },
+    "json_decode_bulk": {
+      "native": {
+        "runs": 5,
+        "median_ms": 504.07,
+        "min_ms": 498.28,
+        "max_ms": 516.29,
+        "stddev_ms": 7.94,
+        "peak_mem_kib": 35652,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 504.06830700012506,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 513.4400040005858,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 500.59261900059937,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 498.28047000119113,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 516.2909159989795,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 6357.8,
+        "min_ms": 6219.67,
+        "max_ms": 6441.58,
+        "stddev_ms": 81.42,
+        "peak_mem_kib": 35652,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 6219.670239999687,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 6357.803327000511,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 6359.77726999954,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 6307.641325000077,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          },
+          {
+            "elapsed_ms": 6441.578171999936,
+            "peak_mem_kib": 35652,
+            "output": "15104000"
+          }
+        ]
+      }
+    },
+    "json_encode": {
+      "native": {
+        "runs": 5,
+        "median_ms": 112.05,
+        "min_ms": 111.33,
+        "max_ms": 121.13,
+        "stddev_ms": 4.05,
+        "peak_mem_kib": 35652,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 112.05210700063617,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 121.12629900002503,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 111.9795750000776,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 111.33065499961958,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 114.10565699952713,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 2208.4,
+        "min_ms": 2159.87,
+        "max_ms": 2310.91,
+        "stddev_ms": 60.76,
+        "peak_mem_kib": 35652,
+        "noisy": false,
+        "samples": [
+          {
+            "elapsed_ms": 2219.070773000567,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2159.871302999818,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2208.40380700065,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2165.033348999714,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          },
+          {
+            "elapsed_ms": 2310.9145930011437,
+            "peak_mem_kib": 35652,
+            "output": "1000"
+          }
+        ]
+      }
+    },
+    "json_defaults": {
+      "native": {
+        "runs": 5,
+        "median_ms": 59.76,
+        "min_ms": 59.2,
+        "max_ms": 70.52,
+        "stddev_ms": 4.84,
+        "peak_mem_kib": 35652,
+        "noisy": true,
+        "samples": [
+          {
+            "elapsed_ms": 61.135798001487274,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 70.52349599871377,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 59.760977999758325,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 59.20293999952264,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 59.285250999892014,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          }
+        ]
+      },
+      "reflection": {
+        "runs": 5,
+        "median_ms": 299.53,
+        "min_ms": 293.34,
+        "max_ms": 335.48,
+        "stddev_ms": 17.35,
+        "peak_mem_kib": 35652,
+        "noisy": true,
+        "samples": [
+          {
+            "elapsed_ms": 293.33609999957844,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 311.0851410001487,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 299.5341610003379,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 335.48403900022095,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          },
+          {
+            "elapsed_ms": 295.4369199997018,
+            "peak_mem_kib": 35652,
+            "output": "4700000"
+          }
+        ]
+      }
+    }
+  }
+}
