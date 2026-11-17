@@ -48,6 +48,13 @@ test "gc: scoped native roots survive collection and root-list growth" {
     try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
 }
 
+test "sema: anonymous coercions preserve private-field visibility" {
+    try runCase("anonymous-private-same-module.dsk");
+    try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-array-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }

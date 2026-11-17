@@ -1,0 +1,5 @@
+import std/time
+func main() -> void
+    let raw = if true then @(milliseconds = 0) else null end
+    let forged: ?time::Timestamp = raw
+end
