@@ -1,5 +1,10 @@
 # Completed
 
+## std/os backend planning correction (2026-11-17)
+
+- Applied user preference for Zig std; checked installed Zig 0.16 environment and cwd APIs. Libuv remains for signals.
+- Recorded that environment-map mutation is distinct from host mutation, whose backend remains unresolved. Planning only.
+
 ## std/os implementation plan (2026-11-17)
 
 - Expanded `.claude/v0.17-os-plan.md` into phases P0-P5 with API recommendations, CLI/embedding integration, allocation rules, environment concurrency audit, signal ownership/liveness, and validation criteria.
