@@ -11,7 +11,35 @@ pub const Program = struct {
     defined_types: []const DefinedType,
     error_names: []const []const u8,
     cell_var_uids: std.AutoHashMapUnmanaged(usize, void) = .empty,
-    serialization_plans: []const @import("../runtime/serialization_plan.zig").Plan = &.{},
+    serialization_plans: []const Plan = &.{},
+};
+
+pub const Plan = struct {
+    type_id: TypeId,
+    shape: PlanShape,
+};
+
+pub const PlanShape = union(enum) {
+    scalar,
+    nullable: usize,
+    array: usize,
+    map: usize,
+    structure: []const PlanField,
+    enumeration: []const PlanVariant,
+    tagged_union: []const PlanVariant,
+};
+
+pub const PlanField = struct {
+    name: []const u8,
+    field_index: u8,
+    plan: usize,
+    default_value: ?*Value,
+};
+
+pub const PlanVariant = struct {
+    name: []const u8,
+    declared_name: []const u8,
+    plan: ?usize,
 };
 
 pub const Block = []const Instruction;

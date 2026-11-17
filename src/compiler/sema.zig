@@ -5,7 +5,6 @@ const tt = @import("type_table.zig");
 const modules = @import("modules.zig");
 const native = @import("../runtime/builtins/native.zig");
 const prelude_bindings = &@import("../runtime/builtins/prelude.zig").bindings;
-const Plan = @import("../runtime/serialization_plan.zig").Plan;
 const allocPrint = std.fmt.allocPrint;
 const std = @import("std");
 
@@ -65,7 +64,7 @@ pub const SemaAnalyzer = struct {
     serialization_module: ?*ModuleScope = null,
     serialization_operation_by_uid: std.AutoHashMapUnmanaged(usize, native.SerializationOperation) = .empty,
     serialization_operation_by_generic: std.AutoHashMapUnmanaged(usize, native.SerializationOperation) = .empty,
-    serialization_plans: std.ArrayList(Plan) = .empty,
+    serialization_plans: std.ArrayList(ir.Plan) = .empty,
     plan_by_type: std.AutoHashMapUnmanaged(tt.TypeId, usize) = .empty,
     derived_names: std.AutoHashMapUnmanaged(DerivedKey, []const u8) = .empty,
     derived_functions: std.AutoHashMapUnmanaged(DerivedKey, usize) = .empty,
@@ -4609,9 +4608,9 @@ pub const SemaAnalyzer = struct {
                 fn_identifier = symbol.identifier;
 
                 if (self.serialization_operation_by_uid.get(symbol.uid)) |operation| {
-                    const is_compile_time_value = operation == .blank or operation == .field_default;
+                    const is_compile_time_value = operation == .blank or operation == .field_default or operation == .plan_of;
                     if (is_compile_time_value) {
-                        return self.evalSerializationValue(operation, fn_call);
+                        return self.evalSerializationValue(operation, fn_call, exp.loc);
                     }
                 }
 
@@ -4963,15 +4962,18 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn evalSerializationValue(self: *Self, operation: native.SerializationOperation, fn_call: ast.FnCall) CompileError!*ir.Value {
+    fn evalSerializationValue(self: *Self, operation: native.SerializationOperation, fn_call: ast.FnCall, loc: err.Loc) CompileError!*ir.Value {
         const type_id = try self.resolveTypeAnnotation(fn_call.type_arguments[0], null);
-        const struct_def = self.type_table.getTypePtrById(type_id).kind.@"struct";
         switch (operation) {
-            .blank => return self.blankStruct(type_id, struct_def),
+            .plan_of => {
+                const index: i64 = if (self.typeContainsSlot(type_id)) 0 else @intCast(try self.planIndex(type_id, "", loc));
+                return ir.Value.init(self.allocator, .{ .data = .{ .i_int = index }, .type_id = self.type_table.getPrimitive(.int) });
+            },
+            .blank => return self.blankStruct(type_id, self.type_table.getTypePtrById(type_id).kind.@"struct"),
             .field_default => {
                 const index_value = try self.evalExp(fn_call.arguments[0].exp);
-                const index: usize = @intCast(index_value.data.i_int);
-                return struct_def.fields_in_order[index].default_value.?;
+                const field = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order[@intCast(index_value.data.i_int)];
+                return self.coerceValue(field.default_value.?, field.type_id, loc);
             },
             .derive_decode, .derive_encode => @panic("evalSerializationValue: derive calls are instantiated, not evaluated"),
         }
@@ -5048,8 +5050,8 @@ pub const SemaAnalyzer = struct {
     }
 
     fn emitStructDecode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, type_text: []const u8, loc: err.Loc) CompileError!void {
-        const fields = (try self.serializableStruct(type_id, loc)).fields_in_order;
-        const plan = try self.planIndex(type_id);
+        const plan = try self.planIndex(type_id, "", loc);
+        const fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
         try self.emit(out, "try reader.begin_struct({d})\nlet mut value = blank[{s}]()\n", .{ plan, type_text });
         for (fields, 0..) |field, i| {
             try self.emit(out, "let mut has_{d} = false\n", .{i});
@@ -5114,8 +5116,8 @@ pub const SemaAnalyzer = struct {
     }
 
     fn emitStructEncode(self: *Self, out: *std.ArrayList(u8), type_id: tt.TypeId, loc: err.Loc) CompileError!void {
-        const fields = (try self.serializableStruct(type_id, loc)).fields_in_order;
-        const plan = try self.planIndex(type_id);
+        const plan = try self.planIndex(type_id, "", loc);
+        const fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
         try self.emit(out, "try writer.begin_struct({d}, {d})\n", .{ plan, fields.len });
         for (fields, 0..) |field, i| {
             try self.emit(out, "try writer.field({d}, {d})\n", .{ plan, i });
@@ -5156,16 +5158,6 @@ pub const SemaAnalyzer = struct {
         return allocPrint(self.allocator, "try writer.{s}({s})", .{ method, source });
     }
 
-    fn serializableStruct(self: *Self, type_id: tt.TypeId, loc: err.Loc) CompileError!tt.Struct {
-        const struct_def = self.type_table.getTypePtrById(type_id).kind.@"struct";
-        for (struct_def.fields_in_order) |field| {
-            if (field.is_file_only) {
-                return self.err_reporter.invalidType("struct without private fields", struct_def.identifier, loc);
-            }
-        }
-        return struct_def;
-    }
-
     fn isConstantDefault(self: *Self, field: tt.TypedIdentifier) bool {
         _ = self;
         const value = field.default_value orelse return false;
@@ -5176,19 +5168,73 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn planIndex(self: *Self, type_id: tt.TypeId) CompileError!usize {
+    fn planIndex(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError!usize {
         if (self.plan_by_type.get(type_id)) |index| {
             return index;
         }
-        const fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
-        const names = try self.allocator.alloc([]const u8, fields.len);
-        for (fields, names) |field, *name| {
-            name.* = field.identifier;
-        }
         const index = self.serialization_plans.items.len;
-        try self.serialization_plans.append(self.allocator, .{ .names = names });
+        try self.serialization_plans.append(self.allocator, .{ .type_id = type_id, .shape = .scalar });
         try self.plan_by_type.put(self.allocator, type_id, index);
+        const shape = try self.planShape(type_id, path, loc);
+        self.serialization_plans.items[index].shape = shape;
         return index;
+    }
+
+    fn planShape(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError!ir.PlanShape {
+        const type_ptr = self.type_table.getTypePtrById(type_id);
+        if (type_ptr.is_nullable) {
+            const base = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+            return .{ .nullable = try self.planIndex(base, path, loc) };
+        }
+        switch (type_ptr.kind) {
+            .int, .byte, .float, .boolean, .string => return .scalar,
+            .array => |item_type| return .{ .array = try self.planIndex(item_type, try allocPrint(self.allocator, "{s}[]", .{path}), loc) },
+            .map => |map| {
+                const key = self.type_table.getTypePtrById(map.key);
+                const is_string_key = key.kind == .string and !key.is_nullable;
+                if (!is_string_key) {
+                    return self.unserializableType(type_id, path, loc);
+                }
+                return .{ .map = try self.planIndex(map.value, try allocPrint(self.allocator, "{s}[]", .{path}), loc) };
+            },
+            .@"enum" => |enumeration| {
+                if (enumeration.error_set != null) {
+                    return self.unserializableType(type_id, path, loc);
+                }
+                const variants = try self.allocator.alloc(ir.PlanVariant, enumeration.variants_in_order.len);
+                for (enumeration.variants_in_order, variants) |name, *variant| {
+                    variant.* = .{ .name = name, .declared_name = name, .plan = null };
+                }
+                return .{ .enumeration = variants };
+            },
+            .@"struct" => |struct_def| {
+                const fields = try self.allocator.alloc(ir.PlanField, struct_def.fields_in_order.len);
+                for (struct_def.fields_in_order, fields, 0..) |field, *plan_field, i| {
+                    const field_path = if (path.len == 0) field.identifier else try allocPrint(self.allocator, "{s}.{s}", .{ path, field.identifier });
+                    if (field.is_file_only) {
+                        return self.unserializableType(type_id, field_path, loc);
+                    }
+                    const default_value = if (field.default_value) |value| try self.coerceValue(value, field.type_id, loc) else null;
+                    plan_field.* = .{ .name = field.identifier, .field_index = @intCast(i), .plan = try self.planIndex(field.type_id, field_path, loc), .default_value = default_value };
+                }
+                return .{ .structure = fields };
+            },
+            .@"union" => |tagged| {
+                const variants = try self.allocator.alloc(ir.PlanVariant, tagged.variants_in_order.len);
+                for (tagged.variants_in_order, variants) |name, *variant| {
+                    const variant_path = if (path.len == 0) name else try allocPrint(self.allocator, "{s}.{s}", .{ path, name });
+                    variant.* = .{ .name = name, .declared_name = name, .plan = try self.planIndex(tagged.variants.get(name).?, variant_path, loc) };
+                }
+                return .{ .tagged_union = variants };
+            },
+            else => return self.unserializableType(type_id, path, loc),
+        }
+    }
+
+    fn unserializableType(self: *Self, type_id: tt.TypeId, path: []const u8, loc: err.Loc) CompileError {
+        const name = try self.type_table.syntaxName(type_id, self.allocator);
+        const found = if (path.len == 0) name else try allocPrint(self.allocator, "{s} at '{s}'", .{ name, path });
+        return self.err_reporter.invalidType("a serializable type with public fields", found, loc);
     }
 
     fn derivedBound(self: *Self, key: DerivedKey) CompileError![]const u8 {

@@ -1,7 +1,7 @@
 const std = @import("std");
 const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
-const Plan = @import("../../serialization_plan.zig").Plan;
+const serialization_plan = @import("../../serialization_plan.zig");
 const native = @import("../native.zig");
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
@@ -11,6 +11,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "field_name", Binding{ .native = &fieldName } },
     .{ "find_field", Binding{ .native = &findField } },
     .{ "find_field_in", Binding{ .native = &findFieldIn } },
+    .{ "plan_of", Binding{ .serialization = .plan_of } },
     .{ "derive_decode", Binding{ .serialization = .derive_decode } },
     .{ "derive_encode", Binding{ .serialization = .derive_encode } },
     .{ "blank", Binding{ .serialization = .blank } },
@@ -18,8 +19,8 @@ pub const bindings = native.BindingMap.initComptime(.{
 });
 
 fn fieldCount(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const plan = planAt(vm, args[0].int64) orelse return native.ok(.{ .int64 = 0 });
-    return native.ok(.{ .int64 = @intCast(plan.names.len) });
+    const fields = fieldsOf(vm, args[0].int64) orelse return native.ok(.{ .int64 = 0 });
+    return native.ok(.{ .int64 = @intCast(fields.len) });
 }
 
 fn fieldName(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -30,12 +31,12 @@ fn fieldName(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn findField(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const plan = planAt(vm, args[0].int64) orelse return native.ok(.{ .int64 = -1 });
-    return native.ok(.{ .int64 = indexOfName(plan, native.bytesArg(args, 1)) });
+    const fields = fieldsOf(vm, args[0].int64) orelse return native.ok(.{ .int64 = -1 });
+    return native.ok(.{ .int64 = indexOfName(fields, native.bytesArg(args, 1)) });
 }
 
 fn findFieldIn(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const plan = planAt(vm, args[0].int64) orelse return native.ok(.{ .int64 = -1 });
+    const fields = fieldsOf(vm, args[0].int64) orelse return native.ok(.{ .int64 = -1 });
     const text = native.bytesArg(args, 1);
     const start = args[2].int64;
     const stop = args[3].int64;
@@ -43,30 +44,33 @@ fn findFieldIn(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (!is_in_bounds) {
         return native.ok(.{ .int64 = -1 });
     }
-    return native.ok(.{ .int64 = indexOfName(plan, text[@intCast(start)..@intCast(stop)]) });
+    return native.ok(.{ .int64 = indexOfName(fields, text[@intCast(start)..@intCast(stop)]) });
 }
 
-fn planAt(vm: *VM, id: i64) ?Plan {
+fn fieldsOf(vm: *VM, id: i64) ?[]const serialization_plan.Field {
     const plans = vm.program.serialization_plans;
     const is_out_of_range = id < 0 or id >= plans.len;
     if (is_out_of_range) {
         return null;
     }
-    return plans[@intCast(id)];
+    return switch (plans[@intCast(id)].shape) {
+        .structure => |structure| structure.fields,
+        else => null,
+    };
 }
 
 fn nameAt(vm: *VM, id: i64, index: i64) ?[]const u8 {
-    const plan = planAt(vm, id) orelse return null;
-    const is_out_of_range = index < 0 or index >= plan.names.len;
+    const fields = fieldsOf(vm, id) orelse return null;
+    const is_out_of_range = index < 0 or index >= fields.len;
     if (is_out_of_range) {
         return null;
     }
-    return plan.names[@intCast(index)];
+    return fields[@intCast(index)].name;
 }
 
-fn indexOfName(plan: Plan, name: []const u8) i64 {
-    for (plan.names, 0..) |candidate, i| {
-        if (std.mem.eql(u8, candidate, name)) {
+fn indexOfName(fields: []const serialization_plan.Field, name: []const u8) i64 {
+    for (fields, 0..) |field, i| {
+        if (std.mem.eql(u8, field.name, name)) {
             return @intCast(i);
         }
     }

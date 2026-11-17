@@ -1,0 +1,48 @@
+import std/serialization
+
+error JsonError
+    InvalidJson
+    TypeMismatch
+    MissingField
+    UnknownField
+    DuplicateKey
+    NumberOutOfRange
+    UnknownVariant
+    InvalidUnion
+    NonFiniteNumber
+    DepthExceeded
+    CycleDetected
+    InvalidOptions
+end
+
+struct Diagnostic
+    path: string = ""
+    byte_offset: ?int = null
+    line: ?int = null
+    column: ?int = null
+end
+
+struct DecodeOptions
+    should_reject_unknown_fields: bool = false
+    max_depth: int = 128
+end
+
+struct EncodeOptions
+    max_depth: int = 128
+end
+
+extern func ~encode_value[T](value: T, options: EncodeOptions, plan: int) -> JsonError!string
+extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut defaults: []func() -> void) -> JsonError!T
+
+func encode[T](value: T, options: EncodeOptions = @()) -> JsonError!string
+    return try encode_value(value, options, serialization::plan_of[T]())
+end
+
+func decode[T](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
+    let mut defaults: []func() -> void = []
+    let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T](), defaults)
+    for defaults: apply_default do
+        apply_default()
+    end
+    return value
+end

@@ -63,6 +63,8 @@ extern func field_name(fields: int, index: int) -> string
 extern func find_field(fields: int, name: string) -> int
 extern func find_field_in(fields: int, text: string, start: int, stop: int) -> int
 
+extern func plan_of[T]() -> int
+
 extern func ~derive_decode[T, R: ScalarReader](mut reader: R, mut pending: []func() -> void) -> SerializationError!T
 extern func ~derive_encode[T, W: ScalarWriter](value: T, mut writer: W) -> SerializationError!void
 extern func ~blank[T]() -> T

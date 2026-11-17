@@ -210,13 +210,9 @@ end
 
 func main() -> !void
     let text = format::sample_text()
-    let user_fields = 0
-    let address_fields = 1
+    let user_fields = serialization::plan_of[format::User]()
+    let address_fields = serialization::plan_of[format::Address]()
     let mut checksum = 0
-    if checksum < 0 then
-        let mut unused_reader = format::reader_for(text)
-        let unused = try serialization::decode[format::User, format::JsonReader](unused_reader)
-    end
     for 0..19999: i do
         let mut reader = format::reader_for(text)
         let mut pending: []func() -> void = []
