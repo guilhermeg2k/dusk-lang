@@ -197,7 +197,7 @@ Each phase updates task tracking and gets its own commit. Reflection and migrati
 
 The requested direction is reflection plus safe construction, followed by JSON migration and comparison. The exact API above remains proposed. Before implementation, settle:
 
-- Resolved: snapshot capture owns a copy; field/collection views share protected storage; typed casts produce copies. Builders and sessions retain shared handle identity across copies.
+- Resolved: snapshot capture owns a copy; field/collection views share protected storage; typed casts produce copies. Builders and sessions retain shared handle identity across copies. Revised 2026-11-16: `value` is a view without a copy, like assignment; snapshots are `value(copy(x))`. Reads stay checked at read time and casts still copy.
 - Resolved: begin_session, builder_in, defer_finish and complete_session provide a public format-neutral default barrier; pending values carry a traced session reference and remain unreadable until completion.
 - Resolved: require_value[T] takes a literal list of allowed Kind variants and a literal MapKeys policy. Sema checks the concrete graph and codegen erases the check; arbitrary compile-time execution is not introduced.
 - Resolved: descriptors remain private-index handles backed by program tables; checked values keep heap payloads and session references in cells, and builders/sessions keep their state behind a closure field, so `copy` shares it without new VM object kinds.

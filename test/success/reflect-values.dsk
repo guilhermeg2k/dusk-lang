@@ -38,9 +38,15 @@ end
 
 func main() -> !void
     let mut original = User("Ana", 30, ["fresh"])
-    let snapshot = reflect::value(original)
+    let view = reflect::value(original)
+    let snapshot = reflect::value(copy(original))
     original.age = 99
     original.tags[0] = "changed"
+    assert((try reflect::cast[int](try reflect::field(view, "age"))) == 99)
+    assert((try reflect::cast[string](try reflect::element(try reflect::field(view, "tags"), 0))) == "changed")
+    let mut view_copy = try reflect::cast[User](view)
+    view_copy.age = 1
+    assert(original.age == 99)
     assert(reflect::is_same(reflect::value_type(snapshot), reflect::type_of[User]()))
     assert((try reflect::cast[int](try reflect::field(snapshot, "age"))) == 30)
     let tags = try reflect::field(snapshot, "tags")
@@ -71,11 +77,26 @@ func main() -> !void
     assert((try reflect::length(mapping)) == 2)
     assert((try reflect::cast[string](try reflect::map_key(mapping, 0))) == "empty")
     assert(try reflect::is_null(try reflect::map_value(mapping, 0)))
-    assert((try reflect::cast[?int](try reflect::map_value(mapping, 1))) == 42)
+    assert((try reflect::cast[?int](try reflect::map_value(mapping, 1))) == 99)
     let enum_value = reflect::value(Color.Crimson)
     assert((try reflect::variant_name(enum_value)) == "Red")
     assert((try reflect::variant_value(enum_value)) == 3)
     assert((try reflect::cast[Color](enum_value)) == Color.Red)
+    let crimson = try reflect::enum_value(reflect::type_of[Color](), "Crimson")
+    assert((try reflect::cast[Color](crimson)) == Color.Crimson)
+    assert((try reflect::variant_name(crimson)) == "Red")
+    let empty_email = try reflect::null_of(reflect::type_of[?string]())
+    assert(try reflect::is_null(empty_email))
+    assert((try reflect::cast[?string](empty_email)) == null)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::enum_value(reflect::type_of[Color](), "Green")
+    end, reflect::ReflectError.UnknownVariant)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::enum_value(reflect::type_of[int](), "Red")
+    end, reflect::ReflectError.TypeMismatch)
+    expect_failure(func() -> reflect::ReflectError!void
+        let wrong = try reflect::null_of(reflect::type_of[string]())
+    end, reflect::ReflectError.TypeMismatch)
     let union_value = reflect::value(Choice(number = 7))
     assert((try reflect::variant_name(union_value)) == "number")
     assert((try reflect::cast[int](try reflect::payload(union_value))) == 7)

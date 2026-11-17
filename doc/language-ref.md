@@ -1787,7 +1787,7 @@ The **prelude** is always available. Everything else is in the **standard librar
 
 The prelude also declares the error set `ConversionError` (`Invalid`, `Overflow`).
 
-`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. A copy of a reflection `Value` is a new handle to the same snapshot, and copies of a `Builder` or `Session` share its construction state. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
+`copy(x)` copies everything reachable from `x`: nested arrays, map values, struct fields, union payloads and buffers, so changing the copy never changes the original (shared references inside `x`, including cycles, are kept shared within the copy). Map keys aren't copied: a struct key stays the same struct, so it still finds its entry in the copy. A copy of a reflection `Value` is a new handle to the same value, and copies of a `Builder` or `Session` share its construction state. Strings and nullable primitives are immutable, so they are shared instead of copied, and `copy` of an `int`, `float`, `bool`, `byte`, string or enum returns the value itself.
 
 ### std/array
 
@@ -2426,9 +2426,11 @@ end
 
 The allowed kinds must be a literal list. The check walks nullable children, collection entries, struct fields and union payloads, including recursive types. `reflect::MapKeys.Immutable` is the default key policy; pass `reflect::MapKeys.String` as the second argument to require string keys. Unsupported reflected values and types excluded by the policy fail during compilation. The check emits no runtime validation or list allocation. This restricted policy check does not evaluate arbitrary functions at compile time.
 
-**Reflected values.** `reflect::value(input)` makes a snapshot of a typed value and returns a protected `Value`. `reflect::value_type(value)` gives its exact type. `try reflect::cast[T](value)` checks that type and returns an independent typed copy. Modifying the original after taking a snapshot, or modifying the result of a cast, does not change the snapshot. Sharing and cycles inside the copied graph are preserved.
+**Reflected values.** `reflect::value(input)` returns a protected `Value` that views a typed value without copying it, the same way assigning an array or a struct shares it: later changes to `input` show through the view. Take a snapshot with `reflect::value(copy(input))`. `reflect::value_type(value)` gives its exact type. `try reflect::cast[T](value)` checks that type and returns an independent typed copy, so changing the result never changes the viewed value. Sharing and cycles inside the copied graph are preserved.
 
-Snapshots support primitives, strings, buffers, nullables, arrays, maps with immutable keys, public-field structs, enums and unions. Private fields, functions, tasks, error values and struct map keys are rejected at compile time. Metadata inspection supports more kinds than value traversal does.
+`try reflect::null_of(type)` returns a nullable type's `null`, and `try reflect::enum_value(type, name)` returns a declared enum value (aliases included), both without a builder. They fail with `TypeMismatch` for other kinds of types, and `enum_value` fails with `UnknownVariant` for a name the enum doesn't declare.
+
+Reflected values support primitives, strings, buffers, nullables, arrays, maps with immutable keys, public-field structs, enums and unions. Private fields, functions, tasks, error values and struct map keys are rejected at compile time. Metadata inspection supports more kinds than value traversal does.
 
 | Operation | Result |
 | --- | --- |
@@ -2443,7 +2445,7 @@ Snapshots support primitives, strings, buffers, nullables, arrays, maps with imm
 | `payload(value)` | The active union payload |
 | `is_same_object(left, right)` | Whether two reflected views refer to the same non-null heap object of the same type |
 
-Every operation in the table returns `ReflectError!` and needs `try` or `catch`. Field and collection reads produce protected views into the snapshot; they do not grant mutable access. Use `cast` to recover a typed copy. Map absence is distinguished from an entry holding null by entry count and indexed iteration. `is_same_object` returns false for primitive values and different concrete types; it permits cycle detection without exposing addresses.
+Every operation in the table returns `ReflectError!` and needs `try` or `catch`. Field and collection reads produce protected views into the same value; they do not grant mutable access. Bounds, active union variants and map entries are checked on every read, so if the value changes between two reads, the second one fails (`OutOfRange`, for example) instead of reading stale data. Use `cast` to recover a typed copy. Map absence is distinguished from an entry holding null by entry count and indexed iteration. `is_same_object` returns false for primitive values and different concrete types; it permits cycle detection without exposing addresses.
 
 **Builders.** A builder records supplied values and publishes a complete result only after required fields and defaults have been handled:
 
@@ -2483,7 +2485,7 @@ end
 | `finish(mut builder)` | Complete construction and return a reflected value |
 | `finish_as[T](mut builder)` | Complete construction and recover an independent typed result; `T` can be inferred from the expected result |
 
-All builder operations return `ReflectError!`. Supplied values must match exact field or child types; there are no implicit numeric or nullable conversions. Typed setters take snapshots. Duplicate struct fields and repeated variant/nullable selection fail; duplicate map keys fail when the map is finished. Missing fields use explicit declared defaults only: a nullable field without a default still has to be supplied. Empty arrays, maps and fieldless structs can be finished.
+All builder operations return `ReflectError!`. Supplied values must match exact field or child types; there are no implicit numeric or nullable conversions. Setters don't copy their input; `finish_as` returns an independent result. Duplicate struct fields and repeated variant/nullable selection fail; duplicate map keys fail when the map is finished. Missing fields use explicit declared defaults only: a nullable field without a default still has to be supplied. Empty arrays, maps and fieldless structs can be finished.
 
 Builders and sessions are handles. Assignment and `copy` refer to the same construction state; they do not fork it. Finishing consumes a builder across every alias. A failed finish invalidates its session; an invalid setter leaves the builder available for correction. A wrong `finish_as` target is rejected before construction or defaults execute.
 

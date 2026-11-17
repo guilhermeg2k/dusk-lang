@@ -65,9 +65,7 @@ func ~parse_value(mut parser: Parser, type: reflect::Type) -> !reflect::Value
             return reflect::value(atom)
         end
         reflect::Kind.Enum then
-            let mut builder = try reflect::builder_in(parser.session, type)
-            try reflect::select_enum(builder, atom)
-            return try reflect::defer_finish(builder)
+            return try reflect::enum_value(type, atom)
         end
         else then
             return DecodeError.UnsupportedType
@@ -131,18 +129,17 @@ end
 
 func ~parse_nullable(mut parser: Parser, type: reflect::Type) -> !reflect::Value
     let child = try child_type(type)
-    let mut builder = try reflect::builder_in(parser.session, type)
     let position = parser.position
     let current_byte = try peek(parser)
     let is_container = current_byte == 123 or current_byte == 91
     if !is_container then
         let atom = try read_atom(parser)
         if atom == "null" then
-            try reflect::set_null(builder)
-            return try reflect::defer_finish(builder)
+            return try reflect::null_of(type)
         end
         parser.position = position
     end
+    let mut builder = try reflect::builder_in(parser.session, type)
     try reflect::set_present_value(builder, try parse_value(parser, child))
     return try reflect::defer_finish(builder)
 end

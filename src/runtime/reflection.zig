@@ -22,12 +22,16 @@ const session_slot = 3;
 const session_phase_slot = 0;
 const session_handle_slot = 3;
 const complete_phase = 2;
+const builder_type_slot = 0;
+const builder_session_slot = 1;
+const builder_values_slot = 2;
+const builder_names_slot = 3;
 
 pub fn requireValue(_: *VM, _: []v.Value) anyerror!native.NativeResult {
     return native.ok(v.NULL_VALUE);
 }
 
-pub fn wrapCapturedValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+pub fn wrapTypedValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     const type_index: u32 = @intCast(args[1].int64);
     const descriptor_id: u16 = @intCast(args[2].int64);
     return native.ok(try wrapValue(vm, type_index, args[0], v.NULL_VALUE, descriptor_id));
@@ -70,6 +74,32 @@ pub fn viewValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
         return native.fail(ReflectError.TypeMismatch);
     }
     return native.ok(payloadOf(vm, handle));
+}
+
+pub fn nullOf(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const type_index = typeHandleIndex(args[0]);
+    if (vm.program.reflection_types[type_index].kind != .Nullable) {
+        return native.fail(ReflectError.TypeMismatch);
+    }
+    return native.ok(try wrapValue(vm, type_index, v.NULL_VALUE, v.NULL_VALUE, @intCast(args[1].int64)));
+}
+
+pub fn enumValue(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const type_index = typeHandleIndex(args[0]);
+    const source = vm.program.reflection_types[type_index];
+    if (source.kind != .Enum) {
+        return native.fail(ReflectError.TypeMismatch);
+    }
+    const name = native.bytesArg(args, 1);
+    for (source.variants) |variant| {
+        if (!std.mem.eql(u8, variant.name, name)) continue;
+        return native.ok(try wrapValue(vm, type_index, .{ .int64 = variant.value }, v.NULL_VALUE, @intCast(args[2].int64)));
+    }
+    return native.fail(ReflectError.UnknownVariant);
+}
+
+fn typeHandleIndex(type_handle: v.Value) u32 {
+    return @intCast(v.HeapValue.getParentPtr(v.Struct, type_handle.heap_obj).get(0).int64);
 }
 
 fn handleOf(value: v.Value) *v.Struct {
@@ -284,14 +314,6 @@ pub fn canConstruct(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     return native.ok(.{ .bool = vm.program.reflection_types[index].is_constructible });
 }
 
-pub fn canAttach(_: *VM, args: []v.Value) anyerror!native.NativeResult {
-    const handle = handleOf(args[1]);
-    if (isReady(handle)) {
-        return native.ok(.{ .bool = true });
-    }
-    return native.ok(.{ .bool = &sessionStateOf(handle).?.obj == args[0].heap_obj });
-}
-
 pub fn construct(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     const root_count = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_count);
@@ -333,6 +355,77 @@ pub fn appendHandle(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     }
     try array.append(args[1]);
     return native.ok(v.NULL_VALUE);
+}
+
+pub fn setField(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const builder = v.HeapValue.getParentPtr(v.Struct, args[0].heap_obj);
+    const target = vm.program.reflection_types[typeHandleIndex(builder.get(builder_type_slot))];
+    if (target.kind != .Struct) {
+        return native.fail(ReflectError.TypeMismatch);
+    }
+    const name = native.bytesArg(args, 1);
+    const field = for (target.fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) {
+            break field;
+        }
+    } else {
+        return native.fail(ReflectError.UnknownField);
+    };
+    if (inputError(builder, handleOf(args[2]), field.type_index)) |failure| {
+        return native.fail(failure);
+    }
+    const names = v.HeapValue.getParentPtr(v.Array, builder.get(builder_names_slot).heap_obj.followRelocated());
+    for (names.getDataPtr()[0..names.len]) |existing| {
+        if (std.mem.eql(u8, v.HeapValue.getParentPtr(v.Bytes, existing.heap_obj).slice(), name)) {
+            return native.fail(ReflectError.DuplicateAssignment);
+        }
+    }
+    const root_count = vm.heap.temporary_roots.items.len;
+    defer vm.heap.restoreRootCount(root_count);
+    const builder_root = try vm.heap.protectValue(args[0], .@"struct");
+    const name_root = try vm.heap.protectValue(args[1], .string);
+    const input_root = try vm.heap.protectValue(args[2], .@"struct");
+    try appendBuilderItem(vm, builder_root, builder_names_slot, name_root);
+    try appendBuilderItem(vm, builder_root, builder_values_slot, input_root);
+    return native.ok(v.NULL_VALUE);
+}
+
+pub fn checkInput(_: *VM, args: []v.Value) anyerror!native.NativeResult {
+    const builder = v.HeapValue.getParentPtr(v.Struct, args[0].heap_obj);
+    if (inputError(builder, handleOf(args[1]), typeHandleIndex(args[2]))) |failure| {
+        return native.fail(failure);
+    }
+    return native.ok(v.NULL_VALUE);
+}
+
+fn inputError(builder: *const v.Struct, input: *const v.Struct, expected: u32) ?ReflectError {
+    if (input.get(type_slot).int64 != expected) {
+        return ReflectError.TypeMismatch;
+    }
+    if (isReady(input)) {
+        return null;
+    }
+    const is_same_session = &sessionStateOf(input).?.obj == builder.get(builder_session_slot).heap_obj;
+    if (!is_same_session) {
+        return ReflectError.InvalidBuilderState;
+    }
+    return null;
+}
+
+fn appendBuilderItem(vm: *VM, builder_root: usize, slot: usize, item_root: usize) !void {
+    const scope = vm.heap.temporary_roots.items.len;
+    defer vm.heap.restoreRootCount(scope);
+    const list = try vm.heap.protectValue(rootedBuilder(vm, builder_root).get(slot), .array);
+    var array = v.HeapValue.getParentPtr(v.Array, vm.heap.protectedValue(list).heap_obj.followRelocated());
+    if (array.len == array.capacity) {
+        array = try vm.growArray(&vm.heap.temporary_roots.items[list].value);
+        rootedBuilder(vm, builder_root).set(slot, vm.heap.protectedValue(list));
+    }
+    try array.append(vm.heap.protectedValue(item_root));
+}
+
+fn rootedBuilder(vm: *VM, builder_root: usize) *v.Struct {
+    return v.HeapValue.getParentPtr(v.Struct, vm.heap.protectedValue(builder_root).heap_obj);
 }
 
 const Construction = struct {

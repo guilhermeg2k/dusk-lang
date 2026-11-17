@@ -150,19 +150,17 @@ func ~decode_value(mut parser: Parser, type: reflect::Type, depth: int) -> JsonE
     let type_kind = reflect::kind(type)
     when type_kind
         reflect::Kind.Nullable then
-            let mut builder = try new_builder(parser.session, type)
             if (try peek(parser)) == TokenKind.Null then
                 let token = try next(parser)
-                try put_null(builder)
-            else
-                let description = reflect::describe(type)
-                if description.nullable: child then
-                    try put_present(builder, try decode_value(parser, child, depth))
-                else
-                    return JsonError.TypeMismatch
-                end
+                return try null_value(type)
             end
-            return try defer_builder(builder)
+            let description = reflect::describe(type)
+            if description.nullable: child then
+                let mut builder = try new_builder(parser.session, type)
+                try put_present(builder, try decode_value(parser, child, depth))
+                return try defer_builder(builder)
+            end
+            return JsonError.TypeMismatch
         end
         reflect::Kind.Int, reflect::Kind.Byte then
             let text = try read_text(parser, TokenKind.Number)
@@ -213,9 +211,7 @@ func ~decode_value(mut parser: Parser, type: reflect::Type, depth: int) -> JsonE
         end
         reflect::Kind.Enum then
             let name = try read_text(parser, TokenKind.String)
-            let mut builder = try new_builder(parser.session, type)
-            try choose_enum(builder, name)
-            return try defer_builder(builder)
+            return try named_enum_value(type, name)
         end
         reflect::Kind.Union then
             return try read_union(parser, type, depth)
@@ -456,10 +452,10 @@ func encode[T](value: T, options: EncodeOptions = @()) -> JsonError!string
     if !is_valid_depth(options.max_depth) then
         return JsonError.InvalidOptions
     end
-    let snapshot = reflect::value(value)
+    let root = reflect::value(value)
     let mut parts: []string = []
     let mut ancestors: []reflect::Value = []
-    try encode_value(snapshot, 0, options.max_depth, parts, ancestors)
+    try encode_value(root, 0, options.max_depth, parts, ancestors)
     return string::join(parts, "")
 end
 
@@ -630,8 +626,8 @@ func ~insert_entry(mut builder: reflect::Builder, key: reflect::Value, value: re
     end
 end
 
-func ~choose_enum(mut builder: reflect::Builder, name: string) -> JsonError!void
-    reflect::select_enum(builder, name) catch err then
+func ~named_enum_value(type: reflect::Type, name: string) -> JsonError!reflect::Value
+    return reflect::enum_value(type, name) catch err then
         return reflection_error(err)
     end
 end
@@ -642,8 +638,8 @@ func ~choose_union(mut builder: reflect::Builder, name: string, value: reflect::
     end
 end
 
-func ~put_null(mut builder: reflect::Builder) -> JsonError!void
-    reflect::set_null(builder) catch err then
+func ~null_value(type: reflect::Type) -> JsonError!reflect::Value
+    return reflect::null_of(type) catch err then
         return reflection_error(err)
     end
 end
