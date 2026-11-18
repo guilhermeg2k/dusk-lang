@@ -1,5 +1,11 @@
 # In Progress
 
+## v0.17: std/path
+
+- Branch v017std, worktree dusk-lang-codex. Plan: `.claude/v0.17-path-plan.md`.
+- Implementing lexical join/normalize, component queries, absolute detection and explicit-base resolution/relative paths using Zig std.
+- Next: helpers and native integration, behavior/GC/Windows tests, docs and both build modes.
+
 ## v0.16 - Shigeo: std/fs slice A
 
 Plan: `.claude/v0.16-fs-plan.md` (2026-11-15).
