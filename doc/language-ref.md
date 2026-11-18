@@ -1945,15 +1945,15 @@ Random numbers, buffers and reproducible generators. Import with `import std/ran
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `random_int(min: int, max: int)` | `RandomError!int` | Uniform integer with both bounds included. |
-| `random_float()` | `RandomError!float` | A value from `0.0` inclusive to `1.0` exclusive. |
+| `integer(min: int, max: int)` | `RandomError!int` | Uniform integer with both bounds included. |
+| `decimal()` | `RandomError!float` | A value from `0.0` inclusive to `1.0` exclusive. |
 | `bytes(size: int)` | `RandomError!buffer` | A fresh buffer of ordinary random bytes. |
 | `secure_bytes(size: int)` | `RandomError!buffer` | A fresh buffer from the host's secure entropy source. |
 | `seeded(seed: int)` | `Generator` | An independent deterministic generator. |
 
 Integer bounds can span the complete `int` range. `min > max` fails with `InvalidBounds`; equal bounds return that value without consuming randomness. Byte counts must be nonnegative (`NegativeSize` otherwise). Zero-byte requests return a fresh empty buffer without consulting a source or advancing a sequence. Invalid bounds and negative sizes also leave sequences unchanged.
 
-The ordinary module functions share one generator per execution, initialized lazily from the host. Tasks share this sequence, so scheduling affects which task receives each draw. An embedded VM without the required host I/O context gets `Unsupported` when initialization or secure entropy is needed. Normal CLI executions supply that context. `random_float()` needs `try` because its source may need initialization.
+The ordinary module functions share one generator per execution, initialized lazily from the host. Tasks share this sequence, so scheduling affects which task receives each draw. An embedded VM without the required host I/O context gets `Unsupported` when initialization or secure entropy is needed. Normal CLI executions supply that context. `decimal()` needs `try` because its source may need initialization.
 
 `secure_bytes` obtains fresh secure entropy directly from the host. It fails with `EntropyUnavailable` if the source cannot complete, including host cancellation; it never falls back to the ordinary generator and returns no partial buffer on failure. Ordinary module functions and seeded generators provide no security guarantee; use `secure_bytes` for secrets. Calls are synchronous; host entropy acquisition can wait.
 
@@ -1961,8 +1961,8 @@ A `Generator` has these methods, all taking `mut self`:
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `random_int(min: int, max: int)` | `RandomError!int` | The same inclusive integer bounds. |
-| `random_float()` | `float` | The same `[0, 1)` range; no host source or `try` needed. |
+| `integer(min: int, max: int)` | `RandomError!int` | The same inclusive integer bounds. |
+| `decimal()` | `float` | The same `[0, 1)` range; no host source or `try` needed. |
 | `bytes(size: int)` | `RandomError!buffer` | Deterministic bytes with the same size rules. |
 
 Every `int` seed is valid, including zero and negative values. The same seed and the same method calls with the same arguments reproduce the same results within a Dusk version. Sequence compatibility across versions is not guaranteed. Call boundaries matter: concatenating two `bytes(4)` results need not match one `bytes(8)` result.
@@ -1974,12 +1974,12 @@ import std/random
 import std/buffer
 
 func main() -> !void
-    let die = try random::random_int(1, 6)
+    let die = try random::integer(1, 6)
     assert(die >= 1 and die <= 6)
     let mut rng = random::seeded(42)
     let mut replay = copy(rng)
-    assert(try rng.random_int(-10, 10) == try replay.random_int(-10, 10))
-    let fraction = rng.random_float()
+    assert(try rng.integer(-10, 10) == try replay.integer(-10, 10))
+    let fraction = rng.decimal()
     assert(fraction >= 0.0 and fraction < 1.0)
     let token = try random::secure_bytes(32)
     assert(buffer::len(token) == 32)

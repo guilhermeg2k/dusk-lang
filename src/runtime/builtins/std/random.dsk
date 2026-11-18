@@ -5,8 +5,8 @@ error RandomError
     Unsupported
 end
 
-extern func random_int(min: int, max: int) -> RandomError!int
-extern func random_float() -> RandomError!float
+extern func integer(min: int, max: int) -> RandomError!int
+extern func decimal() -> RandomError!float
 extern func bytes(size: int) -> RandomError!buffer
 extern func secure_bytes(size: int) -> RandomError!buffer
 
@@ -16,11 +16,11 @@ struct Generator
     ~s2: int
     ~s3: int
 
-    func random_int(mut self: @, min: int, max: int) -> RandomError!int
+    func integer(mut self: @, min: int, max: int) -> RandomError!int
         return try generator_int(self, min, max)
     end
 
-    func random_float(mut self: @) -> float
+    func decimal(mut self: @) -> float
         return generator_float(self)
     end
 

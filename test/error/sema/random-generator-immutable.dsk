@@ -1,5 +1,5 @@
 import std/random
 func main() -> void
     let rng = random::seeded(42)
-    let value = rng.random_float()
+    let value = rng.decimal()
 end

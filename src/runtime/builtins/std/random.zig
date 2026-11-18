@@ -8,8 +8,8 @@ const NativeResult = native.NativeResult;
 const RandomError = random.RandomError;
 
 pub const bindings = native.BindingMap.initComptime(.{
-    .{ "random_int", Binding{ .native = &nextInt } },
-    .{ "random_float", Binding{ .native = &nextFloat } },
+    .{ "integer", Binding{ .native = &nextInt } },
+    .{ "decimal", Binding{ .native = &nextFloat } },
     .{ "bytes", Binding{ .native = &bytes } },
     .{ "secure_bytes", Binding{ .native = &secureBytes } },
     .{ "seed_words", Binding{ .native = &seedWords } },

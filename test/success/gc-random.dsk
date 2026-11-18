@@ -12,14 +12,14 @@ func main() -> !void
         for bytes: value, index do
             assert(value == reference[index])
         end
-        assert(rng.random_float() == expected.random_float())
+        assert(rng.decimal() == expected.decimal())
     end
     let mut snapshot = copy(rng)
     let worker = spawn(func() -> !int
         task::sleep(0)
         let data = try rng.bytes(1100000)
-        return try rng.random_int(1, 100)
+        return try rng.integer(1, 100)
     end)
     let discarded = try snapshot.bytes(1100000)
-    assert(try await(worker) == try snapshot.random_int(1, 100))
+    assert(try await(worker) == try snapshot.integer(1, 100))
 end

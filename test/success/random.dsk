@@ -12,26 +12,26 @@ func verify_seed(seed: int) -> !void
     let mut left = random::seeded(seed)
     let mut right = random::seeded(seed)
     for 0..127: i do
-        assert(try left.random_int(-100, 100) == try right.random_int(-100, 100))
-        let fraction = left.random_float()
+        assert(try left.integer(-100, 100) == try right.integer(-100, 100))
+        let fraction = left.decimal()
         assert(fraction >= 0.0 and fraction < 1.0)
-        assert(fraction == right.random_float())
+        assert(fraction == right.decimal())
         assert_bytes(try left.bytes(i % 10), try right.bytes(i % 10))
     end
     let mut snapshot = copy(left)
     let mut alias = left
     let mut expected = copy(left)
-    assert(try alias.random_int(1, 100) == try expected.random_int(1, 100))
-    assert(left.random_float() == expected.random_float())
+    assert(try alias.integer(1, 100) == try expected.integer(1, 100))
+    assert(left.decimal() == expected.decimal())
     let mut saved = random::seeded(seed)
     for 0..127: i do
-        let integer = try saved.random_int(-100, 100)
-        let fraction = saved.random_float()
+        let integer = try saved.integer(-100, 100)
+        let fraction = saved.decimal()
         let data = try saved.bytes(i % 10)
     end
-    assert(snapshot.random_float() == saved.random_float())
+    assert(snapshot.decimal() == saved.decimal())
     let mut has_bounds_error = false
-    left.random_int(2, 1) catch e then
+    left.integer(2, 1) catch e then
         assert(e == random::RandomError.InvalidBounds)
         has_bounds_error = true
     end
@@ -42,9 +42,9 @@ func verify_seed(seed: int) -> !void
         has_size_error = true
     end
     assert(has_size_error)
-    assert(try left.random_int(7, 7) == 7)
+    assert(try left.integer(7, 7) == 7)
     assert(buffer::len(try left.bytes(0)) == 0)
-    assert(left.random_float() == expected.random_float())
+    assert(left.decimal() == expected.decimal())
 end
 
 func main() -> !void
@@ -53,10 +53,10 @@ func main() -> !void
     assert(prefix[0] == 223 and prefix[1] == 35 and prefix[2] == 11)
     assert(prefix[3] == 73 and prefix[4] == 97 and prefix[5] == 93)
     assert(prefix[6] == 23 and prefix[7] == 83 and prefix[8] == 7)
-    assert(try golden.random_int(1, 6) == 3)
-    assert(golden.random_float() == 0.015013785908919042)
+    assert(try golden.integer(1, 6) == 3)
+    assert(golden.decimal() == 0.015013785908919042)
     let mut first_float = random::seeded(0)
-    assert(first_float.random_float() == 0.3650744641604983)
+    assert(first_float.decimal() == 0.3650744641604983)
     try verify_seed(0)
     try verify_seed(42)
     try verify_seed(-1)
@@ -65,23 +65,23 @@ func main() -> !void
     let minimum = -9223372036854775807 - 1
     let maximum = 9223372036854775807
     let mut rng = random::seeded(1)
-    assert(try rng.random_int(minimum, minimum) == minimum)
-    assert(try rng.random_int(maximum, maximum) == maximum)
-    let wide = try rng.random_int(minimum, maximum)
-    let negative = try rng.random_int(minimum, -1)
+    assert(try rng.integer(minimum, minimum) == minimum)
+    assert(try rng.integer(maximum, maximum) == maximum)
+    let wide = try rng.integer(minimum, maximum)
+    let negative = try rng.integer(minimum, -1)
     assert(negative < 0)
-    let nonnegative = try rng.random_int(0, maximum)
+    let nonnegative = try rng.integer(0, maximum)
     assert(nonnegative >= 0)
     for 0..31: i do
-        let integer = try random::random_int(-5, 5)
+        let integer = try random::integer(-5, 5)
         assert(integer >= -5 and integer <= 5)
-        let fraction = try random::random_float()
+        let fraction = try random::decimal()
         assert(fraction >= 0.0 and fraction < 1.0)
         assert(buffer::len(try random::bytes(i)) == i)
     end
     assert(buffer::len(try random::secure_bytes(0)) == 0)
     let mut baseline = random::seeded(42)
     let mut unchanged = random::seeded(42)
-    let unrelated = try random::random_int(1, 100)
-    assert(baseline.random_float() == unchanged.random_float())
+    let unrelated = try random::integer(1, 100)
+    assert(baseline.decimal() == unchanged.decimal())
 end

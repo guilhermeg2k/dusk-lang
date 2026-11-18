@@ -176,7 +176,7 @@ test "random: lazy seeding is per VM and fast paths need no I/O" {
     var vm = VM.init(&program, .{});
     defer vm.deinit();
     var int_args = [_]value.Value{ .{ .int64 = 5 }, .{ .int64 = 5 } };
-    const equal = try native.bindings.get("random_int").?.native(&vm, &int_args);
+    const equal = try native.bindings.get("integer").?.native(&vm, &int_args);
     try testing.expect(!equal.has_failed);
     try testing.expectEqual(@as(i64, 5), equal.value.int64);
     var size_args = [_]value.Value{.{ .int64 = 0 }};
@@ -186,16 +186,16 @@ test "random: lazy seeding is per VM and fast paths need no I/O" {
     }
     try testing.expect(vm.random_engine == null);
     int_args[1].int64 = 4;
-    const invalid = try native.bindings.get("random_int").?.native(&vm, &int_args);
+    const invalid = try native.bindings.get("integer").?.native(&vm, &int_args);
     try testing.expect(invalid.has_failed);
     try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.InvalidBounds)), invalid.value.int64);
     var no_args: [0]value.Value = .{};
-    const unsupported = try native.bindings.get("random_float").?.native(&vm, &no_args);
+    const unsupported = try native.bindings.get("decimal").?.native(&vm, &no_args);
     try testing.expect(unsupported.has_failed);
     try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), unsupported.value.int64);
     try testing.expect(vm.random_engine == null);
     int_args[1].int64 = 6;
-    const missing_int_source = try native.bindings.get("random_int").?.native(&vm, &int_args);
+    const missing_int_source = try native.bindings.get("integer").?.native(&vm, &int_args);
     try testing.expect(missing_int_source.has_failed);
     try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_int_source.value.int64);
     size_args[0].int64 = 1;
@@ -210,16 +210,16 @@ test "random: lazy seeding is per VM and fast paths need no I/O" {
     vtable.randomSecure = RandomSourceProbe.fillSecure;
     const io = std.Io{ .userdata = &source, .vtable = &vtable };
     vm.io = io;
-    const first = try native.bindings.get("random_float").?.native(&vm, &no_args);
+    const first = try native.bindings.get("decimal").?.native(&vm, &no_args);
     var expected = random.seeded(0x3c3c3c3c3c3c3c3c);
     try testing.expectEqual(random.nextFloat(&expected), first.value.float64);
-    const second = try native.bindings.get("random_float").?.native(&vm, &no_args);
+    const second = try native.bindings.get("decimal").?.native(&vm, &no_args);
     try testing.expectEqual(random.nextFloat(&expected), second.value.float64);
     try testing.expectEqual(@as(usize, 1), source.random_calls);
     var fresh = VM.init(&program, .{});
     defer fresh.deinit();
     fresh.io = io;
-    const restarted = try native.bindings.get("random_float").?.native(&fresh, &no_args);
+    const restarted = try native.bindings.get("decimal").?.native(&fresh, &no_args);
     try testing.expectEqual(first.value.float64, restarted.value.float64);
     try testing.expectEqual(@as(usize, 2), source.random_calls);
     size_args[0].int64 = 1;

@@ -1,5 +1,10 @@
 # Completed
 
+## std/random API naming (2026-11-17)
+
+- User selected integer()/decimal() for module functions and Generator methods, replacing random_int/random_float. Updated declarations, bindings, existing tests, public docs/changelog and the current plan.
+- Debug and ReleaseFast: 560/560 tests each on Linux; diff checks clean. No behavior changes or benchmarks.
+
 ## std/random v0.17 implementation (2026-11-17)
 
 - Implemented the approved `.claude/v0.17-random-plan.md` on v017std. User chose random_int/random_float to avoid reserved type keyword names; no parser/compiler changes.
