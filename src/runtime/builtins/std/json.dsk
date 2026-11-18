@@ -39,12 +39,14 @@ end
 
 extern func ~encode_value[T](value: T, options: EncodeOptions, plan: int) -> JsonError!string
 extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut defaults: []func() -> void) -> JsonError!T
-extern func ~skip_space(text: string, position: int) -> int
 extern func ~string_end(text: string, position: int) -> int
 extern func ~number_end(text: string, position: int) -> int
 extern func ~string_value(text: string, start: int, stop: int) -> JsonError!string
 extern func ~quote(text: string) -> JsonError!string
 extern func ~format_float(value: float) -> JsonError!string
+extern func ~key_index(fields: int, text: string, start: int, stop: int) -> JsonError!int
+extern func ~parse_int(text: string, start: int, stop: int) -> JsonError!int
+extern func ~parse_float(text: string, start: int, stop: int) -> JsonError!float
 
 func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string
     if serialization::is_native[T, S]() then
@@ -196,9 +198,15 @@ struct Reader
     ~max_depth: int
     ~should_reject_unknown_fields: bool
     ~pos: int = 0
+    ~depth: int = 0
+    ~next_object: int = 0
     ~counts: []int = []
-    ~keys: []map[string, bool] = []
-    ~segments: []string = []
+    ~objects: []int = []
+    ~mark_kinds: []int = []
+    ~mark_starts: []int = []
+    ~mark_stops: []int = []
+    ~seen_keys: map[string, bool] = {}
+    ~missing_name: string = ""
     ~failure: ?JsonError = null
 
     func ~fail(mut self: @, failure: JsonError) -> void
@@ -208,99 +216,101 @@ struct Reader
     end
 
     func ~peek(mut self: @) -> byte
-        self.pos = skip_space(self.text, self.pos)
-        if self.pos >= buffer::len(self.data) then
-            return 0
+        let size = buffer::len(self.data)
+        for self.pos < size do
+            let c = self.data[self.pos]
+            let is_space = c == ' ' or c == '\n' or c == '\r' or c == '\t'
+            if !is_space then
+                return c
+            end
+            self.pos = self.pos + 1
         end
-        return self.data[self.pos]
+        return 0
     end
 
-    func ~expect(mut self: @, c: byte, failure: JsonError) -> serialization::SerializationError!void
+    func ~expect(mut self: @, c: byte) -> serialization::SerializationError!void
         if self.peek() != c then
-            self.fail(failure)
+            self.fail(JsonError.InvalidJson)
             return serialization::SerializationError.InvalidInput
         end
         self.pos = self.pos + 1
     end
 
-    func ~literal(mut self: @, word: string) -> serialization::SerializationError!void
-        let stop = self.pos + string::len(word)
-        let found = string::slice(self.text, self.pos, stop) catch ""
-        if found != word then
-            self.fail(JsonError.InvalidJson)
-            return serialization::SerializationError.InvalidInput
+    func ~word(mut self: @, a: byte, b: byte, c: byte, d: byte) -> bool
+        let has_room = self.pos + 3 < buffer::len(self.data)
+        if !has_room then
+            return false
         end
-        self.pos = stop
+        let is_word = self.data[self.pos] == a and self.data[self.pos + 1] == b and self.data[self.pos + 2] == c and self.data[self.pos + 3] == d
+        if is_word then
+            self.pos = self.pos + 4
+        end
+        return is_word
     end
 
-    func ~number_text(mut self: @) -> serialization::SerializationError!string
+    func ~number_stop(mut self: @) -> serialization::SerializationError!int
         let c = self.peek()
         let starts_number = c == '-' or (c >= '0' and c <= '9')
         if !starts_number then
             self.fail(JsonError.TypeMismatch)
-            return serialization::SerializationError.InvalidInput
+            return serialization::SerializationError.TypeMismatch
         end
         let stop = number_end(self.text, self.pos)
         if stop < 0 then
             self.fail(JsonError.InvalidJson)
             return serialization::SerializationError.InvalidInput
         end
-        let text = string::slice(self.text, self.pos, stop) catch ""
-        self.pos = stop
-        return text
+        return stop
     end
 
     func read_int(mut self: @) -> serialization::SerializationError!int
-        let text = try self.number_text()
-        let has_fraction = string::contains(text, ".") or string::contains(text, "e") or string::contains(text, "E")
-        if has_fraction then
-            self.fail(JsonError.TypeMismatch)
-            return serialization::SerializationError.InvalidInput
+        let stop = try self.number_stop()
+        let number = parse_int(self.text, self.pos, stop) catch e then
+            self.fail(e)
+            return serialization::SerializationError.TypeMismatch
         end
-        let number = string::to_int(text) catch e then
-            self.fail(JsonError.NumberOutOfRange)
-            return serialization::SerializationError.InvalidInput
-        end
+        self.pos = stop
         return number
     end
 
     func read_float(mut self: @) -> serialization::SerializationError!float
-        let text = try self.number_text()
-        let number = string::to_float(text) catch e then
-            self.fail(JsonError.NumberOutOfRange)
-            return serialization::SerializationError.InvalidInput
+        let stop = try self.number_stop()
+        let number = parse_float(self.text, self.pos, stop) catch e then
+            self.fail(e)
+            return serialization::SerializationError.OutOfRange
         end
-        if !math::is_finite(number) then
-            self.fail(JsonError.NumberOutOfRange)
-            return serialization::SerializationError.InvalidInput
-        end
+        self.pos = stop
         return number
     end
 
     func read_bool(mut self: @) -> serialization::SerializationError!bool
         let c = self.peek()
-        if c == 't' then
-            try self.literal("true")
+        if c == 't' and self.word('t', 'r', 'u', 'e') then
             return true
         end
-        if c == 'f' then
-            try self.literal("false")
+        if c == 'f' and self.word('f', 'a', 'l', 's') and self.peek() == 'e' then
+            self.pos = self.pos + 1
             return false
         end
-        self.fail(JsonError.TypeMismatch)
-        return serialization::SerializationError.InvalidInput
+        self.fail(if c == 't' or c == 'f' then JsonError.InvalidJson else JsonError.TypeMismatch end)
+        return serialization::SerializationError.TypeMismatch
     end
 
-    func read_string(mut self: @) -> serialization::SerializationError!string
+    func ~string_stop(mut self: @, failure: JsonError) -> serialization::SerializationError!int
         if self.peek() != '"' then
-            self.fail(JsonError.TypeMismatch)
-            return serialization::SerializationError.InvalidInput
+            self.fail(failure)
+            return serialization::SerializationError.TypeMismatch
         end
         let stop = string_end(self.text, self.pos)
         if stop < 0 then
             self.fail(JsonError.InvalidJson)
             return serialization::SerializationError.InvalidInput
         end
+        return stop
+    end
+
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        let stop = try self.string_stop(JsonError.TypeMismatch)
         let value = string_value(self.text, self.pos, stop) catch e then
             self.fail(e)
             return serialization::SerializationError.InvalidInput
@@ -313,124 +323,139 @@ struct Reader
         if self.peek() != 'n' then
             return false
         end
-        try self.literal("null")
+        if !self.word('n', 'u', 'l', 'l') then
+            self.fail(JsonError.InvalidJson)
+            return serialization::SerializationError.InvalidInput
+        end
         return true
     end
 
-    func ~open(mut self: @, c: byte, is_object: bool) -> serialization::SerializationError!void
+    func ~open(mut self: @, c: byte) -> serialization::SerializationError!void
         if self.peek() != c then
             self.fail(JsonError.TypeMismatch)
-            return serialization::SerializationError.InvalidInput
+            return serialization::SerializationError.TypeMismatch
         end
-        if array::len(self.counts) >= self.max_depth then
+        if self.depth >= self.max_depth then
             self.fail(JsonError.DepthExceeded)
-            return serialization::SerializationError.InvalidInput
+            return serialization::SerializationError.DepthExceeded
         end
         self.pos = self.pos + 1
-        array::append(self.counts, 0)
-        array::append(self.segments, "")
-        if is_object then
-            array::append(self.keys, {})
+        if self.depth == array::len(self.counts) then
+            array::append(self.counts, 0)
+            array::append(self.objects, 0)
+            array::append(self.mark_kinds, 0)
+            array::append(self.mark_starts, 0)
+            array::append(self.mark_stops, 0)
         end
+        self.counts[self.depth] = 0
+        self.objects[self.depth] = self.next_object
+        self.mark_kinds[self.depth] = 0
+        self.next_object = self.next_object + 1
+        self.depth = self.depth + 1
     end
 
-    func ~close(mut self: @, is_object: bool) -> void
+    func ~close(mut self: @) -> void
         self.pos = self.pos + 1
-        let count = array::pop(self.counts) catch 0
-        let segment = array::pop(self.segments) catch ""
-        if is_object then
-            let keys = array::pop(self.keys) catch {}
-        end
+        self.depth = self.depth - 1
     end
 
     func ~separate(mut self: @) -> serialization::SerializationError!void
-        let last = array::len(self.counts) - 1
-        if self.counts[last] > 0 then
-            try self.expect(',', JsonError.InvalidJson)
+        let level = self.depth - 1
+        if self.counts[level] > 0 then
+            try self.expect(',')
         end
-        self.counts[last] = self.counts[last] + 1
+        self.counts[level] = self.counts[level] + 1
     end
 
-    func ~read_key(mut self: @, is_map_key: bool) -> serialization::SerializationError!string
+    func ~key_span(mut self: @, kind: int) -> serialization::SerializationError!int
         try self.separate()
-        let name = try self.read_string()
-        let last = array::len(self.keys) - 1
-        if map::has(self.keys[last], name) then
-            self.mark(name, is_map_key)
-            self.fail(JsonError.DuplicateKey)
+        let start = self.pos
+        let stop = try self.string_stop(JsonError.InvalidJson)
+        let level = self.depth - 1
+        self.mark_kinds[level] = kind
+        self.mark_starts[level] = start
+        self.mark_stops[level] = stop
+        self.pos = stop
+        try self.expect(':')
+        return start
+    end
+
+    func ~remember_key(mut self: @, start: int, stop: int) -> serialization::SerializationError!string
+        let name = string_value(self.text, start, stop) catch e then
+            self.fail(e)
             return serialization::SerializationError.InvalidInput
         end
-        self.keys[last][name] = true
-        self.mark(name, is_map_key)
-        try self.expect(':', JsonError.InvalidJson)
+        let seen = "${self.objects[self.depth - 1]}:${name}"
+        if map::has(self.seen_keys, seen) then
+            self.fail(JsonError.DuplicateKey)
+            return serialization::SerializationError.DuplicateField
+        end
+        self.seen_keys[seen] = true
         return name
     end
 
-    func ~mark(mut self: @, name: string, is_map_key: bool) -> void
-        let last = array::len(self.segments) - 1
-        if is_map_key or !is_identifier(name) then
-            let quoted = quote(name) catch "\"\""
-            self.segments[last] = "[${quoted}]"
-            return
-        end
-        self.segments[last] = ".${name}"
-    end
-
     func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
-        try self.open('{', true)
+        try self.open('{')
     end
 
     func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
         for true do
             if self.peek() == '}' then
-                self.close(true)
+                self.close()
                 return -1
             end
-            let name = try self.read_key(false)
-            let index = serialization::find_field(fields, name)
+            let start = try self.key_span(1)
+            let stop = self.mark_stops[self.depth - 1]
+            let index = key_index(fields, self.text, start, stop) catch e then
+                self.fail(e)
+                return serialization::SerializationError.InvalidInput
+            end
             if index >= 0 then
                 return index
             end
             if self.should_reject_unknown_fields then
                 self.fail(JsonError.UnknownField)
-                return serialization::SerializationError.InvalidInput
+                return serialization::SerializationError.UnknownField
             end
+            let name = try self.remember_key(start, stop)
             try self.skip_value()
         end
         return -1
     end
 
     func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
-        array::append(self.segments, ".${serialization::field_name(fields, index)}")
+        self.missing_name = serialization::field_name(fields, index)
         self.fail(JsonError.MissingField)
-        return serialization::SerializationError.InvalidInput
+        return serialization::SerializationError.MissingField
     end
 
     func begin_array(mut self: @) -> serialization::SerializationError!void
-        try self.open('[', false)
+        try self.open('[')
     end
 
     func has_item(mut self: @) -> serialization::SerializationError!bool
         if self.peek() == ']' then
-            self.close(false)
+            self.close()
             return false
         end
-        let last = array::len(self.counts) - 1
-        self.segments[last] = "[${self.counts[last]}]"
+        let level = self.depth - 1
+        self.mark_kinds[level] = 3
+        self.mark_starts[level] = self.counts[level]
         try self.separate()
         return true
     end
 
     func begin_map(mut self: @) -> serialization::SerializationError!void
-        try self.open('{', true)
+        try self.open('{')
     end
 
     func next_key(mut self: @) -> serialization::SerializationError!?string
         if self.peek() == '}' then
-            self.close(true)
+            self.close()
             return null
         end
-        return try self.read_key(true)
+        let start = try self.key_span(2)
+        return try self.remember_key(start, self.mark_stops[self.depth - 1])
     end
 
     func read_variant(mut self: @, variants: int) -> serialization::SerializationError!int
@@ -438,22 +463,26 @@ struct Reader
         let index = serialization::find_variant(variants, name)
         if index < 0 then
             self.fail(JsonError.UnknownVariant)
-            return serialization::SerializationError.InvalidInput
+            return serialization::SerializationError.UnknownVariant
         end
         return index
     end
 
     func begin_union(mut self: @, variants: int) -> serialization::SerializationError!int
-        try self.open('{', true)
+        try self.open('{')
         if self.peek() == '}' then
             self.fail(JsonError.InvalidUnion)
             return serialization::SerializationError.InvalidInput
         end
-        let name = try self.read_key(false)
+        let start = try self.key_span(1)
+        let name = string_value(self.text, start, self.mark_stops[self.depth - 1]) catch e then
+            self.fail(e)
+            return serialization::SerializationError.InvalidInput
+        end
         let index = serialization::find_variant(variants, name)
         if index < 0 then
             self.fail(JsonError.UnknownVariant)
-            return serialization::SerializationError.InvalidInput
+            return serialization::SerializationError.UnknownVariant
         end
         return index
     end
@@ -463,7 +492,7 @@ struct Reader
             self.fail(JsonError.InvalidUnion)
             return serialization::SerializationError.InvalidInput
         end
-        self.close(true)
+        self.close()
     end
 
     func end_document(mut self: @) -> serialization::SerializationError!void
@@ -476,16 +505,17 @@ struct Reader
     func ~skip_value(mut self: @) -> serialization::SerializationError!void
         let c = self.peek()
         if c == '{' then
-            try self.open('{', true)
+            try self.open('{')
             for self.peek() != '}' do
-                let name = try self.read_key(false)
+                let start = try self.key_span(1)
+                let name = try self.remember_key(start, self.mark_stops[self.depth - 1])
                 try self.skip_value()
             end
-            self.close(true)
+            self.close()
             return
         end
         if c == '[' then
-            try self.open('[', false)
+            try self.open('[')
             for try self.has_item() do
                 try self.skip_value()
             end
@@ -500,14 +530,36 @@ struct Reader
             return
         end
         if c == 'n' then
-            try self.literal("null")
+            let is_null = try self.read_null()
             return
         end
-        let number = try self.number_text()
+        let stop = try self.number_stop()
+        self.pos = stop
     end
 
     func ~describe(mut self: @, mut diagnostic: Diagnostic) -> void
-        let path = string::join(self.segments)
+        let mut parts: []string = []
+        for 0..self.depth - 1: level do
+            let kind = self.mark_kinds[level]
+            if kind == 3 then
+                array::append(parts, "[${self.mark_starts[level]}]")
+                continue
+            end
+            if kind == 0 then
+                continue
+            end
+            let name = string_value(self.text, self.mark_starts[level], self.mark_stops[level]) catch ""
+            if kind == 1 and is_identifier(name) then
+                array::append(parts, ".${name}")
+            else
+                let quoted = quote(name) catch "\"\""
+                array::append(parts, "[${quoted}]")
+            end
+        end
+        if string::len(self.missing_name) > 0 then
+            array::append(parts, ".${self.missing_name}")
+        end
+        let path = string::join(parts)
         diagnostic.path = if string::starts_with(path, ".") then (string::slice(path, 1, string::len(path)) catch path) else path end
         let offset = if self.pos < buffer::len(self.data) then self.pos else buffer::len(self.data) end
         let mut line = 1
@@ -544,17 +596,19 @@ end
 struct Writer
     ~max_depth: int
     ~parts: []string = []
+    ~depth: int = 0
     ~counts: []int = []
+    ~names: map[int, string] = {}
     ~failure: ?JsonError = null
+
+    func text(self: @) -> string
+        return string::join(self.parts)
+    end
 
     func ~fail(mut self: @, failure: JsonError) -> void
         if self.failure == null then
             self.failure = failure
         end
-    end
-
-    func text(self: @) -> string
-        return string::join(self.parts)
     end
 
     func write_int(mut self: @, value: int) -> serialization::SerializationError!void
@@ -586,31 +640,43 @@ struct Writer
     end
 
     func ~open(mut self: @, text: string) -> serialization::SerializationError!void
-        if array::len(self.counts) >= self.max_depth then
+        if self.depth >= self.max_depth then
             self.fail(JsonError.DepthExceeded)
-            return serialization::SerializationError.InvalidValue
+            return serialization::SerializationError.DepthExceeded
         end
         array::append(self.parts, text)
-        array::append(self.counts, 0)
+        if self.depth == array::len(self.counts) then
+            array::append(self.counts, 0)
+        end
+        self.counts[self.depth] = 0
+        self.depth = self.depth + 1
     end
 
     func ~close(mut self: @, text: string) -> void
-        let count = array::pop(self.counts) catch 0
+        self.depth = self.depth - 1
         array::append(self.parts, text)
     end
 
     func ~separate(mut self: @) -> void
-        let last = array::len(self.counts) - 1
-        if self.counts[last] > 0 then
+        let level = self.depth - 1
+        if self.counts[level] > 0 then
             array::append(self.parts, ",")
         end
-        self.counts[last] = self.counts[last] + 1
+        self.counts[level] = self.counts[level] + 1
     end
 
-    func ~name(mut self: @, text: string) -> serialization::SerializationError!void
-        self.separate()
-        try self.write_string(text)
-        array::append(self.parts, ":")
+    func ~cached_name(mut self: @, key: int, name: string) -> serialization::SerializationError!void
+        if self.names[key]: found then
+            array::append(self.parts, found)
+            return
+        end
+        let quoted = quote(name) catch e then
+            self.fail(e)
+            return serialization::SerializationError.InvalidValue
+        end
+        let label = "${quoted}:"
+        self.names[key] = label
+        array::append(self.parts, label)
     end
 
     func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
@@ -618,7 +684,13 @@ struct Writer
     end
 
     func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
-        try self.name(serialization::field_name(fields, index))
+        self.separate()
+        let key = fields * 65536 + index
+        if self.names[key]: found then
+            array::append(self.parts, found)
+            return
+        end
+        try self.cached_name(key, serialization::field_name(fields, index))
     end
 
     func end_struct(mut self: @) -> serialization::SerializationError!void
@@ -630,7 +702,9 @@ struct Writer
     end
 
     func item(mut self: @, index: int) -> serialization::SerializationError!void
-        self.separate()
+        if index > 0 then
+            array::append(self.parts, ",")
+        end
     end
 
     func end_array(mut self: @) -> serialization::SerializationError!void
@@ -642,7 +716,9 @@ struct Writer
     end
 
     func key(mut self: @, text: string) -> serialization::SerializationError!void
-        try self.name(text)
+        self.separate()
+        try self.write_string(text)
+        array::append(self.parts, ":")
     end
 
     func end_map(mut self: @) -> serialization::SerializationError!void
@@ -655,7 +731,8 @@ struct Writer
 
     func begin_union(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
         try self.open("{")
-        try self.name(serialization::variant_name(variants, index))
+        self.separate()
+        try self.cached_name(0 - (variants * 65536 + index) - 1, serialization::variant_name(variants, index))
     end
 
     func end_union(mut self: @) -> serialization::SerializationError!void
