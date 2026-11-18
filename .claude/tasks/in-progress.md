@@ -1,5 +1,13 @@
 # In Progress
 
+## Generic native worker pool (planning, 2026-11-18)
+
+Plan: `.claude/generic-worker-plan.md`, v017std. User requested planning first; implementation has not started.
+
+- [x] Inspect scheduler/event-loop ownership and write the generic pool/uv_async bridge proposal.
+- [ ] Review proposed ownership, admission and shutdown contract with the user.
+- [ ] Implement only after the user requests implementation; follow the plan's four slices.
+
 ## v0.16 - Shigeo: std/fs slice A
 
 Plan: `.claude/v0.16-fs-plan.md` (2026-11-15).

@@ -1,5 +1,7 @@
 # Backlog
 
+- **SQLite std support (future, user 2026-11-18)**: embed the pinned SQLite C library using the existing dependency-fork approach. First implement the generic native worker infrastructure proposed in `.claude/generic-worker-plan.md`; SQLite uses a dedicated instance. Plan its public API, per-connection ordering/transaction ownership, native result limits, interruption/lock waits and connection shutdown separately. No SQLite implementation requested yet.
+
 - **Reuse closed signal subscription slots** (std/os, 2026-11-17): subscription slots are append-only for stale-handle safety, matching existing stream tables. Consider generation-checked reuse for programs that repeatedly subscribe and close; each closed subscription currently retains one null pointer slot until VM teardown.
 
 - **Host environment mutation (deferred beyond v0.17, user 2026-11-17)**: set_env/unset_env are excluded from this version. Revisit host versus map semantics, Zig std/platform bindings and synchronization with native environment readers if scheduled later. Plan: `.claude/v0.17-os-plan.md`.

@@ -1,5 +1,11 @@
 # Completed
 
+## Generic native worker pool planning (2026-11-18)
+
+- Wrote `.claude/generic-worker-plan.md` after inspecting v017std's scheduler, pending operations, native wake payloads, libuv handle ownership and installed Zig 0.16 threading interfaces.
+- Proposed a libuv-independent bounded pool with native jobs, dedicated instances per workload, injected notification and a uv_async_t runtime adapter. Defined admission ownership, completion draining, GC boundary, event-loop liveness and stop/join/discard/close ordering.
+- SQLite connection ordering, transactions, result limits and interruption stay in its future consumer layer. No runtime code, public API, changelog, tests or benchmarks changed/run.
+
 ## std/process v0.17 implementation (2026-11-18)
 
 - Implemented approved libuv plan on v017std: captured run with binary stdout/stderr, Result text helpers and Termination; interactive start, inherited/ignored/piped stdio, cached waits, forced kill, idempotent post-exit close, Reader/Writer-compatible pipes.
