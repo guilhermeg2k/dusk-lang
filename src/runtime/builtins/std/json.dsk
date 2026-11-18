@@ -47,6 +47,9 @@ extern func ~format_float(value: float) -> JsonError!string
 extern func ~key_index(fields: int, text: string, start: int, stop: int) -> JsonError!int
 extern func ~parse_int(text: string, start: int, stop: int) -> JsonError!int
 extern func ~parse_float(text: string, start: int, stop: int) -> JsonError!float
+extern func ~put_quoted(mut data: buffer, at: int, text: string) -> JsonError!int
+extern func ~put_float(mut data: buffer, at: int, value: float) -> JsonError!int
+extern func ~buffer_text(data: buffer, used: int) -> string
 
 func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string
     if serialization::is_native[T, S]() then
@@ -74,7 +77,7 @@ func reader(text: string, options: DecodeOptions = @()) -> Reader
 end
 
 func writer(options: EncodeOptions = @()) -> Writer
-    return Writer(max_depth = options.max_depth)
+    return Writer(max_depth = options.max_depth, data = buffer::from_string(""))
 end
 
 func ~is_valid_depth(depth: int) -> bool
@@ -85,12 +88,12 @@ func ~encode_derived[T, S: schema](value: T, options: EncodeOptions) -> JsonErro
     if !is_valid_depth(options.max_depth) then
         return JsonError.InvalidOptions
     end
-    let mut writer = Writer(max_depth = options.max_depth)
+    let mut writer = writer(options)
     serialization::encode[T, Writer, S](value, writer) catch e then
         try raise(writer.failure, e)
         return JsonError.InvalidJson
     end
-    return string::join(writer.parts)
+    return writer.text()
 end
 
 func ~decode_derived[T, S: schema](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions) -> JsonError!T
@@ -595,14 +598,15 @@ end
 
 struct Writer
     ~max_depth: int
-    ~parts: []string = []
+    ~data: buffer
+    ~used: int = 0
     ~depth: int = 0
     ~counts: []int = []
     ~names: map[int, string] = {}
     ~failure: ?JsonError = null
 
     func text(self: @) -> string
-        return string::join(self.parts)
+        return buffer_text(self.data, self.used)
     end
 
     func ~fail(mut self: @, failure: JsonError) -> void
@@ -611,40 +615,90 @@ struct Writer
         end
     end
 
+    func ~grow(mut self: @, extra: int) -> void
+        let doubled = buffer::len(self.data) * 2
+        let needed = self.used + extra
+        let capacity = if doubled > needed then doubled else needed end
+        let mut bigger = buffer::new(if capacity > 1024 then capacity else 1024 end) catch e then
+            return
+        end
+        let kept = buffer::slice(self.data, 0, self.used) catch e then
+            return
+        end
+        let copied = buffer::put_bytes(bigger, 0, kept) catch e then
+            return
+        end
+        self.data = bigger
+    end
+
+    func ~put_text(mut self: @, text: string) -> void
+        let next = buffer::put(self.data, self.used, text) catch e then
+            self.grow(string::len(text))
+            self.used = buffer::put(self.data, self.used, text) catch self.used
+            return
+        end
+        self.used = next
+    end
+
+    func ~put_byte(mut self: @, c: byte) -> void
+        if self.used >= buffer::len(self.data) then
+            self.grow(1)
+        end
+        self.data[self.used] = c
+        self.used = self.used + 1
+    end
+
     func write_int(mut self: @, value: int) -> serialization::SerializationError!void
-        array::append(self.parts, "${value}")
+        let next = buffer::put_int(self.data, self.used, value) catch e then
+            self.grow(20)
+            self.used = buffer::put_int(self.data, self.used, value) catch self.used
+            return
+        end
+        self.used = next
     end
 
     func write_float(mut self: @, value: float) -> serialization::SerializationError!void
-        let text = format_float(value) catch e then
-            self.fail(e)
-            return serialization::SerializationError.InvalidValue
+        for true do
+            let next = put_float(self.data, self.used, value) catch e then
+                self.fail(e)
+                return serialization::SerializationError.InvalidValue
+            end
+            if next >= 0 then
+                self.used = next
+                return
+            end
+            self.grow(32)
         end
-        array::append(self.parts, text)
     end
 
     func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
-        array::append(self.parts, if value then "true" else "false" end)
+        self.put_text(if value then "true" else "false" end)
     end
 
     func write_string(mut self: @, value: string) -> serialization::SerializationError!void
-        let text = quote(value) catch e then
-            self.fail(e)
-            return serialization::SerializationError.InvalidValue
+        for true do
+            let next = put_quoted(self.data, self.used, value) catch e then
+                self.fail(e)
+                return serialization::SerializationError.InvalidValue
+            end
+            if next >= 0 then
+                self.used = next
+                return
+            end
+            self.grow(string::len(value) * 6 + 2)
         end
-        array::append(self.parts, text)
     end
 
     func write_null(mut self: @) -> serialization::SerializationError!void
-        array::append(self.parts, "null")
+        self.put_text("null")
     end
 
-    func ~open(mut self: @, text: string) -> serialization::SerializationError!void
+    func ~open(mut self: @, c: byte) -> serialization::SerializationError!void
         if self.depth >= self.max_depth then
             self.fail(JsonError.DepthExceeded)
             return serialization::SerializationError.DepthExceeded
         end
-        array::append(self.parts, text)
+        self.put_byte(c)
         if self.depth == array::len(self.counts) then
             array::append(self.counts, 0)
         end
@@ -652,22 +706,22 @@ struct Writer
         self.depth = self.depth + 1
     end
 
-    func ~close(mut self: @, text: string) -> void
+    func ~close(mut self: @, c: byte) -> void
         self.depth = self.depth - 1
-        array::append(self.parts, text)
+        self.put_byte(c)
     end
 
     func ~separate(mut self: @) -> void
         let level = self.depth - 1
         if self.counts[level] > 0 then
-            array::append(self.parts, ",")
+            self.put_byte(',')
         end
         self.counts[level] = self.counts[level] + 1
     end
 
     func ~cached_name(mut self: @, key: int, name: string) -> serialization::SerializationError!void
         if self.names[key]: found then
-            array::append(self.parts, found)
+            self.put_text(found)
             return
         end
         let quoted = quote(name) catch e then
@@ -676,53 +730,53 @@ struct Writer
         end
         let label = "${quoted}:"
         self.names[key] = label
-        array::append(self.parts, label)
+        self.put_text(label)
     end
 
     func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
-        try self.open("{")
+        try self.open('{')
     end
 
     func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
         self.separate()
         let key = fields * 65536 + index
         if self.names[key]: found then
-            array::append(self.parts, found)
+            self.put_text(found)
             return
         end
         try self.cached_name(key, serialization::field_name(fields, index))
     end
 
     func end_struct(mut self: @) -> serialization::SerializationError!void
-        self.close("}")
+        self.close('}')
     end
 
     func begin_array(mut self: @, length: int) -> serialization::SerializationError!void
-        try self.open("[")
+        try self.open('[')
     end
 
     func item(mut self: @, index: int) -> serialization::SerializationError!void
         if index > 0 then
-            array::append(self.parts, ",")
+            self.put_byte(',')
         end
     end
 
     func end_array(mut self: @) -> serialization::SerializationError!void
-        self.close("]")
+        self.close(']')
     end
 
     func begin_map(mut self: @, length: int) -> serialization::SerializationError!void
-        try self.open("{")
+        try self.open('{')
     end
 
     func key(mut self: @, text: string) -> serialization::SerializationError!void
         self.separate()
         try self.write_string(text)
-        array::append(self.parts, ":")
+        self.put_byte(':')
     end
 
     func end_map(mut self: @) -> serialization::SerializationError!void
-        self.close("}")
+        self.close('}')
     end
 
     func write_variant(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
@@ -730,12 +784,12 @@ struct Writer
     end
 
     func begin_union(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
-        try self.open("{")
+        try self.open('{')
         self.separate()
         try self.cached_name(0 - (variants * 65536 + index) - 1, serialization::variant_name(variants, index))
     end
 
     func end_union(mut self: @) -> serialization::SerializationError!void
-        self.close("}")
+        self.close('}')
     end
 end

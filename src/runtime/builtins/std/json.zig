@@ -21,6 +21,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "key_index", Binding{ .native = &keyIndex } },
     .{ "parse_int", Binding{ .native = &parseInt } },
     .{ "parse_float", Binding{ .native = &parseFloat } },
+    .{ "put_quoted", Binding{ .native = &putQuoted } },
+    .{ "put_float", Binding{ .native = &putFloat } },
+    .{ "buffer_text", Binding{ .native = &bufferText } },
 });
 
 fn stringEnd(_: *VM, args: []v.Value) anyerror!NativeResult {
@@ -217,4 +220,44 @@ fn numberToken(text: []const u8, start: i64, stop: i64) ?[]const u8 {
         return null;
     }
     return text[@intCast(start)..@intCast(stop)];
+}
+
+fn putQuoted(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = native.bytesArg(args, 2);
+    if (!std.unicode.utf8ValidateSlice(text)) {
+        return native.fail(JsonError.InvalidJson);
+    }
+    const target = roomAt(args) orelse return native.ok(.{ .int64 = -1 });
+    var writer = std.Io.Writer.fixed(target);
+    std.json.Stringify.encodeJsonString(text, .{}, &writer) catch return native.ok(.{ .int64 = -1 });
+    return native.ok(.{ .int64 = args[1].int64 + @as(i64, @intCast(writer.end)) });
+}
+
+fn putFloat(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const number = args[2].float64;
+    if (!std.math.isFinite(number)) {
+        return native.fail(JsonError.NonFiniteNumber);
+    }
+    const target = roomAt(args) orelse return native.ok(.{ .int64 = -1 });
+    var writer = std.Io.Writer.fixed(target);
+    std.json.Stringify.value(number, .{}, &writer) catch return native.ok(.{ .int64 = -1 });
+    return native.ok(.{ .int64 = args[1].int64 + @as(i64, @intCast(writer.end)) });
+}
+
+fn roomAt(args: []v.Value) ?[]u8 {
+    const data = v.HeapValue.getParentPtr(v.Bytes, args[0].heap_obj).mutableSlice();
+    const at = args[1].int64;
+    const is_in_range = at >= 0 and at <= data.len;
+    if (!is_in_range) {
+        return null;
+    }
+    return data[@intCast(at)..];
+}
+
+fn bufferText(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const used: usize = @intCast(@max(args[1].int64, 0));
+    const length = @min(used, native.bytesArg(args, 0).len);
+    const result = try vm.allocString(length);
+    @memcpy(result.mutableSlice(), native.bytesArg(args, 0)[0..length]);
+    return native.stringResult(result);
 }
