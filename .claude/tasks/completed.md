@@ -1,5 +1,10 @@
 # Completed
 
+## std/process libuv plan revision (2026-11-17)
+
+- Applied user decision to use libuv lifecycle/pipes. Replaced the worker/std-first backend proposal with uv_spawn, concurrent capture, exit callbacks, timers and uv_process_kill, with loop-only ownership.
+- Added explicit ABI/failed-spawn checks, capture versus stream backpressure, live-child accounting and exit-before-close shutdown ordering. Plan only; no runtime changes, tests or benchmarks.
+
 ## std/process initial planning draft (2026-11-17)
 
 - Inspected installed Zig 0.16 spawn/run/Child implementations and existing stream/scheduler ownership. Drafted `.claude/v0.17-process-plan.md` with captured-run and interactive-child API proposals, std-first backend feasibility criteria, deadline/output/reaping semantics and validation.

@@ -4,7 +4,7 @@
 
 - Branch v017std; draft `.claude/v0.17-process-plan.md`. Planning only, no implementation.
 - Recommend captured run first, interactive Child as a second slice. Proposals cover binary output, direct argv, child cwd/env, bounded capture, deadlines and reaping.
-- Backend decision needs a std-first spike: installed Zig run does not bound the final wait, and Unix Child.kill uses TERM then wait. Preserve VM responsiveness and cleanup before selecting a backend.
+- Backend accepted (2026-11-17): libuv launch/exit/pipes/timers/termination, Zig std validation and memory. Revised phases cover capture sinks, total deadlines, failed-spawn cleanup, and reaping before EventLoop generic shutdown. API scope remains for discussion.
 
 ## v0.16 - Shigeo: std/fs slice A
 
