@@ -671,12 +671,12 @@ const Decoder = struct {
         }
         _ = try self.nextToken();
         for (shape.skipped) |skip| {
-            try self.queueStep(skip.default_function, &.{object});
+            try self.applyDefault(object, skip.slot, skip.default);
         }
         for (shape.fields, 0..) |field, i| {
             if (seen_fields.isSet(i)) continue;
-            if (field.default_function) |function| {
-                try self.queueStep(function, &.{object});
+            if (field.default) |default| {
+                try self.applyDefault(object, field.slot, default);
                 continue;
             }
             try self.appendFieldPath(field.name, false);
@@ -715,6 +715,34 @@ const Decoder = struct {
         }
         _ = try self.nextToken();
         return map;
+    }
+
+    fn applyDefault(self: *Decoder, object: usize, slot: u8, default: serialization_plan.Default) !void {
+        switch (default) {
+            .function => |function| try self.queueStep(function, &.{object}),
+            .constant => |constant| {
+                const value = try self.constantRoot(constant.value);
+                const stored = if (constant.box_kind) |kind| try self.vm.allocNullBox(self.vm.heap.protectedValue(value), kind) else self.vm.heap.protectedValue(value);
+                self.rootedStruct(object).set(slot, stored);
+            },
+        }
+    }
+
+    fn constantRoot(self: *Decoder, constant: serialization_plan.ConstantValue) !usize {
+        return switch (constant) {
+            .int => |number| self.vm.heap.protectValue(.{ .int64 = number }, .int64),
+            .float => |number| self.vm.heap.protectValue(.{ .float64 = number }, .float64),
+            .boolean => |flag| self.vm.heap.protectValue(.{ .bool = flag }, .bool),
+            .null => self.vm.heap.protectValue(v.NULL_VALUE, .nullable),
+            .string => |id| self.vm.heap.protectValue(self.vm.program.string_pool.values[id], .string),
+            .array => |array| blk: {
+                const root = try allocRootedArray(self.vm, array.kind, @max(array.items.len, 1));
+                for (array.items) |item| {
+                    try appendRootedItem(self.vm, root, try self.constantRoot(item));
+                }
+                break :blk root;
+            },
+        };
     }
 
     fn decodeSite(self: *Decoder, site: serialization_plan.ProxySite, depth: usize) !?SiteValue {

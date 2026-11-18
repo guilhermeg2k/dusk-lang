@@ -495,6 +495,18 @@ pub const BytecodeGen = struct {
     }
 
     fn genLoadString(self: *Self, s: []const u8, target_reg: u8) !void {
+        const string_id = try self.internString(s);
+
+        var load_string = bc.Instruction{
+            .op = .LOAD_STRING,
+            .a = target_reg,
+        };
+
+        load_string.putBEx(string_id);
+        try self.chunk_instructions.append(self.allocator, load_string);
+    }
+
+    fn internString(self: *Self, s: []const u8) !u16 {
         const result = try self.string_id_by_text.getOrPut(s);
         if (!result.found_existing) {
             if (self.string_texts.items.len > std.math.maxInt(u16)) {
@@ -504,16 +516,7 @@ pub const BytecodeGen = struct {
             result.value_ptr.* = @intCast(self.string_texts.items.len);
             try self.string_texts.append(self.allocator, s);
         }
-
-        const string_id = result.value_ptr.*;
-
-        var load_string = bc.Instruction{
-            .op = .LOAD_STRING,
-            .a = target_reg,
-        };
-
-        load_string.putBEx(string_id);
-        try self.chunk_instructions.append(self.allocator, load_string);
+        return result.value_ptr.*;
     }
 
     fn genStringBuild(self: *Self, parts: []const *ir.Value, result_type: tt.TypeId, target_reg: u8) !void {
@@ -1869,7 +1872,7 @@ pub const BytecodeGen = struct {
                 .omits_null = field.omits_null,
                 .slot = field.field_index,
                 .plan = @intCast(field.plan),
-                .default_function = if (field.default_value) |value| try self.addPlanDefault(owner_type, struct_field, value, funcs) else null,
+                .default = if (field.default_value) |value| try self.planDefault(owner_type, struct_field, value, funcs) else null,
                 .proxy = try self.runtimeSite(field.site, funcs),
             };
         }
@@ -1882,7 +1885,7 @@ pub const BytecodeGen = struct {
         for (skipped, runtime_skipped) |skip, *runtime_skip| {
             runtime_skip.* = .{
                 .slot = skip.field_index,
-                .default_function = try self.addPlanDefault(owner_type, struct_fields[skip.field_index], skip.default_value, funcs),
+                .default = try self.planDefault(owner_type, struct_fields[skip.field_index], skip.default_value, funcs),
             };
         }
         return runtime_skipped;
@@ -1938,6 +1941,42 @@ pub const BytecodeGen = struct {
             key.* = field.identifier;
         }
         return self.getOrCreateStructDescriptor(&.{ .type_id = type_id, .data = .{ .struct_init = .{ .keys = keys, .values = &.{} } } });
+    }
+
+    fn planDefault(self: *Self, owner_type: tt.TypeId, field: tt.TypedIdentifier, value: *ir.Value, funcs: *std.ArrayList(bc.Function)) !serialization_plan.Default {
+        const field_type = self.type_table.getTypePtrById(field.type_id);
+        const value_type = if (field_type.is_nullable) self.type_table.typeIdByNullableTypeId.get(field.type_id) orelse field.type_id else field.type_id;
+        const constant = try self.constantValue(value, value_type) orelse return .{ .function = try self.addPlanDefault(owner_type, field, value, funcs) };
+        const value_kind = valueTypeFromTypeId(self.type_table, value_type);
+        const needs_box = field_type.is_nullable and constant != .null and !value_kind.isHeapType();
+        return .{ .constant = .{ .value = constant, .box_kind = if (needs_box) value_kind else null } };
+    }
+
+    fn constantValue(self: *Self, value: *ir.Value, type_id: tt.TypeId) !?serialization_plan.ConstantValue {
+        const target = self.type_table.getTypePtrById(type_id);
+        return switch (value.data) {
+            .i_int => |number| if (target.kind == .float) .{ .float = @floatFromInt(number) } else .{ .int = number },
+            .i_float => |number| .{ .float = number },
+            .i_bool => |flag| .{ .boolean = flag },
+            .i_null => .null,
+            .i_string => |text| .{ .string = try self.internString(text) },
+            .i_array => |array| blk: {
+                if (target.kind != .array) {
+                    break :blk null;
+                }
+                const item_type = target.kind.array;
+                const is_nullable_item = self.type_table.getTypePtrById(item_type).is_nullable;
+                const items = try self.allocator.alloc(serialization_plan.ConstantValue, array.values.len);
+                for (array.values, items) |item, *constant| {
+                    if (is_nullable_item) {
+                        return null;
+                    }
+                    constant.* = try self.constantValue(item, item_type) orelse return null;
+                }
+                break :blk .{ .array = .{ .kind = valueTypeFromTypeId(self.type_table, item_type), .items = items } };
+            },
+            else => null,
+        };
     }
 
     fn addPlanDefault(self: *Self, owner_type: tt.TypeId, field: tt.TypedIdentifier, value: *ir.Value, funcs: *std.ArrayList(bc.Function)) !u16 {

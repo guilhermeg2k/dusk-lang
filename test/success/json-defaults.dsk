@@ -1,6 +1,7 @@
 import std/json
 import std/io
 import std/task
+import std/array
 
 func make_name() -> string
     task::sleep(0)
@@ -22,7 +23,39 @@ struct Group
     item: Item = Item()
 end
 
+enum Tone
+    Low
+    High
+end
+
+struct Literals
+    id: int
+    ratio: float = 1
+    exact: float = 2.5
+    count: ?int = 5
+    nothing: ?int = null
+    flag: ?bool = true
+    label: string = "hi"
+    maybe: ?string = "x"
+    numbers: []int = [1, 2]
+    names: []string = []
+    nested: [][]int = [[3], []]
+    tone: Tone = Tone.High
+    maybe_tone: ?Tone = Tone.Low
+end
+
 func main() -> !void
+    let mut lit_a = try json::decode[Literals]("{\"id\":1}")
+    let lit_b = try json::decode[Literals]("{\"id\":2}")
+    assert(lit_a.ratio == 1.0 and lit_a.exact == 2.5)
+    assert(lit_a.count == 5 and lit_a.nothing == null and lit_a.flag == true)
+    assert(lit_a.label == "hi" and lit_a.maybe == "x")
+    assert(array::len(lit_a.numbers) == 2 and lit_a.numbers[1] == 2)
+    assert(array::len(lit_a.names) == 0)
+    assert(array::len(lit_a.nested) == 2 and lit_a.nested[0][0] == 3)
+    assert(lit_a.tone == Tone.High and lit_a.maybe_tone == Tone.Low)
+    array::append(lit_a.numbers, 9)
+    assert(array::len(lit_b.numbers) == 2)
     let first = try json::decode[Item]("{}")
     assert(first.name == "Ada")
     assert(first.items[1] == 2)

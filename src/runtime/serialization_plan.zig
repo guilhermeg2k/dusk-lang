@@ -46,7 +46,7 @@ pub const Field = struct {
     omits_null: bool,
     slot: u8,
     plan: u32,
-    default_function: ?u16,
+    default: ?Default,
     proxy: ?ProxySite = null,
 
     pub fn isNamed(self: Field, text: []const u8) bool {
@@ -56,7 +56,31 @@ pub const Field = struct {
 
 pub const SkippedField = struct {
     slot: u8,
-    default_function: u16,
+    default: Default,
+};
+
+pub const Default = union(enum) {
+    function: u16,
+    constant: Constant,
+};
+
+pub const Constant = struct {
+    value: ConstantValue,
+    box_kind: ?v.ValueType,
+};
+
+pub const ConstantValue = union(enum) {
+    int: i64,
+    float: f64,
+    boolean: bool,
+    null,
+    string: u16,
+    array: ConstantArray,
+};
+
+pub const ConstantArray = struct {
+    kind: v.ValueType,
+    items: []const ConstantValue,
 };
 
 pub const EnumVariant = struct {
