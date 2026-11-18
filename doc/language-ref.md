@@ -1936,8 +1936,22 @@ end
 | `len(data)`         | `int`                | Number of bytes.                                                                                  |
 | `new(size)`         | `BufferError!buffer` | A new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size.     |
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
+| `put(data, at, text)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
+| `put_bytes(data, at, source)` | `BufferError!int` | Same, copying another buffer. |
+| `put_int(data, at, number)` | `BufferError!int` | Writes `number` as decimal text (`-42` is the three bytes `-`, `4`, `2`), without making a string. |
+| `slice(data, start, stop)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
 
-The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](#buffers).
+`put`, `put_bytes` and `put_int` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or `at` is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` fails the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`:
+
+```nim
+let mut frame = try buffer::new(4096)
+let mut used = try buffer::put(frame, 0, "progress: ")
+used = try buffer::put_int(frame, used, done)
+used = try buffer::put(frame, used, "%\n")
+try out.write_bytes(try buffer::slice(frame, 0, used))
+```
+
+The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). See [Buffers](#buffers).
 
 ### std/time
 
@@ -2116,7 +2130,7 @@ trait Writer
 end
 ```
 
-`io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr` and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
+`io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr`, files (`fs::File`, see [std/fs](#files)) and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
 
 ```nim
 import std/io
@@ -2190,7 +2204,7 @@ end
 - `stat` follows symbolic links: `is_symlink` says the path itself is a link, and the other fields describe the file it points to (or the link itself, when what it points to is gone).
 - `delete(path, recursive = true)` never follows symbolic links: a link inside the folder is deleted, not what it points to.
 - `write`, `write_bytes` and `append` create new files with the permissions `rw-rw-rw-`, minus what the system's default mask removes (usually `rw-r--r--`).
-- Each call reads or writes the whole file at once. `read_bytes` returns a new `buffer`: changing it doesn't change the file until it's written back.
+- Each call reads or writes the whole file at once. `read_bytes` returns a new `buffer`: changing it doesn't change the file until it's written back. To read or write a file piece by piece, open it (below).
 
 ```nim
 import std/io
@@ -2214,6 +2228,62 @@ func main() -> !void
         return
     end
     io::println(config)
+end
+```
+
+#### Files
+
+`fs::open(path, mode = fs::Mode.Read)` opens a file once and returns an `fs::File` to read or write it piece by piece: big files, a log written line by line, a file read line by line, or a file sent to a connection with `io::copy`. Opening fails with `FsError` (`NotFound`, `IsDirectory` for a folder, `PermissionDenied`...); using a `File` fails with `io::IoError`, like any stream.
+
+| Mode | Opens for | |
+| :--- | :-------- | :- |
+| `fs::Mode.Read` | reading | The file must exist. |
+| `fs::Mode.Write` | writing | Creates the file, or empties it. |
+| `fs::Mode.Append` | writing at the end | Creates the file if needed; every write goes to the end. |
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `read_line(max = -1, timeout_ms = -1)` | `IoError!?string` | The next line, without `\n` or `\r\n`; `null` at the end of the file. With `max`, a longer line fails with `LineTooLong`. |
+| `read_bytes(max, timeout_ms = -1)` | `IoError!?buffer` | Up to `max` bytes; `null` at the end. |
+| `read_exact(count, timeout_ms = -1)` | `IoError!?buffer` | Exactly `count` bytes, `null` when the file ends first. |
+| `read_all(timeout_ms = -1)` | `IoError!string` | The rest of the file as text (`InvalidUtf8` if it isn't). |
+| `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | The rest of the file as bytes. |
+| `write(text)` / `write_bytes(data)` | `IoError!void` | Adds text or bytes at the current position. |
+| `flush()` | `IoError!void` | Sends buffered writes to the file now and waits for them. |
+| `seek(offset, from = fs::SeekFrom.Start)` | `IoError!int` | Moves to `offset` bytes from `Start`, `Current` or `End` and returns the new position. |
+| `position()` | `int` | The current position, counting buffered writes. |
+| `size()` | `IoError!int` | The file's size, counting buffered writes. |
+| `close()` | `void` | Sends buffered writes, then closes. Closing twice does nothing. |
+
+- **Writes are buffered.** They collect in memory and go to the file when 64 KiB have built up, on `flush()`, on `close()` and when the program ends, so writing many small pieces is cheap. Until then another reader (`fs::read`, another process) doesn't see them. A failed write shows up at the next `write`, `flush` or `seek`; `close()` can't report it, so call `flush()` first when it matters.
+- **Reads** read ahead in pieces, without blocking other tasks. A second task reading the same file while one is waiting fails with `Busy`. `timeout_ms` is there so a `File` fits `io::Reader`; reading a file never times out.
+- **Seeking** sends buffered writes first and forgets what was read ahead. It fails with `Busy` while another task is reading, with `Other` for a negative position, and with `Other` on a file opened with `Append` (its writes always go to the end). Seeking past the end of a file opened for writing and writing there leaves a gap of zero bytes.
+- Reading a file opened for writing, or writing one opened for reading, fails with `Other`. A `File` that isn't closed is closed when the program ends, after its buffered writes are sent. Several tasks writing to one `File` each get their writes in whole, in call order.
+- `File` fits `io::Reader` and `io::Writer`, so `io::copy(file, conn)` sends a file to a connection and `io::copy(conn, file)` saves one.
+
+```nim
+import std/fs
+import std/io
+
+func main() -> !void
+    let log = try fs::open("app.log", fs::Mode.Append)
+    for 1..3: i do
+        try log.write("step ${i}\n")
+    end
+    log.close()
+
+    let file = try fs::open("app.log")
+    for true do
+        let next = try file.read_line()
+        if next: line then
+            io::println(line)
+        else
+            break
+        end
+    end
+    try file.seek(-7, fs::SeekFrom.End)
+    io::print(try file.read_all())      # step 3
+    file.close()
 end
 ```
 
@@ -2250,7 +2320,7 @@ A name is looked up first, and each of its addresses is tried in order until one
 | `read_all_bytes(timeout_ms = -1)` | `io::IoError!buffer` | Same, as bytes. |
 | `write(text)` | `io::IoError!void` | Sends `text`. |
 | `write_bytes(data)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
-| `flush()` | `io::IoError!void` | Writes are never buffered, so there's nothing to send: it only fails with `Closed` after `close()`, like `write`. It's there so a connection fits `io::Writer`. |
+| `flush()` | `io::IoError!void` | Writes on a connection are never buffered, so there's nothing to send: it only fails with `Closed` after `close()`, like `write`. It's there so a connection fits `io::Writer`. |
 | `remote_address()` | `Address` | The other side's address, saved when the connection opened. |
 | `start_tls(host, timeout_ms = -1, ca = null, verify = true)` | `NetError!void` | Switches a plain connection to TLS as a client, for protocols that start in plain text. Calling it on a connection that already uses TLS is a runtime error. |
 | `handshake(timeout_ms = -1)` | `NetError!void` | Waits for the TLS handshake to finish. Does nothing on a plain connection or one whose handshake is done. |
