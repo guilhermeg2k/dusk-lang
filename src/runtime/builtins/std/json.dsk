@@ -43,7 +43,6 @@ extern func ~string_end(text: string, position: int) -> int
 extern func ~number_end(text: string, position: int) -> int
 extern func ~string_value(text: string, start: int, stop: int) -> JsonError!string
 extern func ~quote(text: string) -> JsonError!string
-extern func ~format_float(value: float) -> JsonError!string
 extern func ~key_index(fields: int, text: string, start: int, stop: int) -> JsonError!int
 extern func ~parse_int(text: string, start: int, stop: int) -> JsonError!int
 extern func ~parse_float(text: string, start: int, stop: int) -> JsonError!float

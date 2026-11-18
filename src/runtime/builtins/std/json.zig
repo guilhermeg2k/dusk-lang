@@ -17,7 +17,6 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "number_end", Binding{ .native = &numberEnd } },
     .{ "string_value", Binding{ .native = &stringValue } },
     .{ "quote", Binding{ .native = &quote } },
-    .{ "format_float", Binding{ .native = &formatFloat } },
     .{ "key_index", Binding{ .native = &keyIndex } },
     .{ "parse_int", Binding{ .native = &parseInt } },
     .{ "parse_float", Binding{ .native = &parseFloat } },
@@ -136,17 +135,6 @@ fn quote(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     const quoted = try std.json.Stringify.valueAlloc(arena.allocator(), text, .{});
     return native.ok(try vm.allocBytesValue(quoted, .string));
-}
-
-fn formatFloat(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    defer arena.deinit();
-    const number = args[0].float64;
-    if (!std.math.isFinite(number)) {
-        return native.fail(JsonError.NonFiniteNumber);
-    }
-    const text = try std.json.Stringify.valueAlloc(arena.allocator(), number, .{});
-    return native.ok(try vm.allocBytesValue(text, .string));
 }
 
 fn keyIndex(vm: *VM, args: []v.Value) anyerror!NativeResult {
