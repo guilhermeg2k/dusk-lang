@@ -1,5 +1,10 @@
 # Completed
 
+## std/random initial plan (2026-11-17)
+
+- Inspected installed Zig 0.16 random/secure entropy, sampling and Xoshiro APIs plus existing map seeding. Drafted `.claude/v0.17-random-plan.md` with public API recommendations, ordinary-struct seeded state, GC rules, implementation phases and deterministic validation.
+- Planning request only: no runtime changes, public docs/changelog, tests or benchmarks. API discussion remains in progress.
+
 ## std/path v0.17 (2026-11-17)
 
 - Planned and implemented `.claude/v0.17-path-plan.md` on v017std. Zig std-backed lexical join/normalize, basename/dirname, extension/stem, fully absolute detection, explicit-base resolve and absolute-input relative paths. No filesystem/libuv/cwd dependency.

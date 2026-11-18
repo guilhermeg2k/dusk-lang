@@ -1,5 +1,11 @@
 # In Progress
 
+## v0.17: std/random planning
+
+- Branch v017std; proposal `.claude/v0.17-random-plan.md` drafted for discussion. No implementation.
+- Recommended: inclusive int bounds, float/bytes, explicit secure_bytes, and mutable seeded Generator with ordinary copy semantics.
+- Open: confirm API scope/names, default float fallibility and reproducibility contract before implementation.
+
 ## v0.16 - Shigeo: std/fs slice A
 
 Plan: `.claude/v0.16-fs-plan.md` (2026-11-15).
