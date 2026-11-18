@@ -61,6 +61,8 @@ pub const Stream = struct {
     table_index: usize = 0,
     owns_file: bool = false,
     can_write_file: bool = false,
+    is_append: bool = false,
+    file_offset: i64 = 0,
     pending_output: std.ArrayList(u8) = .empty,
     has_output_in_flight: bool = false,
     output_waiters: std.ArrayList(OutputWaiter) = .empty,
@@ -477,6 +479,7 @@ pub const Stream = struct {
         const job = try FsJob.create(self.allocator, .read_chunk, "", "");
         errdefer job.destroy();
         job.file = self.file;
+        job.offset = if (self.owns_file) self.file_offset else -1;
         job.stream = self;
         try self.event_loop.startFsJob(self.scheduler, null, job);
         self.has_chunk_in_flight = true;
@@ -500,6 +503,7 @@ pub const Stream = struct {
             if (data.len == 0) {
                 self.has_ended = true;
             } else {
+                self.file_offset += @intCast(data.len);
                 self.buffered.appendSlice(self.allocator, data) catch {
                     self.failure = .Other;
                 };
@@ -617,6 +621,33 @@ pub const Stream = struct {
         return .parked;
     }
 
+    pub fn filePosition(self: *const Self) i64 {
+        if (self.can_write_file) {
+            return self.file_offset + @as(i64, @intCast(self.pending_output.items.len));
+        }
+        const unread: i64 = @intCast(self.buffered.items.len - self.read_offset);
+        return self.file_offset - unread;
+    }
+
+    pub fn seekFile(self: *Self, target: i64) ?IoError {
+        const can_seek = self.owns_file and !self.is_append and target >= 0;
+        if (!can_seek) {
+            return .Other;
+        }
+        if (self.waiter != null) {
+            return .Busy;
+        }
+        const has_output = self.pending_output.items.len > 0 or self.has_output_in_flight;
+        if (has_output) {
+            return .Other;
+        }
+        self.file_offset = target;
+        self.buffered.clearRetainingCapacity();
+        self.read_offset = 0;
+        self.has_ended = false;
+        return null;
+    }
+
     fn takeOutputFailure(self: *Self) ?IoError {
         const failure = self.output_failure orelse return null;
         self.output_failure = null;
@@ -630,7 +661,9 @@ pub const Stream = struct {
         errdefer job.destroy();
         job.output = try self.pending_output.toOwnedSlice(self.allocator);
         job.file = self.file;
+        job.offset = if (self.is_append) -1 else self.file_offset;
         job.stream = self;
+        self.file_offset += @intCast(job.output.?.len);
         try self.event_loop.startFsJob(self.scheduler, null, job);
         self.has_output_in_flight = true;
     }
@@ -687,7 +720,8 @@ pub const Stream = struct {
         const output = self.pending_output.items;
         while (written < output.len) {
             const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
-            const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, -1, null);
+            const offset: i64 = if (self.is_append) -1 else self.file_offset + @as(i64, @intCast(written));
+            const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, offset, null);
             uv.uv_fs_req_cleanup(request);
             if (status < 0) break;
             written += @intCast(status);

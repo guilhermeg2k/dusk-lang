@@ -1,0 +1,69 @@
+import std/fs
+import std/io
+import std/string
+import std/buffer
+
+func seek_error(file: fs::File, offset: int, from: fs::SeekFrom = fs::SeekFrom.Start) -> ?io::IoError
+    let position = file.seek(offset, from) catch e then
+        return e
+    end
+    return null
+end
+
+func text_of(data: ?buffer) -> string
+    if data: found then
+        return string::from_bytes(found) catch ""
+    end
+    return ""
+end
+
+func main() -> !void
+    try fs::write("DIR/digits.txt", "0123456789")
+
+    let file = try fs::open("DIR/digits.txt")
+    assert((try file.size()) == 10)
+    assert((try file.seek(5)) == 5)
+    assert(text_of(try file.read_exact(2)) == "56")
+    assert(file.position() == 7)
+    assert((try file.seek(-3, fs::SeekFrom.End)) == 7)
+    assert((try file.read_all()) == "789")
+    assert(file.position() == 10)
+    assert((try file.seek(-8, fs::SeekFrom.Current)) == 2)
+    assert(text_of(try file.read_exact(1)) == "2")
+    assert(file.position() == 3)
+    assert((try file.seek(0)) == 0)
+    assert(text_of(try file.read_exact(1)) == "0")
+    assert(file.position() == 1)
+    assert((try file.seek(9)) == 9)
+    assert((try file.read_all()) == "9")
+    assert(seek_error(file, -1) == io::IoError.Other)
+
+    file.close()
+
+    let busy = try fs::open("DIR/digits.txt")
+    let seeker = spawn(func() -> ?io::IoError
+        return seek_error(busy, 0)
+    end)
+    let first = try busy.read_line()
+    assert(first == "0123456789")
+    assert(await(seeker) == io::IoError.Busy)
+    busy.close()
+
+    let written = try fs::open("DIR/letters.txt", fs::Mode.Write)
+    try written.write("abcdef")
+    assert(written.position() == 6)
+    assert((try written.size()) == 6)
+    assert((try written.seek(2)) == 2)
+    try written.write("XY")
+    assert(written.position() == 4)
+    written.close()
+    assert((try fs::read("DIR/letters.txt")) == "abXYef")
+
+    let appending = try fs::open("DIR/letters.txt", fs::Mode.Append)
+    assert(appending.position() == 6)
+    try appending.write("gh")
+    assert(appending.position() == 8)
+    assert(seek_error(appending, 0) == io::IoError.Other)
+    appending.close()
+    assert((try fs::read("DIR/letters.txt")) == "abXYefgh")
+end

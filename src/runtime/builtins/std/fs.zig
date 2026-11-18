@@ -33,6 +33,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_flush", Binding{ .native = &io.streamFlush } },
+    .{ "stream_position", Binding{ .native = &streamPosition } },
+    .{ "stream_seek", Binding{ .native = &streamSeek } },
+    .{ "stream_file_size", Binding{ .native = &streamFileSize } },
 });
 
 fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -46,9 +49,32 @@ fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const can_write = args[1].int64 != @intFromEnum(FsJob.OpenMode.read);
-    const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), can_write);
+    const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), args[1].int64, @enumFromInt(args[2].int64));
     return native.ok(.{ .int64 = @intCast(handle) });
+}
+
+fn streamPosition(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return native.ok(.{ .int64 = 0 });
+    return native.ok(.{ .int64 = stream.filePosition() });
+}
+
+fn streamSeek(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return native.fail(io.IoError.Closed);
+    if (stream.seekFile(args[1].int64)) |failure| {
+        return native.fail(failure);
+    }
+    return native.ok(.{ .null = {} });
+}
+
+fn streamFileSize(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return native.fail(io.IoError.Closed);
+    const job = try FsJob.create(vm.event_loop.allocator, .file_size, "", "");
+    errdefer job.destroy();
+    job.file = stream.file;
+    const current = vm.running_task.?;
+    try vm.event_loop.startFsJob(&vm.scheduler, current, job);
+    current.park();
+    return native.parked();
 }
 
 fn exists(vm: *VM, args: []v.Value) anyerror!NativeResult {

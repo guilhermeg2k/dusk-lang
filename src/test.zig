@@ -435,6 +435,10 @@ test "fs: files opened for writing, buffered, appended, written from several tas
     try runCaseInTmpDir("fs-files-write.dsk");
 }
 
+test "fs: seek, position and size on files read, written and appended" {
+    try runCaseInTmpDir("fs-files-seek.dsk");
+}
+
 test "fs: data still buffered in a file reaches the disk when the program ends" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

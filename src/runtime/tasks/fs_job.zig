@@ -8,6 +8,7 @@ const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
 const WakePayload = @import("scheduler.zig").WakePayload;
 const Stream = @import("stream.zig").Stream;
+const IoError = @import("stream.zig").IoError;
 
 const request_alignment = std.mem.Alignment.@"16";
 
@@ -28,7 +29,7 @@ const chunk_size = 64 * 1024;
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk, write_chunk, open_file };
+    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk, write_chunk, open_file, file_size };
 
     pub const OpenMode = enum(i64) { read, write, append };
 
@@ -43,6 +44,8 @@ pub const FsJob = struct {
     task: ?*TaskState = null,
     stream: ?*Stream = null,
     file: c_int = -1,
+    offset: i64 = -1,
+    file_size: i64 = 0,
     open_mode: OpenMode = .read,
     loop: *uv.Loop = undefined,
     failure: ?FsError = null,
@@ -104,7 +107,20 @@ pub const FsJob = struct {
             .read_chunk => self.readChunk(),
             .write_chunk => self.writeChunk(),
             .open_file => self.openFile(),
+            .file_size => self.readFileSize(),
         }
+    }
+
+    fn readFileSize(self: *Self) void {
+        const request = self.fsRequest();
+        const status = uv.uv_fs_fstat(self.loop, request, self.file, null);
+        if (status < 0) {
+            uv.uv_fs_req_cleanup(request);
+            self.failure = failureFromStatus(status);
+            return;
+        }
+        self.file_size = @intCast(uv.uv_fs_get_statbuf(request).st_size);
+        uv.uv_fs_req_cleanup(request);
     }
 
     fn writeChunk(self: *Self) void {
@@ -113,7 +129,8 @@ pub const FsJob = struct {
         const request = self.fsRequest();
         while (written < output.len) {
             const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
-            const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, -1, null);
+            const offset: i64 = if (self.offset < 0) -1 else self.offset + @as(i64, @intCast(written));
+            const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, offset, null);
             uv.uv_fs_req_cleanup(request);
             if (status < 0) {
                 self.failure = failureFromStatus(status);
@@ -138,6 +155,9 @@ pub const FsJob = struct {
         }
         const stat_status = uv.uv_fs_fstat(self.loop, request, status, null);
         const is_directory = stat_status >= 0 and uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
+        if (stat_status >= 0) {
+            self.file_size = @intCast(uv.uv_fs_get_statbuf(request).st_size);
+        }
         uv.uv_fs_req_cleanup(request);
         if (is_directory) {
             _ = uv.uv_fs_close(self.loop, request, status, null);
@@ -452,7 +472,7 @@ pub const FsJob = struct {
         };
         const request = self.fsRequest();
         const buffer = uv.Buffer{ .base = data.ptr, .len = @intCast(data.len) };
-        const status = uv.uv_fs_read(self.loop, request, self.file, @ptrCast(&buffer), 1, -1, null);
+        const status = uv.uv_fs_read(self.loop, request, self.file, @ptrCast(&buffer), 1, self.offset, null);
         uv.uv_fs_req_cleanup(request);
         if (status < 0) {
             self.allocator.free(data);
@@ -496,6 +516,10 @@ pub const FsJob = struct {
     }
 
     pub fn takeWakeResult(self: *Self) WakeResult {
+        const is_stream_failure = self.failure != null and self.kind == .file_size;
+        if (is_stream_failure) {
+            return .{ .value = .{ .int64 = @intFromEnum(IoError.Other) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+        }
         if (self.failure) |failure| {
             return .{ .value = .{ .int64 = @intFromEnum(failure) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
         }
@@ -503,7 +527,13 @@ pub const FsJob = struct {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
             .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
             .read_chunk, .write_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
-            .open_file => .{ .value = .{ .int64 = self.file }, .kind = .int64 },
+            .open_file => result: {
+                const numbers = self.allocator.alloc(i64, 2) catch break :result .{ .value = .{ .int64 = @intFromEnum(FsError.Other) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+                numbers[0] = self.file;
+                numbers[1] = self.file_size;
+                break :result .{ .value = v.NULL_VALUE, .kind = .array, .payload = .{ .ints = numbers } };
+            },
+            .file_size => .{ .value = .{ .int64 = self.file_size }, .kind = .int64 },
             .read_dir => result: {
                 const names = self.names.?;
                 self.names = null;

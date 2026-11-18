@@ -126,12 +126,14 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, can_write: bool) !usize {
+    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !usize {
         const loop = try self.ensureLoopStarted();
         try self.streams.ensureUnusedCapacity(self.allocator, 1);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
         stream.owns_file = true;
-        stream.can_write_file = can_write;
+        stream.can_write_file = mode != .read;
+        stream.is_append = mode == .append;
+        stream.file_offset = if (mode == .append) size else 0;
         const handle = self.streams.items.len;
         stream.table_index = handle;
         self.streams.appendAssumeCapacity(stream);
