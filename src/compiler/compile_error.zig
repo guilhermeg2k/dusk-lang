@@ -249,11 +249,6 @@ pub const CompileErrorReporter = struct {
         return error.UnwrappedCantBeMutable;
     }
 
-    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: Loc) CompileError {
-        self.log("@ cannot be used outside of a struct", loc);
-        return error.SelfOutsideStruct;
-    }
-
     pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
@@ -812,11 +807,6 @@ pub const CompileErrorReporter = struct {
         return error.NotAnErrorSet;
     }
 
-    pub fn invalidDefinition(self: *Self, loc: Loc) CompileError {
-        self.log("struct and enum definitions cannot be mutable", loc);
-        return error.InvalidDefinition;
-    }
-
     pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) CompileError {
         self.log(
             "Can't infer anonymous struct type",
@@ -1103,9 +1093,7 @@ pub const CompileError = error{
     NotMutable,
     ReadOnlyIntoMutable,
     UnwrappedCantBeMutable,
-    SelfOutsideStruct,
     InvalidStructField,
-    InvalidDefinition,
     CantInferAnonymousStruct,
     PrimitiveParamsCantBeMutable,
     CantInferArrayLiteralType,

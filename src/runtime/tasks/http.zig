@@ -53,4 +53,3 @@ pub extern fn dusk_http_header_count(parser: *const Parser) usize;
 pub extern fn dusk_http_header_offsets(parser: *const Parser) ?[*]const usize;
 pub extern fn dusk_http_is_message_complete(parser: *const Parser) c_int;
 pub extern fn dusk_http_can_keep_alive(parser: *const Parser) c_int;
-pub extern fn dusk_http_error_name(parser: *const Parser) [*:0]const u8;

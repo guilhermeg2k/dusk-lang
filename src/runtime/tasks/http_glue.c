@@ -318,7 +318,3 @@ int dusk_http_is_message_complete(const DuskHttpParser *self) {
 int dusk_http_can_keep_alive(const DuskHttpParser *self) {
     return self->can_keep_alive;
 }
-
-const char *dusk_http_error_name(const DuskHttpParser *self) {
-    return llhttp_errno_name(llhttp_get_errno(&self->parser));
-}
