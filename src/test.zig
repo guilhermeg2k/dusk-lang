@@ -431,6 +431,38 @@ test "fs: files opened for reading, read by lines, chunks and whole" {
     try runCaseInTmpDir("fs-files-read.dsk");
 }
 
+test "fs: files opened for writing, buffered, appended, written from several tasks" {
+    try runCaseInTmpDir("fs-files-write.dsk");
+}
+
+test "fs: data still buffered in a file reaches the disk when the program ends" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/fs
+        \\func main() -> !void
+        \\    let big = try fs::open("DIR/big.txt", fs::Mode.Write)
+        \\    for 1..20000: i do
+        \\        try big.write("0123456789")
+        \\    end
+        \\    try big.write("end")
+        \\    let small = try fs::open("DIR/small.txt", fs::Mode.Write)
+        \\    try small.write("kept")
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+    const big = try tmp.dir.readFileAlloc(testing.io, "big.txt", allocator, .unlimited);
+    try testing.expectEqual(@as(usize, 200003), big.len);
+    try testing.expect(std.mem.endsWith(u8, big, "89end"));
+    try testing.expectEqualStrings("kept", try tmp.dir.readFileAlloc(testing.io, "small.txt", allocator, .unlimited));
+}
+
 fn runCaseInTmpDir(src_file: []const u8) !void {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

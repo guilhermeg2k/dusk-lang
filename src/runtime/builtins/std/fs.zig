@@ -30,6 +30,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_read_all", Binding{ .native = &io.streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &io.streamReadAllBytes } },
     .{ "stream_close", Binding{ .native = &io.streamClose } },
+    .{ "stream_write", Binding{ .native = &io.streamWrite } },
+    .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
+    .{ "stream_flush", Binding{ .native = &io.streamFlush } },
 });
 
 fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -43,7 +46,8 @@ fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64));
+    const can_write = args[1].int64 != @intFromEnum(FsJob.OpenMode.read);
+    const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), can_write);
     return native.ok(.{ .int64 = @intCast(handle) });
 }
 

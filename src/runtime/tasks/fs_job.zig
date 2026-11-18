@@ -28,7 +28,7 @@ const chunk_size = 64 * 1024;
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk, open_file };
+    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk, write_chunk, open_file };
 
     pub const OpenMode = enum(i64) { read, write, append };
 
@@ -49,6 +49,7 @@ pub const FsJob = struct {
     is_found: bool = false,
     stat_numbers: ?[]i64 = null,
     contents: ?[]u8 = null,
+    output: ?[]u8 = null,
     names: ?[][]u8 = null,
 
     pub fn create(allocator: std.mem.Allocator, kind: Kind, path: []const u8, input: []const u8) !*Self {
@@ -72,6 +73,9 @@ pub const FsJob = struct {
         }
         if (self.contents) |contents| {
             allocator.free(contents);
+        }
+        if (self.output) |output| {
+            allocator.free(output);
         }
         if (self.names) |names| {
             WakePayload.free(.{ .names = names }, allocator);
@@ -98,7 +102,24 @@ pub const FsJob = struct {
             .delete_recursive => _ = self.deleteTree(self.path, .unknown),
             .rename => self.renamePath(),
             .read_chunk => self.readChunk(),
+            .write_chunk => self.writeChunk(),
             .open_file => self.openFile(),
+        }
+    }
+
+    fn writeChunk(self: *Self) void {
+        const output = self.output orelse return;
+        var written: usize = 0;
+        const request = self.fsRequest();
+        while (written < output.len) {
+            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
+            const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, -1, null);
+            uv.uv_fs_req_cleanup(request);
+            if (status < 0) {
+                self.failure = failureFromStatus(status);
+                return;
+            }
+            written += @intCast(status);
         }
     }
 
@@ -481,7 +502,7 @@ pub const FsJob = struct {
         return switch (self.kind) {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
             .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
-            .read_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
+            .read_chunk, .write_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
             .open_file => .{ .value = .{ .int64 = self.file }, .kind = .int64 },
             .read_dir => result: {
                 const names = self.names.?;

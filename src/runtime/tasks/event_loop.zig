@@ -126,11 +126,12 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int) !usize {
+    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, can_write: bool) !usize {
         const loop = try self.ensureLoopStarted();
         try self.streams.ensureUnusedCapacity(self.allocator, 1);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
         stream.owns_file = true;
+        stream.can_write_file = can_write;
         const handle = self.streams.items.len;
         stream.table_index = handle;
         self.streams.appendAssumeCapacity(stream);
@@ -355,6 +356,10 @@ fn onFsJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
     const event_loop = job.event_loop;
     event_loop.pending_operations -= 1;
     if (job.stream) |stream| {
+        if (job.kind == .write_chunk) {
+            stream.finishOutput(job.failure != null);
+            return;
+        }
         stream.finishChunk(job.takeContents(), job.failure != null);
         return;
     }

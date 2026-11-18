@@ -33,13 +33,16 @@ extern func rename(from: string, to: string) -> FsError!void
 extern func exists(path: string) -> bool
 extern func ~stat_numbers(path: string) -> FsError![]int
 extern func ~open_descriptor(path: string, mode: Mode) -> FsError!int
-extern func ~file_stream(descriptor: int) -> int
+extern func ~file_stream(descriptor: int, mode: Mode) -> int
 extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
 extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~stream_close(handle: int) -> void
+extern func ~stream_write(handle: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_flush(handle: int) -> io::IoError!void
 
 enum Mode
     Read
@@ -70,14 +73,28 @@ struct File
         return try stream_read_all_bytes(self.handle, timeout_ms)
     end
 
+    func write(self: @, text: string) -> io::IoError!void
+        try stream_write(self.handle, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> io::IoError!void
+        try stream_write_bytes(self.handle, data)
+    end
+
+    func flush(self: @) -> io::IoError!void
+        try stream_flush(self.handle)
+    end
+
     func close(self: @) -> void
+        stream_flush(self.handle) catch e then
+        end
         stream_close(self.handle)
     end
 end
 
 func open(path: string, mode: Mode = Mode.Read) -> FsError!File
     let descriptor = try open_descriptor(path, mode)
-    return File(handle = file_stream(descriptor))
+    return File(handle = file_stream(descriptor, mode))
 end
 
 func stat(path: string) -> FsError!FileInfo

@@ -26,6 +26,8 @@ const read_chunk_size = 64 * 1024;
 const high_water_mark = 1024 * 1024;
 const tls_record_size = 16 * 1024 + 256;
 
+const file_output_limit = 64 * 1024;
+
 pub const Stream = struct {
     const Self = @This();
 
@@ -58,6 +60,11 @@ pub const Stream = struct {
     http_reader: ?*HttpReader = null,
     table_index: usize = 0,
     owns_file: bool = false,
+    can_write_file: bool = false,
+    pending_output: std.ArrayList(u8) = .empty,
+    has_output_in_flight: bool = false,
+    output_waiters: std.ArrayList(OutputWaiter) = .empty,
+    output_failure: ?IoError = null,
     pool_key: ?[]u8 = null,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
@@ -65,6 +72,11 @@ pub const Stream = struct {
     pub const Waiter = struct {
         task: *TaskState,
         mode: ReadMode,
+    };
+
+    pub const OutputWaiter = struct {
+        task: *TaskState,
+        is_flush: bool,
     };
 
     pub fn open(allocator: std.mem.Allocator, event_loop: *EventLoop, scheduler: *Scheduler, loop: *uv.Loop, file: c_int) !*Self {
@@ -139,6 +151,8 @@ pub const Stream = struct {
             self.allocator.free(key);
         }
         self.buffered.deinit(self.allocator);
+        self.pending_output.deinit(self.allocator);
+        self.output_waiters.deinit(self.allocator);
         if (self.handle_memory.len > 0) {
             self.allocator.free(self.handle_memory);
         }
@@ -158,6 +172,7 @@ pub const Stream = struct {
 
     pub fn releaseAtExit(self: *Self) void {
         self.is_closed = true;
+        self.writeOutputNow();
         self.releaseIfDone();
     }
 
@@ -172,7 +187,7 @@ pub const Stream = struct {
     }
 
     fn releaseIfDone(self: *Self) void {
-        const is_done = self.is_closed and self.open_handles == 0 and !self.has_chunk_in_flight and self.requests_in_flight == 0;
+        const is_done = self.is_closed and self.open_handles == 0 and !self.has_chunk_in_flight and !self.has_output_in_flight and self.requests_in_flight == 0;
         if (is_done) {
             self.destroy();
         }
@@ -541,6 +556,9 @@ pub const Stream = struct {
 
     pub fn write(self: *Self, task: *TaskState, data: []const u8) !WriteOutcome {
         if (data.len == 0) return .done;
+        if (self.kind == .file) {
+            return self.writeFile(task, data);
+        }
         const layer = self.tls_layer orelse return self.sendBytes(task, data);
         if (layer.handshake != .done) {
             self.ensureHandshakeStarted();
@@ -560,6 +578,121 @@ pub const Stream = struct {
             return .{ .failure = .Other };
         }
         return self.sendCipherOutput(task);
+    }
+
+    fn writeFile(self: *Self, task: *TaskState, data: []const u8) !WriteOutcome {
+        if (!self.can_write_file) {
+            return .{ .failure = .Other };
+        }
+        if (self.takeOutputFailure()) |failure| {
+            return .{ .failure = failure };
+        }
+        try self.pending_output.appendSlice(self.allocator, data);
+        if (self.pending_output.items.len < file_output_limit) {
+            return .done;
+        }
+        try self.startOutputJob();
+        if (self.pending_output.items.len < file_output_limit) {
+            return .done;
+        }
+        try self.output_waiters.append(self.allocator, .{ .task = task, .is_flush = false });
+        self.event_loop.pending_operations += 1;
+        return .parked;
+    }
+
+    pub fn flush(self: *Self, task: *TaskState) !WriteOutcome {
+        if (self.kind != .file) {
+            return .done;
+        }
+        if (self.takeOutputFailure()) |failure| {
+            return .{ .failure = failure };
+        }
+        const has_output = self.pending_output.items.len > 0 or self.has_output_in_flight;
+        if (!has_output) {
+            return .done;
+        }
+        try self.startOutputJob();
+        try self.output_waiters.append(self.allocator, .{ .task = task, .is_flush = true });
+        self.event_loop.pending_operations += 1;
+        return .parked;
+    }
+
+    fn takeOutputFailure(self: *Self) ?IoError {
+        const failure = self.output_failure orelse return null;
+        self.output_failure = null;
+        return failure;
+    }
+
+    fn startOutputJob(self: *Self) !void {
+        const can_start = !self.has_output_in_flight and self.pending_output.items.len > 0;
+        if (!can_start) return;
+        const job = try FsJob.create(self.allocator, .write_chunk, "", "");
+        errdefer job.destroy();
+        job.output = try self.pending_output.toOwnedSlice(self.allocator);
+        job.file = self.file;
+        job.stream = self;
+        try self.event_loop.startFsJob(self.scheduler, null, job);
+        self.has_output_in_flight = true;
+    }
+
+    pub fn finishOutput(self: *Self, has_failed: bool) void {
+        self.has_output_in_flight = false;
+        if (has_failed) {
+            self.output_failure = .Other;
+        }
+        if (self.is_closed) {
+            self.writeOutputNow();
+            self.releaseIfDone();
+            return;
+        }
+        if (self.output_failure == null) {
+            self.startOutputJob() catch {
+                self.output_failure = .Other;
+            };
+        }
+        self.wakeOutputWaiters();
+    }
+
+    fn wakeOutputWaiters(self: *Self) void {
+        const is_drained = !self.has_output_in_flight and self.pending_output.items.len == 0;
+        const failure = self.output_failure;
+        var kept: usize = 0;
+        var has_woken = false;
+        for (self.output_waiters.items) |waiter| {
+            const has_room = self.pending_output.items.len < file_output_limit;
+            const can_continue = failure != null or (if (waiter.is_flush) is_drained else has_room);
+            if (!can_continue) {
+                self.output_waiters.items[kept] = waiter;
+                kept += 1;
+                continue;
+            }
+            self.event_loop.pending_operations -= 1;
+            const wake_result: WakeResult = if (failure) |found| failureResult(found) else doneResult();
+            self.wakeTask(waiter.task, wake_result);
+            has_woken = true;
+        }
+        self.output_waiters.shrinkRetainingCapacity(kept);
+        if (has_woken) {
+            self.output_failure = null;
+        }
+    }
+
+    fn writeOutputNow(self: *Self) void {
+        const has_output = self.pending_output.items.len > 0 and self.output_failure == null and !self.has_output_in_flight;
+        if (!has_output) return;
+        const request_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.fs)) catch return;
+        defer self.allocator.free(request_memory);
+        const request: *uv.Request = @ptrCast(request_memory.ptr);
+        var written: usize = 0;
+        const output = self.pending_output.items;
+        while (written < output.len) {
+            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
+            const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, -1, null);
+            uv.uv_fs_req_cleanup(request);
+            if (status < 0) break;
+            written += @intCast(status);
+        }
+        self.pending_output.clearRetainingCapacity();
     }
 
     fn sendBytes(self: *Self, task: ?*TaskState, data: []const u8) !WriteOutcome {
