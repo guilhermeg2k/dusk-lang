@@ -28,7 +28,9 @@ const chunk_size = 64 * 1024;
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk };
+    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk, open_file };
+
+    pub const OpenMode = enum(i64) { read, write, append };
 
     allocator: std.mem.Allocator,
     kind: Kind,
@@ -41,6 +43,7 @@ pub const FsJob = struct {
     task: ?*TaskState = null,
     stream: ?*Stream = null,
     file: c_int = -1,
+    open_mode: OpenMode = .read,
     loop: *uv.Loop = undefined,
     failure: ?FsError = null,
     is_found: bool = false,
@@ -95,7 +98,33 @@ pub const FsJob = struct {
             .delete_recursive => _ = self.deleteTree(self.path, .unknown),
             .rename => self.renamePath(),
             .read_chunk => self.readChunk(),
+            .open_file => self.openFile(),
         }
+    }
+
+    fn openFile(self: *Self) void {
+        const flags: c_int = switch (self.open_mode) {
+            .read => open_read_only,
+            .write => open_to_replace,
+            .append => open_to_append,
+        };
+        const request = self.fsRequest();
+        const status = uv.uv_fs_open(self.loop, request, self.path.ptr, flags, new_file_mode, null);
+        uv.uv_fs_req_cleanup(request);
+        if (status < 0) {
+            self.failure = failureFromStatus(status);
+            return;
+        }
+        const stat_status = uv.uv_fs_fstat(self.loop, request, status, null);
+        const is_directory = stat_status >= 0 and uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
+        uv.uv_fs_req_cleanup(request);
+        if (is_directory) {
+            _ = uv.uv_fs_close(self.loop, request, status, null);
+            uv.uv_fs_req_cleanup(request);
+            self.failure = .IsDirectory;
+            return;
+        }
+        self.file = status;
     }
 
     fn checkPathExists(self: *Self) void {
@@ -453,6 +482,7 @@ pub const FsJob = struct {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
             .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
             .read_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
+            .open_file => .{ .value = .{ .int64 = self.file }, .kind = .int64 },
             .read_dir => result: {
                 const names = self.names.?;
                 self.names = null;

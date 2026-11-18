@@ -57,6 +57,7 @@ pub const Stream = struct {
     tls_layer: ?*TlsLayer = null,
     http_reader: ?*HttpReader = null,
     table_index: usize = 0,
+    owns_file: bool = false,
     pool_key: ?[]u8 = null,
     failure: ?IoError = null,
     waiter: ?Waiter = null,
@@ -147,8 +148,9 @@ pub const Stream = struct {
         if (self.handshake_timer_memory.len > 0) {
             self.allocator.free(self.handshake_timer_memory);
         }
-        const owns_file = self.kind == .file and self.file > 2;
-        if (owns_file) {
+        const is_plain_file = self.kind == .file or self.kind == .closed_input;
+        const should_close_file = is_plain_file and (self.owns_file or self.file > 2);
+        if (should_close_file) {
             closeFileNow(self.allocator, self.loop, self.file);
         }
         self.allocator.destroy(self);

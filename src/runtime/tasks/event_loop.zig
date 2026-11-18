@@ -126,6 +126,17 @@ pub const EventLoop = struct {
         return handle;
     }
 
+    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int) !usize {
+        const loop = try self.ensureLoopStarted();
+        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
+        stream.owns_file = true;
+        const handle = self.streams.items.len;
+        stream.table_index = handle;
+        self.streams.appendAssumeCapacity(stream);
+        return handle;
+    }
+
     pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !usize {
         const loop = try self.ensureLoopStarted();
         try self.streams.ensureUnusedCapacity(self.allocator, 1);

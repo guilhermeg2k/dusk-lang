@@ -1,4 +1,5 @@
 const v = @import("../../value.zig");
+const io = @import("io.zig");
 const VM = @import("../../vm.zig").VM;
 const native = @import("../native.zig");
 const FsJob = @import("../../tasks/fs_job.zig").FsJob;
@@ -21,7 +22,30 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "make_dir", Binding{ .native = &makeDir } },
     .{ "delete", Binding{ .native = &delete } },
     .{ "rename", Binding{ .native = &rename } },
+    .{ "open_descriptor", Binding{ .native = &openDescriptor } },
+    .{ "file_stream", Binding{ .native = &fileStream } },
+    .{ "stream_read_bytes", Binding{ .native = &io.streamReadBytes } },
+    .{ "stream_read_exact", Binding{ .native = &io.streamReadExact } },
+    .{ "stream_read_line", Binding{ .native = &io.streamReadLine } },
+    .{ "stream_read_all", Binding{ .native = &io.streamReadAll } },
+    .{ "stream_read_all_bytes", Binding{ .native = &io.streamReadAllBytes } },
+    .{ "stream_close", Binding{ .native = &io.streamClose } },
 });
+
+fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const job = try FsJob.create(vm.event_loop.allocator, .open_file, bytesArg(args, 0), "");
+    errdefer job.destroy();
+    job.open_mode = @enumFromInt(args[1].int64);
+    const current = vm.running_task.?;
+    try vm.event_loop.startFsJob(&vm.scheduler, current, job);
+    current.park();
+    return native.parked();
+}
+
+fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64));
+    return native.ok(.{ .int64 = @intCast(handle) });
+}
 
 fn exists(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startFsJob(vm, .exists, bytesArg(args, 0), "");

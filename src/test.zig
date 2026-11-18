@@ -427,6 +427,24 @@ test "fs: write, write_bytes and append, checked on disk" {
     }
 }
 
+test "fs: files opened for reading, read by lines, chunks and whole" {
+    try runCaseInTmpDir("fs-files-read.dsk");
+}
+
+fn runCaseInTmpDir(src_file: []const u8) !void {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const path = try std.fmt.allocPrint(allocator, "test/success/{s}", .{src_file});
+    const template = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, allocator, .unlimited);
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
 test "fs: read_dir, make_dir, remove and rename, checked on disk" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
