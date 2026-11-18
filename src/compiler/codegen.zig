@@ -1806,18 +1806,18 @@ pub const BytecodeGen = struct {
         for (plans, runtime_plans) |plan, *runtime_plan| {
             runtime_plan.* = .{
                 .kind = valueTypeFromTypeId(self.type_table, plan.type_id),
-                .shape = try self.runtimePlanShape(plan, funcs),
+                .shape = try self.runtimePlanShape(plans, plan, funcs),
             };
         }
         return runtime_plans;
     }
 
-    fn runtimePlanShape(self: *Self, plan: ir.Plan, funcs: *std.ArrayList(bc.Function)) !serialization_plan.Shape {
+    fn runtimePlanShape(self: *Self, plans: []const ir.Plan, plan: ir.Plan, funcs: *std.ArrayList(bc.Function)) !serialization_plan.Shape {
         const type_ptr = self.type_table.getTypePtrById(plan.type_id);
         return switch (plan.shape) {
             .nullable => |child| .{ .nullable = @intCast(child) },
-            .array => |child| .{ .array = @intCast(child) },
-            .map => |child| .{ .map = @intCast(child) },
+            .array => |child| .{ .array = .{ .item = @intCast(child), .proxy = try self.runtimeSite(plans, plan.item_site, &.{ plan.type_id, self.type_table.getPrimitive(.int) }, funcs) } },
+            .map => |child| .{ .map = .{ .item = @intCast(child), .proxy = try self.runtimeSite(plans, plan.item_site, &.{ plan.type_id, self.type_table.getPrimitive(.string) }, funcs) } },
             .proxy => |proxy| .{ .proxy = @intCast(proxy.plan) },
             .scalar => switch (type_ptr.kind) {
                 .int => .int,
@@ -1829,7 +1829,7 @@ pub const BytecodeGen = struct {
             },
             .structure => |structure| .{ .structure = .{
                 .descriptor = try self.structDescriptorOf(plan.type_id),
-                .fields = try self.runtimePlanFields(plan.type_id, structure.fields, funcs),
+                .fields = try self.runtimePlanFields(plans, plan.type_id, structure.fields, funcs),
                 .skipped = try self.runtimeSkippedFields(plan.type_id, structure.skipped, funcs),
             } },
             .enumeration => |variants| blk: {
@@ -1855,7 +1855,7 @@ pub const BytecodeGen = struct {
         };
     }
 
-    fn runtimePlanFields(self: *Self, owner_type: tt.TypeId, fields: []const ir.PlanField, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.Field {
+    fn runtimePlanFields(self: *Self, plans: []const ir.Plan, owner_type: tt.TypeId, fields: []const ir.PlanField, funcs: *std.ArrayList(bc.Function)) ![]const serialization_plan.Field {
         const struct_fields = self.type_table.getTypePtrById(owner_type).kind.@"struct".fields_in_order;
         const runtime_fields = try self.allocator.alloc(serialization_plan.Field, fields.len);
         for (fields, runtime_fields) |field, *runtime_field| {
@@ -1867,6 +1867,7 @@ pub const BytecodeGen = struct {
                 .slot = field.field_index,
                 .plan = @intCast(field.plan),
                 .default_function = if (field.default_value) |value| try self.addPlanDefault(owner_type, struct_field, value, funcs) else null,
+                .proxy = try self.runtimeSite(plans, field.site, &.{owner_type}, funcs),
             };
         }
         return runtime_fields;
@@ -1884,6 +1885,41 @@ pub const BytecodeGen = struct {
         return runtime_skipped;
     }
 
+    fn runtimeSite(self: *Self, plans: []const ir.Plan, site: ?ir.PlanSite, target_types: []const tt.TypeId, funcs: *std.ArrayList(bc.Function)) !?serialization_plan.ProxySite {
+        const found = site orelse return null;
+        const capture_types = try self.allocator.alloc(tt.TypeId, target_types.len + 1);
+        @memcpy(capture_types[0..target_types.len], target_types);
+        capture_types[target_types.len] = plans[found.proxy_plan].type_id;
+        return .{
+            .plan = @intCast(found.proxy_plan),
+            .convert_function = try self.addConversionClosure(found.convert_uid, capture_types, funcs),
+            .is_nullable_target = found.is_nullable_target,
+        };
+    }
+
+    fn addConversionClosure(self: *Self, convert_uid: usize, capture_types: []const tt.TypeId, funcs: *std.ArrayList(bc.Function)) !u16 {
+        const captures = try self.allocator.alloc(ir.Capture, capture_types.len);
+        const args = try self.allocator.alloc(*ir.Value, capture_types.len);
+        for (capture_types, captures, args, 0..) |type_id, *capture, *arg, i| {
+            capture.* = .{ .type_id = type_id, .is_cell = false };
+            arg.* = try ir.Value.init(self.allocator, .{ .type_id = type_id, .data = .{ .capture_ref = .{ .index = @intCast(i), .is_cell = false } } });
+        }
+        const boolean = self.type_table.getPrimitive(.boolean);
+        const call = try ir.Value.init(self.allocator, .{ .type_id = boolean, .data = .{ .fn_call = .{ .fn_uid = convert_uid, .identifier = "proxy_into", .args = args } } });
+        const body = try self.allocator.alloc(ir.Instruction, 1);
+        body[0] = .{ .return_stmt = .{ .value = call } };
+        const function_index: u16 = @intCast(funcs.items.len);
+        try funcs.append(self.allocator, try self.genFunction(.{
+            .uid = 0,
+            .identifier = "$proxy-convert",
+            .params = &.{},
+            .return_type = boolean,
+            .captures = captures,
+            .body = body,
+        }));
+        return function_index;
+    }
+
     fn structDescriptorOf(self: *Self, type_id: tt.TypeId) !u16 {
         const fields = self.type_table.getTypePtrById(type_id).kind.@"struct".fields_in_order;
         const keys = try self.allocator.alloc([]const u8, fields.len);
@@ -1897,8 +1933,11 @@ pub const BytecodeGen = struct {
         const owner = try ir.Value.init(self.allocator, .{ .type_id = owner_type, .data = .{ .capture_ref = .{ .index = 0, .is_cell = false } } });
         const name = try ir.Value.init(self.allocator, .{ .type_id = self.type_table.getPrimitive(.string), .data = .{ .i_string = field.identifier } });
         const target = try ir.Value.init(self.allocator, .{ .type_id = field.type_id, .data = .{ .indexed = .{ .target = owner, .index = name } } });
-        const body = try self.allocator.alloc(ir.Instruction, 1);
+        const boolean = self.type_table.getPrimitive(.boolean);
+        const done = try ir.Value.init(self.allocator, .{ .type_id = boolean, .data = .{ .i_bool = true } });
+        const body = try self.allocator.alloc(ir.Instruction, 2);
         body[0] = .{ .update_indexed = .{ .target = target, .value = value } };
+        body[1] = .{ .return_stmt = .{ .value = done } };
         const captures = try self.allocator.alloc(ir.Capture, 1);
         captures[0] = .{ .type_id = owner_type, .is_cell = false };
         const function_index: u16 = @intCast(funcs.items.len);
@@ -1906,7 +1945,7 @@ pub const BytecodeGen = struct {
             .uid = 0,
             .identifier = "$field-default",
             .params = &.{},
-            .return_type = self.type_table.getPrimitive(.void),
+            .return_type = boolean,
             .captures = captures,
             .body = body,
         }));

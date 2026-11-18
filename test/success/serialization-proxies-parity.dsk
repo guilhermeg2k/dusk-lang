@@ -1,0 +1,211 @@
+import std/serialization
+import std/json
+import std/time
+import std/array
+import std/map
+import std/string
+
+struct Span
+    label: string
+    starts: time::Timestamp
+end
+
+struct Window
+    ~from_ms: int
+    ~to_ms: int
+
+    func first(self: @) -> int
+        return self.from_ms
+    end
+end
+
+func window_to_span(window: Window) -> Span
+    return Span(label = "w${window.to_ms - window.from_ms}", starts = time::from_unix_ms(window.from_ms))
+end
+
+func span_to_window(span: Span) -> Window
+    return Window(from_ms = span.starts.unix_ms(), to_ms = span.starts.unix_ms() + label_width(span.label))
+end
+
+func label_width(label: string) -> int
+    let digits = string::slice(label, 1, string::len(label)) catch e then
+        return 0
+    end
+    let width = string::to_int(digits) catch e then
+        return 0
+    end
+    return width
+end
+
+func ms_to_seconds(milliseconds: int) -> int
+    return milliseconds // 1000
+end
+
+func seconds_to_ms(seconds: int) -> int
+    return seconds * 1000
+end
+
+func counter() -> int
+    return 99
+end
+
+struct Wire
+    base: int
+    extra: int = counter()
+end
+
+struct Total
+    value: int
+end
+
+func total_to_wire(total: Total) -> Wire
+    return Wire(base = total.value, extra = 0)
+end
+
+func wire_to_total(wire: Wire) -> Total
+    return Total(value = wire.base + wire.extra)
+end
+
+schema Api(case = "snake")
+    time::Timestamp: via(time::to_iso, time::from_iso)
+    Window: via(window_to_span, span_to_window)
+    Total: via(total_to_wire, wire_to_total)
+end
+
+struct Totals
+    one: Total
+    many: []Total
+    named: map[string, Total]
+end
+
+struct Event
+    title: string
+    startsAt: time::Timestamp
+    endsAt: ?time::Timestamp = null
+    durationMs: int
+    marks: []time::Timestamp = []
+    maybeMarks: []?time::Timestamp = []
+    byName: map[string, time::Timestamp] = {}
+    window: ?Window = null
+    order: int = counter()
+
+    schema Api
+        durationMs: "duration_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+
+struct Batch
+    events: []Event
+    labels: map[string, string]
+end
+
+union Moment
+    at: time::Timestamp
+    never: int
+end
+
+func native_text[T](value: T) -> json::JsonError!string
+    return try json::encode[T, Api](value)
+end
+
+func dusk_text[T](value: T) -> serialization::SerializationError!string
+    let mut writer = json::writer()
+    try serialization::encode[T, json::Writer, Api](value, writer)
+    return writer.text()
+end
+
+func dusk_decode[T](text: string) -> serialization::SerializationError!T
+    let mut reader = json::reader(text)
+    return try serialization::decode_document[T, json::Reader, Api](reader)
+end
+
+func native_error(text: string) -> ?json::JsonError
+    let event = json::decode[Event, Api](text) catch e then
+        return e
+    end
+    return null
+end
+
+func dusk_error(text: string) -> ?serialization::SerializationError
+    let event = dusk_decode[Event](text) catch e then
+        return e
+    end
+    return null
+end
+
+func at(milliseconds: int) -> time::Timestamp
+    return time::from_unix_ms(milliseconds)
+end
+
+func main() -> !void
+    let mut names: map[string, time::Timestamp] = {"a": at(1000), "b": at(2000), "c": at(3000)}
+    map::remove(names, "b")
+    names["d"] = at(4000)
+    let full = Event(title = "full", startsAt = at(86400000), endsAt = at(90000000), durationMs = 61000, marks = [at(0), at(5)], maybeMarks = [at(7), null, at(9)], byName = names, window = Window(from_ms = 500, to_ms = 2500), order = 1)
+    let bare = Event(title = "bare", startsAt = at(0), durationMs = 0)
+    let batch = Batch(events = [full, bare, full], labels = {"x": "y"})
+
+    let text = try native_text(batch)
+    assert(text == (try dusk_text(batch)))
+    assert(string::contains(text, "\"by_name\":{\"a\":\"1970-01-01T00:00:01.000Z\",\"c\":\"1970-01-01T00:00:03.000Z\",\"d\":\"1970-01-01T00:00:04.000Z\"}"))
+    assert(string::contains(text, "\"window\":{\"label\":\"w2000\",\"starts\":\"1970-01-01T00:00:00.500Z\"}"))
+    assert(string::contains(text, "\"maybe_marks\":[\"1970-01-01T00:00:00.007Z\",null,\"1970-01-01T00:00:00.009Z\"]"))
+    assert(string::contains(text, "\"duration_s\":61"))
+
+    let native = try json::decode[Batch, Api](text)
+    let dusk = try dusk_decode[Batch](text)
+    assert((try native_text(native)) == text)
+    assert((try native_text(dusk)) == text)
+    assert(native.events[0].durationMs == 61000)
+    if native.events[0].byName["d"]: d then
+        assert(d.unix_ms() == 4000)
+    else
+        assert(false)
+    end
+    if native.events[0].window: window then
+        assert(window.first() == 500)
+    else
+        assert(false)
+    end
+    assert(native.events[1].endsAt == null and native.events[1].window == null)
+
+    let partial = "{\"title\":\"p\",\"starts_at\":\"2024-02-29T12:30:00Z\",\"duration_s\":2,\"maybe_marks\":[null]}"
+    let from_native = try json::decode[Event, Api](partial)
+    let from_dusk = try dusk_decode[Event](partial)
+    assert(from_native.order == 99 and from_dusk.order == 99)
+    assert(from_native.durationMs == 2000 and from_native.maybeMarks[0] == null)
+    assert((try native_text(from_native)) == (try native_text(from_dusk)))
+
+    let broken = "{\"title\":\"p\",\"starts_at\":\"soon\",\"duration_s\":2}"
+    assert(native_error(broken) == json::JsonError.InvalidValue)
+    assert(dusk_error(broken) == serialization::SerializationError.InvalidValue)
+    let broken_item = "{\"title\":\"p\",\"starts_at\":\"2024-01-01T00:00:00Z\",\"duration_s\":2,\"marks\":[\"2024-01-01T00:00:00Z\",\"later\"]}"
+    assert(native_error(broken_item) == json::JsonError.InvalidValue)
+
+    let mut many: []Event = []
+    for 0..1999: i do
+        array::append(many, Event(title = "e${i}", startsAt = at(i * 1000), durationMs = i * 1000, marks = [at(i)], byName = {"k": at(i)}))
+    end
+    let many_text = try native_text(many)
+    assert(many_text == (try dusk_text(many)))
+    let many_back = try json::decode[[]Event, Api](many_text)
+    assert(array::len(many_back) == 2000 and many_back[1999].marks[0].unix_ms() == 1999)
+    assert((try native_text(many_back)) == many_text)
+
+    let totals_text = "{\"one\":{\"base\":1},\"many\":[{\"base\":2},{\"base\":3,\"extra\":0}],\"named\":{\"k\":{\"base\":4}}}"
+    let native_totals = try json::decode[Totals, Api](totals_text)
+    let dusk_totals = try dusk_decode[Totals](totals_text)
+    assert(native_totals.one.value == 100 and dusk_totals.one.value == 100)
+    assert(native_totals.many[0].value == 101 and native_totals.many[1].value == 3)
+    assert(dusk_totals.many[0].value == 101 and dusk_totals.many[1].value == 3)
+    if native_totals.named["k"]: named then
+        assert(named.value == 103)
+    else
+        assert(false)
+    end
+    assert((try native_text(native_totals)) == (try dusk_text(dusk_totals)))
+
+    assert((try json::encode[time::Timestamp, Api](at(0))) == "\"1970-01-01T00:00:00.000Z\"")
+    let moment = try json::decode[Moment, Api]("{\"at\":\"1970-01-01T00:00:01.000Z\"}")
+    assert((try json::encode[Moment, Api](moment)) == "{\"at\":\"1970-01-01T00:00:01.000Z\"}")
+end

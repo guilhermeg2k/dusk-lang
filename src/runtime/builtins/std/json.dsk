@@ -37,8 +37,8 @@ struct EncodeOptions
     max_depth: int = 128
 end
 
-extern func ~encode_value[T](value: T, options: EncodeOptions, plan: int) -> JsonError!string
-extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut defaults: []func() -> void) -> JsonError!T
+extern func ~encode_value[T](value: T, options: EncodeOptions, plan: int, fragments: []string) -> JsonError!string
+extern func ~decode_value[T](text: string, mut diagnostic: ?Diagnostic, options: DecodeOptions, plan: int, mut steps: []func() -> bool) -> JsonError!T
 extern func ~string_end(text: string, position: int) -> int
 extern func ~number_end(text: string, position: int) -> int
 extern func ~string_value(text: string, start: int, stop: int) -> JsonError!string
@@ -53,7 +53,15 @@ extern func ~buffer_text(data: buffer, used: int) -> string
 
 func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!string
     if serialization::is_native[T, S]() then
-        return try encode_value(value, options, serialization::plan_of[T, S]())
+        let mut fragments: []string = []
+        if serialization::has_proxies[T, S]() then
+            let mut collector = writer(options)
+            serialization::proxy_fragments[T, Writer, S](value, collector, fragments) catch e then
+                try raise(collector.failure, e)
+                return JsonError.InvalidJson
+            end
+        end
+        return try encode_value(value, options, serialization::plan_of[T, S](), fragments)
     else
         return try encode_derived[T, S](value, options)
     end
@@ -61,10 +69,12 @@ end
 
 func decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, options: DecodeOptions = @()) -> JsonError!T
     if serialization::is_native[T, S]() then
-        let mut defaults: []func() -> void = []
-        let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T, S](), defaults)
-        for defaults: apply_default do
-            apply_default()
+        let mut steps: []func() -> bool = []
+        let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T, S](), steps)
+        for steps: step do
+            if !step() then
+                return JsonError.InvalidValue
+            end
         end
         return value
     else
@@ -607,6 +617,11 @@ struct Writer
 
     func text(self: @) -> string
         return buffer_text(self.data, self.used)
+    end
+
+    func clear(mut self: @) -> void
+        self.used = 0
+        self.depth = 0
     end
 
     func ~fail(mut self: @, failure: JsonError) -> void

@@ -17,6 +17,8 @@ pub const SerializationOperation = enum {
     field_default,
     plan_of,
     is_native,
+    has_proxies,
+    derive_collect,
 };
 
 pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResult;

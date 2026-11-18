@@ -96,7 +96,8 @@ test "json: native entry points reject invalid UTF-8" {
     const encode_options = try value.Struct.init(vm.getCurrentHeapAllocator(), 1, encode_descriptor);
     encode_options.set(0, .{ .int64 = 128 });
     const invalid_text = try vm.allocBytesValue(&.{0xff}, .string);
-    var encode_args = [_]value.Value{ invalid_text, .{ .heap_obj = &encode_options.obj }, .{ .int64 = @intCast(plan_index) } };
+    const fragments = try value.Array.init(vm.getCurrentHeapAllocator(), .string, 8);
+    var encode_args = [_]value.Value{ invalid_text, .{ .heap_obj = &encode_options.obj }, .{ .int64 = @intCast(plan_index) }, .{ .heap_obj = &fragments.obj } };
     const encoded = try json.encode(&vm, &encode_args);
     try testing.expect(encoded.has_failed);
     try testing.expectEqual(@as(i64, @intFromEnum(json.JsonError.InvalidJson)), encoded.value.int64);
@@ -104,8 +105,8 @@ test "json: native entry points reject invalid UTF-8" {
     decode_options.set(0, .{ .bool = false });
     decode_options.set(1, .{ .int64 = 128 });
     const invalid_document = try vm.allocBytesValue(&.{ '"', 0xff, '"' }, .string);
-    const defaults = try value.Array.init(vm.getCurrentHeapAllocator(), .function, 8);
-    var decode_args = [_]value.Value{ invalid_document, value.NULL_VALUE, .{ .heap_obj = &decode_options.obj }, .{ .int64 = @intCast(plan_index) }, .{ .heap_obj = &defaults.obj } };
+    const steps = try value.Array.init(vm.getCurrentHeapAllocator(), .function, 8);
+    var decode_args = [_]value.Value{ invalid_document, value.NULL_VALUE, .{ .heap_obj = &decode_options.obj }, .{ .int64 = @intCast(plan_index) }, .{ .heap_obj = &steps.obj } };
     const decoded = try json.decode(&vm, &decode_args);
     try testing.expect(decoded.has_failed);
     try testing.expectEqual(@as(usize, 0), vm.heap.temporary_roots.items.len);
@@ -147,6 +148,7 @@ test "serialization: schemas rename, alias, skip and omit fields for each consum
 
 test "serialization: proxies convert values through two functions" {
     try runCase("serialization-proxies.dsk");
+    try runCase("serialization-proxies-parity.dsk");
     try runCaseError("sema/schema-via-wrong-signature.dsk", error.InvalidSchema);
     try runCaseError("sema/schema-via-not-function.dsk", error.InvalidSchema);
     try runCaseError("sema/schema-type-line-rule.dsk", error.InvalidSchema);

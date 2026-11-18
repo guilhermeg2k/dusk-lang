@@ -17,6 +17,14 @@ pub const Program = struct {
 pub const Plan = struct {
     type_id: TypeId,
     shape: PlanShape,
+    item_site: ?PlanSite = null,
+};
+
+pub const PlanSite = struct {
+    proxy: usize,
+    proxy_plan: usize,
+    convert_uid: usize,
+    is_nullable_target: bool,
 };
 
 pub const PlanShape = union(enum) {
@@ -48,6 +56,7 @@ pub const PlanField = struct {
     plan: usize,
     default_value: ?*Value,
     proxy: ?usize = null,
+    site: ?PlanSite = null,
 };
 
 pub const PlanSkip = struct {

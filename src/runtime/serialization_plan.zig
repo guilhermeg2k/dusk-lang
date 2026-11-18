@@ -13,12 +13,23 @@ pub const Shape = union(enum) {
     boolean,
     string,
     nullable: u32,
-    array: u32,
-    map: u32,
+    array: Items,
+    map: Items,
     structure: Structure,
     enumeration: []const EnumVariant,
     tagged_union: TaggedUnion,
     proxy: u32,
+};
+
+pub const Items = struct {
+    item: u32,
+    proxy: ?ProxySite = null,
+};
+
+pub const ProxySite = struct {
+    plan: u32,
+    convert_function: u16,
+    is_nullable_target: bool,
 };
 
 pub const Structure = struct {
@@ -34,6 +45,7 @@ pub const Field = struct {
     slot: u8,
     plan: u32,
     default_function: ?u16,
+    proxy: ?ProxySite = null,
 
     pub fn isNamed(self: Field, text: []const u8) bool {
         return isAnyName(self.name, self.aliases, text);
