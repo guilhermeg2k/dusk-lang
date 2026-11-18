@@ -422,12 +422,13 @@ func check_diagnostic() -> void
 end
 
 func main() -> !void
-    assert(serialization::is_native[Event, Api]())
+    assert(!serialization::is_proxied[Event, Api]())
     assert(serialization::has_proxies[Event, Api]())
     assert(!serialization::has_proxies[MoneyParts, Api]())
-    assert(!serialization::is_native[time::Timestamp, Api]())
-    assert(!serialization::is_native[Moment, Api]())
-    assert(serialization::is_native[MoneyParts, Api]())
+    assert(serialization::is_proxied[time::Timestamp, Api]())
+    assert(serialization::is_proxied[?time::Timestamp, Api]())
+    assert(!serialization::is_proxied[Moment, Api]())
+    assert(serialization::has_proxies[Moment, Api]())
     let event = Event(title = "Launch", startsAt = time::from_unix_ms(86400000), durationMs = 90000, price = Money(cents = 1999))
     let expected = "{\"title\":\"Launch\",\"starts_at\":\"1970-01-02T00:00:00.000Z\",\"ends_at\":null,\"duration_s\":90,\"price\":{\"whole\":19,\"cents\":99}}"
     assert((try json::encode[Event, Api](event)) == expected)

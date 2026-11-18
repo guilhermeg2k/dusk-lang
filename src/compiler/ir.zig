@@ -18,13 +18,21 @@ pub const Plan = struct {
     type_id: TypeId,
     shape: PlanShape,
     item_site: ?PlanSite = null,
+    root_site: ?PlanSite = null,
 };
 
 pub const PlanSite = struct {
-    proxy: usize,
     proxy_plan: usize,
-    convert_uid: usize,
     is_nullable_target: bool,
+    decode: SiteFunction,
+    encode: SiteFunction,
+};
+
+pub const SiteFunction = struct {
+    uid: usize,
+    captures: []const TypeId,
+    arg_count: usize,
+    return_type: TypeId,
 };
 
 pub const PlanShape = union(enum) {
@@ -69,6 +77,7 @@ pub const PlanVariant = struct {
     aliases: []const []const u8,
     declared_name: []const u8,
     plan: ?usize,
+    site: ?PlanSite = null,
 };
 
 pub const Block = []const Instruction;

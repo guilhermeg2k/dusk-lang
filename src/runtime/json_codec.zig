@@ -24,52 +24,117 @@ pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const options = v.HeapValue.getParentPtr(v.Struct, args[1].heap_obj);
-    const max_depth = options.get(0).int64;
-    if (!isValidDepth(max_depth)) {
-        return native.fail(JsonError.InvalidOptions);
-    }
+    const max_depth = encodeDepth(args[1]) orelse return native.fail(JsonError.InvalidOptions);
     var output: std.Io.Writer.Allocating = .init(allocator);
     var encoder = Encoder{
         .vm = vm,
         .allocator = allocator,
         .writer = .{ .writer = &output.writer, .options = .{} },
-        .max_depth = @intCast(max_depth),
-        .fragments = v.HeapValue.getParentPtr(v.Array, args[3].heap_obj.followRelocated()),
+        .max_depth = max_depth,
     };
-    encoder.encodeValue(@intCast(args[2].int64), args[0], 0) catch |failure| {
-        const is_allocation_failure = failure == error.OutOfMemory or failure == error.WriteFailed;
-        if (is_allocation_failure) {
-            return error.OutOfMemory;
-        }
-        return native.fail(std.meta.stringToEnum(JsonError, @errorName(failure)) orelse .InvalidJson);
+    if (args.len > 3) {
+        try encoder.levels.append(allocator, .{ .list = arrayOf(args[3]) });
+    }
+    encoder.visit(.write, @intCast(args[2].int64), args[0], 0) catch |failure| {
+        return encodeFailure(failure);
     };
     return native.ok(try vm.allocBytesValue(output.written(), .string));
+}
+
+pub fn collectSites(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+    const root_base = vm.heap.temporary_roots.items.len;
+    defer vm.heap.restoreRootCount(root_base);
+    const max_depth = encodeDepth(args[1]) orelse return native.fail(JsonError.InvalidOptions);
+    var encoder = Encoder{ .vm = vm, .allocator = arena.allocator(), .max_depth = max_depth };
+    const roots = try vm.heap.protectValue(args[3], .array);
+    const queue = try vm.heap.protectValue(args[4], .array);
+    encoder.visit(.collect, @intCast(args[2].int64), args[0], 0) catch |failure| {
+        return encodeFailure(failure);
+    };
+    try encoder.createSiteClosures(roots, queue);
+    return native.ok(.{ .null = {} });
+}
+
+pub fn collectNested(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+    const root_base = vm.heap.temporary_roots.items.len;
+    defer vm.heap.restoreRootCount(root_base);
+    const max_depth = encodeDepth(args[3]) orelse return native.fail(JsonError.InvalidOptions);
+    var encoder = Encoder{ .vm = vm, .allocator = arena.allocator(), .max_depth = max_depth };
+    const queue = try vm.heap.protectValue(args[0], .array);
+    const stop: usize = @intCast(args[2].int64);
+    var i: usize = @intCast(args[1].int64);
+    while (i < stop) : (i += 1) {
+        const closure = closureOf(arrayOf(vm.heap.protectedValue(queue)).getDataPtr()[i]);
+        const out = arrayOf(closure.captures()[1]);
+        if (out.len == 0) continue;
+        const children = try vm.heap.protectValue(closure.captures()[2], .array);
+        encoder.found.clearRetainingCapacity();
+        encoder.visit(.collect, @intCast(closure.captures()[3].int64), out.getDataPtr()[0], 0) catch |failure| {
+            return encodeFailure(failure);
+        };
+        try encoder.createSiteClosures(children, queue);
+    }
+    return native.ok(.{ .null = {} });
+}
+
+fn encodeDepth(options_value: v.Value) ?usize {
+    const options = v.HeapValue.getParentPtr(v.Struct, options_value.heap_obj);
+    const max_depth = options.get(0).int64;
+    if (!isValidDepth(max_depth)) {
+        return null;
+    }
+    return @intCast(max_depth);
+}
+
+fn encodeFailure(failure: anyerror) anyerror!native.NativeResult {
+    const is_allocation_failure = failure == error.OutOfMemory or failure == error.WriteFailed;
+    if (is_allocation_failure) {
+        return error.OutOfMemory;
+    }
+    return native.fail(std.meta.stringToEnum(JsonError, @errorName(failure)) orelse .InvalidJson);
 }
 
 fn isValidDepth(depth: i64) bool {
     return depth > 0 and depth <= 512;
 }
 
+const Mode = enum { collect, write };
+
+const Level = struct {
+    list: *v.Array,
+    next: usize = 0,
+};
+
+const FoundSite = struct {
+    value: usize,
+    site: serialization_plan.ProxySite,
+};
+
 const Encoder = struct {
     vm: *VM,
     allocator: std.mem.Allocator,
-    writer: std.json.Stringify,
+    writer: std.json.Stringify = undefined,
     max_depth: usize,
-    fragments: *v.Array,
-    next_fragment: usize = 0,
     ancestors: std.ArrayList(*v.HeapValue) = .empty,
+    levels: std.ArrayList(Level) = .empty,
+    found: std.ArrayList(FoundSite) = .empty,
 
-    fn encodeValue(self: *Encoder, plan_index: u32, value: v.Value, depth: usize) anyerror!void {
+    fn visit(self: *Encoder, comptime mode: Mode, plan_index: u32, value: v.Value, depth: usize) anyerror!void {
         const plan = self.vm.program.serialization_plans[plan_index];
         if (plan.shape == .nullable) {
             if (@as(u64, @bitCast(value)) == 0) {
-                try self.writer.write(null);
+                if (mode == .write) {
+                    try self.writer.write(null);
+                }
                 return;
             }
             const inner = self.vm.program.serialization_plans[plan.shape.nullable];
             const unwrapped = if (inner.kind.isHeapType()) value else v.HeapValue.getParentPtr(v.NullBox, value.heap_obj).value;
-            return self.encodeValue(plan.shape.nullable, unwrapped, depth);
+            return self.visit(mode, plan.shape.nullable, unwrapped, depth);
         }
         const is_container = switch (plan.shape) {
             .array, .map, .structure, .tagged_union => true,
@@ -91,6 +156,101 @@ const Encoder = struct {
             _ = self.ancestors.pop();
         };
         switch (plan.shape) {
+            .int, .byte, .float, .boolean, .string, .enumeration => {
+                if (mode == .collect) return;
+                try self.writeScalar(plan.shape, value);
+            },
+            .structure => |structure| {
+                const object = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
+                if (mode == .write) {
+                    try self.writer.beginObject();
+                }
+                for (structure.fields) |field| {
+                    const item = object.get(field.slot);
+                    const is_omitted = field.omits_null and @as(u64, @bitCast(item)) == 0;
+                    if (is_omitted) continue;
+                    if (mode == .write) {
+                        try self.writer.objectField(field.name);
+                    }
+                    if (field.proxy) |site| {
+                        try self.visitSite(mode, site, item, self.planKind(field.plan), depth);
+                        continue;
+                    }
+                    try self.visit(mode, field.plan, item, depth + 1);
+                }
+                if (mode == .write) {
+                    try self.writer.endObject();
+                }
+            },
+            .array => |items| {
+                const array = arrayOf(value);
+                if (mode == .write) {
+                    try self.writer.beginArray();
+                }
+                for (array.getDataPtr()[0..array.len]) |item| {
+                    if (items.proxy) |site| {
+                        try self.visitSite(mode, site, item, self.planKind(items.item), depth);
+                        continue;
+                    }
+                    try self.visit(mode, items.item, item, depth + 1);
+                }
+                if (mode == .write) {
+                    try self.writer.endArray();
+                }
+            },
+            .map => |items| {
+                const map = v.HeapValue.getParentPtr(v.Map, value.heap_obj);
+                if (mode == .write) {
+                    try self.writer.beginObject();
+                }
+                if (map.getStorage()) |storage| {
+                    for (storage.entries()[0..storage.len]) |entry| {
+                        if (entry.isRemoved()) continue;
+                        if (mode == .write) {
+                            const key = bytes(entry.key);
+                            if (!std.unicode.utf8ValidateSlice(key)) {
+                                return error.InvalidJson;
+                            }
+                            try self.writer.objectField(key);
+                        }
+                        if (items.proxy) |site| {
+                            try self.visitSite(mode, site, entry.value, self.planKind(items.item), depth);
+                            continue;
+                        }
+                        try self.visit(mode, items.item, entry.value, depth + 1);
+                    }
+                }
+                if (mode == .write) {
+                    try self.writer.endObject();
+                }
+            },
+            .tagged_union => |tagged| {
+                const object = v.HeapValue.getParentPtr(v.Union, value.heap_obj);
+                const variant = for (tagged.variants) |candidate| {
+                    if (candidate.tag == object.active_tag) {
+                        break candidate;
+                    }
+                } else return error.InvalidUnion;
+                if (mode == .write) {
+                    try self.writer.beginObject();
+                    try self.writer.objectField(variant.name);
+                }
+                if (variant.proxy) |site| {
+                    try self.visitSite(mode, site, object.get(variant.tag), self.planKind(variant.plan), depth);
+                } else {
+                    try self.visit(mode, variant.plan, object.get(variant.tag), depth + 1);
+                }
+                if (mode == .write) {
+                    try self.writer.endObject();
+                }
+            },
+            .proxy => |site| try self.visitSite(mode, site, value, plan.kind, depth),
+            .nullable => unreachable,
+        }
+    }
+
+    fn writeScalar(self: *Encoder, shape: serialization_plan.Shape, value: v.Value) !void {
+        switch (shape) {
             .int, .byte => try self.writer.write(value.int64),
             .float => {
                 if (!std.math.isFinite(value.float64)) {
@@ -99,7 +259,13 @@ const Encoder = struct {
                 try self.writer.write(value.float64);
             },
             .boolean => try self.writer.write(value.bool),
-            .string => try self.writeString(bytes(value)),
+            .string => {
+                const text = bytes(value);
+                if (!std.unicode.utf8ValidateSlice(text)) {
+                    return error.InvalidJson;
+                }
+                try self.writer.write(text);
+            },
             .enumeration => |variants| {
                 for (variants) |variant| {
                     if (variant.value != value.int64) continue;
@@ -108,91 +274,54 @@ const Encoder = struct {
                 }
                 return error.UnknownVariant;
             },
-            .structure => |structure| {
-                const object = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
-                try self.writer.beginObject();
-                for (structure.fields) |field| {
-                    const item = object.get(field.slot);
-                    const is_omitted = field.omits_null and @as(u64, @bitCast(item)) == 0;
-                    if (is_omitted) continue;
-                    try self.writer.objectField(field.name);
-                    if (field.proxy) |site| {
-                        try self.encodeSite(site, item);
-                        continue;
-                    }
-                    try self.encodeValue(field.plan, item, depth + 1);
-                }
-                try self.writer.endObject();
-            },
-            .array => |items| {
-                const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
-                try self.writer.beginArray();
-                for (array.getDataPtr()[0..array.len]) |item| {
-                    if (items.proxy) |site| {
-                        try self.encodeSite(site, item);
-                        continue;
-                    }
-                    try self.encodeValue(items.item, item, depth + 1);
-                }
-                try self.writer.endArray();
-            },
-            .map => |items| {
-                const map = v.HeapValue.getParentPtr(v.Map, value.heap_obj);
-                try self.writer.beginObject();
-                if (map.getStorage()) |storage| {
-                    for (storage.entries()[0..storage.len]) |entry| {
-                        if (entry.isRemoved()) continue;
-                        const key = bytes(entry.key);
-                        if (!std.unicode.utf8ValidateSlice(key)) {
-                            return error.InvalidJson;
-                        }
-                        try self.writer.objectField(key);
-                        if (items.proxy) |site| {
-                            try self.encodeSite(site, entry.value);
-                            continue;
-                        }
-                        try self.encodeValue(items.item, entry.value, depth + 1);
-                    }
-                }
-                try self.writer.endObject();
-            },
-            .tagged_union => |tagged| {
-                const object = v.HeapValue.getParentPtr(v.Union, value.heap_obj);
-                for (tagged.variants) |variant| {
-                    if (object.active_tag != variant.tag) continue;
-                    try self.writer.beginObject();
-                    try self.writer.objectField(variant.name);
-                    try self.encodeValue(variant.plan, object.get(variant.tag), depth + 1);
-                    try self.writer.endObject();
-                    return;
-                }
-                return error.InvalidUnion;
-            },
-            .nullable, .proxy => unreachable,
+            else => unreachable,
         }
     }
 
-    fn encodeSite(self: *Encoder, site: serialization_plan.ProxySite, value: v.Value) !void {
+    fn planKind(self: *Encoder, plan_index: u32) v.ValueType {
+        return self.vm.program.serialization_plans[plan_index].kind;
+    }
+
+    fn visitSite(self: *Encoder, comptime mode: Mode, site: serialization_plan.ProxySite, value: v.Value, kind: v.ValueType, depth: usize) !void {
         const is_null = site.is_nullable_target and @as(u64, @bitCast(value)) == 0;
         if (is_null) {
-            try self.writer.write(null);
+            if (mode == .write) {
+                try self.writer.write(null);
+            }
             return;
         }
-        if (self.next_fragment >= self.fragments.len) {
+        if (mode == .collect) {
+            const root = try self.vm.heap.protectValue(value, kind);
+            try self.found.append(self.allocator, .{ .value = root, .site = site });
+            return;
+        }
+        if (self.levels.items.len == 0) {
             return error.InvalidJson;
         }
-        const fragment = bytes(self.fragments.getDataPtr()[self.next_fragment]);
-        self.next_fragment += 1;
-        try self.writer.beginWriteRaw();
-        try self.writer.writer.writeAll(fragment);
-        self.writer.endWriteRaw();
+        const level = &self.levels.items[self.levels.items.len - 1];
+        if (level.next >= level.list.len) {
+            return error.InvalidJson;
+        }
+        const closure = closureOf(level.list.getDataPtr()[level.next]);
+        level.next += 1;
+        const out = arrayOf(closure.captures()[1]);
+        if (out.len == 0) {
+            return error.InvalidJson;
+        }
+        try self.levels.append(self.allocator, .{ .list = arrayOf(closure.captures()[2]) });
+        defer _ = self.levels.pop();
+        try self.visit(.write, site.plan, out.getDataPtr()[0], depth);
     }
 
-    fn writeString(self: *Encoder, text: []const u8) !void {
-        if (!std.unicode.utf8ValidateSlice(text)) {
-            return error.InvalidJson;
+    fn createSiteClosures(self: *Encoder, level: usize, queue: usize) !void {
+        for (self.found.items) |entry| {
+            const out = try allocRootedArray(self.vm, self.planKind(entry.site.plan), 1);
+            const children = try allocRootedArray(self.vm, .function, 2);
+            const plan = try self.vm.heap.protectValue(.{ .int64 = entry.site.plan }, .int64);
+            const closure = try allocRootedClosure(self.vm, entry.site.encode_function, &.{ entry.value, out, children, plan });
+            try appendRootedItem(self.vm, level, closure);
+            try appendRootedItem(self.vm, queue, closure);
         }
-        try self.writer.write(text);
     }
 };
 
@@ -200,7 +329,66 @@ fn bytes(value: v.Value) []const u8 {
     return v.HeapValue.getParentPtr(v.Bytes, value.heap_obj).slice();
 }
 
+fn arrayOf(value: v.Value) *v.Array {
+    return v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
+}
+
+fn closureOf(value: v.Value) *v.Closure {
+    return v.HeapValue.getParentPtr(v.Closure, value.heap_obj);
+}
+
+fn allocRootedArray(vm: *VM, kind: v.ValueType, capacity: usize) !usize {
+    const size = v.Array.calc_size(capacity);
+    try vm.maybeCollectGarbage(size);
+    const array = try v.Array.init(vm.getCurrentHeapAllocator(), kind, capacity);
+    vm.increaseHeapAllocationCount(size);
+    return vm.heap.protectValue(.{ .heap_obj = &array.obj }, .array);
+}
+
+fn appendRootedItem(vm: *VM, array_root: usize, item_root: usize) !void {
+    var array = v.HeapValue.getParentPtr(v.Array, vm.heap.protectedValue(array_root).heap_obj);
+    if (array.len == array.capacity) {
+        array = try vm.growArray(&vm.heap.temporary_roots.items[array_root].value);
+    }
+    try array.append(vm.heap.protectedValue(item_root));
+}
+
+fn allocRootedClosure(vm: *VM, function: u16, captures: []const usize) !usize {
+    const size = v.Closure.calc_size(captures.len);
+    try vm.maybeCollectGarbage(size);
+    const closure = try v.Closure.init(vm.getCurrentHeapAllocator(), &vm.program.functions[function], captures.len);
+    vm.increaseHeapAllocationCount(size);
+    for (captures, 0..) |root, i| {
+        closure.captures()[i] = vm.heap.protectedValue(root);
+    }
+    return vm.heap.protectValue(.{ .heap_obj = &closure.obj }, .function);
+}
+
 pub fn decode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    return decodeDocument(vm, args, false);
+}
+
+pub fn decodeProxied(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    return decodeDocument(vm, args, true);
+}
+
+pub fn describeStep(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
+    if (@as(u64, @bitCast(args[2])) == 0) {
+        return native.ok(.{ .null = {} });
+    }
+    const root_base = vm.heap.temporary_roots.items.len;
+    defer vm.heap.restoreRootCount(root_base);
+    const closure = closureOf(args[0]);
+    const path = closure.captures()[closure.capture_count - 2];
+    const offset: usize = @intCast(closure.captures()[closure.capture_count - 1].int64);
+    const position = Position.at(bytes(args[1]), offset);
+    const diagnostic = try vm.heap.protectValue(args[2], .nullable);
+    const path_value = if (@as(u64, @bitCast(path)) == 0) try vm.allocBytesValue("", .string) else path;
+    try writeDiagnosticFields(vm, diagnostic, path_value, position);
+    return native.ok(.{ .null = {} });
+}
+
+fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.NativeResult {
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -208,6 +396,7 @@ pub fn decode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     defer vm.heap.restoreRootCount(root_base);
     const diagnostic = try vm.heap.protectValue(args[1], .nullable);
     const steps = try vm.heap.protectValue(args[4], .array);
+    const holder = if (has_holder) try vm.heap.protectValue(args[5], .array) else null;
     const source = try allocator.dupe(u8, bytes(args[0]));
     const options = v.HeapValue.getParentPtr(v.Struct, args[2].heap_obj);
     const max_depth = options.get(1).int64;
@@ -223,7 +412,7 @@ pub fn decode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     };
     defer decoder.scanner.deinit();
     try decoder.resetDiagnostic();
-    const result = decoder.decodeDocument(@intCast(args[3].int64)) catch |failure| {
+    const result = decoder.decodeRoot(@intCast(args[3].int64), holder) catch |failure| {
         if (failure == error.OutOfMemory) {
             return failure;
         }
@@ -235,7 +424,13 @@ pub fn decode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 
 const PendingItem = struct {
     index: usize,
+    site_value: SiteValue,
+};
+
+const SiteValue = struct {
     proxy_value: usize,
+    path: usize,
+    offset: usize,
 };
 
 const Decoder = struct {
@@ -250,16 +445,27 @@ const Decoder = struct {
     path: std.ArrayList(u8) = .empty,
     steps: usize,
 
-    fn decodeDocument(self: *Decoder, plan: u32) !v.Value {
+    fn decodeRoot(self: *Decoder, plan_index: u32, holder: ?usize) !v.Value {
         if (self.max_depth == 0) {
             return error.InvalidOptions;
         }
-        const value = try self.decodeValue(plan, 0);
+        const value = if (holder) |found| try self.decodeIntoHolder(plan_index, found) else try self.decodeValue(plan_index, 0);
         if (try self.peekToken() != .end_of_document) {
             return error.InvalidJson;
         }
         _ = try self.nextToken();
         return self.vm.heap.protectedValue(value);
+    }
+
+    fn decodeIntoHolder(self: *Decoder, plan_index: u32, holder: usize) !usize {
+        const plan = self.vm.program.serialization_plans[plan_index];
+        const site = plan.root_site.?;
+        const placeholder = try self.vm.heap.protectValue(v.NULL_VALUE, plan.kind);
+        try appendRootedItem(self.vm, holder, placeholder);
+        const site_value = try self.decodeSite(site, 0) orelse return placeholder;
+        const index = try self.vm.heap.protectValue(.{ .int64 = 0 }, .int64);
+        try self.queueConversion(site.decode_function, &.{ holder, index }, site_value);
+        return placeholder;
     }
 
     fn decodeValue(self: *Decoder, plan_index: u32, depth: usize) anyerror!usize {
@@ -323,7 +529,7 @@ const Decoder = struct {
             .array => |items| {
                 try self.enterContainer(.array_begin, depth);
                 const item_kind = self.vm.program.serialization_plans[items.item].kind;
-                const array = try self.allocRootedArray(item_kind);
+                const array = try allocRootedArray(self.vm, item_kind, 8);
                 var pending: std.ArrayList(PendingItem) = .empty;
                 var i: usize = 0;
                 while (try self.peekToken() != .array_end) : (i += 1) {
@@ -331,13 +537,13 @@ const Decoder = struct {
                     try self.appendIndexPath(i);
                     if (items.proxy) |site| {
                         const placeholder = try self.vm.heap.protectValue(v.NULL_VALUE, item_kind);
-                        if (try self.decodeSite(site, depth + 1)) |proxy_value| {
-                            try pending.append(self.allocator, .{ .index = i, .proxy_value = proxy_value });
+                        if (try self.decodeSite(site, depth + 1)) |site_value| {
+                            try pending.append(self.allocator, .{ .index = i, .site_value = site_value });
                         }
-                        try self.appendArrayItem(array, placeholder);
+                        try appendRootedItem(self.vm, array, placeholder);
                     } else {
                         const item = try self.decodeValue(items.item, depth + 1);
-                        try self.appendArrayItem(array, item);
+                        try appendRootedItem(self.vm, array, item);
                     }
                     self.path.shrinkRetainingCapacity(path_base);
                 }
@@ -345,7 +551,7 @@ const Decoder = struct {
                 if (items.proxy) |site| {
                     for (pending.items) |entry| {
                         const index = try self.vm.heap.protectValue(.{ .int64 = @intCast(entry.index) }, .int64);
-                        try self.queueStep(site.convert_function, &.{ array, index, entry.proxy_value });
+                        try self.queueConversion(site.decode_function, &.{ array, index }, entry.site_value);
                     }
                 }
                 return array;
@@ -401,8 +607,8 @@ const Decoder = struct {
                 }
                 seen_fields[i] = true;
                 if (shape.fields[i].proxy) |site| {
-                    if (try self.decodeSite(site, depth + 1)) |proxy_value| {
-                        try self.queueStep(site.convert_function, &.{ object, proxy_value });
+                    if (try self.decodeSite(site, depth + 1)) |site_value| {
+                        try self.queueConversion(site.decode_function, &.{object}, site_value);
                     }
                 } else {
                     const item = try self.decodeValue(shape.fields[i].plan, depth + 1);
@@ -446,10 +652,10 @@ const Decoder = struct {
             const key_root = try self.vm.heap.protectValue(key_value, .string);
             if (items.proxy) |site| {
                 const placeholder = try self.vm.heap.protectValue(v.NULL_VALUE, value_kind);
-                const proxy_value = try self.decodeSite(site, depth + 1);
+                const site_value = try self.decodeSite(site, depth + 1);
                 try self.vm.setMapEntry(&self.vm.heap.temporary_roots.items[map].value, &self.vm.heap.temporary_roots.items[key_root].value, &self.vm.heap.temporary_roots.items[placeholder].value);
-                if (proxy_value) |found| {
-                    try self.queueStep(site.convert_function, &.{ map, key_root, found });
+                if (site_value) |found| {
+                    try self.queueConversion(site.decode_function, &.{ map, key_root }, found);
                 }
             } else {
                 const item = try self.decodeValue(items.item, depth + 1);
@@ -461,25 +667,32 @@ const Decoder = struct {
         return map;
     }
 
-    fn decodeSite(self: *Decoder, site: serialization_plan.ProxySite, depth: usize) !?usize {
-        const is_null = site.is_nullable_target and try self.peekToken() == .null;
+    fn decodeSite(self: *Decoder, site: serialization_plan.ProxySite, depth: usize) !?SiteValue {
+        const next = try self.peekToken();
+        const is_null = site.is_nullable_target and next == .null;
         if (is_null) {
             _ = try self.nextToken();
             return null;
         }
-        return try self.decodeValue(site.plan, depth);
+        const offset = try self.vm.heap.protectValue(.{ .int64 = @intCast(self.scanner.cursor) }, .int64);
+        const path_value = if (self.hasDiagnostic()) try self.vm.allocBytesValue(self.path.items, .string) else v.NULL_VALUE;
+        const path = try self.vm.heap.protectValue(path_value, .nullable);
+        const proxy_value = try self.decodeValue(site.plan, depth);
+        return .{ .proxy_value = proxy_value, .path = path, .offset = offset };
     }
 
     fn queueStep(self: *Decoder, function: u16, captures: []const usize) !void {
-        const size = v.Closure.calc_size(captures.len);
-        try self.vm.maybeCollectGarbage(size);
-        const closure = try v.Closure.init(self.vm.getCurrentHeapAllocator(), &self.vm.program.functions[function], @intCast(captures.len));
-        self.vm.increaseHeapAllocationCount(size);
-        for (captures, 0..) |root, i| {
-            closure.captures()[i] = self.vm.heap.protectedValue(root);
-        }
-        const rooted = try self.vm.heap.protectValue(.{ .heap_obj = &closure.obj }, .function);
-        try self.appendArrayItem(self.steps, rooted);
+        const closure = try allocRootedClosure(self.vm, function, captures);
+        try appendRootedItem(self.vm, self.steps, closure);
+    }
+
+    fn queueConversion(self: *Decoder, function: u16, targets: []const usize, site_value: SiteValue) !void {
+        var captures: [5]usize = undefined;
+        @memcpy(captures[0..targets.len], targets);
+        captures[targets.len] = site_value.proxy_value;
+        captures[targets.len + 1] = site_value.path;
+        captures[targets.len + 2] = site_value.offset;
+        try self.queueStep(function, captures[0 .. targets.len + 3]);
     }
 
     fn readUnion(self: *Decoder, shape: serialization_plan.TaggedUnion, depth: usize) !usize {
@@ -496,7 +709,11 @@ const Decoder = struct {
                 break candidate;
             }
         } else return error.UnknownVariant;
-        const item = try self.decodeValue(variant.plan, depth + 1);
+        var site_value: ?SiteValue = null;
+        const item = if (variant.proxy) |site| blk: {
+            site_value = try self.decodeSite(site, depth + 1);
+            break :blk try self.vm.heap.protectValue(v.NULL_VALUE, self.vm.program.serialization_plans[variant.plan].kind);
+        } else try self.decodeValue(variant.plan, depth + 1);
         if (try self.peekToken() != .object_end) {
             _ = try self.readObjectKey(&keys);
             return error.InvalidUnion;
@@ -508,6 +725,10 @@ const Decoder = struct {
         self.vm.increaseHeapAllocationCount(size);
         object.set(variant.tag, self.vm.heap.protectedValue(item));
         const result = try self.vm.heap.protectValue(.{ .heap_obj = &object.obj }, .@"union");
+        if (site_value) |found| {
+            const tag = try self.vm.heap.protectValue(.{ .int64 = variant.tag }, .int64);
+            try self.queueConversion(variant.proxy.?.decode_function, &.{ result, tag }, found);
+        }
         self.path.shrinkRetainingCapacity(path_base);
         return result;
     }
@@ -615,22 +836,6 @@ const Decoder = struct {
         return v.HeapValue.getParentPtr(v.Struct, self.vm.heap.protectedValue(root).heap_obj);
     }
 
-    fn allocRootedArray(self: *Decoder, kind: v.ValueType) !usize {
-        const size = v.Array.calc_size(8);
-        try self.vm.maybeCollectGarbage(size);
-        const array = try v.Array.init(self.vm.getCurrentHeapAllocator(), kind, 8);
-        self.vm.increaseHeapAllocationCount(size);
-        return self.vm.heap.protectValue(.{ .heap_obj = &array.obj }, .array);
-    }
-
-    fn appendArrayItem(self: *Decoder, array_root: usize, item_root: usize) !void {
-        var array = v.HeapValue.getParentPtr(v.Array, self.vm.heap.protectedValue(array_root).heap_obj);
-        if (array.len == array.capacity) {
-            array = try self.vm.growArray(&self.vm.heap.temporary_roots.items[array_root].value);
-        }
-        try array.append(self.vm.heap.protectedValue(item_root));
-    }
-
     fn resetDiagnostic(self: *Decoder) !void {
         if (@as(u64, @bitCast(self.vm.heap.protectedValue(self.diagnostic))) == 0) return;
         const empty = try self.vm.allocBytesValue("", .string);
@@ -642,13 +847,22 @@ const Decoder = struct {
     }
 
     fn writeDiagnostic(self: *Decoder) !void {
-        if (@as(u64, @bitCast(self.vm.heap.protectedValue(self.diagnostic))) == 0) return;
+        if (!self.hasDiagnostic()) return;
         const path = try self.vm.allocBytesValue(self.path.items, .string);
-        self.rootedStruct(self.diagnostic).set(0, path);
-        const offset = @min(self.offset, self.source.len);
+        try writeDiagnosticFields(self.vm, self.diagnostic, path, Position.at(self.source, self.offset));
+    }
+};
+
+const Position = struct {
+    offset: i64,
+    line: i64,
+    column: i64,
+
+    fn at(source: []const u8, offset: usize) Position {
+        const stop = @min(offset, source.len);
         var line: i64 = 1;
         var column: i64 = 1;
-        for (self.source[0..offset]) |c| {
+        for (source[0..stop]) |c| {
             if (c == '\n') {
                 line += 1;
                 column = 1;
@@ -656,10 +870,16 @@ const Decoder = struct {
                 column += 1;
             }
         }
-        const positions = [_]i64{ @intCast(offset), line, column };
-        for (positions, 1..) |position, i| {
-            const boxed = try self.vm.allocNullBox(.{ .int64 = position }, .int64);
-            self.rootedStruct(self.diagnostic).set(i, boxed);
-        }
+        return .{ .offset = @intCast(stop), .line = line, .column = column };
     }
 };
+
+fn writeDiagnosticFields(vm: *VM, diagnostic: usize, path: v.Value, position: Position) !void {
+    const path_root = try vm.heap.protectValue(path, .string);
+    v.HeapValue.getParentPtr(v.Struct, vm.heap.protectedValue(diagnostic).heap_obj).set(0, vm.heap.protectedValue(path_root));
+    const positions = [_]i64{ position.offset, position.line, position.column };
+    for (positions, 1..) |number, i| {
+        const boxed = try vm.allocNullBox(.{ .int64 = number }, .int64);
+        v.HeapValue.getParentPtr(v.Struct, vm.heap.protectedValue(diagnostic).heap_obj).set(i, boxed);
+    }
+}

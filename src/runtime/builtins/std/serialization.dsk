@@ -56,11 +56,6 @@ trait DocumentReader
     func end_document(mut self: @) -> SerializationError!void
 end
 
-trait FragmentWriter
-    func clear(mut self: @) -> void
-    func text(self: @) -> string
-end
-
 trait ScalarWriter
     func write_int(mut self: @, value: int) -> SerializationError!void
     func write_float(mut self: @, value: float) -> SerializationError!void
@@ -109,12 +104,12 @@ extern func find_variant(variants: int, name: string) -> int
 extern func find_variant_in(variants: int, text: string, start: int, stop: int) -> int
 
 extern func plan_of[T, S: schema]() -> int
-extern func is_native[T, S: schema]() -> bool
+extern func is_proxied[T, S: schema]() -> bool
 extern func has_proxies[T, S: schema]() -> bool
 
 extern func ~derive_decode[T, R: ScalarReader, S: schema](mut reader: R, mut pending: []func() -> void, depth: int) -> SerializationError!T
 extern func ~derive_encode[T, W: ScalarWriter, S: schema](value: T, mut writer: W, depth: int) -> SerializationError!void
-extern func ~derive_collect[T, W: ScalarWriter + FragmentWriter, S: schema](value: T, mut writer: W, mut fragments: []string, depth: int) -> SerializationError!void
+extern func ~set_payload[U, T](mut target: U, tag: int, value: T) -> void
 extern func ~blank[T]() -> T
 extern func ~field_default[T, F](index: int) -> F
 
@@ -147,10 +142,6 @@ func ~read_byte[R: ScalarReader](mut reader: R) -> SerializationError!byte
         return SerializationError.OutOfRange
     end
     return narrowed
-end
-
-func proxy_fragments[T, W: ScalarWriter + FragmentWriter, S: schema](value: T, mut writer: W, mut fragments: []string) -> SerializationError!void
-    try derive_collect[T, W, S](value, writer, fragments, 0)
 end
 
 func ~apply_pending_since(mut pending: []func() -> void, base: int) -> void

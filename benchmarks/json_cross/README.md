@@ -1,6 +1,6 @@
 # JSON comparison workloads
 
-These programs reproduce the four existing Dusk JSON workloads without changing their inputs, counts or expected checksums. Run the comparison with `benchmarks/json_compare.py` from the repository root. It builds Dusk in ReleaseFast and runs each workload twice: `json_*.dsk` (native engine) and `json_dusk_*.dsk` (the derived Dusk code, reached through a box type with a whole-type `via`), compiles Go and Java outside the timed interval, checks every process output and rotates the starting runtime each round. Each workload result is checkpointed to `benchmarks/history/NAME.json` with individual samples, source/dependency/binary hashes, versions, commands, ranges, standard deviation and noise flags.
+These programs reproduce the four existing Dusk JSON workloads without changing their inputs, counts or expected checksums. Run the comparison with `benchmarks/json_compare.py` from the repository root. It builds Dusk in ReleaseFast, compiles Go and Java outside the timed interval, checks every process output and rotates the starting runtime each round. Each workload result is checkpointed to `benchmarks/history/NAME.json` with individual samples, source/dependency/binary hashes, versions, commands, ranges, standard deviation and noise flags.
 
 Requirements: the repository build toolchain, Go, a JDK, Bun, Python and Ruby with its JSON library. The measured dependency set is Bun 1.4.4, Jackson databind/core 2.20.1 and annotations 2.20. Dependencies are external artifacts and are not vendored.
 

@@ -16,9 +16,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "find_variant", Binding{ .native = &findVariant } },
     .{ "find_variant_in", Binding{ .native = &findVariantIn } },
     .{ "plan_of", Binding{ .serialization = .plan_of } },
-    .{ "is_native", Binding{ .serialization = .is_native } },
+    .{ "is_proxied", Binding{ .serialization = .is_proxied } },
     .{ "has_proxies", Binding{ .serialization = .has_proxies } },
-    .{ "derive_collect", Binding{ .serialization = .derive_collect } },
+    .{ "set_payload", Binding{ .native = &setPayload } },
     .{ "derive_decode", Binding{ .serialization = .derive_decode } },
     .{ "derive_encode", Binding{ .serialization = .derive_encode } },
     .{ "blank", Binding{ .serialization = .blank } },
@@ -84,6 +84,12 @@ fn findVariantIn(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return native.ok(.{ .int64 = -1 });
     }
     return native.ok(.{ .int64 = indexOfVariant(shape, text[@intCast(start)..@intCast(stop)]) });
+}
+
+fn setPayload(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const target = v.HeapValue.getParentPtr(v.Union, args[0].heap_obj);
+    target.set(@intCast(args[1].int64), args[2]);
+    return native.ok(.{ .null = {} });
 }
 
 fn variantShapeOf(vm: *VM, id: i64) ?serialization_plan.Shape {

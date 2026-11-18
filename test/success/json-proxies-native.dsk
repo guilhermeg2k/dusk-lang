@@ -1,0 +1,172 @@
+import std/serialization
+import std/json
+import std/time
+import std/array
+
+struct Stamp
+    at: time::Timestamp
+end
+
+func stamp_to_time(stamp: Stamp) -> time::Timestamp
+    return stamp.at
+end
+
+func time_to_stamp(at: time::Timestamp) -> Stamp
+    return Stamp(at = at)
+end
+
+func bonus() -> int
+    return 5
+end
+
+struct Wire
+    base: int
+    extra: int = bonus()
+end
+
+struct Total
+    value: int
+end
+
+func total_to_wire(total: Total) -> Wire
+    return Wire(base = total.value, extra = 0)
+end
+
+func wire_to_total(wire: Wire) -> Total
+    return Total(value = wire.base + wire.extra)
+end
+
+schema Api
+    time::Timestamp: via(time::to_iso, time::from_iso)
+    Stamp: via(stamp_to_time, time_to_stamp)
+    Total: via(total_to_wire, wire_to_total)
+end
+
+union Moment
+    at: time::Timestamp
+    stamp: Stamp
+    never: int
+end
+
+struct Node
+    label: string
+    seen: ?time::Timestamp = null
+    children: []Node = []
+end
+
+struct Everything
+    stamp: Stamp
+    stamps: []Stamp
+    named: map[string, Stamp]
+    moments: []Moment
+    maybe: ?Stamp = null
+    total: Total
+end
+
+func at(milliseconds: int) -> time::Timestamp
+    return time::from_unix_ms(milliseconds)
+end
+
+func iso(milliseconds: int) -> string
+    return "\"${time::to_iso(at(milliseconds))}\""
+end
+
+func failure_path(text: string) -> string
+    let mut diagnostic = json::Diagnostic()
+    let value = json::decode[Everything, Api](text, diagnostic) catch e then
+        assert(e == json::JsonError.InvalidValue)
+        assert(diagnostic.line == 1)
+        assert(diagnostic.byte_offset != null)
+        return diagnostic.path
+    end
+    return "no failure"
+end
+
+func top_failure() -> ?json::JsonError
+    let stamp = json::decode[Stamp, Api]("\"later\"") catch e then
+        return e
+    end
+    return null
+end
+
+func cycle_error(node: Node) -> ?json::JsonError
+    let text = json::encode[Node, Api](node) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    assert(serialization::is_proxied[Stamp, Api]())
+    assert(serialization::is_proxied[?time::Timestamp, Api]())
+    assert(!serialization::is_proxied[Everything, Api]())
+
+    assert((try json::encode[Stamp, Api](Stamp(at = at(0)))) == iso(0))
+    let stamp = try json::decode[Stamp, Api](iso(1000))
+    assert(stamp.at.unix_ms() == 1000)
+    let missing = try json::decode[?time::Timestamp, Api]("null")
+    assert(missing == null)
+    let present = try json::decode[?time::Timestamp, Api](iso(7))
+    if present: found then
+        assert(found.unix_ms() == 7)
+    else
+        assert(false)
+    end
+    let nothing: ?time::Timestamp = null
+    assert((try json::encode[?time::Timestamp, Api](nothing)) == "null")
+    let total = try json::decode[Total, Api]("{\"base\":1}")
+    assert(total.value == 6)
+
+    let moment = try json::decode[Moment, Api]("{\"at\":${iso(5)}}")
+    if moment.at: value then
+        assert(value.unix_ms() == 5)
+    else
+        assert(false)
+    end
+    assert((try json::encode[Moment, Api](moment)) == "{\"at\":${iso(5)}}")
+    let stamped = try json::decode[Moment, Api]("{\"stamp\":${iso(9)}}")
+    if stamped.stamp: value then
+        assert(value.at.unix_ms() == 9)
+    else
+        assert(false)
+    end
+    assert((try json::encode[Moment, Api](Moment(never = 3))) == "{\"never\":3}")
+
+    let everything = Everything(stamp = Stamp(at = at(1)), stamps = [Stamp(at = at(2)), Stamp(at = at(3))], named = {"k": Stamp(at = at(4))}, moments = [Moment(at = at(5)), Moment(stamp = Stamp(at = at(6))), Moment(never = 0)], total = Total(value = 8))
+    let expected = "{\"stamp\":${iso(1)},\"stamps\":[${iso(2)},${iso(3)}],\"named\":{\"k\":${iso(4)}},\"moments\":[{\"at\":${iso(5)}},{\"stamp\":${iso(6)}},{\"never\":0}],\"maybe\":null,\"total\":{\"base\":8,\"extra\":0}}"
+    let text = try json::encode[Everything, Api](everything)
+    assert(text == expected)
+    let back = try json::decode[Everything, Api](text)
+    assert((try json::encode[Everything, Api](back)) == expected)
+    assert(back.stamps[1].at.unix_ms() == 3)
+    assert(back.total.value == 8)
+
+    let good = "{\"stamp\":${iso(1)},\"stamps\":[${iso(2)}],\"named\":{},\"moments\":[],\"total\":{\"base\":1}}"
+    let decoded = try json::decode[Everything, Api](good)
+    assert(decoded.total.value == 6 and decoded.maybe == null)
+    assert(failure_path("{\"stamp\":\"x\",\"stamps\":[],\"named\":{},\"moments\":[],\"total\":{\"base\":1}}") == "stamp")
+    assert(failure_path("{\"stamp\":${iso(1)},\"stamps\":[${iso(2)},\"x\"],\"named\":{},\"moments\":[],\"total\":{\"base\":1}}") == "stamps[1]")
+    assert(failure_path("{\"stamp\":${iso(1)},\"stamps\":[],\"named\":{\"a b\":\"x\"},\"moments\":[],\"total\":{\"base\":1}}") == "named[\"a b\"]")
+    assert(failure_path("{\"stamp\":${iso(1)},\"stamps\":[],\"named\":{},\"moments\":[{\"at\":\"x\"}],\"total\":{\"base\":1}}") == "moments[0].at")
+    assert(failure_path(good) == "no failure")
+    assert(top_failure() == json::JsonError.InvalidValue)
+
+    let mut nodes: []Node = []
+    for 0..19999: i do
+        array::append(nodes, Node(label = "n${i}", seen = at(i), children = [Node(label = "c", seen = at(i + 1))]))
+    end
+    let root = Node(label = "root", children = nodes)
+    let many = try json::encode[Node, Api](root)
+    let many_back = try json::decode[Node, Api](many)
+    assert(array::len(many_back.children) == 20000)
+    if many_back.children[19999].children[0].seen: last then
+        assert(last.unix_ms() == 20000)
+    else
+        assert(false)
+    end
+    assert((try json::encode[Node, Api](many_back)) == many)
+
+    let mut looped = Node(label = "loop", seen = at(0))
+    array::append(looped.children, looped)
+    assert(cycle_error(looped) == json::JsonError.CycleDetected)
+end

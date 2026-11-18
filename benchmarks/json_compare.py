@@ -19,7 +19,7 @@ from run_benchmarks import machine_info
 SOURCES = ROOT / 'benchmarks/json_cross'
 BUILD = ROOT / 'benchmarks/build/json_cross'
 WORKLOADS = {'json_decode': '5200000', 'json_decode_bulk': '15104000', 'json_encode': '1000', 'json_defaults': '4700000'}
-LABELS = {'native': 'Dusk native', 'derived': 'Dusk derived', 'go': 'Go encoding/json', 'java': 'Java Jackson', 'bun': 'Bun JSON', 'python': 'Python json', 'ruby': 'Ruby JSON'}
+LABELS = {'native': 'Dusk', 'go': 'Go encoding/json', 'java': 'Java Jackson', 'bun': 'Bun JSON', 'python': 'Python json', 'ruby': 'Ruby JSON'}
 
 
 def main():
@@ -51,7 +51,6 @@ def main():
         subprocess.run(['javac', '-cp', str(deps / '*'), '-d', str(BUILD), str(SOURCES / 'JsonCodec.java')], check=True)
     commands = {
         'native': [str(BUILD / 'dusk-native')],
-        'derived': [str(BUILD / 'dusk-native')],
         'go': [str(BUILD / 'codec-go')],
         'java': ['java', '-cp', str(BUILD) + os.pathsep + str(deps / '*'), 'JsonCodec'],
         'bun': [bun, str(SOURCES / 'codec.js')],
@@ -85,7 +84,7 @@ def main():
             offset = round_index % len(args.only)
             order = args.only[offset:] + args.only[:offset]
             for name in order:
-                command = commands[name] + ([str(ROOT / 'benchmarks/dusk' / f'{dusk_file(name, workload)}.dsk')] if name in ('native', 'derived') else [workload])
+                command = commands[name] + ([str(ROOT / 'benchmarks/dusk' / f'{workload}.dsk')] if name == 'native' else [workload])
                 elapsed, peak, output = run_once(command)
                 if output.strip() != WORKLOADS[workload]:
                     raise RuntimeError(f'{name} {workload}: expected {WORKLOADS[workload]}, got {output!r}')
@@ -102,12 +101,6 @@ def main():
         print(workload)
         for name, stats in measurements.items():
             print(f"  {LABELS[name]}: {stats['median_ms']:.2f} ms; noisy={stats['noisy']}")
-
-
-def dusk_file(name, workload):
-    if name == 'derived':
-        return workload.replace('json_', 'json_dusk_', 1)
-    return workload
 
 
 def digest(path):

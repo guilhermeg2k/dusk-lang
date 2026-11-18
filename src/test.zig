@@ -149,6 +149,7 @@ test "serialization: schemas rename, alias, skip and omit fields for each consum
 test "serialization: proxies convert values through two functions" {
     try runCase("serialization-proxies.dsk");
     try runCase("serialization-proxies-parity.dsk");
+    try runCase("json-proxies-native.dsk");
     try runCaseError("sema/schema-via-wrong-signature.dsk", error.InvalidSchema);
     try runCaseError("sema/schema-via-not-function.dsk", error.InvalidSchema);
     try runCaseError("sema/schema-type-line-rule.dsk", error.InvalidSchema);

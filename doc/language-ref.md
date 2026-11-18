@@ -2742,9 +2742,8 @@ let user: User = try serialization::decode(reader)
 | `decode[T, R, S: schema](mut reader)` | `SerializationError!T` | Reads a `T` from `reader`. |
 | `decode_document[T, R, S: schema](mut reader)` | `SerializationError!T` | Like `decode`, then calls `reader.end_document()` before any default runs, so a format can reject trailing input first. |
 | `plan_of[T, S: schema]()` | `int` | The id of `T`'s plan, the description formats read field and variant names from. Known when compiling. |
-| `is_native[T, S: schema]()` | `bool` | Whether code written in another language can handle `T`'s plan (`std/json` uses this): every proxy sits in a struct field, an array item or a map value, never at the top or directly as a union member. Known when compiling: an `if` on it only compiles the branch taken. |
-| `has_proxies[T, S: schema]()` | `bool` | Whether `T`'s plan uses `via` anywhere. Known when compiling, like `is_native`. |
-| `proxy_fragments[T, W, S: schema](value, mut writer, mut fragments)` | `SerializationError!void` | For engines written in another language: calls each `to` inside `value`, in the order the plan writes them (fields in plan order, array items by index, map entries in insertion order, the active union member, skipping nulls), writes each result with `writer` (a `ScalarWriter` that also has `clear()` and `text()`) and appends the text to `fragments`. |
+| `has_proxies[T, S: schema]()` | `bool` | Whether `T`'s plan uses `via` anywhere. Known when compiling: an `if` on it only compiles the branch taken. |
+| `is_proxied[T, S: schema]()` | `bool` | Whether `T` itself (or the type inside a nullable `T`) is written through a whole-type `via`. Known when compiling, like `has_proxies`. |
 
 For each type, the compiler writes one decode and one encode function that read and fill fields directly, and checks at compile time that the format has every method the type needs. Types must have public instance fields only; functions, tasks, buffers, error values and maps with keys other than `string` can't be written, anywhere inside the type (`InvalidType`, naming the path, such as `Hidden at 'inner[].value'`). Enums are written by variant name; aliases decode by their own names and encode as the first variant with that value.
 
@@ -2832,7 +2831,7 @@ struct Job
 end
 ```
 
-Proxies are how a type with private fields, such as `time::Timestamp`, gets written. Both functions must be named functions, not lambdas or generic functions. A whole-type proxy can't return its own type, since it would apply again.
+Proxies are how a type with private fields, such as `time::Timestamp`, gets written. Both functions must be named functions, not lambdas or generic functions. A whole-type proxy can't return its own type, since it would apply again. Proxies can chain (a `Stamp` written as a `time::Timestamp`, itself written as text), but not through a nullable: a `via` whose other type is nullable and has its own `via` is `InvalidSchema`.
 
 #### Writing a format
 
@@ -2961,7 +2960,7 @@ Unknown fields are ignored by default, but their values must still be valid JSON
 
 Encoding includes null fields (unless the schema says `omit_null`) and fields equal to their defaults. Struct fields appear in declaration order, and map entries in insertion order. Shared objects are written independently wherever they occur; cycles fail with `CycleDetected`. Decoding does not restore sharing between separate JSON objects.
 
-**Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. A fast built-in engine handles them, proxies included. Only a type with a whole-type `via` used as the top value (`json::encode[time::Timestamp, Api](t)`) or directly as a union member goes through the code `std/serialization` writes instead, with the same results, only slower. A `from` that fails makes decoding fail with `InvalidValue`; with proxies, a value that contains itself shows up as `DepthExceeded`.
+**Schemas and proxies.** `json::encode[User, Api](user)` and `json::decode[User, Api](text)` use a schema's names. A fast built-in engine handles every type, proxies included: it reads or writes the other type, and only the `to` and `from` functions themselves run as Dusk code. A `from` that fails makes decoding fail with `InvalidValue`, and a `json::Diagnostic` then points at that value (its path and position).
 
 **Options.** `DecodeOptions` has `should_reject_unknown_fields: bool = false` and `max_depth: int = 128`. `EncodeOptions` has `max_depth: int = 128`. A depth limit must be between 1 and 512, otherwise the operation fails with `InvalidOptions`. Each array or object adds one level; nullable wrappers and scalar values do not. Ignored values use the same limit.
 

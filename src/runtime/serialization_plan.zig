@@ -4,6 +4,7 @@ const v = @import("value.zig");
 pub const Plan = struct {
     kind: v.ValueType,
     shape: Shape,
+    root_site: ?ProxySite = null,
 };
 
 pub const Shape = union(enum) {
@@ -18,7 +19,7 @@ pub const Shape = union(enum) {
     structure: Structure,
     enumeration: []const EnumVariant,
     tagged_union: TaggedUnion,
-    proxy: u32,
+    proxy: ProxySite,
 };
 
 pub const Items = struct {
@@ -28,7 +29,8 @@ pub const Items = struct {
 
 pub const ProxySite = struct {
     plan: u32,
-    convert_function: u16,
+    decode_function: u16,
+    encode_function: u16,
     is_nullable_target: bool,
 };
 
@@ -77,6 +79,7 @@ pub const Variant = struct {
     aliases: []const []const u8,
     plan: u32,
     tag: u16,
+    proxy: ?ProxySite = null,
 
     pub fn isNamed(self: Variant, text: []const u8) bool {
         return isAnyName(self.name, self.aliases, text);
