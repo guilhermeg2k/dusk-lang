@@ -134,10 +134,17 @@ pub fn streamWrite(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 pub fn streamFlush(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    if (vm.event_loop.streamAt(args[0].int64) == null) {
-        return fail(IoError.Closed);
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
+    const current = vm.running_task.?;
+    const outcome = stream.flush(current) catch return fail(IoError.Other);
+    switch (outcome) {
+        .done => return ok(.{ .null = {} }),
+        .failure => |failure| return fail(failure),
+        .parked => {
+            current.park();
+            return native.parked();
+        },
     }
-    return ok(.{ .null = {} });
 }
 
 pub fn streamClose(vm: *VM, args: []v.Value) anyerror!NativeResult {

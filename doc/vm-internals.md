@@ -800,6 +800,12 @@ libuv hands the server one pending connection per loop iteration (it stops watch
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 
+### 11.11 Files
+
+`fs::open` runs an `open_file` fs job (`uv_fs_open`, then `uv_fs_fstat` to reject folders and read the size) and returns `[descriptor, size]`; `file_stream` wraps the descriptor in a file-kind `Stream` (`EventLoop.openFileStream`) with `owns_file`, `can_write_file`, `is_append` and `file_offset`. libuv has no `lseek`, so opened files keep their own offset: each `read_chunk` job reads at `file_offset` (advanced as chunks arrive) and each `write_chunk` job writes at the offset of what came before it (`-1`, the OS's end of file, for `Append`, where `file_offset` only counts for `position()`). Redirected stdin keeps reading at the OS position.
+
+Writes go to `Stream.pending_output` (`writeFile`); when it reaches 64 KiB, or on `flush`, `startOutputJob` hands it to one `write_chunk` job (a loop of synchronous `uv_fs_write` on the pool). A writer waits (`output_waiters`) only when a job is already in flight and the buffer fills again; a flusher waits until nothing is pending or in flight. A failed job sets `output_failure`, returned to the waiters or to the next `write` / `flush`. `close` flushes from Dusk first; at exit `releaseAtExit` writes what's left synchronously (`writeOutputNow`), and a job still in flight finishes in `EventLoop.deinit`'s last `uv_run`, whose `finishOutput` writes the rest. `seekFile` refuses while a reader waits (`Busy`) and drops the read buffer; position and size count pending writes.
+
 ## 12. Serialization plans and derived code
 
 `std/serialization` turns values into formats without runtime reflection: the compiler describes each type once and writes typed code for it.

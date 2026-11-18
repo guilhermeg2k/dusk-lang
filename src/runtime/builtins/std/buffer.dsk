@@ -1,10 +1,15 @@
 error BufferError
     NegativeSize
+    OutOfRange
 end
 
 extern func len(data: buffer) -> int
 extern func ~unchecked_new(size: int) -> buffer
 extern func from_string(text: string) -> buffer
+extern func put(mut data: buffer, at: int, text: string) -> BufferError!int
+extern func put_bytes(mut data: buffer, at: int, source: buffer) -> BufferError!int
+extern func put_int(mut data: buffer, at: int, number: int) -> BufferError!int
+extern func slice(data: buffer, start: int, stop: int) -> BufferError!buffer
 
 func new(size: int) -> BufferError!buffer
     if size < 0 then

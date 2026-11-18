@@ -531,6 +531,60 @@ test "fs: write, write_bytes and append, checked on disk" {
     }
 }
 
+test "fs: files opened for reading, read by lines, chunks and whole" {
+    try runCaseInTmpDir("fs-files-read.dsk");
+}
+
+test "fs: files opened for writing, buffered, appended, written from several tasks" {
+    try runCaseInTmpDir("fs-files-write.dsk");
+}
+
+test "fs: seek, position and size on files read, written and appended" {
+    try runCaseInTmpDir("fs-files-seek.dsk");
+}
+
+test "fs: data still buffered in a file reaches the disk when the program ends" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import std/fs
+        \\func main() -> !void
+        \\    let big = try fs::open("DIR/big.txt", fs::Mode.Write)
+        \\    for 1..20000: i do
+        \\        try big.write("0123456789")
+        \\    end
+        \\    try big.write("end")
+        \\    let small = try fs::open("DIR/small.txt", fs::Mode.Write)
+        \\    try small.write("kept")
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+    const big = try tmp.dir.readFileAlloc(testing.io, "big.txt", allocator, .unlimited);
+    try testing.expectEqual(@as(usize, 200003), big.len);
+    try testing.expect(std.mem.endsWith(u8, big, "89end"));
+    try testing.expectEqualStrings("kept", try tmp.dir.readFileAlloc(testing.io, "small.txt", allocator, .unlimited));
+}
+
+fn runCaseInTmpDir(src_file: []const u8) !void {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const path = try std.fmt.allocPrint(allocator, "test/success/{s}", .{src_file});
+    const template = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, allocator, .unlimited);
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
 test "fs: read_dir, make_dir, remove and rename, checked on disk" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var tmp = testing.tmpDir(.{});
@@ -1198,7 +1252,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 14 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 15 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -1683,6 +1737,10 @@ test "buffer" {
 
 test "buffer annotations and parameters" {
     try runCaseOutput("buffer-params.dsk", "[[120, 120, 120, 120]]\n");
+}
+
+test "buffer put, put_bytes, put_int and slice" {
+    try runCase("buffer-put.dsk");
 }
 
 test "buffer GC" {
@@ -3767,6 +3825,7 @@ test "builtins: each native error enum matches its error set, names and order" {
     try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("json"), @import("runtime/builtins/std/json.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("time"), @import("runtime/builtins/std/time.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("buffer"), @import("runtime/builtins/std/buffer.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {

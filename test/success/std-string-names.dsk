@@ -12,6 +12,7 @@ func main() -> !void
     let empty = buffer::new(-1) catch e then
         when e
             buffer::BufferError.NegativeSize then return end
+            buffer::BufferError.OutOfRange then return end
         end
     end
 end
