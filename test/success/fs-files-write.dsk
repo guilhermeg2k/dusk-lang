@@ -79,4 +79,12 @@ func main() -> !void
     target.close()
     assert(copied == 18)
     assert((try fs::read("DIR/copy.txt")) == "short\nappended\nab\n")
+
+    let mut frame = try buffer::new(64)
+    let mut used = try buffer::put(frame, 0, "frame ")
+    used = try buffer::put_int(frame, used, 7)
+    let framed = try fs::open("DIR/frame.txt", fs::Mode.Write)
+    try framed.write_bytes(try buffer::slice(frame, 0, used))
+    framed.close()
+    assert((try fs::read("DIR/frame.txt")) == "frame 7")
 end

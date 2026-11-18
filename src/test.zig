@@ -1148,7 +1148,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 14 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 15 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -1633,6 +1633,10 @@ test "buffer" {
 
 test "buffer annotations and parameters" {
     try runCaseOutput("buffer-params.dsk", "[[120, 120, 120, 120]]\n");
+}
+
+test "buffer put, put_bytes, put_int and slice" {
+    try runCase("buffer-put.dsk");
 }
 
 test "buffer GC" {
@@ -3715,6 +3719,7 @@ test "builtins: each native error enum matches its error set, names and order" {
     try expectErrorEnumsMatchSets(dusk.stdSource("fs"), @import("runtime/builtins/std/fs.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("url"), @import("runtime/builtins/std/url.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("buffer"), @import("runtime/builtins/std/buffer.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {
