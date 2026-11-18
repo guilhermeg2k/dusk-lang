@@ -1,0 +1,84 @@
+import std/json
+
+struct Pair
+    a: int
+    b: ?string = null
+end
+
+func outcome[T](text: string) -> ?json::JsonError
+    let value = json::decode[T](text) catch e then
+        return e
+    end
+    return null
+end
+
+func check[T](text: string, expected: ?json::JsonError) -> void
+    assert(outcome[T](text) == expected)
+end
+
+func main() -> void
+    check[string]("\"\\u00e9\"", null)
+    check[string]("\"\\uD83D\\uDE00\"", null)
+    check[string]("\"é\"", null)
+    check[string]("\"\\/\\b\\f\\n\\r\\t\\\"\\\\\"", null)
+    check[string]("\"abc", json::JsonError.InvalidJson)
+    check[string]("\"\\x\"", json::JsonError.InvalidJson)
+    check[string]("\"\\u12\"", json::JsonError.InvalidJson)
+    check[string]("\"\\u12G4\"", json::JsonError.InvalidJson)
+    check[string]("\"\\uDC00\"", json::JsonError.InvalidJson)
+    check[string]("\"\\uD800\\u0041\"", json::JsonError.InvalidJson)
+    check[string]("\"a\tb\"", json::JsonError.InvalidJson)
+    check[string]("\"\\u+123\"", json::JsonError.InvalidJson)
+    check[string]("\"\\uD800\"", json::JsonError.InvalidJson)
+    check[string]("\"\\u0000\"", null)
+    check[string]("'a'", json::JsonError.InvalidJson)
+    check[int](" \t\n\r 1 ", null)
+    check[int]("-0", null)
+    check[float]("0.5e+10", null)
+    check[float]("1E5", null)
+    check[int]("+1", json::JsonError.InvalidJson)
+    check[float](".5", json::JsonError.InvalidJson)
+    check[float]("1.", json::JsonError.InvalidJson)
+    check[float]("1e", json::JsonError.InvalidJson)
+    check[float]("1e+", json::JsonError.InvalidJson)
+    check[int]("-", json::JsonError.InvalidJson)
+    check[int]("--1", json::JsonError.InvalidJson)
+    check[int]("0x10", json::JsonError.InvalidJson)
+    check[float]("NaN", json::JsonError.InvalidJson)
+    check[float]("Infinity", json::JsonError.InvalidJson)
+    check[int]("-01", json::JsonError.InvalidJson)
+    check[float]("1.5e-3", null)
+    check[int]("1 ", null)
+    check[[]int]("[]", null)
+    check[[]int]("[ ]", null)
+    check[[]int]("[1 2]", json::JsonError.InvalidJson)
+    check[[]int]("[,1]", json::JsonError.InvalidJson)
+    check[[]int]("[1,,2]", json::JsonError.InvalidJson)
+    check[[]int]("[1]]", json::JsonError.InvalidJson)
+    check[[]int]("[", json::JsonError.InvalidJson)
+    check[[]int]("[1,]", json::JsonError.InvalidJson)
+    check[[]int]("[\"x\"]", json::JsonError.TypeMismatch)
+    check[map[string, int]]("{}", null)
+    check[map[string, int]]("{ }", null)
+    check[map[string, int]]("{\"a\" 1}", json::JsonError.InvalidJson)
+    check[map[string, int]]("{\"a\":1 \"b\":2}", json::JsonError.InvalidJson)
+    check[map[string, int]]("{a:1}", json::JsonError.InvalidJson)
+    check[map[string, int]]("{\"a\":1,}", json::JsonError.InvalidJson)
+    check[map[string, int]]("{\"a\":1}}", json::JsonError.InvalidJson)
+    check[map[string, int]]("{", json::JsonError.InvalidJson)
+    check[map[string, int]]("{\"a\":}", json::JsonError.InvalidJson)
+    check[map[string, int]]("{,}", json::JsonError.InvalidJson)
+    check[Pair]("{\"a\":1,\"x\":[1,{\"y\":tru}]}", json::JsonError.InvalidJson)
+    check[Pair]("{\"a\":1,\"x\":[1,{\"y\":true}]}", null)
+    check[Pair]("{\"a\":\"1\"}", json::JsonError.TypeMismatch)
+    check[Pair]("{\"a\":[}", json::JsonError.TypeMismatch)
+    check[Pair]("{\"a\":1,\"b\":nul}", json::JsonError.InvalidJson)
+    check[Pair]("{\"a\":1,\"b\":True}", json::JsonError.InvalidJson)
+    check[Pair]("{\"a\":1,\"x\":\"\\q\"}", json::JsonError.InvalidJson)
+    check[Pair]("{\"a\":1,\"x\":-}", json::JsonError.InvalidJson)
+    check[bool]("tru", json::JsonError.InvalidJson)
+    check[bool]("truex", json::JsonError.InvalidJson)
+    check[bool]("1", json::JsonError.TypeMismatch)
+    check[int]("", json::JsonError.InvalidJson)
+    check[int](" ", json::JsonError.InvalidJson)
+end

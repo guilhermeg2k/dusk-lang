@@ -59,6 +59,7 @@ test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");
     try runCase("json-errors.dsk");
+    try runCase("json-syntax.dsk");
     try runCase("gc-json.dsk");
     try runCaseOutput("json-defaults.dsk", "name\nitems\nname\nitems\nname\nitems\nname\nitems\n");
 }

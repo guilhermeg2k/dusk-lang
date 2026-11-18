@@ -406,13 +406,12 @@ fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.Na
         .vm = vm,
         .allocator = allocator,
         .source = source,
-        .scanner = std.json.Scanner.initCompleteInput(allocator, source),
+        .lexer = .{ .source = source, .allocator = allocator },
         .diagnostic = diagnostic,
         .max_depth = if (isValidDepth(max_depth)) @intCast(max_depth) else 0,
         .should_reject_unknown_fields = options.get(0).bool,
         .steps = steps,
     };
-    defer decoder.scanner.deinit();
     try decoder.resetDiagnostic();
     const result = decoder.decodeRoot(@intCast(args[3].int64), holder) catch |failure| {
         if (failure == error.OutOfMemory) {
@@ -480,11 +479,10 @@ const Decoder = struct {
     vm: *VM,
     allocator: std.mem.Allocator,
     source: []const u8,
-    scanner: std.json.Scanner,
+    lexer: Lexer,
     diagnostic: usize,
     max_depth: usize,
     should_reject_unknown_fields: bool,
-    offset: usize = 0,
     path: std.ArrayList(u8) = .empty,
     steps: usize,
 
@@ -493,10 +491,9 @@ const Decoder = struct {
             return error.InvalidOptions;
         }
         const value = if (holder) |found| try self.decodeIntoHolder(plan_index, found) else try self.decodeValue(plan_index, 0);
-        if (try self.peekToken() != .end_of_document) {
+        if (self.lexer.peekKind() != .end) {
             return error.InvalidJson;
         }
-        _ = try self.nextToken();
         return self.vm.heap.protectedValue(value);
     }
 
@@ -514,8 +511,8 @@ const Decoder = struct {
     fn decodeValue(self: *Decoder, plan_index: u32, depth: usize) anyerror!usize {
         const plan = self.vm.program.serialization_plans[plan_index];
         if (plan.shape == .nullable) {
-            if (try self.peekToken() == .null) {
-                _ = try self.nextToken();
+            if (self.lexer.peekKind() == .literal_null) {
+                try self.lexer.readLiteral("null");
                 return self.vm.heap.protectValue(v.NULL_VALUE, .nullable);
             }
             const child = try self.decodeValue(plan.shape.nullable, depth);
@@ -528,11 +525,11 @@ const Decoder = struct {
         }
         switch (plan.shape) {
             .int, .byte => {
-                const text = try self.readNumberText();
-                if (std.mem.indexOfAny(u8, text, ".eE") != null) {
+                const found = try self.readNumber();
+                if (!found.is_integer) {
                     return error.TypeMismatch;
                 }
-                const number = std.fmt.parseInt(i64, text, 10) catch return error.NumberOutOfRange;
+                const number = std.fmt.parseInt(i64, found.text, 10) catch return error.NumberOutOfRange;
                 const is_byte_out_of_range = plan.shape == .byte and (number < 0 or number > 255);
                 if (is_byte_out_of_range) {
                     return error.NumberOutOfRange;
@@ -540,20 +537,21 @@ const Decoder = struct {
                 return self.vm.heap.protectValue(.{ .int64 = number }, .int64);
             },
             .float => {
-                const text = try self.readNumberText();
-                const number = std.fmt.parseFloat(f64, text) catch return error.NumberOutOfRange;
+                const found = try self.readNumber();
+                const number = std.fmt.parseFloat(f64, found.text) catch return error.NumberOutOfRange;
                 if (!std.math.isFinite(number)) {
                     return error.NumberOutOfRange;
                 }
                 return self.vm.heap.protectValue(.{ .float64 = number }, .float64);
             },
             .boolean => {
-                const item = try self.nextToken();
-                const is_true = switch (item) {
-                    .true => true,
-                    .false => false,
-                    else => return error.TypeMismatch,
+                const kind = self.lexer.peekKind();
+                const is_true = switch (kind) {
+                    .literal_true => true,
+                    .literal_false => false,
+                    else => return self.rejectToken(kind),
                 };
+                try self.lexer.readLiteral(if (is_true) "true" else "false");
                 return self.vm.heap.protectValue(.{ .bool = is_true }, .bool);
             },
             .string => {
@@ -570,12 +568,13 @@ const Decoder = struct {
                 return error.UnknownVariant;
             },
             .array => |items| {
-                try self.enterContainer(.array_begin, depth);
+                try self.enterContainer(.array, depth);
                 const item_kind = self.vm.program.serialization_plans[items.item].kind;
                 const array = try allocRootedArray(self.vm, item_kind, 8);
                 var pending: std.ArrayList(PendingItem) = .empty;
+                var is_first = true;
                 var i: usize = 0;
-                while (try self.peekToken() != .array_end) : (i += 1) {
+                while (try self.lexer.hasItem(&is_first)) : (i += 1) {
                     const path_base = self.path.items.len;
                     try self.appendIndexPath(i);
                     if (items.proxy) |site| {
@@ -590,7 +589,6 @@ const Decoder = struct {
                     }
                     self.path.shrinkRetainingCapacity(path_base);
                 }
-                _ = try self.nextToken();
                 if (items.proxy) |site| {
                     for (pending.items) |entry| {
                         const index = try self.vm.heap.protectValue(.{ .int64 = @intCast(entry.index) }, .int64);
@@ -606,37 +604,54 @@ const Decoder = struct {
         }
     }
 
-    fn readNumberText(self: *Decoder) ![]const u8 {
-        return switch (try self.nextToken()) {
-            .number, .allocated_number => |text| text,
-            else => error.TypeMismatch,
-        };
+    fn readNumber(self: *Decoder) !Number {
+        const kind = self.lexer.peekKind();
+        if (kind != .number) {
+            return self.rejectToken(kind);
+        }
+        return self.lexer.readNumber();
     }
 
     fn readStringText(self: *Decoder) ![]const u8 {
-        return switch (try self.nextToken()) {
-            .string, .allocated_string => |text| text,
-            else => error.TypeMismatch,
-        };
+        const kind = self.lexer.peekKind();
+        if (kind != .string) {
+            return self.rejectToken(kind);
+        }
+        return self.lexer.readString();
     }
 
-    fn enterContainer(self: *Decoder, expected: std.meta.Tag(std.json.Token), depth: usize) !void {
-        if (std.meta.activeTag(try self.nextToken()) != expected) {
-            return error.TypeMismatch;
+    fn rejectToken(self: *Decoder, kind: ValueKind) anyerror {
+        switch (kind) {
+            .string => _ = try self.lexer.readString(),
+            .number => _ = try self.lexer.readNumber(),
+            .literal_true => try self.lexer.readLiteral("true"),
+            .literal_false => try self.lexer.readLiteral("false"),
+            .literal_null => try self.lexer.readLiteral("null"),
+            .object, .array => {},
+            .end, .invalid => return error.InvalidJson,
         }
+        return error.TypeMismatch;
+    }
+
+    fn enterContainer(self: *Decoder, expected: ValueKind, depth: usize) !void {
+        const kind = self.lexer.peekKind();
+        if (kind != expected) {
+            return self.rejectToken(kind);
+        }
+        self.lexer.pos += 1;
         if (depth >= self.max_depth) {
             return error.DepthExceeded;
         }
     }
 
     fn readStruct(self: *Decoder, shape: serialization_plan.Structure, depth: usize) !usize {
-        try self.enterContainer(.object_begin, depth);
+        try self.enterContainer(.object, depth);
         const object = try self.allocRootedStruct(shape.descriptor);
         var seen_fields = try SeenFields.init(self.allocator, shape.fields.len);
         var unknown_keys: ?std.StringHashMap(void) = null;
         var guess: usize = 0;
-        while (try self.peekToken() != .object_end) {
-            const key = try self.readStringText();
+        var is_first = true;
+        while (try self.lexer.nextKey(&is_first)) |key| {
             const path_base = self.path.items.len;
             try self.appendFieldPath(key, false);
             const field_index = findField(shape.fields, key, guess);
@@ -669,7 +684,6 @@ const Decoder = struct {
             }
             self.path.shrinkRetainingCapacity(path_base);
         }
-        _ = try self.nextToken();
         for (shape.skipped) |skip| {
             try self.applyDefault(object, skip.slot, skip.default);
         }
@@ -686,12 +700,12 @@ const Decoder = struct {
     }
 
     fn readMap(self: *Decoder, items: serialization_plan.Items, depth: usize) !usize {
-        try self.enterContainer(.object_begin, depth);
+        try self.enterContainer(.object, depth);
         const value_kind = self.vm.program.serialization_plans[items.item].kind;
         const value = try self.vm.newMap(.string, value_kind);
         const map = try self.vm.heap.protectValue(value, .map);
-        while (try self.peekToken() != .object_end) {
-            const key_text = try self.readStringText();
+        var is_first = true;
+        while (try self.lexer.nextKey(&is_first)) |key_text| {
             const path_base = self.path.items.len;
             try self.appendFieldPath(key_text, true);
             const key_value = try self.vm.allocBytesValue(key_text, .string);
@@ -713,7 +727,6 @@ const Decoder = struct {
             }
             self.path.shrinkRetainingCapacity(path_base);
         }
-        _ = try self.nextToken();
         return map;
     }
 
@@ -746,13 +759,13 @@ const Decoder = struct {
     }
 
     fn decodeSite(self: *Decoder, site: serialization_plan.ProxySite, depth: usize) !?SiteValue {
-        const next = try self.peekToken();
-        const is_null = site.is_nullable_target and next == .null;
+        const next = self.lexer.peekKind();
+        const is_null = site.is_nullable_target and next == .literal_null;
         if (is_null) {
-            _ = try self.nextToken();
+            try self.lexer.readLiteral("null");
             return null;
         }
-        const offset = try self.vm.heap.protectValue(.{ .int64 = @intCast(self.scanner.cursor) }, .int64);
+        const offset = try self.vm.heap.protectValue(.{ .int64 = @intCast(self.lexer.token_start) }, .int64);
         const path_value = if (self.hasDiagnostic()) try self.vm.allocBytesValue(self.path.items, .string) else v.NULL_VALUE;
         const path = try self.vm.heap.protectValue(path_value, .nullable);
         const proxy_value = try self.decodeValue(site.plan, depth);
@@ -774,11 +787,9 @@ const Decoder = struct {
     }
 
     fn readUnion(self: *Decoder, shape: serialization_plan.TaggedUnion, depth: usize) !usize {
-        try self.enterContainer(.object_begin, depth);
-        if (try self.peekToken() == .object_end) {
-            return error.InvalidUnion;
-        }
-        const key = try self.readStringText();
+        try self.enterContainer(.object, depth);
+        var is_first = true;
+        const key = try self.lexer.nextKey(&is_first) orelse return error.InvalidUnion;
         const path_base = self.path.items.len;
         try self.appendFieldPath(key, false);
         const variant = for (shape.variants) |candidate| {
@@ -791,15 +802,13 @@ const Decoder = struct {
             site_value = try self.decodeSite(site, depth + 1);
             break :blk try self.vm.heap.protectValue(v.NULL_VALUE, self.vm.program.serialization_plans[variant.plan].kind);
         } else try self.decodeValue(variant.plan, depth + 1);
-        if (try self.peekToken() != .object_end) {
-            const second = try self.readStringText();
+        if (try self.lexer.nextKey(&is_first)) |second| {
             if (std.mem.eql(u8, second, key)) {
                 try self.appendFieldPath(second, true);
                 return error.DuplicateKey;
             }
             return error.InvalidUnion;
         }
-        _ = try self.nextToken();
         const size = v.Union.calc_size();
         try self.vm.maybeCollectGarbage(size);
         const object = try v.Union.init(self.vm.getCurrentHeapAllocator(), shape.descriptor);
@@ -814,62 +823,43 @@ const Decoder = struct {
         return result;
     }
 
-    fn readObjectKey(self: *Decoder, keys: *std.StringHashMap(void)) ![]const u8 {
-        const name = try self.readStringText();
-        const entry = try keys.getOrPut(name);
-        if (entry.found_existing) {
-            try self.appendFieldPath(name, true);
-            return error.DuplicateKey;
-        }
-        return name;
-    }
-
     fn skipValue(self: *Decoder, depth: usize) anyerror!void {
-        switch (try self.peekToken()) {
-            .object_begin => {
-                try self.enterContainer(.object_begin, depth);
+        const kind = self.lexer.peekKind();
+        switch (kind) {
+            .object => {
+                try self.enterContainer(.object, depth);
                 var keys = std.StringHashMap(void).init(self.allocator);
-                while (try self.peekToken() != .object_end) {
-                    const key_text = try self.readObjectKey(&keys);
+                var is_first = true;
+                while (try self.lexer.nextKey(&is_first)) |key_text| {
+                    const entry = try keys.getOrPut(key_text);
+                    if (entry.found_existing) {
+                        try self.appendFieldPath(key_text, true);
+                        return error.DuplicateKey;
+                    }
                     const path_base = self.path.items.len;
                     try self.appendFieldPath(key_text, false);
                     try self.skipValue(depth + 1);
                     self.path.shrinkRetainingCapacity(path_base);
                 }
-                _ = try self.nextToken();
             },
-            .array_begin => {
-                try self.enterContainer(.array_begin, depth);
+            .array => {
+                try self.enterContainer(.array, depth);
+                var is_first = true;
                 var i: usize = 0;
-                while (try self.peekToken() != .array_end) : (i += 1) {
+                while (try self.lexer.hasItem(&is_first)) : (i += 1) {
                     const path_base = self.path.items.len;
                     try self.appendIndexPath(i);
                     try self.skipValue(depth + 1);
                     self.path.shrinkRetainingCapacity(path_base);
                 }
-                _ = try self.nextToken();
             },
-            .string, .number, .true, .false, .null => {
-                _ = try self.nextToken();
-            },
-            else => return error.InvalidJson,
+            .string => _ = try self.lexer.readString(),
+            .number => _ = try self.lexer.readNumber(),
+            .literal_true => try self.lexer.readLiteral("true"),
+            .literal_false => try self.lexer.readLiteral("false"),
+            .literal_null => try self.lexer.readLiteral("null"),
+            .end, .invalid => return error.InvalidJson,
         }
-    }
-
-    fn peekToken(self: *Decoder) !std.json.TokenType {
-        return self.scanner.peekNextTokenType() catch |failure| {
-            self.offset = self.scanner.cursor;
-            return failure;
-        };
-    }
-
-    fn nextToken(self: *Decoder) !std.json.Token {
-        _ = try self.peekToken();
-        self.offset = self.scanner.cursor;
-        return self.scanner.nextAllocMax(self.allocator, .alloc_if_needed, self.source.len) catch |failure| {
-            self.offset = self.scanner.cursor;
-            return failure;
-        };
     }
 
     fn appendIndexPath(self: *Decoder, index: usize) !void {
@@ -930,7 +920,254 @@ const Decoder = struct {
     fn writeDiagnostic(self: *Decoder) !void {
         if (!self.hasDiagnostic()) return;
         const path = try self.vm.allocBytesValue(self.path.items, .string);
-        try writeDiagnosticFields(self.vm, self.diagnostic, path, Position.at(self.source, self.offset));
+        try writeDiagnosticFields(self.vm, self.diagnostic, path, Position.at(self.source, self.lexer.token_start));
+    }
+};
+
+const ValueKind = enum { object, array, string, number, literal_true, literal_false, literal_null, end, invalid };
+
+const Number = struct {
+    text: []const u8,
+    is_integer: bool,
+};
+
+const Lexer = struct {
+    source: []const u8,
+    allocator: std.mem.Allocator,
+    pos: usize = 0,
+    token_start: usize = 0,
+
+    fn peekKind(self: *Lexer) ValueKind {
+        self.skipSpace();
+        if (self.pos >= self.source.len) {
+            return .end;
+        }
+        return switch (self.source[self.pos]) {
+            '{' => .object,
+            '[' => .array,
+            '"' => .string,
+            '-', '0'...'9' => .number,
+            't' => .literal_true,
+            'f' => .literal_false,
+            'n' => .literal_null,
+            else => .invalid,
+        };
+    }
+
+    fn skipSpace(self: *Lexer) void {
+        while (self.pos < self.source.len) : (self.pos += 1) {
+            switch (self.source[self.pos]) {
+                ' ', '\t', '\n', '\r' => {},
+                else => break,
+            }
+        }
+        self.token_start = self.pos;
+    }
+
+    fn nextKey(self: *Lexer, is_first: *bool) !?[]const u8 {
+        self.skipSpace();
+        if (self.pos >= self.source.len) {
+            return error.InvalidJson;
+        }
+        if (self.source[self.pos] == '}') {
+            self.pos += 1;
+            return null;
+        }
+        if (!is_first.*) {
+            if (self.source[self.pos] != ',') {
+                return error.InvalidJson;
+            }
+            self.pos += 1;
+            self.skipSpace();
+        }
+        is_first.* = false;
+        const has_key = self.pos < self.source.len and self.source[self.pos] == '"';
+        if (!has_key) {
+            return error.InvalidJson;
+        }
+        const key = try self.readString();
+        self.skipSpace();
+        const has_colon = self.pos < self.source.len and self.source[self.pos] == ':';
+        if (!has_colon) {
+            return error.InvalidJson;
+        }
+        self.pos += 1;
+        return key;
+    }
+
+    fn hasItem(self: *Lexer, is_first: *bool) !bool {
+        self.skipSpace();
+        if (self.pos >= self.source.len) {
+            return error.InvalidJson;
+        }
+        if (self.source[self.pos] == ']') {
+            self.pos += 1;
+            return false;
+        }
+        if (!is_first.*) {
+            if (self.source[self.pos] != ',') {
+                return error.InvalidJson;
+            }
+            self.pos += 1;
+        }
+        is_first.* = false;
+        return true;
+    }
+
+    fn readLiteral(self: *Lexer, word: []const u8) !void {
+        const stop = self.pos + word.len;
+        const is_match = stop <= self.source.len and std.mem.eql(u8, self.source[self.pos..stop], word);
+        if (!is_match) {
+            return error.InvalidJson;
+        }
+        self.pos = stop;
+    }
+
+    fn readNumber(self: *Lexer) !Number {
+        const start = self.pos;
+        if (self.source[self.pos] == '-') {
+            self.pos += 1;
+        }
+        if (self.pos >= self.source.len) {
+            return error.InvalidJson;
+        }
+        switch (self.source[self.pos]) {
+            '0' => self.pos += 1,
+            '1'...'9' => self.skipDigits(),
+            else => return error.InvalidJson,
+        }
+        var is_integer = true;
+        if (self.pos < self.source.len and self.source[self.pos] == '.') {
+            self.pos += 1;
+            try self.requireDigits();
+            is_integer = false;
+        }
+        const has_exponent = self.pos < self.source.len and (self.source[self.pos] == 'e' or self.source[self.pos] == 'E');
+        if (has_exponent) {
+            self.pos += 1;
+            const has_sign = self.pos < self.source.len and (self.source[self.pos] == '+' or self.source[self.pos] == '-');
+            if (has_sign) {
+                self.pos += 1;
+            }
+            try self.requireDigits();
+            is_integer = false;
+        }
+        return .{ .text = self.source[start..self.pos], .is_integer = is_integer };
+    }
+
+    fn skipDigits(self: *Lexer) void {
+        while (self.pos < self.source.len and std.ascii.isDigit(self.source[self.pos])) {
+            self.pos += 1;
+        }
+    }
+
+    fn requireDigits(self: *Lexer) !void {
+        const start = self.pos;
+        self.skipDigits();
+        if (self.pos == start) {
+            return error.InvalidJson;
+        }
+    }
+
+    fn readString(self: *Lexer) ![]const u8 {
+        self.pos += 1;
+        const start = self.pos;
+        var has_non_ascii = false;
+        while (self.pos < self.source.len) {
+            const c = self.source[self.pos];
+            if (c == '"') {
+                const text = self.source[start..self.pos];
+                self.pos += 1;
+                if (has_non_ascii and !std.unicode.utf8ValidateSlice(text)) {
+                    return error.InvalidJson;
+                }
+                return text;
+            }
+            if (c == '\\') {
+                return self.readEscapedString(start);
+            }
+            if (c < 0x20) {
+                return error.InvalidJson;
+            }
+            if (c >= 0x80) {
+                has_non_ascii = true;
+            }
+            self.pos += 1;
+        }
+        return error.InvalidJson;
+    }
+
+    fn readEscapedString(self: *Lexer, start: usize) ![]const u8 {
+        var out: std.ArrayList(u8) = .empty;
+        try out.appendSlice(self.allocator, self.source[start..self.pos]);
+        while (self.pos < self.source.len) {
+            const c = self.source[self.pos];
+            self.pos += 1;
+            if (c == '"') {
+                if (!std.unicode.utf8ValidateSlice(out.items)) {
+                    return error.InvalidJson;
+                }
+                return out.items;
+            }
+            if (c < 0x20) {
+                return error.InvalidJson;
+            }
+            if (c != '\\') {
+                try out.append(self.allocator, c);
+                continue;
+            }
+            if (self.pos >= self.source.len) {
+                return error.InvalidJson;
+            }
+            const escape = self.source[self.pos];
+            self.pos += 1;
+            switch (escape) {
+                '"', '\\', '/' => try out.append(self.allocator, escape),
+                'b' => try out.append(self.allocator, 0x08),
+                'f' => try out.append(self.allocator, 0x0c),
+                'n' => try out.append(self.allocator, '\n'),
+                'r' => try out.append(self.allocator, '\r'),
+                't' => try out.append(self.allocator, '\t'),
+                'u' => try self.appendCodepoint(&out),
+                else => return error.InvalidJson,
+            }
+        }
+        return error.InvalidJson;
+    }
+
+    fn appendCodepoint(self: *Lexer, out: *std.ArrayList(u8)) !void {
+        var codepoint: u21 = try self.readHex4();
+        if (codepoint >= 0xDC00 and codepoint <= 0xDFFF) {
+            return error.InvalidJson;
+        }
+        if (codepoint >= 0xD800 and codepoint <= 0xDBFF) {
+            const has_pair = self.pos + 1 < self.source.len and self.source[self.pos] == '\\' and self.source[self.pos + 1] == 'u';
+            if (!has_pair) {
+                return error.InvalidJson;
+            }
+            self.pos += 2;
+            const low = try self.readHex4();
+            if (low < 0xDC00 or low > 0xDFFF) {
+                return error.InvalidJson;
+            }
+            codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00);
+        }
+        var buffer: [4]u8 = undefined;
+        const length = std.unicode.utf8Encode(codepoint, &buffer) catch return error.InvalidJson;
+        try out.appendSlice(self.allocator, buffer[0..length]);
+    }
+
+    fn readHex4(self: *Lexer) !u21 {
+        if (self.pos + 4 > self.source.len) {
+            return error.InvalidJson;
+        }
+        var value: u21 = 0;
+        for (self.source[self.pos .. self.pos + 4]) |c| {
+            const digit = std.fmt.charToDigit(c, 16) catch return error.InvalidJson;
+            value = value * 16 + digit;
+        }
+        self.pos += 4;
+        return value;
     }
 };
 
