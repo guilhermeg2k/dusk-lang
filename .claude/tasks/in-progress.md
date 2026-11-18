@@ -1,5 +1,11 @@
 # In Progress
 
+## v0.17: std/process planning
+
+- Branch v017std; draft `.claude/v0.17-process-plan.md`. Planning only, no implementation.
+- Recommend captured run first, interactive Child as a second slice. Proposals cover binary output, direct argv, child cwd/env, bounded capture, deadlines and reaping.
+- Backend decision needs a std-first spike: installed Zig run does not bound the final wait, and Unix Child.kill uses TERM then wait. Preserve VM responsiveness and cleanup before selecting a backend.
+
 ## v0.16 - Shigeo: std/fs slice A
 
 Plan: `.claude/v0.16-fs-plan.md` (2026-11-15).

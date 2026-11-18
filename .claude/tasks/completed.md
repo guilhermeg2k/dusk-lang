@@ -1,5 +1,10 @@
 # Completed
 
+## std/process initial planning draft (2026-11-17)
+
+- Inspected installed Zig 0.16 spawn/run/Child implementations and existing stream/scheduler ownership. Drafted `.claude/v0.17-process-plan.md` with captured-run and interactive-child API proposals, std-first backend feasibility criteria, deadline/output/reaping semantics and validation.
+- Recorded concrete std limitations: run timeout excludes final wait after EOF, and Unix Child.kill sends TERM then waits. No implementation, public docs/changelog, tests or benchmarks. Design discussion remains in progress.
+
 ## std/random API naming (2026-11-17)
 
 - User selected integer()/decimal() for module functions and Generator methods, replacing random_int/random_float. Updated declarations, bindings, existing tests, public docs/changelog and the current plan.
