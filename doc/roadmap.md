@@ -13,6 +13,7 @@
 - Expand std::time
 - std::json
 - std::os
+- std::path
 
 ## Backlog
 

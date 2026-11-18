@@ -1699,7 +1699,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`, `std/os`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`, `std/os`, `std/path`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1938,6 +1938,46 @@ end
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
 
 The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](#buffers).
+
+### std/path
+
+Lexical path operations. Import with `import std/path`. Paths follow the runtime platform's syntax: slash separators on Unix, and drive/UNC paths with slash or backslash separators on Windows. These functions do not access the filesystem, check existence, follow symlinks or read the working directory.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `join(parts: []string)` | `string` | Joins nonempty parts with native separators, avoiding a duplicate separator at a boundary. Empty input produces `""`. |
+| `normalize(text)` | `string` | Collapses redundant separators, `.` and lexical `..` components. Empty or cancelled relative paths become `"."`. |
+| `basename(text)` | `string` | Last component, ignoring trailing separators. Empty paths and roots produce `""`. |
+| `dirname(text)` | `?string` | Parent component text, ignoring trailing separators. Empty paths, bare names and roots have no parent (`null`). |
+| `extension(text)` | `string` | Final extension of the last component, including its dot; absent extensions produce `""`. |
+| `stem(text)` | `string` | Last component with its final extension removed. |
+| `is_absolute(text)` | `bool` | Whether the path has a fully qualified root. |
+| `resolve(base, text)` | `PathError!string` | Normalizes `text` against an absolute base. A fully absolute `text` replaces the base. |
+| `relative(from, to)` | `PathError!string` | Computes a path from the absolute directory `from` to the absolute destination `to`. |
+
+`join` combines text without normalizing dot components or discarding earlier parts when a later part starts with a separator. For example, `join(["a/", "/b"])` gives `"a/b"`. Use `normalize` or `resolve` for lexical dot-component processing. `normalize` preserves leading parent components in relative paths and clamps parent traversal at absolute roots. It removes trailing separators except where required for a root. Component queries preserve the input's component text rather than normalizing it.
+
+A leading dot alone does not introduce an extension: `extension("config/.env")` is `""`, and its stem is `".env"`. `extension(".env.local")` is `".local"`, `stem("archive.tar.gz")` is `"archive.tar"`, and `extension("name.")` is `"."`. The special components `.` and `..` have no extension.
+
+`resolve` requires an absolute base even when `text` is absolute. `relative` requires both inputs to be absolute, and returns `"."` for identical normalized paths. A relative input fails with `PathError.NotAbsolute`. Neither function has an implicit working directory; pass `os::cwd()` explicitly when needed.
+
+On Windows, `is_absolute` accepts drive-qualified, UNC and device absolute roots; a rooted path such as `\folder` and a drive-relative path such as `C:folder` are not fully absolute. `resolve` can use a drive-qualified base to resolve a rooted path, but fails with `NotAbsolute` if a drive-relative destination remains unresolved. Normalization uses backslash separators and uppercase drive letters. `relative` returns the normalized absolute destination when the inputs are on different drives or shares. Ordinary component comparison follows the platform path rules; it does not query filesystem-specific case behavior.
+
+```dusk
+import std/path
+import std/os
+
+func main() -> !void
+    let base = try os::cwd()
+    let file = try path::resolve(base, "assets/./images/../logo.png")
+    assert(path::basename(file) == "logo.png")
+    assert(path::stem(file) == "logo")
+    assert(path::extension(file) == ".png")
+    assert(try path::relative(base, file) == path::join(["assets", "logo.png"]))
+end
+```
+
+These operations work on path text and do not validate whether it names a legal filesystem entry. They do not expand `~`, environment variables, wildcards or URL escapes. Lexical `..` processing can differ from physical traversal through symlinks; resolving against a base does not ensure the result stays inside that directory.
 
 ### std/os
 

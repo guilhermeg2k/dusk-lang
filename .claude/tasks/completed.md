@@ -1,5 +1,12 @@
 # Completed
 
+## std/path v0.17 (2026-11-17)
+
+- Planned and implemented `.claude/v0.17-path-plan.md` on v017std. Zig std-backed lexical join/normalize, basename/dirname, extension/stem, fully absolute detection, explicit-base resolve and absolute-input relative paths. No filesystem/libuv/cwd dependency.
+- Documented null parents, empty/root behavior, dotfiles, join versus resolve, Windows rooted/drive-relative inputs, UNC paths and different-drive fallback. PathError.NotAbsolute is mirrored and tested. Dotfile stems are computed from the basename; special dot components have no extension.
+- Result component allocation records input offsets and rereads rooted args after GC; join/normalize/resolve/relative copy owned host results into the GC. Added forced-collection tests, long-path GC stress, native type errors and platform-independent POSIX/Windows behavior checks; every new Dusk file registered in src/test.zig.
+- Debug and ReleaseFast: 554/554 tests on Linux. Built the Debug CLI and ran the public documentation example successfully. Windows path helper semantics tested on Linux; Windows runtime not executed. No benchmarks. Changelog, roadmap and language reference updated.
+
 ## std/os v0.17 implementation (2026-11-17)
 
 - Branch `v017std`, worktree `dusk-lang-codex`; implemented `.claude/v0.17-os-plan.md` P0-P5. Core phases delivered together because they share the module and runtime integration.

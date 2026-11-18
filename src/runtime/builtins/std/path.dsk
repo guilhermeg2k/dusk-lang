@@ -1,0 +1,13 @@
+error PathError
+    NotAbsolute
+end
+
+extern func join(parts: []string) -> string
+extern func normalize(text: string) -> string
+extern func basename(text: string) -> string
+extern func dirname(text: string) -> ?string
+extern func extension(text: string) -> string
+extern func stem(text: string) -> string
+extern func is_absolute(text: string) -> bool
+extern func resolve(base: string, text: string) -> PathError!string
+extern func relative(from: string, to: string) -> PathError!string

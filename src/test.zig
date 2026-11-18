@@ -55,6 +55,92 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "path: lexical components, normalization and explicit bases" {
+    try runCase("path.dsk");
+}
+
+test "path: GC moves input strings and arrays during native result allocation" {
+    try runCase("gc-path.dsk");
+    const value = @import("runtime/value.zig");
+    const path = @import("runtime/builtins/std/path.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{});
+    defer vm.deinit();
+    const text = try vm.allocBytesValue("folder/.env", .string);
+    const root = try vm.heap.protectValue(text, .string);
+    inline for (.{ .{ "basename", ".env" }, .{ "dirname", "folder" }, .{ "extension", "" }, .{ "stem", ".env" }, .{ "normalize", if (@import("builtin").os.tag == .windows) "folder\\.env" else "folder/.env" } }) |case| {
+        vm.heap.threshold = 0;
+        const args: [*]value.Value = @ptrCast(&vm.heap.temporary_roots.items[root].value);
+        const result = try path.bindings.get(case[0]).?.native(&vm, args[0..1]);
+        try testing.expectEqualStrings(case[1], value.HeapValue.getParentPtr(value.Bytes, result.value.heap_obj).slice());
+    }
+    const parts = try vm.allocStringArray(&.{ "folder", "file.dsk" });
+    const array_root = try vm.heap.protectValue(parts, .array);
+    vm.heap.threshold = 0;
+    const args: [*]value.Value = @ptrCast(&vm.heap.temporary_roots.items[array_root].value);
+    const result = try path.bindings.get("join").?.native(&vm, args[0..1]);
+    const expected = try std.fs.path.join(testing.allocator, &.{ "folder", "file.dsk" });
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, value.HeapValue.getParentPtr(value.Bytes, result.value.heap_obj).slice());
+}
+
+test "path: argument types" {
+    try runCaseError("sema/path-join-non-string.dsk", error.InvalidType);
+    try runCaseError("sema/path-normalize-non-string.dsk", error.InvalidType);
+}
+
+test "path: POSIX and Windows lexical semantics independent of host" {
+    const path = @import("runtime/path.zig");
+    const posix = path.Paths(.posix);
+    const windows = path.Paths(.windows);
+    const allocator = testing.allocator;
+    const posix_normal = try posix.normalize(allocator, "/../../a//./b/../");
+    defer allocator.free(posix_normal);
+    try testing.expectEqualStrings("/a", posix_normal);
+    const leading_parents = try posix.normalize(allocator, "../../a/../b");
+    defer allocator.free(leading_parents);
+    try testing.expectEqualStrings("../../b", leading_parents);
+    const posix_resolved = try posix.resolve(allocator, "/base", "/other/../last");
+    defer allocator.free(posix_resolved);
+    try testing.expectEqualStrings("/last", posix_resolved);
+    const posix_relative = try posix.relative(allocator, "/a/b", "/a/c/leaf");
+    defer allocator.free(posix_relative);
+    try testing.expectEqualStrings("../c/leaf", posix_relative);
+    try testing.expectEqualStrings("a\\b", posix.basename("a\\b"));
+    try testing.expectEqualStrings(".env", windows.stem("C:\\folder\\.env"));
+    try testing.expectEqualStrings(".local", windows.extension("C:\\folder\\.env.local"));
+    try testing.expectEqualStrings("C:\\", windows.dirname("C:\\file").?);
+    try testing.expect(windows.dirname("C:\\") == null);
+    try testing.expectEqualStrings("", windows.basename("C:\\"));
+    try testing.expect(windows.isAbsolute("C:\\folder"));
+    try testing.expect(windows.isAbsolute("\\\\server\\share\\folder"));
+    try testing.expect(!windows.isAbsolute("\\folder"));
+    try testing.expect(!windows.isAbsolute("C:folder"));
+    const windows_normal = try windows.normalize(allocator, "c:/base//one/../two/");
+    defer allocator.free(windows_normal);
+    try testing.expectEqualStrings("C:\\base\\two", windows_normal);
+    const windows_resolved = try windows.resolve(allocator, "C:\\base", "\\rooted\\file");
+    defer allocator.free(windows_resolved);
+    try testing.expectEqualStrings("C:\\rooted\\file", windows_resolved);
+    try testing.expectError(error.NotAbsolute, windows.resolve(allocator, "C:\\base", "D:relative"));
+    try testing.expectError(error.NotAbsolute, windows.resolve(allocator, "\\base", "file"));
+    const windows_relative = try windows.relative(allocator, "C:\\one\\two", "c:/one/three");
+    defer allocator.free(windows_relative);
+    try testing.expectEqualStrings("..\\three", windows_relative);
+    const different_drive = try windows.relative(allocator, "C:\\one", "D:\\two");
+    defer allocator.free(different_drive);
+    try testing.expectEqualStrings("D:\\two", different_drive);
+    const unc = try windows.resolve(allocator, "\\\\server\\share\\base", "../file");
+    defer allocator.free(unc);
+    try testing.expectEqualStrings("\\\\server\\share\\file", unc);
+    const identical = try windows.relative(allocator, "C:\\folder", "c:/folder/.");
+    defer allocator.free(identical);
+    try testing.expectEqualStrings(".", identical);
+}
+
 test "os: platform, empty arguments, environment validation, cwd and status" {
     try runCase("os.dsk");
 }
@@ -3728,6 +3814,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("path"), @import("runtime/builtins/std/path.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("os"), @import("runtime/builtins/std/os.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);

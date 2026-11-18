@@ -8,6 +8,7 @@ pub const Module = struct {
 };
 
 pub const modules = [_]Module{
+    .{ .path = "path", .source = @embedFile("std/path.dsk"), .bindings = &@import("std/path.zig").bindings },
     .{ .path = "os", .source = @embedFile("std/os.dsk"), .bindings = &@import("std/os.zig").bindings },
     .{ .path = "math", .source = @embedFile("std/math.dsk"), .bindings = &@import("std/math.zig").bindings },
     .{ .path = "buffer", .source = @embedFile("std/buffer.dsk"), .bindings = &@import("std/buffer.zig").bindings },
