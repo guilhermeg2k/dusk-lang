@@ -1796,22 +1796,6 @@ pub const BytecodeGen = struct {
         return names;
     }
 
-    fn genArrayStore(self: *Self, array_reg: u8, index_value: *ir.Value, value: *ir.Value) !void {
-        const index_reg = try self.genValue(index_value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const value_reg = try self.genValue(value, try self.consumeRegister());
-        defer self.freeRegister();
-
-        const store_inst = bc.Instruction{
-            .op = .ARRAY_STORE,
-            .a = array_reg,
-            .b = index_reg,
-            .c = value_reg,
-        };
-
-        try self.chunk_instructions.append(self.allocator, store_inst);
-    }
 };
 
 const TypedValue = struct {

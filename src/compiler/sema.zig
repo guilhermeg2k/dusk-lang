@@ -975,39 +975,6 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createEnumSymbol(self: *Self, identifier: []const u8, enum_def: *const ast.EnumDef) !Symbol {
-        var variants: std.StringHashMap(i64) = .init(self.allocator);
-
-        const variants_in_order = try self.allocator.alloc([]const u8, enum_def.variants.len);
-
-        const is_explicit = enum_def.variants[0].value != null;
-        for (enum_def.variants, 0..) |variant, i| {
-            const value: i64 = if (is_explicit) variant.value.? else @intCast(i);
-            try variants.put(variant.identifier, value);
-            variants_in_order[i] = variant.identifier;
-        }
-
-        const blueprint_type_id = try self.type_table.addType(.{
-            .kind = .{
-                .@"enum" = .{
-                    .identifier = identifier,
-                    .variants = variants,
-                    .variants_in_order = variants_in_order,
-                    .static_fields = .init(self.allocator),
-                    .methods = .init(self.allocator),
-                },
-            },
-            .is_nullable = false,
-        });
-
-        return Symbol{
-            .identifier = identifier,
-            .uid = self.scope.genUid(),
-            .type_id = self.type_table.getPrimitive(.meta),
-            .kind = .{ .defined_type = .{ .blueprint_type_id = blueprint_type_id } },
-        };
-    }
-
     fn createEmptyStructSymbol(self: *Self, identifier: []const u8) !Symbol {
         const blueprint_type_id = try self.type_table.addType(.{
             .kind = .{
@@ -1392,10 +1359,6 @@ pub const SemaAnalyzer = struct {
 
     fn isBlockLeaving(instructions: ir.Block) bool {
         return doesBlockExit(instructions, .leaves_block);
-    }
-
-    fn isValueReturning(value: *const ir.Value) bool {
-        return doesValueExit(value, .returns);
     }
 
     fn isValueLeaving(value: *const ir.Value) bool {
