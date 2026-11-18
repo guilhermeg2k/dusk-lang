@@ -55,6 +55,181 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "random: seeded replay, bounds, copy and default draws" {
+    try runCase("random.dsk");
+}
+
+test "random: generator allocation across GC and captured state" {
+    try runCase("gc-random.dsk");
+}
+
+test "random: generator mutation and visibility" {
+    try runCaseError("sema/random-generator-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/random-generator-private.dsk", error.NotVisible);
+    try runCaseError("sema/random-generator-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/random-native-private.dsk", error.NotVisible);
+}
+
+test "random: fixed engine, sampling vectors and non-consuming fast paths" {
+    const random = @import("runtime/random.zig");
+    var engine = random.seeded(0);
+    const expected = [_]u64{ 0x53175d61490b23df, 0x61da6f3dc380d507, 0x5c0fdf91ec9a7bfc };
+    for (expected) |word| {
+        try testing.expectEqual(word, engine.next());
+    }
+    engine = random.seeded(0);
+    try testing.expectEqual(@as(i64, 2), try random.nextInt(&engine, 1, 6));
+    engine = random.seeded(0);
+    try testing.expectEqual(@as(u64, 0x3fd75d61490b23df), @as(u64, @bitCast(random.nextFloat(&engine))));
+    engine = random.seeded(0);
+    var bytes: [9]u8 = undefined;
+    random.fillBytes(&engine, &bytes);
+    try testing.expectEqualSlices(u8, &.{ 0xdf, 0x23, 0x0b, 0x49, 0x61, 0x5d, 0x17, 0x53, 0x07 }, &bytes);
+    const state = engine.s;
+    try testing.expectError(error.InvalidBounds, random.nextInt(&engine, 1, -1));
+    try testing.expectEqual(@as(i64, -1), try random.nextInt(&engine, -1, -1));
+    random.fillBytes(&engine, &.{});
+    try testing.expectEqualSlices(u64, &state, &engine.s);
+}
+
+test "random: secure source failures never fall back to ordinary randomness" {
+    const native = @import("runtime/builtins/std/random.zig");
+    const RandomError = @import("runtime/random.zig").RandomError;
+    const value = @import("runtime/value.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{});
+    defer vm.deinit();
+    var source = RandomSourceProbe{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.random = RandomSourceProbe.fillRandom;
+    vtable.randomSecure = RandomSourceProbe.fillSecure;
+    vm.io = .{ .userdata = &source, .vtable = &vtable };
+    var args = [_]value.Value{.{ .int64 = 9 }};
+    vm.heap.threshold = 0;
+    const success = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(!success.has_failed);
+    try testing.expectEqualSlices(u8, &.{ 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5 }, value.HeapValue.getParentPtr(value.Bytes, success.value.heap_obj).slice());
+    try testing.expectEqual(@as(usize, 1), source.secure_calls);
+    try testing.expectEqual(@as(usize, 0), source.random_calls);
+    inline for (.{ RandomSourceProbe.Failure.unavailable, RandomSourceProbe.Failure.canceled }) |failure| {
+        source.failure = failure;
+        const result = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+        try testing.expect(result.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(RandomError.EntropyUnavailable)), result.value.int64);
+        try testing.expectEqual(@as(usize, 0), source.random_calls);
+        try testing.expect(vm.random_engine == null);
+    }
+    args[0].int64 = 0;
+    const before = source.secure_calls;
+    const empty = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(!empty.has_failed);
+    try testing.expectEqual(@as(usize, 0), value.HeapValue.getParentPtr(value.Bytes, empty.value.heap_obj).len);
+    try testing.expectEqual(before, source.secure_calls);
+    args[0].int64 = -1;
+    const negative = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(negative.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(RandomError.NegativeSize)), negative.value.int64);
+    args[0].int64 = std.math.maxInt(i64);
+    const allocated = vm.heap.allocated;
+    try testing.expectError(error.OutOfMemory, native.bindings.get("secure_bytes").?.native(&vm, &args));
+    try testing.expectEqual(allocated, vm.heap.allocated);
+    try testing.expectEqual(before, source.secure_calls);
+}
+
+const RandomSourceProbe = struct {
+    const Failure = enum { none, unavailable, canceled };
+
+    random_calls: usize = 0,
+    secure_calls: usize = 0,
+    failure: Failure = .none,
+
+    fn fillRandom(userdata: ?*anyopaque, bytes: []u8) void {
+        const self: *RandomSourceProbe = @ptrCast(@alignCast(userdata.?));
+        self.random_calls += 1;
+        @memset(bytes, 0x3c);
+    }
+
+    fn fillSecure(userdata: ?*anyopaque, bytes: []u8) std.Io.RandomSecureError!void {
+        const self: *RandomSourceProbe = @ptrCast(@alignCast(userdata.?));
+        self.secure_calls += 1;
+        @memset(bytes, 0xa5);
+        switch (self.failure) {
+            .none => {},
+            .unavailable => return error.EntropyUnavailable,
+            .canceled => return error.Canceled,
+        }
+    }
+};
+
+test "random: lazy seeding is per VM and fast paths need no I/O" {
+    const native = @import("runtime/builtins/std/random.zig");
+    const random = @import("runtime/random.zig");
+    const value = @import("runtime/value.zig");
+    const VM = @import("runtime/vm.zig").VM;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{});
+    defer vm.deinit();
+    var int_args = [_]value.Value{ .{ .int64 = 5 }, .{ .int64 = 5 } };
+    const equal = try native.bindings.get("random_int").?.native(&vm, &int_args);
+    try testing.expect(!equal.has_failed);
+    try testing.expectEqual(@as(i64, 5), equal.value.int64);
+    var size_args = [_]value.Value{.{ .int64 = 0 }};
+    inline for (.{ "bytes", "secure_bytes" }) |name| {
+        const empty = try native.bindings.get(name).?.native(&vm, &size_args);
+        try testing.expect(!empty.has_failed);
+    }
+    try testing.expect(vm.random_engine == null);
+    int_args[1].int64 = 4;
+    const invalid = try native.bindings.get("random_int").?.native(&vm, &int_args);
+    try testing.expect(invalid.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.InvalidBounds)), invalid.value.int64);
+    var no_args: [0]value.Value = .{};
+    const unsupported = try native.bindings.get("random_float").?.native(&vm, &no_args);
+    try testing.expect(unsupported.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), unsupported.value.int64);
+    try testing.expect(vm.random_engine == null);
+    int_args[1].int64 = 6;
+    const missing_int_source = try native.bindings.get("random_int").?.native(&vm, &int_args);
+    try testing.expect(missing_int_source.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_int_source.value.int64);
+    size_args[0].int64 = 1;
+    inline for (.{ "bytes", "secure_bytes" }) |name| {
+        const missing_source = try native.bindings.get(name).?.native(&vm, &size_args);
+        try testing.expect(missing_source.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_source.value.int64);
+    }
+    var source = RandomSourceProbe{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.random = RandomSourceProbe.fillRandom;
+    vtable.randomSecure = RandomSourceProbe.fillSecure;
+    const io = std.Io{ .userdata = &source, .vtable = &vtable };
+    vm.io = io;
+    const first = try native.bindings.get("random_float").?.native(&vm, &no_args);
+    var expected = random.seeded(0x3c3c3c3c3c3c3c3c);
+    try testing.expectEqual(random.nextFloat(&expected), first.value.float64);
+    const second = try native.bindings.get("random_float").?.native(&vm, &no_args);
+    try testing.expectEqual(random.nextFloat(&expected), second.value.float64);
+    try testing.expectEqual(@as(usize, 1), source.random_calls);
+    var fresh = VM.init(&program, .{});
+    defer fresh.deinit();
+    fresh.io = io;
+    const restarted = try native.bindings.get("random_float").?.native(&fresh, &no_args);
+    try testing.expectEqual(first.value.float64, restarted.value.float64);
+    try testing.expectEqual(@as(usize, 2), source.random_calls);
+    size_args[0].int64 = 1;
+    const secure = try native.bindings.get("secure_bytes").?.native(&vm, &size_args);
+    try testing.expect(!secure.has_failed);
+    try testing.expectEqual(@as(usize, 1), source.secure_calls);
+    try testing.expectEqual(@as(usize, 2), source.random_calls);
+    try testing.expectEqualSlices(u64, &expected.s, &vm.random_engine.?.s);
+}
+
 test "path: lexical components, normalization and explicit bases" {
     try runCase("path.dsk");
 }
@@ -3814,6 +3989,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("random"), @import("runtime/builtins/std/random.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("path"), @import("runtime/builtins/std/path.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("os"), @import("runtime/builtins/std/os.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);

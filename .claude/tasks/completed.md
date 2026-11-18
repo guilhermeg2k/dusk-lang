@@ -1,5 +1,14 @@
 # Completed
 
+## std/random v0.17 implementation (2026-11-17)
+
+- Implemented the approved `.claude/v0.17-random-plan.md` on v017std. User chose random_int/random_float to avoid reserved type keyword names; no parser/compiler changes.
+- Module API: inclusive random_int, [0,1) random_float, bytes, secure_bytes, seeded. Seeded Generator methods mutate four private ordinary-struct state words; aliases share progress and copy makes an independent snapshot. Explicit Xoshiro256, fixed-width sampling and per-VM lazy default state; separate from map hash seeding. No libuv dependency or new heap kind.
+- Negative counts/reversed bounds leave state unchanged; zero bytes/equal bounds consume no source. Complete signed integer range supported. Checked buffer sizes/accounting fail with OutOfMemory rather than overflowing; byte allocation rereads rooted Generator state after GC.
+- Secure bytes use only std.Io.randomSecure, mapping source unavailability/cancellation to EntropyUnavailable without returning partial buffers or invoking ordinary randomness. Missing required host I/O is Unsupported.
+- Debug and ReleaseFast: 560/560 tests on Linux. Tests include public and engine golden vectors, mixed seeded replay, seed extrema, aliases/copy, privacy/mutability, large buffers through GC and captured tasks, lazy per-VM initialization, injected secure source success/failure/cancellation/no-fallback, and size checks. No statistical chance assertions or benchmarks.
+- Both CLI builds pass the public random program and documented example, including real secure_bytes(32). Public reference, runtime internals, roadmap and changelog updated. Other runtime platforms were not executed.
+
 ## std/random initial plan (2026-11-17)
 
 - Inspected installed Zig 0.16 random/secure entropy, sampling and Xoshiro APIs plus existing map seeding. Drafted `.claude/v0.17-random-plan.md` with public API recommendations, ordinary-struct seeded state, GC rules, implementation phases and deterministic validation.

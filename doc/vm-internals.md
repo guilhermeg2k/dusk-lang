@@ -803,7 +803,15 @@ Signal subscriptions live in `tasks/signal.zig`, with append-only slots in `Even
 
 Each subscription registers a `uv_signal_t` immediately, stores one pending-notification flag and permits one parked task. Idle watchers are unreferenced. Parking references the watcher and increments `pending_operations`; delivery clears the waiter, unreferences the watcher, decrements the count and wakes the task. Notifications with no waiter set the pending flag. Closing stops the watcher and wakes a waiter with relative `OsError.Closed`, unless the event loop is already tearing down. A second waiter fails with `Busy`. At teardown all remaining watchers close before their C memory is freed.
 
-### 11.11 Freeing tasks
+### 11.11 Random state
+
+`VM.random_engine` is an optional per-execution `Xoshiro256` engine, separate from map hashing. `std/random` initializes it lazily from eight host `std.Io.random` bytes. Integer sampling uses fixed-width unbiased inclusive bounds, float sampling uses `f64`, and byte generation uses the engine's byte interface. No interface containing a pointer to engine state is retained across calls.
+
+A seeded `Generator` is an ordinary struct with four private `int` fields storing the engine's four state words as bit patterns. Hidden natives reconstruct a local engine and write updated words back into those slots. No new heap kind, native resource table or finalizer is needed; normal struct sharing and deep copy provide alias and snapshot behavior. Byte allocation may move the generator, so its native argument is reread after allocation before loading and updating state.
+
+`secure_bytes` allocates a fresh buffer, calls `std.Io.randomSecure` directly and returns a relative `RandomError.EntropyUnavailable` if filling fails. It does not initialize or use the ordinary engine. Zero-byte calls skip source access, and invalid bounds/counts are rejected before engine state changes. Buffer allocation checks supported lengths and accounting arithmetic before collecting. These natives do not use libuv or park tasks.
+
+### 11.12 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 

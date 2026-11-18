@@ -1,0 +1,40 @@
+error RandomError
+    InvalidBounds
+    NegativeSize
+    EntropyUnavailable
+    Unsupported
+end
+
+extern func random_int(min: int, max: int) -> RandomError!int
+extern func random_float() -> RandomError!float
+extern func bytes(size: int) -> RandomError!buffer
+extern func secure_bytes(size: int) -> RandomError!buffer
+
+struct Generator
+    ~s0: int
+    ~s1: int
+    ~s2: int
+    ~s3: int
+
+    func random_int(mut self: @, min: int, max: int) -> RandomError!int
+        return try generator_int(self, min, max)
+    end
+
+    func random_float(mut self: @) -> float
+        return generator_float(self)
+    end
+
+    func bytes(mut self: @, size: int) -> RandomError!buffer
+        return try generator_bytes(self, size)
+    end
+end
+
+func seeded(seed: int) -> Generator
+    let state = seed_words(seed)
+    return Generator(s0 = state[0], s1 = state[1], s2 = state[2], s3 = state[3])
+end
+
+extern func ~seed_words(seed: int) -> []int
+extern func ~generator_int(mut generator: Generator, min: int, max: int) -> RandomError!int
+extern func ~generator_float(mut generator: Generator) -> float
+extern func ~generator_bytes(mut generator: Generator, size: int) -> RandomError!buffer

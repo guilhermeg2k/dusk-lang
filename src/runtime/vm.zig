@@ -9,6 +9,7 @@ const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const Stdio = @import("stdio.zig").Stdio;
+const RandomEngine = @import("random.zig").Engine;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
 
@@ -28,6 +29,7 @@ pub const VM = struct {
     program_args: []const []const u8 = &.{},
     environment: ?*const std.process.Environ.Map = null,
     exit_code: u8 = 0,
+    random_engine: ?RandomEngine = null,
     stack: []v.Value,
     heap: Heap,
     scheduler: Scheduler,

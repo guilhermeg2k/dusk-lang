@@ -6,6 +6,7 @@
 
 - `std/os`: platform identification, program arguments, read-only environment lookup, the current working directory and normal exit status. Signal subscriptions support explicit shutdown handling with `watch_signal`, `wait` and `close`; waiting parks only the calling task, and unused subscriptions do not keep execution alive. The CLI forwards arguments after the script path and uses the selected exit status after normal completion
 - `std/path`: lexical path joining, normalization, basename/dirname, extension/stem, absolute-path detection and explicit-base resolution/relative paths. Uses the runtime platform’s path syntax without filesystem access; `resolve` and `relative` report `PathError.NotAbsolute` for nonabsolute bases/inputs or unresolved drive-relative destinations
+- `std/random`: inclusive `random_int`, `[0, 1)` `random_float`, ordinary bytes, secure bytes without a weaker fallback, and mutable seeded generators with reproducible sequences and independent `copy` snapshots. Default generator state is separate for each execution; zero-byte requests and equal integer bounds do not consume randomness
 
 ## v0.16 - Shigeo
 
