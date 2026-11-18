@@ -811,7 +811,19 @@ A seeded `Generator` is an ordinary struct with four private `int` fields storin
 
 `secure_bytes` allocates a fresh buffer, calls `std.Io.randomSecure` directly and returns a relative `RandomError.EntropyUnavailable` if filling fails. It does not initialize or use the ordinary engine. Zero-byte calls skip source access, and invalid bounds/counts are rejected before engine state changes. Buffer allocation checks supported lengths and accounting arithmetic before collecting. These natives do not use libuv or park tasks.
 
-### 11.12 Freeing tasks
+### 11.12 Child processes
+
+`tasks/process.zig` owns stable `Process` records in `EventLoop.processes`. `process_glue.c` constructs libuv's process/stdio options against the dependency headers, avoiding a mirrored platform ABI; process handles themselves remain opaque and are sized with `uv_handle_size`. Native wrappers validate and snapshot argv, cwd and environment into temporary host memory before synchronous `uv_spawn`. Executable lookup uses the VM parent PATH, then passes an explicit path so a replacement child environment cannot alter lookup.
+
+`live_processes` keeps scheduling active independently of parked native calls. Each successful launch increments it; only the exit callback decrements it, stores status and closes the process handle. `EventLoop.deinit` releases/kills owned children and drives their exit callbacks before generic handle closure. Failed `uv_spawn` handles also close asynchronously; the native failure path polls close callbacks so a synchronous failure loop does not accumulate native capture allocations.
+
+Captured runs use two dedicated raw capture pipes, each with a fixed read scratch buffer. Their callbacks drain concurrently into host arrays under one combined byte cap, independent of interactive Stream high-water backpressure. Completion requires both capture EOFs plus child exit. One first-failure latch handles read failure, output overflow and the monotonic deadline; it closes capture pipes and requests forced termination, then wakes the parked call once exit is observed. Deadlines remain active after EOF without exit, and after exit without EOF.
+
+A captured wait returns a private record index. Ordinary Dusk code builds Result/Termination and copies both capture buffers via allocating natives, then releases the record; no new VM result object or process-specific WakePayload is needed. Interactive waits snapshot status/signal into the existing ints wake payload. Errors after parking use the extern's relative error base. Process records are freed after release and all process/timer/capture close callbacks; stale wrapper indexes never resolve to later children.
+
+Interactive pipes reuse `Stream.openProcessPipe`, which initializes an unopened pipe for libuv to populate during spawn. They use the existing read outcomes, UTF-8/line rules, write queue, timers, reference counts and io traits. Stream callbacks do not reference the Process record. Closing a Child after exit closes its remaining stream indexes; a copied wrapper aliases those same indexes and child.
+
+### 11.13 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 

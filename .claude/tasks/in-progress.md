@@ -1,11 +1,5 @@
 # In Progress
 
-## v0.17: std/process planning
-
-- Branch v017std; draft `.claude/v0.17-process-plan.md`. Planning only, no implementation.
-- Recommend captured run first, interactive Child as a second slice. Proposals cover binary output, direct argv, child cwd/env, bounded capture, deadlines and reaping.
-- Backend accepted (2026-11-17): libuv launch/exit/pipes/timers/termination, Zig std validation and memory. Revised phases cover capture sinks, total deadlines, failed-spawn cleanup, and reaping before EventLoop generic shutdown. API scope remains for discussion.
-
 ## v0.16 - Shigeo: std/fs slice A
 
 Plan: `.claude/v0.16-fs-plan.md` (2026-11-15).

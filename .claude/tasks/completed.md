@@ -1,5 +1,14 @@
 # Completed
 
+## std/process v0.17 implementation (2026-11-18)
+
+- Implemented approved libuv plan on v017std: captured run with binary stdout/stderr, Result text helpers and Termination; interactive start, inherited/ignored/piped stdio, cached waits, forced kill, idempotent post-exit close, Reader/Writer-compatible pipes.
+- Stable loop-owned process records, separate live-child accounting, independent exit/EOF tracking, combined capture cap and a whole-operation timer. Timeout/overflow use one failure latch and wait for direct-child exit. VM teardown kills/reaps children before generic handle closure. Failed launches drain close callbacks before returning to avoid accumulating native allocations in a synchronous error loop.
+- Narrow process_glue.c builds libuv options against dependency headers; no mirrored process-options ABI, threads, new VM heap kind, compiler changes or new WakePayload. Dusk builds captured Result from a private handle; interactive wait reuses ints payload. Inputs are validated/copied and executable lookup uses the VM parent PATH independently of a replacement child environment.
+- Debug and ReleaseFast: 567/567 tests on Linux, including portable child fixture, concurrent output beyond pipe capacity, binary output, exact argv, cwd/env, exit/signal status, caps, EOF-before-exit and descendant-held-output deadlines, ignored TERM, wait races, pipe io::copy, stale/closed access, GC-held results, six children depending on Dusk filesystem work, privacy, and immediate failed-launch record release.
+- test/process_cli.py passes with Debug and ReleaseFast CLI builds under external timeouts. It checks inherited stdout ordering, unawaited-child liveness and no remaining owned child after runtime assertion failure. Public git --version documentation example passes. Windows x86_64-gnu ReleaseFast cross-build succeeds under /tmp/dusk-process-windows; Windows runtime not executed. No benchmarks.
+- Reference, runtime internals, roadmap and changelog updated. Documented Windows libuv required-environment-variable supplementation; later generation-checked table reuse and Windows runtime conformance remain backlog items.
+
 ## std/process libuv plan revision (2026-11-17)
 
 - Applied user decision to use libuv lifecycle/pipes. Replaced the worker/std-first backend proposal with uv_spawn, concurrent capture, exit callbacks, timers and uv_process_kill, with loop-only ownership.

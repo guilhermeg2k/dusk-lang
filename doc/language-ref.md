@@ -1699,7 +1699,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`, `std/os`, `std/path`, `std/random`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`, `std/os`, `std/path`, `std/random`, `std/process`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1938,6 +1938,53 @@ end
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
 
 The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](#buffers).
+
+### std/process
+
+External programs with asynchronous exit waiting and pipe I/O. Import with `import std/process`.
+
+```dusk
+import std/process
+import std/io
+
+func main() -> !void
+    let result = try process::run(["git", "--version"])
+    io::print(try result.stdout_text())
+    assert(result.is_success())
+end
+```
+
+`run(args: []string, cwd: ?string = null, env: ?map[string, string] = null, timeout_ms: int = -1, max_output: int = 16777216) -> ProcessError!Result` launches a program, captures stdout/stderr concurrently and waits for completion. Only the calling task waits; other tasks, timers and I/O continue. Launch setup, path lookup and validation are synchronous. The first argument is the executable; later arguments are passed literally, preserving empty strings and spaces. There is no implicit shell expansion, redirection or pipeline syntax.
+
+Default stdin is an EOF source. `cwd` changes only the child's directory; relative paths resolve against the parent directory at submission. `env = null` uses the VM's supplied environment snapshot, matching `std/os`; absent embedding context means an empty environment. A supplied map replaces the child environment. On Windows, libuv may add required platform variables that are absent from it. Names must be nonempty and contain no `=` or zero byte, except host-supported drive environment names on Windows. Arguments, names, values and paths cannot contain zero bytes; host context text must be valid UTF-8.
+
+A bare executable name is searched using the VM parent environment's `PATH`, even when `env` supplies a different child environment. Empty or relative PATH entries resolve against the child's working directory. Explicit executable paths resolve against that directory and bypass PATH search. Windows lookup also considers `.exe` and `.com`; `.bat` and `.cmd` files require an explicit interpreter.
+
+`Result` contains `stdout: buffer`, `stderr: buffer` and `termination: Termination`. The termination union has `Exited: int` and `Signaled: int` variants. Exit codes and signal numbers retain the host-reported value; signal numbers are platform-specific. `is_success()` is true only for `Exited = 0`. Nonzero exits are results, not errors. `stdout_text()` and `stderr_text()` return `ProcessError!string`, failing with `InvalidUtf8` for binary data while preserving the original buffers.
+
+`max_output` limits combined stdout/stderr bytes, defaulting to 16 MiB. It must be nonnegative; zero permits empty output only. Overflow returns `OutputTooLarge` after terminating and reaping the direct child. Output is not silently truncated into a successful result.
+
+`timeout_ms = -1` means no deadline, `0` means immediate expiry, and lower values are invalid. The deadline covers launch accounting, output capture and child exit. It stays active if a child closes its outputs but continues running, or exits while a descendant retains a pipe. Expiry closes capture pipes, requests forced termination of the direct child and waits for its exit notification before returning `TimedOut`. Cleanup may outlast the nominal deadline while the host completes termination; descendants are not automatically terminated.
+
+#### Interactive children
+
+`start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit) -> ProcessError!Child` uses the same argument/path/environment rules and returns after launch. Modes are `Stdio.Inherit`, `Stdio.Ignore` and `Stdio.Pipe`. Inherited streams are OS standard descriptors; inheriting an embedded custom stdout/stderr writer fails with `Unsupported`. Preceding Dusk output is flushed before an inheriting child starts.
+
+| Child method | Returns | Description |
+| :----------- | :------ | :---------- |
+| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for exit; completed status is cached for repeat calls. A wait timeout leaves the child running. |
+| `kill()` | `ProcessError!void` | Requests forced termination without waiting. Use `wait()` to observe exit. Does nothing after observed exit. |
+| `stdin()` | `ProcessError!PipeWriter` | Gets piped stdin, or fails with `NotPiped`. |
+| `stdout()` / `stderr()` | `ProcessError!PipeReader` | Gets a piped reader, or fails with `NotPiped`. |
+| `close()` | `ProcessError!void` | Releases pipes/resources after exit; `Busy` while running. Repeated close does nothing. |
+
+Only one task can wait for a child at once (`Busy` otherwise). Waiting after close fails with `Closed`. Child wrappers share the same OS process, including wrappers made by `copy`; closing one closes its aliases.
+
+A `PipeReader` supports `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`. A `PipeWriter` supports `write(text)`, `write_bytes(buffer)`, `flush()` and `close()`. Both fit the `std/io` reader/writer traits. Pipe operations use `io::IoError` and the same EOF, text/bytes and backpressure rules as other streams.
+
+Closing stdin sends EOF; closing a pipe does not kill the child. Exit does not discard buffered output. Drain piped stdout/stderr concurrently while waiting, or use `run` for automatic collection. `Child.close()` closes remaining pipes and discards unread output. A running owned child keeps execution alive even without an active waiter. Runtime teardown terminates/reaps remaining owned children before releasing process handles.
+
+`ProcessError` contains `InvalidArgument`, `NotFound`, `PermissionDenied`, `InvalidExecutable`, `ResourceLimit`, `TimedOut`, `OutputTooLarge`, `InvalidUtf8`, `Unsupported`, `Other`, `Busy`, `Closed` and `NotPiped`.
 
 ### std/random
 
