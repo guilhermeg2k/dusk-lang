@@ -8,6 +8,7 @@ pub const Module = struct {
 };
 
 pub const modules = [_]Module{
+    .{ .path = "process", .source = @embedFile("std/process.dsk"), .bindings = &@import("std/process.zig").bindings },
     .{ .path = "random", .source = @embedFile("std/random.dsk"), .bindings = &@import("std/random.zig").bindings },
     .{ .path = "path", .source = @embedFile("std/path.dsk"), .bindings = &@import("std/path.zig").bindings },
     .{ .path = "os", .source = @embedFile("std/os.dsk"), .bindings = &@import("std/os.zig").bindings },

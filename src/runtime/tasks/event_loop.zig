@@ -13,6 +13,8 @@ const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
 const ServerState = @import("http_server.zig").ServerState;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
+const Process = @import("process.zig").Process;
+const process_runtime = @import("process.zig");
 const Subscription = @import("signal.zig").Subscription;
 
 const handle_alignment = std.mem.Alignment.@"16";
@@ -23,6 +25,8 @@ pub const EventLoop = struct {
     allocator: std.mem.Allocator,
     loop: ?*uv.Loop = null,
     pending_operations: usize = 0,
+    live_processes: usize = 0,
+    processes: std.ArrayList(?*Process) = .empty,
     is_shutting_down: bool = false,
     callback_failure: ?anyerror = null,
     streams: std.ArrayList(?*Stream) = .empty,
@@ -36,6 +40,15 @@ pub const EventLoop = struct {
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
+        for (self.processes.items) |entry| {
+            if (entry) |process| {
+                process.release();
+            }
+        }
+        while (self.live_processes > 0) {
+            _ = uv.uv_run(self.loop.?, .once);
+        }
+        defer self.processes.deinit(self.allocator);
         for (self.signal_subscriptions.items) |entry| {
             if (entry) |subscription| {
                 subscription.close();
@@ -166,6 +179,28 @@ pub const EventLoop = struct {
         return handle;
     }
 
+    pub fn openProcessPipe(self: *Self, scheduler: *Scheduler) !usize {
+        const loop = try self.ensureLoopStarted();
+        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        const stream = try Stream.openProcessPipe(self.allocator, self, scheduler, loop);
+        const index = self.streams.items.len;
+        stream.table_index = index;
+        self.streams.appendAssumeCapacity(stream);
+        return index;
+    }
+
+    pub fn processAt(self: *Self, handle: i64) ?*Process {
+        const index = std.math.cast(usize, handle) orelse return null;
+        if (index >= self.processes.items.len) {
+            return null;
+        }
+        const process = self.processes.items[index] orelse return null;
+        if (process.is_released) {
+            return null;
+        }
+        return process;
+    }
+
     pub fn openListener(self: *Self, scheduler: *Scheduler) !usize {
         const loop = try self.ensureLoopStarted();
         try self.listeners.ensureUnusedCapacity(self.allocator, 1);
@@ -257,7 +292,7 @@ pub const EventLoop = struct {
     }
 
     pub fn hasPendingOperations(self: *const Self) bool {
-        return self.pending_operations > 0;
+        return self.pending_operations > 0 or self.live_processes > 0;
     }
 
     pub fn wallTimeMilliseconds() RuntimeError!i64 {
@@ -286,7 +321,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { signal, timer, stream, stream_timer, stream_handshake_timer, listener, listener_timer, open_timer };
+    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, listener, listener_timer, open_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -301,6 +336,15 @@ fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
 pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
     const owner = HandleOwner.of(handle);
     switch (owner.kind) {
+        .process => {
+            const process: *Process = @alignCast(@fieldParentPtr("owner", owner));
+            process.markHandleClosed();
+        },
+        .process_timer => {
+            const process: *Process = @alignCast(@fieldParentPtr("timer_owner", owner));
+            process.markHandleClosed();
+        },
+        .process_pipe => process_runtime.captureHandleClosed(owner),
         .signal => {
             const subscription: *Subscription = @alignCast(@fieldParentPtr("owner", owner));
             subscription.destroy();

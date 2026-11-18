@@ -1,0 +1,25 @@
+import std/process
+import std/os
+import std/task
+import std/fs
+import std/time
+
+func main() -> !void
+    let helper = (try os::args())[0]
+    let gate = (try os::args())[3]
+    let one = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
+    let two = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
+    let three = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
+    let four = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
+    let five = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
+    let six = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
+    task::sleep(0)
+    try fs::write(gate, "ready")
+    assert((try await(one)).is_success())
+    assert((try await(two)).is_success())
+    assert((try await(three)).is_success())
+    assert((try await(four)).is_success())
+    assert((try await(five)).is_success())
+    assert((try await(six)).is_success())
+    try fs::delete(gate)
+end

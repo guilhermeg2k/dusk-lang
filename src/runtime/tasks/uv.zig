@@ -9,7 +9,7 @@ pub const Handle = opaque {};
 pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
-pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, signal = 16, file = 17, _ };
+pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, process = 10, tcp = 12, timer = 13, tty = 14, signal = 16, file = 17, _ };
 pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7, getaddrinfo = 8 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
@@ -111,6 +111,11 @@ pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 pub extern fn uv_guess_handle(file: c_int) HandleType;
 pub extern fn uv_ref(handle: *Handle) void;
 pub extern fn uv_unref(handle: *Handle) void;
+
+// ---- Processes ----
+
+pub extern fn dusk_process_spawn(loop: *Loop, process: *Handle, file: [*:0]const u8, args: [*:null]const ?[*:0]const u8, env: [*:null]const ?[*:0]const u8, cwd: [*:0]const u8, pipes: *const [3]?*Handle, modes: *const [3]c_int, callback: *const fn (*Handle, i64, c_int) callconv(.c) void) c_int;
+pub extern fn dusk_process_kill(process: *Handle) c_int;
 
 // ---- Signals ----
 

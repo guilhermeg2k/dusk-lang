@@ -55,6 +55,76 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "process: captured output, arguments, environment, directory and termination" {
+    try runProcessCase("process-run.dsk");
+}
+
+test "process: interactive pipes, waits, deadlines, kill and close" {
+    try runProcessCase("process-child.dsk");
+}
+
+test "process: output caps, whole-operation deadlines and launch cleanup" {
+    try runProcessCase("process-errors.dsk");
+}
+
+test "process: parked children do not occupy the filesystem pool" {
+    try runProcessCase("process-concurrent.dsk");
+}
+
+test "process: captured results and interactive streams survive collection" {
+    try runProcessCase("process-gc.dsk");
+}
+
+test "process: private construction and native access" {
+    try runCaseError("sema/process-child-private.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/process-native-private.dsk", error.NotVisible);
+}
+
+test "process: failed launches release native records before returning" {
+    const VM = @import("runtime/vm.zig").VM;
+    const value = @import("runtime/value.zig");
+    const native = @import("runtime/builtins/std/process.zig");
+    const ProcessError = @import("runtime/tasks/process.zig").ProcessError;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{});
+    defer vm.deinit();
+    vm.io = testing.io;
+    const argv = try vm.allocStringArray(&.{"/dusk/missing/executable"});
+    var args = [_]value.Value{ argv, value.NULL_VALUE, value.NULL_VALUE, .{ .int64 = -1 }, .{ .int64 = 16777216 } };
+    for (0..50) |_| {
+        const result = try native.bindings.get("run_handle").?.native(&vm, &args);
+        try testing.expect(result.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(ProcessError.NotFound)), result.value.int64);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.live_processes);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+        for (vm.event_loop.processes.items) |entry| {
+            try testing.expect(entry == null);
+        }
+    }
+}
+
+fn runProcessCase(name: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var environment = std.process.Environ.Map.init(arena.allocator());
+    defer environment.deinit();
+    const parent = try std.process.currentPathAlloc(testing.io, arena.allocator());
+    const helper = try std.fs.path.resolve(arena.allocator(), &.{ parent, @import("test_paths").process_fixture });
+    const directory = std.fs.path.dirname(helper).?;
+    try environment.put("PATH", directory);
+    try environment.put("DUSK_PROCESS_PARENT", "parent");
+    const filename = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{name});
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, filename, arena.allocator(), .unlimited);
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const gate = try std.fs.path.resolve(arena.allocator(), &.{ parent, ".zig-cache", "tmp", &temporary.sub_path, "process-gate" });
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .environment = &environment, .program_args = &.{ helper, std.fs.path.basename(helper), directory, gate } };
+    try dusk.compileAndRun(source);
+}
+
 test "random: seeded replay, bounds, copy and default draws" {
     try runCase("random.dsk");
 }
@@ -3989,6 +4059,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("process"), @import("runtime/builtins/std/process.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("random"), @import("runtime/builtins/std/random.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("path"), @import("runtime/builtins/std/path.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("os"), @import("runtime/builtins/std/os.zig").error_sets);
