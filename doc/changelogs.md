@@ -1,5 +1,11 @@
 # Changelogs
 
+## v0.17 - Fujiwara
+
+### Features
+
+- `std/os`: platform identification, program arguments, read-only environment lookup, the current working directory and normal exit status. Signal subscriptions support explicit shutdown handling with `watch_signal`, `wait` and `close`; waiting parks only the calling task, and unused subscriptions do not keep execution alive. The CLI forwards arguments after the script path and uses the selected exit status after normal completion
+
 ## v0.16 - Shigeo
 
 Started v0.16 development: updated the CLI version to `0.16.0-devel`.

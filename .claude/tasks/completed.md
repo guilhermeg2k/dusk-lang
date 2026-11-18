@@ -1,5 +1,13 @@
 # Completed
 
+## std/os v0.17 implementation (2026-11-17)
+
+- Branch `v017std`, worktree `dusk-lang-codex`; implemented `.claude/v0.17-os-plan.md` P0-P5. Core phases delivered together because they share the module and runtime integration.
+- Zig std: target platform, script arguments, host-supplied read-only environment map, cwd. CLI forwards arguments after the script path; embedding defaults to empty arguments/environment. Exit status is per-run, validated 0..255, reset across executions, and returned to the host without exiting it.
+- Libuv: explicit Interrupt/Terminate subscriptions, one pending notification, independent subscribers, one waiter, Busy/Closed errors, idempotent close and asynchronous cleanup. Idle watchers do not keep execution alive. Windows Terminate is explicitly unsupported.
+- Debug and ReleaseFast: 550/550 tests each on Linux. `python3 test/os_cli.py` passes with both CLI builds: arguments/UTF-8, empty/missing environment, cwd, stdout/stderr flush, status bounds/reset/failure precedence, actual Interrupt/Terminate delivery, multiple subscribers, repeated waits, and restored default termination after closing the last subscriber. No benchmarks run; other platforms not executed.
+- Registered new Dusk success/privacy tests, native error mirror and host integration checks. Public API and runtime ownership documented; opened v0.17 development metadata and roadmap entry. Deferred environment mutation and generation-checked subscription slot reuse remain in backlog.
+
 ## std/os read-only environment scope (2026-11-17)
 
 - Removed set_env/unset_env from v0.17 by user request; removed mutation implementation/audit requirements and recorded future work in backlog. No runtime changes.

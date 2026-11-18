@@ -793,7 +793,17 @@ A plain-mode failure is an `IoError`; the head and whole-body modes fail with `H
 
 libuv hands the server one pending connection per loop iteration (it stops watching the socket until `uv_accept`), so bursts wait in the listen backlog; `http::listen` defaults to 1024.
 
-### 11.10 Freeing tasks
+### 11.10 OS context and signals
+
+`Dusk` passes borrowed program arguments, an optional read-only `std.process.Environ.Map` and `std.Io` into each VM. The host keeps argument and environment storage alive and immutable during the run. The CLI supplies arguments after the script path and its startup environment map; embedded executions default to empty arguments/environment. `os::args` uses `VM.allocStringArray` after UTF-8 validation. Environment values and cwd results are copied into GC strings. Cwd uses `std.process.currentPathAlloc`; these operations do not use libuv.
+
+`VM.exit_code` starts at zero and `os::set_exit_code` updates it without changing scheduling. On success, `Dusk.runProgram` copies the status to `Dusk.exit_code`; failed execution leaves host status at one. The CLI returns the normal status after output flush and VM teardown; an embedded run never exits its host process.
+
+Signal subscriptions live in `tasks/signal.zig`, with append-only slots in `EventLoop.signal_subscriptions`. Their public struct stores a file-only integer handle. Closing clears the slot immediately, so an old handle cannot resolve to another subscription. A `HandleOwner.signal` field routes the close callback, which frees the watcher memory and subscription after libuv finishes with them.
+
+Each subscription registers a `uv_signal_t` immediately, stores one pending-notification flag and permits one parked task. Idle watchers are unreferenced. Parking references the watcher and increments `pending_operations`; delivery clears the waiter, unreferences the watcher, decrements the count and wakes the task. Notifications with no waiter set the pending flag. Closing stops the watcher and wakes a waiter with relative `OsError.Closed`, unless the event loop is already tearing down. A second waiter fails with `Busy`. At teardown all remaining watchers close before their C memory is freed.
+
+### 11.11 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 

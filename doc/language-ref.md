@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.16 - Shigeo** (in development). Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.17 - Fujiwara** (in development). Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -1699,7 +1699,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`, `std/os`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1938,6 +1938,51 @@ end
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
 
 The module declares the error set `BufferError` (`NegativeSize`). See [Buffers](#buffers).
+
+### std/os
+
+Program context and shutdown notifications. Import with `import std/os`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `platform()` | `Platform` | The operating system targeted by the running runtime: `Linux`, `MacOS`, `Windows` or `Other`. |
+| `args()` | `OsError![]string` | A fresh array of program arguments. |
+| `env(name)` | `OsError!?string` | An environment value, or `null` when absent. An empty value is `""`. |
+| `cwd()` | `OsError!string` | The absolute current working directory. |
+| `set_exit_code(code)` | `OsError!void` | Sets the status for normal completion; execution continues. |
+| `watch_signal(signal)` | `OsError!SignalStream` | Subscribes to a shutdown signal immediately. |
+
+For `dusk app.dsk first --flag`, `args()` returns `["first", "--flag"]`: it excludes the runtime executable and script path. Arguments after the script path belong to the program, including `--version`. The CLI reads environment values from its startup environment map. Environment names follow host case rules; empty names and names containing `=` or a zero byte fail with `InvalidArgument`. Invalid UTF-8 in arguments, returned environment values or the working-directory path fails with `InvalidUtf8`. These calls copy results into program values.
+
+Embedded executions receive arguments and a read-only environment map from the host; both default to empty. The host keeps their storage alive and unchanged during execution. `cwd()` uses the host-provided I/O context. It reports the process working directory, which can differ from the entry module's directory. This module does not change environment variables or the working directory.
+
+Exit status starts at `0` for each execution. `set_exit_code` accepts `0` through `255`; an invalid code fails with `InvalidArgument` and leaves the previous status unchanged. The last successful call wins, including calls from other tasks. All tasks continue under the normal execution rules; output is flushed and runtime resources are released before the CLI exits. Runtime errors and unhandled task failures still produce failure regardless of the selected status. Embedded executions return control to their host, which can read `Dusk.exit_code` after execution.
+
+`Signal` has `Interrupt` (usually Ctrl+C) and `Terminate` variants. Both are supported on Unix hosts; on Windows, `Terminate` fails with `Unsupported`, while `Interrupt` receives console notifications. Ctrl+C does not generate an interrupt while the terminal is in raw mode.
+
+| SignalStream method | Returns | Description |
+| :------------------ | :------ | :---------- |
+| `wait()` | `OsError!void` | Consumes a pending notification or waits while other tasks continue. |
+| `close()` | `void` | Stops the subscription; repeated calls do nothing. |
+
+Subscribe before starting work to receive signals that arrive before `wait()`. Each subscription retains at most one pending notification; repeated arrivals can coalesce. Separate subscriptions each receive a notification. Only one task can wait on a subscription at a time (`Busy` otherwise). Closing wakes a waiting task with `Closed`; waiting after close also fails with `Closed`. A subscription without a waiting task does not keep execution alive; a waiting task does. Open subscriptions are closed when execution ends.
+
+While subscribed, repeated interrupts follow the same notification rule and do not force an exit. Closing the last subscription ends interception of that signal. Signal handling does not cancel tasks or automatically execute application cleanup; the waiting task performs that cleanup explicitly.
+
+```dusk
+import std/os
+import std/io
+
+func main() -> !void
+    let shutdown = try os::watch_signal(os::Signal.Interrupt)
+    io::println("Press Ctrl+C to stop.")
+    try shutdown.wait()
+    shutdown.close()
+    io::println("Shutting down...")
+end
+```
+
+`OsError` contains `InvalidArgument`, `InvalidUtf8`, `NotFound`, `Unsupported`, `Busy`, `Closed` and `Other`. `NotFound` can occur when the current directory no longer exists; `Other` covers host failures without a more specific variant. `SignalStream` construction and its native handle are private to the module.
 
 ### std/time
 

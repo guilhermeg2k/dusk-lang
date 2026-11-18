@@ -8,6 +8,10 @@
 - std::net
 - std::math
 - std::time
+
+## Version 0.17 - Fujiwara
+- Expand std::time
+- std::json
 - std::os
 
 ## Backlog

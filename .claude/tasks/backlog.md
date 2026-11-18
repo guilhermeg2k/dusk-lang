@@ -1,5 +1,7 @@
 # Backlog
 
+- **Reuse closed signal subscription slots** (std/os, 2026-11-17): subscription slots are append-only for stale-handle safety, matching existing stream tables. Consider generation-checked reuse for programs that repeatedly subscribe and close; each closed subscription currently retains one null pointer slot until VM teardown.
+
 - **Host environment mutation (deferred beyond v0.17, user 2026-11-17)**: set_env/unset_env are excluded from this version. Revisit host versus map semantics, Zig std/platform bindings and synchronization with native environment readers if scheduled later. Plan: `.claude/v0.17-os-plan.md`.
 
 Prioritized, top first. Language features planned per version live in `doc/roadmap.md`. This list is for concrete work items and known bugs.
