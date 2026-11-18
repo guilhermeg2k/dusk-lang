@@ -20,10 +20,15 @@ pub const JsonError = enum {
     InvalidValue,
 };
 
+var scratch: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
+
+fn releaseScratch() void {
+    _ = scratch.reset(.{ .retain_with_limit = 1 << 20 });
+}
+
 pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    defer releaseScratch();
+    const allocator = scratch.allocator();
     const max_depth = encodeDepth(args[1]) orelse return native.fail(JsonError.InvalidOptions);
     var output: std.Io.Writer.Allocating = .init(allocator);
     var encoder = Encoder{
@@ -42,12 +47,11 @@ pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 }
 
 pub fn collectSites(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    defer arena.deinit();
+    defer releaseScratch();
     const root_base = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_base);
     const max_depth = encodeDepth(args[1]) orelse return native.fail(JsonError.InvalidOptions);
-    var encoder = Encoder{ .vm = vm, .allocator = arena.allocator(), .max_depth = max_depth };
+    var encoder = Encoder{ .vm = vm, .allocator = scratch.allocator(), .max_depth = max_depth };
     const roots = try vm.heap.protectValue(args[3], .array);
     const queue = try vm.heap.protectValue(args[4], .array);
     encoder.visit(.collect, @intCast(args[2].int64), args[0], 0) catch |failure| {
@@ -58,12 +62,11 @@ pub fn collectSites(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 }
 
 pub fn collectNested(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    defer arena.deinit();
+    defer releaseScratch();
     const root_base = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_base);
     const max_depth = encodeDepth(args[3]) orelse return native.fail(JsonError.InvalidOptions);
-    var encoder = Encoder{ .vm = vm, .allocator = arena.allocator(), .max_depth = max_depth };
+    var encoder = Encoder{ .vm = vm, .allocator = scratch.allocator(), .max_depth = max_depth };
     const queue = try vm.heap.protectValue(args[0], .array);
     const stop: usize = @intCast(args[2].int64);
     var i: usize = @intCast(args[1].int64);
@@ -389,9 +392,8 @@ pub fn describeStep(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
 }
 
 fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.NativeResult {
-    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
+    defer releaseScratch();
+    const allocator = scratch.allocator();
     const root_base = vm.heap.temporary_roots.items.len;
     defer vm.heap.restoreRootCount(root_base);
     const diagnostic = try vm.heap.protectValue(args[1], .nullable);
@@ -421,6 +423,47 @@ fn decodeDocument(vm: *VM, args: []v.Value, has_holder: bool) anyerror!native.Na
     };
     return native.ok(result);
 }
+
+fn findField(fields: []const serialization_plan.Field, key: []const u8, guess: usize) ?usize {
+    if (guess < fields.len and fields[guess].isNamed(key)) {
+        return guess;
+    }
+    for (fields, 0..) |field, i| {
+        if (field.isNamed(key)) {
+            return i;
+        }
+    }
+    return null;
+}
+
+const SeenFields = struct {
+    small: u64 = 0,
+    large: ?[]bool = null,
+
+    fn init(allocator: std.mem.Allocator, count: usize) !SeenFields {
+        if (count <= 64) {
+            return .{};
+        }
+        const large = try allocator.alloc(bool, count);
+        @memset(large, false);
+        return .{ .large = large };
+    }
+
+    fn isSet(self: SeenFields, index: usize) bool {
+        if (self.large) |large| {
+            return large[index];
+        }
+        return self.small & (@as(u64, 1) << @intCast(index)) != 0;
+    }
+
+    fn set(self: *SeenFields, index: usize) void {
+        if (self.large) |large| {
+            large[index] = true;
+            return;
+        }
+        self.small |= @as(u64, 1) << @intCast(index);
+    }
+};
 
 const PendingItem = struct {
     index: usize,
@@ -589,23 +632,20 @@ const Decoder = struct {
     fn readStruct(self: *Decoder, shape: serialization_plan.Structure, depth: usize) !usize {
         try self.enterContainer(.object_begin, depth);
         const object = try self.allocRootedStruct(shape.descriptor);
-        const seen_fields = try self.allocator.alloc(bool, shape.fields.len);
-        @memset(seen_fields, false);
-        var keys = std.StringHashMap(void).init(self.allocator);
+        var seen_fields = try SeenFields.init(self.allocator, shape.fields.len);
+        var unknown_keys: ?std.StringHashMap(void) = null;
+        var guess: usize = 0;
         while (try self.peekToken() != .object_end) {
-            const key = try self.readObjectKey(&keys);
+            const key = try self.readStringText();
             const path_base = self.path.items.len;
             try self.appendFieldPath(key, false);
-            const field_index = for (shape.fields, 0..) |field, i| {
-                if (field.isNamed(key)) {
-                    break i;
-                }
-            } else null;
+            const field_index = findField(shape.fields, key, guess);
             if (field_index) |i| {
-                if (seen_fields[i]) {
+                if (seen_fields.isSet(i)) {
                     return error.DuplicateKey;
                 }
-                seen_fields[i] = true;
+                seen_fields.set(i);
+                guess = i + 1;
                 if (shape.fields[i].proxy) |site| {
                     if (try self.decodeSite(site, depth + 1)) |site_value| {
                         try self.queueConversion(site.decode_function, &.{object}, site_value);
@@ -618,6 +658,13 @@ const Decoder = struct {
                 if (self.should_reject_unknown_fields) {
                     return error.UnknownField;
                 }
+                if (unknown_keys == null) {
+                    unknown_keys = std.StringHashMap(void).init(self.allocator);
+                }
+                const entry = try unknown_keys.?.getOrPut(key);
+                if (entry.found_existing) {
+                    return error.DuplicateKey;
+                }
                 try self.skipValue(depth + 1);
             }
             self.path.shrinkRetainingCapacity(path_base);
@@ -627,7 +674,7 @@ const Decoder = struct {
             try self.queueStep(skip.default_function, &.{object});
         }
         for (shape.fields, 0..) |field, i| {
-            if (seen_fields[i]) continue;
+            if (seen_fields.isSet(i)) continue;
             if (field.default_function) |function| {
                 try self.queueStep(function, &.{object});
                 continue;
@@ -643,12 +690,15 @@ const Decoder = struct {
         const value_kind = self.vm.program.serialization_plans[items.item].kind;
         const value = try self.vm.newMap(.string, value_kind);
         const map = try self.vm.heap.protectValue(value, .map);
-        var keys = std.StringHashMap(void).init(self.allocator);
         while (try self.peekToken() != .object_end) {
-            const key_text = try self.readObjectKey(&keys);
+            const key_text = try self.readStringText();
             const path_base = self.path.items.len;
             try self.appendFieldPath(key_text, true);
             const key_value = try self.vm.allocBytesValue(key_text, .string);
+            const map_object = v.HeapValue.getParentPtr(v.Map, self.vm.heap.protectedValue(map).heap_obj);
+            if (map_object.find(key_value, map_object.hashKey(key_value)) != null) {
+                return error.DuplicateKey;
+            }
             const key_root = try self.vm.heap.protectValue(key_value, .string);
             if (items.proxy) |site| {
                 const placeholder = try self.vm.heap.protectValue(v.NULL_VALUE, value_kind);
@@ -700,8 +750,7 @@ const Decoder = struct {
         if (try self.peekToken() == .object_end) {
             return error.InvalidUnion;
         }
-        var keys = std.StringHashMap(void).init(self.allocator);
-        const key = try self.readObjectKey(&keys);
+        const key = try self.readStringText();
         const path_base = self.path.items.len;
         try self.appendFieldPath(key, false);
         const variant = for (shape.variants) |candidate| {
@@ -715,7 +764,11 @@ const Decoder = struct {
             break :blk try self.vm.heap.protectValue(v.NULL_VALUE, self.vm.program.serialization_plans[variant.plan].kind);
         } else try self.decodeValue(variant.plan, depth + 1);
         if (try self.peekToken() != .object_end) {
-            _ = try self.readObjectKey(&keys);
+            const second = try self.readStringText();
+            if (std.mem.eql(u8, second, key)) {
+                try self.appendFieldPath(second, true);
+                return error.DuplicateKey;
+            }
             return error.InvalidUnion;
         }
         _ = try self.nextToken();
@@ -785,7 +838,7 @@ const Decoder = struct {
     fn nextToken(self: *Decoder) !std.json.Token {
         _ = try self.peekToken();
         self.offset = self.scanner.cursor;
-        return self.scanner.nextAllocMax(self.allocator, .alloc_always, self.source.len) catch |failure| {
+        return self.scanner.nextAllocMax(self.allocator, .alloc_if_needed, self.source.len) catch |failure| {
             self.offset = self.scanner.cursor;
             return failure;
         };
