@@ -55,6 +55,79 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "os: platform, empty arguments, environment validation, cwd and status" {
+    try runCase("os.dsk");
+}
+
+test "os: runtime platform agrees with public enum" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const name = switch (@import("builtin").os.tag) {
+        .linux => "Linux",
+        .macos => "MacOS",
+        .windows => "Windows",
+        else => "Other",
+    };
+    const source = try std.fmt.allocPrint(arena.allocator(), "import std/os func main() -> void assert(os::platform() == os::Platform.{s}) end", .{name});
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "os: signal waiter close, concurrent wait and idle teardown" {
+    try runCase("os-signals.dsk");
+    try runCaseError("sema/os-signal-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/os-signal-native-private.dsk", error.NotVisible);
+}
+
+test "os: host arguments, environment snapshots and exit status reset" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var environment = std.process.Environ.Map.init(testing.allocator);
+    defer environment.deinit();
+    try environment.put("DUSK_TEST_VALUE", "héllo");
+    try environment.put("DUSK_TEST_EMPTY", "");
+    try environment.put("DUSK_TEST_INVALID", "\xff");
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .program_args = &.{ "one two", "--flag", "世界" }, .environment = &environment };
+    try dusk.compileAndRun(
+        \\import std/os
+        \\import std/array
+        \\func main() -> !void
+        \\    let mut args = try os::args()
+        \\    assert(array::len(args) == 3)
+        \\    assert(args[0] == "one two" and args[1] == "--flag" and args[2] == "世界")
+        \\    args[0] = "changed"
+        \\    let again = try os::args()
+        \\    assert(again[0] == "one two")
+        \\    assert(try os::env("DUSK_TEST_VALUE") == "héllo")
+        \\    assert(try os::env("DUSK_TEST_EMPTY") == "")
+        \\    assert(try os::env("DUSK_TEST_MISSING") == null)
+        \\    let invalid = os::env("DUSK_TEST_INVALID") catch e then
+        \\        assert(e == os::OsError.InvalidUtf8)
+        \\        return
+        \\    end
+        \\    assert(false)
+        \\end
+    );
+    try dusk.compileAndRun("import std/os func main() -> !void try os::set_exit_code(42) end");
+    try testing.expectEqual(@as(u8, 42), dusk.exit_code);
+    try dusk.compileAndRun("func main() -> void end");
+    try testing.expectEqual(@as(u8, 0), dusk.exit_code);
+    try dusk.compileAndRun("import std/os func main() -> !void try os::set_exit_code(42) end");
+    try testing.expectError(error.ParserError, dusk.compileAndRun("func"));
+    try testing.expectEqual(@as(u8, 1), dusk.exit_code);
+    dusk.program_args = &.{"\xff"};
+    try dusk.compileAndRun(
+        \\import std/os
+        \\func main() -> !void
+        \\    let args = os::args() catch e then
+        \\        assert(e == os::OsError.InvalidUtf8)
+        \\        return
+        \\    end
+        \\    assert(false)
+        \\end
+    );
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }
@@ -3655,6 +3728,7 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("os"), @import("runtime/builtins/std/os.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);

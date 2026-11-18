@@ -13,6 +13,7 @@ const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
 const ServerState = @import("http_server.zig").ServerState;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
+const Subscription = @import("signal.zig").Subscription;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -31,9 +32,16 @@ pub const EventLoop = struct {
     connection_pool: ConnectionPool = .{},
     http_servers: std.ArrayList(ServerState) = .empty,
     stdin_handle: ?usize = null,
+    signal_subscriptions: std.ArrayList(?*Subscription) = .empty,
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
+        for (self.signal_subscriptions.items) |entry| {
+            if (entry) |subscription| {
+                subscription.close();
+            }
+        }
+        defer self.signal_subscriptions.deinit(self.allocator);
         for (self.streams.items) |entry| {
             const stream = entry orelse continue;
             stream.releaseAtExit();
@@ -74,6 +82,28 @@ pub const EventLoop = struct {
     fn loopMemory(loop: *uv.Loop) []align(16) u8 {
         const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
         return bytes[0..uv.uv_loop_size()];
+    }
+
+    pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !usize {
+        try self.signal_subscriptions.ensureUnusedCapacity(self.allocator, 1);
+        const subscription = try Subscription.create(self, scheduler, signal);
+        const index = self.signal_subscriptions.items.len;
+        self.signal_subscriptions.appendAssumeCapacity(subscription);
+        return index;
+    }
+
+    pub fn signalAt(self: *Self, handle: i64) ?*Subscription {
+        const index = std.math.cast(usize, handle) orelse return null;
+        if (index >= self.signal_subscriptions.items.len) {
+            return null;
+        }
+        return self.signal_subscriptions.items[index];
+    }
+
+    pub fn closeSignal(self: *Self, handle: i64) void {
+        const subscription = self.signalAt(handle) orelse return;
+        self.signal_subscriptions.items[@intCast(handle)] = null;
+        subscription.close();
     }
 
     pub fn startTimer(self: *Self, scheduler: *Scheduler, ms: u64, task: *TaskState) !void {
@@ -256,7 +286,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer, stream_handshake_timer, listener, listener_timer, open_timer };
+    pub const Kind = enum { signal, timer, stream, stream_timer, stream_handshake_timer, listener, listener_timer, open_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -271,6 +301,10 @@ fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
 pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
     const owner = HandleOwner.of(handle);
     switch (owner.kind) {
+        .signal => {
+            const subscription: *Subscription = @alignCast(@fieldParentPtr("owner", owner));
+            subscription.destroy();
+        },
         .timer => {
             const request: *TimerRequest = @alignCast(@fieldParentPtr("owner", owner));
             const allocator = request.event_loop.allocator;

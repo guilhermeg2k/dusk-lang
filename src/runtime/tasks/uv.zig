@@ -9,7 +9,7 @@ pub const Handle = opaque {};
 pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
-pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, file = 17, _ };
+pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, signal = 16, file = 17, _ };
 pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7, getaddrinfo = 8 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 
@@ -109,6 +109,14 @@ pub extern fn uv_handle_set_data(handle: *Handle, data: ?*anyopaque) void;
 pub extern fn uv_is_closing(handle: *const Handle) c_int;
 pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 pub extern fn uv_guess_handle(file: c_int) HandleType;
+pub extern fn uv_ref(handle: *Handle) void;
+pub extern fn uv_unref(handle: *Handle) void;
+
+// ---- Signals ----
+
+pub extern fn uv_signal_init(loop: *Loop, signal: *Handle) c_int;
+pub extern fn uv_signal_start(signal: *Handle, callback: *const fn (*Handle, c_int) callconv(.c) void, number: c_int) c_int;
+pub extern fn uv_signal_stop(signal: *Handle) c_int;
 
 // ---- Timers ----
 
