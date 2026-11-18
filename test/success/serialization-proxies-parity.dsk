@@ -104,19 +104,75 @@ union Moment
     never: int
 end
 
+struct BatchBox
+    value: Batch
+end
+
+func batch_box_to_value(box: BatchBox) -> Batch
+    return box.value
+end
+
+func batch_value_to_box(value: Batch) -> BatchBox
+    return BatchBox(value = value)
+end
+
+struct EventBox
+    value: Event
+end
+
+func event_box_to_value(box: EventBox) -> Event
+    return box.value
+end
+
+func event_value_to_box(value: Event) -> EventBox
+    return EventBox(value = value)
+end
+
+struct EventsBox
+    value: []Event
+end
+
+func events_box_to_value(box: EventsBox) -> []Event
+    return box.value
+end
+
+func events_value_to_box(value: []Event) -> EventsBox
+    return EventsBox(value = value)
+end
+
+struct TotalsBox
+    value: Totals
+end
+
+func totals_box_to_value(box: TotalsBox) -> Totals
+    return box.value
+end
+
+func totals_value_to_box(value: Totals) -> TotalsBox
+    return TotalsBox(value = value)
+end
+
+schema DuskPath(case = "snake")
+    time::Timestamp: via(time::to_iso, time::from_iso)
+    Window: via(window_to_span, span_to_window)
+    Total: via(total_to_wire, wire_to_total)
+    BatchBox: via(batch_box_to_value, batch_value_to_box)
+    EventBox: via(event_box_to_value, event_value_to_box)
+    EventsBox: via(events_box_to_value, events_value_to_box)
+    TotalsBox: via(totals_box_to_value, totals_value_to_box)
+
+    struct Event
+        durationMs: "duration_s", via(ms_to_seconds, seconds_to_ms)
+    end
+end
+
 func native_text[T](value: T) -> json::JsonError!string
     return try json::encode[T, Api](value)
 end
 
-func dusk_text[T](value: T) -> serialization::SerializationError!string
-    let mut writer = json::writer()
-    try serialization::encode[T, json::Writer, Api](value, writer)
-    return writer.text()
-end
-
-func dusk_decode[T](text: string) -> serialization::SerializationError!T
-    let mut reader = json::reader(text)
-    return try serialization::decode_document[T, json::Reader, Api](reader)
+func dusk_text[B](box: B) -> json::JsonError!string
+    assert(!serialization::is_native[B, DuskPath]())
+    return try json::encode[B, DuskPath](box)
 end
 
 func native_error(text: string) -> ?json::JsonError
@@ -126,8 +182,8 @@ func native_error(text: string) -> ?json::JsonError
     return null
 end
 
-func dusk_error(text: string) -> ?serialization::SerializationError
-    let event = dusk_decode[Event](text) catch e then
+func dusk_error(text: string) -> ?json::JsonError
+    let event = json::decode[EventBox, DuskPath](text) catch e then
         return e
     end
     return null
@@ -146,14 +202,15 @@ func main() -> !void
     let batch = Batch(events = [full, bare, full], labels = {"x": "y"})
 
     let text = try native_text(batch)
-    assert(text == (try dusk_text(batch)))
+    assert(text == (try dusk_text(BatchBox(value = batch))))
     assert(string::contains(text, "\"by_name\":{\"a\":\"1970-01-01T00:00:01.000Z\",\"c\":\"1970-01-01T00:00:03.000Z\",\"d\":\"1970-01-01T00:00:04.000Z\"}"))
     assert(string::contains(text, "\"window\":{\"label\":\"w2000\",\"starts\":\"1970-01-01T00:00:00.500Z\"}"))
     assert(string::contains(text, "\"maybe_marks\":[\"1970-01-01T00:00:00.007Z\",null,\"1970-01-01T00:00:00.009Z\"]"))
     assert(string::contains(text, "\"duration_s\":61"))
 
     let native = try json::decode[Batch, Api](text)
-    let dusk = try dusk_decode[Batch](text)
+    let dusk_box = try json::decode[BatchBox, DuskPath](text)
+    let dusk = dusk_box.value
     assert((try native_text(native)) == text)
     assert((try native_text(dusk)) == text)
     assert(native.events[0].durationMs == 61000)
@@ -171,14 +228,15 @@ func main() -> !void
 
     let partial = "{\"title\":\"p\",\"starts_at\":\"2024-02-29T12:30:00Z\",\"duration_s\":2,\"maybe_marks\":[null]}"
     let from_native = try json::decode[Event, Api](partial)
-    let from_dusk = try dusk_decode[Event](partial)
+    let partial_box = try json::decode[EventBox, DuskPath](partial)
+    let from_dusk = partial_box.value
     assert(from_native.order == 99 and from_dusk.order == 99)
     assert(from_native.durationMs == 2000 and from_native.maybeMarks[0] == null)
     assert((try native_text(from_native)) == (try native_text(from_dusk)))
 
     let broken = "{\"title\":\"p\",\"starts_at\":\"soon\",\"duration_s\":2}"
     assert(native_error(broken) == json::JsonError.InvalidValue)
-    assert(dusk_error(broken) == serialization::SerializationError.InvalidValue)
+    assert(dusk_error(broken) == json::JsonError.InvalidValue)
     let broken_item = "{\"title\":\"p\",\"starts_at\":\"2024-01-01T00:00:00Z\",\"duration_s\":2,\"marks\":[\"2024-01-01T00:00:00Z\",\"later\"]}"
     assert(native_error(broken_item) == json::JsonError.InvalidValue)
 
@@ -187,14 +245,15 @@ func main() -> !void
         array::append(many, Event(title = "e${i}", startsAt = at(i * 1000), durationMs = i * 1000, marks = [at(i)], byName = {"k": at(i)}))
     end
     let many_text = try native_text(many)
-    assert(many_text == (try dusk_text(many)))
+    assert(many_text == (try dusk_text(EventsBox(value = many))))
     let many_back = try json::decode[[]Event, Api](many_text)
     assert(array::len(many_back) == 2000 and many_back[1999].marks[0].unix_ms() == 1999)
     assert((try native_text(many_back)) == many_text)
 
     let totals_text = "{\"one\":{\"base\":1},\"many\":[{\"base\":2},{\"base\":3,\"extra\":0}],\"named\":{\"k\":{\"base\":4}}}"
     let native_totals = try json::decode[Totals, Api](totals_text)
-    let dusk_totals = try dusk_decode[Totals](totals_text)
+    let totals_box = try json::decode[TotalsBox, DuskPath](totals_text)
+    let dusk_totals = totals_box.value
     assert(native_totals.one.value == 100 and dusk_totals.one.value == 100)
     assert(native_totals.many[0].value == 101 and native_totals.many[1].value == 3)
     assert(dusk_totals.many[0].value == 101 and dusk_totals.many[1].value == 3)
@@ -203,7 +262,7 @@ func main() -> !void
     else
         assert(false)
     end
-    assert((try native_text(native_totals)) == (try dusk_text(dusk_totals)))
+    assert((try native_text(native_totals)) == (try dusk_text(TotalsBox(value = dusk_totals))))
 
     assert((try json::encode[time::Timestamp, Api](at(0))) == "\"1970-01-01T00:00:00.000Z\"")
     let moment = try json::decode[Moment, Api]("{\"at\":\"1970-01-01T00:00:01.000Z\"}")

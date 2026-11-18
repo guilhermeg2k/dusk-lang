@@ -55,7 +55,7 @@ func encode[T, S: schema](value: T, options: EncodeOptions = @()) -> JsonError!s
     if serialization::is_native[T, S]() then
         let mut fragments: []string = []
         if serialization::has_proxies[T, S]() then
-            let mut collector = writer(options)
+            let mut collector = Writer(max_depth = options.max_depth, data = buffer::from_string(""))
             serialization::proxy_fragments[T, Writer, S](value, collector, fragments) catch e then
                 try raise(collector.failure, e)
                 return JsonError.InvalidJson
@@ -82,14 +82,6 @@ func decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, opti
     end
 end
 
-func reader(text: string, options: DecodeOptions = @()) -> Reader
-    return Reader(text = text, data = buffer::from_string(text), max_depth = options.max_depth, should_reject_unknown_fields = options.should_reject_unknown_fields)
-end
-
-func writer(options: EncodeOptions = @()) -> Writer
-    return Writer(max_depth = options.max_depth, data = buffer::from_string(""))
-end
-
 func ~is_valid_depth(depth: int) -> bool
     return depth > 0 and depth <= 512
 end
@@ -98,7 +90,7 @@ func ~encode_derived[T, S: schema](value: T, options: EncodeOptions) -> JsonErro
     if !is_valid_depth(options.max_depth) then
         return JsonError.InvalidOptions
     end
-    let mut writer = writer(options)
+    let mut writer = Writer(max_depth = options.max_depth, data = buffer::from_string(""))
     serialization::encode[T, Writer, S](value, writer) catch e then
         try raise(writer.failure, e)
         return JsonError.InvalidJson
@@ -205,7 +197,7 @@ func ~raise(failure: ?JsonError, cause: serialization::SerializationError) -> Js
     end
 end
 
-struct Reader
+struct ~Reader
     ~text: string
     ~data: buffer
     ~max_depth: int
@@ -606,7 +598,7 @@ func ~is_identifier(name: string) -> bool
     return true
 end
 
-struct Writer
+struct ~Writer
     ~max_depth: int
     ~data: buffer
     ~used: int = 0
