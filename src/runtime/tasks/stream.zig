@@ -108,6 +108,7 @@ pub const Stream = struct {
         if (uv.uv_tcp_init(loop, @ptrCast(memory.ptr)) != 0) {
             return error.TcpInitFailed;
         }
+        _ = uv.uv_tcp_nodelay(@ptrCast(memory.ptr), 1);
         stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = .tcp, .loop = loop, .file = -1, .handle_memory = memory, .open_handles = 1 };
         uv.uv_handle_set_data(stream.uvHandle(), &stream.owner);
         return stream;

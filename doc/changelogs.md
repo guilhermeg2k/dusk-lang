@@ -12,6 +12,10 @@
 - `accept` takes a burst of waiting connections at once (up to 64) instead of one per event loop round, so servers handle many short connections faster
 - Every heap value except arrays (strings, buffers, structs, unions, maps, closures, tasks, nullable boxes) takes 8 bytes less memory
 
+### Fixes
+
+- HTTP keep-alive responses no longer wait about 40 ms each: TCP connections send small writes right away (`TCP_NODELAY`), and `http::serve` sends a response's head and body (up to 64 KiB) in one write. A hello-world server goes from about 4,900 to 96,000 requests per second on keep-alive connections
+
 ## v0.16 - Shigeo
 
 Started v0.16 development: updated the CLI version to `0.16.0-devel`.
