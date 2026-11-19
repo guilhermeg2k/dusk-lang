@@ -37,7 +37,7 @@ func wire_to_total(wire: Wire) -> Total
 end
 
 schema Api
-    time::Timestamp: via(time::to_iso, time::from_iso)
+    time::Timestamp: via(time::to_iso, time::from_iso_string)
     Stamp: via(stamp_to_time, time_to_stamp)
     Total: via(total_to_wire, wire_to_total)
 end

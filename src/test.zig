@@ -177,6 +177,10 @@ test "time: timestamps, formatting and private construction" {
     try runCaseError("sema/time-timestamp-native-private.dsk", error.NotVisible);
 }
 
+test "time: ISO parsing, offsets, expanded years and errors" {
+    try runCase("time-parsing.dsk");
+}
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);

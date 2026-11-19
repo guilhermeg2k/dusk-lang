@@ -1,5 +1,6 @@
 error TimeError
     InvalidTimestamp
+    Overflow
 end
 
 struct Timestamp
@@ -30,7 +31,7 @@ func to_iso(timestamp: Timestamp) -> string
     return format_timestamp(timestamp.milliseconds)
 end
 
-func from_iso(text: string) -> TimeError!Timestamp
+func from_iso_string(text: string) -> TimeError!Timestamp
     return from_unix_ms(try parse_timestamp(text))
 end
 

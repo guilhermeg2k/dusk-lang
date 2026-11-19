@@ -370,7 +370,7 @@ func seconds_to_ms(seconds: int) -> int
 end
 
 schema Api(case = "snake")
-    time::Timestamp: via(time::to_iso, time::from_iso)
+    time::Timestamp: via(time::to_iso, time::from_iso_string)
     Money: via(money_to_parts, parts_to_money)
 end
 
@@ -403,8 +403,8 @@ func json_error(text: string, options: json::DecodeOptions = @()) -> ?json::Json
     return null
 end
 
-func iso_fails(text: string) -> bool
-    let parsed = time::from_iso(text) catch e then
+func is_invalid_iso_timestamp(text: string) -> bool
+    let parsed = time::from_iso_string(text) catch e then
         return true
     end
     return false
@@ -459,9 +459,9 @@ func main() -> !void
 
     check_diagnostic()
 
-    assert((try time::from_iso("2000-01-01T00:00:00Z")).unix_ms() == 946684800000)
-    assert(time::to_iso(try time::from_iso("1999-12-31T23:59:59.9Z")) == "1999-12-31T23:59:59.900Z")
-    assert(iso_fails("2023-02-29T00:00:00Z") and iso_fails("2024-13-01T00:00:00Z") and iso_fails("2024-01-01 00:00:00Z") and iso_fails("2024-01-01T00:00:00"))
+    assert((try time::from_iso_string("2000-01-01T00:00:00Z")).unix_ms() == 946684800000)
+    assert(time::to_iso(try time::from_iso_string("1999-12-31T23:59:59.9Z")) == "1999-12-31T23:59:59.900Z")
+    assert(is_invalid_iso_timestamp("2023-02-29T00:00:00Z") and is_invalid_iso_timestamp("2024-13-01T00:00:00Z") and is_invalid_iso_timestamp("2024-01-01 00:00:00Z") and is_invalid_iso_timestamp("2024-01-01T00:00:00"))
 
     let nested = Nested(events = [event, back])
     let nested_text = try json::encode[Nested, Api](nested)

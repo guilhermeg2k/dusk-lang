@@ -1997,7 +1997,7 @@ Clocks and timestamp values. Import with `import std/time`.
 | `from_unix_ms(milliseconds)` | `Timestamp` | A timestamp from any `int` epoch-millisecond value, including negative values. |
 | `to_unix_ms(timestamp)` | `int` | The timestamp's epoch milliseconds, like `timestamp.unix_ms()`. |
 | `to_iso(timestamp)` | `string` | The same text as `timestamp.to_string()`. |
-| `from_iso(text)` | `TimeError!Timestamp` | Reads `YYYY-MM-DDTHH:MM:SS` with an optional fraction and a final `Z`, such as `2024-02-29T12:30:00.250Z`. Digits after the third fractional one are dropped. Anything else, including impossible dates, fails with `TimeError.InvalidTimestamp`. |
+| `from_iso_string(text)` | `TimeError!Timestamp` | Reads a full Gregorian timestamp with an explicit `Z` or numeric `+HH:MM` / `-HH:MM` offset. Supports expanded years and optional fractions, truncated to milliseconds. Invalid text fails with `TimeError.InvalidTimestamp`; a valid value outside the `int` millisecond range fails with `TimeError.Overflow`. |
 | `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
 | `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
 
@@ -2041,9 +2041,13 @@ let modified = time::from_unix_ms(info.modified_ms)
 
 The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
 
-The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Date arithmetic and timestamp comparison methods are not provided; `from_iso` only reads the UTC form above, not offsets or expanded years.
+The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Date arithmetic and timestamp comparison methods are not provided.
 
-`to_iso` / `from_iso` and `to_unix_ms` / `from_unix_ms` are pairs of plain functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
+`from_iso_string` requires uppercase `T` and a final uppercase `Z` or offset, with no surrounding whitespace or trailing text. Years use four digits, a negative sign with at least four digits, or a positive sign for years above 9999. The Gregorian calendar extends through year zero. A fraction must contain at least one digit; one or two digits are padded to milliseconds, and digits after the third are validated and discarded. Leap seconds, `24:00`, date-only and time-only input, week dates, ordinal dates, and intervals are rejected. Offset hours range from 00 to 23 and minutes from 00 to 59. Both `+00:00` and `-00:00` mean zero offset; the original offset is not retained.
+
+For example, `1970-01-01T05:30:00+05:30` represents epoch millisecond zero, and `+10000-01-01T00:00:00Z` is accepted. Every timestamp produced by `to_iso` can be read back, including both `int` limits. An offset can move the local date across a day or year boundary; only the resulting UTC epoch milliseconds must fit in `int`.
+
+`to_iso` / `from_iso_string` and `to_unix_ms` / `from_unix_ms` are pairs of plain functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
 
 ### std/task
 
@@ -2816,7 +2820,7 @@ A schema is a named set of outside names for one consumer: an API, a database ta
 
 ```nim
 schema Api(case = "snake")
-    time::Timestamp: via(time::to_iso, time::from_iso)
+    time::Timestamp: via(time::to_iso, time::from_iso_string)
 
     struct models::Address
         zipCode: "postcode"
@@ -3055,7 +3059,8 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
-| `TimeError.InvalidTimestamp` | `time::from_iso` with text that isn't a valid `YYYY-MM-DDTHH:MM:SSZ` UTC timestamp. |
+| `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
+| `TimeError.Overflow` | `time::from_iso_string` with an otherwise valid timestamp whose epoch milliseconds exceed the `int` range. |
 
 ## 16. Errors
 
