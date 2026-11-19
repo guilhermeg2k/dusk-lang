@@ -38,7 +38,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) std.I
                 try writer.print("null", .{});
                 return;
             }
-            const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
+            const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj).newestCopy();
             const data = array.getDataPtr();
             try writer.print("[", .{});
             for (0..array.len) |i| {

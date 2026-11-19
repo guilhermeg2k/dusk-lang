@@ -45,7 +45,7 @@ fn arrayMin(_: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn arrayExtremum(args: []v.Value, comptime operation: enum { min, max }) !NativeResult {
-    const array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj.followRelocated());
+    const array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj).newestCopy();
     if (array.len == 0) {
         return fail(MathError.Empty);
     }

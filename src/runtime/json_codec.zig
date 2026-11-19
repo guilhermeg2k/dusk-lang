@@ -333,7 +333,7 @@ fn bytes(value: v.Value) []const u8 {
 }
 
 fn arrayOf(value: v.Value) *v.Array {
-    return v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
+    return v.HeapValue.getParentPtr(v.Array, value.heap_obj).newestCopy();
 }
 
 fn closureOf(value: v.Value) *v.Closure {
