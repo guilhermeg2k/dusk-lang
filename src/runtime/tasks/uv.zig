@@ -133,6 +133,7 @@ pub extern fn uv_write(request: *Request, stream: *Handle, buffers: [*]const Buf
 
 pub extern fn uv_tcp_init(loop: *Loop, tcp: *Handle) c_int;
 pub extern fn uv_tcp_open(tcp: *Handle, socket: OsSocket) c_int;
+pub extern fn uv_tcp_nodelay(tcp: *Handle, enable: c_int) c_int;
 pub extern fn uv_tcp_bind(tcp: *Handle, address: *const SocketAddress, flags: c_uint) c_int;
 pub extern fn uv_tcp_connect(request: *Request, tcp: *Handle, address: *const SocketAddress, callback: ConnectCallback) c_int;
 pub extern fn uv_tcp_getsockname(tcp: *const Handle, address: *SocketAddress, length: *c_int) c_int;

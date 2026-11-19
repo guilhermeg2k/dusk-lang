@@ -48,6 +48,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - Piping a program's output into a command that stops reading early (`dusk app.dsk | head -2`) crashed with a stack trace. The program now ends quietly, like other command-line tools (exit status 141)
 - Failing to write output (a full disk, for example) crashed with a stack trace. It's now a runtime error: `can't write to stdout: NoSpaceLeft`
 - With both outputs sent to the same file (`dusk app.dsk > out.txt 2>&1`), a runtime error message overwrote the program's output at the start of the file
+- HTTP keep-alive responses no longer wait about 40 ms each: TCP connections send small writes right away (`TCP_NODELAY`), and `http::serve` sends a response's head and body (up to 64 KiB) in one write. A hello-world server goes from about 4,900 to 96,000 requests per second on keep-alive connections
 
 ## v0.15 - Enjin
 

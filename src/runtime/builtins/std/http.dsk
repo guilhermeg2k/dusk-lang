@@ -248,6 +248,7 @@ extern func ~body_given_twice() -> void
 let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
 let ~REQUEST_DRAIN_LIMIT = 65536
+let ~JOINED_BODY_LIMIT = 65536
 let ~BODY_COMPLETE = 0
 let ~BODY_UNREAD = 1
 let ~BODY_TOO_LARGE = 1
@@ -822,14 +823,38 @@ func ~write_response(request: Request, response: Response, keeps_alive: bool) ->
     if !keeps_alive then
         append(lines, "Connection: close")
     end
-    stream_write(request.handle, "${string::join(lines, "\r\n")}\r\n\r\n") catch e then
-        return false
-    end
+    let head = "${string::join(lines, "\r\n")}\r\n\r\n"
     let sends_body = has_body and request.method != "HEAD" and buffer::len(response.body) > 0
-    if sends_body then
-        stream_write_bytes(request.handle, response.body) catch e then
+    if !sends_body then
+        stream_write(request.handle, head) catch e then
             return false
         end
+        return true
+    end
+    if buffer::len(response.body) <= JOINED_BODY_LIMIT then
+        return write_joined(request.handle, head, response.body)
+    end
+    stream_write(request.handle, head) catch e then
+        return false
+    end
+    stream_write_bytes(request.handle, response.body) catch e then
+        return false
+    end
+    return true
+end
+
+func ~write_joined(handle: int, head: string, body: buffer) -> bool
+    let mut message = buffer::new(string::len(head) + buffer::len(body)) catch e then
+        return false
+    end
+    let body_start = buffer::put(message, 0, head) catch e then
+        return false
+    end
+    buffer::put_bytes(message, body_start, body) catch e then
+        return false
+    end
+    stream_write_bytes(handle, message) catch e then
+        return false
     end
     return true
 end
