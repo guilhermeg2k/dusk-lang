@@ -7,7 +7,8 @@ pub fn build(b: *std.Build) void {
     const libuv = b.dependency("libuv", .{ .target = target, .optimize = optimize }).artifact("uv");
     const mbedtls = b.dependency("mbedtls", .{ .target = target, .optimize = optimize }).artifact("mbedtls");
     const llhttp = b.dependency("llhttp", .{ .target = target, .optimize = optimize }).artifact("llhttp");
-    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp };
+    const zlib_ng = b.dependency("zlib_ng", .{ .target = target, .optimize = optimize }).artifact("z-ng");
+    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp, .zlib_ng = zlib_ng };
 
     const exe = b.addExecutable(.{
         .name = "dusk",
@@ -58,12 +59,14 @@ const RuntimeLibraries = struct {
     libuv: *std.Build.Step.Compile,
     mbedtls: *std.Build.Step.Compile,
     llhttp: *std.Build.Step.Compile,
+    zlib_ng: *std.Build.Step.Compile,
 };
 
 fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: RuntimeLibraries) void {
     module.linkLibrary(libraries.libuv);
     module.linkLibrary(libraries.mbedtls);
     module.linkLibrary(libraries.llhttp);
+    module.linkLibrary(libraries.zlib_ng);
     const flags = &[_][]const u8{ "-std=c99", "-fno-strict-aliasing" };
     module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/tls_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/http_glue.c"), .flags = flags });
