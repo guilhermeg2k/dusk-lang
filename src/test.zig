@@ -415,6 +415,10 @@ test "net: read_exact and remote_address" {
     try runCase("net-tcp-extras.dsk");
 }
 
+test "http: streamed responses (chunked, sized, files, head, server-sent events)" {
+    try runCaseInTmpDir("http-server-streams.dsk");
+}
+
 test "net: a burst of connections is accepted in batches" {
     try runCase("net-tcp-burst.dsk");
 }
