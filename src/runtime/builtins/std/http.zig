@@ -27,6 +27,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
+    .{ "stream_set_write_timeout", Binding{ .native = &io.streamSetWriteTimeout } },
     .{ "stream_close", Binding{ .native = &io.streamClose } },
     .{ "stream_read_head", Binding{ .native = &streamReadHead } },
     .{ "stream_read_whole_body", Binding{ .native = &streamReadWholeBody } },

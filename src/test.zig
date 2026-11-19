@@ -311,6 +311,10 @@ test "http: streamed responses (chunked, sized, files, head, server-sent events)
     try runCaseInTmpDir("http-server-streams.dsk");
 }
 
+test "net: write timeouts close a connection whose peer stops reading" {
+    try runCase("net-write-timeout.dsk");
+}
+
 test "net: a burst of connections is accepted in batches" {
     try runCase("net-tcp-burst.dsk");
 }
