@@ -1238,6 +1238,13 @@ pub const SemaAnalyzer = struct {
             generic.outer_slots = self.generic_types.items[copied.generic].slots;
             generic.outer_args = copied.args;
         }
+        for (func_stmt.slots) |slot| {
+            for (generic.outer_slots) |outer| {
+                if (std.mem.eql(u8, outer.identifier, slot.identifier)) {
+                    return self.err_reporter.alreadyDefined(slot.identifier, slot.loc);
+                }
+            }
+        }
         const index = self.generic_functions.items.len;
         try self.generic_functions.append(self.allocator, generic);
         const entry = try self.generic_methods.getOrPut(self.allocator, owner_type_id);
@@ -1821,13 +1828,19 @@ pub const SemaAnalyzer = struct {
         loc: err.Loc,
         inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
     ) CompileError!Symbol {
-        const func_stmt = self.generic_functions.items[index].func_stmt;
-        const bindings = try self.allocator.alloc(?tt.TypeId, func_stmt.slots.len);
+        const generic = self.generic_functions.items[index];
+        const func_stmt = generic.func_stmt;
+        const outer_count = generic.outer_slots.len;
+        const slots = if (outer_count == 0) func_stmt.slots else try std.mem.concat(self.allocator, ast.Slot, &.{ generic.outer_slots, func_stmt.slots });
+        const bindings = try self.allocator.alloc(?tt.TypeId, slots.len);
         @memset(bindings, null);
+        for (generic.outer_args, 0..) |arg, i| {
+            bindings[i] = arg;
+        }
         const could_bind_void_slots = self.can_bind_void_slots;
-        self.can_bind_void_slots = self.generic_functions.items[index].extern_uid != null;
+        self.can_bind_void_slots = generic.extern_uid != null;
         defer self.can_bind_void_slots = could_bind_void_slots;
-        try self.bindExplicitTypeArguments(func_stmt.identifier, func_stmt.slots, fn_call.type_arguments, bindings, loc);
+        try self.bindExplicitTypeArguments(func_stmt.identifier, func_stmt.slots, fn_call.type_arguments, bindings[outer_count..], loc);
 
         const param_names = try self.allocator.alloc([]const u8, func_stmt.def.params.len);
         for (func_stmt.def.params, param_names) |param, *name| {
@@ -1837,7 +1850,7 @@ pub const SemaAnalyzer = struct {
         var has_lambda_args = false;
         for (func_stmt.def.params, 0..) |param, param_index| {
             const annotation = param.type_annotation orelse continue;
-            if (!mentionsSlot(annotation, func_stmt.slots) or areMentionedSlotsBound(annotation, func_stmt.slots, bindings)) continue;
+            if (!mentionsSlot(annotation, slots) or areMentionedSlotsBound(annotation, slots, bindings)) continue;
             const arg_exp = matched[param_index] orelse continue;
             if (arg_exp.data == .lambda) {
                 has_lambda_args = true;
@@ -1845,19 +1858,19 @@ pub const SemaAnalyzer = struct {
             }
             const value = try self.evalExpExpecting(arg_exp, null);
             try inferred_values.put(self.allocator, arg_exp, value);
-            try self.inferSlots(annotation, value.type_id, func_stmt.slots, bindings, arg_exp.loc);
+            try self.inferSlots(annotation, value.type_id, slots, bindings, arg_exp.loc);
         }
         if (has_lambda_args) {
             for (func_stmt.def.params, 0..) |param, param_index| {
                 const annotation = param.type_annotation orelse continue;
                 const arg_exp = matched[param_index] orelse continue;
-                try self.inferSlotsFromLambda(annotation, arg_exp, func_stmt.slots, bindings, inferred_values, self.generic_functions.items[index].module);
+                try self.inferSlotsFromLambda(annotation, arg_exp, slots, bindings, inferred_values, generic.module);
             }
         }
-        try self.inferSlotsFromExpectedType(func_stmt, expected_type, bindings, loc);
+        try self.inferSlotsFromExpectedType(func_stmt, slots, expected_type, bindings, loc);
 
-        const args = try self.allocator.alloc(tt.TypeId, bindings.len);
-        for (bindings, func_stmt.slots, 0..) |binding, slot, slot_index| {
+        const args = try self.allocator.alloc(tt.TypeId, func_stmt.slots.len);
+        for (bindings[outer_count..], func_stmt.slots, 0..) |binding, slot, slot_index| {
             if (binding == null and slot.is_schema) {
                 args[slot_index] = try self.defaultSchemaType();
                 continue;
@@ -1941,7 +1954,7 @@ pub const SemaAnalyzer = struct {
         return saved_table;
     }
 
-    fn inferSlotsFromExpectedType(self: *Self, func_stmt: *const ast.FuncStmt, expected_type: ?tt.TypeId, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
+    fn inferSlotsFromExpectedType(self: *Self, func_stmt: *const ast.FuncStmt, slots: []const ast.Slot, expected_type: ?tt.TypeId, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
         const expected = expected_type orelse return;
         const return_annotation = func_stmt.def.return_type orelse return;
         for (bindings) |binding| {
@@ -1950,7 +1963,7 @@ pub const SemaAnalyzer = struct {
 
         const from_expected = try self.allocator.alloc(?tt.TypeId, bindings.len);
         @memset(from_expected, null);
-        try self.inferSlots(return_annotation, expected, func_stmt.slots, from_expected, loc);
+        try self.inferSlots(return_annotation, expected, slots, from_expected, loc);
         for (bindings, from_expected) |*binding, expected_binding| {
             if (binding.* == null) {
                 binding.* = expected_binding;
@@ -2098,7 +2111,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn instantiateGenericFunction(self: *Self, index: usize, args: []const tt.TypeId, loc: err.Loc) CompileError!Symbol {
-        const generic = &self.generic_functions.items[index];
+        const generic = self.generic_functions.items[index];
         for (generic.copies.items) |copy| {
             if (std.mem.eql(tt.TypeId, copy.args, args)) return copy.symbol;
         }
@@ -2114,12 +2127,13 @@ pub const SemaAnalyzer = struct {
         if (generic.extern_uid == null and generic.owner == null) {
             try self.qualifyFunctionName(symbol, generic.module);
         }
-        try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
-        const copy_index = generic.copies.items.len - 1;
+        const copies = &self.generic_functions.items[index].copies;
+        try copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
+        const copy_index = copies.items.len - 1;
 
         const saved_module = self.enterModuleContext(generic.module);
         defer self.exitModuleContext(saved_module);
-        const saved_table = try self.enterGenericScope(generic.*, args);
+        const saved_table = try self.enterGenericScope(generic, args);
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;
         defer self.scope.return_type_id = saved_return_type;
