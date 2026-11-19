@@ -1,0 +1,16 @@
+trait Named
+    func name(self: @) -> string
+end
+
+struct B
+    v: int
+
+    func show[T: Named](self: @, x: T) -> string
+        return x.name()
+    end
+end
+
+func main() -> void
+    let b = B(v = 1)
+    let s = b.show(5)
+end

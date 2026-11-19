@@ -1,0 +1,24 @@
+import std/array: append
+struct Store
+    ~items: []int
+
+    func map[U](self: @, f: func(int) -> U) -> []U
+        let mut out: []U = []
+        for self.items: item do
+            append(out, f(item))
+        end
+        return out
+    end
+
+    func ~secret[T](self: @, x: T) -> int
+        return 1
+    end
+
+    func peek[T](self: @, x: T) -> int
+        return self.secret(x)
+    end
+end
+
+func store(items: []int) -> Store
+    return Store(items = items)
+end
