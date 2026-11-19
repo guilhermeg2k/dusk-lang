@@ -154,6 +154,7 @@ struct Server
     ~max_body: int
     ~head_timeout_ms: int
     ~idle_timeout_ms: int
+    ~write_timeout_ms: int
     ~max_connections: int
 
     func port(self: @) -> int
@@ -332,6 +333,7 @@ extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> net
 extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_set_write_timeout(handle: int, timeout_ms: int) -> void
 extern func ~stream_close(handle: int) -> void
 extern func ~stream_read_head(handle: int, is_head_request: bool, timeout_ms: int) -> HttpError!?buffer
 extern func ~stream_read_whole_body(handle: int, cap: int, timeout_ms: int) -> HttpError!buffer
@@ -595,6 +597,7 @@ func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
 end
 
 func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Response
+    stream_set_write_timeout(handle, remaining_ms(exchange))
     stream_write(handle, request_head(target, exchange)) catch e then
         return from_io(e)
     end
@@ -800,11 +803,11 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000) -> HttpError!Server
     let listener = open_listener(host, port, cert, backlog) catch e then
         return from_net(e)
     end
-    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, max_connections = max_connections)
+    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections)
 end
 
 func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener
@@ -816,6 +819,7 @@ end
 
 func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response) -> void
     let handle = conn_handle(conn)
+    stream_set_write_timeout(handle, server.write_timeout_ms)
     let mut is_first = true
     for serve_request(server, conn, handle, handler, is_first) do
         is_first = false

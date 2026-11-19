@@ -1,0 +1,99 @@
+import std/buffer
+import std/http
+import std/io
+import std/net
+import std/string
+import std/task
+
+func fill_until_failure(conn: net::TcpConn) -> io::IoError!void
+    let piece = string::repeat("x", 65536) catch ""
+    for true do
+        try conn.write(piece)
+    end
+end
+
+func check_plain_tcp() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let silent = try net::tcp_connect("127.0.0.1", listener.port())
+    let conn = try listener.accept()
+    conn.set_write_timeout(100)
+    let mut failure: ?io::IoError = null
+    fill_until_failure(conn) catch e then
+        failure = e
+    end
+    assert(failure == io::IoError.TimedOut)
+    let mut after: ?io::IoError = null
+    conn.write("more") catch e then
+        after = e
+    end
+    assert(after == io::IoError.Closed)
+    silent.close()
+    listener.close()
+end
+
+func check_http_stream() -> !void
+    let server = try http::listen("127.0.0.1", 0, write_timeout_ms = 100)
+    let mut stream_failure: ?io::IoError = null
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> !http::Response
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                let piece = string::repeat("y", 65536) catch ""
+                for true do
+                    writer.write(piece) catch e then
+                        stream_failure = e
+                        return e
+                    end
+                end
+            end)
+        end)
+    end)
+    let silent = try net::tcp_connect("127.0.0.1", server.port())
+    try silent.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+    let mut waited = 0
+    for stream_failure == null and waited < 300 do
+        task::sleep(10)
+        waited = waited + 1
+    end
+    assert(stream_failure == io::IoError.TimedOut)
+    server.close()
+    await(running)
+    silent.close()
+end
+
+func check_slow_reader() -> !void
+    let total = 4194304
+    let server = try http::listen("127.0.0.1", 0, write_timeout_ms = 300)
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> !http::Response
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                let piece = string::repeat("z", 65536) catch ""
+                let mut sent = 0
+                for sent < total do
+                    try writer.write(piece)
+                    sent = sent + 65536
+                end
+            end, length = total)
+        end)
+    end)
+    let mut body = try http::open("http://127.0.0.1:${server.port()}/")
+    let mut received = 0
+    for true do
+        let piece = try body.read_bytes(262144)
+        if piece: data then
+            received = received + buffer::len(data)
+            task::sleep(20)
+        else
+            break
+        end
+    end
+    assert(received == total)
+    body.close()
+    server.close()
+    await(running)
+end
+
+func main() -> !void
+    try check_plain_tcp()
+    try check_http_stream()
+    try check_slow_reader()
+end

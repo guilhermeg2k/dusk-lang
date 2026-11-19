@@ -36,6 +36,7 @@ pub const Stream = struct {
     owner: HandleOwner = .{ .kind = .stream },
     timer_owner: HandleOwner = .{ .kind = .stream_timer },
     handshake_timer_owner: HandleOwner = .{ .kind = .stream_handshake_timer },
+    write_timer_owner: HandleOwner = .{ .kind = .stream_write_timer },
     allocator: std.mem.Allocator,
     event_loop: *EventLoop,
     scheduler: *Scheduler,
@@ -45,9 +46,14 @@ pub const Stream = struct {
     handle_memory: []align(16) u8 = &.{},
     timer_memory: []align(16) u8 = &.{},
     handshake_timer_memory: []align(16) u8 = &.{},
+    write_timer_memory: []align(16) u8 = &.{},
     open_handles: u8 = 0,
     is_timer_running: bool = false,
     is_handshake_timer_running: bool = false,
+    is_write_timer_running: bool = false,
+    write_timeout_ms: ?u64 = null,
+    queued_writes: usize = 0,
+    has_write_timed_out: bool = false,
     buffered: std.ArrayList(u8) = .empty,
     read_offset: usize = 0,
     is_reading: bool = false,
@@ -165,6 +171,9 @@ pub const Stream = struct {
         if (self.handshake_timer_memory.len > 0) {
             self.allocator.free(self.handshake_timer_memory);
         }
+        if (self.write_timer_memory.len > 0) {
+            self.allocator.free(self.write_timer_memory);
+        }
         const is_plain_file = self.kind == .file or self.kind == .closed_input;
         const should_close_file = is_plain_file and (self.owns_file or self.file > 2);
         if (should_close_file) {
@@ -220,6 +229,10 @@ pub const Stream = struct {
         if (self.handshake_timer_memory.len > 0) {
             self.stopHandshakeTimer();
             uv.uv_close(self.handshakeTimerHandle(), onHandleClosed);
+        }
+        if (self.write_timer_memory.len > 0) {
+            self.stopWriteTimer();
+            uv.uv_close(self.writeTimerHandle(), onHandleClosed);
         }
         self.releaseIfDone();
     }
@@ -747,10 +760,42 @@ pub const Stream = struct {
             return .{ .failure = ioErrorFromStatus(write_status) };
         }
         self.requests_in_flight += 1;
+        self.queued_writes += 1;
         if (task != null) {
             self.event_loop.pending_operations += 1;
         }
+        if (!self.is_write_timer_running) {
+            try self.startWriteTimer();
+        }
         return .parked;
+    }
+
+    pub fn setWriteTimeout(self: *Self, timeout_ms: ?u64) void {
+        self.write_timeout_ms = timeout_ms;
+    }
+
+    fn startWriteTimer(self: *Self) !void {
+        const ms = self.write_timeout_ms orelse return;
+        try self.startTimerHandle(&self.write_timer_memory, &self.write_timer_owner, onWriteTimeout, ms);
+        self.is_write_timer_running = true;
+    }
+
+    fn finishQueuedWrite(self: *Self) void {
+        self.queued_writes -= 1;
+        self.stopWriteTimer();
+        const has_more_writes = self.queued_writes > 0 and !self.is_closed;
+        if (!has_more_writes) return;
+        self.startWriteTimer() catch {};
+    }
+
+    fn stopWriteTimer(self: *Self) void {
+        if (!self.is_write_timer_running) return;
+        _ = uv.uv_timer_stop(self.writeTimerHandle());
+        self.is_write_timer_running = false;
+    }
+
+    fn writeTimerHandle(self: *Self) *uv.Handle {
+        return @ptrCast(self.write_timer_memory.ptr);
     }
 
     pub fn isTls(self: *const Self) bool {
@@ -1023,14 +1068,23 @@ fn onWrite(uv_request: *uv.Request, status: c_int) callconv(.c) void {
     const request: *WriteRequest = @ptrCast(@alignCast(uv.uv_req_get_data(uv_request).?));
     defer request.destroy();
     const stream = request.stream;
+    stream.finishQueuedWrite();
+    const failure: IoError = if (stream.has_write_timed_out) .TimedOut else ioErrorFromStatus(status);
     if (request.task) |task| {
         stream.event_loop.pending_operations -= 1;
-        const wake_result: WakeResult = if (status == 0) doneResult() else failureResult(ioErrorFromStatus(status));
+        const wake_result: WakeResult = if (status == 0) doneResult() else failureResult(failure);
         stream.wakeTask(task, wake_result);
     } else if (status != 0 and !stream.is_closed) {
-        stream.failure = ioErrorFromStatus(status);
+        stream.failure = failure;
     }
     stream.finishRequest();
+}
+
+fn onWriteTimeout(timer: *uv.Handle) callconv(.c) void {
+    const stream: *Stream = @alignCast(@fieldParentPtr("write_timer_owner", HandleOwner.of(timer)));
+    stream.is_write_timer_running = false;
+    stream.has_write_timed_out = true;
+    stream.event_loop.closeStream(@intCast(stream.table_index));
 }
 
 pub const ReadMode = union(enum) {

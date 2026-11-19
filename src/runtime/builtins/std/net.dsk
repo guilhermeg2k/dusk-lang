@@ -29,6 +29,7 @@ extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_set_write_timeout(handle: int, timeout_ms: int) -> void
 extern func ~stream_flush(handle: int) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
 extern func ~remote_host(handle: int) -> string
@@ -96,6 +97,10 @@ struct TcpConn
 
     func write_bytes(self: @, data: buffer) -> io::IoError!void
         try stream_write_bytes(self.handle, data)
+    end
+
+    func set_write_timeout(self: @, timeout_ms: int) -> void
+        stream_set_write_timeout(self.handle, timeout_ms)
     end
 
     func start_tls(self: @, host: string, timeout_ms: int = -1, ca: ?string = null, verify: bool = true) -> NetError!void

@@ -133,6 +133,13 @@ pub fn streamWrite(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
 }
 
+pub fn streamSetWriteTimeout(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .null = {} });
+    const timeout_ms = args[1].int64;
+    stream.setWriteTimeout(if (timeout_ms < 0) null else @intCast(timeout_ms));
+    return ok(.{ .null = {} });
+}
+
 pub fn streamFlush(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
     const current = vm.running_task.?;
