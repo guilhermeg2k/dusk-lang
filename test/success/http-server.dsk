@@ -96,7 +96,7 @@ end
 
 func start_strict(server: http::Server) -> Task[void]
     return spawn(func() -> void
-        http::serve(server, func(req: http::Request) -> http::HttpError!http::Response
+        server.serve(func(req: http::Request) -> http::HttpError!http::Response
             let body = try req.text()
             return http::text("${string::len(body)}")
         end)
@@ -105,7 +105,7 @@ end
 
 func start(server: http::Server) -> Task[void]
     return spawn(func() -> void
-        http::serve(server, func(req: http::Request) -> AppError!http::Response
+        server.serve(func(req: http::Request) -> AppError!http::Response
             return try route(req)
         end)
     end)

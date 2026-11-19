@@ -2500,7 +2500,7 @@ end
 
 ### std/http
 
-HTTP/1.1 clients and servers. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. `http::listen` and `http::serve` answer requests (see Serving HTTP below). Like every network call, they only make the calling task wait (see [Tasks](#13-tasks)).
+HTTP/1.1 clients and servers. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. `http::listen` and `server.serve` answer requests (see Serving HTTP below). Like every network call, they only make the calling task wait (see [Tasks](#13-tasks)).
 
 ```nim
 import std/http
@@ -2604,7 +2604,7 @@ A body that ends before its announced length, or that breaks the chunked format,
 
 **Compression.** `request` asks for gzip (`Accept-Encoding: gzip`) and decompresses a gzip body, so `body` and `text()` are the original content; `max_body` counts the decompressed bytes. The `Content-Encoding` and `Content-Length` headers stay as the server sent them. Setting `Accept-Encoding` in `headers` turns this off: the body is returned as it came.
 
-**Serving HTTP.** `http::listen` opens a server and `http::serve` answers its requests with a handler function, a `func(http::Request) -> E!http::Response`. Each connection runs in its own task, so a slow handler only holds up its own client.
+**Serving HTTP.** `http::listen` opens a server and `server.serve(handler)` answers its requests with a handler function, a `func(http::Request) -> E!http::Response`. Each connection runs in its own task, so a slow handler only holds up its own client.
 
 ```nim
 import std/http
@@ -2613,7 +2613,7 @@ import std/io
 func main() -> !void
     let server = try http::listen("0.0.0.0", 8080)
     io::println("listening on ${server.port()}")
-    http::serve(server, func(req: http::Request) -> !http::Response
+    server.serve(func(req: http::Request) -> !http::Response
         when req.path
             "/" then return http::text("hello ${req.query_param("name") orelse "world"}") end
             "/users" then
@@ -2631,9 +2631,16 @@ end
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
 | `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. |
-| `serve(server, handler)` | `void` | Accepts connections until `server.close()`, calls `handler` for each request, and returns once every connection is done. |
 
-`Server` has `port()` and `close()`. `close()` stops accepting and closes the connections that are waiting for their next request; requests already being handled finish, and their responses close the connection. Calling it again does nothing.
+**`Server`**
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `serve(handler)` | `void` | Accepts connections until `close()`, calls `handler` for each request, and returns once every connection is done. |
+| `port()` | `int` | The port it listens on. |
+| `close()` | `void` | Stops the server (see below). |
+
+`close()` stops accepting and closes the connections that are waiting for their next request; requests already being handled finish, and their responses close the connection. Calling it again does nothing.
 
 **`Request`**
 
