@@ -3564,6 +3564,12 @@ test "generics: methods with their own type slots" {
     try runCaseError("sema/generic-method-mut-self.dsk", error.NotMutable);
 }
 
+test "generics: methods with their own type slots on generic types" {
+    try runCase("generic-methods-generic-owner.dsk");
+    try runCaseError("sema/generic-method-owner-slot-reuse.dsk", error.AlreadyDefined);
+    try runCaseError("sema/generic-method-owner-body-checked.dsk", error.InvalidReturnType);
+}
+
 test "generics: error slots take the errors of failing callbacks" {
     try runCase("error-slots.dsk");
     try runCaseError("sema/error-slot-not-marked.dsk", error.SlotNotMarkedError);

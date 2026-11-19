@@ -1,0 +1,91 @@
+trait Named
+    func name(self: @) -> string
+end
+
+error Bad
+    Nope
+end
+
+struct User
+    n: string
+
+    func name(self: @) -> string
+        return self.n
+    end
+end
+
+struct Box[T]
+    value: T
+
+    func map[U](self: @, f: func(T) -> U) -> Box[U]
+        return Box(value = f(self.value))
+    end
+
+    func pair[U](self: @, other: U) -> string
+        return "${self.value}/${other}"
+    end
+end
+
+struct Tagged[T: Named]
+    value: T
+
+    func greet[U](self: @, x: U) -> string
+        return "${self.value.name()}+${x}"
+    end
+
+    func try_map[U, E: error](self: @, f: func(T) -> E!U) -> E!U
+        return try f(self.value)
+    end
+
+    func depth[U](self: @, x: U, n: int) -> string
+        if n == 0 then
+            return "${x}"
+        end
+        return self.depth[string]("${x}.", n - 1)
+    end
+end
+
+union Maybe[T]
+    some: T
+    none: bool
+
+    func map_or[U](self: @, f: func(T) -> U, fallback: U) -> U
+        return when self
+            some: v then f(v) end
+            none: n then fallback end
+        end
+    end
+end
+
+func through[T: Named](tagged: Tagged[T]) -> string
+    return tagged.greet(1)
+end
+
+func fails(u: User) -> Bad!int
+    return Bad.Nope
+end
+
+func main() -> !void
+    let b = Box(value = 3)
+    let s = b.map(func(n: int) -> return "#${n}")
+    assert(s.value == "#3")
+    assert(s.pair(1) == "#3/1")
+    let back = s.map(func(t) -> return 2)
+    assert(back.value == 2)
+    let f = Box(value = 1.5)
+    assert(f.pair[string]("x") == "1.5/x")
+
+    let m = Maybe[int](some = 4)
+    assert(m.map_or(func(n: int) -> return n * 2, 0) == 8)
+    let none = Maybe[int](none = true)
+    assert(none.map_or(func(n) -> return n * 2, -1) == -1)
+
+    let tagged = Tagged(value = User(n = "ana"))
+    assert(tagged.greet(true) == "ana+true")
+    assert(tagged.greet[float](1.5) == "ana+1.5")
+    assert(through(tagged) == "ana+1")
+    assert(tagged.try_map(func(u: User) -> return 3) == 3)
+    let failed = tagged.try_map(fails) catch -1
+    assert(failed == -1)
+    assert(tagged.depth(7, 2) == "7..")
+end
