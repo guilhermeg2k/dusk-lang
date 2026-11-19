@@ -2688,6 +2688,8 @@ The body is read only when the handler asks for it. `text` and `bytes` fail with
 | `bytes(data, content_type = "application/octet-stream", status = 200)` | the bytes of a `buffer` |
 | `status(code)` | an empty body |
 | `redirect(location, status = 302)` | an empty body with `Location` |
+| `stream(write, content_type = "application/octet-stream", status = 200, length = -1)` | a body written by `write` after the head is sent (see Streamed responses) |
+| `file(path, content_type, status = 200)` | the file's contents, sent in pieces with its size as `Content-Length`; fails with `fs::FsError` when the file can't be opened |
 
 Headers change through `Headers` methods on a `let mut` response: `set(name, value)` replaces every value of that header, `add(name, value)` adds one more, and `remove(name)` drops them all.
 
@@ -2699,6 +2701,33 @@ return response
 ```
 
 A `reason` left empty is filled from the status code (`"Not Found"`). The server adds `Date` (unless set), `Content-Length` (except for `1xx`, `204` and `304`) and `Connection: close` when the connection is closing; `Content-Length`, `Transfer-Encoding`, `Connection` and `Keep-Alive` set by the handler are replaced. A `Response` from `http::request` can be returned as it is (a proxy), but its body is already decompressed: remove its `Content-Encoding` header first.
+
+**Streamed responses.** `stream` takes a `func(mut http::BodyWriter) -> io::IoError!void`. The server sends the head, then calls it with a writer for the body, so the body doesn't have to fit in memory and can be sent as it's produced. `BodyWriter` has `write(text)`, `write_bytes(data)` and `flush()`, so it fits `io::Writer`. Writes are collected and sent in pieces of up to 16 KiB, when the writer fills up, on `flush()` and at the end; a slow client makes the writes wait instead of filling memory.
+
+- With `length = -1`, the body is sent with `Transfer-Encoding: chunked`. With a length, it's sent with `Content-Length`: a write past it fails with `io::IoError.Other`, and a function that writes less closes the connection.
+- Writes fail with `io::IoError.Closed` when the client is gone, once `server.close()` was called, and for a `HEAD` request (only the head is sent, but the function still runs so it can release what it holds). Return the error and the connection closes.
+- The head is already sent when the function runs, so a failure can't become a `500`: the connection closes and the client sees a body cut short. Any error other than `Closed` is also written to stderr: `http: GET /path failed while streaming: <error>`.
+
+```nim
+"/events" then
+    return http::stream(func(mut events: http::BodyWriter) -> io::IoError!void
+        let mut n = 0
+        for true do
+            try events.write("data: tick $n\n\n")
+            try events.flush()
+            n = n + 1
+            task::sleep(1000)
+        end
+    end, content_type = "text/event-stream")
+end
+"/report" then
+    return http::file("data/report.csv", "text/csv") catch e then
+        return http::status(404)
+    end
+end
+```
+
+Server-sent events are a stream with `content_type = "text/event-stream"` and a `flush()` after each event. An endless stream ends when the client leaves or the server closes.
 
 **What the server does on its own:**
 

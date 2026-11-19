@@ -33,6 +33,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - Every heap value except arrays (strings, buffers, structs, unions, maps, closures, tasks, nullable boxes) takes 8 bytes less memory
 - `accept` takes a burst of waiting connections at once (up to 64) instead of one per event loop round, so servers handle many short connections faster
 - Methods with their own slots: a struct, enum or union method can declare slots like a function (`func map[U](self: @, f: func(T) -> U) -> Box[U]`), filled from the arguments after `self`, the expected type or explicit type arguments (`box.map[string](f)`). Two methods with the same name in one type are now an error
+- `std/http` streamed responses: `http::stream(write, content_type, status, length)` sends a body written piece by piece by a `func(mut http::BodyWriter) -> io::IoError!void` after the head (chunked, or with `Content-Length` when `length` is given), and `http::file(path, content_type)` sends a file in pieces. `BodyWriter` fits `io::Writer`; writes fail with `Closed` when the client leaves or the server closes, so server-sent events and other endless streams end cleanly
 
 ### Fixes
 

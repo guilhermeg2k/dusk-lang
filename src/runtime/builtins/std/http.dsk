@@ -1,5 +1,6 @@
 import std/array: append, contains, len
 import std/buffer
+import std/fs
 import std/io
 import std/map
 import std/net
@@ -104,6 +105,8 @@ struct Response
     headers: Headers
     body: buffer
     url: string
+    ~stream: ?func(mut BodyWriter) -> io::IoError!void = null
+    ~stream_length: int = -1
 
     func text(self: @) -> HttpError!string
         return string::from_bytes(self.body) catch e then
@@ -180,6 +183,89 @@ struct Server
         for active > 0 do
             task::sleep(10)
         end
+    end
+end
+
+struct BodyWriter
+    ~handle: int
+    ~state: int
+    ~is_chunked: bool
+    ~is_discarding: bool
+    ~remaining: int
+    ~pending: buffer
+    ~used: int
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        let size = string::len(text)
+        try self.make_room(size)
+        if size > buffer::len(self.pending) then
+            try self.send(buffer::from_string(text))
+            return
+        end
+        self.used = buffer::put(self.pending, self.used, text) catch e then
+            return io::IoError.Other
+        end
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        let size = buffer::len(data)
+        try self.make_room(size)
+        if size > buffer::len(self.pending) then
+            try self.send(data)
+            return
+        end
+        self.used = buffer::put_bytes(self.pending, self.used, data) catch e then
+            return io::IoError.Other
+        end
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+        if self.used == 0 then
+            return
+        end
+        let data = buffer::slice(self.pending, 0, self.used) catch e then
+            return io::IoError.Other
+        end
+        self.used = 0
+        try self.send(data)
+    end
+
+    func ~make_room(mut self: @, size: int) -> io::IoError!void
+        let is_closed = self.is_discarding or server_is_closing(self.state)
+        if is_closed then
+            return io::IoError.Closed
+        end
+        if self.remaining >= 0 then
+            if size > self.remaining then
+                return io::IoError.Other
+            end
+            self.remaining = self.remaining - size
+        end
+        if self.used + size > buffer::len(self.pending) then
+            try self.flush()
+        end
+    end
+
+    func ~send(mut self: @, data: buffer) -> io::IoError!void
+        if !self.is_chunked then
+            try stream_write_bytes(self.handle, data)
+            return
+        end
+        let size_line = "${hex_text(buffer::len(data))}\r\n"
+        let body_start = string::len(size_line)
+        let mut framed = buffer::new(body_start + buffer::len(data) + 2) catch e then
+            return io::IoError.Other
+        end
+        buffer::put(framed, 0, size_line) catch e then
+            return io::IoError.Other
+        end
+        let body_end = buffer::put_bytes(framed, body_start, data) catch e then
+            return io::IoError.Other
+        end
+        buffer::put(framed, body_end, "\r\n") catch e then
+            return io::IoError.Other
+        end
+        try stream_write_bytes(self.handle, framed)
     end
 end
 
@@ -270,6 +356,8 @@ let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
 let ~REQUEST_DRAIN_LIMIT = 65536
 let ~JOINED_BODY_LIMIT = 65536
+let ~BODY_WRITER_SIZE = 16384
+let ~FILE_PIECE_SIZE = 65536
 let ~BODY_COMPLETE = 0
 let ~BODY_UNREAD = 1
 let ~BODY_TOO_LARGE = 1
@@ -666,6 +754,39 @@ func redirect(location: string, status: int = 302) -> Response
     return Response(status = status, reason = "", headers = Headers(items = [Header(name = "Location", value = location)], lowered = ["location"]), body = buffer::from_string(""), url = "")
 end
 
+func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = "application/octet-stream", status: int = 200, length: int = -1) -> Response
+    let mut response = response_with(status, content_type, buffer::from_string(""))
+    response.stream = write
+    response.stream_length = length
+    return response
+end
+
+func file(path: string, content_type: string, status: int = 200) -> fs::FsError!Response
+    let opened = try fs::open(path)
+    let size = opened.size() catch e then
+        opened.close()
+        return fs::FsError.Other
+    end
+    return stream(func(mut writer: BodyWriter) -> io::IoError!void
+        send_file(opened, writer) catch e then
+            opened.close()
+            return e
+        end
+        opened.close()
+    end, content_type = content_type, status = status, length = size)
+end
+
+func ~send_file(opened: fs::File, mut writer: BodyWriter) -> io::IoError!void
+    for true do
+        let piece = try opened.read_bytes(FILE_PIECE_SIZE)
+        if piece: data then
+            try writer.write_bytes(data)
+        else
+            return
+        end
+    end
+end
+
 func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
@@ -779,11 +900,11 @@ func ~finish(server: Server, request: Request, response: Response) -> bool
     let body_state = request_body_state(request.handle, request.expects_continue)
     let is_body_done = body_state == BODY_COMPLETE or (body_state == BODY_UNREAD and drain_request(server, request))
     if !is_body_done then
-        return write_response(request, checked_response(request, response), false) and false
+        return write_response(server, request, checked_response(request, response), false) and false
     end
     let wants_close = string::lower(response.headers.get("connection") orelse "") == "close"
     let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.state)
-    return write_response(request, checked_response(request, response), keeps_alive) and keeps_alive
+    return write_response(server, request, checked_response(request, response), keeps_alive) and keeps_alive
 end
 
 func ~drain_request(server: Server, request: Request) -> bool
@@ -804,7 +925,7 @@ func ~checked_response(request: Request, response: Response) -> Response
     return response
 end
 
-func ~write_response(request: Request, response: Response, keeps_alive: bool) -> bool
+func ~write_response(server: Server, request: Request, response: Response, keeps_alive: bool) -> bool
     let code = response.status
     let reason = if response.reason == "" then reason_phrase(code) else response.reason end
     let mut lines: []string = ["HTTP/1.1 $code $reason"]
@@ -817,13 +938,23 @@ func ~write_response(request: Request, response: Response, keeps_alive: bool) ->
         append(lines, "Date: ${http_date()}")
     end
     let has_body = !(code < 200 or code == 204 or code == 304)
-    if has_body then
-        append(lines, "Content-Length: ${buffer::len(response.body)}")
+    let is_chunked = response.stream != null and response.stream_length < 0
+    if has_body and is_chunked then
+        append(lines, "Transfer-Encoding: chunked")
+    elif has_body then
+        let length = if response.stream != null then response.stream_length else buffer::len(response.body) end
+        append(lines, "Content-Length: $length")
     end
     if !keeps_alive then
         append(lines, "Connection: close")
     end
     let head = "${string::join(lines, "\r\n")}\r\n\r\n"
+    if response.stream: write then
+        stream_write(request.handle, head) catch e then
+            return false
+        end
+        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length)
+    end
     let sends_body = has_body and request.method != "HEAD" and buffer::len(response.body) > 0
     if !sends_body then
         stream_write(request.handle, head) catch e then
@@ -841,6 +972,42 @@ func ~write_response(request: Request, response: Response, keeps_alive: bool) ->
         return false
     end
     return true
+end
+
+func ~write_stream_body(server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int) -> bool
+    let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
+        return false
+    end
+    let mut writer = BodyWriter(handle = request.handle, state = server.state, is_chunked = sends_body and length < 0, is_discarding = !sends_body, remaining = length, pending = pending, used = 0)
+    write(writer) catch e then
+        let is_expected = !sends_body or e == io::IoError.Closed
+        if !is_expected then
+            io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e")
+        end
+        return false
+    end
+    if !sends_body then
+        return true
+    end
+    writer.flush() catch e then
+        return false
+    end
+    if writer.is_chunked then
+        stream_write(request.handle, "0\r\n\r\n") catch e then
+            return false
+        end
+        return true
+    end
+    return writer.remaining == 0
+end
+
+func ~hex_text(number: int) -> string
+    let digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+    let digit = digits[number % 16]
+    if number < 16 then
+        return digit
+    end
+    return "${hex_text(number // 16)}$digit"
 end
 
 func ~write_joined(handle: int, head: string, body: buffer) -> bool
