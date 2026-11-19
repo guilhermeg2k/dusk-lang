@@ -45,6 +45,8 @@ pub const SemaAnalyzer = struct {
     constant_by_exp: std.AutoHashMapUnmanaged(*const ast.ExpNode, usize) = .empty,
     exp_types: std.AutoHashMapUnmanaged(*const ast.ExpNode, tt.TypeId) = .empty,
     generic_functions: std.ArrayList(GenericFunction) = .empty,
+    generic_methods: std.AutoHashMapUnmanaged(tt.TypeId, std.StringHashMapUnmanaged(usize)) = .empty,
+    generic_method_names: std.StringHashMapUnmanaged(void) = .empty,
     generic_types: std.ArrayList(GenericType) = .empty,
     traits: std.ArrayList(Trait) = .empty,
     trait_self_type: ?tt.TypeId = null,
@@ -1207,8 +1209,17 @@ pub const SemaAnalyzer = struct {
 
     fn createMethodSignatures(self: *Self, funcs: []const ast.StatementNode, owner_symbol: Symbol) CompileError!std.StringHashMap(tt.TypeId) {
         var methods: std.StringHashMap(tt.TypeId) = .init(self.allocator);
-        for (funcs) |func_node| {
+        const owner_type_id = owner_symbol.kind.defined_type.blueprint_type_id;
+        for (funcs) |*func_node| {
             const func = func_node.data.func;
+            const is_duplicate = methods.contains(func.identifier) or self.genericMethodOf(owner_type_id, func.identifier) != null;
+            if (is_duplicate) {
+                return self.err_reporter.alreadyDefined(func.identifier, func_node.loc);
+            }
+            if (func.slots.len > 0) {
+                try self.registerGenericMethod(&func_node.data.func, func_node.loc, owner_symbol);
+                continue;
+            }
             const fn_symbol = try self.createEmptyFuncSymbol(func.identifier);
             try self.fulfillFuncType(fn_symbol, &func.def, owner_symbol, func_node.loc);
             try methods.put(func.identifier, fn_symbol.type_id);
@@ -1217,6 +1228,29 @@ pub const SemaAnalyzer = struct {
             }
         }
         return methods;
+    }
+
+    fn registerGenericMethod(self: *Self, func_stmt: *const ast.FuncStmt, loc: err.Loc, owner_symbol: Symbol) CompileError!void {
+        try self.recordSlotModules(func_stmt.slots);
+        const owner_type_id = owner_symbol.kind.defined_type.blueprint_type_id;
+        var generic: GenericFunction = .{ .func_stmt = func_stmt, .loc = loc, .module = self.module, .owner = owner_symbol };
+        if (self.copied_types.get(owner_type_id)) |copied| {
+            generic.outer_slots = self.generic_types.items[copied.generic].slots;
+            generic.outer_args = copied.args;
+        }
+        const index = self.generic_functions.items.len;
+        try self.generic_functions.append(self.allocator, generic);
+        const entry = try self.generic_methods.getOrPut(self.allocator, owner_type_id);
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .empty;
+        }
+        try entry.value_ptr.put(self.allocator, func_stmt.identifier, index);
+        try self.generic_method_names.put(self.allocator, func_stmt.identifier, {});
+    }
+
+    fn genericMethodOf(self: *Self, type_id: tt.TypeId, name: []const u8) ?usize {
+        const methods = self.generic_methods.get(type_id) orelse return null;
+        return methods.get(name);
     }
 
     fn createStaticField(self: *Self, field: ast.Field, current_struct_type_id: tt.TypeId) CompileError!tt.TypedIdentifier {
@@ -1773,7 +1807,7 @@ pub const SemaAnalyzer = struct {
         }
 
         const symbol = try self.createEmptyFuncSymbol(func_stmt.identifier);
-        try self.fulfillFuncType(symbol, &func_stmt.def, null, generic.loc);
+        try self.fulfillFuncType(symbol, &func_stmt.def, generic.owner, generic.loc);
         const metadata = self.type_table.getTypePtrById(symbol.type_id).kind.function;
         _ = try self.visitFnDef(&func_stmt.def, metadata.uid, metadata, null, generic.loc);
     }
@@ -1782,6 +1816,7 @@ pub const SemaAnalyzer = struct {
         self: *Self,
         index: usize,
         fn_call: ast.FnCall,
+        bound_params: usize,
         expected_type: ?tt.TypeId,
         loc: err.Loc,
         inferred_values: *std.AutoHashMapUnmanaged(*const ast.ExpNode, *ir.Value),
@@ -1798,7 +1833,7 @@ pub const SemaAnalyzer = struct {
         for (func_stmt.def.params, param_names) |param, *name| {
             name.* = param.identifier;
         }
-        const matched = try self.matchArguments(fn_call.arguments, param_names, 0);
+        const matched = try self.matchArguments(fn_call.arguments, param_names, bound_params);
         var has_lambda_args = false;
         for (func_stmt.def.params, 0..) |param, param_index| {
             const annotation = param.type_annotation orelse continue;
@@ -2075,8 +2110,8 @@ pub const SemaAnalyzer = struct {
         }
         const name = try self.copyName(generic.func_stmt.identifier, args);
 
-        const symbol = try self.createEmptyFuncSymbol(name);
-        if (generic.extern_uid == null) {
+        const symbol = try self.createEmptyFuncSymbol(if (generic.owner) |owner| try allocPrint(self.allocator, "{s}.{s}", .{ owner.identifier, name }) else name);
+        if (generic.extern_uid == null and generic.owner == null) {
             try self.qualifyFunctionName(symbol, generic.module);
         }
         try generic.copies.append(self.allocator, .{ .args = args, .symbol = symbol, .call_loc = loc, .call_src = self.src, .depth = self.copy_depth + 1 });
@@ -2084,17 +2119,20 @@ pub const SemaAnalyzer = struct {
 
         const saved_module = self.enterModuleContext(generic.module);
         defer self.exitModuleContext(saved_module);
-        const saved_table = try self.enterSlotScope(generic.func_stmt.slots, args);
+        const saved_table = try self.enterGenericScope(generic.*, args);
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;
         defer self.scope.return_type_id = saved_return_type;
-        try self.fulfillFuncType(symbol, &generic.func_stmt.def, null, generic.loc);
+        try self.fulfillFuncType(symbol, &generic.func_stmt.def, generic.owner, generic.loc);
 
         if (generic.extern_uid) |extern_uid| {
             self.type_table.getTypePtrById(symbol.type_id).kind.function.uid = extern_uid;
             return symbol;
         }
-        if (!self.containsSlot(args)) try self.pending_copies.append(self.allocator, .{ .kind = .function, .generic = index, .copy = copy_index });
+        const can_lower = !self.containsSlot(args) and !self.containsSlot(generic.outer_args);
+        if (can_lower) {
+            try self.pending_copies.append(self.allocator, .{ .kind = .function, .generic = index, .copy = copy_index });
+        }
         return symbol;
     }
 
@@ -2280,7 +2318,7 @@ pub const SemaAnalyzer = struct {
 
             const saved_lowering = self.enterCopyLowering(copy, generic.module);
             defer self.exitCopyLowering(saved_lowering);
-            const saved_table = try self.enterSlotScope(generic.func_stmt.slots, copy.args);
+            const saved_table = try self.enterGenericScope(generic, copy.args);
             defer self.scope.symbol_table = saved_table;
 
             const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
@@ -2332,6 +2370,19 @@ pub const SemaAnalyzer = struct {
                 .type_id = arg,
                 .kind = .{ .type_slot = {} },
             });
+        }
+        return saved_table;
+    }
+
+    fn enterGenericScope(self: *Self, generic: GenericFunction, args: []const tt.TypeId) CompileError!*SymbolTable {
+        const saved_table = try self.enterSlotScope(generic.outer_slots, generic.outer_args);
+        for (generic.func_stmt.slots, args) |slot, arg| {
+            self.scope.symbol_table.put(.{
+                .identifier = slot.identifier,
+                .uid = self.scope.genUid(),
+                .type_id = arg,
+                .kind = .{ .type_slot = {} },
+            }) catch return self.err_reporter.alreadyDefined(slot.identifier, slot.loc);
         }
         return saved_table;
     }
@@ -2751,7 +2802,7 @@ pub const SemaAnalyzer = struct {
         const enum_symbol = try self.scope.symbol_table.getOrError(enum_stmt.identifier);
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
         const enum_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum";
-        const funcs = try self.lowerMethods(enum_stmt.def.funcs, enum_def.methods);
+        const funcs = try self.lowerMethods(enum_stmt.def.funcs, enum_def.methods, blueprint_type_id);
 
         try self.defined_types.append(self.allocator, .{
             .kind = .{
@@ -2781,7 +2832,7 @@ pub const SemaAnalyzer = struct {
     fn visitUnionDef(self: *Self, union_ast: *const ast.UnionDef, union_symbol: Symbol) CompileError!ir.DefinedType {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
         const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
-        const funcs = try self.lowerMethods(union_ast.funcs, union_def.methods);
+        const funcs = try self.lowerMethods(union_ast.funcs, union_def.methods, blueprint_type_id);
 
         return .{
             .kind = .{
@@ -2796,14 +2847,25 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn lowerMethods(self: *Self, funcs: []const ast.StatementNode, methods: std.StringHashMap(tt.TypeId)) CompileError![]ir.Func {
-        const lowered = try self.allocator.alloc(ir.Func, funcs.len);
-        for (funcs, lowered) |func_node, *func| {
+    fn lowerMethods(self: *Self, funcs: []const ast.StatementNode, methods: std.StringHashMap(tt.TypeId), owner_type_id: tt.TypeId) CompileError![]ir.Func {
+        var lowered: std.ArrayList(ir.Func) = .empty;
+        for (funcs) |func_node| {
             const func_stmt = func_node.data.func;
+            if (func_stmt.slots.len > 0) {
+                try self.checkGenericMethod(owner_type_id, func_stmt.identifier);
+                continue;
+            }
             const fn_metadata = self.type_table.getTypePtrById(methods.get(func_stmt.identifier).?).kind.function;
-            func.* = try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, func_stmt.identifier, func_node.loc);
+            try lowered.append(self.allocator, try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, func_stmt.identifier, func_node.loc));
         }
-        return lowered;
+        return lowered.toOwnedSlice(self.allocator);
+    }
+
+    fn checkGenericMethod(self: *Self, owner_type_id: tt.TypeId, name: []const u8) CompileError!void {
+        const is_concrete_copy = self.copied_types.contains(owner_type_id) and !self.is_checking_opaque;
+        if (is_concrete_copy) return;
+        const index = self.genericMethodOf(owner_type_id, name) orelse @panic("checkGenericMethod: generic method isn't registered");
+        try self.checkGenericFunction(self.generic_functions.items[index]);
     }
 
     fn lowerIf(self: *Self, exp: *const ast.ExpNode, result: ?*BranchResult) CompileError!ir.Instruction {
@@ -3810,7 +3872,7 @@ pub const SemaAnalyzer = struct {
             );
         }
 
-        const funcs = try self.lowerMethods(struct_def.funcs, self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods);
+        const funcs = try self.lowerMethods(struct_def.funcs, self.type_table.getTypePtrById(blueprint_type_id).kind.@"struct".methods, blueprint_type_id);
 
         return ir.Struct{
             .uid = struct_symbol.uid,
@@ -4724,7 +4786,7 @@ pub const SemaAnalyzer = struct {
                         }
                     },
                     .generic_function => |index| {
-                        const copy_symbol = try self.callGenericFunction(index, fn_call, expected_type, exp.loc, &inferred_values);
+                        const copy_symbol = try self.callGenericFunction(index, fn_call, 0, expected_type, exp.loc, &inferred_values);
                         const func = self.type_table.getTypePtrById(copy_symbol.type_id).kind.function;
                         params = func.params;
                         return_type = func.return_type_id;
@@ -4759,6 +4821,32 @@ pub const SemaAnalyzer = struct {
             } else {
                 const target = try self.evalExp(indexed.target);
                 const fn_name = indexed.index.data.identifier;
+                if (self.genericMethodOf(target.type_id, fn_name)) |index| {
+                    const generic = self.generic_functions.items[index];
+                    try self.checkMemberVisible(target.type_id, fn_name, generic.func_stmt.is_file_only, exp.loc);
+                    const takes_self = isSelfParam(generic.func_stmt.def) and self.shouldAutoBindSelf(target);
+                    const copy_symbol = try self.callGenericFunction(index, fn_call, @intFromBool(takes_self), expected_type, exp.loc, &inferred_values);
+                    const fn_metadata = self.type_table.getTypePtrById(copy_symbol.type_id).kind.function;
+                    if (takes_self) {
+                        if (fn_metadata.params[0].is_mut) {
+                            try self.ensureMutable(indexed.target);
+                        }
+                        try fn_call_arguments_values.append(self.allocator, target);
+                    }
+                    params = fn_metadata.params;
+                    return_type = fn_metadata.return_type_id;
+                    uid = fn_metadata.uid;
+                    fn_identifier = fn_name;
+                    break :resolve;
+                }
+                if (fn_call.type_arguments.len > 0) {
+                    const is_bracket_index = exp.data.fn_call.target.data == .indexed;
+                    if (is_bracket_index) {
+                        callee = try self.evalCallee(exp.data.fn_call.target);
+                        break :resolve;
+                    }
+                    return self.err_reporter.wrongSlotCount(fn_name, 0, fn_call.type_arguments.len, exp.loc);
+                }
                 if (try self.fieldCallee(fn_call.target, target)) |field| {
                     callee = field;
                     break :resolve;
@@ -4903,6 +4991,14 @@ pub const SemaAnalyzer = struct {
                 call.type_arguments = application.arguments;
             },
             .indexed => |indexed| {
+                const can_name_generic_method = indexed.is_bracket and !indexed.is_nullable and isMemberAccess(indexed.target) and self.generic_method_names.contains(indexed.target.data.indexed.index.data.identifier) and indexed.index.data == .identifier;
+                if (can_name_generic_method) {
+                    call.target = indexed.target;
+                    const arguments = try self.allocator.alloc(*ast.TypeAnnotation, 1);
+                    arguments[0] = try self.typeArgumentFromExpression(indexed.index);
+                    call.type_arguments = arguments;
+                    return call;
+                }
                 const can_name_generic = indexed.is_bracket and !indexed.is_nullable and indexed.target.data == .identifier;
                 if (!can_name_generic) return call;
                 const symbol = self.scope.symbol_table.get(indexed.target.data.identifier) orelse return call;
@@ -4916,6 +5012,9 @@ pub const SemaAnalyzer = struct {
                 call.type_arguments = arguments;
             },
             else => return call,
+        }
+        if (isMemberAccess(call.target)) {
+            return call;
         }
         if (call.target.data != .identifier) {
             return self.err_reporter.wrongSlotCount("this call", 0, call.type_arguments.len, loc);
@@ -7934,8 +8033,23 @@ const GenericFunction = struct {
     loc: err.Loc,
     module: *ModuleScope,
     extern_uid: ?usize = null,
+    owner: ?Symbol = null,
+    outer_slots: []const ast.Slot = &.{},
+    outer_args: []const tt.TypeId = &.{},
     copies: std.ArrayList(GenericCopy) = .empty,
 };
+
+fn isSelfParam(fn_def: ast.FnDef) bool {
+    if (fn_def.params.len == 0) return false;
+    const annotation = fn_def.params[0].type_annotation orelse return false;
+    return annotation.type == .type_self and !annotation.is_nullable;
+}
+
+fn isMemberAccess(exp: *const ast.ExpNode) bool {
+    if (exp.data != .indexed) return false;
+    const indexed = exp.data.indexed;
+    return !indexed.is_bracket and !indexed.is_nullable and indexed.index.data == .identifier;
+}
 
 const CopyLowering = struct {
     module: *ModuleScope,

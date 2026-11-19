@@ -3658,6 +3658,20 @@ test "lambdas: return types come from the body" {
     try runCaseError("parser/func-block-without-return-type.dsk", error.ParserError);
 }
 
+test "generics: methods with their own type slots" {
+    try runCase("generic-methods.dsk");
+    try runModuleCase("generic-methods/main.dsk");
+    try runModuleCaseError("generic-methods/hidden.dsk", error.NotVisible);
+    try runCaseError("sema/generic-method-body-checked.dsk", error.InvalidStructField);
+    try runCaseError("sema/generic-method-cant-infer.dsk", error.CantInferSlot);
+    try runCaseError("sema/generic-method-wrong-slot-count.dsk", error.WrongSlotCount);
+    try runCaseError("sema/method-type-args-not-generic.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-method-duplicate.dsk", error.AlreadyDefined);
+    try runCaseError("sema/method-duplicate.dsk", error.AlreadyDefined);
+    try runCaseError("sema/generic-method-trait.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/generic-method-mut-self.dsk", error.NotMutable);
+}
+
 test "generics: error slots take the errors of failing callbacks" {
     try runCase("error-slots.dsk");
     try runCaseError("sema/error-slot-not-marked.dsk", error.SlotNotMarkedError);

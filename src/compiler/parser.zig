@@ -811,20 +811,7 @@ pub const Parser = struct {
                         .default_value = let_stmt.value,
                     });
                 },
-                .func_kw => {
-                    self.walk();
-                    const is_file_only = try self.matchFileOnly(null);
-                    const identifier_token = try self.expect(.identifier);
-                    const fn_def = try self.parseFnDef();
-                    try funcs.append(self.allocator, .{
-                        .data = .{ .func = .{
-                            .identifier = identifier_token.value(self.src),
-                            .def = fn_def,
-                            .is_file_only = is_file_only,
-                        } },
-                        .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
-                    });
-                },
+                .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .identifier, .tilde => {
                     const is_file_only = try self.matchFileOnly(null);
                     const identifier = try self.expect(.identifier);
@@ -884,6 +871,24 @@ pub const Parser = struct {
         };
     }
 
+    fn parseMethod(self: *Self) CompileError!ast.StatementNode {
+        const start = self.peekCurrent();
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
+        const fn_def = try self.parseFnDef();
+        return .{
+            .data = .{ .func = .{
+                .identifier = identifier_token.value(self.src),
+                .def = fn_def,
+                .is_file_only = is_file_only,
+                .slots = slots,
+            } },
+            .loc = .{ .start = start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+        };
+    }
+
     fn parseEnumDef(self: *Self) CompileError!ast.EnumDef {
         var variants: std.ArrayList(ast.EnumVariant) = .empty;
         var static_fields: std.ArrayList(ast.Field) = .empty;
@@ -934,25 +939,7 @@ pub const Parser = struct {
                         });
                     }
                 },
-                .func_kw => {
-                    self.walk();
-                    const is_file_only = try self.matchFileOnly(null);
-                    const identifier_token = try self.expect(.identifier);
-                    const fn_def = try self.parseFnDef();
-                    try funcs.append(self.allocator, .{
-                        .data = .{
-                            .func = .{
-                                .identifier = identifier_token.value(self.src),
-                                .def = fn_def,
-                                .is_file_only = is_file_only,
-                            },
-                        },
-                        .loc = .{
-                            .start = tk.loc.start,
-                            .end = self.tokens[self.cur_index - 1].loc.end,
-                        },
-                    });
-                },
+                .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .let_kw => {
                     const let_stmt = try self.parseLetStmt(static_field_refusal);
                     try static_fields.append(self.allocator, .{
@@ -999,25 +986,7 @@ pub const Parser = struct {
 
                     try variants.append(self.allocator, .{ .identifier = identifier, .type = @"type" });
                 },
-                .func_kw => {
-                    self.walk();
-                    const is_file_only = try self.matchFileOnly(null);
-                    const identifier_token = try self.expect(.identifier);
-                    const fn_def = try self.parseFnDef();
-                    try funcs.append(self.allocator, .{
-                        .data = .{
-                            .func = .{
-                                .identifier = identifier_token.value(self.src),
-                                .def = fn_def,
-                                .is_file_only = is_file_only,
-                            },
-                        },
-                        .loc = .{
-                            .start = tk.loc.start,
-                            .end = self.tokens[self.cur_index - 1].loc.end,
-                        },
-                    });
-                },
+                .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .let_kw => {
                     const let_stmt = try self.parseLetStmt(static_field_refusal);
                     try static_fields.append(self.allocator, .{

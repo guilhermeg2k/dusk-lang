@@ -1,0 +1,12 @@
+struct B
+    v: int
+
+    func empty[T](self: @) -> []T
+        return []
+    end
+end
+
+func main() -> void
+    let b = B(v = 1)
+    let items = b.empty()
+end

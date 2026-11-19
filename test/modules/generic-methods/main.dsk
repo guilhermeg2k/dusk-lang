@@ -1,0 +1,18 @@
+import @/lib
+import std/array
+
+struct Handlers
+    map: []func(int) -> int
+end
+
+func main() -> void
+    let s = lib::store([1, 2, 3])
+    let names = s.map(func(n: int) -> return "#${n}")
+    assert(array::len(names) == 3)
+    assert(names[2] == "#3")
+    assert(s.peek(true) == 1)
+    let h = Handlers(map = [func(n: int) -> return n * 3])
+    let i = 0
+    assert(h.map[i](2) == 6)
+    assert(h.map[0](3) == 9)
+end
