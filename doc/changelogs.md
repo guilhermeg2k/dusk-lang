@@ -32,6 +32,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - Generic result types can be inferred through `try` and `catch`: a call returning `ParseError![]T` can fill `T` from `let xs: []int = try read_items(text)` or `let xs: []int = read_items(text) catch []`
 - Every heap value except arrays (strings, buffers, structs, unions, maps, closures, tasks, nullable boxes) takes 8 bytes less memory
 - `accept` takes a burst of waiting connections at once (up to 64) instead of one per event loop round, so servers handle many short connections faster
+- Methods with their own slots: a struct, enum or union method can declare slots like a function (`func map[U](self: @, f: func(T) -> U) -> Box[U]`), filled from the arguments after `self`, the expected type or explicit type arguments (`box.map[string](f)`). Two methods with the same name in one type are now an error
 
 ### Fixes
 
