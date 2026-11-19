@@ -154,6 +154,7 @@ struct Server
     ~max_body: int
     ~head_timeout_ms: int
     ~idle_timeout_ms: int
+    ~max_connections: int
 
     func port(self: @) -> int
         return self.listener.port()
@@ -167,6 +168,14 @@ struct Server
     func serve[E: error](self: @, handler: func(Request) -> E!Response) -> void
         let mut active = 0
         for true do
+            let is_full = self.max_connections > 0 and active >= self.max_connections
+            if is_full then
+                if server_is_closing(self.state) then
+                    break
+                end
+                task::sleep(1)
+                continue
+            end
             let conn = self.listener.accept() catch e then
                 if e == io::IoError.Closed then
                     break
@@ -791,11 +800,11 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1) -> HttpError!Server
     let listener = open_listener(host, port, cert, backlog) catch e then
         return from_net(e)
     end
-    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms)
+    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, max_connections = max_connections)
 end
 
 func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener

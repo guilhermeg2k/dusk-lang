@@ -2649,7 +2649,7 @@ end
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. |
+| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024, max_connections = -1)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. |
 
 **`Server`**
 

@@ -335,6 +335,26 @@ func check_shutdown() -> !void
     assert(refused)
 end
 
+func check_connection_limit() -> !void
+    let server = try http::listen("127.0.0.1", 0, max_connections = 1)
+    let running = start(server)
+    let port = server.port()
+    let holder = try net::tcp_connect("127.0.0.1", port)
+    task::sleep(50)
+    let mut is_answered = false
+    let waiting = spawn(func() -> !string
+        let reply = try http::request("http://127.0.0.1:$port/", timeout_ms = 3000)
+        is_answered = true
+        return try reply.text()
+    end)
+    task::sleep(100)
+    assert(!is_answered)
+    holder.close()
+    assert(try await(waiting) == "hello world")
+    server.close()
+    await(running)
+end
+
 func check_listen_errors() -> !void
     let taken = try http::listen("127.0.0.1", 0)
     let mut failure: ?http::HttpError = null
@@ -407,6 +427,7 @@ func main() -> !void
     try check_body_limits()
     try check_timeouts()
     try check_shutdown()
+    try check_connection_limit()
     try check_shutdown_in_flight()
     try check_https()
     try check_listen_errors()
