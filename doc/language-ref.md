@@ -1268,6 +1268,25 @@ let parsed: Result[int, string] = @(ok = 42)
 
 Each filled type is its own type: a `Stack[int]` isn't a `Stack[float]`. Recursive types work (`next: ?Node[T]`), and static fields are shared by every copy (`Stack.MAX`).
 
+### Methods with their own slots
+
+A method of a struct, enum or union can take slots of its own, written after its name like a function's. Calls fill them the same way: from the arguments after `self`, the expected type, or explicit type arguments (`box.map[string](f)`). In a generic type, a method can use the type's slots and its own; its own can't reuse a name the type already uses.
+
+```nim
+struct Box[T]
+    value: T
+
+    func map[U](self: @, f: func(T) -> U) -> Box[U]
+        return Box(value = f(self.value))
+    end
+end
+
+let count = Box(value = 3)
+let label = count.map(func(n: int) -> return "#${n}")    # Box[string]
+```
+
+A method with its own slots doesn't fill a trait's method.
+
 ### Checked where written
 
 A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value; it can be `mut` (see [Mutable parameters](#mutable-parameters)).
@@ -3042,4 +3061,4 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
 - **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client doesn't use proxies (`HTTP_PROXY` and similar variables are ignored), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); only `http::request` decompresses, and only gzip. The server has no router (handlers match `req.path` themselves), sends response bodies whole (no streaming, no server-sent events), doesn't compress responses, and has no limit on the number of connections. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
 - **Serialization**: map keys must be strings, and schemas have no flattening of nested structs and no unions written without their variant name. `via` takes named, non-generic functions. Values written through `std/serialization` are read field by field into the type, never into a general tree of values.
-- **Generics**: an explicit type-argument list must fill every slot, except trailing schema slots; other partial lists are not supported. Methods can't have their own slots, traits can't require static methods or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
+- **Generics**: an explicit type-argument list must fill every slot, except trailing schema slots; other partial lists are not supported. Traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
