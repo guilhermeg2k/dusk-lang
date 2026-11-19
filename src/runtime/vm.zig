@@ -830,11 +830,11 @@ pub const VM = struct {
 
     fn getArrayFromHeapValuePtr(stack: []v.Value, stack_base: usize, reg_idx: u8) *v.Array {
         const ptr = stack[stack_base + reg_idx].heap_obj;
-        const current = ptr.followRelocated();
-        if (current != ptr) {
-            stack[stack_base + reg_idx].heap_obj = current;
+        const current = v.HeapValue.getParentPtr(v.Array, ptr).newestCopy();
+        if (&current.obj != ptr) {
+            stack[stack_base + reg_idx].heap_obj = &current.obj;
         }
-        return v.HeapValue.getParentPtr(v.Array, current);
+        return current;
     }
 
     pub fn growArray(self: *Self, slot: *v.Value) !*v.Array {
@@ -846,8 +846,9 @@ pub const VM = struct {
     }
 
     fn arrayInSlot(slot: *v.Value) *v.Array {
-        slot.heap_obj = slot.heap_obj.followRelocated();
-        return v.HeapValue.getParentPtr(v.Array, slot.heap_obj);
+        const array = v.HeapValue.getParentPtr(v.Array, slot.heap_obj).newestCopy();
+        slot.heap_obj = &array.obj;
+        return array;
     }
 
     fn newMap(self: *Self, key_type: v.ValueType, value_type: v.ValueType) !v.Value {

@@ -95,7 +95,7 @@ fn arrayExtend(vm: *VM, args: []v.Value) anyerror!NativeResult {
         const grown = try v.Array.init(vm.getCurrentHeapAllocator(), array.kind, capacity);
         @memcpy(grown.getDataPtr()[0..array.len], array.getDataPtr()[0..array.len]);
         grown.len = array.len;
-        array.obj.relocated = &grown.obj;
+        array.relocated = grown;
         args[0].heap_obj = &grown.obj;
         array = grown;
         vm.increaseHeapAllocationCount(size);
@@ -140,7 +140,7 @@ fn isSameItem(kind: v.ValueType, left: v.Value, right: v.Value) bool {
 }
 
 fn arrayArg(args: []v.Value, index: usize) *v.Array {
-    const current = args[index].heap_obj.followRelocated();
-    args[index].heap_obj = current;
-    return v.HeapValue.getParentPtr(v.Array, current);
+    const array = v.HeapValue.getParentPtr(v.Array, args[index].heap_obj).newestCopy();
+    args[index].heap_obj = &array.obj;
+    return array;
 }
