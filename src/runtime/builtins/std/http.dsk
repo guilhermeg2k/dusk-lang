@@ -160,6 +160,27 @@ struct Server
         server_close(self.state)
         self.listener.close()
     end
+
+    func serve[E: error](self: @, handler: func(Request) -> E!Response) -> void
+        let mut active = 0
+        for true do
+            let conn = self.listener.accept() catch e then
+                if e == io::IoError.Closed then
+                    break
+                end
+                task::sleep(10)
+                continue
+            end
+            active = active + 1
+            spawn(func() -> void
+                serve_connection(self, conn, handler)
+                active = active - 1
+            end)
+        end
+        for active > 0 do
+            task::sleep(10)
+        end
+    end
 end
 
 struct Request
@@ -661,27 +682,6 @@ func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: i
         return try net::tls_listen(host, port, certificate, backlog)
     end
     return try net::tcp_listen(host, port, backlog)
-end
-
-func serve[E: error](server: Server, handler: func(Request) -> E!Response) -> void
-    let mut active = 0
-    for true do
-        let conn = server.listener.accept() catch e then
-            if e == io::IoError.Closed then
-                break
-            end
-            task::sleep(10)
-            continue
-        end
-        active = active + 1
-        spawn(func() -> void
-            serve_connection(server, conn, handler)
-            active = active - 1
-        end)
-    end
-    for active > 0 do
-        task::sleep(10)
-    end
 end
 
 func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response) -> void
