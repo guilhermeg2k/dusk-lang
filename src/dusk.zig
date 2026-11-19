@@ -83,14 +83,4 @@ pub const Dusk = struct {
         defer v.deinit();
         try v.run();
     }
-
-    fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
-        const dir_path = std.fs.path.dirname(file_name) orelse ".";
-        try std.Io.Dir.cwd().createDirPath(self.io, dir_path);
-
-        const json_str = try std.json.Stringify.valueAlloc(self.allocator, obj, .{ .whitespace = .indent_2 });
-        defer self.allocator.free(json_str);
-
-        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = file_name, .data = json_str });
-    }
 };

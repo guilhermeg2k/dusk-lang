@@ -1997,10 +1997,6 @@ pub const Parser = struct {
         return self.err_reporter.invalidSyntax(@tagName(tag), token);
     }
 
-    fn walkBack(self: *Self) void {
-        self.cur_index = @max(0, self.cur_index - 1);
-    }
-
     fn walk(self: *Self) void {
         self.cur_index += 1;
     }
@@ -2025,11 +2021,4 @@ pub const Parser = struct {
         return self.tokens[self.cur_index + n];
     }
 
-    fn peekBack(self: *Self) Token {
-        if (self.cur_index - 1 >= self.tokens.len or self.cur_index - 1 == 0) {
-            return Token.init(Tag.eof, 0, 0);
-        }
-
-        return self.tokens[self.cur_index - 1];
-    }
 };

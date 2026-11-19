@@ -206,12 +206,6 @@ pub const StoreVar = struct {
     value: *Value,
 };
 
-pub const UpdateVar = struct {
-    var_uid: usize,
-    identifier: []const u8,
-    value: *Value,
-};
-
 pub const BranchIf = struct {
     condition: *Value,
     then_block: Block,
@@ -340,10 +334,6 @@ pub const BinaryOp = struct {
     kind: BinaryOpKind,
     left: *Value,
     right: *Value,
-};
-
-pub const NullBoxNNullOp = struct {
-    value: *Value,
 };
 
 pub const MapCursor = struct {
