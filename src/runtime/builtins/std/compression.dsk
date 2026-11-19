@@ -1,0 +1,15 @@
+error CompressionError
+    InvalidData
+    TooLarge
+    InvalidLevel
+    Other
+end
+
+enum Format
+    Gzip
+    Zlib
+    Deflate
+end
+
+extern func compress(data: buffer, format: Format, level: int = 6) -> CompressionError!buffer
+extern func decompress(data: buffer, format: Format, max: int = -1) -> CompressionError!buffer

@@ -319,6 +319,10 @@ test "net: a burst of connections is accepted in batches" {
     try runCase("net-tcp-burst.dsk");
 }
 
+test "compression: compress and decompress gzip, zlib and raw deflate (levels, fixtures from other tools, gzip members, bad data, max, levels out of range, GC)" {
+    try runCase("compression.dsk");
+}
+
 test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
     try runCase("url.dsk");
 }
@@ -3752,6 +3756,7 @@ test "builtins: each native error enum matches its error set, names and order" {
     try expectErrorEnumsMatchSets(dusk.stdSource("url"), @import("runtime/builtins/std/url.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("http"), @import("runtime/builtins/std/http.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("buffer"), @import("runtime/builtins/std/buffer.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("compression"), @import("runtime/builtins/std/compression.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {

@@ -1718,7 +1718,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/compression`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1971,6 +1971,28 @@ try out.write_bytes(try buffer::slice(frame, 0, used))
 ```
 
 The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). See [Buffers](#buffers).
+
+### std/compression
+
+Compressing and decompressing bytes. Import with `import std/compression`.
+
+| Function                                | Returns                         | Description                                                                 |
+| :-------------------------------------- | :------------------------------ | :-------------------------------------------------------------------------- |
+| `compress(data, format, level = 6)`     | `CompressionError!buffer`       | Compresses `data` in the given format.                                      |
+| `decompress(data, format, max = -1)`    | `CompressionError!buffer`       | Decompresses `data`; fails with `TooLarge` past `max` bytes (`-1`: no limit). |
+
+`format` is a `compression::Format`: `Gzip` (what `.gz` files and HTTP's `gzip` use), `Zlib` (HTTP's `deflate`) or `Deflate` (raw deflate data, no header). `level` goes from `0` (stored, no compression) to `9` (smallest output, slowest); `6` is a good default, and `1` is much faster for a slightly bigger result. A level outside `0..9` fails with `InvalidLevel`.
+
+```nim
+let packed = try compression::compress(buffer::from_string(report), compression::Format.Gzip)
+try fs::write_bytes("report.txt.gz", packed)
+
+let text = try string::from_bytes(try compression::decompress(try fs::read_bytes("report.txt.gz"), compression::Format.Gzip))
+```
+
+`decompress` checks the data's checksum and fails with `InvalidData` for corrupted or cut-short data, data in another format, or bytes left after the end. A gzip file made of several members back to back (as `cat a.gz b.gz` makes) decodes to their contents joined. Pass `max` whenever the data comes from outside: a few kilobytes of compressed data can expand to gigabytes.
+
+The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Other`). It uses a bundled zlib-ng.
 
 ### std/time
 
