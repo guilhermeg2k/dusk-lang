@@ -415,6 +415,10 @@ test "net: read_exact and remote_address" {
     try runCase("net-tcp-extras.dsk");
 }
 
+test "net: a burst of connections is accepted in batches" {
+    try runCase("net-tcp-burst.dsk");
+}
+
 test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
     try runCase("url.dsk");
 }

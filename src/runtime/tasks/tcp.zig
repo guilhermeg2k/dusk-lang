@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const uv = @import("uv.zig");
 const EventLoop = @import("event_loop.zig").EventLoop;
 const HandleOwner = @import("event_loop.zig").HandleOwner;
@@ -13,6 +14,7 @@ const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const handle_alignment = std.mem.Alignment.@"16";
 const max_ip_length = 64;
 const max_host_length = 255;
+const max_ready_connections = 64;
 
 pub const NetError = enum {
     HostNotFound,
@@ -346,7 +348,8 @@ pub const Listener = struct {
     open_handles: u8 = 1,
     is_timer_running: bool = false,
     is_closed: bool = false,
-    pending_connections: usize = 0,
+    ready_connections: std.ArrayList(usize) = .empty,
+    has_unaccepted_connection: bool = false,
     failure: ?IoError = null,
     waiter: ?*TaskState = null,
     tls_certificate: ?*ServerCertificate = null,
@@ -370,6 +373,7 @@ pub const Listener = struct {
     }
 
     pub fn destroy(self: *Self) void {
+        self.ready_connections.deinit(self.allocator);
         self.allocator.free(self.handle_memory);
         self.allocator.free(self.timer_memory);
         self.allocator.destroy(self);
@@ -397,16 +401,38 @@ pub const Listener = struct {
     }
 
     pub fn takeReadyConnection(self: *Self) ?AcceptOutcome {
+        if (self.ready_connections.items.len == 0) {
+            self.queueReadyConnections();
+        }
         if (self.failure) |failure| {
             self.failure = null;
             return .{ .failure = failure };
         }
-        if (self.pending_connections == 0) {
+        if (self.ready_connections.items.len == 0) {
             return null;
         }
-        self.pending_connections -= 1;
-        const handle = self.acceptConnection() catch return .{ .failure = .Other };
-        return .{ .connection = handle };
+        return .{ .connection = self.ready_connections.orderedRemove(0) };
+    }
+
+    fn queueReadyConnections(self: *Self) void {
+        if (!self.has_unaccepted_connection) return;
+        while (self.ready_connections.items.len < max_ready_connections) {
+            self.ready_connections.ensureUnusedCapacity(self.allocator, 1) catch {
+                self.failure = .Other;
+                return;
+            };
+            if (self.has_unaccepted_connection) {
+                self.has_unaccepted_connection = false;
+                const handle = self.acceptConnection() catch {
+                    self.failure = .Other;
+                    return;
+                };
+                self.ready_connections.appendAssumeCapacity(handle);
+                continue;
+            }
+            const handle = self.acceptNextFromSocket() orelse return;
+            self.ready_connections.appendAssumeCapacity(handle);
+        }
     }
 
     fn acceptConnection(self: *Self) !usize {
@@ -416,14 +442,41 @@ pub const Listener = struct {
             self.event_loop.closeStream(@intCast(handle));
             return error.AcceptFailed;
         }
-        stream.rememberPeer();
-        if (self.tls_certificate) |certificate| {
-            stream.useServerTls(certificate.config) catch {
-                self.event_loop.closeStream(@intCast(handle));
-                return error.AcceptFailed;
-            };
-        }
+        try self.prepareAcceptedStream(handle);
         return handle;
+    }
+
+    fn acceptNextFromSocket(self: *Self) ?usize {
+        if (builtin.os.tag == .windows) {
+            return null;
+        }
+        var listener_socket: uv.OsFile = undefined;
+        if (uv.uv_fileno(self.uvHandle(), &listener_socket) != 0) {
+            return null;
+        }
+        const socket = acceptWaitingSocket(listener_socket) orelse return null;
+        const handle = self.event_loop.openTcpStream(self.scheduler) catch {
+            _ = std.c.close(socket);
+            return null;
+        };
+        const stream = self.event_loop.streamAt(@intCast(handle)).?;
+        if (uv.uv_tcp_open(stream.uvHandle(), socket) != 0) {
+            _ = std.c.close(socket);
+            self.event_loop.closeStream(@intCast(handle));
+            return null;
+        }
+        self.prepareAcceptedStream(handle) catch return null;
+        return handle;
+    }
+
+    fn prepareAcceptedStream(self: *Self, handle: usize) !void {
+        const stream = self.event_loop.streamAt(@intCast(handle)).?;
+        stream.rememberPeer();
+        const certificate = self.tls_certificate orelse return;
+        stream.useServerTls(certificate.config) catch {
+            self.event_loop.closeStream(@intCast(handle));
+            return error.AcceptFailed;
+        };
     }
 
     pub fn parkAccepter(self: *Self, task: *TaskState, timeout_ms: ?u64) !void {
@@ -467,6 +520,10 @@ pub const Listener = struct {
                 self.event_loop.callback_failure = failure;
             };
         }
+        for (self.ready_connections.items) |handle| {
+            self.event_loop.closeStream(@intCast(handle));
+        }
+        self.ready_connections.clearRetainingCapacity();
         self.is_closed = true;
         uv.uv_close(self.uvHandle(), onHandleClosed);
         if (self.timer_memory.len > 0) {
@@ -520,9 +577,34 @@ fn onConnection(server: *uv.Handle, status: c_int) callconv(.c) void {
     if (status < 0) {
         listener.failure = .Other;
     } else {
-        listener.pending_connections += 1;
+        listener.has_unaccepted_connection = true;
     }
     listener.serveWaiter();
+}
+
+fn acceptWaitingSocket(listener_socket: c_int) ?c_int {
+    while (true) {
+        const socket = acceptSocketWithFlags(listener_socket);
+        if (socket >= 0) {
+            return socket;
+        }
+        switch (std.posix.errno(socket)) {
+            .INTR, .CONNABORTED => continue,
+            else => return null,
+        }
+    }
+}
+
+fn acceptSocketWithFlags(listener_socket: c_int) c_int {
+    const has_accept4 = builtin.os.tag == .linux or builtin.os.tag == .freebsd;
+    if (has_accept4) {
+        return std.c.accept4(listener_socket, null, null, std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC);
+    }
+    const socket = std.c.accept(listener_socket, null, null);
+    if (socket >= 0) {
+        _ = std.c.fcntl(socket, std.posix.F.SETFD, @as(c_int, std.posix.FD_CLOEXEC));
+    }
+    return socket;
 }
 
 fn onAcceptTimeout(timer: *uv.Handle) callconv(.c) void {

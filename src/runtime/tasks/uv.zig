@@ -12,6 +12,8 @@ pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
 pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, tcp = 12, timer = 13, tty = 14, file = 17, _ };
 pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7, getaddrinfo = 8 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
+pub const OsFile = if (@import("builtin").os.tag == .windows) ?*anyopaque else c_int;
+pub const OsSocket = if (@import("builtin").os.tag == .windows) usize else c_int;
 
 // ---- Structs mirrored from uv.h (layouts must match) ----
 
@@ -109,6 +111,7 @@ pub extern fn uv_handle_set_data(handle: *Handle, data: ?*anyopaque) void;
 pub extern fn uv_is_closing(handle: *const Handle) c_int;
 pub extern fn uv_close(handle: *Handle, callback: ?CloseCallback) void;
 pub extern fn uv_guess_handle(file: c_int) HandleType;
+pub extern fn uv_fileno(handle: *const Handle, file: *OsFile) c_int;
 
 // ---- Timers ----
 
@@ -129,6 +132,7 @@ pub extern fn uv_write(request: *Request, stream: *Handle, buffers: [*]const Buf
 // ---- TCP ----
 
 pub extern fn uv_tcp_init(loop: *Loop, tcp: *Handle) c_int;
+pub extern fn uv_tcp_open(tcp: *Handle, socket: OsSocket) c_int;
 pub extern fn uv_tcp_bind(tcp: *Handle, address: *const SocketAddress, flags: c_uint) c_int;
 pub extern fn uv_tcp_connect(request: *Request, tcp: *Handle, address: *const SocketAddress, callback: ConnectCallback) c_int;
 pub extern fn uv_tcp_getsockname(tcp: *const Handle, address: *SocketAddress, length: *c_int) c_int;
