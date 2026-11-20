@@ -421,6 +421,85 @@ func tls_listener(cert_name: string) -> !net::TcpListener
     return try net::tls_listen("127.0.0.1", 0, cert)
 end
 
+func check_client(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let mut api = http::Client(base_url = "${base(listener)}/v1", headers = {"X-Token": "abc", "Accept": "text/plain"})
+
+    let plain_server = serve_once(listener, ok)
+    let plain = try api.request("/users")
+    let plain_request = await(plain_server)
+    assert(try plain.text() == "hello")
+    assert(plain_request.lines[0] == "GET /v1/users HTTP/1.1")
+    assert(has_line(plain_request, "X-Token: abc"))
+    assert(has_line(plain_request, "Accept: text/plain"))
+
+    let no_slash_server = serve_once(listener, ok)
+    let no_slash = try api.request("users/7", query = {"full": "yes"})
+    assert(await(no_slash_server).lines[0] == "GET /v1/users/7?full=yes HTTP/1.1")
+
+    let slashed = http::Client(base_url = "${base(listener)}/v1/")
+    let both_server = serve_once(listener, ok)
+    let both = try slashed.request("/items")
+    assert(await(both_server).lines[0] == "GET /v1/items HTTP/1.1")
+    let query_server = serve_once(listener, ok)
+    let query_only = try api.request("?page=2")
+    assert(await(query_server).lines[0] == "GET /v1?page=2 HTTP/1.1")
+    let empty_server = serve_once(listener, ok)
+    let empty_path = try api.request("")
+    assert(await(empty_server).lines[0] == "GET /v1 HTTP/1.1")
+
+    let elsewhere = http::Client(base_url = "http://nowhere.invalid/base")
+    let absolute_server = serve_once(listener, ok)
+    let absolute = try elsewhere.request("${base(listener)}/direct")
+    assert(await(absolute_server).lines[0] == "GET /direct HTTP/1.1")
+
+    let override_server = serve_once(listener, ok)
+    let overridden = try api.request("/me", method = "POST", body = "x", headers = {"x-token": "xyz", "X-Extra": "1"})
+    let override_request = await(override_server)
+    assert(override_request.lines[0] == "POST /v1/me HTTP/1.1")
+    assert(has_line(override_request, "x-token: xyz"))
+    assert(!has_line(override_request, "X-Token: abc"))
+    assert(has_line(override_request, "X-Extra: 1"))
+    assert(has_line(override_request, "Accept: text/plain"))
+
+    api.headers["X-Late"] = "yes"
+    let late_server = serve_once(listener, ok)
+    let late = try api.request("/late")
+    assert(has_line(await(late_server), "X-Late: yes"))
+
+    let tight = http::Client(base_url = base(listener), max_body = 3)
+    let tight_server = serve_once(listener, ok)
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try tight.request("/big"))
+    await(tight_server)
+    let loose_server = serve_once(listener, ok)
+    assert(try (try tight.request("/big", max_body = 100)).text() == "hello")
+    await(loose_server)
+
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let stays = http::Client(base_url = base(listener), max_redirects = 0, headers = {"Authorization": "Bearer t"})
+    let stay_server = serve_once(listener, redirect_to(302, "/next"))
+    assert((try stays.request("/start")).status == 302)
+    await(stay_server)
+    let follow_server = serve_sequence(listener, [redirect_to(302, "/next"), done])
+    assert(try (try stays.request("/start", max_redirects = 3)).text() == "done")
+    let followed = await(follow_server)
+    assert(followed[1].lines[0] == "GET /next HTTP/1.1")
+    assert(has_line(followed[1], "Authorization: Bearer t"))
+
+    let stream_server = serve_once(listener, ok)
+    let mut streamed = try api.open("/stream")
+    assert(try streamed.read_all() == "hello")
+    streamed.close()
+    let stream_request = await(stream_server)
+    assert(stream_request.lines[0] == "GET /v1/stream HTTP/1.1")
+    assert(has_line(stream_request, "X-Token: abc"))
+
+    let quick = http::Client(base_url = base(listener), timeout_ms = 100)
+    let silent = accept_and_wait(listener, "", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try quick.request("/slow"))
+    await(silent)
+end
+
 func check_https() -> !void
     let ca = try fixture("ca.pem")
     let secure = try tls_listener("server.pem")
@@ -438,10 +517,19 @@ func check_https() -> !void
     assert(try hopped.text() == "ok")
     assert(len(await(hops)) == 2)
 
+    let trusted = http::Client(base_url = secure_base, ca = ca)
+    let trusted_server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    assert(try (try trusted.request("/client")).text() == "ok")
+    await(trusted_server)
+
     let other_ca = try fixture("self-signed.pem")
     let untrusted = serve_once(secure, "")
     expect_error(http::HttpError.UntrustedCertificate, func() -> return try http::request("$secure_base/", ca = other_ca))
     await(untrusted)
+    let wrongly_trusting = http::Client(base_url = secure_base, ca = other_ca)
+    let override_ca_server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    assert(try (try wrongly_trusting.request("/client", ca = ca)).text() == "ok")
+    await(override_ca_server)
     let bad_ca = serve_once(secure, "")
     expect_error(http::HttpError.InvalidCertificate, func() -> return try http::request("$secure_base/", ca = "not a certificate"))
     await(bad_ca)
@@ -897,6 +985,7 @@ func main() -> !void
     try check_stream_errors(listener)
     try check_pool(listener)
     try check_gzip(listener)
+    try check_client(listener)
     listener.close()
     try check_https()
 end

@@ -2688,6 +2688,24 @@ A body that ends before its announced length, or that breaks the chunked format,
 
 **Compression.** `request` and `open` ask for compressed bodies (`Accept-Encoding: gzip, deflate`) and decompress them, so `body`, `text()` and a `ResponseStream`'s reads give the original content; `max_body` counts the decompressed bytes. `deflate` bodies are accepted with or without their zlib header, since some servers leave it out. The `Content-Encoding` and `Content-Length` headers stay as the server sent them. Setting `Accept-Encoding` in `headers` turns this off: the body is returned as it came. A `ResponseStream` read fails with `io::IoError.Other` for a broken compressed body and `UnexpectedEnd` for one cut short.
 
+**Clients.** An `http::Client` keeps settings for many requests to the same service: a base URL, headers sent with every request, and the defaults for the other settings. Build one with the fields you need; the others keep the defaults of `http::request`.
+
+```nim
+let mut api = http::Client(base_url = "https://api.example.com/v1", headers = {"Authorization": "Bearer $token"}, timeout_ms = 5000)
+let user = try api.request("/users/7")
+let created = try api.request("/users", method = "POST", body = json, headers = {"Content-Type": http::ContentType.JSON})
+let mut export = try api.open("/export.csv")
+api.headers["X-Trace"] = trace_id
+```
+
+| Field | Default | Description |
+| :---- | :------ | :---------- |
+| `base_url` | `""` | Put in front of relative URLs, with exactly one `/` between: `.../v1` and `/users`, or `.../v1/` and `users`, both give `.../v1/users`. A URL with a scheme (`https://...`) ignores it. |
+| `headers` | `{}` | Sent with every request. A header given to a call replaces the client's header of the same name, ignoring case. |
+| `timeout_ms`, `max_redirects`, `max_body`, `ca`, `verify` | as in `request` | The defaults for each call. |
+
+`client.request(url, ...)` and `client.open(url, ...)` take the same arguments as `http::request` and `http::open`; a setting given to the call (`timeout_ms = 20000`) overrides the client's for that call only. Changing a field of a `let mut` client affects the requests after it. Every client shares the program's pool of open connections, so two clients talking to the same server reuse each other's connections.
+
 **Serving HTTP.** `http::listen` opens a server and `server.serve(handler)` answers its requests with a handler function, a `func(http::Request) -> E!http::Response`. Each connection runs in its own task, so a slow handler only holds up its own client.
 
 ```nim

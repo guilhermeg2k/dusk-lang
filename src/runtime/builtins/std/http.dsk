@@ -458,20 +458,98 @@ struct ~Opened
     pool_key: string
 end
 
+struct Client
+    base_url: string = ""
+    headers: map[string, string] = {}
+    timeout_ms: int = -1
+    max_redirects: int = 10
+    max_body: int = 67108864
+    ca: ?string = null
+    verify: bool = true
+
+    func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!Response
+        let redirects = max_redirects orelse self.max_redirects
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true)
+        let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
+        return opened.response
+    end
+
+    func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!ResponseStream
+        let redirects = max_redirects orelse self.max_redirects
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false)
+        let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
+        let response = opened.response
+        if body_format(response.status, response.headers, exchange): format then
+            stream_decode_body(opened.handle, format)
+        end
+        return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key)
+    end
+end
+
 func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
-    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = true)
-    let opened = try start(url, query, exchange, max_redirects)
-    return opened.response
+    let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, max_body = max_body, ca = ca, verify = verify)
+    return try client.request(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query)
 end
 
 func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true) -> HttpError!ResponseStream
-    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = false)
-    let opened = try start(url, query, exchange, max_redirects)
-    let response = opened.response
-    if body_format(response.status, response.headers, exchange): format then
-        stream_decode_body(opened.handle, format)
+    let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, ca = ca, verify = verify)
+    return try client.open(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query)
+end
+
+func ~merged_headers(base: map[string, string], extra: map[string, string]) -> map[string, string]
+    if map::len(extra) == 0 then
+        return base
     end
-    return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key)
+    if map::len(base) == 0 then
+        return extra
+    end
+    let mut result: map[string, string] = {}
+    for base: value, name do
+        if !has_header_name(extra, name) then
+            result[name] = value
+        end
+    end
+    for extra: value, name do
+        result[name] = value
+    end
+    return result
+end
+
+func ~has_header_name(headers: map[string, string], name: string) -> bool
+    let lowered = string::lower(name)
+    for headers: value, other do
+        if string::lower(other) == lowered then
+            return true
+        end
+    end
+    return false
+end
+
+func ~joined_url(base: string, target: string) -> string
+    if base == "" or has_scheme(target) then
+        return target
+    end
+    if target == "" or string::starts_with(target, "?") then
+        return "$base$target"
+    end
+    let base_has_slash = string::ends_with(base, "/")
+    let target_has_slash = string::starts_with(target, "/")
+    if base_has_slash and target_has_slash then
+        return "$base${string::slice(target, 1, string::len(target)) catch ""}"
+    end
+    if !base_has_slash and !target_has_slash then
+        return "$base/$target"
+    end
+    return "$base$target"
+end
+
+func ~has_scheme(target: string) -> bool
+    let separator = string::find(target, "://") orelse -1
+    if separator <= 0 then
+        return false
+    end
+    let scheme = string::slice(target, 0, separator) catch ""
+    return !string::contains(scheme, "/") and !string::contains(scheme, "?")
 end
 
 func ~start(url: string, query: map[string, string], exchange: Exchange, max_redirects: int) -> HttpError!Opened
