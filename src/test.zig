@@ -2616,6 +2616,10 @@ test "sema error: ?. method call on a value that can't be null" {
     try runCaseError("sema/optional-chain-method-not-nullable.dsk", error.UnecessaryOptionalChain);
 }
 
+test "sema error: a number passed where text is expected (the message suggests interpolation)" {
+    try runCaseError("sema/print-number-hint.dsk", error.InvalidType);
+}
+
 test "sema error: try in non-failing function" {
     try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
 }

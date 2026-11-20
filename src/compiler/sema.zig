@@ -2661,6 +2661,17 @@ pub const SemaAnalyzer = struct {
         return self.isSameType(required.return_type_id, actual.return_type_id);
     }
 
+    fn needsTextHint(self: *Self, arg_type: tt.TypeId, param_type: tt.TypeId) bool {
+        const param = self.type_table.getTypePtrById(param_type);
+        if (param.kind != .string or param.is_nullable) {
+            return false;
+        }
+        return switch (self.type_table.getTypePtrById(arg_type).kind) {
+            .int, .byte, .float, .boolean, .@"enum" => true,
+            else => false,
+        };
+    }
+
     fn isNullableMethodCall(fn_call: ast.FnCall) bool {
         if (fn_call.target.data != .indexed) {
             return false;
@@ -4994,6 +5005,9 @@ pub const SemaAnalyzer = struct {
             if (arg_exp) |_exp| {
                 const evaluated = inferred_values.get(_exp) orelse try self.evalExpExpecting(_exp, param.type_id);
                 const arg_type = evaluated.type_id;
+                if (self.needsTextHint(arg_type, param.type_id)) {
+                    return self.err_reporter.textExpected(try self.type_table.name(arg_type, self.allocator), _exp.loc);
+                }
                 const fn_call_arg_value = try self.coerceValue(evaluated, param.type_id, _exp.loc);
 
                 const arg_type_ptr = self.type_table.getTypePtrById(arg_type);
