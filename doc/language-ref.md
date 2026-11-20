@@ -2040,6 +2040,7 @@ A `Timestamp` stores epoch milliseconds in a private field and has no mutating m
 | :----- | :------ | :---------- |
 | `unix_ms()` | `int` | The stored epoch milliseconds, unchanged. |
 | `to_iso_string(zone = utc_timezone())` | `TimeError!string` | ISO timestamp text in the selected zone, with exactly three fractional millisecond digits. |
+| `format(pattern, zone = utc_timezone())` | `TimeError!string` | Formats numeric calendar fields and literal text using a custom pattern. |
 | `is_equal(other)` | `bool` | Whether both timestamps represent the same epoch milliseconds. |
 | `is_before(other)` | `bool` | Whether this timestamp precedes the other. |
 | `is_after(other)` | `bool` | Whether this timestamp follows the other. |
@@ -2127,7 +2128,7 @@ let fixed = try time::fixed_timezone(19800)
 assert(fixed.name() == "UTC+05:30")
 ```
 
-Named-zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. Custom pattern formatting is not provided yet.
+Named-zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. Custom numeric patterns use the same zone rules and calendar conversion as ISO formatting.
 
 `to_iso_string` applies the selected zone's offset at the timestamp, then writes local calendar fields and an explicit offset. Zero prints `Z`; other offsets print `+HH:MM` or `-HH:MM`. Applying an offset can move the displayed date across a day, year, or the epoch-millisecond integer boundary; wide calendar arithmetic keeps the represented timestamp unchanged. DST changes can skip or repeat local clock readings, with the explicit suffix distinguishing repeated times.
 
@@ -2161,6 +2162,34 @@ io::println(try current.to_iso_string(local))
 ```
 
 The default formatter and serialization adapter continue to use UTC. Local discovery does not change their behavior, and ISO formatting can still return `PrecisionLoss` when a local historical offset has seconds.
+
+`timestamp.format(pattern, zone = utc_timezone())` writes numeric calendar fields in the selected zone. It defaults to UTC, requires `try` or `catch`, and supports these case-sensitive tokens:
+
+| Token | Meaning | Example |
+| :---- | :------ | :------ |
+| `YYYY` | Year with at least four digits and the ISO expanded-year sign rules. | `2026` |
+| `MM` | Two-digit month. | `11` |
+| `DD` | Two-digit day. | `18` |
+| `HH` | Two-digit hour, from 00 to 23. | `14` |
+| `mm` | Two-digit minute. | `30` |
+| `ss` | Two-digit second. | `45` |
+| `SSS` | Three-digit millisecond. | `123` |
+| `Z` | UTC offset, with `Z` at zero and `+HH:MM` or `-HH:MM` otherwise. | `-03:00` |
+
+Adjacent different tokens work without separators (`YYYYMMDD`). Each complete repeated-letter run must be a recognized token: `MMMM`, `YYYYY`, `SS`, and `ZZ` are errors. Unescaped ASCII letters must form tokens; punctuation, spaces, digits, and non-ASCII UTF-8 bytes pass through as literals.
+
+Bracketed text is literal: `[Created on]` writes `Created on`, and `[Z]` writes the letter `Z`. Outside bracketed text, `[[` writes `[` and `]]` writes `]`. Brackets cannot nest; unclosed literals and unmatched single closing brackets return `TimeError.InvalidFormat`. Empty literals (`[]`) are allowed, and an empty pattern produces an empty string.
+
+```dusk
+let timestamp = try time::from_iso_string("2026-11-18T14:30:45.123Z")
+assert((try timestamp.format("YYYY-MM-DD")) == "2026-11-18")
+assert((try timestamp.format("DD/MM/YYYY")) == "18/11/2026")
+assert((try timestamp.format("[Created on] DD/MM/YYYY [at] HH:mm")) == "Created on 18/11/2026 at 14:30")
+assert((try timestamp.format("[[YYYY]]")) == "[2026]")
+assert((try timestamp.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ")) == (try timestamp.to_iso_string()))
+```
+
+`Z` requires an offset that is an exact number of minutes. An offset with a seconds component returns `TimeError.PrecisionLoss` when the pattern contains that token. Patterns without `Z` still display the exact local fields, including historical second-level adjustments. An escaped `[Z]` is literal and imposes no offset-precision requirement. For example, midnight UTC on 1800-01-01 formats as `00:09:21` with `HH:mm:ss` in `Europe/Paris`.
 
 ### std/task
 
@@ -3174,10 +3203,11 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
 | `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
 | `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration factory or arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
-| `TimeError.PrecisionLoss` | Timestamp arithmetic with fractional milliseconds, or ISO formatting in a zone whose offset contains seconds. |
+| `TimeError.PrecisionLoss` | Timestamp arithmetic with fractional milliseconds, or ISO formatting/custom `Z` with an offset that is not an exact number of minutes. |
 | `TimeError.UnknownTimeZone` | A name is invalid or absent from the bundled timezone database. |
 | `TimeError.InvalidOffset` | A fixed timezone offset is outside the supported range. |
 | `TimeError.LocalTimeUnavailable` | Explicit local configuration is invalid, the system zone cannot be discovered or mapped, or its local rules are unsupported or unreadable. |
+| `TimeError.InvalidFormat` | A custom timestamp pattern has an unsupported token or malformed bracket escaping. |
 
 ## 16. Errors
 

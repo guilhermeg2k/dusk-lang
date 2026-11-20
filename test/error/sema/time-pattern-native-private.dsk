@@ -1,0 +1,5 @@
+import std/time
+
+func main() -> !void
+    let text = try time::format_timestamp_pattern(0, "YYYY", 0)
+end

@@ -4,6 +4,7 @@ const VM = @import("../../vm.zig").VM;
 const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
 const Civil = @import("../../calendar.zig").Civil;
 const formatIsoMilliseconds = @import("../../time_format.zig").formatIsoMilliseconds;
+const PatternFormatter = @import("../../time_format.zig").PatternFormatter;
 const LocalJob = @import("../../tasks/timezone_job.zig").LocalJob;
 const native = @import("../native.zig");
 const Binding = native.Binding;
@@ -14,6 +15,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "monotonic_ns", Binding{ .native = &monotonicNanoseconds } },
     .{ "format_timestamp", Binding{ .native = &formatTimestamp } },
     .{ "format_utc_timestamp", Binding{ .native = &formatUtcTimestamp } },
+    .{ "format_timestamp_pattern", Binding{ .native = &formatTimestampPattern } },
     .{ "parse_timestamp", Binding{ .native = &parseTimestamp } },
     .{ "scale_nanoseconds", Binding{ .native = &scaleNanoseconds } },
     .{ "add_nanoseconds", Binding{ .native = &addNanoseconds } },
@@ -56,6 +58,21 @@ fn formatUtcTimestamp(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var buffer: [40]u8 = undefined;
     const text = formatIsoMilliseconds(args[0].int64, 0, &buffer) catch unreachable;
     return allocateTimestampString(vm, text);
+}
+
+fn formatTimestampPattern(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const milliseconds = args[0].int64;
+    const offset_seconds = vm.timezones.offsetSeconds(args[2].int64, milliseconds);
+    const formatter = PatternFormatter.init(milliseconds, offset_seconds);
+    const length = formatter.measure(native.bytesArg(args, 1)) catch |failure| return switch (failure) {
+        error.InvalidFormat => native.fail(TimeError.InvalidFormat),
+        error.PrecisionLoss => native.fail(TimeError.PrecisionLoss),
+        error.OutOfMemory => error.OutOfMemory,
+    };
+    _ = std.math.add(usize, @sizeOf(v.Bytes), length) catch return error.OutOfMemory;
+    const result = try vm.allocString(length);
+    formatter.write(native.bytesArg(args, 1), result.mutableSlice());
+    return native.stringResult(result);
 }
 
 fn parseTimestamp(_: *VM, args: []v.Value) anyerror!NativeResult {

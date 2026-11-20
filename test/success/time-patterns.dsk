@@ -1,0 +1,121 @@
+import std/time
+import std/string
+import std/array
+
+func check(timestamp: time::Timestamp, pattern: string, expected: string, zone: time::TimeZone = time::utc_timezone()) -> !void
+    assert((try timestamp.format(pattern, zone)) == expected)
+end
+
+func check_error(timestamp: time::Timestamp, pattern: string, expected: time::TimeError, zone: time::TimeZone = time::utc_timezone()) -> void
+    let text = timestamp.format(pattern, zone) catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func check_tokens() -> !void
+    let timestamp = try time::from_iso_string("2026-11-18T14:30:45.123Z")
+    let patterns = ["YYYY", "MM", "DD", "HH", "mm", "ss", "SSS", "Z"]
+    let expected = ["2026", "11", "18", "14", "30", "45", "123", "Z"]
+    for 0..7: i do
+        try check(timestamp, patterns[i], expected[i])
+    end
+    try check(timestamp, "YYYY-MM-DD", "2026-11-18")
+    try check(timestamp, "DD/MM/YYYY", "18/11/2026")
+    try check(timestamp, "YYYY-MM-DD HH:mm:ss.SSS", "2026-11-18 14:30:45.123")
+    try check(timestamp, "YYYYMMDDHHmmssSSSZ", "20261118143045123Z")
+    try check(timestamp, "[Created on] DD/MM/YYYY [at] HH:mm", "Created on 18/11/2026 at 14:30")
+    try check(timestamp, "[YYYY MM DD HH mm ss SSS Z]", "YYYY MM DD HH mm ss SSS Z")
+    try check(timestamp, "[[]]", "[]")
+    try check(timestamp, "[[YYYY]]", "[2026]")
+    try check(timestamp, "[[[YYYY]]]", "[YYYY]")
+    try check(timestamp, "[[ ]]", "[ ]")
+    try check(timestamp, "[a]]]", "a]")
+    try check(timestamp, "[][]", "")
+    try check(timestamp, "", "")
+    try check(timestamp, "年YYYY月MM日DD 🕒 HH:mm", "年2026月11日18 🕒 14:30")
+    try check(timestamp, "1234 -_:.,/\n\t\0", "1234 -_:.,/\n\t\0")
+    try check(timestamp, "[café] YYYY", "café 2026")
+    let epoch = time::from_unix_ms(0)
+    try check(epoch, "YYYY-MM-DD HH:mm:ss.SSS", "1970-01-01 00:00:00.000")
+    try check(time::from_unix_ms(1), "SSS", "001")
+    try check(time::from_unix_ms(12), "SSS", "012")
+    try check(time::from_unix_ms(-1), "YYYY-MM-DD HH:mm:ss.SSS", "1969-12-31 23:59:59.999")
+    for ["Y", "YY", "YYY", "YYYYY", "MMMM", "D", "DDD", "H", "hhh", "m", "mmmm", "s", "SS", "SSSS", "ZZ", "yyyy", "T", "hello", "YYYY-MM-DDTHH:mm:ss", "[", "]", "[text", "[a[b]", "[a]]", "[[]"]: pattern do
+        check_error(timestamp, pattern, time::TimeError.InvalidFormat)
+    end
+    check_error(timestamp, try string::repeat("Y", 10000), time::TimeError.InvalidFormat)
+end
+
+func check_zones() -> !void
+    let timestamp = try time::from_iso_string("2024-07-15T00:00:00Z")
+    let new_york = try time::load_timezone("America/New_York")
+    try check(timestamp, "YYYY-MM-DD HH:mm:ss.SSS Z", "2024-07-14 20:00:00.000 -04:00", new_york)
+    try check(try time::from_iso_string("2024-11-03T06:00:00Z"), "HH:mm Z", "01:00 -05:00", new_york)
+    let east = try time::fixed_timezone(19800)
+    try check(time::from_unix_ms(0), "YYYY-MM-DD[T]HH:mm:ss.SSSZ", "1970-01-01T05:30:00.000+05:30", east)
+    let second_offset = try time::fixed_timezone(30)
+    try check(time::from_unix_ms(-1), "YYYY-MM-DD HH:mm:ss.SSS", "1970-01-01 00:00:29.999", second_offset)
+    try check(timestamp, "[Z]", "Z", second_offset)
+    try check(timestamp, "", "", second_offset)
+    try check(timestamp, "[]", "", second_offset)
+    check_error(timestamp, "Z", time::TimeError.PrecisionLoss, second_offset)
+    check_error(timestamp, "Z[", time::TimeError.InvalidFormat, second_offset)
+    let paris = try time::load_timezone("Europe/Paris")
+    let historical = try time::from_iso_string("1800-01-01T00:00:00Z")
+    try check(historical, "YYYY-MM-DD HH:mm:ss", "1800-01-01 00:09:21", paris)
+    check_error(historical, "YYYY-MM-DD HH:mm:ss Z", time::TimeError.PrecisionLoss, paris)
+    try check(historical, "YYYY-MM-DD HH:mm:ss [Z]", "1800-01-01 00:09:21 Z", paris)
+    try check(historical, "YYYY-MM-DD HH:mm:ss", "1799-12-31 19:03:58", new_york)
+    let extreme_east = try time::fixed_timezone(86340)
+    let extreme_west = try time::fixed_timezone(-86340)
+    let maximum = time::from_unix_ms(9223372036854775807)
+    let minimum = time::from_unix_ms(-9223372036854775807 - 1)
+    try check(maximum, "YYYY-MM-DD HH:mm:ss.SSS Z", "+292278994-08-18 07:11:55.807 +23:59", extreme_east)
+    try check(minimum, "YYYY-MM-DD HH:mm:ss.SSS Z", "-292275055-05-15 16:48:04.192 -23:59", extreme_west)
+    try check(try time::from_iso_string("0000-01-01T00:00:00Z"), "YYYY-MM-DD", "-0001-12-31", extreme_west)
+    for [-9223372036854775807 - 1, -62167219200000, -1, 0, 1, 253402300800000, 9223372036854775807]: milliseconds do
+        let sample = time::from_unix_ms(milliseconds)
+        assert((try sample.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ")) == time::to_utc_iso_string(sample))
+        for [-86340, -60, 0, 60, 19800, 86340]: offset do
+            let zone = try time::fixed_timezone(offset)
+            assert((try sample.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ", zone)) == (try sample.to_iso_string(zone)))
+        end
+    end
+end
+
+func check_gc() -> !void
+    let timestamp = try time::from_iso_string("2026-11-18T14:30:45.123Z")
+    let zone = try time::fixed_timezone(19800)
+    assert((try timestamp.format(zone = zone, pattern = "HH:mm")) == "20:00")
+    let mut kept: []string = []
+    for 0..19: i do
+        let pattern = try string::repeat("YYYY-MM-DD[T]HH:mm:ss.SSSZ|", 4096)
+        let result = try timestamp.format(pattern, zone)
+        let expected = try string::repeat("2026-11-18T20:00:45.123+05:30|", 4096)
+        assert(result == expected)
+        assert(string::starts_with(pattern, "YYYY-MM-DD[T]"))
+        if i % 5 == 0 then
+            array::append(kept, result)
+        end
+    end
+    assert(kept[0] == kept[3])
+    let mut labels: []string = []
+    for 0..19999: i do
+        let pattern = "[item $i] YYYY-MM-DD HH:mm:ss Z"
+        let result = try timestamp.format(pattern, zone)
+        assert(result == "item $i 2026-11-18 20:00:45 +05:30")
+        if i % 5000 == 0 then
+            array::append(labels, result)
+        end
+    end
+    assert(labels[0] == "item 0 2026-11-18 20:00:45 +05:30")
+    assert(labels[3] == "item 15000 2026-11-18 20:00:45 +05:30")
+end
+
+func main() -> !void
+    try check_tokens()
+    try check_zones()
+    try check_gc()
+end

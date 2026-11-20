@@ -329,6 +329,15 @@ const TestTimezoneEnvironment = struct {
     }
 };
 
+test "time: custom numeric patterns, escaping, precision and GC" {
+    try runCase("time-patterns.dsk");
+    try runCaseError("sema/time-pattern-missing.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-pattern-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-pattern-zone-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-pattern-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-pattern-native-private.dsk", error.NotVisible);
+}
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);

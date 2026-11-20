@@ -5,6 +5,7 @@ error TimeError
     UnknownTimeZone
     InvalidOffset
     LocalTimeUnavailable
+    InvalidFormat
 end
 
 func utc_timezone() -> TimeZone
@@ -20,6 +21,10 @@ struct Timestamp
 
     func to_iso_string(self: @, zone: TimeZone = utc_timezone()) -> TimeError!string
         return try format_timestamp(self.milliseconds, zone.zone_id)
+    end
+
+    func format(self: @, pattern: string, zone: TimeZone = utc_timezone()) -> TimeError!string
+        return try format_timestamp_pattern(self.milliseconds, pattern, zone.zone_id)
     end
 
     func is_equal(self: @, other: Timestamp) -> bool
@@ -123,6 +128,7 @@ extern func now_ms() -> int
 extern func monotonic_ns() -> int
 extern func ~format_timestamp(milliseconds: int, zone_id: int) -> TimeError!string
 extern func ~format_utc_timestamp(milliseconds: int) -> string
+extern func ~format_timestamp_pattern(milliseconds: int, pattern: string, zone_id: int) -> TimeError!string
 
 func to_iso_string(timestamp: Timestamp, zone: TimeZone = utc_timezone()) -> TimeError!string
     return try format_timestamp(timestamp.milliseconds, zone.zone_id)
