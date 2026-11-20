@@ -71,7 +71,9 @@ func decode[T, S: schema](text: string, mut diagnostic: ?Diagnostic = null, opti
         return result[0]
     end
     let value = try decode_value[T](text, diagnostic, options, serialization::plan_of[T, S](), steps)
-    try run_steps(steps, text, diagnostic)
+    if array::len(steps) > 0 then
+        try run_steps(steps, text, diagnostic)
+    end
     return value
 end
 
