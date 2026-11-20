@@ -32,6 +32,7 @@ pub const SemaAnalyzer = struct {
     err_reporter: err.CompileErrorReporter,
 
     fn_depth: usize = 0,
+    pending_signatures: std.AutoHashMapUnmanaged(tt.TypeId, PendingSignature) = .empty,
     defer_scopes: std.ArrayList(DeferScope) = .empty,
     defer_base: usize = 0,
     loop_starts: std.ArrayList(usize) = .empty,
@@ -702,6 +703,7 @@ pub const SemaAnalyzer = struct {
                         try self.qualifyFunctionName(symbol, self.module);
                     }
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
+                    try self.pending_signatures.put(self.allocator, symbol.type_id, .{ .symbol = symbol, .def = &stmt.data.func.def, .loc = stmt.loc, .module = self.module });
                 },
                 .@"struct" => |ss| {
                     if (ss.slots.len > 0) {
@@ -758,7 +760,7 @@ pub const SemaAnalyzer = struct {
                 .func => |fs| {
                     if (fs.slots.len > 0) continue;
                     const symbol = try self.scope.symbol_table.getOrError(fs.identifier);
-                    try self.fulfillFuncType(symbol, &fs.def, null, stmt.loc);
+                    try self.ensureSignature(symbol.type_id);
                 },
                 .@"struct" => |ss| {
                     const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
@@ -821,6 +823,20 @@ pub const SemaAnalyzer = struct {
             .int, .byte, .float, .boolean, .string, .@"enum" => true,
             else => false,
         };
+    }
+
+    fn ensureSignature(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const entry = self.pending_signatures.getPtr(type_id) orelse return;
+        if (entry.state != .pending) return;
+        entry.state = .filling;
+        const pending = entry.*;
+        const saved_module = self.enterModuleContext(pending.module);
+        defer self.exitModuleContext(saved_module);
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = self.module.root;
+        defer self.scope.symbol_table = saved_table;
+        try self.fulfillFuncType(pending.symbol, pending.def, null, pending.loc);
+        self.pending_signatures.getPtr(type_id).?.state = .filled;
     }
 
     fn resolveConstant(self: *Self, index: usize) CompileError!*ir.Value {
@@ -4823,6 +4839,7 @@ pub const SemaAnalyzer = struct {
 
                 switch (symbol.kind) {
                     .function => {
+                        try self.ensureSignature(symbol.type_id);
                         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
                         params = func.params;
                         return_type = func.return_type_id;
@@ -5468,6 +5485,7 @@ pub const SemaAnalyzer = struct {
                 return self.resolveConstant(symbol.kind.constant);
             }
             if (symbol.kind == .function) {
+                try self.ensureSignature(symbol.type_id);
                 return self.evalFuncRef(symbol.type_id, exp.loc);
             }
             if (self.outerVariableContext(symbol)) |context_index| {
@@ -6625,6 +6643,14 @@ const VisitedBlock = struct {
 };
 
 const ExitQuery = enum { returns, leaves_block };
+
+const PendingSignature = struct {
+    symbol: Symbol,
+    def: *const ast.FnDef,
+    loc: err.Loc,
+    module: *ModuleScope,
+    state: enum { pending, filling, filled } = .pending,
+};
 
 const Constant = struct {
     let_stmt: ast.LetStmt,

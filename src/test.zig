@@ -2620,6 +2620,10 @@ test "sema error: a number passed where text is expected (the message suggests i
     try runCaseError("sema/print-number-hint.dsk", error.InvalidType);
 }
 
+test "field and parameter defaults can call functions declared further down (also as values, failing calls with catch, inline returns)" {
+    try runCase("defaults-call-later-functions.dsk");
+}
+
 test "sema error: try in non-failing function" {
     try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
 }

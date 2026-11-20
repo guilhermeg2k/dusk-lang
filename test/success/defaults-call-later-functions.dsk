@@ -1,0 +1,68 @@
+import std/string
+
+struct Config
+    port: int = default_port()
+    name: string = label("svc", 2)
+    retries: int = triple(default_port() // 4000)
+    pick: func(int) -> int = doubled
+    safe: int = risky(true) catch 7
+end
+
+struct Origin
+    x: int = 5
+end
+
+struct Point
+    x: int = origin().x
+    y: int = 1
+end
+
+func make(base: int = default_port(), text: string = label("p", 1)) -> string
+    return "$text:$base"
+end
+
+func main() -> void
+    let config = Config()
+    assert(config.port == 8080)
+    assert(config.name == "svc-2")
+    assert(config.retries == 6)
+    assert(config.pick(4) == 8)
+    assert(config.safe == 7)
+    assert(Point().x == 5)
+    assert(make() == "p-1:8080")
+    assert(make(1) == "p-1:1")
+    assert(inline_twice(3) == 12)
+end
+
+func default_port() -> int
+    return 8080
+end
+
+func label(prefix: string, n: int) -> string
+    return "$prefix-$n"
+end
+
+func triple(n: int) -> int
+    return n * 3
+end
+
+func doubled(n: int) -> int
+    return n * 2
+end
+
+error Oops
+    Bad
+end
+
+func risky(should_fail: bool) -> Oops!int
+    if should_fail then
+        return Oops.Bad
+    end
+    return 1
+end
+
+func origin() -> Origin
+    return Origin()
+end
+
+func inline_twice(n: int) -> return doubled(doubled(n))
