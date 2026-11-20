@@ -45,23 +45,44 @@ fn runHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (are_invalid_options) {
         return native.fail(ProcessError.InvalidArgument);
     }
-    var arena = std.heap.ArenaAllocator.init(vm.allocator);
-    defer arena.deinit();
-    var launch = prepareLaunch(vm, args, arena.allocator()) catch |failure| return launchFailure(failure);
+    const arena = try createArena(vm);
+    var is_arena_handed_off = false;
+    defer if (!is_arena_handed_off) {
+        destroyArena(vm, arena);
+    };
+    var prepared = prepareLaunch(vm, args, arena.allocator()) catch |failure| return launchFailure(failure);
     if (timeout_ms == 0) {
         return native.fail(ProcessError.TimedOut);
     }
-    launch.modes = .{ 1, 2, 2 };
-    launch.is_captured = true;
-    launch.max_output = std.math.cast(usize, max_output) orelse return native.fail(ProcessError.InvalidArgument);
-    launch.timeout_ms = if (timeout_ms < 0) null else @intCast(timeout_ms);
-    launch.started_ns = started;
-    const child = launchChild(vm, launch) catch |failure| return launchFailure(failure);
+    prepared.launch.modes = .{ 1, 2, 2 };
+    prepared.launch.is_captured = true;
+    prepared.launch.max_output = std.math.cast(usize, max_output) orelse return native.fail(ProcessError.InvalidArgument);
+    prepared.launch.timeout_ms = if (timeout_ms < 0) null else @intCast(timeout_ms);
+    prepared.launch.started_ns = started;
+    if (prepared.candidates) |candidates| {
+        const task = vm.running_task.?;
+        process.ExecutableLookup.start(&vm.event_loop, &vm.scheduler, task, arena, candidates, prepared.launch) catch |failure| return launchFailure(failure);
+        is_arena_handed_off = true;
+        task.park();
+        return native.parked();
+    }
+    const child = launchChild(vm, prepared.launch) catch |failure| return launchFailure(failure);
     child.park(vm.running_task.?, null) catch |failure| {
         child.release();
         return launchFailure(failure);
     };
     return native.parked();
+}
+
+fn createArena(vm: *VM) !*std.heap.ArenaAllocator {
+    const arena = try vm.allocator.create(std.heap.ArenaAllocator);
+    arena.* = std.heap.ArenaAllocator.init(vm.allocator);
+    return arena;
+}
+
+fn destroyArena(vm: *VM, arena: *std.heap.ArenaAllocator) void {
+    arena.deinit();
+    vm.allocator.destroy(arena);
 }
 
 fn launchChild(vm: *VM, options: process.Launch) !*process.Process {
@@ -71,7 +92,12 @@ fn launchChild(vm: *VM, options: process.Launch) !*process.Process {
     };
 }
 
-fn prepareLaunch(vm: *VM, args: []v.Value, allocator: std.mem.Allocator) !process.Launch {
+const PreparedLaunch = struct {
+    launch: process.Launch,
+    candidates: ?[]const [:0]const u8 = null,
+};
+
+fn prepareLaunch(vm: *VM, args: []v.Value, allocator: std.mem.Allocator) !PreparedLaunch {
     const host_io = vm.io orelse return error.Unsupported;
     args[0].heap_obj = args[0].heap_obj.followRelocated();
     const array = v.HeapValue.getParentPtr(v.Array, args[0].heap_obj);
@@ -119,8 +145,14 @@ fn prepareLaunch(vm: *VM, args: []v.Value, allocator: std.mem.Allocator) !proces
     }
     const env = try allocator.allocSentinel(?[*:0]const u8, entries.items.len, null);
     @memcpy(env, entries.items);
-    const file = try findExecutable(vm, allocator, program, cwd);
-    return .{ .file = file.ptr, .args = argv.ptr, .env = env.ptr, .cwd = cwd.ptr, .modes = .{ 1, 0, 0 }, .started_ns = uv.uv_hrtime() };
+    var prepared: PreparedLaunch = .{ .launch = .{ .file = argv[0].?, .args = argv.ptr, .env = env.ptr, .cwd = cwd.ptr, .modes = .{ 1, 0, 0 }, .started_ns = uv.uv_hrtime() } };
+    try checkInterpreterScript(program);
+    if (hasPathSeparator(program)) {
+        prepared.launch.file = (try allocator.dupeZ(u8, try paths.resolve(allocator, cwd, program))).ptr;
+        return prepared;
+    }
+    prepared.candidates = try executableCandidates(vm, allocator, program, cwd);
+    return prepared;
 }
 
 fn validateText(text: []const u8) !void {
@@ -144,86 +176,75 @@ fn addEnvironment(allocator: std.mem.Allocator, entries: *std.ArrayList(?[*:0]co
     try entries.append(allocator, entry.ptr);
 }
 
-fn findExecutable(vm: *VM, allocator: std.mem.Allocator, program: []const u8, cwd: []const u8) ![:0]u8 {
-    if (builtin.os.tag == .windows) {
-        const extension = std.fs.path.extension(program);
-        const needs_interpreter = std.ascii.eqlIgnoreCase(extension, ".cmd") or std.ascii.eqlIgnoreCase(extension, ".bat");
-        if (needs_interpreter) {
-            return error.InvalidExecutable;
-        }
+fn checkInterpreterScript(program: []const u8) !void {
+    if (builtin.os.tag != .windows) return;
+    const extension = std.fs.path.extension(program);
+    const needs_interpreter = std.ascii.eqlIgnoreCase(extension, ".cmd") or std.ascii.eqlIgnoreCase(extension, ".bat");
+    if (needs_interpreter) {
+        return error.InvalidExecutable;
     }
-    const has_separator = std.mem.indexOfScalar(u8, program, '/') != null or (builtin.os.tag == .windows and std.mem.indexOfAny(u8, program, "\\:") != null);
-    if (has_separator) {
-        return allocator.dupeZ(u8, try paths.resolve(allocator, cwd, program));
-    }
+}
+
+fn hasPathSeparator(program: []const u8) bool {
+    return std.mem.indexOfScalar(u8, program, '/') != null or (builtin.os.tag == .windows and std.mem.indexOfAny(u8, program, "\\:") != null);
+}
+
+fn executableCandidates(vm: *VM, allocator: std.mem.Allocator, program: []const u8, cwd: []const u8) ![]const [:0]const u8 {
     const environment = vm.environment orelse return error.NotFound;
     const path = environment.get("PATH") orelse return error.NotFound;
     try validateText(path);
+    const suffixes: []const []const u8 = if (builtin.os.tag == .windows) &.{ "", ".exe", ".com" } else &.{""};
+    var candidates: std.ArrayList([:0]const u8) = .empty;
     var parts = std.mem.splitScalar(u8, path, std.fs.path.delimiter);
-    var has_denied = false;
     while (parts.next()) |part| {
         const directory = try paths.resolve(allocator, cwd, part);
         const candidate = try std.fs.path.join(allocator, &.{ directory, program });
-        const suffixes: []const []const u8 = if (builtin.os.tag == .windows) &.{ "", ".exe", ".com" } else &.{""};
         for (suffixes) |suffix| {
-            const full = try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{ candidate, suffix }, 0);
-            std.Io.Dir.cwd().access(vm.io.?, full, .{ .execute = true }) catch |failure| {
-                const is_denied = failure == error.AccessDenied or failure == error.PermissionDenied;
-                has_denied = has_denied or is_denied;
-                continue;
-            };
-            const stat = std.Io.Dir.cwd().statFile(vm.io.?, full, .{}) catch continue;
-            if (stat.kind != .file) {
-                has_denied = true;
-                continue;
-            }
-            return full;
+            try candidates.append(allocator, try std.fmt.allocPrintSentinel(allocator, "{s}{s}", .{ candidate, suffix }, 0));
         }
     }
-    return if (has_denied) error.PermissionDenied else error.NotFound;
+    return candidates.items;
 }
 
 fn launchFailure(failure: anyerror) !NativeResult {
     if (failure == error.OutOfMemory) {
         return error.OutOfMemory;
     }
-    const variant: ProcessError = switch (failure) {
-        error.InvalidArgument, error.NotAbsolute => .InvalidArgument,
-        error.NotFound, error.FileNotFound, error.NotDir, error.CurrentDirUnlinked => .NotFound,
-        error.PermissionDenied, error.AccessDenied => .PermissionDenied,
-        error.InvalidExecutable => .InvalidExecutable,
-        error.ResourceLimit => .ResourceLimit,
-        error.TimedOut => .TimedOut,
-        error.InvalidUtf8 => .InvalidUtf8,
-        error.Unsupported => .Unsupported,
-        error.Busy => .Busy,
-        else => .Other,
-    };
-    return native.fail(variant);
+    return native.fail(process.processErrorOf(failure));
 }
 
 fn startHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    var arena = std.heap.ArenaAllocator.init(vm.allocator);
-    defer arena.deinit();
-    var launch = prepareLaunch(vm, args, arena.allocator()) catch |failure| return launchFailure(failure);
-    for (&launch.modes, args[3..6]) |*mode, arg| {
+    const arena = try createArena(vm);
+    var is_arena_handed_off = false;
+    defer if (!is_arena_handed_off) {
+        destroyArena(vm, arena);
+    };
+    var prepared = prepareLaunch(vm, args, arena.allocator()) catch |failure| return launchFailure(failure);
+    for (&prepared.launch.modes, args[3..6]) |*mode, arg| {
         const is_valid_mode = arg.int64 >= 0 and arg.int64 <= 2;
         if (!is_valid_mode) {
             return native.fail(ProcessError.InvalidArgument);
         }
         mode.* = @intCast(arg.int64);
     }
-    const has_custom_output = (launch.modes[1] == 0 and vm.stdio.stdout == .custom) or (launch.modes[2] == 0 and vm.stdio.stderr == .custom);
+    const has_custom_output = (prepared.launch.modes[1] == 0 and vm.stdio.stdout == .custom) or (prepared.launch.modes[2] == 0 and vm.stdio.stderr == .custom);
     if (has_custom_output) {
         return native.fail(ProcessError.Unsupported);
     }
-    if (launch.modes[1] == 0) {
+    if (prepared.launch.modes[1] == 0) {
         try vm.stdio.tryFlush(.stdout);
     }
-    if (launch.modes[2] == 0) {
+    if (prepared.launch.modes[2] == 0) {
         try vm.stdio.tryFlush(.stderr);
     }
-    const child = launchChild(vm, launch) catch |failure| return launchFailure(failure);
+    if (prepared.candidates) |candidates| {
+        const task = vm.running_task.?;
+        process.ExecutableLookup.start(&vm.event_loop, &vm.scheduler, task, arena, candidates, prepared.launch) catch |failure| return launchFailure(failure);
+        is_arena_handed_off = true;
+        task.park();
+        return native.parked();
+    }
+    const child = launchChild(vm, prepared.launch) catch |failure| return launchFailure(failure);
     return native.ok(.{ .int64 = @intCast(child.table_index) });
 }
 

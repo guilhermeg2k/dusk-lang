@@ -36,6 +36,18 @@ func main() -> !void
     assert(try binary.stderr_text() == "ok")
     let parent_env = try process::run([helper, "env", "DUSK_PROCESS_PARENT"])
     assert(try parent_env.stdout_text() == "parent")
+    let mut is_missing = false
+    process::run(["dusk-no-such-program"]) catch e then
+        assert(e == process::ProcessError.NotFound)
+        is_missing = true
+    end
+    assert(is_missing)
+    let started = try process::start([bare, "exit", "3"])
+    when try started.wait()
+        Exited: code then assert(code == 3) end
+        else then assert(false) end
+    end
+    try started.close()
     let replacement = try process::run([bare, "env", "MODE"], env = {"MODE": "child", "PATH": "/does-not-exist"})
     assert(try replacement.stdout_text() == "child")
     let empty_env = try process::run([helper, "env", "DUSK_PROCESS_PARENT"], env = {})

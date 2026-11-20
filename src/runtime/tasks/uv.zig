@@ -202,6 +202,7 @@ pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback:
 // ---- File system: paths ----
 
 pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_access(loop: *Loop, request: *Request, path: [*:0]const u8, mode: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_readlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_rename(loop: *Loop, request: *Request, path: [*:0]const u8, new_path: [*:0]const u8, callback: ?FsCallback) c_int;
