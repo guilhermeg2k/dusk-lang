@@ -2007,6 +2007,9 @@ Clocks, timestamps, durations, and monotonic instants. Import with `import std/t
 | `seconds(value)` | `TimeError!Duration` | A whole-number seconds count converted to nanoseconds with an overflow check. |
 | `minutes(value)` | `TimeError!Duration` | A whole-number minutes count converted to nanoseconds with an overflow check. |
 | `hours(value)` | `TimeError!Duration` | A whole-number hours count converted to nanoseconds with an overflow check. |
+| `utc_timezone()` | `TimeZone` | The UTC zone, with offset zero for every timestamp. |
+| `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A constant offset east of UTC; requires strictly more than -86400 and less than +86400 seconds. |
+| `load_timezone(name)` | `TimeError!TimeZone` | Loads a named zone or alias from the bundled database. Unknown or invalid names return `UnknownTimeZone`. |
 
 `now_ms` is wall-clock time: system clock adjustments can move it forward or backward. It is independent of the local time zone. Fractions are rounded down to milliseconds, including before the epoch.
 
@@ -2100,6 +2103,29 @@ let started = time::instant()
 let elapsed = try started.elapsed()
 io::println("Elapsed: ${elapsed.seconds()} seconds")
 ```
+
+A `TimeZone` is an immutable value with private representation. Dusk bundles IANA tzdb 2026f: 597 named zones and aliases, with no network or host timezone-database requirement at runtime. Use exact case-sensitive names such as `America/Sao_Paulo`, `America/New_York`, or `Asia/Kathmandu`. Names must identify a bundled zone; absolute paths, traversal, NUL bytes, raw offset strings and `right/` or `posix/` database trees are not accepted. An alias keeps its requested name.
+
+| TimeZone method | Returns | Description |
+| :-------------- | :------ | :---------- |
+| `name()` | `string` | The requested bundled name, or a stable UTC/fixed-offset name. |
+| `offset_seconds(timestamp)` | `int` | The UTC offset at this timestamp, in seconds, positive east of UTC. |
+
+Named offsets use historical transitions and recurring future rules across the full timestamp range. Before the first transition, the zone's initial time type applies. Future values extrapolate the bundled rules; governments can change those rules after this database release. Historical second-level offsets are preserved. Two named zones can share an offset today and have different rules for another date.
+
+Fixed offsets never change with the timestamp. Their names are `UTC` at zero, `UTC+05:30` for an offset of 19800 seconds, or `UTC-00:00:30` for -30 seconds. Unsupported fixed offsets return `TimeError.InvalidOffset`. `utc_timezone()` and `fixed_timezone(0)` both represent UTC.
+
+```dusk
+let new_york = try time::load_timezone("America/New_York")
+let winter = try time::from_iso_string("2024-01-15T00:00:00Z")
+let summer = try time::from_iso_string("2024-07-15T00:00:00Z")
+assert(new_york.offset_seconds(winter) == -18000)
+assert(new_york.offset_seconds(summer) == -14400)
+let fixed = try time::fixed_timezone(19800)
+assert(fixed.name() == "UTC+05:30")
+```
+
+Zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. The current `to_iso` and `Timestamp.to_string` methods still format UTC; system-local discovery and zone-aware formatting are not provided yet.
 
 ### std/task
 
@@ -3114,6 +3140,8 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
 | `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration factory or arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
 | `TimeError.PrecisionLoss` | Timestamp addition or subtraction with a duration containing fractional milliseconds. |
+| `TimeError.UnknownTimeZone` | A name is invalid or absent from the bundled timezone database. |
+| `TimeError.InvalidOffset` | A fixed timezone offset is outside the supported range. |
 
 ## 16. Errors
 

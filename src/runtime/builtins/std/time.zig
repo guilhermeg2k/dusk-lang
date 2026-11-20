@@ -18,9 +18,12 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "add_timestamp_duration", Binding{ .native = &addTimestampDuration } },
     .{ "subtract_timestamp_duration", Binding{ .native = &subtractTimestampDuration } },
     .{ "timestamp_difference_nanoseconds", Binding{ .native = &timestampDifferenceNanoseconds } },
+    .{ "load_timezone_id", Binding{ .native = &loadTimezoneId } },
+    .{ "timezone_name", Binding{ .native = &timezoneName } },
+    .{ "timezone_offset_seconds", Binding{ .native = &timezoneOffsetSeconds } },
 });
 
-pub const TimeError = enum { InvalidTimestamp, Overflow, PrecisionLoss };
+pub const TimeError = enum { InvalidTimestamp, Overflow, PrecisionLoss, UnknownTimeZone, InvalidOffset };
 pub const error_sets = .{TimeError};
 
 fn nowMilliseconds(_: *VM, _: []v.Value) anyerror!NativeResult {
@@ -228,4 +231,21 @@ fn subtractTimestampDuration(_: *VM, args: []v.Value) anyerror!NativeResult {
 fn timestampDifferenceNanoseconds(_: *VM, args: []v.Value) anyerror!NativeResult {
     const difference = @as(i128, args[0].int64) - args[1].int64;
     return checkedIntegerResult(difference * 1000000);
+}
+
+fn loadTimezoneId(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const identifier = (try vm.timezones.loadNamed(vm.allocator, native.bytesArg(args, 0))) orelse return native.fail(TimeError.UnknownTimeZone);
+    return native.ok(.{ .int64 = identifier });
+}
+
+fn timezoneName(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var buffer: [32]u8 = undefined;
+    const text = vm.timezones.zoneName(args[0].int64, &buffer);
+    const result = try vm.allocString(text.len);
+    @memcpy(result.mutableSlice(), text);
+    return native.stringResult(result);
+}
+
+fn timezoneOffsetSeconds(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return native.ok(.{ .int64 = vm.timezones.offsetSeconds(args[0].int64, args[1].int64) });
 }

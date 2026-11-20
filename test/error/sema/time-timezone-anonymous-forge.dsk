@@ -1,0 +1,6 @@
+import std/time
+
+func main() -> !void
+    let raw = @(zone_id = 0)
+    let zone: time::TimeZone = raw
+end

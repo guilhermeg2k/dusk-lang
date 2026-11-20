@@ -203,6 +203,16 @@ test "time: duration and instant privacy and argument types" {
     try runCaseError("sema/time-arithmetic-native-private.dsk", error.NotVisible);
 }
 
+test "time: bundled named zones, fixed offsets, aliases, transitions and GC" {
+    try runCase("time-timezones.dsk");
+    try runCaseError("sema/time-timezone-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-timezone-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-native-private.dsk", error.NotVisible);
+    try runCaseError("sema/time-timezone-argument.dsk", error.InvalidType);
+}
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);

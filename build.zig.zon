@@ -4,6 +4,7 @@
     .fingerprint = 0x194887165dc2592d,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
+        .timezone_data = .{ .path = "vendor/timezone-data" },
         .libuv = .{
             .url = "https://github.com/duskilang/libuv/archive/refs/tags/v1.53.0-dusk.tar.gz",
             .hash = "libuv-1.53.0-QDiZxwLiGwA6a2ix6PbZDYBFPIkzrogxPaagys6M1KV9",
@@ -21,6 +22,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "vendor/timezone-data",
         "LICENSE",
         "README.md",
     },

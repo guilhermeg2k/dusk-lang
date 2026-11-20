@@ -1,0 +1,5 @@
+import std/time
+
+func main() -> !void
+    let offset = time::utc_timezone().offset_seconds(0)
+end

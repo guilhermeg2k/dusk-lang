@@ -33,13 +33,7 @@ pub const Civil = struct {
         if (!self.isValid()) {
             return error.InvalidTimestamp;
         }
-        const shifted_year = @as(i128, self.year) - @intFromBool(self.month <= 2);
-        const era = @divFloor(shifted_year, 400);
-        const year_of_era = shifted_year - era * 400;
-        const shifted_month = @as(i128, self.month) + @as(i128, if (self.month > 2) -3 else 9);
-        const day_of_year = @divTrunc(153 * shifted_month + 2, 5) + self.day - 1;
-        const day_of_era = year_of_era * 365 + @divTrunc(year_of_era, 4) - @divTrunc(year_of_era, 100) + day_of_year;
-        const days = era * 146097 + day_of_era - 719468;
+        const days = daysFromCivil(self.year, self.month, self.day);
         const milliseconds = days * 86400000 + @as(i128, self.hour) * 3600000 + @as(i128, self.minute) * 60000 + @as(i128, self.second) * 1000 + self.millisecond - @as(i128, offset_seconds) * 1000;
         return std.math.cast(i64, milliseconds) orelse error.Overflow;
     }
@@ -49,11 +43,25 @@ pub const Civil = struct {
         if (!has_valid_month) {
             return false;
         }
-        const is_leap_year = @mod(self.year, 4) == 0 and (@mod(self.year, 100) != 0 or @mod(self.year, 400) == 0);
+        const is_leap_year = isLeapYear(self.year);
         const month_lengths = [_]u8{ 31, if (is_leap_year) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
         return self.day >= 1 and self.day <= month_lengths[self.month - 1] and self.hour < 24 and self.minute < 60 and self.second < 60 and self.millisecond < 1000;
     }
 };
+
+pub fn daysFromCivil(year: i64, month: u8, day: u8) i128 {
+    const shifted_year = @as(i128, year) - @intFromBool(month <= 2);
+    const era = @divFloor(shifted_year, 400);
+    const year_of_era = shifted_year - era * 400;
+    const shifted_month = @as(i128, month) + @as(i128, if (month > 2) -3 else 9);
+    const day_of_year = @divTrunc(153 * shifted_month + 2, 5) + day - 1;
+    const day_of_era = year_of_era * 365 + @divTrunc(year_of_era, 4) - @divTrunc(year_of_era, 100) + day_of_year;
+    return era * 146097 + day_of_era - 719468;
+}
+
+pub fn isLeapYear(year: i64) bool {
+    return @mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0);
+}
 
 test "calendar converts every day of a Gregorian cycle and full-range milliseconds" {
     for (0..146097) |day| {

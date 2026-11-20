@@ -2,6 +2,8 @@ error TimeError
     InvalidTimestamp
     Overflow
     PrecisionLoss
+    UnknownTimeZone
+    InvalidOffset
 end
 
 struct Timestamp
@@ -92,6 +94,18 @@ struct Instant
     end
 end
 
+struct TimeZone
+    ~zone_id: int
+
+    func name(self: @) -> string
+        return timezone_name(self.zone_id)
+    end
+
+    func offset_seconds(self: @, timestamp: Timestamp) -> int
+        return timezone_offset_seconds(self.zone_id, timestamp.milliseconds)
+    end
+end
+
 func now() -> Timestamp
     return from_unix_ms(now_ms())
 end
@@ -152,3 +166,23 @@ extern func ~subtract_nanoseconds(left: int, right: int) -> TimeError!int
 extern func ~add_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
 extern func ~subtract_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
 extern func ~timestamp_difference_nanoseconds(left: int, right: int) -> TimeError!int
+
+func utc_timezone() -> TimeZone
+    return TimeZone(zone_id = 0)
+end
+
+func fixed_timezone(offset_seconds: int) -> TimeError!TimeZone
+    let is_valid_offset = offset_seconds > -86400 and offset_seconds < 86400
+    if !is_valid_offset then
+        return TimeError.InvalidOffset
+    end
+    return TimeZone(zone_id = offset_seconds)
+end
+
+func load_timezone(name: string) -> TimeError!TimeZone
+    return TimeZone(zone_id = try load_timezone_id(name))
+end
+
+extern func ~load_timezone_id(name: string) -> TimeError!int
+extern func ~timezone_name(zone_id: int) -> string
+extern func ~timezone_offset_seconds(zone_id: int, milliseconds: int) -> int

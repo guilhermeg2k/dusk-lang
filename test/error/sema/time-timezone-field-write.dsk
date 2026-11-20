@@ -1,0 +1,6 @@
+import std/time
+
+func main() -> !void
+    let mut zone = time::utc_timezone()
+    zone.zone_id = 1
+end

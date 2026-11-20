@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     const libuv = b.dependency("libuv", .{ .target = target, .optimize = optimize }).artifact("uv");
     const mbedtls = b.dependency("mbedtls", .{ .target = target, .optimize = optimize }).artifact("mbedtls");
     const llhttp = b.dependency("llhttp", .{ .target = target, .optimize = optimize }).artifact("llhttp");
+    const timezone_data = b.dependency("timezone_data", .{}).module("timezone_data");
     const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp };
 
     const exe = b.addExecutable(.{
@@ -19,6 +20,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     linkRuntimeLibraries(b, exe.root_module, libraries);
+    exe.root_module.addImport("timezone_data", timezone_data);
 
     exe.root_module.addAnonymousImport("build_zon", .{
         .root_source_file = b.path("build.zig.zon"),
@@ -43,6 +45,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     linkRuntimeLibraries(b, tests.root_module, libraries);
+    tests.root_module.addImport("timezone_data", timezone_data);
 
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run tests");

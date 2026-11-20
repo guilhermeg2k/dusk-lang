@@ -11,6 +11,7 @@ const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const Stdio = @import("stdio.zig").Stdio;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
+const TimeZones = @import("timezone.zig").Registry;
 
 pub const VM = struct {
     const Self = @This();
@@ -28,6 +29,7 @@ pub const VM = struct {
     heap: Heap,
     scheduler: Scheduler,
     event_loop: EventLoop,
+    timezones: TimeZones = .{},
     frames: []CallFrame,
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
@@ -51,6 +53,7 @@ pub const VM = struct {
         self.scratch.deinit();
         self.event_loop.deinit();
         self.scheduler.deinit();
+        self.timezones.deinit(self.allocator);
         self.heap.deinit();
     }
 
