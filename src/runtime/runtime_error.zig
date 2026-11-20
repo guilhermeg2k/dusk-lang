@@ -46,7 +46,7 @@ pub const RuntimeErrorReporter = struct {
 
     pub noinline fn httpBodyGivenTwice() RuntimeError {
         @branchHint(.cold);
-        return report(RuntimeError.HttpBodyGivenTwice, "http request with both body and body_bytes", .{});
+        return report(RuntimeError.HttpBodyGivenTwice, "http request with more than one of body, body_bytes and body_stream", .{});
     }
 
     pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {

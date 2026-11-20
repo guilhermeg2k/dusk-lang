@@ -26,6 +26,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
     .{ "base64", Binding{ .native = &base64 } },
     .{ "encoded_url", Binding{ .native = &encodedUrl } },
+    .{ "stream_forbid_reuse", Binding{ .native = &streamForbidReuse } },
+    .{ "stream_has_final_status", Binding{ .native = &streamHasFinalStatus } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_set_write_timeout", Binding{ .native = &io.streamSetWriteTimeout } },
@@ -413,6 +415,24 @@ fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
     defer std.heap.smp_allocator.free(encoded);
     _ = encoder.encode(encoded, text);
     return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn streamForbidReuse(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    if (vm.event_loop.streamAt(args[0].int64)) |stream| {
+        stream.is_reuse_forbidden = true;
+    }
+    return ok(.{ .null = {} });
+}
+
+fn streamHasFinalStatus(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .bool = false });
+    const head = stream.bufferedBytes();
+    const prefix = "HTTP/1.";
+    const has_status = head.len >= prefix.len + 3 and std.mem.startsWith(u8, head, prefix);
+    if (!has_status) {
+        return ok(.{ .bool = false });
+    }
+    return ok(.{ .bool = head[prefix.len + 2] != '1' });
 }
 
 fn encodedUrl(vm: *VM, args: []v.Value) anyerror!NativeResult {

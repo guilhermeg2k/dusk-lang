@@ -64,6 +64,7 @@ pub const Stream = struct {
     peer: ?uv.SocketAddress = null,
     tls_layer: ?*TlsLayer = null,
     tunnel_layer: ?*TlsLayer = null,
+    is_reuse_forbidden: bool = false,
     http_reader: ?*HttpReader = null,
     table_index: usize = 0,
     owns_file: bool = false,
@@ -322,7 +323,7 @@ pub const Stream = struct {
         const reader = self.http_reader orelse return false;
         const is_idle = self.waiter == null and !self.is_closed and !self.has_ended and self.failure == null and self.bufferedBytes().len == 0;
         const is_tls_ready = if (self.tls_layer) |layer| layer.handshake == .done else true;
-        return is_idle and is_tls_ready and reader.isMessageComplete() and reader.canKeepAlive();
+        return is_idle and is_tls_ready and !self.is_reuse_forbidden and reader.isMessageComplete() and reader.canKeepAlive();
     }
 
     pub fn enterPool(self: *Self, key: []const u8) !void {

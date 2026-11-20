@@ -367,6 +367,10 @@ test "http: requests, response streams and the connection pool over loopback (he
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
+test "http: streamed request bodies (chunked, sized, from a file), Expect: 100-continue (automatic, early refusal, servers that never answer it), length mismatches, redirects with streamed bodies" {
+    try runCase("http-client-upload.dsk");
+}
+
 test "http: ContentType names common types and content_type_of guesses one from a file name" {
     try runCase("http-content-type.dsk");
 }

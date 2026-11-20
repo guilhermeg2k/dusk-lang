@@ -2607,8 +2607,8 @@ end
 
 | Function | Returns |
 | :------- | :------ |
-| `request(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, max_body = 67108864, ca = null, verify = true)` | `HttpError!Response` |
-| `open(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, ca = null, verify = true)` | `HttpError!ResponseStream` |
+| `request(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, max_body = 67108864, ca = null, verify = true, body_stream = null, body_length = -1)` | `HttpError!Response` |
+| `open(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, ca = null, verify = true, body_stream = null, body_length = -1)` | `HttpError!ResponseStream` |
 
 | Parameter | Description |
 | :-------- | :---------- |
@@ -2616,7 +2616,8 @@ end
 | `method` | Any HTTP method, in uppercase: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"`... Lowercase letters, spaces and other characters fail with `InvalidMethod`. |
 | `headers` | Request headers, as a `map[string, string]`. Names and values are checked before anything is sent: a name with spaces or other characters a header name can't have, or a value with a line break or another control character, fails with `InvalidHeader`. |
 | `body` | Text to send. |
-| `body_bytes` | Bytes to send. Giving both `body` and `body_bytes` is a runtime error. |
+| `body_bytes` | Bytes to send. |
+| `body_stream`, `body_length` | A body written piece by piece, for uploads too big to hold in memory or made as they go: a `func(mut http::BodyWriter) -> io::IoError!void`, called after the head is sent, with the same writer a server's `http::stream` gets (`write`, `write_bytes`, `flush`, fits `io::Writer`). With `body_length = -1` the body is sent chunked; with a length it's sent with `Content-Length`, and writing more or less fails the request with `Other`. An error the function returns fails the request too (mapped like a connection error). Giving more than one of `body`, `body_bytes` and `body_stream` is a runtime error. |
 | `query` | Entries to add to the URL's query, encoded with `url::encode`: `query = {"q": "dusk lang"}` on `https://example.com/search?lang=en` asks for `/search?lang=en&q=dusk%20lang`. |
 | `timeout_ms` | The time the whole call may take: looking up the name, connecting, the TLS handshake, sending the request, every redirect, and for `request`, reading the whole body. `-1` waits forever. |
 | `max_redirects` | How many redirects to follow (see below). |
@@ -2688,6 +2689,19 @@ A body that ends before its announced length, or that breaks the chunked format,
 **Connections.** After a response, its connection is kept open for the next request to the same scheme, host and port (and, for `https`, the same `ca` and `verify`), which skips connecting and the TLS handshake. Up to 8 idle connections are kept per server. An idle connection closes after 30 seconds, or as soon as the server closes it, and never keeps the program running. A `ResponseStream` gives its connection back on `close()` when the whole response has arrived; otherwise, the connection is closed. If a kept connection turns out to be closed when it's reused, before any answer arrives, a `GET`, `HEAD`, `PUT`, `DELETE` or `OPTIONS` request is sent again on a new connection; a `POST` or `PATCH` fails with `ConnectionReset` instead, since the server may already have acted on it.
 
 **Compression.** `request` and `open` ask for compressed bodies (`Accept-Encoding: gzip, deflate`) and decompress them, so `body`, `text()` and a `ResponseStream`'s reads give the original content; `max_body` counts the decompressed bytes. `deflate` bodies are accepted with or without their zlib header, since some servers leave it out. The `Content-Encoding` and `Content-Length` headers stay as the server sent them. Setting `Accept-Encoding` in `headers` turns this off: the body is returned as it came. A `ResponseStream` read fails with `io::IoError.Other` for a broken compressed body and `UnexpectedEnd` for one cut short.
+
+**Streamed uploads.** `io::copy` sends a file or any other `io::Reader` as the body:
+
+```nim
+let mut file = try fs::open("backup.tar")
+let resp = try http::request("https://example.com/backups", method = "PUT", body_length = try file.size(),
+    body_stream = func(mut out: http::BodyWriter) -> io::IoError!void
+        let sent = try io::copy(file, out)
+    end)
+file.close()
+```
+
+A request with a `body_stream`, or a body of 1 MiB or more, asks the server first with `Expect: 100-continue` and waits up to a second for its go-ahead (servers that never answer it get the body after that second). A server that answers right away with a final status (`401`, `413`...) gets no body: the function isn't called, the response is returned as usual and the connection isn't reused. Setting `Expect` in `headers` turns this off. A streamed body can't be sent twice, so a `307` or `308` redirect is returned instead of followed, and a stale kept connection isn't retried.
 
 **Clients.** An `http::Client` keeps settings for many requests to the same service: a base URL, headers sent with every request, and the defaults for the other settings. Build one with the fields you need; the others keep the defaults of `http::request`.
 
@@ -2925,5 +2939,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
-- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client uses only `http://` and `https://` proxies (no SOCKS, and `HTTP_PROXY` and similar variables aren't read on their own), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); it decompresses gzip and deflate, not `br` or `zstd`. The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
+- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client uses only `http://` and `https://` proxies (no SOCKS, and `HTTP_PROXY` and similar variables aren't read on their own), doesn't store cookies between requests, has no client certificates, and decompresses only gzip and deflate (not `br` or `zstd`). The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
 - **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
