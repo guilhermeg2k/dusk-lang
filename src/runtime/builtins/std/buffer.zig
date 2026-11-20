@@ -13,7 +13,6 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "from_string", Binding{ .native = &bufferFrom } },
     .{ "put", Binding{ .native = &put } },
     .{ "put_bytes", Binding{ .native = &put } },
-    .{ "put_int", Binding{ .native = &putInt } },
     .{ "slice", Binding{ .native = &slice } },
 });
 
@@ -30,12 +29,6 @@ fn bufferFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn put(_: *VM, args: []v.Value) anyerror!NativeResult {
     return putBytes(args, bytesArg(args, 2));
-}
-
-fn putInt(_: *VM, args: []v.Value) anyerror!NativeResult {
-    var digits: [20]u8 = undefined;
-    const text = std.fmt.bufPrint(&digits, "{d}", .{args[2].int64}) catch unreachable;
-    return putBytes(args, text);
 }
 
 fn putBytes(args: []v.Value, source: []const u8) NativeResult {

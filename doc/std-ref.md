@@ -177,16 +177,14 @@ end
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
 | `put(data, at, text)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
 | `put_bytes(data, at, source)` | `BufferError!int` | Same, copying another buffer. |
-| `put_int(data, at, number)` | `BufferError!int` | Writes `number` as decimal text (`-42` is the three bytes `-`, `4`, `2`), without making a string. |
 | `slice(data, start, stop)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
 
-`put`, `put_bytes` and `put_int` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or `at` is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` fails the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`:
+`put` and `put_bytes` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or `at` is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` fails the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`:
 
 ```nim
 let mut frame = try buffer::new(4096)
 let mut used = try buffer::put(frame, 0, "progress: ")
-used = try buffer::put_int(frame, used, done)
-used = try buffer::put(frame, used, "%\n")
+used = try buffer::put(frame, used, "$done%\n")
 try out.write_bytes(try buffer::slice(frame, 0, used))
 ```
 

@@ -2488,7 +2488,7 @@ test "buffer annotations and parameters" {
     try runCaseOutput("buffer-params.dsk", "[[120, 120, 120, 120]]\n");
 }
 
-test "buffer put, put_bytes, put_int and slice" {
+test "buffer put, put_bytes and slice" {
     try runCase("buffer-put.dsk");
 }
 
