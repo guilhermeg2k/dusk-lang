@@ -16,6 +16,8 @@ pub const FlushMode = enum(c_int) { none, flush, finish };
 
 pub const max_level = 9;
 
+pub const CompressionError = enum { InvalidData, TooLarge, InvalidLevel, Finished, Other };
+
 pub extern fn dusk_zip_compressor_new(format: Format, level: c_int) ?*Zip;
 pub extern fn dusk_zip_decompressor_new(format: Format) ?*Zip;
 pub extern fn dusk_zip_free(zip: ?*Zip) void;

@@ -3,6 +3,7 @@ const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
 const native = @import("../native.zig");
 const compression = @import("../../compression.zig");
+const CompressionJob = @import("../../tasks/compression_job.zig").CompressionJob;
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 const ok = native.ok;
@@ -21,25 +22,35 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "close_stream", Binding{ .native = &closeStream } },
 });
 
-pub const CompressionError = enum { InvalidData, TooLarge, InvalidLevel, Finished, Other };
+pub const CompressionError = compression.CompressionError;
 pub const error_sets = .{CompressionError};
+
+const pool_threshold = 256 * 1024;
 
 fn compress(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const level = args[2].int64;
     if (!isValidLevel(level)) {
         return fail(CompressionError.InvalidLevel);
     }
-    const allocator = std.heap.smp_allocator;
     const format: compression.Format = @enumFromInt(args[1].int64);
-    const output = try compression.compressAll(allocator, format, @intCast(level), bytesArg(args, 0));
+    const input = bytesArg(args, 0);
+    if (input.len > pool_threshold) {
+        return startJob(vm, .{ .kind = .compress, .format = format, .level = @intCast(level) }, input);
+    }
+    const allocator = std.heap.smp_allocator;
+    const output = try compression.compressAll(allocator, format, @intCast(level), input);
     defer allocator.free(output);
     return ok(try vm.allocBytesValue(output, .buffer));
 }
 
 fn decompress(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const allocator = std.heap.smp_allocator;
     const format: compression.Format = @enumFromInt(args[1].int64);
-    const output = compression.decompressAll(allocator, format, bytesArg(args, 0), maxArg(args[2])) catch |err| switch (err) {
+    const input = bytesArg(args, 0);
+    if (input.len > pool_threshold) {
+        return startJob(vm, .{ .kind = .decompress, .format = format, .max = maxArg(args[2]) }, input);
+    }
+    const allocator = std.heap.smp_allocator;
+    const output = compression.decompressAll(allocator, format, input, maxArg(args[2])) catch |err| switch (err) {
         error.InvalidData => return fail(CompressionError.InvalidData),
         error.TooLarge => return fail(CompressionError.TooLarge),
         error.OutOfMemory => return err,
@@ -54,6 +65,13 @@ fn isValidLevel(level: i64) bool {
 
 fn maxArg(value: v.Value) ?usize {
     return if (value.int64 < 0) null else @intCast(value.int64);
+}
+
+fn startJob(vm: *VM, settings: CompressionJob.Settings, input: []const u8) anyerror!NativeResult {
+    const current = vm.running_task.?;
+    try vm.event_loop.startCompressionJob(&vm.scheduler, current, settings, input);
+    current.park();
+    return native.parked();
 }
 
 fn compressorNew(vm: *VM, args: []v.Value) anyerror!NativeResult {

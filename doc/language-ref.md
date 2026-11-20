@@ -1992,6 +1992,8 @@ let text = try string::from_bytes(try compression::decompress(try fs::read_bytes
 
 `decompress` checks the data's checksum and fails with `InvalidData` for corrupted or cut-short data, data in another format, or bytes left after the end. A gzip file made of several members back to back (as `cat a.gz b.gz` makes) decodes to their contents joined. Pass `max` whenever the data comes from outside: a few kilobytes of compressed data can expand to gigabytes.
 
+Inputs over 256 KiB are compressed or decompressed on a background thread: only the calling task waits, and other tasks keep running. Smaller ones are done right away.
+
 **Streams.** For data that arrives or leaves in pieces (a file read in chunks, a response sent as it's produced), `compression::Compressor(format, level = 6)` and `compression::Decompressor(format, max = -1)` take bytes in and give bytes out, keeping their state between calls. They do no I/O themselves, so their output can go anywhere: a file, a connection, a buffer.
 
 | Method                          | Returns                    | Description                                                                                       |

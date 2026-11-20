@@ -331,6 +331,10 @@ test "compression: writer and reader wrap any io::Writer and io::Reader (files, 
     try runCaseInTmpDir("compression-io.dsk");
 }
 
+test "compression: buffers over 256 KiB are compressed and decompressed on the thread pool while other tasks run (errors and max from the pool, several jobs at once)" {
+    try runCase("compression-pool.dsk");
+}
+
 test "compression: the stream table reuses slots and rejects stale handles" {
     const compression = @import("runtime/compression.zig");
     const allocator = testing.allocator;
