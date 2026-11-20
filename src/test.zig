@@ -367,6 +367,10 @@ test "http: requests, response streams and the connection pool over loopback (he
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
+test "http: max_connections_per_host caps connections in use per host (waiting in line, reuse counted, timeouts while waiting)" {
+    try runCase("http-client-limit.dsk");
+}
+
 test "http: streamed request bodies (chunked, sized, from a file), Expect: 100-continue (automatic, early refusal, servers that never answer it), length mismatches, redirects with streamed bodies" {
     try runCase("http-client-upload.dsk");
 }

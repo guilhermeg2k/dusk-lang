@@ -430,6 +430,9 @@ extern func ~base64(text: string) -> string
 extern func ~encoded_url(text: string) -> string
 extern func ~stream_forbid_reuse(handle: int) -> void
 extern func ~stream_has_final_status(handle: int) -> bool
+extern func ~host_slot_take(host: string, limit: int, timeout_ms: int) -> HttpError!void
+extern func ~host_slot_release(host: string) -> void
+extern func ~stream_hold_host_slot(handle: int, host: string) -> void
 extern func ~invalid_compression_level(level: int) -> void
 
 let ~USER_AGENT = "dusk/0.16"
@@ -461,6 +464,7 @@ struct ~Exchange
     proxy: ?Proxy
     body_stream: ?func(mut BodyWriter) -> io::IoError!void = null
     body_length: int = -1
+    max_connections_per_host: int = -1
 end
 
 struct ~Proxy
@@ -488,17 +492,18 @@ struct Client
     ca: ?string = null
     verify: bool = true
     proxy: ?string = null
+    max_connections_per_host: int = -1
 
     func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!Response
         let redirects = max_redirects orelse self.max_redirects
-        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length)
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length, max_connections_per_host = self.max_connections_per_host)
         let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
         return opened.response
     end
 
     func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!ResponseStream
         let redirects = max_redirects orelse self.max_redirects
-        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length)
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length, max_connections_per_host = self.max_connections_per_host)
         let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
         let response = opened.response
         if body_format(response.status, response.headers, exchange): format then
@@ -654,7 +659,7 @@ end
 func ~with_authorization(exchange: Exchange, credentials: string) -> Exchange
     let mut headers = copy(exchange.headers)
     headers["Authorization"] = credentials
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length, max_connections_per_host = exchange.max_connections_per_host)
 end
 
 func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Opened
@@ -703,9 +708,9 @@ func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Excha
     end
     let headers = without_headers(exchange.headers, dropped)
     if becomes_get then
-        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy)
+        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
     end
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length, max_connections_per_host = exchange.max_connections_per_host)
 end
 
 func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
@@ -754,15 +759,26 @@ end
 
 func ~send(target: url::Url, exchange: Exchange) -> HttpError!Opened
     let key = pool_key_of(target, exchange)
-    let reused = pool_take(key)
-    if reused >= 0 then
-        let answered = try exchange_on_reused(reused, target, exchange, key)
-        if answered: opened then
-            return opened
+    let host = "${target.scheme}://${target.host}:${port_of(target)}"
+    for true do
+        try host_slot_take(host, exchange.max_connections_per_host, remaining_ms(exchange))
+        let reused = pool_take(key)
+        if reused >= 0 then
+            stream_hold_host_slot(reused, host)
+            let answered = try exchange_on_reused(reused, target, exchange, key)
+            if answered: opened then
+                return opened
+            end
+            continue
         end
+        let handle = open_connection(target, exchange) catch e then
+            host_slot_release(host)
+            return e
+        end
+        stream_hold_host_slot(handle, host)
+        return try exchange_on(handle, target, exchange, key)
     end
-    let handle = try open_connection(target, exchange)
-    return try exchange_on(handle, target, exchange, key)
+    return HttpError.Other
 end
 
 func ~pool_key_of(target: url::Url, exchange: Exchange) -> string

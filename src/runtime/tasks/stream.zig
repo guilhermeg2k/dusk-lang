@@ -65,6 +65,7 @@ pub const Stream = struct {
     tls_layer: ?*TlsLayer = null,
     tunnel_layer: ?*TlsLayer = null,
     is_reuse_forbidden: bool = false,
+    host_key: ?[]u8 = null,
     http_reader: ?*HttpReader = null,
     table_index: usize = 0,
     owns_file: bool = false,
@@ -158,6 +159,9 @@ pub const Stream = struct {
         if (self.tunnel_layer) |tunnel| {
             tunnel.destroy();
         }
+        if (self.host_key) |key| {
+            self.allocator.free(key);
+        }
         if (self.http_reader) |reader| {
             reader.destroy();
         }
@@ -223,6 +227,7 @@ pub const Stream = struct {
             self.closeTls(layer);
         }
         self.is_closed = true;
+        self.releaseHostSlot();
         if (self.handle_memory.len > 0) {
             self.stopReading();
             uv.uv_close(self.uvHandle(), onHandleClosed);
@@ -240,6 +245,17 @@ pub const Stream = struct {
             uv.uv_close(self.writeTimerHandle(), onHandleClosed);
         }
         self.releaseIfDone();
+    }
+
+    pub fn holdHostSlot(self: *Self, key: []const u8) !void {
+        self.host_key = try self.allocator.dupe(u8, key);
+    }
+
+    fn releaseHostSlot(self: *Self) void {
+        const key = self.host_key orelse return;
+        self.host_key = null;
+        defer self.allocator.free(key);
+        self.event_loop.releaseHostSlot(key);
     }
 
     fn closeTls(self: *Self, layer: *TlsLayer) void {
@@ -327,6 +343,7 @@ pub const Stream = struct {
     }
 
     pub fn enterPool(self: *Self, key: []const u8) !void {
+        self.releaseHostSlot();
         self.pool_key = try self.allocator.dupe(u8, key);
         self.buffered.clearAndFree(self.allocator);
         self.read_offset = 0;

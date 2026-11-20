@@ -2719,6 +2719,7 @@ api.headers["X-Trace"] = trace_id
 | `headers` | `{}` | Sent with every request. A header given to a call replaces the client's header of the same name, ignoring case. |
 | `timeout_ms`, `max_redirects`, `max_body`, `ca`, `verify` | as in `request` | The defaults for each call. |
 | `proxy` | `null` | A proxy every request goes through (see Proxies); `null` or `""` connects directly. |
+| `max_connections_per_host` | `-1` | At most this many connections in use at once to one server (`scheme://host:port`); `-1` means no limit. |
 
 **Proxies.** With `proxy = "http://proxy.example.com:3128"`, requests go through that proxy: an `http://` URL is sent to the proxy whole (`GET http://host/path`), and an `https://` one through a tunnel (`CONNECT host:443`) inside which the TLS connection to the server runs as usual, checked against `ca` / `verify`. The proxy can be `https://` too, so the connection to the proxy is encrypted as well (its certificate is checked with the same `ca` / `verify`); `https://` servers are then reached with TLS inside that TLS connection. Credentials go in the proxy URL (`http://user:pass@proxy:3128`, percent-encoded) and are sent as `Proxy-Authorization: Basic ...`, never to the server. Requests to `localhost`, `*.localhost`, `127.x.x.x` and `::1` always connect directly. A proxy that refuses a tunnel (a `407` for missing credentials, a `403`...) fails the request with `ProxyRefused`; a proxy URL that can't be parsed is `InvalidUrl`, and one that isn't `http://` or `https://` (SOCKS) is `UnsupportedScheme`. The environment isn't read on its own: pass the value of `HTTPS_PROXY` or similar yourself if you want it.
 
@@ -2726,6 +2727,8 @@ api.headers["X-Trace"] = trace_id
 let corporate = http::Client(proxy = "http://alice:s3cret@proxy.internal:3128")
 let page = try corporate.request("https://example.com/")
 ```
+
+**Connection limit.** Firing many requests at one server at once, from many tasks, opens one connection per request. `max_connections_per_host = 16` caps the connections in use to that server: the other requests wait in line, first come first served, and take a connection as soon as one is free (a request waiting past its `timeout_ms` fails with `TimedOut`). The count covers every request in the program to that server, whichever client sent it, and a `ResponseStream` holds its connection until `close()`. Idle kept-alive connections don't count.
 
 `client.request(url, ...)` and `client.open(url, ...)` take the same arguments as `http::request` and `http::open`; a setting given to the call (`timeout_ms = 20000`) overrides the client's for that call only. Changing a field of a `let mut` client affects the requests after it. Every client shares the program's pool of open connections, so two clients talking to the same server reuse each other's connections.
 

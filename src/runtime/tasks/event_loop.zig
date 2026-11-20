@@ -10,6 +10,9 @@ const OpenRequest = @import("tcp.zig").OpenRequest;
 const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const CompressionStreams = @import("../compression.zig").StreamTable;
 const CompressionJob = @import("compression_job.zig").CompressionJob;
+const HostSlots = @import("host_slots.zig").HostSlots;
+const HttpError = @import("http.zig").HttpError;
+const WakeResult = @import("scheduler.zig").WakeResult;
 const TrustStore = @import("trust_store.zig").TrustStore;
 const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
 const ServerState = @import("http_server.zig").ServerState;
@@ -33,6 +36,7 @@ pub const EventLoop = struct {
     connection_pool: ConnectionPool = .{},
     http_servers: std.ArrayList(ServerState) = .empty,
     compression_streams: CompressionStreams = .{},
+    host_slots: HostSlots = .{},
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -51,6 +55,7 @@ pub const EventLoop = struct {
         defer self.connection_pool.deinit(self.allocator);
         defer self.freeHttpServers();
         defer self.compression_streams.deinit(self.allocator);
+        defer self.host_slots.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -130,6 +135,49 @@ pub const EventLoop = struct {
             return error.PoolJobFailed;
         }
         self.pending_operations += 1;
+    }
+
+    pub fn parkForHostSlot(self: *Self, scheduler: *Scheduler, task: *TaskState, key: []const u8, timeout_ms: ?u64) !void {
+        const loop = try self.ensureLoopStarted();
+        const waiter = try self.allocator.create(SlotWaiter);
+        errdefer self.allocator.destroy(waiter);
+        const owned_key = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(owned_key);
+        waiter.* = .{ .event_loop = self, .scheduler = scheduler, .task = task, .key = owned_key };
+        try self.host_slots.addWaiter(self.allocator, key, waiter);
+        const ms = timeout_ms orelse return;
+        waiter.timer_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer)) catch |failure| {
+            self.host_slots.removeWaiter(key, waiter);
+            return failure;
+        };
+        if (uv.uv_timer_init(loop, waiter.timer()) != 0) {
+            self.host_slots.removeWaiter(key, waiter);
+            self.allocator.free(waiter.timer_memory);
+            waiter.timer_memory = &.{};
+            return error.TimerFailed;
+        }
+        uv.uv_handle_set_data(waiter.timer(), &waiter.owner);
+        uv.uv_update_time(loop);
+        _ = uv.uv_timer_start(waiter.timer(), onSlotTimeout, ms, 0);
+        self.pending_operations += 1;
+    }
+
+    pub fn releaseHostSlot(self: *Self, key: []const u8) void {
+        const waiter = self.host_slots.release(key) orelse return;
+        self.handSlotToWaiter(waiter);
+    }
+
+    fn handSlotToWaiter(self: *Self, waiter: *SlotWaiter) void {
+        waiter.scheduler.wake(waiter.task, .{ .value = v.NULL_VALUE, .kind = .null }) catch |failure| {
+            self.callback_failure = failure;
+        };
+        if (waiter.timer_memory.len == 0) {
+            waiter.destroy();
+            return;
+        }
+        _ = uv.uv_timer_stop(waiter.timer());
+        self.pending_operations -= 1;
+        uv.uv_close(waiter.timer(), onHandleClosed);
     }
 
     pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !usize {
@@ -289,7 +337,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer };
+    pub const Kind = enum { timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -338,7 +386,46 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
             const request: *OpenRequest = @alignCast(@fieldParentPtr("owner", owner));
             request.markTimerClosed();
         },
+        .slot_timer => {
+            const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", owner));
+            waiter.event_loop.host_slots.removeWaiter(waiter.key, waiter);
+            waiter.destroy();
+        },
     }
+}
+
+pub const SlotWaiter = struct {
+    owner: HandleOwner = .{ .kind = .slot_timer },
+    event_loop: *EventLoop,
+    scheduler: *Scheduler,
+    task: *TaskState,
+    key: []u8,
+    timer_memory: []align(16) u8 = &.{},
+
+    fn timer(self: *SlotWaiter) *uv.Handle {
+        return @ptrCast(self.timer_memory.ptr);
+    }
+
+    pub fn destroy(self: *SlotWaiter) void {
+        const allocator = self.event_loop.allocator;
+        if (self.timer_memory.len > 0) {
+            allocator.free(self.timer_memory);
+        }
+        allocator.free(self.key);
+        allocator.destroy(self);
+    }
+};
+
+fn onSlotTimeout(handle: *uv.Handle) callconv(.c) void {
+    const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
+    const event_loop = waiter.event_loop;
+    event_loop.host_slots.removeWaiter(waiter.key, waiter);
+    event_loop.pending_operations -= 1;
+    const failure: WakeResult = .{ .value = .{ .int64 = @intFromEnum(HttpError.TimedOut) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+    waiter.scheduler.wake(waiter.task, failure) catch |wake_failure| {
+        event_loop.callback_failure = wake_failure;
+    };
+    uv.uv_close(handle, onHandleClosed);
 }
 
 fn timerRequestOf(handle: *uv.Handle) *TimerRequest {

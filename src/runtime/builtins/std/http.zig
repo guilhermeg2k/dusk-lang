@@ -28,6 +28,9 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "encoded_url", Binding{ .native = &encodedUrl } },
     .{ "stream_forbid_reuse", Binding{ .native = &streamForbidReuse } },
     .{ "stream_has_final_status", Binding{ .native = &streamHasFinalStatus } },
+    .{ "host_slot_take", Binding{ .native = &hostSlotTake } },
+    .{ "host_slot_release", Binding{ .native = &hostSlotRelease } },
+    .{ "stream_hold_host_slot", Binding{ .native = &streamHoldHostSlot } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_set_write_timeout", Binding{ .native = &io.streamSetWriteTimeout } },
@@ -415,6 +418,36 @@ fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
     defer std.heap.smp_allocator.free(encoded);
     _ = encoder.encode(encoded, text);
     return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn hostSlotTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const event_loop = &vm.event_loop;
+    const host = bytesArg(args, 0);
+    const limit: ?usize = if (args[1].int64 < 0) null else @intCast(args[1].int64);
+    if (try event_loop.host_slots.tryTake(event_loop.allocator, host, limit)) {
+        return ok(.{ .null = {} });
+    }
+    const current = vm.running_task.?;
+    const timeout_ms: ?u64 = if (args[2].int64 < 0) null else @intCast(args[2].int64);
+    try event_loop.parkForHostSlot(&vm.scheduler, current, bytesArg(args, 0), timeout_ms);
+    current.park();
+    return native.parked();
+}
+
+fn hostSlotRelease(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    vm.event_loop.releaseHostSlot(bytesArg(args, 0));
+    return ok(.{ .null = {} });
+}
+
+fn streamHoldHostSlot(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse {
+        vm.event_loop.releaseHostSlot(bytesArg(args, 1));
+        return ok(.{ .null = {} });
+    };
+    stream.holdHostSlot(bytesArg(args, 1)) catch {
+        vm.event_loop.releaseHostSlot(bytesArg(args, 1));
+    };
+    return ok(.{ .null = {} });
 }
 
 fn streamForbidReuse(vm: *VM, args: []v.Value) anyerror!NativeResult {
