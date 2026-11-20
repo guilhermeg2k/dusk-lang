@@ -864,12 +864,22 @@ pub const Stream = struct {
             return failure;
         };
         self.tls_layer = layer;
-        const early = self.bufferedBytes();
-        if (early.len > 0) {
-            _ = tls.dusk_tls_feed(layer.session, early.ptr, early.len);
-            self.consume(early.len);
-        }
+        self.feedBufferedIntoTls(layer);
         return self.awaitHandshake(task, timeout_ms);
+    }
+
+    pub fn startServerTls(self: *Self, task: *TaskState, config: *tls.Config, timeout_ms: ?u64) !HandshakeWait {
+        const layer = try TlsLayer.createServer(self.allocator, config);
+        self.tls_layer = layer;
+        self.feedBufferedIntoTls(layer);
+        return self.awaitHandshake(task, timeout_ms);
+    }
+
+    fn feedBufferedIntoTls(self: *Self, layer: *TlsLayer) void {
+        const early = self.bufferedBytes();
+        if (early.len == 0) return;
+        _ = tls.dusk_tls_feed(layer.session, early.ptr, early.len);
+        self.consume(early.len);
     }
 
     pub fn awaitHandshake(self: *Self, task: *TaskState, timeout_ms: ?u64) !HandshakeWait {

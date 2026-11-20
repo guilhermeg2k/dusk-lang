@@ -397,6 +397,11 @@ test "net: start_tls on a plain connection, handshake() and its errors, handshak
     try runCase("net-tls-handshake.dsk");
 }
 
+test "net: accept_tls upgrades an accepted plain connection (STARTTLS), early client hello, handshake failure, timeout, twice" {
+    try runCase("net-starttls.dsk");
+    try runCaseRuntimeError("net-accept-tls-twice.dsk", error.TlsAlreadyStarted);
+}
+
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 extern "c" fn unsetenv(name: [*:0]const u8) c_int;
 

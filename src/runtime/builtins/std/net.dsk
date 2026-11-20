@@ -37,6 +37,7 @@ extern func ~remote_port(handle: int) -> int
 extern func ~certificate_handle(cert_pem: string, key_pem: string) -> NetError!int
 extern func ~listener_use_tls(listener: int, certificate: int) -> void
 extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> NetError!void
+extern func ~stream_accept_tls(handle: int, certificate: int, timeout_ms: int) -> NetError!void
 extern func ~stream_is_tls(handle: int) -> bool
 extern func ~stream_handshake(handle: int, timeout_ms: int) -> NetError!void
 
@@ -105,6 +106,10 @@ struct TcpConn
 
     func start_tls(self: @, host: string, timeout_ms: int = -1, ca: ?string = null, verify: bool = true) -> NetError!void
         try stream_start_tls(self.handle, host, ca, verify, timeout_ms)
+    end
+
+    func accept_tls(self: @, cert: Certificate, timeout_ms: int = -1) -> NetError!void
+        try stream_accept_tls(self.handle, cert.handle, timeout_ms)
     end
 
     func handshake(self: @, timeout_ms: int = -1) -> NetError!void

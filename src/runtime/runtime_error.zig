@@ -41,7 +41,7 @@ pub const RuntimeErrorReporter = struct {
 
     pub noinline fn tlsAlreadyStarted() RuntimeError {
         @branchHint(.cold);
-        return report(RuntimeError.TlsAlreadyStarted, "start_tls on a connection that already uses TLS", .{});
+        return report(RuntimeError.TlsAlreadyStarted, "start_tls or accept_tls on a connection that already uses TLS", .{});
     }
 
     pub noinline fn httpBodyGivenTwice() RuntimeError {
