@@ -810,6 +810,14 @@ pub const VM = struct {
         if (!self.heap.needsCollection(bytes)) return;
         self.saveCurrentTask();
         try self.heap.collect(&self.scheduler, self.program);
+        self.closeDeadResources();
+    }
+
+    fn closeDeadResources(self: *Self) void {
+        for (self.heap.dead_resource_ids.items) |id| {
+            self.event_loop.closeResource(id);
+        }
+        self.heap.dead_resource_ids.clearRetainingCapacity();
     }
 
     fn saveCurrentTask(self: *Self) void {
@@ -977,7 +985,7 @@ pub const VM = struct {
                     if (!storage.value_type.isHeapType()) continue;
                     for (storage.usedEntries()) |*entry| try self.deepCopySlot(&entry.value, &copies, &pending);
                 },
-                .string, .buffer, .null_box, .closure, .cell, .task => {},
+                .string, .buffer, .null_box, .closure, .cell, .task, .resource => {},
             }
         }
         return result;
@@ -987,7 +995,7 @@ pub const VM = struct {
         if (@as(u64, @bitCast(slot.*)) == 0) return;
         const current = slot.heap_obj.followRelocated();
         const is_immutable = switch (current.kind) {
-            .string, .null_box, .closure, .cell, .task => true,
+            .string, .null_box, .closure, .cell, .task, .resource => true,
             else => false,
         };
         if (is_immutable) {

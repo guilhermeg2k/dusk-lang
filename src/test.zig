@@ -992,6 +992,117 @@ test "net: a burst of connections is accepted in batches" {
     try runCase("net-tcp-burst.dsk");
 }
 
+test "compression: compress and decompress gzip, zlib and raw deflate (levels, fixtures from other tools, gzip members, bad data, max, levels out of range, GC)" {
+    try runCase("compression.dsk");
+}
+
+test "compression: streamed Compressor and Decompressor (pieces of any size, flush, finish, gzip members, Finished, bad data, max across writes, slot reuse, many live streams)" {
+    try runCase("compression-stream.dsk");
+}
+
+test "compression: writer and reader wrap any io::Writer and io::Reader (files, io::copy, flush, cut-short and bad input, max, Closed after finish)" {
+    try runCaseInTmpDir("compression-io.dsk");
+}
+
+test "compression: buffers over 256 KiB are compressed and decompressed on the thread pool while other tasks run (errors and max from the pool, several jobs at once)" {
+    try runCase("compression-pool.dsk");
+}
+
+test "resources: the GC closes connections, listeners, files, response streams and compressors nothing can reach (copies keep them, explicit close and pooling win)" {
+    try runCaseInTmpDir("gc-resources.dsk");
+}
+
+test "handles: the stream and listener tables reuse slots and reject stale handles" {
+    const HandleTable = @import("runtime/tasks/handle_table.zig").HandleTable;
+    const allocator = testing.allocator;
+    var table: HandleTable(u8) = .{};
+    defer table.deinit(allocator);
+    var a: u8 = 1;
+    var b: u8 = 2;
+    try table.reserve(allocator);
+    const first: i64 = @intCast(table.addAssumeCapacity(&a));
+    try testing.expectEqual(&a, table.get(first).?);
+    try testing.expectEqual(&a, table.remove(first).?);
+    try testing.expect(table.get(first) == null);
+    try testing.expect(table.remove(first) == null);
+    try table.reserve(allocator);
+    const second: i64 = @intCast(table.addAssumeCapacity(&b));
+    try testing.expect(second != first);
+    try testing.expectEqual(first & 0xffff_ffff, second & 0xffff_ffff);
+    try testing.expect(table.get(first) == null);
+    try testing.expectEqual(&b, table.get(second).?);
+    try testing.expect(table.get(-1) == null);
+    try testing.expectEqual(@as(usize, 1), table.entries.items.len);
+}
+
+test "net: a closed connection's handle can't reach a new connection that reuses its slot" {
+    try runCase("net-handle-reuse.dsk");
+}
+
+test "resources: the registry hands out ids, rejects stale ones and keeps released slots until taken" {
+    const ResourceRegistry = @import("runtime/tasks/resource_registry.zig").ResourceRegistry;
+    const allocator = testing.allocator;
+    var registry: ResourceRegistry = .{};
+    defer registry.deinit(allocator);
+    const conn = try registry.add(allocator, .stream, 4);
+    const listener = try registry.add(allocator, .listener, 0);
+    try testing.expectEqual(@as(usize, 2), registry.liveCount());
+    registry.release(listener);
+    const taken = registry.take(conn).?;
+    try testing.expectEqual(@as(i64, 4), taken.handle);
+    try testing.expect(!taken.is_released);
+    try testing.expect(registry.take(conn) == null);
+    const reused = try registry.add(allocator, .compression, 99);
+    try testing.expectEqual(conn.index, reused.index);
+    try testing.expect(reused.generation != conn.generation);
+    try testing.expect(registry.take(conn) == null);
+    try testing.expect(registry.take(listener).?.is_released);
+    try testing.expectEqual(@as(usize, 1), registry.liveCount());
+}
+
+test "resources: a collection keeps moved owners and reports the ones nobody copied" {
+    const v = @import("runtime/value.zig");
+    const Heap = @import("runtime/gc.zig").Heap;
+    var heap = Heap.init(testing.allocator);
+    defer heap.deinit();
+    const allocator = heap.allocator();
+    const kept = try v.Resource.init(allocator, .{ .index = 1, .generation = 1 });
+    const dropped = try v.Resource.init(allocator, .{ .index = 2, .generation = 7 });
+    try heap.trackResource(&kept.obj);
+    try heap.trackResource(&dropped.obj);
+    const moved = try kept.clone(allocator);
+    kept.obj.gc_forward = &moved.obj;
+    try heap.sweepResources();
+    try testing.expectEqual(@as(usize, 1), heap.resources.items.len);
+    try testing.expectEqual(&moved.obj, heap.resources.items[0]);
+    try testing.expectEqual(@as(usize, 1), heap.dead_resource_ids.items.len);
+    try testing.expectEqual(@as(u32, 2), heap.dead_resource_ids.items[0].index);
+    try testing.expectEqual(@as(u32, 7), heap.dead_resource_ids.items[0].generation);
+}
+
+test "compression: the stream table reuses slots and rejects stale handles" {
+    const compression = @import("runtime/compression.zig");
+    const allocator = testing.allocator;
+    var table: compression.StreamTable = .{};
+    defer table.deinit(allocator);
+    const first = try table.add(allocator, compression.dusk_zip_compressor_new(.gzip, 6).?, .gzip, null);
+    const second = try table.add(allocator, compression.dusk_zip_decompressor_new(.zlib).?, .zlib, 10);
+    try testing.expect(first != second);
+    try testing.expect(table.find(first) != null);
+    try testing.expectEqual(@as(?usize, 10), table.find(second).?.max);
+    table.remove(first);
+    try testing.expect(table.find(first) == null);
+    table.remove(first);
+    const third = try table.add(allocator, compression.dusk_zip_compressor_new(.deflate, 1).?, .deflate, null);
+    try testing.expectEqual(first & 0xffff_ffff, third & 0xffff_ffff);
+    try testing.expect(third != first);
+    try testing.expect(table.find(first) == null);
+    try testing.expectEqual(compression.Format.deflate, table.find(third).?.format);
+    try testing.expect(table.find(-1) == null);
+    try testing.expect(table.find(12345) == null);
+    try testing.expectEqual(@as(usize, 2), table.slots.items.len);
+}
+
 test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
     try runCase("url.dsk");
 }
@@ -999,6 +1110,23 @@ test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_q
 test "http: requests, response streams and the connection pool over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https, reuse and retry, gzip)" {
     try runCase("http-client.dsk");
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
+}
+
+test "http: max_connections_per_host caps connections in use per host (waiting in line, reuse counted, timeouts while waiting)" {
+    try runCase("http-client-limit.dsk");
+}
+
+test "http: streamed request bodies (chunked, sized, from a file), Expect: 100-continue (automatic, early refusal, servers that never answer it), length mismatches, redirects with streamed bodies" {
+    try runCase("http-client-upload.dsk");
+}
+
+test "http: ContentType names common types and content_type_of guesses one from a file name" {
+    try runCase("http-content-type.dsk");
+}
+
+test "http server: response compression (gzip when accepted, q-values, compressible types, minimum size, Vary, HEAD, handler encodings, streams, files, flushed events, compress = false, levels)" {
+    try runCase("http-server-compression.dsk");
+    try runCaseRuntimeError("http-compression-level.dsk", error.HttpInvalidCompressionLevel);
 }
 
 test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw and malformed requests, request bodies, limits, 100-continue, timeouts, shutdown" {
@@ -1012,6 +1140,11 @@ test "net: TLS over loopback with test certificates, errors on both sides, start
 
 test "net: start_tls on a plain connection, handshake() and its errors, handshake timeouts" {
     try runCase("net-tls-handshake.dsk");
+}
+
+test "net: accept_tls upgrades an accepted plain connection (STARTTLS), early client hello, handshake failure, timeout, twice" {
+    try runCase("net-starttls.dsk");
+    try runCaseRuntimeError("net-accept-tls-twice.dsk", error.TlsAlreadyStarted);
 }
 
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
@@ -3132,6 +3265,38 @@ test "sema error: unhandled call argument" {
     try runCaseError("sema/errors-unhandled-call-arg.dsk", error.UnhandledError);
 }
 
+test "defer and errdefer: order, block scope, values read at exit, returns, failing try, error returns, catch, break and continue, nested loops, compound statements, shadowing, branch values, when, lambdas, tasks" {
+    try runCase("defer.dsk");
+}
+
+test "sema error: try, return or break leaving deferred code, errdefer in a function that can't fail" {
+    try runCaseError("sema/defer-try.dsk", error.TryInsideDefer);
+    try runCaseError("sema/defer-return.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/defer-break.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/errdefer-non-failing.dsk", error.ErrdeferOutsideFailingFunction);
+}
+
+test "parser error: defer of a declaration or another defer" {
+    try runCaseError("parser/defer-let.dsk", error.ParserError);
+    try runCaseError("parser/defer-defer.dsk", error.ParserError);
+}
+
+test "optional chaining: method calls through ?. (values, void and mut self methods, arguments, chains, enums, unions) and fields of a struct's own nullable type" {
+    try runCase("optional-chain-methods.dsk");
+}
+
+test "sema error: ?. method call on a value that can't be null" {
+    try runCaseError("sema/optional-chain-method-not-nullable.dsk", error.UnecessaryOptionalChain);
+}
+
+test "sema error: a number passed where text is expected (the message suggests interpolation)" {
+    try runCaseError("sema/print-number-hint.dsk", error.InvalidType);
+}
+
+test "field and parameter defaults can call functions and use structs declared further down (function values, catch, inline returns, fields, methods, static fields)" {
+    try runCase("defaults-call-later-functions.dsk");
+}
+
 test "sema error: try in non-failing function" {
     try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
 }
@@ -4028,7 +4193,7 @@ test "tasks: spawn, await and sleep(0) on the scheduler" {
     try runCaseRuntimeError("task-awaits-itself.dsk", error.TaskAwaitsItself);
     try runCaseRuntimeError("tasks-all-waiting.dsk", error.AllTasksWaiting);
     try runCaseRuntimeError("task-unhandled-error.dsk", error.UnhandledTaskError);
-    try runCaseRuntimeError("sleep-negative.dsk", error.NegativeSleep);
+    try runCase("sleep-negative.dsk");
     try runCaseRuntimeError("task-runtime-error.dsk", error.ArrayOutOfBounds);
 }
 
@@ -4431,6 +4596,7 @@ test "builtins: each native error enum matches its error set, names and order" {
     try expectErrorEnumsMatchSets(dusk.stdSource("json"), @import("runtime/builtins/std/json.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("time"), @import("runtime/builtins/std/time.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("buffer"), @import("runtime/builtins/std/buffer.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("compression"), @import("runtime/builtins/std/compression.zig").error_sets);
 }
 
 fn findErrorSet(root: @import("compiler/ast.zig").Root, name: []const u8) ?@import("compiler/ast.zig").ErrorSetStmt {

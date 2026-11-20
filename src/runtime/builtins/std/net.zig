@@ -21,6 +21,8 @@ const IoError = io.IoError;
 pub const error_sets = .{NetError};
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
     .{ "tcp_connect_handle", Binding{ .native = &tcpConnect } },
     .{ "tcp_listen_handle", Binding{ .native = &tcpListen } },
     .{ "listener_accept", Binding{ .native = &listenerAccept } },
@@ -41,6 +43,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "certificate_handle", Binding{ .native = &certificateHandle } },
     .{ "listener_use_tls", Binding{ .native = &listenerUseTls } },
     .{ "stream_start_tls", Binding{ .native = &streamStartTls } },
+    .{ "stream_accept_tls", Binding{ .native = &streamAcceptTls } },
     .{ "stream_is_tls", Binding{ .native = &streamIsTls } },
     .{ "stream_handshake", Binding{ .native = &streamHandshake } },
 });
@@ -139,6 +142,19 @@ pub fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (stream.isTls()) {
         return RuntimeErrorReporter.tlsAlreadyStarted();
     }
+    return startClientTls(vm, stream, args);
+}
+
+pub fn streamStartTunneledTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
+    const can_start = !stream.isTls() or stream.moveTlsIntoTunnel();
+    if (!can_start) {
+        return fail(NetError.HandshakeFailed);
+    }
+    return startClientTls(vm, stream, args);
+}
+
+fn startClientTls(vm: *VM, stream: *Stream, args: []v.Value) anyerror!NativeResult {
     const should_verify = args[3].bool;
     const ca = native.optionalBytesArg(args, 2);
     const current = vm.running_task.?;
@@ -163,6 +179,17 @@ fn startWithSystemRoots(vm: *VM, stream: *Stream, current: *TaskState, handle: u
     trust_store.parkStarter(&vm.event_loop, &vm.scheduler, current, handle, host, timeout_ms) catch return fail(NetError.Other);
     current.park();
     return native.parked();
+}
+
+fn streamAcceptTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
+    if (stream.isTls()) {
+        return RuntimeErrorReporter.tlsAlreadyStarted();
+    }
+    const certificate = vm.event_loop.certificateAt(args[1].int64) orelse return fail(NetError.InvalidCertificate);
+    const current = vm.running_task.?;
+    const wait = stream.startServerTls(current, certificate.config, timeoutArg(args[2].int64)) catch return fail(NetError.Other);
+    return handshakeResult(current, wait);
 }
 
 fn streamHandshake(vm: *VM, args: []v.Value) anyerror!NativeResult {

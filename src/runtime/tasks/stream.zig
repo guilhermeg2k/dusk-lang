@@ -63,6 +63,9 @@ pub const Stream = struct {
     requests_in_flight: usize = 0,
     peer: ?uv.SocketAddress = null,
     tls_layer: ?*TlsLayer = null,
+    tunnel_layer: ?*TlsLayer = null,
+    is_reuse_forbidden: bool = false,
+    host_key: ?[]u8 = null,
     http_reader: ?*HttpReader = null,
     table_index: usize = 0,
     owns_file: bool = false,
@@ -166,6 +169,12 @@ pub const Stream = struct {
         if (self.tls_layer) |layer| {
             layer.destroy();
         }
+        if (self.tunnel_layer) |tunnel| {
+            tunnel.destroy();
+        }
+        if (self.host_key) |key| {
+            self.allocator.free(key);
+        }
         if (self.http_reader) |reader| {
             reader.destroy();
         }
@@ -231,6 +240,7 @@ pub const Stream = struct {
             self.closeTls(layer);
         }
         self.is_closed = true;
+        self.releaseHostSlot();
         if (self.handle_memory.len > 0) {
             self.stopReading();
             uv.uv_close(self.uvHandle(), onHandleClosed);
@@ -250,6 +260,17 @@ pub const Stream = struct {
         self.releaseIfDone();
     }
 
+    pub fn holdHostSlot(self: *Self, key: []const u8) !void {
+        self.host_key = try self.allocator.dupe(u8, key);
+    }
+
+    fn releaseHostSlot(self: *Self) void {
+        const key = self.host_key orelse return;
+        self.host_key = null;
+        defer self.allocator.free(key);
+        self.event_loop.releaseHostSlot(key);
+    }
+
     fn closeTls(self: *Self, layer: *TlsLayer) void {
         var waiters = layer.takeHandshakeWaiters();
         defer waiters.deinit(self.allocator);
@@ -259,13 +280,28 @@ pub const Stream = struct {
             const wake_result = if (waiter.pending_write == null) netFailureResult(.HandshakeFailed) else failureResult(.Closed);
             self.wakeTask(waiter.task, wake_result);
         }
-        if (layer.handshake != .done) return;
-        _ = tls.dusk_tls_close_notify(layer.session);
-        const length = tls.dusk_tls_output_length(layer.session);
+        if (layer.handshake == .done) {
+            _ = tls.dusk_tls_close_notify(layer.session);
+            self.tryWriteCipherOutput(layer.session, self.tunnel_layer);
+        }
+        const tunnel = self.tunnel_layer orelse return;
+        _ = tls.dusk_tls_close_notify(tunnel.session);
+        self.tryWriteCipherOutput(tunnel.session, null);
+    }
+
+    fn tryWriteCipherOutput(self: *Self, session: *tls.Session, through: ?*TlsLayer) void {
+        const length = tls.dusk_tls_output_length(session);
         if (length == 0) return;
-        const buffers = [_]uv.Buffer{.{ .base = @constCast(tls.dusk_tls_output_bytes(layer.session)), .len = @intCast(length) }};
+        const output = tls.dusk_tls_output_bytes(session)[0..length];
+        if (through) |tunnel| {
+            _ = tls.dusk_tls_write(tunnel.session, output.ptr, output.len);
+            tls.dusk_tls_consume_output(session, length);
+            self.tryWriteCipherOutput(tunnel.session, null);
+            return;
+        }
+        const buffers = [_]uv.Buffer{.{ .base = @constCast(output.ptr), .len = @intCast(output.len) }};
         _ = uv.uv_try_write(self.uvHandle(), &buffers, 1);
-        tls.dusk_tls_consume_output(layer.session, length);
+        tls.dusk_tls_consume_output(session, length);
     }
 
     pub fn bufferedBytes(self: *const Self) []const u8 {
@@ -316,10 +352,11 @@ pub const Stream = struct {
         const reader = self.http_reader orelse return false;
         const is_idle = self.waiter == null and !self.is_closed and !self.has_ended and self.failure == null and self.bufferedBytes().len == 0;
         const is_tls_ready = if (self.tls_layer) |layer| layer.handshake == .done else true;
-        return is_idle and is_tls_ready and reader.isMessageComplete() and reader.canKeepAlive();
+        return is_idle and is_tls_ready and !self.is_reuse_forbidden and reader.isMessageComplete() and reader.canKeepAlive();
     }
 
     pub fn enterPool(self: *Self, key: []const u8) !void {
+        self.releaseHostSlot();
         self.pool_key = try self.allocator.dupe(u8, key);
         self.buffered.clearAndFree(self.allocator);
         self.read_offset = 0;
@@ -384,6 +421,7 @@ pub const Stream = struct {
         if (self.feedHttpBody(reader, std.math.maxInt(usize)) != null) {
             return .{ .result = .{ .failure = .Other } };
         }
+        reader.decodeBody(read.decodeLimit()) catch return .{ .result = .{ .failure = .Other } };
         var has_ended = reader.isMessageComplete();
         const has_no_more_input = self.has_ended and self.bufferedBytes().len == 0;
         if (!has_ended and has_no_more_input) {
@@ -391,6 +429,11 @@ pub const Stream = struct {
                 return .{ .result = .{ .failure = .UnexpectedEnd } };
             }
             has_ended = true;
+        }
+        if (has_ended and reader.hasUndecodedBody()) {
+            has_ended = false;
+        } else if (has_ended and !reader.isDecodedToEnd()) {
+            return .{ .result = .{ .failure = .UnexpectedEnd } };
         }
         const source: ReadSource = .{ .available = reader.pendingBody(), .has_ended = has_ended, .failure = if (has_ended) null else self.failure };
         const found = switch (read) {
@@ -681,6 +724,10 @@ pub const Stream = struct {
         return failure;
     }
 
+    pub fn flushOutputBeforeClose(self: *Self) void {
+        self.startOutputJob() catch self.writeOutputNow();
+    }
+
     fn startOutputJob(self: *Self) !void {
         const can_start = !self.has_output_in_flight and self.pending_output.items.len > 0;
         if (!can_start) return;
@@ -815,6 +862,17 @@ pub const Stream = struct {
         return self.tls_layer != null;
     }
 
+    pub fn moveTlsIntoTunnel(self: *Self) bool {
+        const layer = self.tls_layer orelse return false;
+        const can_move = layer.handshake == .done and self.tunnel_layer == null;
+        if (!can_move) {
+            return false;
+        }
+        self.tunnel_layer = layer;
+        self.tls_layer = null;
+        return true;
+    }
+
     pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, owns_config: bool, host: []const u8, timeout_ms: ?u64) !HandshakeWait {
         const layer = TlsLayer.createClient(self.allocator, config, owns_config, host) catch |failure| {
             if (owns_config) {
@@ -823,12 +881,22 @@ pub const Stream = struct {
             return failure;
         };
         self.tls_layer = layer;
-        const early = self.bufferedBytes();
-        if (early.len > 0) {
-            _ = tls.dusk_tls_feed(layer.session, early.ptr, early.len);
-            self.consume(early.len);
-        }
+        self.feedBufferedIntoTls(layer);
         return self.awaitHandshake(task, timeout_ms);
+    }
+
+    pub fn startServerTls(self: *Self, task: *TaskState, config: *tls.Config, timeout_ms: ?u64) !HandshakeWait {
+        const layer = try TlsLayer.createServer(self.allocator, config);
+        self.tls_layer = layer;
+        self.feedBufferedIntoTls(layer);
+        return self.awaitHandshake(task, timeout_ms);
+    }
+
+    fn feedBufferedIntoTls(self: *Self, layer: *TlsLayer) void {
+        const early = self.bufferedBytes();
+        if (early.len == 0) return;
+        _ = tls.dusk_tls_feed(layer.session, early.ptr, early.len);
+        self.consume(early.len);
     }
 
     pub fn awaitHandshake(self: *Self, task: *TaskState, timeout_ms: ?u64) !HandshakeWait {
@@ -960,6 +1028,46 @@ pub const Stream = struct {
         self.applyBackpressure();
     }
 
+    fn receiveTunnelRead(self: *Self, tunnel: *TlsLayer, read_count: isize) void {
+        const layer = self.tls_layer orelse return;
+        if (read_count <= 0) {
+            self.receiveTlsRead(layer, read_count);
+            return;
+        }
+        if (tls.dusk_tls_feed(tunnel.session, &tunnel.cipher_scratch, @intCast(read_count)) != .done) {
+            self.failure = .Other;
+            self.serveWaiter();
+            return;
+        }
+        self.forwardTunnelPlaintext(tunnel, layer);
+    }
+
+    fn forwardTunnelPlaintext(self: *Self, tunnel: *TlsLayer, layer: *TlsLayer) void {
+        while (true) {
+            const count = tls.dusk_tls_read(tunnel.session, &layer.cipher_scratch, cipher_chunk_size);
+            if (count > 0) {
+                self.receiveCiphertext(layer, layer.cipher_scratch[0..@intCast(count)]);
+                continue;
+            }
+            if (count == @intFromEnum(tls.Status.end)) {
+                self.has_ended = true;
+                self.serveWaiter();
+            } else if (count < 0) {
+                self.failure = .Other;
+                self.serveWaiter();
+            }
+            break;
+        }
+        const outcome = self.sendTunnelOutput(tunnel, null) catch {
+            self.failure = .Other;
+            return;
+        };
+        switch (outcome) {
+            .failure => |failure| self.failure = failure,
+            .done, .parked => {},
+        }
+    }
+
     fn receiveCiphertext(self: *Self, layer: *TlsLayer, data: []const u8) void {
         if (tls.dusk_tls_feed(layer.session, data.ptr, data.len) != .done) {
             self.failure = .Other;
@@ -1002,8 +1110,24 @@ pub const Stream = struct {
         const session = self.tls_layer.?.session;
         const length = tls.dusk_tls_output_length(session);
         if (length == 0) return .done;
-        const outcome = try self.sendBytes(task, tls.dusk_tls_output_bytes(session)[0..length]);
+        const output = tls.dusk_tls_output_bytes(session)[0..length];
+        const tunnel = self.tunnel_layer orelse {
+            const outcome = try self.sendBytes(task, output);
+            tls.dusk_tls_consume_output(session, length);
+            return outcome;
+        };
+        if (tls.dusk_tls_write(tunnel.session, output.ptr, output.len) < 0) {
+            return .{ .failure = .Other };
+        }
         tls.dusk_tls_consume_output(session, length);
+        return self.sendTunnelOutput(tunnel, task);
+    }
+
+    fn sendTunnelOutput(self: *Self, tunnel: *TlsLayer, task: ?*TaskState) !WriteOutcome {
+        const length = tls.dusk_tls_output_length(tunnel.session);
+        if (length == 0) return .done;
+        const outcome = try self.sendBytes(task, tls.dusk_tls_output_bytes(tunnel.session)[0..length]);
+        tls.dusk_tls_consume_output(tunnel.session, length);
         return outcome;
     }
 
@@ -1135,7 +1259,16 @@ pub const BodyRead = union(enum) {
     line: ?usize,
     all_text,
     all_bytes,
+
+    fn decodeLimit(self: BodyRead) usize {
+        return switch (self) {
+            .bytes => |max| @max(max, min_decoded_bytes),
+            .line, .all_text, .all_bytes => std.math.maxInt(usize),
+        };
+    }
 };
+
+const min_decoded_bytes = 64 * 1024;
 
 pub const ReadOutcome = struct {
     result: union(enum) {
@@ -1322,6 +1455,10 @@ fn onHandshakeTimeout(timer: *uv.Handle) callconv(.c) void {
 
 fn onAlloc(handle: *uv.Handle, _: usize, buffer: *uv.Buffer) callconv(.c) void {
     const stream = streamOf(handle);
+    if (stream.tunnel_layer) |tunnel| {
+        buffer.* = .{ .base = &tunnel.cipher_scratch, .len = cipher_chunk_size };
+        return;
+    }
     if (stream.tls_layer) |layer| {
         buffer.* = .{ .base = &layer.cipher_scratch, .len = cipher_chunk_size };
         return;
@@ -1336,6 +1473,11 @@ fn onAlloc(handle: *uv.Handle, _: usize, buffer: *uv.Buffer) callconv(.c) void {
 
 fn onRead(handle: *uv.Handle, read_count: isize, _: *const uv.Buffer) callconv(.c) void {
     const stream = streamOf(handle);
+    if (stream.tunnel_layer) |tunnel| {
+        stream.receiveTunnelRead(tunnel, read_count);
+        stream.evictIfUnusable();
+        return;
+    }
     if (stream.tls_layer) |layer| {
         stream.receiveTlsRead(layer, read_count);
         stream.evictIfUnusable();

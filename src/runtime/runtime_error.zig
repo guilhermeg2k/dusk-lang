@@ -16,13 +16,13 @@ pub const RuntimeError = error{
     AssertionFailed,
     TaskAwaitsItself,
     AllTasksWaiting,
-    NegativeSleep,
     UnhandledTaskError,
     OutputFailed,
     ClockFailed,
     ClockOutOfRange,
     TlsAlreadyStarted,
     HttpBodyGivenTwice,
+    HttpInvalidCompressionLevel,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -40,12 +40,17 @@ pub const RuntimeErrorReporter = struct {
 
     pub noinline fn tlsAlreadyStarted() RuntimeError {
         @branchHint(.cold);
-        return report(RuntimeError.TlsAlreadyStarted, "start_tls on a connection that already uses TLS", .{});
+        return report(RuntimeError.TlsAlreadyStarted, "start_tls or accept_tls on a connection that already uses TLS", .{});
     }
 
     pub noinline fn httpBodyGivenTwice() RuntimeError {
         @branchHint(.cold);
-        return report(RuntimeError.HttpBodyGivenTwice, "http request with both body and body_bytes", .{});
+        return report(RuntimeError.HttpBodyGivenTwice, "http request with more than one of body, body_bytes and body_stream", .{});
+    }
+
+    pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.HttpInvalidCompressionLevel, "http server compression_level must be from 0 to 9: {d}", .{level});
     }
 
     pub noinline fn invalidReadSize(max: i64) RuntimeError {
@@ -106,11 +111,6 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn allTasksWaiting() RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.AllTasksWaiting, "all tasks are waiting: nothing can wake them up", .{});
-    }
-
-    pub noinline fn negativeSleep(ms: i64) RuntimeError {
-        @branchHint(.cold);
-        return report(RuntimeError.NegativeSleep, "sleep time can't be negative: {d}", .{ms});
     }
 
     pub noinline fn unhandledTaskError(error_name: []const u8) RuntimeError {

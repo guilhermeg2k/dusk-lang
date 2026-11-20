@@ -1,5 +1,6 @@
 import std/array: append, len
 import std/buffer
+import std/compression
 import std/fs
 import std/http
 import std/io
@@ -420,6 +421,277 @@ func tls_listener(cert_name: string) -> !net::TcpListener
     return try net::tls_listen("127.0.0.1", 0, cert)
 end
 
+func check_client(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let mut api = http::Client(base_url = "${base(listener)}/v1", headers = {"X-Token": "abc", "Accept": "text/plain"})
+
+    let plain_server = serve_once(listener, ok)
+    let plain = try api.request("/users")
+    let plain_request = await(plain_server)
+    assert(try plain.text() == "hello")
+    assert(plain_request.lines[0] == "GET /v1/users HTTP/1.1")
+    assert(has_line(plain_request, "X-Token: abc"))
+    assert(has_line(plain_request, "Accept: text/plain"))
+
+    let no_slash_server = serve_once(listener, ok)
+    let no_slash = try api.request("users/7", query = {"full": "yes"})
+    assert(await(no_slash_server).lines[0] == "GET /v1/users/7?full=yes HTTP/1.1")
+
+    let slashed = http::Client(base_url = "${base(listener)}/v1/")
+    let both_server = serve_once(listener, ok)
+    let both = try slashed.request("/items")
+    assert(await(both_server).lines[0] == "GET /v1/items HTTP/1.1")
+    let query_server = serve_once(listener, ok)
+    let query_only = try api.request("?page=2")
+    assert(await(query_server).lines[0] == "GET /v1?page=2 HTTP/1.1")
+    let empty_server = serve_once(listener, ok)
+    let empty_path = try api.request("")
+    assert(await(empty_server).lines[0] == "GET /v1 HTTP/1.1")
+
+    let elsewhere = http::Client(base_url = "http://nowhere.invalid/base")
+    let absolute_server = serve_once(listener, ok)
+    let absolute = try elsewhere.request("${base(listener)}/direct")
+    assert(await(absolute_server).lines[0] == "GET /direct HTTP/1.1")
+
+    let override_server = serve_once(listener, ok)
+    let overridden = try api.request("/me", method = "POST", body = "x", headers = {"x-token": "xyz", "X-Extra": "1"})
+    let override_request = await(override_server)
+    assert(override_request.lines[0] == "POST /v1/me HTTP/1.1")
+    assert(has_line(override_request, "x-token: xyz"))
+    assert(!has_line(override_request, "X-Token: abc"))
+    assert(has_line(override_request, "X-Extra: 1"))
+    assert(has_line(override_request, "Accept: text/plain"))
+
+    api.headers["X-Late"] = "yes"
+    let late_server = serve_once(listener, ok)
+    let late = try api.request("/late")
+    assert(has_line(await(late_server), "X-Late: yes"))
+
+    let tight = http::Client(base_url = base(listener), max_body = 3)
+    let tight_server = serve_once(listener, ok)
+    expect_error(http::HttpError.BodyTooLarge, func() -> return try tight.request("/big"))
+    await(tight_server)
+    let loose_server = serve_once(listener, ok)
+    assert(try (try tight.request("/big", max_body = 100)).text() == "hello")
+    await(loose_server)
+
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let stays = http::Client(base_url = base(listener), max_redirects = 0, headers = {"Authorization": "Bearer t"})
+    let stay_server = serve_once(listener, redirect_to(302, "/next"))
+    assert((try stays.request("/start")).status == 302)
+    await(stay_server)
+    let follow_server = serve_sequence(listener, [redirect_to(302, "/next"), done])
+    assert(try (try stays.request("/start", max_redirects = 3)).text() == "done")
+    let followed = await(follow_server)
+    assert(followed[1].lines[0] == "GET /next HTTP/1.1")
+    assert(has_line(followed[1], "Authorization: Bearer t"))
+
+    let stream_server = serve_once(listener, ok)
+    let mut streamed = try api.open("/stream")
+    assert(try streamed.read_all() == "hello")
+    streamed.close()
+    let stream_request = await(stream_server)
+    assert(stream_request.lines[0] == "GET /v1/stream HTTP/1.1")
+    assert(has_line(stream_request, "X-Token: abc"))
+
+    let quick = http::Client(base_url = base(listener), timeout_ms = 100)
+    let silent = accept_and_wait(listener, "", 400)
+    expect_error(http::HttpError.TimedOut, func() -> return try quick.request("/slow"))
+    await(silent)
+end
+
+func pipe(from: net::TcpConn, to: net::TcpConn) -> void
+    for true do
+        let next = from.read_bytes(65536) catch e then
+            break
+        end
+        if next: data then
+            to.write_bytes(data) catch e then
+                break
+            end
+        else
+            break
+        end
+    end
+    to.close()
+    from.close()
+end
+
+func tunnel_once(proxy: net::TcpListener, target_port: int, answer: string) -> Task[Received]
+    return spawn(func() -> Received
+        let conn = proxy.accept() catch e then
+            return Received(lines = [], body = "")
+        end
+        let received = read_request(conn) catch e then
+            conn.close()
+            return Received(lines = [], body = "")
+        end
+        if answer != "" then
+            conn.write(answer) catch e then
+            end
+            conn.close()
+            return received
+        end
+        let target = net::tcp_connect("127.0.0.1", target_port) catch e then
+            conn.close()
+            return received
+        end
+        conn.write("HTTP/1.1 200 Connection established\r\n\r\n") catch e then
+        end
+        let upstream = spawn(func() -> void
+            pipe(conn, target)
+        end)
+        pipe(target, conn)
+        await(upstream)
+        return received
+    end)
+end
+
+func proxy_error(client: http::Client, url: string) -> ?http::HttpError
+    let resp = client.request(url, timeout_ms = 3000) catch e then
+        return e
+    end
+    return null
+end
+
+func check_proxy(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let port = listener.port()
+    let via = http::Client(proxy = "http://127.0.0.1:$port")
+    let forward_server = serve_once(listener, ok)
+    let forwarded = try via.request("http://example.test/items?page=2", headers = {"X-Token": "abc"})
+    let forward_request = await(forward_server)
+    assert(try forwarded.text() == "hello")
+    assert(forward_request.lines[0] == "GET http://example.test/items?page=2 HTTP/1.1")
+    assert(has_line(forward_request, "Host: example.test"))
+    assert(has_line(forward_request, "X-Token: abc"))
+    assert(!has_header_named(forward_request, "proxy-authorization"))
+
+    let port_server = serve_once(listener, ok)
+    let with_port = try via.request("http://example.test:8080/x")
+    assert(await(port_server).lines[0] == "GET http://example.test:8080/x HTTP/1.1")
+
+    let secret = http::Client(proxy = "http://user:p%40ss@127.0.0.1:$port")
+    let secret_server = serve_once(listener, ok)
+    let authorized = try secret.request("http://example.test/")
+    assert(has_line(await(secret_server), "Proxy-Authorization: Basic dXNlcjpwQHNz"))
+
+    let nowhere = http::Client(proxy = "http://127.0.0.1:1")
+    let local_server = serve_once(listener, ok)
+    assert(try (try nowhere.request("${base(listener)}/local")).text() == "hello")
+    assert(await(local_server).lines[0] == "GET /local HTTP/1.1")
+    let named_local = serve_once(listener, ok)
+    assert(try (try nowhere.request("http://localhost:$port/named")).text() == "hello")
+    assert(await(named_local).lines[0] == "GET /named HTTP/1.1")
+    assert(proxy_error(nowhere, "http://example.test/") == http::HttpError.ConnectionRefused)
+    assert(proxy_error(http::Client(proxy = "not a url"), "http://example.test/") == http::HttpError.InvalidUrl)
+    assert(proxy_error(http::Client(proxy = "socks5://127.0.0.1:1080"), "http://example.test/") == http::HttpError.UnsupportedScheme)
+    let direct_server = serve_once(listener, ok)
+    assert(try (try http::Client(proxy = "").request("${base(listener)}/direct")).text() == "hello")
+    assert(await(direct_server).lines[0] == "GET /direct HTTP/1.1")
+end
+
+func check_proxy_tunnels() -> !void
+    let ca = try fixture("ca.pem")
+    let target = try tls_listener("other-host.pem")
+    let plain_proxy = try net::tcp_listen("127.0.0.1", 0)
+    let secure_proxy = try tls_listener("server.pem")
+    let secret = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecret"
+
+    let tunnel = tunnel_once(plain_proxy, target.port(), "")
+    let target_server = serve_once(target, secret)
+    let through_plain = http::Client(proxy = "http://u:pw@127.0.0.1:${plain_proxy.port()}", ca = ca)
+    let tunneled = try through_plain.request("https://other.example/secure")
+    assert(try tunneled.text() == "secret")
+    let connect = await(tunnel)
+    assert(connect.lines[0] == "CONNECT other.example:443 HTTP/1.1")
+    assert(has_line(connect, "Host: other.example:443"))
+    assert(has_line(connect, "Proxy-Authorization: Basic dTpwdw=="))
+    let target_request = await(target_server)
+    assert(target_request.lines[0] == "GET /secure HTTP/1.1")
+    assert(!has_header_named(target_request, "proxy-authorization"))
+
+    let double = tunnel_once(secure_proxy, target.port(), "")
+    let double_server = serve_once(target, secret)
+    let through_secure = http::Client(proxy = "https://localhost:${secure_proxy.port()}", ca = ca)
+    let doubly = try through_secure.request("https://other.example:8443/twice")
+    assert(try doubly.text() == "secret")
+    assert(await(double).lines[0] == "CONNECT other.example:8443 HTTP/1.1")
+    assert(await(double_server).lines[0] == "GET /twice HTTP/1.1")
+
+    let streamed_tunnel = tunnel_once(secure_proxy, target.port(), "")
+    let streamed_server = serve_once(target, secret)
+    let mut streamed = try through_secure.open("https://other.example/stream")
+    assert(try streamed.read_all() == "secret")
+    streamed.close()
+    await(streamed_tunnel)
+    await(streamed_server)
+
+    let forward = tunnel_once(secure_proxy, 0, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+    let forwarded = try through_secure.request("http://example.test/plain")
+    assert(try forwarded.text() == "ok")
+    assert(await(forward).lines[0] == "GET http://example.test/plain HTTP/1.1")
+
+    let refusing = tunnel_once(plain_proxy, 0, "HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+    assert(proxy_error(through_plain, "https://other.example/") == http::HttpError.ProxyRefused)
+    await(refusing)
+
+    let untrusting = http::Client(proxy = "https://localhost:${secure_proxy.port()}")
+    let untrusted_proxy = tunnel_once(secure_proxy, 0, "x")
+    assert(proxy_error(untrusting, "https://other.example/") == http::HttpError.UntrustedCertificate)
+    await(untrusted_proxy)
+
+    target.close()
+    plain_proxy.close()
+    secure_proxy.close()
+end
+
+func check_url_details(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let port = listener.port()
+
+    let spaced_server = serve_once(listener, ok)
+    let spaced = try http::request("${base(listener)}/my files/café?q=a b&tag=\"x\"#part one")
+    assert(await(spaced_server).lines[0] == "GET /my%20files/caf%C3%A9?q=a%20b&tag=%22x%22 HTTP/1.1")
+    assert(spaced.url == "${base(listener)}/my%20files/caf%C3%A9?q=a%20b&tag=%22x%22#part%20one")
+
+    let kept_server = serve_once(listener, ok)
+    let kept = try http::request("${base(listener)}/already%20encoded/a+b?x=%C3%A9")
+    assert(await(kept_server).lines[0] == "GET /already%20encoded/a+b?x=%C3%A9 HTTP/1.1")
+
+    let user_server = serve_once(listener, ok)
+    let with_user = try http::request("http://user:pa%3Ass@127.0.0.1:$port/private")
+    let user_request = await(user_server)
+    assert(user_request.lines[0] == "GET /private HTTP/1.1")
+    assert(has_line(user_request, "Authorization: Basic dXNlcjpwYTpzcw=="))
+    assert(has_line(user_request, "Host: 127.0.0.1:$port"))
+    assert(with_user.url == "http://127.0.0.1:$port/private")
+
+    let token_server = serve_once(listener, ok)
+    let token = try http::request("http://token@127.0.0.1:$port/")
+    assert(has_line(await(token_server), "Authorization: Basic dG9rZW46"))
+
+    let explicit_server = serve_once(listener, ok)
+    let explicit = try http::request("http://user:pw@127.0.0.1:$port/", headers = {"authorization": "Bearer mine"})
+    let explicit_request = await(explicit_server)
+    assert(has_line(explicit_request, "authorization: Bearer mine"))
+    assert(!has_line(explicit_request, "Authorization: Basic dXNlcjpwdw=="))
+
+    let done = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone"
+    let hops = serve_sequence(listener, [redirect_to(302, "http://localhost:$port/elsewhere"), done])
+    let hopped = try http::request("http://user:pw@127.0.0.1:$port/start")
+    let hop_requests = await(hops)
+    assert(has_line(hop_requests[0], "Authorization: Basic dXNlcjpwdw=="))
+    assert(!has_header_named(hop_requests[1], "authorization"))
+
+    let api = http::Client(base_url = "http://user:pw@127.0.0.1:$port/v1")
+    let client_server = serve_once(listener, ok)
+    let through_client = try api.request("/a b")
+    let client_request = await(client_server)
+    assert(client_request.lines[0] == "GET /v1/a%20b HTTP/1.1")
+    assert(has_line(client_request, "Authorization: Basic dXNlcjpwdw=="))
+end
+
 func check_https() -> !void
     let ca = try fixture("ca.pem")
     let secure = try tls_listener("server.pem")
@@ -437,10 +709,19 @@ func check_https() -> !void
     assert(try hopped.text() == "ok")
     assert(len(await(hops)) == 2)
 
+    let trusted = http::Client(base_url = secure_base, ca = ca)
+    let trusted_server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    assert(try (try trusted.request("/client")).text() == "ok")
+    await(trusted_server)
+
     let other_ca = try fixture("self-signed.pem")
     let untrusted = serve_once(secure, "")
     expect_error(http::HttpError.UntrustedCertificate, func() -> return try http::request("$secure_base/", ca = other_ca))
     await(untrusted)
+    let wrongly_trusting = http::Client(base_url = secure_base, ca = other_ca)
+    let override_ca_server = serve_once(secure, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+    assert(try (try wrongly_trusting.request("/client", ca = ca)).text() == "ok")
+    await(override_ca_server)
     let bad_ca = serve_once(secure, "")
     expect_error(http::HttpError.InvalidCertificate, func() -> return try http::request("$secure_base/", ca = "not a certificate"))
     await(bad_ca)
@@ -714,6 +995,21 @@ func encoded_head(encoding: string, body: buffer) -> string
     return "HTTP/1.1 200 OK\r\nContent-Encoding: $encoding\r\nContent-Length: ${buffer::len(body)}\r\nConnection: close\r\n\r\n"
 end
 
+func stream_error(mut stream: http::ResponseStream) -> ?io::IoError
+    let data = stream.read_all_bytes() catch e then
+        return e
+    end
+    return null
+end
+
+func to_hex(value: int) -> string
+    let digits = "0123456789abcdef"
+    if value < 16 then
+        return string::slice(digits, value, value + 1) catch ""
+    end
+    return "${to_hex(value // 16)}${to_hex(value % 16)}"
+end
+
 func check_gzip(listener: net::TcpListener) -> !void
     let hello = try fs::read_bytes("test/fixtures/http/hello.gz")
     let zeros = try fs::read_bytes("test/fixtures/http/zeros.gz")
@@ -723,7 +1019,7 @@ func check_gzip(listener: net::TcpListener) -> !void
     let plain_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
     let plain = try http::request(base(listener))
     let plain_request = await(plain_server)
-    assert(has_line(plain_request, "Accept-Encoding: gzip"))
+    assert(has_line(plain_request, "Accept-Encoding: gzip, deflate"))
     assert(try plain.text() == expected)
     assert(plain.headers.get("content-encoding") == "gzip")
     assert(plain.headers.get("content-length") == "${buffer::len(hello)}")
@@ -738,7 +1034,7 @@ func check_gzip(listener: net::TcpListener) -> !void
     let raw_request = await(raw_server)
     assert(buffer::len(raw.body) == buffer::len(hello))
     assert(has_line(raw_request, "accept-encoding: gzip"))
-    assert(!has_line(raw_request, "Accept-Encoding: gzip"))
+    assert(!has_line(raw_request, "Accept-Encoding: gzip, deflate"))
 
     let bomb_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
     expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 100000))
@@ -759,11 +1055,108 @@ func check_gzip(listener: net::TcpListener) -> !void
     assert(buffer::len(unknown.body) == buffer::len(hello))
     await(unknown_server)
 
+    let text = buffer::from_string(expected)
+    let mut zlibbed = try compression::compress(text, compression::Format.Zlib)
+    let deflate_server = serve_body_once(listener, encoded_head("deflate", zlibbed), zlibbed)
+    assert(try (try http::request(base(listener))).text() == expected)
+    await(deflate_server)
+    let mut raw_deflate = try compression::compress(text, compression::Format.Deflate)
+    let raw_deflate_server = serve_body_once(listener, encoded_head("Deflate", raw_deflate), raw_deflate)
+    assert(try (try http::request(base(listener))).text() == expected)
+    await(raw_deflate_server)
+    let mut bad_deflate = buffer::from_string("not deflate at all")
+    let bad_deflate_server = serve_body_once(listener, encoded_head("deflate", bad_deflate), bad_deflate)
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(bad_deflate_server)
+    let empty_gzip_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    assert(buffer::len((try http::request(base(listener))).body) == 0)
+    await(empty_gzip_server)
+
     let streamed_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
     let mut streamed = try http::open(base(listener))
-    assert(buffer::len(try streamed.read_all_bytes()) == buffer::len(hello))
+    assert(try string::from_bytes(try streamed.read_all_bytes()) == expected)
     streamed.close()
-    assert(!has_header_named(await(streamed_server), "accept-encoding"))
+    assert(has_line(await(streamed_server), "Accept-Encoding: gzip, deflate"))
+
+    let lines_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut lines = try http::open(base(listener))
+    let mut line_count = 0
+    for true do
+        let next = try lines.read_line()
+        if next: line then
+            assert(line == "hello from gzip")
+            line_count = line_count + 1
+        else
+            break
+        end
+    end
+    assert(line_count == 64)
+    lines.close()
+    await(lines_server)
+
+    let pieces_server = serve_body_once(listener, encoded_head("deflate", zlibbed), zlibbed)
+    let mut pieces = try http::open(base(listener))
+    let mut collected: []string = []
+    for true do
+        let next = try pieces.read_bytes(10)
+        if next: piece then
+            assert(buffer::len(piece) <= 10)
+            append(collected, try string::from_bytes(piece))
+        else
+            break
+        end
+    end
+    assert(string::join(collected) == expected)
+    pieces.close()
+    await(pieces_server)
+
+    let big_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut big = try http::open(base(listener))
+    let mut total = 0
+    for true do
+        let next = try big.read_bytes(1000)
+        if next: piece then
+            total = total + buffer::len(piece)
+        else
+            break
+        end
+    end
+    assert(total == 1048576)
+    big.close()
+    await(big_server)
+
+    let mut framed = try buffer::new(buffer::len(hello) + 32)
+    let half = buffer::len(hello) // 2
+    let mut at = try buffer::put(framed, 0, "${string::lower(to_hex(half))}\r\n")
+    at = try buffer::put_bytes(framed, at, try buffer::slice(hello, 0, half))
+    at = try buffer::put(framed, at, "\r\n${to_hex(buffer::len(hello) - half)}\r\n")
+    at = try buffer::put_bytes(framed, at, try buffer::slice(hello, half, buffer::len(hello)))
+    at = try buffer::put(framed, at, "\r\n0\r\n\r\n")
+    let mut chunked_body = try buffer::slice(framed, 0, at)
+    let chunked_server = serve_body_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", chunked_body)
+    let mut chunked = try http::open(base(listener))
+    assert(try chunked.read_all() == expected)
+    chunked.close()
+    await(chunked_server)
+
+    let broken_stream_server = serve_body_once(listener, encoded_head("gzip", broken), broken)
+    let mut broken_stream = try http::open(base(listener))
+    assert(stream_error(broken_stream) == io::IoError.Other)
+    broken_stream.close()
+    await(broken_stream_server)
+
+    let mut cut = try buffer::slice(hello, 0, buffer::len(hello) - 4)
+    let cut_server = serve_body_once(listener, encoded_head("gzip", cut), cut)
+    let mut cut_stream = try http::open(base(listener))
+    assert(stream_error(cut_stream) == io::IoError.UnexpectedEnd)
+    cut_stream.close()
+    await(cut_server)
+
+    let raw_stream_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut raw_stream = try http::open(base(listener), headers = {"Accept-Encoding": "gzip"})
+    assert(buffer::len(try raw_stream.read_all_bytes()) == buffer::len(hello))
+    raw_stream.close()
+    await(raw_stream_server)
 
     let head_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 45\r\n\r\n")
     let head = try http::request(base(listener), method = "HEAD")
@@ -784,6 +1177,10 @@ func main() -> !void
     try check_stream_errors(listener)
     try check_pool(listener)
     try check_gzip(listener)
+    try check_client(listener)
+    try check_proxy(listener)
+    try check_url_details(listener)
     listener.close()
     try check_https()
+    try check_proxy_tunnels()
 end

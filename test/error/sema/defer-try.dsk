@@ -1,0 +1,11 @@
+error Oops
+    Bad
+end
+
+func risky() -> Oops!void
+    return Oops.Bad
+end
+
+func main() -> !void
+    defer try risky()
+end

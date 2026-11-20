@@ -37,8 +37,11 @@ extern func ~remote_port(handle: int) -> int
 extern func ~certificate_handle(cert_pem: string, key_pem: string) -> NetError!int
 extern func ~listener_use_tls(listener: int, certificate: int) -> void
 extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> NetError!void
+extern func ~stream_accept_tls(handle: int, certificate: int, timeout_ms: int) -> NetError!void
 extern func ~stream_is_tls(handle: int) -> bool
 extern func ~stream_handshake(handle: int, timeout_ms: int) -> NetError!void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void
 
 struct Certificate
     ~handle: int
@@ -52,6 +55,7 @@ end
 struct TcpListener
     ~handle: int
     ~bound_port: int
+    ~owner: resource
 
     func accept(self: @, timeout_ms: int = -1) -> io::IoError!TcpConn
         return open_conn(try listener_accept(self.handle, timeout_ms))
@@ -63,6 +67,7 @@ struct TcpListener
 
     func close(self: @) -> void
         listener_close(self.handle)
+        release(self.owner)
     end
 end
 
@@ -70,6 +75,7 @@ struct TcpConn
     ~handle: int
     ~remote_host: string
     ~remote_port: int
+    ~owner: resource
 
     func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
         return try stream_read_line(self.handle, max, timeout_ms)
@@ -107,6 +113,10 @@ struct TcpConn
         try stream_start_tls(self.handle, host, ca, verify, timeout_ms)
     end
 
+    func accept_tls(self: @, cert: Certificate, timeout_ms: int = -1) -> NetError!void
+        try stream_accept_tls(self.handle, cert.handle, timeout_ms)
+    end
+
     func handshake(self: @, timeout_ms: int = -1) -> NetError!void
         try stream_handshake(self.handle, timeout_ms)
     end
@@ -125,6 +135,7 @@ struct TcpConn
 
     func close(self: @) -> void
         stream_close(self.handle)
+        release(self.owner)
     end
 end
 
@@ -134,11 +145,11 @@ end
 
 func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
     let handle = try tcp_listen_handle(host, port, backlog)
-    return TcpListener(handle = handle, bound_port = listener_port(handle))
+    return TcpListener(handle = handle, bound_port = listener_port(handle), owner = own(1, handle))
 end
 
 func ~open_conn(handle: int) -> TcpConn
-    return TcpConn(handle = handle, remote_host = remote_host(handle), remote_port = remote_port(handle))
+    return TcpConn(handle = handle, remote_host = remote_host(handle), remote_port = remote_port(handle), owner = own(0, handle))
 end
 
 func certificate(cert_pem: string, key_pem: string) -> NetError!Certificate

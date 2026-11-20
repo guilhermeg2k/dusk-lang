@@ -110,6 +110,19 @@ pub const CompileErrorReporter = struct {
         return error.InvalidType;
     }
 
+    pub fn textExpected(self: *Self, found: []const u8, loc: Loc) CompileError {
+        const source = self.src[loc.start..@min(loc.end + 1, self.src.len)];
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Invalid type: expected 'string' found '{s}': use interpolation to turn it into text, \"${{{s}}}\"",
+                .{ found, source },
+            ),
+            loc,
+        );
+        return error.InvalidType;
+    }
+
     pub fn stringIndexing(self: *Self, loc: Loc) CompileError {
         self.log("Strings can't be indexed: use string::byte_at(s, i) or string::char_at(s, i) from std/string", loc);
         return error.InvalidIndexing;
@@ -462,6 +475,21 @@ pub const CompileErrorReporter = struct {
             loc,
         );
         return error.UnhandledError;
+    }
+
+    pub fn tryInsideDefer(self: *Self, loc: Loc) CompileError {
+        self.log("try can't be used in deferred code: it runs while the function is already leaving, so handle errors with catch", loc);
+        return error.TryInsideDefer;
+    }
+
+    pub fn exitInsideDefer(self: *Self, keyword: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} can't leave deferred code: it runs while its block is already leaving", .{keyword}), loc);
+        return error.ExitInsideDefer;
+    }
+
+    pub fn errdeferOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
+        self.log("errdefer only runs when the function returns an error, so it needs a function that can fail (-> E!T or -> !T)", loc);
+        return error.ErrdeferOutsideFailingFunction;
     }
 
     pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
@@ -1131,6 +1159,9 @@ pub const CompileError = error{
     UnawaitedTaskCanFail,
     UnhandledError,
     TryOutsideFailingFunction,
+    TryInsideDefer,
+    ExitInsideDefer,
+    ErrdeferOutsideFailingFunction,
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,

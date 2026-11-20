@@ -1,0 +1,107 @@
+import std/compression
+import std/buffer
+import std/task
+import std/array
+import std/string
+
+struct Flag
+    is_set: bool = false
+end
+
+func same_bytes(a: buffer, b: buffer) -> bool
+    if buffer::len(a) != buffer::len(b) then
+        return false
+    end
+    for 0..buffer::len(a) - 1: i do
+        if a[i] != b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+func sample(size: int, seed_start: int) -> !buffer
+    let mut data = try buffer::new(size)
+    let mut seed = seed_start
+    for 0..size - 1: i do
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        let is_noise = (i // 4096) % 4 == 3
+        let value = if is_noise then (seed // 65536) % 256 else (i // 7) % 64 + 32 end
+        data[i] = try to_byte(value)
+    end
+    return data
+end
+
+func decompress_error(data: buffer, format: compression::Format, max: int = -1) -> ?compression::CompressionError
+    let plain = compression::decompress(data, format, max) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let big = try sample(300000, 7)
+    let mut compress_flag = Flag()
+    let compress_watcher = spawn(func() -> void
+        compress_flag.is_set = true
+    end)
+    let packed = try compression::compress(big, compression::Format.Gzip, 9)
+    assert(compress_flag.is_set)
+    await(compress_watcher)
+    assert(same_bytes(try compression::decompress(packed, compression::Format.Gzip), big))
+
+    let stored = try compression::compress(big, compression::Format.Gzip, 0)
+    assert(buffer::len(stored) > 262144)
+    let mut decompress_flag = Flag()
+    let decompress_watcher = spawn(func() -> void
+        decompress_flag.is_set = true
+    end)
+    let plain = try compression::decompress(stored, compression::Format.Gzip)
+    assert(decompress_flag.is_set)
+    await(decompress_watcher)
+    assert(same_bytes(plain, big))
+
+    let small = try sample(1000, 3)
+    let mut small_flag = Flag()
+    let small_watcher = spawn(func() -> void
+        small_flag.is_set = true
+    end)
+    let small_packed = try compression::compress(small, compression::Format.Zlib)
+    assert(!small_flag.is_set)
+    await(small_watcher)
+
+    let zeros = try buffer::new(20000000)
+    let packed_zeros = try compression::compress(zeros, compression::Format.Gzip, 1)
+    assert(buffer::len(try compression::decompress(packed_zeros, compression::Format.Gzip)) == 20000000)
+    assert(decompress_error(big, compression::Format.Gzip) == compression::CompressionError.InvalidData)
+    assert(decompress_error(big, compression::Format.Deflate) == compression::CompressionError.InvalidData)
+    let mut padded = try buffer::new(buffer::len(stored) + 300000)
+    let padded_end = try buffer::put_bytes(padded, 0, stored)
+    assert(decompress_error(padded, compression::Format.Gzip) == compression::CompressionError.InvalidData)
+    assert(decompress_error(stored, compression::Format.Gzip, max = 1000) == compression::CompressionError.TooLarge)
+    assert(decompress_error(stored, compression::Format.Gzip, max = 299999) == compression::CompressionError.TooLarge)
+    assert(decompress_error(stored, compression::Format.Gzip, max = 300000) == null)
+
+    let formats = [compression::Format.Gzip, compression::Format.Zlib, compression::Format.Deflate]
+    let mut inputs: []buffer = []
+    for 0..3: i do
+        let mut input = try sample(270000 + i * 1000, i)
+        array::append(inputs, input)
+    end
+    let mut jobs: []Task[bool, compression::CompressionError] = []
+    for 0..3: i do
+        array::append(jobs, spawn(func() -> compression::CompressionError!bool
+            let format = formats[i % 3]
+            let job_packed = try compression::compress(inputs[i], format, i % 10)
+            let filler = string::repeat("x", 100000) catch e then
+                return false
+            end
+            let job_plain = try compression::decompress(job_packed, format)
+            return same_bytes(job_plain, inputs[i])
+        end))
+    end
+    for jobs: job do
+        assert(try await(job))
+    end
+
+end

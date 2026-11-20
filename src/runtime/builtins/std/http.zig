@@ -19,12 +19,20 @@ pub const HttpError = http.HttpError;
 pub const error_sets = .{HttpError};
 
 const replacement_character = "\u{FFFD}";
-const flate = std.compress.flate;
-const gunzip_chunk_size = 16 * 1024;
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
     .{ "tcp_connect_handle", Binding{ .native = &net.tcpConnect } },
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
+    .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
+    .{ "base64", Binding{ .native = &base64 } },
+    .{ "encoded_url", Binding{ .native = &encodedUrl } },
+    .{ "stream_forbid_reuse", Binding{ .native = &streamForbidReuse } },
+    .{ "stream_has_final_status", Binding{ .native = &streamHasFinalStatus } },
+    .{ "host_slot_take", Binding{ .native = &hostSlotTake } },
+    .{ "host_slot_release", Binding{ .native = &hostSlotRelease } },
+    .{ "stream_hold_host_slot", Binding{ .native = &streamHoldHostSlot } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_set_write_timeout", Binding{ .native = &io.streamSetWriteTimeout } },
@@ -49,13 +57,14 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "server_set_idle", Binding{ .native = &serverSetIdle } },
     .{ "server_close", Binding{ .native = &serverClose } },
     .{ "server_is_closing", Binding{ .native = &serverIsClosing } },
-    .{ "gunzip", Binding{ .native = &gunzip } },
+    .{ "stream_decode_body", Binding{ .native = &streamDecodeBody } },
     .{ "pool_take", Binding{ .native = &poolTake } },
     .{ "pool_put", Binding{ .native = &poolPut } },
     .{ "is_method", Binding{ .native = &isMethod } },
     .{ "is_header_name", Binding{ .native = &isHeaderName } },
     .{ "is_header_value", Binding{ .native = &isHeaderValue } },
     .{ "body_given_twice", Binding{ .native = &bodyGivenTwice } },
+    .{ "invalid_compression_level", Binding{ .native = &invalidCompressionLevel } },
 });
 
 fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -178,36 +187,11 @@ fn readHttp(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!Nati
     return native.parked();
 }
 
-fn gunzip(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const allocator = std.heap.smp_allocator;
-    const cap: usize = @intCast(@max(args[1].int64, 0));
-    const window = try allocator.alloc(u8, flate.max_window_len);
-    defer allocator.free(window);
-    var input: std.Io.Reader = .fixed(bytesArg(args, 0));
-    var decompress: flate.Decompress = .init(&input, .gzip, window);
-    var plain: std.ArrayList(u8) = .empty;
-    defer plain.deinit(allocator);
-    var chunk: [gunzip_chunk_size]u8 = undefined;
-    while (true) {
-        const count = decompress.reader.readSliceShort(&chunk) catch return fail(HttpError.InvalidResponse);
-        if (count == 0) break;
-        if (plain.items.len + count > cap) {
-            return fail(HttpError.BodyTooLarge);
-        }
-        try plain.appendSlice(allocator, chunk[0..count]);
-    }
-    if (!matchesGzipFooter(&decompress, plain.items)) {
-        return fail(HttpError.InvalidResponse);
-    }
-    return ok(try vm.allocBytesValue(plain.items, .buffer));
-}
-
-fn matchesGzipFooter(decompress: *const flate.Decompress, plain: []const u8) bool {
-    if (decompress.state != .end) {
-        return false;
-    }
-    const footer = decompress.container_metadata.gzip;
-    return footer.crc == std.hash.Crc32.hash(plain) and footer.count == @as(u32, @truncate(plain.len));
+fn streamDecodeBody(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .null = {} });
+    const reader = stream.http_reader orelse return ok(.{ .null = {} });
+    try reader.startDecoding(@enumFromInt(args[1].int64));
+    return ok(.{ .null = {} });
 }
 
 fn poolTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -427,4 +411,111 @@ fn isHeaderValue(_: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn bodyGivenTwice(_: *VM, _: []v.Value) anyerror!NativeResult {
     return RuntimeErrorReporter.httpBodyGivenTwice();
+}
+
+fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const encoder = std.base64.standard.Encoder;
+    const encoded = try std.heap.smp_allocator.alloc(u8, encoder.calcSize(text.len));
+    defer std.heap.smp_allocator.free(encoded);
+    _ = encoder.encode(encoded, text);
+    return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn hostSlotTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const event_loop = &vm.event_loop;
+    const host = bytesArg(args, 0);
+    const limit: ?usize = if (args[1].int64 < 0) null else @intCast(args[1].int64);
+    if (try event_loop.host_slots.tryTake(event_loop.allocator, host, limit)) {
+        return ok(.{ .null = {} });
+    }
+    const current = vm.running_task.?;
+    const timeout_ms: ?u64 = if (args[2].int64 < 0) null else @intCast(args[2].int64);
+    try event_loop.parkForHostSlot(&vm.scheduler, current, bytesArg(args, 0), timeout_ms);
+    current.park();
+    return native.parked();
+}
+
+fn hostSlotRelease(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    vm.event_loop.releaseHostSlot(bytesArg(args, 0));
+    return ok(.{ .null = {} });
+}
+
+fn streamHoldHostSlot(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse {
+        vm.event_loop.releaseHostSlot(bytesArg(args, 1));
+        return ok(.{ .null = {} });
+    };
+    stream.holdHostSlot(bytesArg(args, 1)) catch {
+        vm.event_loop.releaseHostSlot(bytesArg(args, 1));
+    };
+    return ok(.{ .null = {} });
+}
+
+fn streamForbidReuse(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    if (vm.event_loop.streamAt(args[0].int64)) |stream| {
+        stream.is_reuse_forbidden = true;
+    }
+    return ok(.{ .null = {} });
+}
+
+fn streamHasFinalStatus(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .bool = false });
+    const head = stream.bufferedBytes();
+    const prefix = "HTTP/1.";
+    const has_status = head.len >= prefix.len + 3 and std.mem.startsWith(u8, head, prefix);
+    if (!has_status) {
+        return ok(.{ .bool = false });
+    }
+    return ok(.{ .bool = head[prefix.len + 2] != '1' });
+}
+
+fn encodedUrl(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const rest_start = urlPathStart(text);
+    var extra: usize = 0;
+    for (text[rest_start..]) |byte| {
+        if (needsUrlEscape(byte)) {
+            extra += 2;
+        }
+    }
+    if (extra == 0) {
+        return ok(args[0]);
+    }
+    const allocator = std.heap.smp_allocator;
+    const encoded = try allocator.alloc(u8, text.len + extra);
+    defer allocator.free(encoded);
+    @memcpy(encoded[0..rest_start], text[0..rest_start]);
+    var at = rest_start;
+    for (text[rest_start..]) |byte| {
+        if (!needsUrlEscape(byte)) {
+            encoded[at] = byte;
+            at += 1;
+            continue;
+        }
+        const digits = "0123456789ABCDEF";
+        encoded[at] = '%';
+        encoded[at + 1] = digits[byte >> 4];
+        encoded[at + 2] = digits[byte & 0x0f];
+        at += 3;
+    }
+    return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn urlPathStart(text: []const u8) usize {
+    const scheme_end = std.mem.indexOf(u8, text, "://") orelse return 0;
+    const authority_start = scheme_end + 3;
+    const authority_end = std.mem.indexOfAnyPos(u8, text, authority_start, "/?#") orelse return text.len;
+    return authority_end;
+}
+
+fn needsUrlEscape(byte: u8) bool {
+    if (byte <= 0x20 or byte >= 0x7f) {
+        return true;
+    }
+    return std.mem.indexOfScalar(u8, "\"<>\\^`{|}", byte) != null;
+}
+
+fn invalidCompressionLevel(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return RuntimeErrorReporter.httpInvalidCompressionLevel(args[0].int64);
 }

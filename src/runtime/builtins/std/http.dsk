@@ -1,5 +1,6 @@
 import std/array: append, contains, len
 import std/buffer
+import std/compression
 import std/fs
 import std/io
 import std/map
@@ -33,6 +34,7 @@ error HttpError
     InvalidRequest
     AddressInUse
     PermissionDenied
+    ProxyRefused
     Other
 end
 
@@ -119,6 +121,27 @@ struct Response
     end
 end
 
+struct ContentType
+    let HTML = "text/html; charset=utf-8"
+    let CSS = "text/css; charset=utf-8"
+    let JS = "text/javascript; charset=utf-8"
+    let JSON = "application/json"
+    let TEXT = "text/plain; charset=utf-8"
+    let CSV = "text/csv; charset=utf-8"
+    let XML = "application/xml"
+    let SVG = "image/svg+xml"
+    let PNG = "image/png"
+    let JPEG = "image/jpeg"
+    let GIF = "image/gif"
+    let WEBP = "image/webp"
+    let ICO = "image/x-icon"
+    let WASM = "application/wasm"
+    let PDF = "application/pdf"
+    let EVENT_STREAM = "text/event-stream"
+    let FORM = "application/x-www-form-urlencoded"
+    let BINARY = "application/octet-stream"
+end
+
 struct ResponseStream
     status: int
     reason: string
@@ -126,6 +149,7 @@ struct ResponseStream
     url: string
     ~handle: int
     ~pool_key: string
+    ~owner: resource
 
     func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
         return try stream_body_bytes(self.handle, max, timeout_ms)
@@ -145,6 +169,7 @@ struct ResponseStream
 
     func close(mut self: @) -> void
         pool_put(self.pool_key, self.handle)
+        release(self.owner)
     end
 end
 
@@ -156,6 +181,8 @@ struct Server
     ~idle_timeout_ms: int
     ~write_timeout_ms: int
     ~max_connections: int
+    ~compress: bool
+    ~compression_level: int
 
     func port(self: @) -> int
         return self.listener.port()
@@ -204,6 +231,8 @@ struct BodyWriter
     ~remaining: int
     ~pending: buffer
     ~used: int
+    ~compressor: compression::Compressor
+    ~is_compressing: bool
 
     func write(mut self: @, text: string) -> io::IoError!void
         let size = string::len(text)
@@ -230,6 +259,17 @@ struct BodyWriter
     end
 
     func flush(mut self: @) -> io::IoError!void
+        try self.send_pending()
+        if !self.is_compressing then
+            return
+        end
+        let packed = self.compressor.flush() catch e then
+            return io::IoError.Other
+        end
+        try self.send_frame(packed)
+    end
+
+    func ~send_pending(mut self: @) -> io::IoError!void
         if self.used == 0 then
             return
         end
@@ -240,8 +280,19 @@ struct BodyWriter
         try self.send(data)
     end
 
+    func ~finish_body(mut self: @) -> io::IoError!void
+        try self.send_pending()
+        if !self.is_compressing then
+            return
+        end
+        let packed = self.compressor.finish() catch e then
+            return io::IoError.Other
+        end
+        try self.send_frame(packed)
+    end
+
     func ~make_room(mut self: @, size: int) -> io::IoError!void
-        let is_closed = self.is_discarding or server_is_closing(self.state)
+        let is_closed = self.is_discarding or (self.state >= 0 and server_is_closing(self.state))
         if is_closed then
             return io::IoError.Closed
         end
@@ -252,11 +303,25 @@ struct BodyWriter
             self.remaining = self.remaining - size
         end
         if self.used + size > buffer::len(self.pending) then
-            try self.flush()
+            try self.send_pending()
         end
     end
 
     func ~send(mut self: @, data: buffer) -> io::IoError!void
+        if !self.is_compressing then
+            try self.send_frame(data)
+            return
+        end
+        let packed = self.compressor.write_bytes(data) catch e then
+            return io::IoError.Other
+        end
+        try self.send_frame(packed)
+    end
+
+    func ~send_frame(mut self: @, data: buffer) -> io::IoError!void
+        if buffer::len(data) == 0 then
+            return
+        end
         if !self.is_chunked then
             try stream_write_bytes(self.handle, data)
             return
@@ -342,7 +407,7 @@ extern func ~stream_body_line(handle: int, max: int, timeout_ms: int) -> io::IoE
 extern func ~stream_body_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_body_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
-extern func ~gunzip(data: buffer, cap: int) -> HttpError!buffer
+extern func ~stream_decode_body(handle: int, format: compression::Format) -> void
 extern func ~pool_take(key: string) -> int
 extern func ~pool_put(key: string, handle: int) -> void
 extern func ~conn_handle(conn: net::TcpConn) -> int
@@ -362,6 +427,17 @@ extern func ~is_method(text: string) -> bool
 extern func ~is_header_name(text: string) -> bool
 extern func ~is_header_value(text: string) -> bool
 extern func ~body_given_twice() -> void
+extern func ~stream_start_tunneled_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
+extern func ~base64(text: string) -> string
+extern func ~encoded_url(text: string) -> string
+extern func ~stream_forbid_reuse(handle: int) -> void
+extern func ~stream_has_final_status(handle: int) -> bool
+extern func ~host_slot_take(host: string, limit: int, timeout_ms: int) -> HttpError!void
+extern func ~host_slot_release(host: string) -> void
+extern func ~stream_hold_host_slot(handle: int, host: string) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void
+extern func ~invalid_compression_level(level: int) -> void
 
 let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
@@ -369,6 +445,9 @@ let ~REQUEST_DRAIN_LIMIT = 65536
 let ~JOINED_BODY_LIMIT = 65536
 let ~BODY_WRITER_SIZE = 16384
 let ~FILE_PIECE_SIZE = 65536
+let ~MIN_COMPRESSED_BODY = 1024
+let ~EXPECT_CONTINUE_SIZE = 1048576
+let ~CONTINUE_WAIT_MS = 1000
 let ~BODY_COMPLETE = 0
 let ~BODY_UNREAD = 1
 let ~BODY_TOO_LARGE = 1
@@ -386,6 +465,20 @@ struct ~Exchange
     verify: bool
     follows_redirects: bool
     reads_body: bool
+    proxy: ?Proxy
+    body_stream: ?func(mut BodyWriter) -> io::IoError!void = null
+    body_length: int = -1
+    max_connections_per_host: int = -1
+end
+
+struct ~Proxy
+    url: url::Url
+    authorization: ?string
+end
+
+struct ~UserInfoSplit
+    url: string
+    authorization: ?string
 end
 
 struct ~Opened
@@ -394,29 +487,183 @@ struct ~Opened
     pool_key: string
 end
 
-func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
-    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = max_body, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = true)
-    let opened = try start(url, query, exchange, max_redirects)
-    return opened.response
+struct Client
+    base_url: string = ""
+    headers: map[string, string] = {}
+    timeout_ms: int = -1
+    max_redirects: int = 10
+    max_body: int = 67108864
+    ca: ?string = null
+    verify: bool = true
+    proxy: ?string = null
+    max_connections_per_host: int = -1
+
+    func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!Response
+        let redirects = max_redirects orelse self.max_redirects
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length, max_connections_per_host = self.max_connections_per_host)
+        let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
+        return opened.response
+    end
+
+    func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!ResponseStream
+        let redirects = max_redirects orelse self.max_redirects
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length, max_connections_per_host = self.max_connections_per_host)
+        let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
+        let response = opened.response
+        if body_format(response.status, response.headers, exchange): format then
+            stream_decode_body(opened.handle, format)
+        end
+        return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key, owner = own(0, opened.handle))
+    end
 end
 
-func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true) -> HttpError!ResponseStream
-    let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = false)
-    let opened = try start(url, query, exchange, max_redirects)
-    let response = opened.response
-    return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key)
+func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!Response
+    let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, max_body = max_body, ca = ca, verify = verify)
+    return try client.request(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query, body_stream = body_stream, body_length = body_length)
+end
+
+func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!ResponseStream
+    let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, ca = ca, verify = verify)
+    return try client.open(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query, body_stream = body_stream, body_length = body_length)
+end
+
+func ~proxy_of(text: ?string) -> HttpError!?Proxy
+    let address = text orelse ""
+    if address == "" then
+        return null
+    end
+    let split = try without_user_info(address)
+    let parsed = url::parse(split.url) catch e then
+        return HttpError.InvalidUrl
+    end
+    let is_supported = parsed.scheme == "http" or parsed.scheme == "https"
+    if !is_supported then
+        return HttpError.UnsupportedScheme
+    end
+    return Proxy(url = parsed, authorization = split.authorization)
+end
+
+func ~without_user_info(address: string) -> HttpError!UserInfoSplit
+    let scheme_end = string::find(address, "://") orelse -1
+    if scheme_end <= 0 then
+        return HttpError.InvalidUrl
+    end
+    let authority_start = scheme_end + 3
+    let authority = string::slice(address, authority_start, authority_end_of(address, authority_start)) catch ""
+    let at = string::find_reverse(authority, "@") orelse -1
+    if at < 0 then
+        return UserInfoSplit(url = address, authorization = null)
+    end
+    let user_info = string::slice(authority, 0, at) catch ""
+    let parts = string::split(user_info, ":", limit = 2)
+    let user = url::decode(parts[0]) catch e then
+        return HttpError.InvalidUrl
+    end
+    let password = if len(parts) > 1 then url::decode(parts[1]) catch "" else "" end
+    let scheme = string::slice(address, 0, authority_start) catch ""
+    let rest = string::slice(address, authority_start + at + 1, string::len(address)) catch ""
+    return UserInfoSplit(url = "$scheme$rest", authorization = "Basic ${base64("$user:$password")}")
+end
+
+func ~authority_end_of(address: string, start: int) -> int
+    let mut end_at = string::len(address)
+    for ["/", "?", "#"]: mark do
+        let found = string::find(address, mark, start) orelse end_at
+        if found < end_at then
+            end_at = found
+        end
+    end
+    return end_at
+end
+
+func ~proxy_for(target: url::Url, exchange: Exchange) -> ?Proxy
+    let host = string::lower(target.host)
+    let is_local = host == "localhost" or string::ends_with(host, ".localhost") or string::starts_with(host, "127.") or host == "::1"
+    if is_local then
+        return null
+    end
+    return exchange.proxy
+end
+
+func ~merged_headers(base: map[string, string], extra: map[string, string]) -> map[string, string]
+    if map::len(extra) == 0 then
+        return base
+    end
+    if map::len(base) == 0 then
+        return extra
+    end
+    let mut result: map[string, string] = {}
+    for base: value, name do
+        if !has_header_name(extra, name) then
+            result[name] = value
+        end
+    end
+    for extra: value, name do
+        result[name] = value
+    end
+    return result
+end
+
+func ~has_header_name(headers: map[string, string], name: string) -> bool
+    let lowered = string::lower(name)
+    for headers: value, other do
+        if string::lower(other) == lowered then
+            return true
+        end
+    end
+    return false
+end
+
+func ~joined_url(base: string, target: string) -> string
+    if base == "" or has_scheme(target) then
+        return target
+    end
+    if target == "" or string::starts_with(target, "?") then
+        return "$base$target"
+    end
+    let base_has_slash = string::ends_with(base, "/")
+    let target_has_slash = string::starts_with(target, "/")
+    if base_has_slash and target_has_slash then
+        return "$base${string::slice(target, 1, string::len(target)) catch ""}"
+    end
+    if !base_has_slash and !target_has_slash then
+        return "$base/$target"
+    end
+    return "$base$target"
+end
+
+func ~has_scheme(target: string) -> bool
+    let separator = string::find(target, "://") orelse -1
+    if separator <= 0 then
+        return false
+    end
+    let scheme = string::slice(target, 0, separator) catch ""
+    return !string::contains(scheme, "/") and !string::contains(scheme, "?")
 end
 
 func ~start(url: string, query: map[string, string], exchange: Exchange, max_redirects: int) -> HttpError!Opened
-    if exchange.body != null and exchange.body_bytes != null then
+    let body_count = (if exchange.body != null then 1 else 0 end) + (if exchange.body_bytes != null then 1 else 0 end) + (if exchange.body_stream != null then 1 else 0 end)
+    if body_count > 1 then
         body_given_twice()
     end
-    let target = try parse_target(url, query)
+    let split = try without_user_info(url)
+    let target = try parse_target(encoded_url(split.url), query)
     if !is_method(exchange.method) then
         return HttpError.InvalidMethod
     end
     try check_headers(exchange.headers)
+    if split.authorization: credentials then
+        if !has_header_name(exchange.headers, "authorization") then
+            return try follow(target, with_authorization(exchange, credentials), max_redirects)
+        end
+    end
     return try follow(target, exchange, max_redirects)
+end
+
+func ~with_authorization(exchange: Exchange, credentials: string) -> Exchange
+    let mut headers = copy(exchange.headers)
+    headers["Authorization"] = credentials
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length, max_connections_per_host = exchange.max_connections_per_host)
 end
 
 func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Opened
@@ -440,7 +687,7 @@ func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpE
 end
 
 func ~redirect_location(response: Response, exchange: Exchange) -> ?string
-    if !exchange.follows_redirects or !is_redirect_status(response.status) then
+    if !can_follow(response.status, exchange) then
         return null
     end
     return response.headers.get("location")
@@ -465,9 +712,9 @@ func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Excha
     end
     let headers = without_headers(exchange.headers, dropped)
     if becomes_get then
-        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body)
+        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
     end
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length, max_connections_per_host = exchange.max_connections_per_host)
 end
 
 func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
@@ -516,28 +763,43 @@ end
 
 func ~send(target: url::Url, exchange: Exchange) -> HttpError!Opened
     let key = pool_key_of(target, exchange)
-    let reused = pool_take(key)
-    if reused >= 0 then
-        let answered = try exchange_on_reused(reused, target, exchange, key)
-        if answered: opened then
-            return opened
+    let host = "${target.scheme}://${target.host}:${port_of(target)}"
+    for true do
+        try host_slot_take(host, exchange.max_connections_per_host, remaining_ms(exchange))
+        let reused = pool_take(key)
+        if reused >= 0 then
+            stream_hold_host_slot(reused, host)
+            let answered = try exchange_on_reused(reused, target, exchange, key)
+            if answered: opened then
+                return opened
+            end
+            continue
         end
+        let handle = open_connection(target, exchange) catch e then
+            host_slot_release(host)
+            return e
+        end
+        stream_hold_host_slot(handle, host)
+        return try exchange_on(handle, target, exchange, key)
     end
-    let handle = try open_connection(target, exchange)
-    return try exchange_on(handle, target, exchange, key)
+    return HttpError.Other
 end
 
 func ~pool_key_of(target: url::Url, exchange: Exchange) -> string
-    let origin = "${target.scheme}://${target.host}:${port_of(target)}"
-    if target.scheme != "https" then
-        return origin
+    let mut key = "${target.scheme}://${target.host}:${port_of(target)}"
+    if proxy_for(target, exchange): proxy then
+        key = "$key|via ${proxy.url.to_string()}|${proxy.authorization orelse ""}"
     end
-    return "$origin|${exchange.verify}|${exchange.ca orelse ""}"
+    let uses_tls = target.scheme == "https" or key != "${target.scheme}://${target.host}:${port_of(target)}"
+    if !uses_tls then
+        return key
+    end
+    return "$key|${exchange.verify}|${exchange.ca orelse ""}"
 end
 
 func ~exchange_on_reused(handle: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!?Opened
     let opened = exchange_on(handle, target, exchange, key) catch e then
-        let can_retry = e == HttpError.ConnectionReset and is_idempotent(exchange.method)
+        let can_retry = e == HttpError.ConnectionReset and is_idempotent(exchange.method) and exchange.body_stream == null
         if can_retry then
             return null
         end
@@ -578,10 +840,18 @@ func ~drain(handle: int, exchange: Exchange) -> bool
 end
 
 func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
-    return exchange.follows_redirects and is_redirect_status(status) and headers.has("location")
+    return can_follow(status, exchange) and headers.has("location")
+end
+
+func ~can_follow(status: int, exchange: Exchange) -> bool
+    let would_resend_stream = exchange.body_stream != null and (status == 307 or status == 308)
+    return exchange.follows_redirects and is_redirect_status(status) and !would_resend_stream
 end
 
 func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
+    if proxy_for(target, exchange): proxy then
+        return try open_through_proxy(target, exchange, proxy)
+    end
     let is_tls = target.scheme == "https"
     let handle = tcp_connect_handle(target.host, port_of(target), remaining_ms(exchange)) catch e then
         return from_net(e)
@@ -596,20 +866,63 @@ func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
     return handle
 end
 
+func ~open_through_proxy(target: url::Url, exchange: Exchange, proxy: Proxy) -> HttpError!int
+    let handle = tcp_connect_handle(proxy.url.host, port_of(proxy.url), remaining_ms(exchange)) catch e then
+        return from_net(e)
+    end
+    if proxy.url.scheme == "https" then
+        stream_start_tls(handle, proxy.url.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+            stream_close(handle)
+            return from_net(e)
+        end
+    end
+    if target.scheme != "https" then
+        return handle
+    end
+    open_tunnel(handle, target, exchange, proxy) catch e then
+        stream_close(handle)
+        return e
+    end
+    stream_start_tunneled_tls(handle, target.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+        stream_close(handle)
+        return from_net(e)
+    end
+    return handle
+end
+
+func ~open_tunnel(handle: int, target: url::Url, exchange: Exchange, proxy: Proxy) -> HttpError!void
+    let host = if string::contains(target.host, ":") then "[${target.host}]" else target.host end
+    let authority = "$host:${port_of(target)}"
+    let mut lines = ["CONNECT $authority HTTP/1.1", "Host: $authority"]
+    if proxy.authorization: credentials then
+        append(lines, "Proxy-Authorization: $credentials")
+    end
+    stream_set_write_timeout(handle, remaining_ms(exchange))
+    stream_write(handle, "${string::join(lines, "\r\n")}\r\n\r\n") catch e then
+        return from_io(e)
+    end
+    let head = try stream_read_head(handle, false, remaining_ms(exchange))
+    if head: received then
+        let parts = try parse_head(received, false)
+        let status = string::to_int(parts[0]) catch 0
+        let is_open = status >= 200 and status < 300
+        if !is_open then
+            return HttpError.ProxyRefused
+        end
+        return
+    end
+    return HttpError.ConnectionReset
+end
+
 func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Response
     stream_set_write_timeout(handle, remaining_ms(exchange))
     stream_write(handle, request_head(target, exchange)) catch e then
         return from_io(e)
     end
-    if exchange.body: text then
-        stream_write(handle, text) catch e then
-            return from_io(e)
-        end
-    end
-    if exchange.body_bytes: data then
-        stream_write_bytes(handle, data) catch e then
-            return from_io(e)
-        end
+    if try should_send_body(handle, exchange) then
+        try send_body(handle, exchange)
+    else
+        stream_forbid_reuse(handle)
     end
     let is_head_request = exchange.method == "HEAD"
     let head = try stream_read_head(handle, is_head_request, remaining_ms(exchange))
@@ -619,17 +932,90 @@ func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Re
         let headers = headers_of(parts)
         let skips_body = !exchange.reads_body or is_followed(status, headers, exchange)
         let body = if skips_body then buffer::from_string("") else try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange)) end
-        let is_gzip = asks_for_gzip(exchange) and is_gzip_encoding(headers.get("content-encoding") orelse "")
-        let plain = if is_gzip and !skips_body then try gunzip(body, exchange.max_body) else body end
+        let format = if skips_body then null else body_format(status, headers, exchange) end
+        let plain = if format: encoding then try decoded(body, encoding, exchange.max_body) else body end
         return Response(status = status, reason = parts[1], headers = headers, body = plain, url = target.to_string())
     end
     return HttpError.ConnectionReset
 end
 
+func ~should_send_body(handle: int, exchange: Exchange) -> HttpError!bool
+    if !expects_continue(exchange) then
+        return true
+    end
+    let left = remaining_ms(exchange)
+    let wait_ms = if left >= 0 and left < CONTINUE_WAIT_MS then left else CONTINUE_WAIT_MS end
+    stream_wait_data(handle, wait_ms) catch e then
+        if e == io::IoError.TimedOut then
+            return true
+        end
+        return from_io(e)
+    end
+    return !stream_has_final_status(handle)
+end
+
+func ~expects_continue(exchange: Exchange) -> bool
+    if has_header_name(exchange.headers, "expect") then
+        return false
+    end
+    if exchange.body_stream != null then
+        return true
+    end
+    return body_length(exchange) >= EXPECT_CONTINUE_SIZE
+end
+
+func ~send_body(handle: int, exchange: Exchange) -> HttpError!void
+    if exchange.body: text then
+        stream_write(handle, text) catch e then
+            return from_io(e)
+        end
+        return
+    end
+    if exchange.body_bytes: data then
+        stream_write_bytes(handle, data) catch e then
+            return from_io(e)
+        end
+        return
+    end
+    if exchange.body_stream: write then
+        try send_body_stream(handle, write, exchange.body_length)
+    end
+end
+
+func ~send_body_stream(handle: int, write: func(mut BodyWriter) -> io::IoError!void, length: int) -> HttpError!void
+    let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
+        return HttpError.Other
+    end
+    let mut compressor = compression::Compressor(compression::Format.Gzip)
+    let mut writer = BodyWriter(handle = handle, state = -1, is_chunked = length < 0, is_discarding = false, remaining = length, pending = pending, used = 0, compressor = compressor, is_compressing = false)
+    write(writer) catch e then
+        return from_io(e)
+    end
+    writer.finish_body() catch e then
+        return from_io(e)
+    end
+    if writer.is_chunked then
+        stream_write(handle, "0\r\n\r\n") catch e then
+            return from_io(e)
+        end
+        return
+    end
+    if writer.remaining != 0 then
+        return HttpError.Other
+    end
+end
+
 func ~request_head(target: url::Url, exchange: Exchange) -> string
     let mut lines: []string = []
     let path = if target.query: query then "${target.path}?$query" else target.path end
-    append(lines, "${exchange.method} $path HTTP/1.1")
+    let proxy = if target.scheme == "http" then proxy_for(target, exchange) else null end
+    let request_target = if proxy != null then "http://${host_header(target)}$path" else path end
+    append(lines, "${exchange.method} $request_target HTTP/1.1")
+    if proxy: through then
+        if through.authorization: credentials then
+            append(lines, "Proxy-Authorization: $credentials")
+        end
+    end
     let mut given: map[string, bool] = {}
     for exchange.headers: value, name do
         let lowered = string::lower(name)
@@ -644,18 +1030,23 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     if !map::has(given, "user-agent") then
         append(lines, "User-Agent: $USER_AGENT")
     end
-    if asks_for_gzip(exchange) then
-        append(lines, "Accept-Encoding: gzip")
+    if asks_for_encoding(exchange) then
+        append(lines, "Accept-Encoding: gzip, deflate")
     end
     let length = body_length(exchange)
     if length >= 0 then
         append(lines, "Content-Length: $length")
+    elif exchange.body_stream != null then
+        append(lines, "Transfer-Encoding: chunked")
+    end
+    if expects_continue(exchange) then
+        append(lines, "Expect: 100-continue")
     end
     return "${string::join(lines, "\r\n")}\r\n\r\n"
 end
 
-func ~asks_for_gzip(exchange: Exchange) -> bool
-    if !exchange.reads_body or exchange.method == "HEAD" then
+func ~asks_for_encoding(exchange: Exchange) -> bool
+    if exchange.method == "HEAD" then
         return false
     end
     for exchange.headers: value, name do
@@ -666,9 +1057,33 @@ func ~asks_for_gzip(exchange: Exchange) -> bool
     return true
 end
 
-func ~is_gzip_encoding(value: string) -> bool
-    let encoding = string::lower(string::trim(value))
-    return encoding == "gzip" or encoding == "x-gzip"
+func ~body_format(status: int, headers: Headers, exchange: Exchange) -> ?compression::Format
+    let has_no_body = status < 200 or status == 204 or status == 304
+    if has_no_body or !asks_for_encoding(exchange) then
+        return null
+    end
+    let encoding = string::lower(string::trim(headers.get("content-encoding") orelse ""))
+    return when encoding
+        "gzip", "x-gzip" then compression::Format.Gzip end
+        "deflate" then compression::Format.Zlib end
+        else then null end
+    end
+end
+
+func ~decoded(body: buffer, format: compression::Format, max: int) -> HttpError!buffer
+    if buffer::len(body) == 0 then
+        return body
+    end
+    let plain = compression::decompress(body, format, max) catch e then
+        if e == compression::CompressionError.TooLarge then
+            return HttpError.BodyTooLarge
+        end
+        if format != compression::Format.Zlib then
+            return HttpError.InvalidResponse
+        end
+        return try decoded(body, compression::Format.Deflate, max)
+    end
+    return plain
 end
 
 func ~host_header(target: url::Url) -> string
@@ -688,6 +1103,9 @@ func ~body_length(exchange: Exchange) -> int
     end
     if exchange.body_bytes: data then
         return buffer::len(data)
+    end
+    if exchange.body_stream != null then
+        return exchange.body_length
     end
     let needs_length = exchange.method == "POST" or exchange.method == "PUT" or exchange.method == "PATCH"
     return if needs_length then 0 else -1 end
@@ -743,18 +1161,18 @@ func ~from_io(failure: io::IoError) -> HttpError
 end
 
 func text(body: string, status: int = 200) -> Response
-    return response_with(status, "text/plain; charset=utf-8", buffer::from_string(body))
+    return response_with(status, ContentType.TEXT, buffer::from_string(body))
 end
 
 func json_text(body: string, status: int = 200) -> Response
-    return response_with(status, "application/json", buffer::from_string(body))
+    return response_with(status, ContentType.JSON, buffer::from_string(body))
 end
 
 func html(body: string, status: int = 200) -> Response
-    return response_with(status, "text/html; charset=utf-8", buffer::from_string(body))
+    return response_with(status, ContentType.HTML, buffer::from_string(body))
 end
 
-func bytes(data: buffer, content_type: string = "application/octet-stream", status: int = 200) -> Response
+func bytes(data: buffer, content_type: string = ContentType.BINARY, status: int = 200) -> Response
     return response_with(status, content_type, data)
 end
 
@@ -766,7 +1184,7 @@ func redirect(location: string, status: int = 302) -> Response
     return Response(status = status, reason = "", headers = Headers(items = [Header(name = "Location", value = location)], lowered = ["location"]), body = buffer::from_string(""), url = "")
 end
 
-func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = "application/octet-stream", status: int = 200, length: int = -1) -> Response
+func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = ContentType.BINARY, status: int = 200, length: int = -1) -> Response
     let mut response = response_with(status, content_type, buffer::from_string(""))
     response.stream = write
     response.stream_length = length
@@ -788,6 +1206,47 @@ func file(path: string, content_type: string, status: int = 200) -> fs::FsError!
     end, content_type = content_type, status = status, length = size)
 end
 
+func content_type_of(path: string) -> string
+    let name = string::find_reverse(path, "/") orelse -1
+    let dot = string::find_reverse(path, ".") orelse -1
+    let has_extension = dot > name + 1
+    if !has_extension then
+        return ContentType.BINARY
+    end
+    let extension = string::lower(string::slice(path, dot + 1, string::len(path)) catch "")
+    return when extension
+        "html", "htm" then ContentType.HTML end
+        "css" then ContentType.CSS end
+        "js", "mjs" then ContentType.JS end
+        "json", "map" then ContentType.JSON end
+        "txt" then ContentType.TEXT end
+        "md" then "text/markdown; charset=utf-8" end
+        "csv" then ContentType.CSV end
+        "xml" then ContentType.XML end
+        "svg" then ContentType.SVG end
+        "png" then ContentType.PNG end
+        "jpg", "jpeg" then ContentType.JPEG end
+        "gif" then ContentType.GIF end
+        "webp" then ContentType.WEBP end
+        "avif" then "image/avif" end
+        "ico" then ContentType.ICO end
+        "wasm" then ContentType.WASM end
+        "pdf" then ContentType.PDF end
+        "woff" then "font/woff" end
+        "woff2" then "font/woff2" end
+        "ttf" then "font/ttf" end
+        "otf" then "font/otf" end
+        "mp4" then "video/mp4" end
+        "webm" then "video/webm" end
+        "mp3" then "audio/mpeg" end
+        "ogg" then "audio/ogg" end
+        "wav" then "audio/wav" end
+        "zip" then "application/zip" end
+        "gz" then "application/gzip" end
+        else then ContentType.BINARY end
+    end
+end
+
 func ~send_file(opened: fs::File, mut writer: BodyWriter) -> io::IoError!void
     for true do
         let piece = try opened.read_bytes(FILE_PIECE_SIZE)
@@ -803,11 +1262,14 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6) -> HttpError!Server
+    if compression_level < 0 or compression_level > 9 then
+        invalid_compression_level(compression_level)
+    end
     let listener = open_listener(host, port, cert, backlog) catch e then
         return from_net(e)
     end
-    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections)
+    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level)
 end
 
 func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener
@@ -941,21 +1403,41 @@ end
 func ~write_response(server: Server, request: Request, response: Response, keeps_alive: bool) -> bool
     let code = response.status
     let reason = if response.reason == "" then reason_phrase(code) else response.reason end
+    let has_body = !(code < 200 or code == 204 or code == 304)
+    let can_compress = has_body and is_compressible(server, response)
+    let is_gzip_accepted = can_compress and accepts_gzip(request.headers.get("accept-encoding") orelse "")
+    let packed = if is_gzip_accepted and response.stream == null then gzipped(server, response.body) else null end
+    let is_stream_large_enough = response.stream_length < 0 or response.stream_length >= MIN_COMPRESSED_BODY
+    let is_stream_compressed = is_gzip_accepted and response.stream != null and is_stream_large_enough
+    let body = packed orelse response.body
     let mut lines: []string = ["HTTP/1.1 $code $reason"]
+    let mut has_vary = false
     for response.headers.items: header do
-        if !is_managed_header(response.headers, header.name) then
-            append(lines, "${header.name}: ${header.value}")
+        if is_managed_header(response.headers, header.name) then
+            continue
         end
+        let needs_vary = can_compress and string::lower(header.name) == "vary"
+        if needs_vary then
+            append(lines, "${header.name}: ${with_accept_encoding(header.value)}")
+            has_vary = true
+            continue
+        end
+        append(lines, "${header.name}: ${header.value}")
+    end
+    if can_compress and !has_vary then
+        append(lines, "Vary: Accept-Encoding")
+    end
+    if packed != null or is_stream_compressed then
+        append(lines, "Content-Encoding: gzip")
     end
     if !response.headers.has("date") then
         append(lines, "Date: ${http_date()}")
     end
-    let has_body = !(code < 200 or code == 204 or code == 304)
-    let is_chunked = response.stream != null and response.stream_length < 0
+    let is_chunked = response.stream != null and (response.stream_length < 0 or is_stream_compressed)
     if has_body and is_chunked then
         append(lines, "Transfer-Encoding: chunked")
     elif has_body then
-        let length = if response.stream != null then response.stream_length else buffer::len(response.body) end
+        let length = if response.stream != null then response.stream_length else buffer::len(body) end
         append(lines, "Content-Length: $length")
     end
     if !keeps_alive then
@@ -966,32 +1448,97 @@ func ~write_response(server: Server, request: Request, response: Response, keeps
         stream_write(request.handle, head) catch e then
             return false
         end
-        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length)
+        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length, is_stream_compressed)
     end
-    let sends_body = has_body and request.method != "HEAD" and buffer::len(response.body) > 0
+    let sends_body = has_body and request.method != "HEAD" and buffer::len(body) > 0
     if !sends_body then
         stream_write(request.handle, head) catch e then
             return false
         end
         return true
     end
-    if buffer::len(response.body) <= JOINED_BODY_LIMIT then
-        return write_joined(request.handle, head, response.body)
+    if buffer::len(body) <= JOINED_BODY_LIMIT then
+        return write_joined(request.handle, head, body)
     end
     stream_write(request.handle, head) catch e then
         return false
     end
-    stream_write_bytes(request.handle, response.body) catch e then
+    stream_write_bytes(request.handle, body) catch e then
         return false
     end
     return true
 end
 
-func ~write_stream_body(server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int) -> bool
+func ~is_compressible(server: Server, response: Response) -> bool
+    if !server.compress or response.headers.has("content-encoding") then
+        return false
+    end
+    let content_type = response.headers.get("content-type") orelse ""
+    let media_type = string::lower(string::trim(string::split(content_type, ";")[0]))
+    let is_text = string::starts_with(media_type, "text/") or string::ends_with(media_type, "+json") or string::ends_with(media_type, "+xml")
+    return is_text or media_type == "application/json" or media_type == "application/javascript" or media_type == "application/xml" or media_type == "application/wasm"
+end
+
+func ~accepts_gzip(accept_encoding: string) -> bool
+    let mut is_any_accepted = false
+    for string::split(accept_encoding, ","): entry do
+        let parts = string::split(entry, ";")
+        let name = string::lower(string::trim(parts[0]))
+        let is_allowed = !has_zero_quality(parts)
+        if name == "gzip" or name == "x-gzip" then
+            return is_allowed
+        end
+        if name == "*" then
+            is_any_accepted = is_allowed
+        end
+    end
+    return is_any_accepted
+end
+
+func ~has_zero_quality(parts: []string) -> bool
+    for parts: part, i do
+        let param = string::lower(string::trim(part))
+        let is_quality = i > 0 and string::starts_with(param, "q=")
+        if is_quality then
+            let value = string::trim(string::slice(param, 2, string::len(param)) catch "")
+            return (string::to_float(value) catch 1.0) == 0.0
+        end
+    end
+    return false
+end
+
+func ~with_accept_encoding(vary: string) -> string
+    let lowered = string::lower(vary)
+    let has_it = string::contains(lowered, "accept-encoding") or string::trim(lowered) == "*"
+    return if has_it then vary else "$vary, Accept-Encoding" end
+end
+
+func ~gzipped(server: Server, body: buffer) -> ?buffer
+    if buffer::len(body) < MIN_COMPRESSED_BODY then
+        return null
+    end
+    let packed = compression::compress(body, compression::Format.Gzip, server.compression_level) catch e then
+        return null
+    end
+    if buffer::len(packed) >= buffer::len(body) then
+        return null
+    end
+    return packed
+end
+
+func ~write_stream_body(server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int, is_compressing: bool) -> bool
     let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
         return false
     end
-    let mut writer = BodyWriter(handle = request.handle, state = server.state, is_chunked = sends_body and length < 0, is_discarding = !sends_body, remaining = length, pending = pending, used = 0)
+    let mut compressor = compression::Compressor(compression::Format.Gzip, level = server.compression_level)
+    let is_chunked = sends_body and (length < 0 or is_compressing)
+    let mut writer = BodyWriter(handle = request.handle, state = server.state, is_chunked = is_chunked, is_discarding = !sends_body, remaining = length, pending = pending, used = 0, compressor = compressor, is_compressing = is_compressing)
+    let is_sent = send_stream_body(request, write, writer, sends_body)
+    writer.compressor.close()
+    return is_sent
+end
+
+func ~send_stream_body(request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool) -> bool
     write(writer) catch e then
         let is_expected = !sends_body or e == io::IoError.Closed
         if !is_expected then
@@ -1002,7 +1549,7 @@ func ~write_stream_body(server: Server, request: Request, write: func(mut BodyWr
     if !sends_body then
         return true
     end
-    writer.flush() catch e then
+    writer.finish_body() catch e then
         return false
     end
     if writer.is_chunked then

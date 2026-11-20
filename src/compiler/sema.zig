@@ -17,6 +17,7 @@ pub const SemaAnalyzer = struct {
     const none_error_set_name = "none";
     const task_type_name = "Task";
     const map_type_name = "map";
+    const resource_type_name = "resource";
     const max_captures = 255;
 
     allocator: std.mem.Allocator,
@@ -31,6 +32,14 @@ pub const SemaAnalyzer = struct {
     err_reporter: err.CompileErrorReporter,
 
     fn_depth: usize = 0,
+    pending_signatures: std.AutoHashMapUnmanaged(tt.TypeId, PendingSignature) = .empty,
+    pending_structs: std.AutoHashMapUnmanaged(tt.TypeId, PendingStruct) = .empty,
+    defer_scopes: std.ArrayList(DeferScope) = .empty,
+    defer_base: usize = 0,
+    loop_starts: std.ArrayList(usize) = .empty,
+    loop_base: usize = 0,
+    deferred_depth: usize = 0,
+    deferred_loop_floor: usize = 0,
     is_in_prelude: bool = false,
     module: *ModuleScope = undefined,
     prelude_module: *ModuleScope = undefined,
@@ -729,6 +738,7 @@ pub const SemaAnalyzer = struct {
                         try self.qualifyFunctionName(symbol, self.module);
                     }
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(fs.identifier, stmt.loc);
+                    try self.pending_signatures.put(self.allocator, symbol.type_id, .{ .symbol = symbol, .def = &stmt.data.func.def, .loc = stmt.loc, .module = self.module });
                 },
                 .@"struct" => |ss| {
                     if (ss.slots.len > 0) {
@@ -741,6 +751,7 @@ pub const SemaAnalyzer = struct {
                     symbol.is_file_only = ss.is_file_only;
                     try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
+                    try self.pending_structs.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .symbol = symbol, .def = &stmt.data.@"struct".def, .module = self.module });
                 },
                 .@"enum" => |es| {
                     var symbol = try self.createEmptyEnumSymbol(es.identifier);
@@ -785,7 +796,7 @@ pub const SemaAnalyzer = struct {
                 .func => |fs| {
                     if (fs.slots.len > 0) continue;
                     const symbol = try self.scope.symbol_table.getOrError(fs.identifier);
-                    try self.fulfillFuncType(symbol, &fs.def, null, stmt.loc);
+                    try self.ensureSignature(symbol.type_id);
                 },
                 .@"struct" => |ss| {
                     const symbol = try self.scope.symbol_table.getOrError(ss.identifier);
@@ -793,7 +804,7 @@ pub const SemaAnalyzer = struct {
                         try self.createOpaqueCopy(symbol.kind.generic_type);
                         continue;
                     }
-                    try self.fulfillStructType(symbol, &ss.def);
+                    try self.ensureStructFields(symbol.kind.defined_type.blueprint_type_id);
                 },
 
                 .@"enum" => |ss| {
@@ -848,6 +859,35 @@ pub const SemaAnalyzer = struct {
             .int, .byte, .float, .boolean, .string, .@"enum" => true,
             else => false,
         };
+    }
+
+    fn ensureSignature(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const entry = self.pending_signatures.getPtr(type_id) orelse return;
+        if (entry.state != .pending) return;
+        entry.state = .filling;
+        const pending = entry.*;
+        const saved_module = self.enterModuleContext(pending.module);
+        defer self.exitModuleContext(saved_module);
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = self.module.root;
+        defer self.scope.symbol_table = saved_table;
+        try self.fulfillFuncType(pending.symbol, pending.def, null, pending.loc);
+        self.pending_signatures.getPtr(type_id).?.state = .filled;
+    }
+
+    fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const entry = self.pending_structs.getPtr(base_id) orelse return;
+        if (entry.state != .pending) return;
+        entry.state = .filling;
+        const pending = entry.*;
+        const saved_module = self.enterModuleContext(pending.module);
+        defer self.exitModuleContext(saved_module);
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = self.module.root;
+        defer self.scope.symbol_table = saved_table;
+        try self.fulfillStructType(pending.symbol, pending.def);
+        self.pending_structs.getPtr(base_id).?.state = .filled;
     }
 
     fn resolveConstant(self: *Self, index: usize) CompileError!*ir.Value {
@@ -1105,6 +1145,7 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".static_fields = static_fields;
         const methods = try self.createMethodSignatures(enum_def.funcs, enum_symbol);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
     fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef, loc: err.Loc) !void {
@@ -1130,6 +1171,7 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".static_fields = static_fields;
         const methods = try self.createMethodSignatures(union_def.funcs, union_symbol);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
@@ -1166,6 +1208,7 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.@"struct".fields = fields;
         struct_type_ptr.kind.@"struct".static_fields = static_fields;
         struct_type_ptr.kind.@"struct".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
     fn createStaticFields(self: *Self, fields: []const ast.Field, owner_type_id: tt.TypeId) CompileError!std.StringHashMap(tt.TypedIdentifier) {
@@ -1366,6 +1409,8 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type_id);
         defer self.scope.exit(self.scope.return_type_id);
+        try self.defer_scopes.append(self.allocator, .{});
+        defer _ = self.defer_scopes.pop();
 
         for (block.statements.items, 0..) |stmt, statement_index| {
             const is_value_tail = result != null and statement_index + 1 == block.statements.items.len;
@@ -1384,9 +1429,10 @@ pub const SemaAnalyzer = struct {
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
                 .expression => try self.visitExpressionStmt(&stmt),
-                .@"break" => ir.Instruction{ .break_stmt = {} },
-                .@"continue" => ir.Instruction{ .continue_stmt = {} },
-                .@"return" => try self.visitReturnStmt(&stmt),
+                .@"break" => try self.loopExit(.{ .break_stmt = {} }, "break", stmt.loc),
+                .@"continue" => try self.loopExit(.{ .continue_stmt = {} }, "continue", stmt.loc),
+                .@"return" => try self.withReturnCleanup(try self.visitReturnStmt(&stmt)),
+                .@"defer" => try self.visitDeferStmt(&stmt),
                 .for_capture => ir.Instruction{ .block = try self.visitForCaptureStmt(&stmt) },
             };
 
@@ -1394,6 +1440,9 @@ pub const SemaAnalyzer = struct {
                 try instructions.append(self.allocator, i);
             }
             if (result != null and isBlockLeaving(instructions.items)) break;
+        }
+        if (!isBlockLeaving(instructions.items)) {
+            try instructions.appendSlice(self.allocator, try self.deferredCleanup(self.defer_scopes.items.len - 1, false));
         }
 
         if (result != null) {
@@ -1408,6 +1457,85 @@ pub const SemaAnalyzer = struct {
             .is_returning = areAllPathsReturning(instructions.items),
             .block = try instructions.toOwnedSlice(self.allocator),
         };
+    }
+
+    fn visitDeferStmt(self: *Self, stmt: *const ast.StatementNode) CompileError!?ir.Instruction {
+        const defer_stmt = stmt.data.@"defer";
+        if (self.fn_depth == 0) {
+            return self.err_reporter.statementOutsideMain(stmt.loc);
+        }
+        const can_fail = self.activeReturnInference() != null or self.type_table.isErrorUnion(self.scope.return_type_id);
+        if (defer_stmt.is_error_only and !can_fail) {
+            return self.err_reporter.errdeferOutsideFailingFunction(stmt.loc);
+        }
+        const saved_floor = self.deferred_loop_floor;
+        self.deferred_depth += 1;
+        self.deferred_loop_floor = self.loop_starts.items.len;
+        defer {
+            self.deferred_depth -= 1;
+            self.deferred_loop_floor = saved_floor;
+        }
+        var statements: std.ArrayList(ast.StatementNode) = .empty;
+        try statements.append(self.allocator, defer_stmt.statement.*);
+        const lowered = try self.visitBlock(&.{ .statements = statements });
+        const scope = &self.defer_scopes.items[self.defer_scopes.items.len - 1];
+        try scope.items.append(self.allocator, .{ .block = lowered.block, .is_error_only = defer_stmt.is_error_only });
+        return null;
+    }
+
+    fn deferredCleanup(self: *Self, first_scope: usize, includes_error_only: bool) CompileError!ir.Block {
+        var cleanup: std.ArrayList(ir.Instruction) = .empty;
+        var index = self.defer_scopes.items.len;
+        while (index > first_scope) {
+            index -= 1;
+            const items = self.defer_scopes.items[index].items.items;
+            var item_index = items.len;
+            while (item_index > 0) {
+                item_index -= 1;
+                const deferred = items[item_index];
+                if (deferred.is_error_only and !includes_error_only) continue;
+                try cleanup.append(self.allocator, .{ .block = deferred.block });
+            }
+        }
+        return cleanup.toOwnedSlice(self.allocator);
+    }
+
+    fn loopExit(self: *Self, exit: ir.Instruction, keyword: []const u8, loc: err.Loc) CompileError!ir.Instruction {
+        const leaves_deferred_code = self.deferred_depth > 0 and self.loop_starts.items.len <= self.deferred_loop_floor;
+        if (leaves_deferred_code) {
+            return self.err_reporter.exitInsideDefer(keyword, loc);
+        }
+        const loop_start = self.loop_starts.getLastOrNull() orelse return exit;
+        const cleanup = try self.deferredCleanup(loop_start, false);
+        if (cleanup.len == 0) {
+            return exit;
+        }
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        try instructions.appendSlice(self.allocator, cleanup);
+        try instructions.append(self.allocator, exit);
+        return .{ .block = try instructions.toOwnedSlice(self.allocator) };
+    }
+
+    fn withReturnCleanup(self: *Self, exit: ir.Instruction) CompileError!ir.Instruction {
+        const is_error = exit == .return_error;
+        const cleanup = try self.deferredCleanup(self.defer_base, is_error);
+        if (cleanup.len == 0) {
+            return exit;
+        }
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const value: ?*ir.Value = switch (exit) {
+            .return_stmt => |ret| ret.value,
+            .return_error => |ret| ret.value,
+            else => unreachable,
+        };
+        const kept: ?*ir.Value = if (value) |returned| try self.storeTemporaryValue(&instructions, "returned value", returned) else null;
+        try instructions.appendSlice(self.allocator, cleanup);
+        try instructions.append(self.allocator, switch (exit) {
+            .return_stmt => .{ .return_stmt = .{ .value = kept } },
+            .return_error => .{ .return_error = .{ .value = kept.? } },
+            else => unreachable,
+        });
+        return .{ .block = try instructions.toOwnedSlice(self.allocator) };
     }
 
     fn visitBranchTail(self: *Self, statement: *const ast.StatementNode, result: *BranchResult) CompileError!ir.Instruction {
@@ -1570,6 +1698,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalTry(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        if (self.deferred_depth > 0) {
+            return self.err_reporter.tryInsideDefer(exp.loc);
+        }
         const call = try self.evalFailingCall(exp.data.try_exp.operand, "try", expected_type);
         if (!self.type_table.isErrorUnion(call.type_id)) {
             return call;
@@ -1587,8 +1718,9 @@ pub const SemaAnalyzer = struct {
             try self.addErrorEdge(error_union.error_set, current_set, exp.loc);
         }
 
+        const cleanup = if (is_top_level) &.{} else try self.deferredCleanup(self.defer_base, true);
         return ir.Value.init(self.allocator, .{
-            .data = .{ .try_call = .{ .call = call, .is_top_level = is_top_level } },
+            .data = .{ .try_call = .{ .call = call, .is_top_level = is_top_level, .cleanup = cleanup } },
             .type_id = error_union.payload,
         });
     }
@@ -2621,6 +2753,79 @@ pub const SemaAnalyzer = struct {
         return self.isSameType(required.return_type_id, actual.return_type_id);
     }
 
+    fn needsTextHint(self: *Self, arg_type: tt.TypeId, param_type: tt.TypeId) bool {
+        const param = self.type_table.getTypePtrById(param_type);
+        if (param.kind != .string or param.is_nullable) {
+            return false;
+        }
+        return switch (self.type_table.getTypePtrById(arg_type).kind) {
+            .int, .byte, .float, .boolean, .@"enum" => true,
+            else => false,
+        };
+    }
+
+    fn isNullableMethodCall(fn_call: ast.FnCall) bool {
+        if (fn_call.target.data != .indexed) {
+            return false;
+        }
+        const indexed = fn_call.target.data.indexed;
+        return indexed.is_nullable and !indexed.is_bracket and indexed.index.data == .identifier;
+    }
+
+    fn evalNullableMethodCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        const fn_call = exp.data.fn_call;
+        const indexed = fn_call.target.data.indexed;
+        const target_type = (try self.evalExp(indexed.target)).type_id;
+        if (!self.type_table.getTypePtrById(target_type).is_nullable) {
+            return self.err_reporter.unnecessaryOptionalChain(try self.type_table.name(target_type, self.allocator), fn_call.target.loc);
+        }
+        const base_type = self.type_table.typeIdByNullableTypeId.get(target_type) orelse target_type;
+        const method = self.methodOf(base_type, indexed.index.data.identifier);
+        const method_metadata: ?tt.Func = if (method) |method_type| self.type_table.getTypePtrById(method_type).kind.function else null;
+        const is_void = if (method_metadata) |metadata| metadata.return_type_id == self.type_table.getPrimitive(.void) else false;
+        const needs_mut_self = if (method_metadata) |metadata| metadata.params.len > 0 and metadata.params[0].is_mut else false;
+
+        const receiver_name = "?. receiver";
+        const receiver = try ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = receiver_name }, .loc = indexed.target.loc });
+        const plain_target = try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .indexed = .{ .target = receiver, .index = indexed.index, .is_nullable = false } },
+            .loc = fn_call.target.loc,
+        });
+        var plain_call = fn_call;
+        plain_call.target = plain_target;
+        const call = try ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_call = plain_call }, .loc = exp.loc });
+
+        var body: std.ArrayList(ast.StatementNode) = .empty;
+        try body.append(self.allocator, .{ .data = .{ .expression = call }, .loc = exp.loc });
+        var else_block: ?ast.Block = null;
+        if (!is_void) {
+            var fallback: std.ArrayList(ast.StatementNode) = .empty;
+            const null_node = try ast.ExpNode.init(self.allocator, .{ .data = .{ .null_literal = {} }, .loc = exp.loc });
+            try fallback.append(self.allocator, .{ .data = .{ .expression = null_node }, .loc = exp.loc });
+            else_block = .{ .statements = fallback };
+        }
+        const conditional = try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .if_capture_exp = .{
+                .exp = indexed.target,
+                .identifier = .{ .name = receiver_name, .is_mut = needs_mut_self },
+                .body = .{ .statements = body },
+                .else_block = else_block,
+            } },
+            .loc = exp.loc,
+        });
+        if (!is_void) {
+            return self.evalConditional(conditional, expected_type);
+        }
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .block_value = .{
+                .instructions = try self.lowerIfCapture(conditional, null),
+                .result_uid = self.scope.genUid(),
+                .can_complete = true,
+            } },
+            .type_id = self.type_table.getPrimitive(.void),
+        });
+    }
+
     fn methodOf(self: *Self, type_id: tt.TypeId, name: []const u8) ?tt.TypeId {
         return switch (self.type_table.getTypePtrById(type_id).kind) {
             .@"struct" => |s| s.methods.get(name),
@@ -3643,7 +3848,9 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
         const block = try self.visitBlock(&for_stmt.do_block);
+        _ = self.loop_starts.pop();
 
         return ir.Instruction{ .loop = .{
             .condition = condition_value,
@@ -3676,6 +3883,8 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(self.scope.return_type_id);
         _ = try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc);
         if (capture.index) |name| _ = try self.bindLoopCapture(&body, name, index, false, loc);
+        try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
+        defer _ = self.loop_starts.pop();
         try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).block);
         return body.toOwnedSlice(self.allocator);
     }
@@ -3875,6 +4084,17 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(old_return_type);
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
+        const saved_defer_base = self.defer_base;
+        const saved_loop_base = self.loop_base;
+        const saved_deferred_depth = self.deferred_depth;
+        self.defer_base = self.defer_scopes.items.len;
+        self.loop_base = self.loop_starts.items.len;
+        self.deferred_depth = 0;
+        defer {
+            self.defer_base = saved_defer_base;
+            self.loop_base = saved_loop_base;
+            self.deferred_depth = saved_deferred_depth;
+        }
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
@@ -3927,6 +4147,9 @@ pub const SemaAnalyzer = struct {
 
     fn visitReturnStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const return_stmt = stmt.data.@"return";
+        if (self.deferred_depth > 0) {
+            return self.err_reporter.exitInsideDefer("return", stmt.loc);
+        }
         if (self.activeReturnInference() != null) {
             return self.visitInferredReturnStmt(stmt);
         }
@@ -4679,6 +4902,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalFnCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) !*ir.Value {
+        if (isNullableMethodCall(exp.data.fn_call)) {
+            return self.evalNullableMethodCall(exp, expected_type);
+        }
         const fn_call = try self.resolveCallTypeArguments(exp.data.fn_call, exp.loc);
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;
@@ -4714,12 +4940,14 @@ pub const SemaAnalyzer = struct {
 
                 switch (symbol.kind) {
                     .function => {
+                        try self.ensureSignature(symbol.type_id);
                         const func = self.type_table.getTypePtrById(symbol.type_id).kind.function;
                         params = func.params;
                         return_type = func.return_type_id;
                         uid = func.uid;
                     },
                     .defined_type => |dt| {
+                        try self.ensureStructFields(dt.blueprint_type_id);
                         const bt = self.type_table.getTypePtrById(dt.blueprint_type_id);
                         switch (bt.kind) {
                             .@"struct" => {
@@ -4797,6 +5025,7 @@ pub const SemaAnalyzer = struct {
                 callee = try self.evalCallee(fn_call.target);
             } else {
                 const target = try self.evalExp(indexed.target);
+                try self.ensureStructFields(target.type_id);
                 const fn_name = indexed.index.data.identifier;
                 if (self.genericMethodOf(target.type_id, fn_name)) |index| {
                     const generic = self.generic_functions.items[index];
@@ -4897,6 +5126,9 @@ pub const SemaAnalyzer = struct {
             if (arg_exp) |_exp| {
                 const evaluated = inferred_values.get(_exp) orelse try self.evalExpExpecting(_exp, param.type_id);
                 const arg_type = evaluated.type_id;
+                if (self.needsTextHint(arg_type, param.type_id)) {
+                    return self.err_reporter.textExpected(try self.type_table.name(arg_type, self.allocator), _exp.loc);
+                }
                 const fn_call_arg_value = try self.coerceValue(evaluated, param.type_id, _exp.loc);
 
                 const arg_type_ptr = self.type_table.getTypePtrById(arg_type);
@@ -6540,6 +6772,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn indexInto(self: *Self, exp: *const ast.ExpNode, target: *ir.Value) !*ir.Value {
+        try self.ensureStructFields(target.type_id);
         const indexed_exp = exp.data.indexed;
         const is_nullable = indexed_exp.is_nullable;
         const target_type = target.type_id;
@@ -6705,6 +6938,7 @@ pub const SemaAnalyzer = struct {
                 return self.resolveConstant(symbol.kind.constant);
             }
             if (symbol.kind == .function) {
+                try self.ensureSignature(symbol.type_id);
                 return self.evalFuncRef(symbol.type_id, exp.loc);
             }
             if (self.outerVariableContext(symbol)) |context_index| {
@@ -7524,6 +7758,11 @@ pub const SemaAnalyzer = struct {
                 return CompileError.SemaError;
             },
             .@"struct" => |struct_name| {
+                const is_resource = self.module.bindings != null and std.mem.eql(u8, struct_name, resource_type_name);
+                if (is_resource) {
+                    const resource_type_id = self.type_table.getPrimitive(.resource);
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(resource_type_id) else resource_type_id;
+                }
                 if (std.mem.eql(u8, struct_name, map_type_name)) {
                     const map_type_id = try self.resolveMapTypeAnnotation(type_annotation, current_defined_type_type_id);
                     return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(map_type_id) else map_type_id;
@@ -7846,12 +8085,36 @@ const ModuleScope = struct {
     }
 };
 
+const DeferScope = struct {
+    items: std.ArrayList(Deferred) = .empty,
+};
+
+const Deferred = struct {
+    block: ir.Block,
+    is_error_only: bool,
+};
+
 const VisitedBlock = struct {
     block: ir.Block,
     is_returning: bool,
 };
 
 const ExitQuery = enum { returns, leaves_block };
+
+const PendingStruct = struct {
+    symbol: Symbol,
+    def: *const ast.Struct,
+    module: *ModuleScope,
+    state: enum { pending, filling, filled } = .pending,
+};
+
+const PendingSignature = struct {
+    symbol: Symbol,
+    def: *const ast.FnDef,
+    loc: err.Loc,
+    module: *ModuleScope,
+    state: enum { pending, filling, filled } = .pending,
+};
 
 const Constant = struct {
     let_stmt: ast.LetStmt,

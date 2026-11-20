@@ -69,6 +69,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) std.I
                 .closure => try printValue(writer, value, .function),
                 .task => try printValue(writer, value, .task),
                 .map => try printValue(writer, value, .map),
+                .resource => try printValue(writer, value, .resource),
                 .cell, .map_storage => unreachable,
             }
         },
@@ -100,6 +101,11 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) std.I
         .map => {
             const raw: u64 = @bitCast(value);
             const text = if (raw == 0) "null" else "<map>";
+            try writer.print("{s}", .{text});
+        },
+        .resource => {
+            const raw: u64 = @bitCast(value);
+            const text = if (raw == 0) "null" else "<resource>";
             try writer.print("{s}", .{text});
         },
         .task => {

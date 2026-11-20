@@ -10,6 +10,8 @@ A general-purpose, statically typed language with its own runtime: a bytecode VM
 
 [Language Reference](doc/language-ref.md)
 
+[Standard Library Reference](doc/std-ref.md)
+
 [Time values and zones example](examples/time.dsk)
 
 [Building & Running](doc/build.md)

@@ -37,6 +37,7 @@ pub const TypeTable = struct {
                     .unknown => .{ .unknown = {} },
                     .meta => .{ .meta = {} },
                     .cell => .{ .cell = {} },
+                    .resource => .{ .resource = {} },
                 },
                 .is_nullable = false,
             });
@@ -179,6 +180,7 @@ pub const TypeTable = struct {
             .unknown => "unknown",
             .meta => "meta",
             .cell => "cell",
+            .resource => "resource",
             .array => |inner| std.fmt.allocPrint(allocator, "[]{s}", .{try self.syntaxName(inner, allocator)}),
             .map => |m| std.fmt.allocPrint(allocator, "map[{s}, {s}]", .{ try self.syntaxName(m.key, allocator), try self.syntaxName(m.value, allocator) }),
             .function => |f| f.identifier,
@@ -210,6 +212,7 @@ pub const TypeTable = struct {
             .meta => "Meta Symbol",
             .cell => "cell",
             .schema => |s| s.identifier,
+            .resource => if (t.is_nullable) "nullable resource" else "resource",
             .function => |metadata| {
                 return std.fmt.allocPrint(allocator, "function {s}", .{metadata.identifier});
             },
@@ -301,6 +304,11 @@ pub const TypeTable = struct {
     pub fn addType(self: *Self, typ: Type) !TypeId {
         try self.types.append(self.allocator, typ);
         return @intCast(self.types.items.len - 1);
+    }
+
+    pub fn syncNullableCopy(self: *Self, type_id: TypeId) void {
+        const nullable_id = self.nullableTypeIdByTypeId.get(type_id) orelse return;
+        self.getTypePtrById(nullable_id).kind = self.getTypePtrById(type_id).kind;
     }
 
     pub fn getOrAddNullable(self: *Self, typeId: TypeId) !TypeId {
@@ -443,6 +451,7 @@ pub const PrimitiveType = enum {
     unknown,
     meta,
     cell,
+    resource,
 };
 
 pub const Struct = struct {
@@ -572,6 +581,7 @@ pub const Type = struct {
 
         meta,
         cell,
+        resource,
 
         function: Func,
         func_type: FuncType,
