@@ -181,6 +181,7 @@ pub const ReturnError = struct {
 pub const TryCall = struct {
     call: *Value,
     is_top_level: bool,
+    cleanup: Block = &.{},
 };
 
 pub const CatchCall = struct {

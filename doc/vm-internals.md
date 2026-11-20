@@ -515,6 +515,8 @@ A full example, from `let x = twice(3) catch 0` in `main`:
 0004 LOAD        R[0] R[1]     ; x
 ```
 
+`defer` / `errdefer` never reach the runtime: sema lowers each deferred statement once, where it's written (so names resolve there, even if an inner block later shadows them), and puts that same IR block at every exit of its block: before the block's end, before `break` / `continue` (the scopes inside the loop), and before `return` (all scopes of the function, after the return value is stored in a temporary; `errdefer` blocks only for `return_error`). A failing `try` carries them in `ir.TryCall.cleanup`, which codegen emits between the failure jump and `RETURN_ERR`.
+
 ### 7.6 Runtime errors
 
 Problems such as a bad index, an overflow, division by zero, a failed `assert` or running out of call depth are not Dusk errors. The reporter prints the message (`RuntimeErrorReporter.*`) and returns a Zig error, which goes up through `execute` to `VM.run`. There, `reportErrorLocation` adds the name of the running function (or the top level, for `$`-prefixed names) and the name of the failing builtin, if any. The program stops: nothing in Dusk can catch these.

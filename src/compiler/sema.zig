@@ -31,6 +31,12 @@ pub const SemaAnalyzer = struct {
     err_reporter: err.CompileErrorReporter,
 
     fn_depth: usize = 0,
+    defer_scopes: std.ArrayList(DeferScope) = .empty,
+    defer_base: usize = 0,
+    loop_starts: std.ArrayList(usize) = .empty,
+    loop_base: usize = 0,
+    deferred_depth: usize = 0,
+    deferred_loop_floor: usize = 0,
     is_in_prelude: bool = false,
     module: *ModuleScope = undefined,
     prelude_module: *ModuleScope = undefined,
@@ -1329,6 +1335,8 @@ pub const SemaAnalyzer = struct {
         var instructions: std.ArrayList(ir.Instruction) = .empty;
         try self.scope.enter(self.scope.return_type_id);
         defer self.scope.exit(self.scope.return_type_id);
+        try self.defer_scopes.append(self.allocator, .{});
+        defer _ = self.defer_scopes.pop();
 
         for (block.statements.items, 0..) |stmt, statement_index| {
             const is_value_tail = result != null and statement_index + 1 == block.statements.items.len;
@@ -1347,9 +1355,10 @@ pub const SemaAnalyzer = struct {
                 .assign => try self.visitAssignStmt(&stmt),
                 .@"for" => try self.visitForStmt(&stmt),
                 .expression => try self.visitExpressionStmt(&stmt),
-                .@"break" => ir.Instruction{ .break_stmt = {} },
-                .@"continue" => ir.Instruction{ .continue_stmt = {} },
-                .@"return" => try self.visitReturnStmt(&stmt),
+                .@"break" => try self.loopExit(.{ .break_stmt = {} }, "break", stmt.loc),
+                .@"continue" => try self.loopExit(.{ .continue_stmt = {} }, "continue", stmt.loc),
+                .@"return" => try self.withReturnCleanup(try self.visitReturnStmt(&stmt)),
+                .@"defer" => try self.visitDeferStmt(&stmt),
                 .for_capture => ir.Instruction{ .block = try self.visitForCaptureStmt(&stmt) },
             };
 
@@ -1357,6 +1366,9 @@ pub const SemaAnalyzer = struct {
                 try instructions.append(self.allocator, i);
             }
             if (result != null and isBlockLeaving(instructions.items)) break;
+        }
+        if (!isBlockLeaving(instructions.items)) {
+            try instructions.appendSlice(self.allocator, try self.deferredCleanup(self.defer_scopes.items.len - 1, false));
         }
 
         if (result != null) {
@@ -1371,6 +1383,85 @@ pub const SemaAnalyzer = struct {
             .is_returning = areAllPathsReturning(instructions.items),
             .block = try instructions.toOwnedSlice(self.allocator),
         };
+    }
+
+    fn visitDeferStmt(self: *Self, stmt: *const ast.StatementNode) CompileError!?ir.Instruction {
+        const defer_stmt = stmt.data.@"defer";
+        if (self.fn_depth == 0) {
+            return self.err_reporter.statementOutsideMain(stmt.loc);
+        }
+        const can_fail = self.activeReturnInference() != null or self.type_table.isErrorUnion(self.scope.return_type_id);
+        if (defer_stmt.is_error_only and !can_fail) {
+            return self.err_reporter.errdeferOutsideFailingFunction(stmt.loc);
+        }
+        const saved_floor = self.deferred_loop_floor;
+        self.deferred_depth += 1;
+        self.deferred_loop_floor = self.loop_starts.items.len;
+        defer {
+            self.deferred_depth -= 1;
+            self.deferred_loop_floor = saved_floor;
+        }
+        var statements: std.ArrayList(ast.StatementNode) = .empty;
+        try statements.append(self.allocator, defer_stmt.statement.*);
+        const lowered = try self.visitBlock(&.{ .statements = statements });
+        const scope = &self.defer_scopes.items[self.defer_scopes.items.len - 1];
+        try scope.items.append(self.allocator, .{ .block = lowered.block, .is_error_only = defer_stmt.is_error_only });
+        return null;
+    }
+
+    fn deferredCleanup(self: *Self, first_scope: usize, includes_error_only: bool) CompileError!ir.Block {
+        var cleanup: std.ArrayList(ir.Instruction) = .empty;
+        var index = self.defer_scopes.items.len;
+        while (index > first_scope) {
+            index -= 1;
+            const items = self.defer_scopes.items[index].items.items;
+            var item_index = items.len;
+            while (item_index > 0) {
+                item_index -= 1;
+                const deferred = items[item_index];
+                if (deferred.is_error_only and !includes_error_only) continue;
+                try cleanup.append(self.allocator, .{ .block = deferred.block });
+            }
+        }
+        return cleanup.toOwnedSlice(self.allocator);
+    }
+
+    fn loopExit(self: *Self, exit: ir.Instruction, keyword: []const u8, loc: err.Loc) CompileError!ir.Instruction {
+        const leaves_deferred_code = self.deferred_depth > 0 and self.loop_starts.items.len <= self.deferred_loop_floor;
+        if (leaves_deferred_code) {
+            return self.err_reporter.exitInsideDefer(keyword, loc);
+        }
+        const loop_start = self.loop_starts.getLastOrNull() orelse return exit;
+        const cleanup = try self.deferredCleanup(loop_start, false);
+        if (cleanup.len == 0) {
+            return exit;
+        }
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        try instructions.appendSlice(self.allocator, cleanup);
+        try instructions.append(self.allocator, exit);
+        return .{ .block = try instructions.toOwnedSlice(self.allocator) };
+    }
+
+    fn withReturnCleanup(self: *Self, exit: ir.Instruction) CompileError!ir.Instruction {
+        const is_error = exit == .return_error;
+        const cleanup = try self.deferredCleanup(self.defer_base, is_error);
+        if (cleanup.len == 0) {
+            return exit;
+        }
+        var instructions: std.ArrayList(ir.Instruction) = .empty;
+        const value: ?*ir.Value = switch (exit) {
+            .return_stmt => |ret| ret.value,
+            .return_error => |ret| ret.value,
+            else => unreachable,
+        };
+        const kept: ?*ir.Value = if (value) |returned| try self.storeTemporaryValue(&instructions, "returned value", returned) else null;
+        try instructions.appendSlice(self.allocator, cleanup);
+        try instructions.append(self.allocator, switch (exit) {
+            .return_stmt => .{ .return_stmt = .{ .value = kept } },
+            .return_error => .{ .return_error = .{ .value = kept.? } },
+            else => unreachable,
+        });
+        return .{ .block = try instructions.toOwnedSlice(self.allocator) };
     }
 
     fn visitBranchTail(self: *Self, statement: *const ast.StatementNode, result: *BranchResult) CompileError!ir.Instruction {
@@ -1533,6 +1624,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalTry(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        if (self.deferred_depth > 0) {
+            return self.err_reporter.tryInsideDefer(exp.loc);
+        }
         const call = try self.evalFailingCall(exp.data.try_exp.operand, "try", expected_type);
         if (!self.type_table.isErrorUnion(call.type_id)) {
             return call;
@@ -1550,8 +1644,9 @@ pub const SemaAnalyzer = struct {
             try self.addErrorEdge(error_union.error_set, current_set, exp.loc);
         }
 
+        const cleanup = if (is_top_level) &.{} else try self.deferredCleanup(self.defer_base, true);
         return ir.Value.init(self.allocator, .{
-            .data = .{ .try_call = .{ .call = call, .is_top_level = is_top_level } },
+            .data = .{ .try_call = .{ .call = call, .is_top_level = is_top_level, .cleanup = cleanup } },
             .type_id = error_union.payload,
         });
     }
@@ -3566,7 +3661,9 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
         const block = try self.visitBlock(&for_stmt.do_block);
+        _ = self.loop_starts.pop();
 
         return ir.Instruction{ .loop = .{
             .condition = condition_value,
@@ -3599,6 +3696,8 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(self.scope.return_type_id);
         _ = try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc);
         if (capture.index) |name| _ = try self.bindLoopCapture(&body, name, index, false, loc);
+        try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
+        defer _ = self.loop_starts.pop();
         try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).block);
         return body.toOwnedSlice(self.allocator);
     }
@@ -3798,6 +3897,17 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(old_return_type);
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
+        const saved_defer_base = self.defer_base;
+        const saved_loop_base = self.loop_base;
+        const saved_deferred_depth = self.deferred_depth;
+        self.defer_base = self.defer_scopes.items.len;
+        self.loop_base = self.loop_starts.items.len;
+        self.deferred_depth = 0;
+        defer {
+            self.defer_base = saved_defer_base;
+            self.loop_base = saved_loop_base;
+            self.deferred_depth = saved_deferred_depth;
+        }
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
 
@@ -3850,6 +3960,9 @@ pub const SemaAnalyzer = struct {
 
     fn visitReturnStmt(self: *Self, stmt: *const ast.StatementNode) !ir.Instruction {
         const return_stmt = stmt.data.@"return";
+        if (self.deferred_depth > 0) {
+            return self.err_reporter.exitInsideDefer("return", stmt.loc);
+        }
         if (self.activeReturnInference() != null) {
             return self.visitInferredReturnStmt(stmt);
         }
@@ -6407,6 +6520,15 @@ const ModuleScope = struct {
         if (symbol.is_file_only) return null;
         return symbol;
     }
+};
+
+const DeferScope = struct {
+    items: std.ArrayList(Deferred) = .empty,
+};
+
+const Deferred = struct {
+    block: ir.Block,
+    is_error_only: bool,
 };
 
 const VisitedBlock = struct {

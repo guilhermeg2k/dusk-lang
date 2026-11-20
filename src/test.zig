@@ -2520,6 +2520,22 @@ test "sema error: unhandled call argument" {
     try runCaseError("sema/errors-unhandled-call-arg.dsk", error.UnhandledError);
 }
 
+test "defer and errdefer: order, block scope, values read at exit, returns, failing try, error returns, catch, break and continue, nested loops, compound statements, shadowing, branch values, when, lambdas, tasks" {
+    try runCase("defer.dsk");
+}
+
+test "sema error: try, return or break leaving deferred code, errdefer in a function that can't fail" {
+    try runCaseError("sema/defer-try.dsk", error.TryInsideDefer);
+    try runCaseError("sema/defer-return.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/defer-break.dsk", error.ExitInsideDefer);
+    try runCaseError("sema/errdefer-non-failing.dsk", error.ErrdeferOutsideFailingFunction);
+}
+
+test "parser error: defer of a declaration or another defer" {
+    try runCaseError("parser/defer-let.dsk", error.ParserError);
+    try runCaseError("parser/defer-defer.dsk", error.ParserError);
+}
+
 test "sema error: try in non-failing function" {
     try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
 }

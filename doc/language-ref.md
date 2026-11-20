@@ -891,6 +891,39 @@ for true do
 end
 ```
 
+### Defer
+
+`defer` runs a statement when its block ends, however it ends: at the end, through `return`, through a failed `try` passing an error up, or through `break` and `continue`. It keeps cleanup next to the setup it undoes:
+
+```nim
+func save(path: string, text: string) -> !void
+    let file = try fs::open(path, fs::Mode.Write)
+    defer file.close()
+    try file.write(text)    # if this fails, file.close() still runs before the error goes up
+    try file.write("\n")
+end
+```
+
+- The block is the one `defer` is written in: a function body, an `if` branch, a `when` case, a loop body (so in a loop it runs at the end of each iteration, not of the function).
+- Deferred statements run in reverse order: the last one written runs first, so cleanup undoes setup step by step.
+- The statement runs as if written at the exit: it sees variables as they are then. A `return` computes its value first, then runs the deferred code.
+- One statement is deferred: a call, an assignment, an `if`, a `when` or a `for`. Several cleanups are several `defer`s.
+- Deferred code can't leave early or fail on its own: `return`, a `break` or `continue` out of it and `try` are compile errors (`ExitInsideDefer`, `TryInsideDefer`), so handle errors there with `catch`. A loop written inside the deferred statement can use `break` and `continue` as usual.
+- A [runtime error](#runtime-errors) stops the program without running deferred code.
+
+`errdefer` is the same, but runs only when the function leaves with an error: a failed `try`, `return SomeError.X`, or a `catch` block that returns an error. It undoes a half-finished setup, while the success path keeps what it built:
+
+```nim
+func open_pair(a: string, b: string) -> fs::FsError!Pair
+    let first = try fs::open(a)
+    errdefer first.close()      # only if opening b fails
+    let second = try fs::open(b)
+    return Pair(first = first, second = second)
+end
+```
+
+`errdefer` needs a function that can fail (`ErrdeferOutsideFailingFunction`). `defer` and `errdefer` mix in one reverse order.
+
 ## 10. Functions
 
 ```nim

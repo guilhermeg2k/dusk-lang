@@ -464,6 +464,21 @@ pub const CompileErrorReporter = struct {
         return error.UnhandledError;
     }
 
+    pub fn tryInsideDefer(self: *Self, loc: Loc) CompileError {
+        self.log("try can't be used in deferred code: it runs while the function is already leaving, so handle errors with catch", loc);
+        return error.TryInsideDefer;
+    }
+
+    pub fn exitInsideDefer(self: *Self, keyword: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} can't leave deferred code: it runs while its block is already leaving", .{keyword}), loc);
+        return error.ExitInsideDefer;
+    }
+
+    pub fn errdeferOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
+        self.log("errdefer only runs when the function returns an error, so it needs a function that can fail (-> E!T or -> !T)", loc);
+        return error.ErrdeferOutsideFailingFunction;
+    }
+
     pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
         self.log("try can only be used at the top level or in a function that can fail (-> E!T or -> !T)", loc);
         return error.TryOutsideFailingFunction;
@@ -1116,6 +1131,9 @@ pub const CompileError = error{
     UnawaitedTaskCanFail,
     UnhandledError,
     TryOutsideFailingFunction,
+    TryInsideDefer,
+    ExitInsideDefer,
+    ErrdeferOutsideFailingFunction,
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,

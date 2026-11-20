@@ -1259,6 +1259,9 @@ pub const BytecodeGen = struct {
 
         switch (handler) {
             .try_call => |tc| {
+                const saved_next_free = self.next_free_register;
+                try self.genInstructionBlock(tc.cleanup);
+                self.freeRegisterN(self.next_free_register - saved_next_free);
                 const op: bc.OpCode = if (tc.is_top_level) .PANIC_ERR else .RETURN_ERR;
                 try self.chunk_instructions.append(self.allocator, .{ .op = op, .a = call_reg });
             },

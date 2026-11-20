@@ -23,6 +23,7 @@ pub const Statement = union(enum) {
     for_capture: ForCaptureStmt,
     assign: AssignStmt,
     @"return": ReturnStmt,
+    @"defer": DeferStmt,
     expression: *ExpNode,
     @"break": void,
     @"continue": void,
@@ -388,6 +389,11 @@ pub fn hasNamedArgument(arguments: []const FnCallArg) bool {
 
 pub const ReturnStmt = struct {
     exp: ?*ExpNode,
+};
+
+pub const DeferStmt = struct {
+    statement: *StatementNode,
+    is_error_only: bool,
 };
 
 pub const IndexedExp = struct {

@@ -229,6 +229,23 @@ pub const Parser = struct {
                 self.walk();
                 return ast.StatementNode{ .data = .{ .@"continue" = {} }, .loc = tk.loc };
             },
+            .defer_kw, .errdefer_kw => {
+                self.walk();
+                const next = self.peekCurrent();
+                const can_defer = switch (next.tag) {
+                    .defer_kw, .errdefer_kw, .return_kw, .break_kw, .continue_kw, .let_kw, .func_kw, .extern_kw, .struct_kw, .enum_kw, .union_kw, .error_kw, .trait_kw, .import_kw, .end_kw, .eof => false,
+                    else => true,
+                };
+                if (!can_defer) {
+                    return self.err_reporter.invalidSyntax("a statement to defer (a call, an assignment, an if, when or for)", next);
+                }
+                const statement = try self.allocator.create(ast.StatementNode);
+                statement.* = try self.parseStmt();
+                return ast.StatementNode{
+                    .data = .{ .@"defer" = .{ .statement = statement, .is_error_only = tk.tag == .errdefer_kw } },
+                    .loc = .{ .start = tk.loc.start, .end = statement.loc.end },
+                };
+            },
             .return_kw => {
                 const return_stmt = try self.parseReturnStmt();
                 const end_pos = if (return_stmt.exp) |exp| exp.loc.end else tk.loc.end;
