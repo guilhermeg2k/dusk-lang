@@ -1,0 +1,50 @@
+import std/array
+
+func remove_first[T](mut items: []T) -> array::ArrayError!T
+    return try array::remove(items, 0)
+end
+
+func main() -> !void
+    let mut empty: []int = []
+    let mut has_empty_error = false
+    array::pop(empty) catch e then
+        has_empty_error = e == array::ArrayError.Empty
+    end
+    assert(has_empty_error)
+    let bounds = [-9223372036854775807 - 1, -1, 0, 1, 9223372036854775807]
+    for bounds: index do
+        let mut has_remove_error = false
+        array::remove(empty, index) catch e then
+            has_remove_error = e == array::ArrayError.OutOfRange
+        end
+        assert(has_remove_error)
+        if index != 0 then
+            let mut has_insert_error = false
+            array::insert(empty, index, 5) catch e then
+                has_insert_error = e == array::ArrayError.OutOfRange
+            end
+            assert(has_insert_error)
+        end
+        assert(array::len(empty) == 0)
+    end
+    try array::insert(empty, 0, 7)
+    assert((try remove_first(empty)) == 7)
+    assert(array::len(empty) == 0)
+    assert(array::pop_or_null(empty) == null)
+    let mut strings: []string = []
+    for 1..10000: i do
+        try array::insert(strings, array::len(strings), "value$i")
+    end
+    let first = try remove_first(strings)
+    assert(first == "value1")
+    let last = try array::pop(strings)
+    assert(last == "value10000")
+    assert(array::len(strings) == 9998)
+    let alias = strings
+    for 1..10000: i do
+        try array::insert(strings, array::len(strings), "extra$i")
+    end
+    assert(first == "value1" and last == "value10000")
+    assert(array::len(alias) == 19998)
+    assert(alias[0] == "value2" and alias[19997] == "extra10000")
+end

@@ -1,5 +1,6 @@
 import std/array: append
 import std/string
+import std/io
 
 struct Point
     x: int
@@ -19,6 +20,6 @@ func main() -> void
             append(kept, text)
         end
     end
-    echo(kept)
-    echo(total)
+    io::println("${kept}")
+    io::println("${total}")
 end

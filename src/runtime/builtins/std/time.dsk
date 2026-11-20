@@ -1,0 +1,23 @@
+struct Timestamp
+    ~milliseconds: int
+
+    func unix_ms(self: @) -> int
+        return self.milliseconds
+    end
+
+    func to_string(self: @) -> string
+        return format_timestamp(self.milliseconds)
+    end
+end
+
+func now() -> Timestamp
+    return from_unix_ms(now_ms())
+end
+
+func from_unix_ms(milliseconds: int) -> Timestamp
+    return Timestamp(milliseconds = milliseconds)
+end
+
+extern func now_ms() -> int
+extern func monotonic_ns() -> int
+extern func ~format_timestamp(milliseconds: int) -> string

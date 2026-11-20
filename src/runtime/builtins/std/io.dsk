@@ -1,0 +1,139 @@
+import std/buffer
+
+error IoError
+    Closed
+    Busy
+    BrokenPipe
+    ConnectionReset
+    LineTooLong
+    InvalidUtf8
+    TimedOut
+    UnexpectedEnd
+    HandshakeFailed
+    Other
+end
+
+extern func print(text: string) -> void
+extern func println(text: string) -> void
+extern func eprint(text: string) -> void
+extern func eprintln(text: string) -> void
+extern func ~stdin_handle() -> int
+extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> IoError!?buffer
+extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> IoError!?buffer
+extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> IoError!?string
+extern func ~stream_read_all(handle: int, timeout_ms: int) -> IoError!string
+extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> IoError!buffer
+extern func ~is_terminal_fd(fd: int) -> bool
+extern func ~stream_close(handle: int) -> void
+extern func ~stdio_write(fd: int, text: string) -> IoError!void
+extern func ~stdio_write_bytes(fd: int, data: buffer) -> IoError!void
+extern func ~stdio_flush(fd: int) -> IoError!void
+
+trait Reader
+    func read_bytes(mut self: @, max: int, timeout_ms: int) -> IoError!?buffer
+end
+
+trait Writer
+    func write(mut self: @, text: string) -> IoError!void
+    func write_bytes(mut self: @, data: buffer) -> IoError!void
+    func flush(mut self: @) -> IoError!void
+end
+
+struct Stdin
+    ~handle: int
+
+    func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> IoError!?string
+        return try stream_read_line(self.handle, max, timeout_ms)
+    end
+
+    func read_bytes(self: @, max: int, timeout_ms: int = -1) -> IoError!?buffer
+        return try stream_read_bytes(self.handle, max, timeout_ms)
+    end
+
+    func read_exact(self: @, count: int, timeout_ms: int = -1) -> IoError!?buffer
+        return try stream_read_exact(self.handle, count, timeout_ms)
+    end
+
+    func read_all(self: @, timeout_ms: int = -1) -> IoError!string
+        return try stream_read_all(self.handle, timeout_ms)
+    end
+
+    func read_all_bytes(self: @, timeout_ms: int = -1) -> IoError!buffer
+        return try stream_read_all_bytes(self.handle, timeout_ms)
+    end
+
+    func is_terminal(self: @) -> bool
+        return is_terminal_fd(0)
+    end
+
+    func close(self: @) -> void
+        stream_close(self.handle)
+    end
+end
+
+struct Stdout
+    ~fd: int
+
+    func write(self: @, text: string) -> IoError!void
+        try stdio_write(self.fd, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> IoError!void
+        try stdio_write_bytes(self.fd, data)
+    end
+
+    func flush(self: @) -> IoError!void
+        try stdio_flush(self.fd)
+    end
+
+    func is_terminal(self: @) -> bool
+        return is_terminal_fd(self.fd)
+    end
+end
+
+struct Stderr
+    ~fd: int
+
+    func write(self: @, text: string) -> IoError!void
+        try stdio_write(self.fd, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> IoError!void
+        try stdio_write_bytes(self.fd, data)
+    end
+
+    func flush(self: @) -> IoError!void
+        try stdio_flush(self.fd)
+    end
+
+    func is_terminal(self: @) -> bool
+        return is_terminal_fd(self.fd)
+    end
+end
+
+func stdin() -> Stdin
+    return Stdin(handle = stdin_handle())
+end
+
+func stdout() -> Stdout
+    return Stdout(fd = 1)
+end
+
+func stderr() -> Stderr
+    return Stderr(fd = 2)
+end
+
+func copy[R: Reader, W: Writer](mut from: R, mut to: W) -> IoError!int
+    let mut total = 0
+    for true do
+        let next = try from.read_bytes(65536, -1)
+        if next: chunk then
+            try to.write_bytes(chunk)
+            total = total + buffer::len(chunk)
+        else
+            break
+        end
+    end
+    try to.flush()
+    return total
+end

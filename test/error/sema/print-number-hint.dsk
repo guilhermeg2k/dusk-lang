@@ -1,0 +1,6 @@
+import std/io
+
+func main() -> void
+    let count = 5
+    io::println(count)
+end

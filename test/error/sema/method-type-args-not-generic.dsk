@@ -1,0 +1,12 @@
+struct B
+    v: int
+
+    func plain(self: @) -> int
+        return 1
+    end
+end
+
+func main() -> void
+    let b = B(v = 1)
+    let x = b.plain[int]()
+end

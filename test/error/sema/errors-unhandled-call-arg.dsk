@@ -1,3 +1,5 @@
+import std/io
+
 error ParseError
     Empty
     BadDigit
@@ -11,5 +13,5 @@ func parse(n: int) -> ParseError!int
 end
 
 func main() -> void
-    echo(parse(1))
+    io::println("${parse(1)}")
 end

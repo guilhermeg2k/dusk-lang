@@ -1,6 +1,8 @@
+import std/io
+
 func main() -> void
     when 'a'
-        300 then echo(1) end
-        else then echo(2) end
+        300 then io::println("${1}") end
+        else then io::println("${2}") end
     end
 end

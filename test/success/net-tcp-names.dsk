@@ -1,0 +1,87 @@
+import std/io
+import std/net
+import std/task
+import std/array
+
+func net_error_name(e: net::NetError) -> string
+    return when e
+        net::NetError.HostNotFound then "not found" end
+        net::NetError.TimedOut then "timed out" end
+        else then "other" end
+    end
+end
+
+func io_error_name(e: io::IoError) -> string
+    return when e
+        io::IoError.TimedOut then "timed out" end
+        io::IoError.Busy then "busy" end
+        else then "other" end
+    end
+end
+
+func read_one_line(listener: net::TcpListener) -> io::IoError!?string
+    let conn = try listener.accept()
+    let line = try conn.read_line()
+    conn.close()
+    return line
+end
+
+func main() -> !void
+    let ipv4 = try net::tcp_listen("127.0.0.1", 0)
+    let server = spawn(func() -> return try read_one_line(ipv4))
+    let by_name = try net::tcp_connect("localhost", ipv4.port())
+    try by_name.write("through every address\n")
+    by_name.close()
+    assert(try await(server) == "through every address")
+    ipv4.close()
+
+    let named = try net::tcp_listen("localhost", 0)
+    let named_server = spawn(func() -> return try read_one_line(named))
+    let to_named = try net::tcp_connect("localhost", named.port(), timeout_ms = 5000)
+    try to_named.write("listening by name\n")
+    to_named.close()
+    assert(try await(named_server) == "listening by name")
+
+    let mut not_found = ""
+    net::tcp_connect("nothing-here.invalid", 80) catch e then
+        not_found = net_error_name(e)
+    end
+    assert(not_found == "not found")
+
+    let mut listen_not_found = ""
+    net::tcp_listen("nothing-here.invalid", 0) catch e then
+        listen_not_found = net_error_name(e)
+    end
+    assert(listen_not_found == "not found")
+
+    let mut accept_error = ""
+    named.accept(timeout_ms = 20) catch e then
+        accept_error = io_error_name(e)
+    end
+    assert(accept_error == "timed out")
+    let after_timeout = spawn(func() -> return try read_one_line(named))
+    task::sleep(0)
+    let late = try net::tcp_connect("localhost", named.port())
+    try late.write("still accepting\n")
+    late.close()
+    assert(try await(after_timeout) == "still accepting")
+    named.close()
+
+    let full = try net::tcp_listen("127.0.0.1", 0, backlog = 1)
+    let mut held: []net::TcpConn = []
+    let mut connect_error = ""
+    let mut attempts = 0
+    for connect_error == "" and attempts < 64 do
+        let mut conn = net::tcp_connect("127.0.0.1", full.port(), timeout_ms = 50) catch e then
+            connect_error = net_error_name(e)
+            break
+        end
+        array::append(held, conn)
+        attempts = attempts + 1
+    end
+    assert(connect_error == "timed out")
+    for held: conn do
+        conn.close()
+    end
+    full.close()
+end

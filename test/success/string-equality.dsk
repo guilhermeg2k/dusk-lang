@@ -1,5 +1,6 @@
 import std/string
 import std/buffer
+import std/io
 
 let name = "Dusk"
 
@@ -25,8 +26,8 @@ func main() -> void
         end
     end
     assert(matches == 1)
-    echo("a" == "a")
-    echo("a" == "b")
+    io::println("${"a" == "a"}")
+    io::println("${"a" == "b"}")
     let maybe: ?string = "Dusk"
     let missing: ?string = null
     let other_missing: ?string = null

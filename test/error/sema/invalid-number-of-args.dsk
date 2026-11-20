@@ -1,9 +1,11 @@
+import std/io
+
 func add(a: int, b: int) -> int
     return a + b
 end
 
 func main() -> void
-    echo(add(1, 2, 3))
+    io::println("${add(1, 2, 3)}")
 
-    echo(add(1))
+    io::println("${add(1)}")
 end

@@ -1,4 +1,5 @@
 import std/string
+import std/io
 
 let name = "olá"
 
@@ -16,6 +17,6 @@ func main() -> void
     if maybe: text then
         assert(string::len(text) == 3)
     end
-    echo(string::len(name))
-    echo(string::char_count(name))
+    io::println("${string::len(name)}")
+    io::println("${string::char_count(name)}")
 end

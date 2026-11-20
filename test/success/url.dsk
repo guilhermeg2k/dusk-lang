@@ -1,0 +1,166 @@
+import std/array: len
+import std/url
+
+func expect_parse_error(text: string, expected: url::UrlError) -> void
+    url::parse(text) catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func expect_resolved(base: url::Url, reference: string, expected: string) -> !void
+    let resolved = try url::resolve(base, reference)
+    assert(resolved.to_string() == expected)
+end
+
+func expect_decode_error(text: string) -> void
+    url::decode(text) catch e then
+        assert(e == url::UrlError.InvalidEncoding)
+        return
+    end
+    assert(false)
+end
+
+func check_parse() -> !void
+    let full = try url::parse("HTTPS://Example.COM:8443/a/b?x=1&y=2#top")
+    assert(full.scheme == "https")
+    assert(full.host == "example.com")
+    assert(full.port == 8443)
+    assert(full.path == "/a/b")
+    assert(full.query == "x=1&y=2")
+    assert(full.fragment == "top")
+    assert(full.to_string() == "https://example.com:8443/a/b?x=1&y=2#top")
+
+    let bare = try url::parse("http://example.com")
+    assert(bare.port == null)
+    assert(bare.path == "/")
+    assert(bare.query == null)
+    assert(bare.fragment == null)
+    assert(bare.to_string() == "http://example.com/")
+
+    let empty_query = try url::parse("http://example.com?")
+    assert(empty_query.query == "")
+    assert(empty_query.path == "/")
+
+    let ipv6 = try url::parse("http://[::1]:8080/x")
+    assert(ipv6.host == "::1")
+    assert(ipv6.port == 8080)
+    assert(ipv6.to_string() == "http://[::1]:8080/x")
+    let ipv6_bare = try url::parse("http://[2001:DB8::7]/")
+    assert(ipv6_bare.host == "2001:db8::7")
+    assert(ipv6_bare.port == null)
+
+    let empty_port = try url::parse("http://example.com:/p")
+    assert(empty_port.port == null)
+    let escaped = try url::parse("http://example.com/a%20b;c=d?q=%C3%A9")
+    assert(escaped.path == "/a%20b;c=d")
+    assert(escaped.query == "q=%C3%A9")
+end
+
+func check_parse_errors() -> void
+    expect_parse_error("example.com", url::UrlError.Invalid)
+    expect_parse_error("http:/x", url::UrlError.Invalid)
+    expect_parse_error("http://", url::UrlError.Invalid)
+    expect_parse_error("http:///path", url::UrlError.Invalid)
+    expect_parse_error("1http://x/", url::UrlError.Invalid)
+    expect_parse_error("http://user:secret@host/", url::UrlError.Invalid)
+    expect_parse_error("http://ho st/", url::UrlError.Invalid)
+    expect_parse_error("http://host/a b", url::UrlError.Invalid)
+    expect_parse_error("http://host/café", url::UrlError.Invalid)
+    expect_parse_error("http://host/%zz", url::UrlError.Invalid)
+    expect_parse_error("http://host/?q=%4", url::UrlError.Invalid)
+    expect_parse_error("http://host/#a<b", url::UrlError.Invalid)
+    expect_parse_error("http://[::1/", url::UrlError.Invalid)
+    expect_parse_error("http://[g::1]/", url::UrlError.Invalid)
+    expect_parse_error("http://[::1]x/", url::UrlError.Invalid)
+    expect_parse_error("http://host:99999/", url::UrlError.InvalidPort)
+    expect_parse_error("http://host:123456/", url::UrlError.InvalidPort)
+    expect_parse_error("http://host:0/", url::UrlError.InvalidPort)
+    expect_parse_error("http://host:8a/", url::UrlError.InvalidPort)
+end
+
+func check_resolve() -> !void
+    let base = try url::parse("http://a/b/c/d;p?q")
+    try expect_resolved(base, "https://other.example/x", "https://other.example/x")
+    try expect_resolved(base, "g", "http://a/b/c/g")
+    try expect_resolved(base, "./g", "http://a/b/c/g")
+    try expect_resolved(base, "g/", "http://a/b/c/g/")
+    try expect_resolved(base, "/g", "http://a/g")
+    try expect_resolved(base, "//g", "http://g/")
+    try expect_resolved(base, "?y", "http://a/b/c/d;p?y")
+    try expect_resolved(base, "g?y", "http://a/b/c/g?y")
+    try expect_resolved(base, "#s", "http://a/b/c/d;p?q#s")
+    try expect_resolved(base, "g#s", "http://a/b/c/g#s")
+    try expect_resolved(base, "g?y#s", "http://a/b/c/g?y#s")
+    try expect_resolved(base, ";x", "http://a/b/c/;x")
+    try expect_resolved(base, "g;x", "http://a/b/c/g;x")
+    try expect_resolved(base, "", "http://a/b/c/d;p?q")
+    try expect_resolved(base, ".", "http://a/b/c/")
+    try expect_resolved(base, "./", "http://a/b/c/")
+    try expect_resolved(base, "..", "http://a/b/")
+    try expect_resolved(base, "../", "http://a/b/")
+    try expect_resolved(base, "../g", "http://a/b/g")
+    try expect_resolved(base, "../..", "http://a/")
+    try expect_resolved(base, "../../", "http://a/")
+    try expect_resolved(base, "../../g", "http://a/g")
+    try expect_resolved(base, "../../../g", "http://a/g")
+    try expect_resolved(base, "/./g", "http://a/g")
+    try expect_resolved(base, "/../g", "http://a/g")
+    try expect_resolved(base, "g.", "http://a/b/c/g.")
+    try expect_resolved(base, "..g", "http://a/b/c/..g")
+    try expect_resolved(base, "./../g", "http://a/b/g")
+    try expect_resolved(base, "./g/.", "http://a/b/c/g/")
+    try expect_resolved(base, "g/./h", "http://a/b/c/g/h")
+    try expect_resolved(base, "g/../h", "http://a/b/c/h")
+    try expect_resolved(base, "g;x=1/./y", "http://a/b/c/g;x=1/y")
+    try expect_resolved(base, "g;x=1/../y", "http://a/b/c/y")
+    let ported = try url::parse("https://[::1]:8443/api/v1/items")
+    try expect_resolved(ported, "../v2/list?page=2", "https://[::1]:8443/api/v2/list?page=2")
+end
+
+func check_encoding() -> !void
+    assert(url::encode("dusk lang/é?&=") == "dusk%20lang%2F%C3%A9%3F%26%3D")
+    assert(url::encode("AZaz09-._~") == "AZaz09-._~")
+    assert(url::encode("") == "")
+    assert(try url::decode("dusk%20lang%2F%C3%A9%3F%26%3D") == "dusk lang/é?&=")
+    assert(try url::decode("%c3%a9") == "é")
+    assert(try url::decode("a+b") == "a+b")
+    expect_decode_error("%zz")
+    expect_decode_error("%4")
+    expect_decode_error("50%")
+    expect_decode_error("%FF")
+    assert(url::query({"q": "dusk lang", "page": "2"}) == "q=dusk%20lang&page=2")
+    assert(url::query({"a&b": "c=d"}) == "a%26b=c%3Dd")
+    assert(url::query({}) == "")
+end
+
+func check_parse_query() -> !void
+    let params = try url::parse_query("q=dusk+lang&tag=a&tag=b%26c&empty=&flag&=x&&e%3Dq=1%2B1")
+    let q = params["q"] orelse []
+    assert(len(q) == 1)
+    assert(q[0] == "dusk lang")
+    let tags = params["tag"] orelse []
+    assert(len(tags) == 2)
+    assert(tags[0] == "a")
+    assert(tags[1] == "b&c")
+    assert((params["empty"] orelse ["missing"])[0] == "")
+    assert((params["flag"] orelse ["missing"])[0] == "")
+    assert((params[""] orelse ["missing"])[0] == "x")
+    assert((params["e=q"] orelse ["missing"])[0] == "1+1")
+    let empty = try url::parse_query("")
+    assert(params["missing"] == null)
+    url::parse_query("bad=%zz") catch e then
+        assert(e == url::UrlError.InvalidEncoding)
+        return
+    end
+    assert(false)
+end
+
+func main() -> !void
+    try check_parse()
+    check_parse_errors()
+    try check_resolve()
+    try check_encoding()
+    try check_parse_query()
+end

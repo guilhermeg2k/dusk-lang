@@ -1,5 +1,6 @@
 import std/array: append
 import std/string
+import std/io
 
 func main() -> !void
     let mut kept: []string = []
@@ -17,6 +18,6 @@ func main() -> !void
             append(kept, string::lower(parts[1]))
         end
     end
-    echo(kept)
-    echo(total)
+    io::println("${kept}")
+    io::println("${total}")
 end

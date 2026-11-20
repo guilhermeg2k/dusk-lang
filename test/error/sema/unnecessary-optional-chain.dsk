@@ -1,5 +1,7 @@
+import std/io
+
 let x = 1
 
 func main() -> void
-    echo(x?.foo)
+    io::println("${x?.foo}")
 end

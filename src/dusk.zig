@@ -9,6 +9,7 @@ const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
 const Map = @import("runtime/value.zig").Map;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
+pub const Stdio = @import("runtime/stdio.zig").Stdio;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
@@ -34,7 +35,8 @@ pub const Dusk = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
-    stdout_writer: ?*std.Io.Writer,
+    stdio: Stdio = .{},
+    stdin_fd: c_int = 0,
     io: std.Io,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
@@ -76,18 +78,9 @@ pub const Dusk = struct {
 
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
         Map.randomizeSeeds(self.io);
-        var v = VM.init(program, self.stdout_writer);
+        var v = VM.init(program, self.stdio);
+        v.stdin_fd = self.stdin_fd;
         defer v.deinit();
         try v.run();
-    }
-
-    fn dump(self: *Self, obj: anytype, file_name: []const u8) !void {
-        const dir_path = std.fs.path.dirname(file_name) orelse ".";
-        try std.Io.Dir.cwd().createDirPath(self.io, dir_path);
-
-        const json_str = try std.json.Stringify.valueAlloc(self.allocator, obj, .{ .whitespace = .indent_2 });
-        defer self.allocator.free(json_str);
-
-        try std.Io.Dir.cwd().writeFile(self.io, .{ .sub_path = file_name, .data = json_str });
     }
 };

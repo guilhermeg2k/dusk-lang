@@ -1,3 +1,5 @@
+import std/io
+
 enum Op
     Add
     Sub
@@ -107,12 +109,12 @@ func nested(a: int, b: int) -> int
 end
 
 func main() -> void
-    echo([apply(Op.Add, 7, 3), apply(Op.Sub, 7, 3), apply(Op.Mul, 7, 3), apply(Op.Div, 7, 3), apply(Op.Mod, 7, 3)])
-    echo([size(Shape(circle = 2)), size(Shape(square = 3)), size(Shape(line = 9)), size(Shape(dot = 1))])
-    echo([grade(95), grade(85), grade(75), grade(10), grade(101), grade(-1)])
-    echo([digit('0'), digit('3'), digit('9')])
-    echo([maybe(1), maybe(4), maybe(5), maybe(null)])
-    echo([maybe_null(null), maybe_null(3), maybe_null(9)])
-    echo([sparse(1), sparse(1000), sparse(-5000), sparse(77777), sparse(2)])
-    echo([nested(1, 10), nested(1, 13), nested(1, 50), nested(2, 10), nested(4, 0), nested(7, 0)])
+    io::println("${[apply(Op.Add, 7, 3), apply(Op.Sub, 7, 3), apply(Op.Mul, 7, 3), apply(Op.Div, 7, 3), apply(Op.Mod, 7, 3)]}")
+    io::println("${[size(Shape(circle = 2)), size(Shape(square = 3)), size(Shape(line = 9)), size(Shape(dot = 1))]}")
+    io::println("${[grade(95), grade(85), grade(75), grade(10), grade(101), grade(-1)]}")
+    io::println("${[digit('0'), digit('3'), digit('9')]}")
+    io::println("${[maybe(1), maybe(4), maybe(5), maybe(null)]}")
+    io::println("${[maybe_null(null), maybe_null(3), maybe_null(9)]}")
+    io::println("${[sparse(1), sparse(1000), sparse(-5000), sparse(77777), sparse(2)]}")
+    io::println("${[nested(1, 10), nested(1, 13), nested(1, 50), nested(2, 10), nested(4, 0), nested(7, 0)]}")
 end

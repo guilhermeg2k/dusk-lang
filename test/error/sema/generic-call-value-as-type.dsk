@@ -1,0 +1,7 @@
+func keep[T](value: T) -> T
+    return value
+end
+func main() -> void
+    let n = 3
+    let x = keep[n](3)
+end

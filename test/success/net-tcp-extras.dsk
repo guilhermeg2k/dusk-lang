@@ -1,0 +1,125 @@
+import std/io
+import std/net
+import std/string
+import std/buffer
+import std/task
+
+func text_of(data: ?buffer) -> !string
+    if data: bytes then
+        return try string::from_bytes(bytes)
+    end
+    return "<end>"
+end
+
+func io_error_name(e: io::IoError) -> string
+    return when e
+        io::IoError.UnexpectedEnd then "unexpected end" end
+        io::IoError.Closed then "closed" end
+        else then "other" end
+    end
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+
+    let exact = spawn(func() -> ![]string
+        let conn = try listener.accept()
+        let first = try text_of(try conn.read_exact(5))
+        let second = try text_of(try conn.read_exact(3))
+        let last = try text_of(try conn.read_exact(1))
+        conn.close()
+        return [first, second, last]
+    end)
+    let writer = try net::tcp_connect("127.0.0.1", listener.port())
+    try writer.write("abc")
+    task::sleep(10)
+    try writer.write("defgh")
+    writer.close()
+    let parts = try await(exact)
+    assert(parts[0] == "abcde")
+    assert(parts[1] == "fgh")
+    assert(parts[2] == "<end>")
+
+    let partial = spawn(func() -> ![]string
+        let conn = try listener.accept()
+        let mut exact_error = ""
+        conn.read_exact(3) catch e then
+            exact_error = io_error_name(e)
+        end
+        let rest = try text_of(try conn.read_bytes(10))
+        conn.close()
+        return [exact_error, rest]
+    end)
+    let short = try net::tcp_connect("127.0.0.1", listener.port())
+    try short.write("xy")
+    short.close()
+    let partial_parts = try await(partial)
+    assert(partial_parts[0] == "unexpected end")
+    assert(partial_parts[1] == "xy")
+
+    let big = try string::repeat("z", 3000000)
+    let big_reader = spawn(func() -> io::IoError!int
+        let conn = try listener.accept()
+        task::sleep(10)
+        let data = try conn.read_exact(3000000)
+        conn.close()
+        if data: bytes then
+            return buffer::len(bytes)
+        end
+        return 0
+    end)
+    let big_writer = try net::tcp_connect("127.0.0.1", listener.port())
+    try big_writer.write(big)
+    big_writer.close()
+    assert(try await(big_reader) == 3000000)
+
+    let peer_check = spawn(func() -> io::IoError!net::Address
+        let conn = try listener.accept()
+        let address = conn.remote_address()
+        conn.close()
+        assert(conn.remote_address().port == address.port)
+        return address
+    end)
+    let client = try net::tcp_connect("127.0.0.1", listener.port())
+    let server_address = client.remote_address()
+    assert(server_address.host == "127.0.0.1")
+    assert(server_address.port == listener.port())
+    let client_address = try await(peer_check)
+    assert(client_address.host == "127.0.0.1")
+    assert(client_address.port > 0)
+    assert(client_address.port != listener.port())
+    client.close()
+    let mut changed = client.remote_address()
+    changed.port = 1
+    assert(client.remote_address().port == listener.port())
+    let after_close = client.remote_address()
+    assert(after_close.host == "127.0.0.1")
+    assert(after_close.port == listener.port())
+
+    let leaving = spawn(func() -> io::IoError!net::Address
+        let conn = try listener.accept()
+        task::sleep(20)
+        let address = conn.remote_address()
+        conn.close()
+        return address
+    end)
+    let brief = try net::tcp_connect("127.0.0.1", listener.port())
+    brief.close()
+    let left_address = try await(leaving)
+    assert(left_address.host == "127.0.0.1")
+    assert(left_address.port > 0)
+    listener.close()
+
+    let ipv6 = try net::tcp_listen("::1", 0)
+    let ipv6_peer = spawn(func() -> io::IoError!string
+        let conn = try ipv6.accept()
+        let address = conn.remote_address()
+        conn.close()
+        return address.host
+    end)
+    let ipv6_client = try net::tcp_connect("::1", ipv6.port())
+    assert(ipv6_client.remote_address().host == "::1")
+    ipv6_client.close()
+    assert(try await(ipv6_peer) == "::1")
+    ipv6.close()
+end

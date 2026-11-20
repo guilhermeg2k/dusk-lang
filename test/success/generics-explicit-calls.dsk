@@ -1,0 +1,103 @@
+import std/array
+import std/string
+
+struct User
+    name: string
+end
+
+struct Box[T]
+    value: T
+end
+
+union Result[T]
+    value: T
+    missing: bool
+end
+
+error Fault
+    Bad
+end
+
+func keep[T](value: T) -> T
+    return value
+end
+
+func empty[T]() -> []T
+    return []
+end
+
+func nothing[T]() -> ?T
+    return null
+end
+
+func pair[T, U](first: T, second: U) -> U
+    return second
+end
+
+func twice[T](value: T, f: func(T) -> T) -> T
+    return f(f(value))
+end
+
+func invoke[T, E: error](f: func() -> E!T) -> E!T
+    return try f()
+end
+
+func make_fault() -> Fault!int
+    return Fault.Bad
+end
+
+func increment(n: int) -> int
+    return n + 1
+end
+
+func main() -> !void
+    let user = keep[User](User(name = "Ada"))
+    assert(user.name == "Ada")
+    assert(keep[int](3) == 3)
+    assert(keep[byte](3) == 3)
+    assert(keep[bool](true))
+    assert(keep[?int](null) == null)
+    assert(keep[float](3) == 3.0)
+    assert(pair[User, string](user, "ok") == "ok")
+    assert(pair[User, string](second = "named", first = user) == "named")
+    assert(array::len(empty[User]()) == 0)
+    assert(array::len(empty[[]int]()) == 0)
+    assert(array::len(empty[?User]()) == 0)
+    assert(array::len(empty[Box[User]]()) == 0)
+    assert(array::len(empty[map[string, User]]()) == 0)
+    assert(array::len(empty[func(int) -> int]()) == 0)
+    assert(array::len(empty[func() -> Fault!int]()) == 0)
+    assert(nothing[int]() == null)
+    assert(nothing[User]() == null)
+    let box = keep[Box[User]](Box(value = user))
+    assert(box.value.name == "Ada")
+    let nested = keep[Box[Box[User]]](Box(value = box))
+    assert(nested.value.value.name == "Ada")
+    let built = Box[User](value = user)
+    assert(built.value.name == "Ada")
+    let result = Result[User](value = user)
+    if result.value: found then
+        assert(found.name == "Ada")
+    else
+        assert(false)
+    end
+    assert(twice[int](3, func(n) -> return n * 2) == 12)
+    assert(invoke[int, none](func() -> return 9) == 9)
+    assert((invoke[int, Fault](make_fault) catch 7) == 7)
+    assert(copy[int](5) == 5)
+    assert(copy[float](5) == 5.0)
+    assert(array::len(copy[[]int]([])) == 0)
+    assert(copy[User](user).name == "Ada")
+    let copied = copy[[]int]([1, 2])
+    assert(copied[1] == 2)
+    assert(array::len[User](empty[User]()) == 0)
+    let mut items: []int = []
+    array::append[int](items, 4)
+    assert(items[0] == 4)
+    assert((5 |> keep[int]()) == 5)
+    let callbacks = [increment]
+    let i = 0
+    assert(callbacks[i](5) == 6)
+    assert(callbacks[i + 0](6) == 7)
+    assert(callbacks[string::len("")](7) == 8)
+end

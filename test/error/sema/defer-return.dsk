@@ -1,0 +1,6 @@
+func main() -> void
+    let done = true
+    defer if done then
+        return
+    end
+end

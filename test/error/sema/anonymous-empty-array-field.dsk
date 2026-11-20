@@ -1,0 +1,3 @@
+func main() -> void
+    let p = @(items = [])
+end

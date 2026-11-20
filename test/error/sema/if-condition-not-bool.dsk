@@ -1,5 +1,7 @@
+import std/io
+
 func main() -> void
     if 1 then
-        echo("hello")
+        io::println("hello")
     end
 end

@@ -1,7 +1,9 @@
+import std/io
+
 let x = 1
 
 func main() -> void
     if x: y then
-        echo(y)
+        io::println("${y}")
     end
 end

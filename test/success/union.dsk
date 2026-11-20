@@ -1,4 +1,5 @@
 import std/array: len
+import std/io
 
 union Response
     success: string
@@ -75,7 +76,7 @@ func main() -> void
     let err = Response(failure = "Error")
 
     if res.success: msg then
-        echo(msg)
+        io::println("${msg}")
     else
         assert(false)
     end
@@ -85,11 +86,11 @@ func main() -> void
     end
 
     if err.failure: msg then
-        echo(msg)
+        io::println("${msg}")
     end
 
-    echo(res.success)
-    echo(res.failure)
+    io::println("${res.success}")
+    io::println("${res.failure}")
 
     let vi = Value(i = 42)
     if vi.i: x then
@@ -154,10 +155,10 @@ func main() -> void
         assert(false)
     end
 
-    echo(vi.i)
-    echo(vf.f)
-    echo(vb.b)
-    echo(vi.f)
+    io::println("${vi.i}")
+    io::println("${vf.f}")
+    io::println("${vb.b}")
+    io::println("${vi.f}")
 
     assert(is_success(fetch(1)))
     assert(!is_success(fetch(2)))

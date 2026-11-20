@@ -25,6 +25,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "to_int", Binding{ .native = &strToInt } },
     .{ "to_float", Binding{ .native = &strToFloat } },
     .{ "find", Binding{ .native = &strFind } },
+    .{ "find_reverse", Binding{ .native = &strFindReverse } },
+    .{ "compare", Binding{ .native = &strCompare } },
     .{ "contains", Binding{ .native = &strContains } },
     .{ "starts_with", Binding{ .native = &strStartsWith } },
     .{ "ends_with", Binding{ .native = &strEndsWith } },
@@ -32,6 +34,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "byte_at", Binding{ .native = &strByteAt } },
     .{ "char_at", Binding{ .native = &strCharAt } },
     .{ "trim", Binding{ .native = &strTrim } },
+    .{ "trim_start", Binding{ .native = &strTrimStart } },
+    .{ "trim_end", Binding{ .native = &strTrimEnd } },
     .{ "split", Binding{ .native = &strSplit } },
     .{ "replace", Binding{ .native = &strReplace } },
     .{ "upper", Binding{ .native = &strUpper } },
@@ -103,10 +107,44 @@ fn strToFloat(_: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn strFind(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
     const needle = bytesArg(args, 1);
-    if (needle.len == 0) return ok(v.NULL_VALUE);
-    const index = std.mem.indexOf(u8, bytesArg(args, 0), needle) orelse return ok(v.NULL_VALUE);
+    const start = args[2].int64;
+    const has_no_search_range = needle.len == 0 or start < 0 or start >= text.len;
+    if (has_no_search_range) {
+        return ok(v.NULL_VALUE);
+    }
+    const index = std.mem.indexOfPos(u8, text, @intCast(start), needle) orelse return ok(v.NULL_VALUE);
     return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
+}
+
+fn strFindReverse(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const needle = bytesArg(args, 1);
+    const has_no_search_range = needle.len == 0 or needle.len > text.len;
+    if (has_no_search_range) {
+        return ok(v.NULL_VALUE);
+    }
+    var start = text.len - needle.len;
+    if (args[2].int64 != 0) {
+        const requested_start = v.HeapValue.getParentPtr(v.NullBox, args[2].heap_obj).value.int64;
+        if (requested_start < 0) {
+            return ok(v.NULL_VALUE);
+        }
+        start = @min(start, @as(usize, @intCast(requested_start)));
+    }
+    const search_end = start + needle.len;
+    const index = std.mem.lastIndexOf(u8, text[0..search_end], needle) orelse return ok(v.NULL_VALUE);
+    return ok(try vm.allocNullBox(.{ .int64 = @intCast(index) }, .int64));
+}
+
+fn strCompare(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const order = std.mem.order(u8, bytesArg(args, 0), bytesArg(args, 1));
+    return ok(.{ .int64 = switch (order) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1,
+    } });
 }
 
 fn strContains(_: *VM, args: []v.Value) anyerror!NativeResult {
@@ -154,18 +192,37 @@ fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn strTrim(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyTrimmedString(vm, args, .both);
+}
+
+fn copyTrimmedString(vm: *VM, args: []v.Value, comptime side: enum { both, start, end }) !NativeResult {
     const text = bytesArg(args, 0);
-    const trimmed = std.mem.trim(u8, text, ascii_whitespace);
+    const trimmed = switch (side) {
+        .both => std.mem.trim(u8, text, ascii_whitespace),
+        .start => std.mem.trimStart(u8, text, ascii_whitespace),
+        .end => std.mem.trimEnd(u8, text, ascii_whitespace),
+    };
     const start = @intFromPtr(trimmed.ptr) - @intFromPtr(text.ptr);
-    const result = try vm.allocString(trimmed.len);
-    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..trimmed.len]);
+    const len = trimmed.len;
+    const result = try vm.allocString(len);
+    @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..len]);
     return stringResult(result);
+}
+
+fn strTrimStart(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyTrimmedString(vm, args, .start);
+}
+
+fn strTrimEnd(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return copyTrimmedString(vm, args, .end);
 }
 
 fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
     var piece_count: usize = 0;
     var total: usize = 0;
-    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    const limit = args[2].int64;
+    const remaining: ?usize = if (limit < 0) null else @intCast(limit);
+    var pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1), .remaining = remaining };
     while (pieces.next()) |piece| {
         piece_count += 1;
         total += std.mem.Alignment.of(v.Bytes).forward(v.Bytes.calc_size(piece.len));
@@ -177,7 +234,7 @@ fn strSplit(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const allocator = vm.getCurrentHeapAllocator();
     const array = try v.Array.init(allocator, .string, capacity);
     vm.increaseHeapAllocationCount(v.Array.calc_size(capacity));
-    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1) };
+    pieces = Pieces{ .text = bytesArg(args, 0), .separator = bytesArg(args, 1), .remaining = remaining };
     while (pieces.next()) |piece| {
         const bytes = try v.Bytes.init(allocator, piece, .string);
         vm.increaseHeapAllocationCount(v.Bytes.calc_size(piece.len));
@@ -232,8 +289,8 @@ fn strRepeat(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn joinParts(parts_value: *v.Value) []const v.Value {
-    parts_value.heap_obj = parts_value.heap_obj.followRelocated();
-    const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj);
+    const array = v.HeapValue.getParentPtr(v.Array, parts_value.heap_obj).newestCopy();
+    parts_value.heap_obj = &array.obj;
     return array.getDataPtr()[0..array.len];
 }
 
@@ -279,14 +336,26 @@ const Pieces = struct {
     text: []const u8,
     separator: []const u8,
     index: ?usize = 0,
+    remaining: ?usize = null,
 
     fn next(self: *Pieces) ?[]const u8 {
         const start = self.index orelse return null;
-        if (self.separator.len == 0) {
-            if (start >= self.text.len) {
-                self.index = null;
+        if (self.remaining) |remaining| {
+            if (remaining == 0) {
                 return null;
             }
+            self.remaining = remaining - 1;
+        }
+        const is_empty_character_split = self.separator.len == 0 and start >= self.text.len;
+        if (is_empty_character_split) {
+            self.index = null;
+            return null;
+        }
+        if (self.remaining == 0) {
+            self.index = null;
+            return self.text[start..];
+        }
+        if (self.separator.len == 0) {
             var end = start + 1;
             while (!isCharBoundary(self.text, end)) end += 1;
             self.index = end;

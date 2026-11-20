@@ -1,3 +1,5 @@
+import std/io
+
 struct User
     id: string
     auth_id: string
@@ -31,5 +33,5 @@ func main() -> void
     )
 
     user3.change_id("FSDF@!#W!@Z#!@")
-    echo(user3.to_string())
+    io::println("${user3.to_string()}")
 end

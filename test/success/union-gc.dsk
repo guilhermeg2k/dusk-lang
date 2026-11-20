@@ -1,4 +1,5 @@
 import std/array: len, append
+import std/io
 
 union Item
     count: int
@@ -26,7 +27,7 @@ func main() -> void
     end
 
     if items[0].name: s then
-        echo(s)
+        io::println("${s}")
     else
         assert(false)
     end
@@ -51,7 +52,7 @@ func main() -> void
 
     if holder.maybe: m then
         if m.name: s then
-            echo(s)
+            io::println("${s}")
         else
             assert(false)
         end

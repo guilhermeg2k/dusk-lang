@@ -1,3 +1,5 @@
+import std/io
+
 enum Color
     Red
     Green
@@ -13,6 +15,6 @@ let c = Color.Red
 
 func main() -> void
     when c
-        Color.Red then echo(1) end
+        Color.Red then io::println("${1}") end
     end
 end

@@ -1,0 +1,23 @@
+struct User
+    name: string
+end
+
+struct Box[T]
+    value: T
+end
+
+error Fault
+    Bad
+end
+
+func keep[T](value: T) -> T
+    return value
+end
+
+func decode[T](text: string) -> Fault!T
+    return Fault.Bad
+end
+
+func empty[T]() -> Fault![]T
+    return []
+end

@@ -1,5 +1,7 @@
+import std/io
+
 func main() -> void
     for [1]: _ do
-        echo(_)
+        io::println("${_}")
     end
 end

@@ -1,5 +1,6 @@
 import std/array: len, append
 import std/string
+import std/io
 
 func make_counter() -> Task[int]
     return spawn(func() -> return 3)
@@ -36,5 +37,5 @@ func main() -> void
     assert(some != null)
 
     let shared = copy(tasks)
-    echo("$typed_quiet ${shared[0]}")
+    io::println("$typed_quiet ${shared[0]}")
 end

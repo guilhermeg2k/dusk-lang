@@ -1,5 +1,6 @@
 import std/array: len
 import std/string
+import std/io
 
 func repeat_reason(count: int) -> string
     let repeated = string::repeat("ab", count) catch e then
@@ -12,30 +13,30 @@ func repeat_reason(count: int) -> string
 end
 
 func main() -> !void
-    echo("[${string::trim("  \t hello world \n\r")}]")
-    echo("[${string::trim("   ")}]")
-    echo("[${string::trim("none")}]")
-    echo("[${string::trim("\u{0B}\u{0C}x\u{0C}")}]")
-    echo("[${string::trim("\u{A0}x\u{A0}")}]")
-    echo(string::split("a,b,,c", ","))
-    echo(string::split("abc", ","))
-    echo(len(string::split("", ",")))
-    echo(string::split("a::b::c", "::"))
-    echo(string::split("olá mundo", " "))
-    echo(string::replace("a-b-c", "-", "+"))
-    echo(string::replace("aaa", "a", "bb"))
-    echo(string::replace("hello", "l", ""))
-    echo(string::replace("abc", "z", "y"))
-    echo(string::upper("hello, ação! ß ÿ × ÷ α"))
-    echo(string::lower("HELLO, AÇÃO! Ž Ω"))
-    echo(try string::repeat("ab", 3))
-    echo("[${try string::repeat("ab", 0)}]")
-    echo("[${try string::repeat("", 5)}]")
-    echo(string::split("olá", ""))
-    echo(len(string::split("", "")))
-    echo(string::split("a,b", ","))
-    echo(string::replace("abc", "", "x"))
-    echo(repeat_reason(-1))
-    echo(repeat_reason(2))
-    echo("  a, b ,c  " |> string::trim() |> string::split(","))
+    io::println("[${string::trim("  \t hello world \n\r")}]")
+    io::println("[${string::trim("   ")}]")
+    io::println("[${string::trim("none")}]")
+    io::println("[${string::trim("\u{0B}\u{0C}x\u{0C}")}]")
+    io::println("[${string::trim("\u{A0}x\u{A0}")}]")
+    io::println("${string::split("a,b,,c", ",")}")
+    io::println("${string::split("abc", ",")}")
+    io::println("${len(string::split("", ","))}")
+    io::println("${string::split("a::b::c", "::")}")
+    io::println("${string::split("olá mundo", " ")}")
+    io::println("${string::replace("a-b-c", "-", "+")}")
+    io::println("${string::replace("aaa", "a", "bb")}")
+    io::println("${string::replace("hello", "l", "")}")
+    io::println("${string::replace("abc", "z", "y")}")
+    io::println("${string::upper("hello, ação! ß ÿ × ÷ α")}")
+    io::println("${string::lower("HELLO, AÇÃO! Ž Ω")}")
+    io::println("${try string::repeat("ab", 3)}")
+    io::println("[${try string::repeat("ab", 0)}]")
+    io::println("[${try string::repeat("", 5)}]")
+    io::println("${string::split("olá", "")}")
+    io::println("${len(string::split("", ""))}")
+    io::println("${string::split("a,b", ",")}")
+    io::println("${string::replace("abc", "", "x")}")
+    io::println("${repeat_reason(-1)}")
+    io::println("${repeat_reason(2)}")
+    io::println("${"  a, b ,c  " |> string::trim() |> string::split(",")}")
 end

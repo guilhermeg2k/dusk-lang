@@ -1,0 +1,96 @@
+import std/array: append, contains, len
+import std/http
+import std/task
+
+struct Stats
+    active: int = 0
+    peak: int = 0
+    ports: []int = []
+end
+
+func reset(mut stats: Stats) -> void
+    stats.active = 0
+    stats.peak = 0
+    stats.ports = []
+end
+
+func fire(api: http::Client, base: string, count: int, path: string) -> int
+    let mut tasks: []Task[bool] = []
+    for 1..count: i do
+        append(tasks, spawn(func() -> bool
+            let answer = api.request("$base$path") catch e then
+                return false
+            end
+            return answer.status == 200
+        end))
+    end
+    let mut succeeded = 0
+    for tasks: job do
+        if await(job) then
+            succeeded = succeeded + 1
+        end
+    end
+    return succeeded
+end
+
+func timeout_error(api: http::Client, url: string) -> ?http::HttpError
+    let answer = api.request(url, timeout_ms = 100) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let mut stats = Stats()
+    let server = try http::listen("127.0.0.1", 0)
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> !http::Response
+            stats.active = stats.active + 1
+            if stats.active > stats.peak then
+                stats.peak = stats.active
+            end
+            let port = req.remote_address.port
+            if !contains(stats.ports, port) then
+                append(stats.ports, port)
+            end
+            let wait = if req.path == "/slow" then 400 else 15 end
+            task::sleep(wait)
+            stats.active = stats.active - 1
+            return http::text("ok")
+        end)
+    end)
+    let base = "http://127.0.0.1:${server.port()}"
+
+    let limited = http::Client(max_connections_per_host = 3)
+    assert(fire(limited, base, 20, "/work") == 20)
+    assert(stats.peak <= 3)
+    assert(stats.peak >= 2)
+    assert(len(stats.ports) <= 3)
+
+    reset(stats)
+    let free = http::Client()
+    assert(fire(free, base, 20, "/work") == 20)
+    assert(stats.peak > 3)
+
+    reset(stats)
+    let single = http::Client(max_connections_per_host = 1)
+    assert(fire(single, base, 5, "/work") == 5)
+    assert(stats.peak == 1)
+    assert(len(stats.ports) <= 1)
+
+    let blocker = spawn(func() -> bool
+        let answer = single.request("$base/slow") catch e then
+            return false
+        end
+        return true
+    end)
+    task::sleep(50)
+    let started = stats.active
+    assert(started == 1)
+    assert(timeout_error(single, "$base/work") == http::HttpError.TimedOut)
+    assert(stats.active == 1)
+    assert(await(blocker))
+
+    server.close()
+    await(running)
+end

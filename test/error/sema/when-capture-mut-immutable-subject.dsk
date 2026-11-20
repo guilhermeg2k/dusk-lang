@@ -1,3 +1,5 @@
+import std/io
+
 union U
     list: []int
     n: int
@@ -8,6 +10,6 @@ func main() -> void
 
     when u
         list: mut l then l[0] = 2 end
-        n: k then echo(k) end
+        n: k then io::println("${k}") end
     end
 end

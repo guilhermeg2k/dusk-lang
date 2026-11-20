@@ -1,0 +1,131 @@
+import std/io
+import std/net
+import std/fs
+
+func fixture(name: string) -> fs::FsError!string
+    return try fs::read("test/fixtures/tls/${name}")
+end
+
+func net_error_name(e: net::NetError) -> string
+    return when e
+        net::NetError.UntrustedCertificate then "untrusted" end
+        net::NetError.HandshakeFailed then "handshake" end
+        net::NetError.TimedOut then "timed out" end
+        else then "other" end
+    end
+end
+
+func io_error_name(e: io::IoError) -> string
+    return when e
+        io::IoError.HandshakeFailed then "handshake" end
+        io::IoError.TimedOut then "timed out" end
+        else then "other" end
+    end
+end
+
+func echo_once(conn: net::TcpConn) -> io::IoError!void
+    let line = try conn.read_line() orelse "none"
+    try conn.write("echo ${line}\n")
+    conn.close()
+end
+
+func hold_until_closed(listener: net::TcpListener) -> io::IoError!void
+    let conn = try listener.accept()
+    let rest = try conn.read_all_bytes()
+    conn.close()
+end
+
+func main() -> !void
+    let ca = try fixture("ca.pem")
+    let cert = try net::certificate(try fixture("server.pem"), try fixture("server.key"))
+    let listener = try net::tls_listen("127.0.0.1", 0, cert)
+    let port = listener.port()
+
+    let upgrade_server = spawn(func() -> io::IoError!void
+        try echo_once(try listener.accept())
+    end)
+    let upgraded = try net::tcp_connect("127.0.0.1", port)
+    assert(!upgraded.is_tls())
+    try upgraded.handshake()
+    try upgraded.start_tls("localhost", ca = ca)
+    assert(upgraded.is_tls())
+    try upgraded.handshake()
+    try upgraded.write("upgraded\n")
+    assert(try upgraded.read_line() == "echo upgraded")
+    upgraded.close()
+    try await(upgrade_server)
+
+    let explicit_server = spawn(func() -> !string
+        let conn = try listener.accept()
+        try conn.handshake(timeout_ms = 5000)
+        try conn.handshake()
+        let line = try conn.read_line() orelse "none"
+        conn.close()
+        return line
+    end)
+    let explicit_client = try net::tls_connect("localhost", port, ca = ca)
+    try explicit_client.write("after explicit handshake\n")
+    assert(try await(explicit_server) == "after explicit handshake")
+    explicit_client.close()
+
+    let rejected_server = spawn(func() -> io::IoError!string
+        let conn = try listener.accept()
+        let mut name = "no error"
+        conn.handshake() catch e then
+            name = net_error_name(e)
+        end
+        conn.close()
+        return name
+    end)
+    let mut rejected = ""
+    net::tls_connect("localhost", port) catch e then
+        rejected = net_error_name(e)
+    end
+    assert(rejected == "untrusted")
+    assert(try await(rejected_server) == "handshake")
+
+    let slow_server = spawn(func() -> io::IoError![]string
+        let conn = try listener.accept()
+        let mut read_error = ""
+        conn.read_line(timeout_ms = 30) catch e then
+            read_error = io_error_name(e)
+        end
+        let mut handshake_error = ""
+        conn.handshake(timeout_ms = 50) catch e then
+            handshake_error = net_error_name(e)
+        end
+        let mut after_error = ""
+        conn.read_line() catch e then
+            after_error = io_error_name(e)
+        end
+        conn.close()
+        return [read_error, handshake_error, after_error]
+    end)
+    let silent_client = try net::tcp_connect("127.0.0.1", port)
+    let slow = try await(slow_server)
+    silent_client.close()
+    assert(slow[0] == "timed out")
+    assert(slow[1] == "timed out")
+    assert(slow[2] == "handshake")
+    listener.close()
+
+    let silent = try net::tcp_listen("127.0.0.1", 0)
+    let holder = spawn(func() -> return try hold_until_closed(silent))
+    let waiting = try net::tcp_connect("127.0.0.1", silent.port())
+    let mut start_error = ""
+    waiting.start_tls("localhost", timeout_ms = 50, ca = ca) catch e then
+        start_error = net_error_name(e)
+    end
+    assert(start_error == "timed out")
+    waiting.close()
+    try await(holder)
+
+    let holder_two = spawn(func() -> return try hold_until_closed(silent))
+    let mut connect_error = ""
+    net::tls_connect("127.0.0.1", silent.port(), timeout_ms = 80, ca = ca) catch e then
+        connect_error = net_error_name(e)
+    end
+    assert(connect_error == "timed out")
+    try await(holder_two)
+    silent.close()
+end

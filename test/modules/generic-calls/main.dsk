@@ -1,0 +1,25 @@
+import @/codec as json
+import @/codec: keep as same, User
+import std/array
+
+func decode_user() -> json::Fault!User
+    return try json::decode("")
+end
+
+func main() -> !void
+    let user = json::keep[User](User(name = "Ada"))
+    assert(user.name == "Ada")
+    assert(same[json::User](user).name == "Ada")
+    let boxed = same[json::Box[json::User]](json::Box(value = user))
+    assert(boxed.value.name == "Ada")
+    let explicit_user = json::decode[User]("bad") catch User(name = "explicit")
+    assert(explicit_user.name == "explicit")
+    let inferred_user: User = json::decode("bad") catch User(name = "inferred")
+    assert(inferred_user.name == "inferred")
+    let returned = decode_user() catch User(name = "returned")
+    assert(returned.name == "returned")
+    let users: []User = try json::empty()
+    assert(array::len(users) == 0)
+    let explicit_users = try json::empty[json::User]()
+    assert(array::len(explicit_users) == 0)
+end

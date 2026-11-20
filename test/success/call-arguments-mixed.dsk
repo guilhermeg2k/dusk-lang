@@ -1,0 +1,35 @@
+import std/string
+
+struct Point
+    x: int
+    y: int = 0
+    z: int = 0
+end
+
+func describe(path: string, recursive: bool = false, force: bool = false) -> string
+    return "$path $recursive $force"
+end
+
+func label[T](items: []T, fallback: T, prefix: string = "first") -> string
+    return "$prefix ${items[0]} $fallback"
+end
+
+func main() -> void
+    assert(describe("a", recursive = true) == "a true false")
+    assert(describe("b", force = true) == "b false true")
+    assert(describe("c", force = true, recursive = true) == "c true true")
+    assert(describe("d", true, force = true) == "d true true")
+    assert(describe(force = true, path = "e") == "e false true")
+    assert(describe("f") == "f false false")
+
+    let p = Point(1, z = 3)
+    assert(p.x == 1 and p.y == 0 and p.z == 3)
+    let q: Point = @(5, y = 6)
+    assert(q.x == 5 and q.y == 6 and q.z == 0)
+    let r = Point(z = 9, x = 2)
+    assert(r.x == 2 and r.z == 9)
+
+    assert(label([1, 2], 9, prefix = "nums") == "nums 1 9")
+    assert(label(["a"], "b") == "first a b")
+    assert(string::join(["a", "b"], sep = "-") == "a-b")
+end

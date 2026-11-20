@@ -1,0 +1,154 @@
+import std/array: len
+import std/buffer
+import std/fs
+import std/http
+import std/io
+import std/net
+import std/string
+import std/task
+
+func pieces(mut writer: http::BodyWriter, words: []string) -> io::IoError!void
+    for words: word do
+        try writer.write(word)
+        try writer.flush()
+    end
+end
+
+func big_body(mut writer: http::BodyWriter) -> io::IoError!void
+    let piece = string::repeat("x", 1000) catch ""
+    let mut i = 0
+    for i < 100 do
+        try writer.write(piece)
+        i = i + 1
+    end
+end
+
+func events(mut writer: http::BodyWriter) -> io::IoError!void
+    let mut n = 0
+    for true do
+        try writer.write("data: $n\n\n")
+        try writer.flush()
+        n = n + 1
+        task::sleep(5)
+    end
+end
+
+func greet[W: io::Writer](mut out: W) -> io::IoError!void
+    try out.write("hi ")
+    try out.write_bytes(buffer::from_string("there"))
+    try out.flush()
+end
+
+func route(req: http::Request) -> !http::Response
+    when req.path
+        "/chunks" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try pieces(writer, ["a", "bb", "ccc"])
+            end, content_type = "text/plain")
+        end
+        "/sized" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try writer.write("hello")
+            end, length = 5)
+        end
+        "/short" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try writer.write("abc")
+            end, length = 10)
+        end
+        "/over" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try writer.write("abc")
+            end, length = 2)
+        end
+        "/big" then return http::stream(big_body) end
+        "/writer" then
+            return http::stream(func(mut writer: http::BodyWriter) -> io::IoError!void
+                try greet(writer)
+            end)
+        end
+        "/file" then return try http::file("DIR/data.csv", "text/csv") end
+        "/missing" then
+            return http::file("DIR/nothing.csv", "text/csv") catch e then
+                return http::status(404)
+            end
+        end
+        "/events" then return http::stream(events, content_type = "text/event-stream") end
+        else then return http::status(404) end
+    end
+end
+
+func raw_exchange(port: int, text: string) -> !string
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    try conn.write(text)
+    let answer = try conn.read_all(timeout_ms = 3000)
+    conn.close()
+    return answer
+end
+
+func fails(url: string) -> bool
+    http::request(url, timeout_ms = 3000) catch e then
+        return true
+    end
+    return false
+end
+
+func main() -> !void
+    let mut rows = ""
+    let mut i = 0
+    for i < 5000 do
+        rows = "${rows}row $i,value\n"
+        i = i + 1
+    end
+    try fs::write("DIR/data.csv", rows)
+
+    let server = try http::listen("127.0.0.1", 0, compress = false)
+    let running = spawn(func() -> void
+        server.serve(route)
+    end)
+    let port = server.port()
+    let base = "http://127.0.0.1:$port"
+
+    let chunks = try http::request("$base/chunks")
+    assert(chunks.status == 200)
+    assert(try chunks.text() == "abbccc")
+    assert(chunks.headers.get("transfer-encoding") == "chunked")
+    assert(!chunks.headers.has("content-length"))
+    let again = try http::request("$base/chunks")
+    assert(try again.text() == "abbccc")
+
+    let framing = try raw_exchange(port, "GET /chunks HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    assert(string::ends_with(framing, "\r\n\r\n1\r\na\r\n2\r\nbb\r\n3\r\nccc\r\n0\r\n\r\n"))
+
+    let sized = try http::request("$base/sized")
+    assert(try sized.text() == "hello")
+    assert(sized.headers.get("content-length") == "5")
+    assert(fails("$base/short"))
+    assert(fails("$base/over"))
+
+    let greeting = try http::request("$base/writer")
+    assert(try greeting.text() == "hi there")
+
+    let big = try http::request("$base/big")
+    assert(buffer::len(big.body) == 100000)
+
+    let served = try http::request("$base/file")
+    assert(try served.text() == rows)
+    assert(served.headers.get("content-type") == "text/csv")
+    assert(served.headers.get("content-length") == "${string::len(rows)}")
+    let head = try http::request("$base/file", method = "HEAD")
+    assert(head.status == 200)
+    assert(head.headers.get("content-length") == "${string::len(rows)}")
+    assert(buffer::len(head.body) == 0)
+    let missing = try http::request("$base/missing")
+    assert(missing.status == 404)
+
+    let mut live = try http::open("$base/events")
+    assert(live.headers.get("content-type") == "text/event-stream")
+    assert(try live.read_line() == "data: 0")
+    assert(try live.read_line() == "")
+    assert(try live.read_line() == "data: 1")
+    server.close()
+    await(running)
+    live.close()
+end

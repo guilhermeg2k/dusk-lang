@@ -1,3 +1,5 @@
+import std/io
+
 func usage(name: string) -> string
     return """
         Usage: $name <file>
@@ -8,15 +10,15 @@ func usage(name: string) -> string
 end
 
 func main() -> void
-    echo(usage("dusk"))
-    echo("[${"""
+    io::println("${usage("dusk")}")
+    io::println("[${"""
     """}]")
     let x = """
         a
 
         """
-    echo("[$x]")
-    echo("[${"""
+    io::println("[$x]")
+    io::println("[${"""
         ${when 2
             1 then "one" end
             else then "other" end
@@ -27,6 +29,6 @@ func main() -> void
                 kept
                 indent
             """
-        echo("[$kept]")
+        io::println("[$kept]")
     end
 end

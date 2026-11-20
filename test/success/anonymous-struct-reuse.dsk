@@ -1,0 +1,34 @@
+struct Node
+    value: int
+    next: ?Node
+end
+
+struct Label
+    text: ?string
+    count: int
+end
+
+func total(node: Node) -> int
+    let mut sum = node.value
+    if node.next: next then
+        sum = sum + total(next)
+    end
+    return sum
+end
+
+func main() -> void
+    let last = @(value = 3, next = null)
+    assert(total(last) == 3)
+
+    let chain = @(value = 1, next = @(value = 2, next = null))
+    assert(total(chain) == 3)
+
+    let label = @(text = null, count = 4)
+    let named: Label = label
+    assert(named.count == 4)
+    assert(named.text == null)
+
+    let only_null = @(a = null)
+    let text: ?string = only_null.a
+    assert(text == null)
+end

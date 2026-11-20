@@ -1,0 +1,10 @@
+struct Box[T]
+    value: T
+
+    func wrong[U](self: @, x: U) -> T
+        return x
+    end
+end
+
+func main() -> void
+end

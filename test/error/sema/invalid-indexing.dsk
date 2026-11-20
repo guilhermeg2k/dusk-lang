@@ -1,4 +1,6 @@
+import std/io
+
 func main() -> void
     let arr = [1, 2, 3]
-    echo(arr["not int"])
+    io::println("${arr["not int"]}")
 end

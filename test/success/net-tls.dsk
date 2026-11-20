@@ -1,0 +1,202 @@
+import std/io
+import std/net
+import std/fs
+import std/string
+import std/buffer
+import std/task
+
+func fixture(name: string) -> fs::FsError!string
+    return try fs::read("test/fixtures/tls/${name}")
+end
+
+func net_error_name(e: net::NetError) -> string
+    return when e
+        net::NetError.UntrustedCertificate then "untrusted" end
+        net::NetError.ExpiredCertificate then "expired" end
+        net::NetError.WrongHostCertificate then "wrong host" end
+        net::NetError.InvalidCertificate then "invalid" end
+        net::NetError.HandshakeFailed then "handshake" end
+        else then "other" end
+    end
+end
+
+func io_error_name(e: io::IoError) -> string
+    return when e
+        io::IoError.HandshakeFailed then "handshake" end
+        io::IoError.Closed then "closed" end
+        else then "other" end
+    end
+end
+
+func echo_lines(conn: net::TcpConn) -> io::IoError!void
+    for true do
+        let next = try conn.read_line()
+        if next: line then
+            try conn.write("echo ${line}\n")
+        else
+            break
+        end
+    end
+    conn.close()
+end
+
+func server_read_error(listener: net::TcpListener) -> io::IoError!string
+    let conn = try listener.accept()
+    let mut name = "no error"
+    conn.read_line() catch e then
+        name = io_error_name(e)
+    end
+    conn.close()
+    return name
+end
+
+func connect_error(port: int, ca: ?string, host: string) -> string
+    let conn = net::tls_connect(host, port, ca = ca) catch e then
+        return net_error_name(e)
+    end
+    conn.close()
+    return "connected"
+end
+
+func handshake_with(cert_name: string, key_name: string, ca: ?string, host: string) -> !string
+    let cert = try net::certificate(try fixture(cert_name), try fixture(key_name))
+    let listener = try net::tls_listen("127.0.0.1", 0, cert)
+    let server = spawn(func() -> return try server_read_error(listener))
+    let result = connect_error(listener.port(), ca, host)
+    let server_side = try await(server)
+    listener.close()
+    return "${result}/${server_side}"
+end
+
+func main() -> !void
+    let ca = try fixture("ca.pem")
+    let cert = try net::certificate(try fixture("server.pem"), try fixture("server.key"))
+    let listener = try net::tls_listen("127.0.0.1", 0, cert)
+    let port = listener.port()
+
+    let echo = spawn(func() -> io::IoError!void
+        try echo_lines(try listener.accept())
+    end)
+    let client = try net::tls_connect("localhost", port, ca = ca)
+    assert(client.is_tls())
+    try client.write("hello\n")
+    assert(try client.read_line() == "echo hello")
+    try client.write_bytes(buffer::from_string("one\ntwo\n"))
+    assert(try client.read_line() == "echo one")
+    assert(try client.read_line() == "echo two")
+    client.close()
+    try await(echo)
+
+    let plain_listener = try net::tcp_listen("127.0.0.1", 0)
+    let plain_accept = spawn(func() -> io::IoError!bool
+        let conn = try plain_listener.accept()
+        let is_tls = conn.is_tls()
+        conn.close()
+        return is_tls
+    end)
+    let plain = try net::tcp_connect("127.0.0.1", plain_listener.port())
+    assert(!plain.is_tls())
+    plain.close()
+    assert(!(try await(plain_accept)))
+    plain_listener.close()
+
+    let big = try string::repeat("0123456789abcdef", 200000)
+    let big_server = spawn(func() -> io::IoError!int
+        let conn = try listener.accept()
+        task::sleep(20)
+        let text = try conn.read_exact(3200000)
+        try conn.write(big)
+        conn.close()
+        if text: bytes then
+            return buffer::len(bytes)
+        end
+        return 0
+    end)
+    let big_client = try net::tls_connect("127.0.0.1", port, ca = ca)
+    try big_client.write(big)
+    let back = try big_client.read_all()
+    big_client.close()
+    assert(try await(big_server) == 3200000)
+    assert(back == big)
+
+    let greeter = spawn(func() -> io::IoError!void
+        let conn = try listener.accept()
+        try conn.write("welcome\n")
+        let reply = try conn.read_line()
+        try conn.write("bye ${reply orelse "nobody"}\n")
+        conn.close()
+    end)
+    let guest = try net::tls_connect("localhost", port, ca = ca)
+    assert(try guest.read_line() == "welcome")
+    try guest.write("ana\n")
+    assert(try guest.read_line() == "bye ana")
+    guest.close()
+    try await(greeter)
+
+    let mut served = 0
+    let pool = spawn(func() -> io::IoError!void
+        let mut i = 0
+        for i < 3 do
+            let conn = try listener.accept()
+            spawn(func() -> void
+                echo_lines(conn) catch _ then conn.close() end
+            end)
+            served = served + 1
+            i = i + 1
+        end
+    end)
+    let a = try net::tls_connect("localhost", port, ca = ca)
+    let b = try net::tls_connect("localhost", port, ca = ca)
+    let c = try net::tls_connect("localhost", port, ca = ca)
+    try c.write("c\n")
+    try a.write("a\n")
+    try b.write("b\n")
+    assert(try a.read_line() == "echo a")
+    assert(try b.read_line() == "echo b")
+    assert(try c.read_line() == "echo c")
+    a.close()
+    b.close()
+    c.close()
+    try await(pool)
+    assert(served == 3)
+
+    let plain_client_check = spawn(func() -> return try server_read_error(listener))
+    let not_tls = try net::tcp_connect("127.0.0.1", port)
+    try not_tls.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+    assert(try await(plain_client_check) == "handshake")
+    not_tls.close()
+    listener.close()
+
+    assert(try handshake_with("server.pem", "server.key", null, "localhost") == "untrusted/handshake")
+    assert(try handshake_with("self-signed.pem", "self-signed.key", ca, "localhost") == "untrusted/handshake")
+    assert(try handshake_with("expired.pem", "server.key", ca, "localhost") == "expired/handshake")
+    assert(try handshake_with("other-host.pem", "server.key", ca, "localhost") == "wrong host/handshake")
+
+    let self_signed = try net::certificate(try fixture("self-signed.pem"), try fixture("self-signed.key"))
+    let lab = try net::tls_listen("127.0.0.1", 0, self_signed)
+    let lab_echo = spawn(func() -> io::IoError!void
+        try echo_lines(try lab.accept())
+    end)
+    let unverified = try net::tls_connect("127.0.0.1", lab.port(), verify = false)
+    try unverified.write("lab\n")
+    assert(try unverified.read_line() == "echo lab")
+    unverified.close()
+    try await(lab_echo)
+    lab.close()
+
+    let mut bad_pair = ""
+    net::certificate(try fixture("server.pem"), try fixture("ca.key")) catch e then
+        bad_pair = net_error_name(e)
+    end
+    assert(bad_pair == "invalid")
+    let mut not_pem = ""
+    net::certificate("not a certificate", "not a key") catch e then
+        not_pem = net_error_name(e)
+    end
+    assert(not_pem == "invalid")
+    let bad_ca_listener = try net::tls_listen("127.0.0.1", 0, cert)
+    let bad_ca_server = spawn(func() -> return try server_read_error(bad_ca_listener))
+    assert(connect_error(bad_ca_listener.port(), "not a ca", "localhost") == "invalid")
+    try await(bad_ca_server)
+    bad_ca_listener.close()
+end

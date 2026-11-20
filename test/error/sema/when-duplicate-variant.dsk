@@ -1,3 +1,5 @@
+import std/io
+
 enum Color
     Red
     Green
@@ -12,8 +14,8 @@ end
 func main() -> void
     let s = Shape(circle = 1)
     when s
-        circle: r then echo(r) end
-        circle: x then echo(x) end
-        square: x then echo(x) end
+        circle: r then io::println("${r}") end
+        circle: x then io::println("${x}") end
+        square: x then io::println("${x}") end
     end
 end

@@ -1,1 +1,3 @@
-for [1]: item echo(item) end
+import std/io
+
+for [1]: item io::println("${item}") end

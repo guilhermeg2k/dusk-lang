@@ -1,0 +1,8 @@
+struct Box
+    count: ?int
+end
+
+func main() -> void
+    let p = @(count = 7)
+    let b: Box = p
+end

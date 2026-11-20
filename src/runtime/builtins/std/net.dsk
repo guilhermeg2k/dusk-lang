@@ -1,0 +1,181 @@
+import std/io
+import std/time
+
+error NetError
+    HostNotFound
+    ConnectionRefused
+    AddressInUse
+    NetworkUnreachable
+    PermissionDenied
+    InvalidAddress
+    TimedOut
+    HandshakeFailed
+    UntrustedCertificate
+    ExpiredCertificate
+    WrongHostCertificate
+    InvalidCertificate
+    Other
+end
+
+extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> NetError!int
+extern func ~tcp_listen_handle(host: string, port: int, backlog: int) -> NetError!int
+extern func ~listener_accept(handle: int, timeout_ms: int) -> io::IoError!int
+extern func ~listener_port(handle: int) -> int
+extern func ~listener_close(handle: int) -> void
+extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
+extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_write(handle: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
+extern func ~stream_set_write_timeout(handle: int, timeout_ms: int) -> void
+extern func ~stream_flush(handle: int) -> io::IoError!void
+extern func ~stream_close(handle: int) -> void
+extern func ~remote_host(handle: int) -> string
+extern func ~remote_port(handle: int) -> int
+extern func ~certificate_handle(cert_pem: string, key_pem: string) -> NetError!int
+extern func ~listener_use_tls(listener: int, certificate: int) -> void
+extern func ~stream_start_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> NetError!void
+extern func ~stream_accept_tls(handle: int, certificate: int, timeout_ms: int) -> NetError!void
+extern func ~stream_is_tls(handle: int) -> bool
+extern func ~stream_handshake(handle: int, timeout_ms: int) -> NetError!void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void
+
+struct Certificate
+    ~handle: int
+end
+
+struct Address
+    host: string
+    port: int
+end
+
+struct TcpListener
+    ~handle: int
+    ~bound_port: int
+    ~owner: resource
+
+    func accept(self: @, timeout_ms: int = -1) -> io::IoError!TcpConn
+        return open_conn(try listener_accept(self.handle, timeout_ms))
+    end
+
+    func port(self: @) -> int
+        return self.bound_port
+    end
+
+    func close(self: @) -> void
+        listener_close(self.handle)
+        release(self.owner)
+    end
+end
+
+struct TcpConn
+    ~handle: int
+    ~remote_host: string
+    ~remote_port: int
+    ~owner: resource
+
+    func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
+        return try stream_read_line(self.handle, max, timeout_ms)
+    end
+
+    func read_bytes(self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        return try stream_read_bytes(self.handle, max, timeout_ms)
+    end
+
+    func read_exact(self: @, count: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        return try stream_read_exact(self.handle, count, timeout_ms)
+    end
+
+    func read_all(self: @, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_read_all(self.handle, timeout_ms)
+    end
+
+    func read_all_bytes(self: @, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_read_all_bytes(self.handle, timeout_ms)
+    end
+
+    func write(self: @, text: string) -> io::IoError!void
+        try stream_write(self.handle, text)
+    end
+
+    func write_bytes(self: @, data: buffer) -> io::IoError!void
+        try stream_write_bytes(self.handle, data)
+    end
+
+    func set_write_timeout(self: @, timeout_ms: int) -> void
+        stream_set_write_timeout(self.handle, timeout_ms)
+    end
+
+    func start_tls(self: @, host: string, timeout_ms: int = -1, ca: ?string = null, verify: bool = true) -> NetError!void
+        try stream_start_tls(self.handle, host, ca, verify, timeout_ms)
+    end
+
+    func accept_tls(self: @, cert: Certificate, timeout_ms: int = -1) -> NetError!void
+        try stream_accept_tls(self.handle, cert.handle, timeout_ms)
+    end
+
+    func handshake(self: @, timeout_ms: int = -1) -> NetError!void
+        try stream_handshake(self.handle, timeout_ms)
+    end
+
+    func is_tls(self: @) -> bool
+        return stream_is_tls(self.handle)
+    end
+
+    func remote_address(self: @) -> Address
+        return Address(host = self.remote_host, port = self.remote_port)
+    end
+
+    func flush(self: @) -> io::IoError!void
+        try stream_flush(self.handle)
+    end
+
+    func close(self: @) -> void
+        stream_close(self.handle)
+        release(self.owner)
+    end
+end
+
+func tcp_connect(host: string, port: int, timeout_ms: int = -1) -> NetError!TcpConn
+    return open_conn(try tcp_connect_handle(host, port, timeout_ms))
+end
+
+func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
+    let handle = try tcp_listen_handle(host, port, backlog)
+    return TcpListener(handle = handle, bound_port = listener_port(handle), owner = own(1, handle))
+end
+
+func ~open_conn(handle: int) -> TcpConn
+    return TcpConn(handle = handle, remote_host = remote_host(handle), remote_port = remote_port(handle), owner = own(0, handle))
+end
+
+func certificate(cert_pem: string, key_pem: string) -> NetError!Certificate
+    return Certificate(handle = try certificate_handle(cert_pem, key_pem))
+end
+
+func tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = null, verify: bool = true) -> NetError!TcpConn
+    let started_ns = time::monotonic_ns()
+    let conn = try tcp_connect(host, port, timeout_ms)
+    conn.start_tls(host, remaining_ms(timeout_ms, started_ns), ca, verify) catch e then
+        conn.close()
+        return e
+    end
+    return conn
+end
+
+func tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128) -> NetError!TcpListener
+    let listener = try tcp_listen(host, port, backlog)
+    listener_use_tls(listener.handle, cert.handle)
+    return listener
+end
+
+func ~remaining_ms(timeout_ms: int, started_ns: int) -> int
+    if timeout_ms < 0 then
+        return -1
+    end
+    let left = timeout_ms - (time::monotonic_ns() - started_ns) // 1000000
+    return if left > 0 then left else 0 end
+end

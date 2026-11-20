@@ -1,0 +1,3 @@
+func main() -> void
+    let value = time::now_ms()
+end

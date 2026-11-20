@@ -1,5 +1,7 @@
+import std/io
+
 func show() -> void
-    echo(count)
+    io::println("${count}")
 end
 
 func main() -> void

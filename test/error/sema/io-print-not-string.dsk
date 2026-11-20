@@ -1,0 +1,5 @@
+import std/io
+
+func main() -> void
+    io::println(5)
+end

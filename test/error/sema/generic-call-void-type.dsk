@@ -1,0 +1,7 @@
+func empty[T]() -> []T
+    return []
+end
+
+func main() -> !void
+    let x = empty[void]()
+end

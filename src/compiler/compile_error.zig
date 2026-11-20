@@ -89,12 +89,34 @@ pub const CompileErrorReporter = struct {
         return CompileError.ParserError;
     }
 
+    pub fn anonymousStructLayoutDiffers(self: *Self, expected: []const u8, field_names: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(
+            self.allocator,
+            "Invalid type: an anonymous struct fits '{s}' only with the same fields, in the same order, of the same types ({s}); give it the type where it's built (`let x: T = @(...)`)",
+            .{ expected, field_names },
+        ), loc);
+        return error.InvalidType;
+    }
+
     pub fn invalidType(self: *Self, expected: []const u8, found: []const u8, loc: Loc) CompileError {
         self.log(
             try allocPrint(
                 self.allocator,
                 "Invalid type: expected '{s}' found '{s}'",
                 .{ expected, found },
+            ),
+            loc,
+        );
+        return error.InvalidType;
+    }
+
+    pub fn textExpected(self: *Self, found: []const u8, loc: Loc) CompileError {
+        const source = self.src[loc.start..@min(loc.end + 1, self.src.len)];
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Invalid type: expected 'string' found '{s}': use interpolation to turn it into text, \"${{{s}}}\"",
+                .{ found, source },
             ),
             loc,
         );
@@ -199,6 +221,21 @@ pub const CompileErrorReporter = struct {
         return error.MissingArgument;
     }
 
+    pub fn unknownArgumentName(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "No parameter named '{s}'", .{name}), loc);
+        return error.UnknownArgumentName;
+    }
+
+    pub fn positionalAfterNamed(self: *Self, loc: Loc) CompileError {
+        self.log("Positional argument after a named one: once a call names an argument, the ones after it must be named too", loc);
+        return error.PositionalAfterNamed;
+    }
+
+    pub fn argumentGivenTwice(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' is given twice", .{name}), loc);
+        return error.ArgumentGivenTwice;
+    }
+
     pub fn alreadyDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "'{s}' is already defined", .{identifier}), loc);
         return error.AlreadyDefined;
@@ -206,6 +243,10 @@ pub const CompileErrorReporter = struct {
 
     pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         try self.checkModuleImported(identifier, loc);
+        if (std.mem.eql(u8, identifier, "echo")) {
+            self.log("Cannot find name 'echo': printing moved to std/io, use io::println(\"${value}\") after `import std/io`", loc);
+            return error.NotDefined;
+        }
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
         return error.NotDefined;
     }
@@ -219,11 +260,6 @@ pub const CompileErrorReporter = struct {
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
         return error.UnwrappedCantBeMutable;
-    }
-
-    pub fn selfCantBeUsedOutsideOfAstruct(self: *Self, loc: Loc) CompileError {
-        self.log("@ cannot be used outside of a struct", loc);
-        return error.SelfOutsideStruct;
     }
 
     pub fn invalidStaticStructField(self: *Self, struct_name: []const u8, field: []const u8, loc: Loc) CompileError {
@@ -439,6 +475,21 @@ pub const CompileErrorReporter = struct {
             loc,
         );
         return error.UnhandledError;
+    }
+
+    pub fn tryInsideDefer(self: *Self, loc: Loc) CompileError {
+        self.log("try can't be used in deferred code: it runs while the function is already leaving, so handle errors with catch", loc);
+        return error.TryInsideDefer;
+    }
+
+    pub fn exitInsideDefer(self: *Self, keyword: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "{s} can't leave deferred code: it runs while its block is already leaving", .{keyword}), loc);
+        return error.ExitInsideDefer;
+    }
+
+    pub fn errdeferOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
+        self.log("errdefer only runs when the function returns an error, so it needs a function that can fail (-> E!T or -> !T)", loc);
+        return error.ErrdeferOutsideFailingFunction;
     }
 
     pub fn tryOutsideFailingFunction(self: *Self, loc: Loc) CompileError {
@@ -784,11 +835,6 @@ pub const CompileErrorReporter = struct {
         return error.NotAnErrorSet;
     }
 
-    pub fn invalidDefinition(self: *Self, loc: Loc) CompileError {
-        self.log("struct and enum definitions cannot be mutable", loc);
-        return error.InvalidDefinition;
-    }
-
     pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) CompileError {
         self.log(
             "Can't infer anonymous struct type",
@@ -1075,9 +1121,7 @@ pub const CompileError = error{
     NotMutable,
     ReadOnlyIntoMutable,
     UnwrappedCantBeMutable,
-    SelfOutsideStruct,
     InvalidStructField,
-    InvalidDefinition,
     CantInferAnonymousStruct,
     PrimitiveParamsCantBeMutable,
     CantInferArrayLiteralType,
@@ -1100,6 +1144,9 @@ pub const CompileError = error{
     UnawaitedTaskCanFail,
     UnhandledError,
     TryOutsideFailingFunction,
+    TryInsideDefer,
+    ExitInsideDefer,
+    ErrdeferOutsideFailingFunction,
     NotAFailingCall,
     ErrorNotInSet,
     PayloadSharesErrors,
@@ -1149,6 +1196,9 @@ pub const CompileError = error{
     LambdaCallsItself,
     FieldAndMethodSameName,
     NamedArgumentsOnValue,
+    UnknownArgumentName,
+    PositionalAfterNamed,
+    ArgumentGivenTwice,
     CantInferSlot,
     ConflictingSlotTypes,
     InvalidSlotType,

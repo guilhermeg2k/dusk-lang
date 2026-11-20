@@ -1,6 +1,8 @@
+import std/io
+
 let x = 1
 let x = 2
 
 func main() -> void
-    echo(x)
+    io::println("${x}")
 end

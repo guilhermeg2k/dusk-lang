@@ -16,6 +16,9 @@ pub const Heap = struct {
     object_count: usize = 0,
     allocated: usize = 0,
     threshold: usize = MIN_GC_THRESHOLD,
+    temporary_roots: std.ArrayList(NativeRoot) = .empty,
+    resources: std.ArrayList(*v.HeapValue) = .empty,
+    dead_resource_ids: std.ArrayList(v.ResourceId) = .empty,
 
     pub fn init(backing_allocator: std.mem.Allocator) Self {
         return .{
@@ -29,6 +32,9 @@ pub const Heap = struct {
 
     pub fn deinit(self: *Self) void {
         self.gc_queue.deinit(self.queue_allocator);
+        self.temporary_roots.deinit(self.queue_allocator);
+        self.resources.deinit(self.queue_allocator);
+        self.dead_resource_ids.deinit(self.queue_allocator);
         for (&self.arenas) |*arena| arena.deinit();
     }
 
@@ -42,6 +48,11 @@ pub const Heap = struct {
 
         var collector = Collector{ .heap = self, .program = program, .to_space = self.arenas[inactive].allocator() };
 
+        for (self.temporary_roots.items) |*root| {
+            if (root.kind.isHeapType()) {
+                try collector.copyHeapValue(&root.value);
+            }
+        }
         scheduler.clearReachable();
         for (scheduler.tasks.items) |task| {
             try collector.copyTaskRoots(task);
@@ -51,9 +62,42 @@ pub const Heap = struct {
         }
 
         scheduler.freeUnreachableTasks();
+        try self.sweepResources();
         self.active = inactive;
         self.threshold = @max(self.allocated * 2, MIN_GC_THRESHOLD);
         try self.shrinkOldArena();
+    }
+
+    pub fn sweepResources(self: *Self) !void {
+        var kept: usize = 0;
+        for (self.resources.items) |owner| {
+            if (owner.gc_forward) |moved| {
+                self.resources.items[kept] = moved;
+                kept += 1;
+                continue;
+            }
+            const dead = v.HeapValue.getParentPtr(v.Resource, owner);
+            try self.dead_resource_ids.append(self.queue_allocator, dead.id());
+        }
+        self.resources.shrinkRetainingCapacity(kept);
+    }
+
+    pub fn trackResource(self: *Self, owner: *v.HeapValue) !void {
+        try self.resources.append(self.queue_allocator, owner);
+    }
+
+    pub fn protectValue(self: *Self, value: v.Value, kind: v.ValueType) !usize {
+        const index = self.temporary_roots.items.len;
+        try self.temporary_roots.append(self.queue_allocator, .{ .value = value, .kind = kind });
+        return index;
+    }
+
+    pub fn protectedValue(self: *Self, index: usize) v.Value {
+        return self.temporary_roots.items[index].value;
+    }
+
+    pub fn restoreRootCount(self: *Self, count: usize) void {
+        self.temporary_roots.shrinkRetainingCapacity(count);
     }
 
     fn shrinkOldArena(self: *Self) !void {
@@ -78,6 +122,11 @@ pub const Heap = struct {
     }
 };
 
+pub const NativeRoot = struct {
+    value: v.Value,
+    kind: v.ValueType,
+};
+
 const Collector = struct {
     const Self = @This();
 
@@ -99,7 +148,8 @@ const Collector = struct {
             const chunk = frame.function.kind.dusk;
             const cur_pc: u16 = @intCast(frame.cur_inst - 1);
             const heap_map = binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
-            const bitmap: u256 = if (heap_map) |hm| hm.bitmap else 0;
+            std.debug.assert(heap_map != null);
+            const bitmap = heap_map.?.bitmap;
             const base = frame.stack_offset;
             const is_top_frame = frame_index + 1 == active_frames.len;
             const owned_registers = if (is_top_frame) chunk.num_registers else active_frames[frame_index + 1].stack_offset - base;
@@ -126,7 +176,7 @@ const Collector = struct {
         const new_ptr = try cloneHeapObj(self.to_space, current);
         current.gc_forward = new_ptr;
         value.heap_obj = new_ptr;
-        const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer;
+        const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer and new_ptr.kind != .resource;
         if (has_references) {
             try self.heap.gc_queue.append(self.heap.queue_allocator, new_ptr);
         }
@@ -196,7 +246,7 @@ const Collector = struct {
                     try self.copyHeapValue(&slot[0]);
                 }
             },
-            .string, .buffer, .null_box => {},
+            .string, .buffer, .null_box, .resource => {},
         }
     }
 };
@@ -222,6 +272,7 @@ pub fn cloneHeapObj(allocator: std.mem.Allocator, obj_ptr: *v.HeapValue) !*v.Hea
         .task => &(try v.HeapValue.getParentPtr(v.Task, obj_ptr).clone(allocator)).obj,
         .map => &(try v.HeapValue.getParentPtr(v.Map, obj_ptr).clone(allocator)).obj,
         .map_storage => &(try v.HeapValue.getParentPtr(v.MapStorage, obj_ptr).clone(allocator)).obj,
+        .resource => &(try v.HeapValue.getParentPtr(v.Resource, obj_ptr).clone(allocator)).obj,
         .string, .buffer => &(try v.HeapValue.getParentPtr(v.Bytes, obj_ptr).clone(allocator)).obj,
     };
 }
@@ -237,6 +288,7 @@ pub fn heapObjectSize(ptr: *v.HeapValue) usize {
         .task => v.Task.calc_size(),
         .map => v.Map.calc_size(),
         .map_storage => v.MapStorage.calc_size(v.HeapValue.getParentPtr(v.MapStorage, ptr).capacity),
+        .resource => v.Resource.calc_size(),
         .string, .buffer => v.Bytes.calc_size(v.HeapValue.getParentPtr(v.Bytes, ptr).len),
     };
 }

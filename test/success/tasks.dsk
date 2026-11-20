@@ -1,6 +1,7 @@
 import std/task
 import std/array: len, append
 import std/string
+import std/io
 
 error FetchError
     NotFound
@@ -88,13 +89,13 @@ func main() -> void
     assert(join(texts) == "item 1,item 2,item 3")
 
     let done = spawn(func() -> return 1)
-    echo("$done")
+    io::println("$done")
     await(done)
-    echo("$done")
+    io::println("$done")
 
     spawn(func()
         task::sleep(0)
-        echo("after main")
+        io::println("after main")
     end)
-    echo("main ends")
+    io::println("main ends")
 end

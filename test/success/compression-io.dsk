@@ -1,0 +1,181 @@
+import std/compression
+import std/fs
+import std/io
+import std/buffer
+import std/array
+
+struct MemoryWriter
+    parts: []buffer
+    flushes: int = 0
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        let mut part = buffer::from_string(text)
+        array::append(self.parts, part)
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        let mut part = copy(data)
+        array::append(self.parts, part)
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+        self.flushes = self.flushes + 1
+    end
+end
+
+struct MemoryReader
+    data: buffer
+    at: int = 0
+    step: int = 7
+
+    func read_bytes(mut self: @, max: int, timeout_ms: int) -> io::IoError!?buffer
+        if self.at == buffer::len(self.data) then
+            return null
+        end
+        let wanted = if max < self.step then max else self.step end
+        let stop = if self.at + wanted > buffer::len(self.data) then buffer::len(self.data) else self.at + wanted end
+        let part = buffer::slice(self.data, self.at, stop) catch e then
+            return io::IoError.Other
+        end
+        self.at = stop
+        return part
+    end
+end
+
+func same_bytes(a: buffer, b: buffer) -> bool
+    if buffer::len(a) != buffer::len(b) then
+        return false
+    end
+    for 0..buffer::len(a) - 1: i do
+        if a[i] != b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+func joined(parts: []buffer) -> !buffer
+    let mut total = 0
+    for parts: part do
+        total = total + buffer::len(part)
+    end
+    let mut result = try buffer::new(total)
+    let mut at = 0
+    for parts: part do
+        at = try buffer::put_bytes(result, at, part)
+    end
+    return result
+end
+
+func read_everything[R: io::Reader](mut from: R, max: int) -> io::IoError!buffer
+    let mut parts: []buffer = []
+    for true do
+        let next = try from.read_bytes(max, -1)
+        if next: part then
+            let mut kept = copy(part)
+            array::append(parts, kept)
+        else
+            break
+        end
+    end
+    return joined(parts) catch e then
+        return io::IoError.Other
+    end
+end
+
+func read_error[R: io::Reader](mut from: R, max: int) -> ?io::IoError
+    let data = read_everything(from, max) catch e then
+        return e
+    end
+    return null
+end
+
+func write_error[W: io::Writer](mut to: W, text: string) -> ?io::IoError
+    to.write(text) catch e then
+        return e
+    end
+    return null
+end
+
+func writer_error(level: int) -> ?compression::CompressionError
+    let mut sink = MemoryWriter(parts = [])
+    let w = compression::writer(sink, compression::Format.Gzip, level = level) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let mut text = try fs::read_bytes("test/fixtures/compression/sample.txt")
+    let path = "DIR/sample.txt.gz"
+
+    let mut out = try fs::open(path, fs::Mode.Write)
+    let mut gz = try compression::writer(out, compression::Format.Gzip, level = 9)
+    try gz.write_bytes(try buffer::slice(text, 0, 5000))
+    try gz.flush()
+    let mut partial = compression::Decompressor(compression::Format.Gzip)
+    assert(same_bytes(try partial.write_bytes(try fs::read_bytes(path)), try buffer::slice(text, 0, 5000)))
+    partial.close()
+    try gz.write_bytes(try buffer::slice(text, 5000, buffer::len(text)))
+    try gz.finish()
+    out.close()
+    assert(write_error(gz, "more") == io::IoError.Closed)
+    assert(same_bytes(try compression::decompress(try fs::read_bytes(path), compression::Format.Gzip), text))
+
+    let mut input = try fs::open(path)
+    let mut unzipped = try compression::reader(input, compression::Format.Gzip)
+    assert(same_bytes(try read_everything(unzipped, 100), text))
+    assert((try unzipped.read_bytes(100)) == null)
+    assert((try unzipped.read_bytes(100)) == null)
+    input.close()
+
+    let mut source = try fs::open(path)
+    let mut from = try compression::reader(source, compression::Format.Gzip)
+    let mut sink = MemoryWriter(parts = [])
+    let mut to = try compression::writer(sink, compression::Format.Zlib, level = 1)
+    assert((try io::copy(from, to)) == buffer::len(text))
+    assert(sink.flushes == 1)
+    try to.finish()
+    assert(sink.flushes == 2)
+    source.close()
+    let mut zlibbed = try joined(sink.parts)
+    assert(same_bytes(try compression::decompress(zlibbed, compression::Format.Zlib), text))
+
+    let mut texts = MemoryWriter(parts = [])
+    let mut line_writer = try compression::writer(texts, compression::Format.Deflate)
+    for 1..300: i do
+        try line_writer.write("line ${i}\n")
+    end
+    try line_writer.finish()
+    let lines = try compression::decompress(try joined(texts.parts), compression::Format.Deflate)
+    assert(buffer::len(lines) > 2000)
+
+    let mut in_memory = compression::reader(MemoryReader(data = zlibbed), compression::Format.Zlib) catch e then
+        assert(false)
+        return
+    end
+    assert(same_bytes(try read_everything(in_memory, 1), text))
+
+    let mut cut = try buffer::slice(zlibbed, 0, buffer::len(zlibbed) - 3)
+    let mut cut_reader = try compression::reader(MemoryReader(data = cut), compression::Format.Zlib)
+    assert(read_error(cut_reader, 4096) == io::IoError.UnexpectedEnd)
+    assert((try cut_reader.read_bytes(10)) == null)
+
+    let mut empty_reader = try compression::reader(MemoryReader(data = buffer::from_string("")), compression::Format.Gzip)
+    assert(read_error(empty_reader, 4096) == io::IoError.UnexpectedEnd)
+
+    let mut garbage_reader = try compression::reader(MemoryReader(data = text), compression::Format.Gzip)
+    assert(read_error(garbage_reader, 4096) == io::IoError.Other)
+
+    let mut small_reader = try compression::reader(MemoryReader(data = zlibbed, step = 4096), compression::Format.Zlib, max = 100)
+    assert(read_error(small_reader, 4096) == io::IoError.Other)
+
+    let mut zero_reader = try compression::reader(MemoryReader(data = zlibbed), compression::Format.Zlib)
+    assert(read_error(zero_reader, 0) == io::IoError.Other)
+    zero_reader.close()
+    assert((try zero_reader.read_bytes(10)) == null)
+
+    assert(writer_error(10) == compression::CompressionError.InvalidLevel)
+    assert(writer_error(-1) == compression::CompressionError.InvalidLevel)
+    assert(writer_error(0) == null)
+end

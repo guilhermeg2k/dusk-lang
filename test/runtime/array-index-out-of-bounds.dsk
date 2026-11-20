@@ -1,4 +1,6 @@
+import std/io
+
 func main() -> void
     let a = [1, 2]
-    echo(a[5])
+    io::println("${a[5]}")
 end

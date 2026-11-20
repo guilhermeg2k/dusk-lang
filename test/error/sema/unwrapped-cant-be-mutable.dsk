@@ -1,10 +1,12 @@
+import std/io
+
 struct S
     x: int
 end
 
 func f(x: ?S) -> void
     if x: mut y then
-        echo(y.x)
+        io::println("${y.x}")
     end
 end
 

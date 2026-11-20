@@ -1,3 +1,5 @@
+import std/io
+
 struct Node
     value: int
     next: ?Node
@@ -17,6 +19,6 @@ func main() -> void
     node1.append(node2)
 
     if node1.next: node then
-        echo(node.value)
+        io::println("${node.value}")
     end
 end

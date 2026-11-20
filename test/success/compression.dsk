@@ -1,0 +1,116 @@
+import std/compression
+import std/buffer
+import std/string
+import std/fs
+import std/array
+
+func same_bytes(a: buffer, b: buffer) -> bool
+    if buffer::len(a) != buffer::len(b) then
+        return false
+    end
+    for 0..buffer::len(a) - 1: i do
+        if a[i] != b[i] then
+            return false
+        end
+    end
+    return true
+end
+
+func binary_sample(size: int) -> !buffer
+    let mut data = try buffer::new(size)
+    let mut seed = 12345
+    for 0..size - 1: i do
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        let is_noise = (i // 512) % 3 == 2
+        let value = if is_noise then (seed // 65536) % 256 else i % 256 end
+        data[i] = try to_byte(value)
+    end
+    return data
+end
+
+func decompress_error(data: buffer, format: compression::Format, max: int = -1) -> ?compression::CompressionError
+    let plain = compression::decompress(data, format, max) catch e then
+        return e
+    end
+    return null
+end
+
+func compress_error(data: buffer, level: int) -> ?compression::CompressionError
+    let packed = compression::compress(data, compression::Format.Gzip, level) catch e then
+        return e
+    end
+    return null
+end
+
+func round_trips(data: buffer, format: compression::Format, level: int) -> !bool
+    let packed = try compression::compress(data, format, level)
+    let plain = try compression::decompress(packed, format)
+    return same_bytes(plain, data)
+end
+
+func main() -> !void
+    let formats = [compression::Format.Gzip, compression::Format.Zlib, compression::Format.Deflate]
+    let text = try fs::read_bytes("test/fixtures/compression/sample.txt")
+    let binary = try binary_sample(70000)
+    let empty = try buffer::new(0)
+
+    for formats: format do
+        for 0..9: level do
+            assert(try round_trips(text, format, level))
+            assert(try round_trips(binary, format, level))
+        end
+        assert(try round_trips(empty, format, 6))
+        assert(buffer::len(try compression::compress(text, format, 9)) < buffer::len(text) // 5)
+        assert(buffer::len(try compression::compress(text, format, 0)) > buffer::len(text))
+    end
+
+    assert(same_bytes(try compression::decompress(try fs::read_bytes("test/fixtures/compression/sample.gz"), compression::Format.Gzip), text))
+    assert(same_bytes(try compression::decompress(try fs::read_bytes("test/fixtures/compression/sample.zlib"), compression::Format.Zlib), text))
+    assert(same_bytes(try compression::decompress(try fs::read_bytes("test/fixtures/compression/sample.deflate"), compression::Format.Deflate), text))
+    assert(same_bytes(try compression::decompress(try fs::read_bytes("test/fixtures/compression/members.gz"), compression::Format.Gzip), text))
+
+    let invalid = compression::CompressionError.InvalidData
+    let gzipped = try compression::compress(text, compression::Format.Gzip)
+    let zlibbed = try compression::compress(text, compression::Format.Zlib)
+    assert(decompress_error(try fs::read_bytes("test/fixtures/compression/bad-checksum.gz"), compression::Format.Gzip) == invalid)
+    assert(decompress_error(try buffer::slice(gzipped, 0, buffer::len(gzipped) - 1), compression::Format.Gzip) == invalid)
+    assert(decompress_error(try buffer::slice(zlibbed, 0, buffer::len(zlibbed) // 2), compression::Format.Zlib) == invalid)
+    assert(decompress_error(gzipped, compression::Format.Zlib) == invalid)
+    assert(decompress_error(zlibbed, compression::Format.Gzip) == invalid)
+    assert(decompress_error(text, compression::Format.Deflate) == invalid)
+    assert(decompress_error(empty, compression::Format.Gzip) == invalid)
+    assert(decompress_error(empty, compression::Format.Deflate) == invalid)
+
+    let mut zlib_with_tail = try buffer::new(buffer::len(zlibbed) + 3)
+    let tail_at = try buffer::put_bytes(zlib_with_tail, 0, zlibbed)
+    let tail_end = try buffer::put(zlib_with_tail, tail_at, "abc")
+    assert(decompress_error(zlib_with_tail, compression::Format.Zlib) == invalid)
+    let mut gzip_with_tail = try buffer::new(buffer::len(gzipped) + 3)
+    let gzip_tail_at = try buffer::put_bytes(gzip_with_tail, 0, gzipped)
+    let gzip_tail_end = try buffer::put(gzip_with_tail, gzip_tail_at, "abc")
+    assert(decompress_error(gzip_with_tail, compression::Format.Gzip) == invalid)
+
+    let zeros = try compression::compress(try buffer::new(1048576), compression::Format.Gzip)
+    assert(buffer::len(zeros) < 2048)
+    assert(decompress_error(zeros, compression::Format.Gzip, 1000) == compression::CompressionError.TooLarge)
+    assert(decompress_error(zeros, compression::Format.Gzip, 1048575) == compression::CompressionError.TooLarge)
+    assert(decompress_error(zeros, compression::Format.Gzip, 1048576) == null)
+    assert(decompress_error(zeros, compression::Format.Gzip, 0) == compression::CompressionError.TooLarge)
+    assert(decompress_error(try compression::compress(empty, compression::Format.Gzip), compression::Format.Gzip, 0) == null)
+
+    assert(compress_error(text, -1) == compression::CompressionError.InvalidLevel)
+    assert(compress_error(text, 10) == compression::CompressionError.InvalidLevel)
+    assert(compress_error(text, 0) == null)
+
+    let mut kept: []buffer = []
+    for 0..299: round do
+        let line = buffer::from_string("round ${round}: ${try string::repeat("dusk ", round % 50)}")
+        let mut packed = try compression::compress(line, formats[round % 3], round % 10)
+        let filler = try string::repeat("x", 2000)
+        let plain = try compression::decompress(packed, formats[round % 3])
+        assert(same_bytes(plain, line))
+        array::append(kept, packed)
+    end
+    let last_line = buffer::from_string("round 299: ${try string::repeat("dusk ", 299 % 50)}")
+    assert(same_bytes(try compression::decompress(kept[299], formats[299 % 3]), last_line))
+end

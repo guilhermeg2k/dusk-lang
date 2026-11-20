@@ -1,0 +1,6 @@
+import std/array
+
+func main() -> void
+    let mut flags = [true, false]
+    array::sort(flags)
+end

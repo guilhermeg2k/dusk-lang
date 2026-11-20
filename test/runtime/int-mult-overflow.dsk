@@ -1,5 +1,7 @@
+import std/io
+
 func main() -> void
     let mut n = 3037000500
     n = n * n
-    echo(n)
+    io::println("${n}")
 end

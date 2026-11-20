@@ -229,6 +229,23 @@ pub const Parser = struct {
                 self.walk();
                 return ast.StatementNode{ .data = .{ .@"continue" = {} }, .loc = tk.loc };
             },
+            .defer_kw, .errdefer_kw => {
+                self.walk();
+                const next = self.peekCurrent();
+                const can_defer = switch (next.tag) {
+                    .defer_kw, .errdefer_kw, .return_kw, .break_kw, .continue_kw, .let_kw, .func_kw, .extern_kw, .struct_kw, .enum_kw, .union_kw, .error_kw, .trait_kw, .import_kw, .end_kw, .eof => false,
+                    else => true,
+                };
+                if (!can_defer) {
+                    return self.err_reporter.invalidSyntax("a statement to defer (a call, an assignment, an if, when or for)", next);
+                }
+                const statement = try self.allocator.create(ast.StatementNode);
+                statement.* = try self.parseStmt();
+                return ast.StatementNode{
+                    .data = .{ .@"defer" = .{ .statement = statement, .is_error_only = tk.tag == .errdefer_kw } },
+                    .loc = .{ .start = tk.loc.start, .end = statement.loc.end },
+                };
+            },
             .return_kw => {
                 const return_stmt = try self.parseReturnStmt();
                 const end_pos = if (return_stmt.exp) |exp| exp.loc.end else tk.loc.end;
@@ -683,20 +700,7 @@ pub const Parser = struct {
                         .default_value = let_stmt.value,
                     });
                 },
-                .func_kw => {
-                    self.walk();
-                    const is_file_only = try self.matchFileOnly(null);
-                    const identifier_token = try self.expect(.identifier);
-                    const fn_def = try self.parseFnDef();
-                    try funcs.append(self.allocator, .{
-                        .data = .{ .func = .{
-                            .identifier = identifier_token.value(self.src),
-                            .def = fn_def,
-                            .is_file_only = is_file_only,
-                        } },
-                        .loc = .{ .start = tk.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
-                    });
-                },
+                .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .identifier, .tilde => {
                     const is_file_only = try self.matchFileOnly(null);
                     const identifier = try self.expect(.identifier);
@@ -755,6 +759,24 @@ pub const Parser = struct {
         };
     }
 
+    fn parseMethod(self: *Self) CompileError!ast.StatementNode {
+        const start = self.peekCurrent();
+        self.walk();
+        const is_file_only = try self.matchFileOnly(null);
+        const identifier_token = try self.expect(.identifier);
+        const slots = try self.parseSlots();
+        const fn_def = try self.parseFnDef();
+        return .{
+            .data = .{ .func = .{
+                .identifier = identifier_token.value(self.src),
+                .def = fn_def,
+                .is_file_only = is_file_only,
+                .slots = slots,
+            } },
+            .loc = .{ .start = start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
+        };
+    }
+
     fn parseEnumDef(self: *Self) CompileError!ast.EnumDef {
         var variants: std.ArrayList(ast.EnumVariant) = .empty;
         var static_fields: std.ArrayList(ast.Field) = .empty;
@@ -803,25 +825,7 @@ pub const Parser = struct {
                         });
                     }
                 },
-                .func_kw => {
-                    self.walk();
-                    const is_file_only = try self.matchFileOnly(null);
-                    const identifier_token = try self.expect(.identifier);
-                    const fn_def = try self.parseFnDef();
-                    try funcs.append(self.allocator, .{
-                        .data = .{
-                            .func = .{
-                                .identifier = identifier_token.value(self.src),
-                                .def = fn_def,
-                                .is_file_only = is_file_only,
-                            },
-                        },
-                        .loc = .{
-                            .start = tk.loc.start,
-                            .end = self.tokens[self.cur_index - 1].loc.end,
-                        },
-                    });
-                },
+                .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .let_kw => {
                     const let_stmt = try self.parseLetStmt(static_field_refusal);
                     try static_fields.append(self.allocator, .{
@@ -865,25 +869,7 @@ pub const Parser = struct {
 
                     try variants.append(self.allocator, .{ .identifier = identifier, .type = @"type" });
                 },
-                .func_kw => {
-                    self.walk();
-                    const is_file_only = try self.matchFileOnly(null);
-                    const identifier_token = try self.expect(.identifier);
-                    const fn_def = try self.parseFnDef();
-                    try funcs.append(self.allocator, .{
-                        .data = .{
-                            .func = .{
-                                .identifier = identifier_token.value(self.src),
-                                .def = fn_def,
-                                .is_file_only = is_file_only,
-                            },
-                        },
-                        .loc = .{
-                            .start = tk.loc.start,
-                            .end = self.tokens[self.cur_index - 1].loc.end,
-                        },
-                    });
-                },
+                .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .let_kw => {
                     const let_stmt = try self.parseLetStmt(static_field_refusal);
                     try static_fields.append(self.allocator, .{
@@ -1122,7 +1108,6 @@ pub const Parser = struct {
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
 
-        var are_arguments_named: ?bool = null;
         var args: std.ArrayList(ast.FnCallArg) = .empty;
 
         while (true) {
@@ -1133,15 +1118,7 @@ pub const Parser = struct {
             const exp = try self.parseExp(0);
             const tk = self.peekCurrent();
 
-            if (are_arguments_named == null) {
-                are_arguments_named = tk.tag == .eq;
-            }
-
-            if (are_arguments_named.?) {
-                if (tk.tag != .eq) {
-                    return self.err_reporter.invalidSyntax("=", tk);
-                }
-
+            if (tk.tag == .eq) {
                 if (exp.data != .identifier) {
                     return self.err_reporter.invalidSyntax("identifier", .{ .tag = .identifier, .loc = exp.loc });
                 }
@@ -1618,7 +1595,7 @@ pub const Parser = struct {
                 return ast.ExpNode.init(self.allocator, .{
                     .data = .{
                         .anonymous_init = .{
-                            .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                            .are_arguments_named = ast.areAllArgumentsNamed(args),
                             .arguments = args,
                         },
                     },
@@ -1662,7 +1639,7 @@ pub const Parser = struct {
                     node = try ast.ExpNode.init(self.allocator, .{
                         .data = .{
                             .fn_call = .{
-                                .are_arguments_named = args.len > 0 and args[0].identifier != null,
+                                .are_arguments_named = ast.areAllArgumentsNamed(args),
                                 .target = node,
                                 .arguments = args,
                             },
@@ -1712,18 +1689,43 @@ pub const Parser = struct {
     }
 
     fn parseIndexAccess(self: *Self, target: *ast.ExpNode, is_nullable: bool) CompileError!*ast.ExpNode {
+        const bracket_index = self.cur_index;
+        const can_start_type = switch (self.peekNext().tag) {
+            .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw, .question_mark, .at, .func_kw => true,
+            .string_kw, .buffer_kw => self.peekNextN(2).tag != .double_colon,
+            .l_bracket => self.peekNextN(2).tag == .r_bracket,
+            else => false,
+        };
+        const is_type_application = !is_nullable and can_start_type;
+        if (is_type_application) {
+            return self.parseTypeApplication(target);
+        }
         self.walk();
         const was_parsing_condition = self.leaveCondition();
         defer self.is_parsing_condition = was_parsing_condition;
         const index = try self.parseExp(0);
+        const has_multiple_types = !is_nullable and self.peekCurrent().tag == .comma;
+        if (has_multiple_types) {
+            self.cur_index = bracket_index;
+            return self.parseTypeApplication(target);
+        }
         const r_bracket = try self.expect(.r_bracket);
         return ast.ExpNode.init(self.allocator, .{
             .data = .{ .indexed = .{
                 .target = target,
                 .index = index,
                 .is_nullable = is_nullable,
+                .is_bracket = true,
             } },
             .loc = .{ .start = target.loc.start, .end = r_bracket.loc.end },
+        });
+    }
+
+    fn parseTypeApplication(self: *Self, target: *ast.ExpNode) CompileError!*ast.ExpNode {
+        const arguments = try self.parseTypeArgs();
+        return ast.ExpNode.init(self.allocator, .{
+            .data = .{ .type_application = .{ .target = target, .arguments = arguments } },
+            .loc = .{ .start = target.loc.start, .end = self.tokens[self.cur_index - 1].loc.end },
         });
     }
 
@@ -1877,10 +1879,6 @@ pub const Parser = struct {
         return self.err_reporter.invalidSyntax(@tagName(tag), token);
     }
 
-    fn walkBack(self: *Self) void {
-        self.cur_index = @max(0, self.cur_index - 1);
-    }
-
     fn walk(self: *Self) void {
         self.cur_index += 1;
     }
@@ -1905,11 +1903,4 @@ pub const Parser = struct {
         return self.tokens[self.cur_index + n];
     }
 
-    fn peekBack(self: *Self) Token {
-        if (self.cur_index - 1 >= self.tokens.len or self.cur_index - 1 == 0) {
-            return Token.init(Tag.eof, 0, 0);
-        }
-
-        return self.tokens[self.cur_index - 1];
-    }
 };

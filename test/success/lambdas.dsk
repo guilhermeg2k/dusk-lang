@@ -1,3 +1,5 @@
+import std/io
+
 
 error ParseError
     Odd
@@ -42,7 +44,7 @@ func main() -> void
     assert(apply(func(a: int, b: int) -> return a * b, 6, 7) == 42)
     assert(twice(3, func(x: int) -> return x + 10) == 23)
     assert(adder()(1, 2) == 3)
-    echo(sq)
+    io::println("${sq}")
 
     let half = func(x: int) -> ParseError!int
         if x % 2 == 1 then

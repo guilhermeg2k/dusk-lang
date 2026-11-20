@@ -1,0 +1,7 @@
+func pair[T, U](first: T, second: U) -> U
+    return second
+end
+
+func main() -> !void
+    let x = pair[int](1, "a")
+end

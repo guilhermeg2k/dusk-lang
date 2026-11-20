@@ -1,0 +1,90 @@
+import std/fs
+import std/io
+import std/string
+import std/array
+import std/buffer
+
+func write_error(file: fs::File, text: string) -> ?io::IoError
+    file.write(text) catch e then
+        return e
+    end
+    return null
+end
+
+func main() -> !void
+    let log = try fs::open("DIR/log.txt", fs::Mode.Write)
+    try log.write("first")
+    assert((try fs::read("DIR/log.txt")) == "")
+    try log.flush()
+    assert((try fs::read("DIR/log.txt")) == "first")
+    for 1..100000: i do
+        try log.write("\nline ${i}")
+    end
+    try log.flush()
+    log.close()
+    let text = try fs::read("DIR/log.txt")
+    let lines = string::split(text, "\n")
+    assert(array::len(lines) == 100001)
+    assert(lines[0] == "first" and lines[100000] == "line 100000")
+
+    let replaced = try fs::open("DIR/log.txt", fs::Mode.Write)
+    try replaced.write("short\n")
+    replaced.close()
+    assert((try fs::read("DIR/log.txt")) == "short\n")
+
+    let more = try fs::open("DIR/log.txt", fs::Mode.Append)
+    try more.write("appended\n")
+    let mut data = try buffer::new(3)
+    data[0] = 'a'
+    data[1] = 'b'
+    data[2] = '\n'
+    try more.write_bytes(data)
+    more.close()
+    assert((try fs::read("DIR/log.txt")) == "short\nappended\nab\n")
+
+    let created = try fs::open("DIR/new.txt", fs::Mode.Append)
+    try created.write("new\n")
+    created.close()
+    assert((try fs::read("DIR/new.txt")) == "new\n")
+
+    let reading = try fs::open("DIR/new.txt")
+    assert(write_error(reading, "x") == io::IoError.Other)
+    reading.close()
+
+    let shared = try fs::open("DIR/tasks.txt", fs::Mode.Write)
+    let mut tasks: []Task[void, io::IoError] = []
+    for 0..3: worker do
+        array::append(tasks, spawn(func() -> io::IoError!void
+            for 0..999: i do
+                try shared.write("worker ${worker} line ${i}\n")
+            end
+        end))
+    end
+    for tasks: task do
+        try await(task)
+    end
+    shared.close()
+    let task_lines = string::split(try fs::read("DIR/tasks.txt"), "\n")
+    assert(array::len(task_lines) == 4001)
+    for task_lines: line, i do
+        if i < 4000 then
+            assert(string::starts_with(line, "worker "))
+        end
+    end
+
+    let mut source = try fs::open("DIR/log.txt")
+    let mut target = try fs::open("DIR/copy.txt", fs::Mode.Write)
+    let copied = try io::copy(source, target)
+    source.close()
+    target.close()
+    assert(copied == 18)
+    assert((try fs::read("DIR/copy.txt")) == "short\nappended\nab\n")
+
+    let mut frame = try buffer::new(64)
+    let mut used = try buffer::put(frame, 0, "frame ")
+    used = try buffer::put_int(frame, used, 7)
+    let framed = try fs::open("DIR/frame.txt", fs::Mode.Write)
+    try framed.write_bytes(try buffer::slice(frame, 0, used))
+    framed.close()
+    assert((try fs::read("DIR/frame.txt")) == "frame 7")
+end

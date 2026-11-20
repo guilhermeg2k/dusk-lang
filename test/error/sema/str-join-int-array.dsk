@@ -1,5 +1,6 @@
 import std/string
+import std/io
 
 func main() -> void
-    echo(string::join([1, 2], ","))
+    io::println("${string::join([1, 2], ",")}")
 end

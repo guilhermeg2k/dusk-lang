@@ -1,8 +1,9 @@
 import @/util
+import std/io
 
 func main() -> void
-    echo(util::double)
+    io::println("${util::double}")
     let f: func([]int) -> int = util::first
-    echo(f)
-    echo(util::first(["a"]))
+    io::println("${f}")
+    io::println("${util::first(["a"])}")
 end

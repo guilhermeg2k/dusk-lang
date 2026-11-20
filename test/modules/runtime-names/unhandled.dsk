@@ -1,6 +1,7 @@
 import @/util
+import std/io
 
 func main() -> !void
     let n = try util::fail_empty()
-    echo(n)
+    io::println("${n}")
 end

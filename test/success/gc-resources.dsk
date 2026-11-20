@@ -1,0 +1,208 @@
+import std/array: append, len
+import std/buffer
+import std/compression
+import std/fs
+import std/http
+import std/io
+import std/net
+import std/string
+import std/task
+
+struct Counter
+    closed: int = 0
+end
+
+func churn() -> void
+    let mut kept: []string = []
+    for 0..300: i do
+        let piece = string::repeat("x", 10000) catch ""
+        if i % 100 == 0 then
+            append(kept, piece)
+        end
+    end
+end
+
+func wait_for(counter: Counter, wanted: int) -> void
+    for 0..300: i do
+        if counter.closed >= wanted then
+            return
+        end
+        churn()
+        task::sleep(10)
+    end
+end
+
+func count_closes(listener: net::TcpListener, mut counter: Counter, connections: int) -> Task[void]
+    return spawn(func() -> void
+        for 1..connections: i do
+            let conn = listener.accept() catch e then
+                return
+            end
+            spawn(func() -> void
+                let rest = conn.read_all_bytes() catch buffer::from_string("")
+                counter.closed = counter.closed + 1
+                conn.close()
+            end)
+        end
+    end)
+end
+
+func drop_connection(port: int) -> !void
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    try conn.write("hi\n")
+end
+
+func keep_copy(port: int) -> !net::TcpConn
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    return copy(conn)
+end
+
+func close_then_drop(port: int) -> !void
+    let conn = try net::tcp_connect("127.0.0.1", port)
+    conn.close()
+end
+
+func drop_listener() -> !int
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    return listener.port()
+end
+
+func drop_file(path: string) -> !void
+    let file = try fs::open(path, fs::Mode.Write)
+    try file.write("written but never closed")
+end
+
+func drop_response_stream(url: string) -> !void
+    let stream = try http::open(url)
+end
+
+func drop_compressors(count: int) -> !void
+    for 1..count: i do
+        let mut compressor = compression::Compressor(compression::Format.Gzip, level = 1)
+        let part = try compressor.write_bytes(buffer::from_string("dropped compressor $i"))
+    end
+end
+
+func answer_and_count(listener: net::TcpListener, mut counter: Counter, answers: int) -> Task[int]
+    return spawn(func() -> int
+        let conn = listener.accept() catch e then
+            return 0
+        end
+        let mut served = 0
+        for served < answers do
+            let mut is_blank = false
+            for !is_blank do
+                let line = conn.read_line() catch e then
+                    counter.closed = counter.closed + 1
+                    return served
+                end
+                if line: text then
+                    is_blank = text == ""
+                else
+                    counter.closed = counter.closed + 1
+                    return served
+                end
+            end
+            conn.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello") catch e then
+                return served
+            end
+            served = served + 1
+        end
+        let rest = conn.read_all_bytes() catch buffer::from_string("")
+        counter.closed = counter.closed + 1
+        conn.close()
+        return served
+    end)
+end
+
+func main() -> !void
+    let listener = try net::tcp_listen("127.0.0.1", 0)
+    let port = listener.port()
+
+    let mut dropped = Counter()
+    let dropped_server = count_closes(listener, dropped, 50)
+    for 1..50: i do
+        try drop_connection(port)
+    end
+    wait_for(dropped, 50)
+    assert(dropped.closed == 50)
+    await(dropped_server)
+
+    let mut copies = Counter()
+    let copies_server = count_closes(listener, copies, 1)
+    let kept = try keep_copy(port)
+    churn()
+    task::sleep(50)
+    churn()
+    assert(copies.closed == 0)
+    try kept.write("still open\n")
+    kept.close()
+    wait_for(copies, 1)
+    assert(copies.closed == 1)
+    await(copies_server)
+
+    let mut explicit = Counter()
+    let explicit_server = count_closes(listener, explicit, 2)
+    try close_then_drop(port)
+    wait_for(explicit, 1)
+    churn()
+    let mut after = try net::tcp_connect("127.0.0.1", port)
+    churn()
+    try after.write("unaffected\n")
+    task::sleep(20)
+    assert(explicit.closed == 1)
+    after.close()
+    wait_for(explicit, 2)
+    await(explicit_server)
+
+    try drop_file("DIR/dropped.txt")
+    let mut written = ""
+    for 0..300: i do
+        churn()
+        written = fs::read("DIR/dropped.txt") catch ""
+        if written != "" then
+            break
+        end
+        task::sleep(10)
+    end
+    assert(written == "written but never closed")
+
+    let web = try net::tcp_listen("127.0.0.1", 0)
+    let url = "http://127.0.0.1:${web.port()}/"
+    let mut unread = Counter()
+    let unread_server = answer_and_count(web, unread, 1)
+    try drop_response_stream(url)
+    wait_for(unread, 1)
+    assert(unread.closed == 1)
+    assert(await(unread_server) == 1)
+
+    let mut pooled = Counter()
+    let pooled_server = answer_and_count(web, pooled, 2)
+    let mut first = try http::open(url)
+    assert(try first.read_all() == "hello")
+    first.close()
+    churn()
+    task::sleep(20)
+    churn()
+    assert(pooled.closed == 0)
+    assert(try (try http::request(url)).text() == "hello")
+    assert(pooled.closed == 0)
+    web.close()
+
+    try drop_compressors(300)
+    churn()
+    let mut alive = compression::Compressor(compression::Format.Gzip)
+    let tail = try alive.finish()
+    assert(buffer::len(tail) > 0)
+
+    let lost_port = try drop_listener()
+    churn()
+    task::sleep(20)
+    churn()
+    let refused = net::tcp_connect("127.0.0.1", lost_port) catch e then
+        assert(e == net::NetError.ConnectionRefused)
+        return
+    end
+    refused.close()
+    assert(false)
+end

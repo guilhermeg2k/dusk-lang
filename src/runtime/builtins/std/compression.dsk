@@ -1,0 +1,208 @@
+import std/buffer
+import std/io
+
+error CompressionError
+    InvalidData
+    TooLarge
+    InvalidLevel
+    Finished
+    Other
+end
+
+enum Format
+    Gzip
+    Zlib
+    Deflate
+end
+
+extern func compress(data: buffer, format: Format, level: int = 6) -> CompressionError!buffer
+extern func decompress(data: buffer, format: Format, max: int = -1) -> CompressionError!buffer
+extern func ~compressor_new(format: Format, level: int) -> CompressionError!int
+extern func ~decompressor_new(format: Format, max: int) -> CompressionError!int
+extern func ~compress_part(handle: int, data: buffer, mode: int) -> CompressionError!buffer
+extern func ~decompress_part(handle: int, data: buffer) -> CompressionError!buffer
+extern func ~decompress_finish(handle: int) -> CompressionError!void
+extern func ~is_stream_at_end(handle: int) -> bool
+extern func ~close_stream(handle: int) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void
+
+struct Compressor
+    format: Format
+    level: int = 6
+    ~handle: int = -1
+    ~owner: ?resource = null
+
+    func write_bytes(mut self: @, data: buffer) -> CompressionError!buffer
+        try self.start()
+        return try compress_part(self.handle, data, 0)
+    end
+
+    func flush(mut self: @) -> CompressionError!buffer
+        try self.start()
+        return try compress_part(self.handle, buffer::from_string(""), 1)
+    end
+
+    func finish(mut self: @) -> CompressionError!buffer
+        try self.start()
+        let tail = try compress_part(self.handle, buffer::from_string(""), 2)
+        release(self.owner)
+        return tail
+    end
+
+    func close(mut self: @) -> void
+        close_stream(self.handle)
+        release(self.owner)
+        self.handle = -2
+    end
+
+    func ~start(mut self: @) -> CompressionError!void
+        if self.handle != -1 then
+            return
+        end
+        self.handle = try compressor_new(self.format, self.level)
+        self.owner = own(2, self.handle)
+    end
+end
+
+struct Decompressor
+    format: Format
+    max: int = -1
+    ~handle: int = -1
+    ~owner: ?resource = null
+    ~is_finished: bool = false
+
+    func write_bytes(mut self: @, data: buffer) -> CompressionError!buffer
+        try self.start()
+        return try decompress_part(self.handle, data)
+    end
+
+    func finish(mut self: @) -> CompressionError!void
+        try self.start()
+        release(self.owner)
+        try decompress_finish(self.handle)
+        self.is_finished = true
+    end
+
+    func is_done(self: @) -> bool
+        return self.is_finished or is_stream_at_end(self.handle)
+    end
+
+    func close(mut self: @) -> void
+        close_stream(self.handle)
+        release(self.owner)
+        self.handle = -2
+    end
+
+    func ~start(mut self: @) -> CompressionError!void
+        if self.handle != -1 then
+            return
+        end
+        self.handle = try decompressor_new(self.format, self.max)
+        self.owner = own(2, self.handle)
+    end
+end
+
+struct Writer[W: io::Writer]
+    ~inner: W
+    ~compressor: Compressor
+
+    func write(mut self: @, text: string) -> io::IoError!void
+        try self.write_bytes(buffer::from_string(text))
+    end
+
+    func write_bytes(mut self: @, data: buffer) -> io::IoError!void
+        let packed = self.compressor.write_bytes(data) catch e then
+            return io_error_of(e)
+        end
+        try self.send(packed)
+    end
+
+    func flush(mut self: @) -> io::IoError!void
+        let packed = self.compressor.flush() catch e then
+            return io_error_of(e)
+        end
+        try self.send(packed)
+        try self.inner.flush()
+    end
+
+    func finish(mut self: @) -> io::IoError!void
+        let packed = self.compressor.finish() catch e then
+            return io_error_of(e)
+        end
+        try self.send(packed)
+        try self.inner.flush()
+    end
+
+    func ~send(mut self: @, packed: buffer) -> io::IoError!void
+        if buffer::len(packed) == 0 then
+            return
+        end
+        try self.inner.write_bytes(packed)
+    end
+end
+
+struct Reader[R: io::Reader]
+    ~inner: R
+    ~decompressor: Decompressor
+    ~held: buffer
+    ~held_at: int = 0
+    ~is_ended: bool = false
+
+    func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        if max < 1 then
+            return io::IoError.Other
+        end
+        for self.held_at == buffer::len(self.held) do
+            if self.is_ended then
+                return null
+            end
+            try self.refill(timeout_ms)
+        end
+        let stop = if self.held_at + max < buffer::len(self.held) then self.held_at + max else buffer::len(self.held) end
+        let part = buffer::slice(self.held, self.held_at, stop) catch e then
+            return io::IoError.Other
+        end
+        self.held_at = stop
+        return part
+    end
+
+    func close(mut self: @) -> void
+        self.decompressor.close()
+        self.is_ended = true
+    end
+
+    func ~refill(mut self: @, timeout_ms: int) -> io::IoError!void
+        let next = try self.inner.read_bytes(65536, timeout_ms)
+        if next: packed then
+            self.held = self.decompressor.write_bytes(packed) catch e then
+                return io_error_of(e)
+            end
+            self.held_at = 0
+            return
+        end
+        self.is_ended = true
+        self.decompressor.finish() catch e then
+            return io::IoError.UnexpectedEnd
+        end
+    end
+end
+
+func writer[W: io::Writer](mut inner: W, format: Format, level: int = 6) -> CompressionError!Writer[W]
+    let mut compressor = Compressor(format, level = level)
+    try compressor.start()
+    return Writer(inner = inner, compressor = compressor)
+end
+
+func reader[R: io::Reader](mut inner: R, format: Format, max: int = -1) -> CompressionError!Reader[R]
+    let mut decompressor = Decompressor(format, max = max)
+    try decompressor.start()
+    return Reader(inner = inner, decompressor = decompressor, held = buffer::from_string(""))
+end
+
+func ~io_error_of(e: CompressionError) -> io::IoError
+    return when e
+        CompressionError.Finished then io::IoError.Closed end
+        else then io::IoError.Other end
+    end
+end

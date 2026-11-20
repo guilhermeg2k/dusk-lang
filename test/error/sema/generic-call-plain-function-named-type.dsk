@@ -1,0 +1,10 @@
+struct User
+    name: string
+end
+func keep(value: int) -> int
+    return value
+end
+
+func main() -> !void
+    let x = keep[User](1)
+end

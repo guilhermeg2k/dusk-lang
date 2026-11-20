@@ -1,3 +1,5 @@
+import std/io
+
 enum Color
     Red
     Green
@@ -69,43 +71,43 @@ enum GameState
 end
 
 func main() -> void
-    echo(Color.Red)
-    echo(Color.Green)
+    io::println("${Color.Red}")
+    io::println("${Color.Green}")
 
-    echo(HttpStatus.Ok)
-    echo(HttpStatus.ServerError)
+    io::println("${HttpStatus.Ok}")
+    io::println("${HttpStatus.ServerError}")
 
-    echo(Direction.DEFAULT)
+    io::println("${Direction.DEFAULT}")
     assert(Direction.LIMIT == 42)
     assert(Direction.DEFAULT == Direction.North)
 
-    echo(Config.name)
-    echo(col)
+    io::println("${Config.name}")
+    io::println("${col}")
 
     if Color.Red == Color.Red then
-        echo(100)
+        io::println("${100}")
     end
 
     if Color.Red != Color.Blue then
-        echo(101)
+        io::println("${101}")
     end
 
-    echo(get_color())
-    echo(is_red(Color.Red))
-    echo(is_red(Color.Green))
+    io::println("${get_color()}")
+    io::println("${is_red(Color.Red)}")
+    io::println("${is_red(Color.Green)}")
 
     let colors = [Color.Red, Color.Green, Color.Blue]
-    echo(colors[0])
-    echo(colors[2])
+    io::println("${colors[0]}")
+    io::println("${colors[2]}")
 
     let maybe: ?Color = null
     let maybe2: ?Color = Color.Green
-    echo(maybe2)
-    echo(s)
+    io::println("${maybe2}")
+    io::println("${s}")
 
     let mut gs = GameState.DEFAULT
-    echo(gs.is_playing())
+    io::println("${gs.is_playing()}")
 
     gs = gs.next()
-    echo(gs.is_playing())
+    io::println("${gs.is_playing()}")
 end

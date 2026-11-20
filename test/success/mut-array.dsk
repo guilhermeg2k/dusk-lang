@@ -1,3 +1,5 @@
+import std/io
+
 func main() -> void
     let mut arr: []int = [1,2,3,4]
 
@@ -12,5 +14,5 @@ func main() -> void
         i = i + 1
     end
 
-    echo(arr)
+    io::println("${arr}")
 end

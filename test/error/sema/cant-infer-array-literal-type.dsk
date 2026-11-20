@@ -1,4 +1,6 @@
+import std/io
+
 func main() -> void
     let arr = []
-    echo(arr)
+    io::println("${arr}")
 end

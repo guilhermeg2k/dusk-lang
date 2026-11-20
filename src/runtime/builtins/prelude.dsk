@@ -3,7 +3,6 @@ error ConversionError
     Overflow
 end
 
-extern func echo(msgs: dynamic) -> void
 extern func ~unchecked_to_byte(value: int) -> byte
 extern func ~unchecked_to_int(value: float) -> int
 extern func to_float[T: int | byte | float](value: T) -> float

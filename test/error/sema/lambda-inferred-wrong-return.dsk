@@ -1,3 +1,5 @@
+import std/io
+
 func apply(f: func(int, int) -> int) -> int
     return f(3, 4)
 end
@@ -11,5 +13,5 @@ func grow(f: func(mut []int) -> void) -> void
 end
 
 func main() -> void
-    echo(keep([1, 2], func(x) -> return x + 1))
+    io::println("${keep([1, 2], func(x) -> return x + 1)}")
 end

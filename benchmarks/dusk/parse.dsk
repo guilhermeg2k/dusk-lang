@@ -1,5 +1,6 @@
 import std/array: append
 import std/string
+import std/io
 
 func main() -> void
     let mut rows: []string = []
@@ -14,5 +15,5 @@ func main() -> void
         total = total + ((string::to_int(fields[0]) catch 0) + (string::to_int(fields[1]) catch 0))
         count = count + 1
     end
-    echo(total + count)
+    io::println("${total + count}")
 end
