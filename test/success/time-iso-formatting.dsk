@@ -1,0 +1,124 @@
+import std/time
+import std/array
+
+func check(milliseconds: int, zone: time::TimeZone, expected: string) -> !void
+    let timestamp = time::from_unix_ms(milliseconds)
+    assert((try timestamp.to_iso_string(zone)) == expected)
+    assert((try time::to_iso_string(timestamp, zone)) == expected)
+    assert((try time::from_iso_string(expected)).unix_ms() == milliseconds)
+    assert(timestamp.unix_ms() == milliseconds)
+end
+
+func check_named(zone: time::TimeZone, utc_text: string, expected: string) -> !void
+    let timestamp = try time::from_iso_string(utc_text)
+    try check(timestamp.unix_ms(), zone, expected)
+end
+
+func expect_precision(format: func() -> time::TimeError!string) -> void
+    let text = format() catch e then
+        assert(e == time::TimeError.PrecisionLoss)
+        return
+    end
+    assert(false)
+end
+
+func check_precision(zone: time::TimeZone, timestamp: time::Timestamp) -> void
+    expect_precision(func() -> time::TimeError!string
+        return try timestamp.to_iso_string(zone)
+    end)
+    expect_precision(func() -> time::TimeError!string
+        return try time::to_iso_string(timestamp, zone)
+    end)
+end
+
+func check_fixed() -> !void
+    let utc = time::utc_timezone()
+    let east = try time::fixed_timezone(19800)
+    let west = try time::fixed_timezone(-12600)
+    let east_limit = try time::fixed_timezone(86340)
+    let west_limit = try time::fixed_timezone(-86340)
+    try check(0, utc, "1970-01-01T00:00:00.000Z")
+    try check(-1, utc, "1969-12-31T23:59:59.999Z")
+    try check(0, east, "1970-01-01T05:30:00.000+05:30")
+    try check(-1, west, "1969-12-31T20:29:59.999-03:30")
+    try check(0, try time::fixed_timezone(-60), "1969-12-31T23:59:00.000-00:01")
+    try check(0, try time::fixed_timezone(60), "1970-01-01T00:01:00.000+00:01")
+    try check(0, try time::fixed_timezone(0), "1970-01-01T00:00:00.000Z")
+    try check(9223372036854775807, east_limit, "+292278994-08-18T07:11:55.807+23:59")
+    try check(-9223372036854775807 - 1, west_limit, "-292275055-05-15T16:48:04.192-23:59")
+    try check(9223372036854775807, west_limit, "+292278994-08-16T07:13:55.807-23:59")
+    try check(-9223372036854775807 - 1, east_limit, "-292275055-05-17T16:46:04.192+23:59")
+    try check_named(west, "0000-01-01T00:00:00Z", "-0001-12-31T20:30:00.000-03:30")
+    try check_named(east, "9999-12-31T23:59:59.999Z", "+10000-01-01T05:29:59.999+05:30")
+    try check_named(west, "+10000-01-01T00:00:00Z", "9999-12-31T20:30:00.000-03:30")
+    let offsets = [-86340, -12600, -60, 0, 60, 19800, 86340]
+    for [-9223372036854775807 - 1, -62167219200000, -1, 0, 1, 253402300800000, 9223372036854775807]: milliseconds do
+        let timestamp = time::from_unix_ms(milliseconds)
+        assert((try timestamp.to_iso_string()) == time::to_utc_iso_string(timestamp))
+        assert((try time::to_iso_string(timestamp)) == time::to_utc_iso_string(timestamp))
+        for offsets: offset do
+            let zone = try time::fixed_timezone(offset)
+            let text = try timestamp.to_iso_string(zone)
+            assert((try time::from_iso_string(text)).unix_ms() == milliseconds)
+        end
+    end
+    for [-86399, -30, 1, 30, 86399]: offset do
+        let zone = try time::fixed_timezone(offset)
+        check_precision(zone, time::from_unix_ms(0))
+        check_precision(zone, time::from_unix_ms(-9223372036854775807 - 1))
+        check_precision(zone, time::from_unix_ms(9223372036854775807))
+    end
+    let encoder: func(time::Timestamp) -> string = time::to_utc_iso_string
+    let formatter: func(time::Timestamp, time::TimeZone) -> time::TimeError!string = time::to_iso_string
+    assert(encoder(time::from_unix_ms(0)) == "1970-01-01T00:00:00.000Z")
+    assert((try formatter(time::from_unix_ms(0), east)) == "1970-01-01T05:30:00.000+05:30")
+end
+
+func check_zones() -> !void
+    let new_york = try time::load_timezone("America/New_York")
+    try check_named(new_york, "2024-03-10T06:59:59.999Z", "2024-03-10T01:59:59.999-05:00")
+    try check_named(new_york, "2024-03-10T07:00:00Z", "2024-03-10T03:00:00.000-04:00")
+    try check_named(new_york, "2024-11-03T05:59:59.999Z", "2024-11-03T01:59:59.999-04:00")
+    try check_named(new_york, "2024-11-03T06:00:00Z", "2024-11-03T01:00:00.000-05:00")
+    try check_named(new_york, "2400-07-15T00:00:00Z", "2400-07-14T20:00:00.000-04:00")
+    let eastern = try time::load_timezone("US/Eastern")
+    try check_named(eastern, "2024-11-03T06:00:00Z", "2024-11-03T01:00:00.000-05:00")
+    assert(eastern.name() == "US/Eastern")
+    let sydney = try time::load_timezone("Australia/Sydney")
+    try check_named(sydney, "2400-01-15T00:00:00Z", "2400-01-15T11:00:00.000+11:00")
+    try check_named(sydney, "2400-07-15T00:00:00Z", "2400-07-15T10:00:00.000+10:00")
+    let kathmandu = try time::load_timezone("Asia/Kathmandu")
+    try check_named(kathmandu, "2024-01-15T00:00:00Z", "2024-01-15T05:45:00.000+05:45")
+    let paris = try time::load_timezone("Europe/Paris")
+    check_precision(paris, try time::from_iso_string("1800-01-01T00:00:00Z"))
+    check_precision(new_york, time::from_unix_ms(-9223372036854775807 - 1))
+    try check_named(paris, "2024-01-15T00:00:00Z", "2024-01-15T01:00:00.000+01:00")
+end
+
+func check_gc() -> !void
+    let new_york = try time::load_timezone("America/New_York")
+    let kathmandu = try time::load_timezone("Asia/Kathmandu")
+    let timestamp = try time::from_iso_string("2024-07-15T00:00:00Z")
+    let mut kept: []string = []
+    for 0..19999: i do
+        let zone = if i % 2 == 0 then new_york else kathmandu end
+        let text = try time::to_iso_string(timestamp, zone)
+        let expected = if i % 2 == 0 then "2024-07-14T20:00:00.000-04:00" else "2024-07-15T05:45:00.000+05:45" end
+        assert(text == expected)
+        assert((try timestamp.to_iso_string(zone)) == expected)
+        assert(time::to_utc_iso_string(timestamp) == "2024-07-15T00:00:00.000Z")
+        if i % 5000 == 0 then
+            array::append(kept, text)
+        end
+    end
+    assert(kept[0] == "2024-07-14T20:00:00.000-04:00")
+    assert(kept[3] == kept[0])
+    assert(new_york.name() == "America/New_York")
+    assert(timestamp.unix_ms() == 1721001600000)
+end
+
+func main() -> !void
+    try check_fixed()
+    try check_zones()
+    try check_gc()
+end

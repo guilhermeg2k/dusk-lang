@@ -1996,7 +1996,8 @@ Clocks, timestamps, durations, and monotonic instants. Import with `import std/t
 | `now()` | `Timestamp` | A timestamp from the current wall-clock reading. |
 | `from_unix_ms(milliseconds)` | `Timestamp` | A timestamp from any `int` epoch-millisecond value, including negative values. |
 | `to_unix_ms(timestamp)` | `int` | The timestamp's epoch milliseconds, like `timestamp.unix_ms()`. |
-| `to_iso(timestamp)` | `string` | The same text as `timestamp.to_string()`. |
+| `to_iso_string(timestamp, zone = utc_timezone())` | `TimeError!string` | Formats an ISO timestamp in the selected zone, defaulting to UTC. |
+| `to_utc_iso_string(timestamp)` | `string` | Infallible unary UTC formatter for serialization and other function-value uses. |
 | `from_iso_string(text)` | `TimeError!Timestamp` | Reads a full Gregorian timestamp with an explicit `Z` or numeric `+HH:MM` / `-HH:MM` offset. Supports expanded years and optional fractions, truncated to milliseconds. Invalid text fails with `TimeError.InvalidTimestamp`; a valid value outside the `int` millisecond range fails with `TimeError.Overflow`. |
 | `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
 | `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
@@ -2037,7 +2038,7 @@ A `Timestamp` stores epoch milliseconds in a private field and has no mutating m
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
 | `unix_ms()` | `int` | The stored epoch milliseconds, unchanged. |
-| `to_string()` | `string` | ISO 8601-style UTC text with exactly three fractional millisecond digits. |
+| `to_iso_string(zone = utc_timezone())` | `TimeError!string` | ISO timestamp text in the selected zone, with exactly three fractional millisecond digits. |
 | `is_equal(other)` | `bool` | Whether both timestamps represent the same epoch milliseconds. |
 | `is_before(other)` | `bool` | Whether this timestamp precedes the other. |
 | `is_after(other)` | `bool` | Whether this timestamp follows the other. |
@@ -2045,25 +2046,25 @@ A `Timestamp` stores epoch milliseconds in a private field and has no mutating m
 | `subtract(duration)` | `TimeError!Timestamp` | Subtracts elapsed time, requiring exact whole milliseconds. |
 | `since(other)` | `TimeError!Duration` | Signed elapsed time: this timestamp minus the other, in nanoseconds. |
 
-Formatting works for every `int` timestamp, without `try` or a date-range error. Years `0000–9999` use four digits. Larger years have a leading `+` and all digits; negative years have a leading `-` and at least four digits. The Gregorian calendar extends backward through year zero. Unix milliseconds do not represent leap seconds. Expanded-year output is not strict RFC 3339.
+UTC formatting works for every `int` timestamp, including both integer limits. The module and method `to_iso_string` calls require `try` or `catch`, including when the zone defaults to UTC. The unary module adapter `to_utc_iso_string` returns a plain string. Years `0000–9999` use four digits. Larger years have a leading `+` and all digits; negative years have a leading `-` and at least four digits. The Gregorian calendar extends backward through year zero. Unix milliseconds do not represent leap seconds. Expanded-year output is not strict RFC 3339.
 
 ```dusk
 let epoch = time::from_unix_ms(0)
-io::println(epoch.to_string())
+io::println(try epoch.to_iso_string())
 let before_epoch = time::from_unix_ms(-1)
-io::println(before_epoch.to_string())
+io::println(try before_epoch.to_iso_string())
 let modified = time::from_unix_ms(info.modified_ms)
 ```
 
-The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
+The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC. With no explicit zone, output always uses UTC, independently of local settings. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
 
-The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior.
+The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and ISO formatting allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior.
 
 `from_iso_string` requires uppercase `T` and a final uppercase `Z` or offset, with no surrounding whitespace or trailing text. Years use four digits, a negative sign with at least four digits, or a positive sign for years above 9999. The Gregorian calendar extends through year zero. A fraction must contain at least one digit; one or two digits are padded to milliseconds, and digits after the third are validated and discarded. Leap seconds, `24:00`, date-only and time-only input, week dates, ordinal dates, and intervals are rejected. Offset hours range from 00 to 23 and minutes from 00 to 59. Both `+00:00` and `-00:00` mean zero offset; the original offset is not retained.
 
-For example, `1970-01-01T05:30:00+05:30` represents epoch millisecond zero, and `+10000-01-01T00:00:00Z` is accepted. Every timestamp produced by `to_iso` can be read back, including both `int` limits. An offset can move the local date across a day or year boundary; only the resulting UTC epoch milliseconds must fit in `int`.
+For example, `1970-01-01T05:30:00+05:30` represents epoch millisecond zero, and `+10000-01-01T00:00:00Z` is accepted. Every successful `to_iso_string` result can be read back to recover the same timestamp, including both `int` limits. An offset can move the local date across a day or year boundary; only the resulting UTC epoch milliseconds must fit in `int`.
 
-`to_iso` / `from_iso_string` and `to_unix_ms` / `from_unix_ms` are pairs of plain functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Like other structs, `==` compares identity; use `is_equal`, `is_before`, and `is_after` for chronological comparisons.
+`to_utc_iso_string` / `from_iso_string` and `to_unix_ms` / `from_unix_ms` are pairs of unary functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Use `via(time::to_utc_iso_string, time::from_iso_string)` for text. The general `to_iso_string` function takes two parameters, even though the zone has a default, and returns a fallible result; it is not a unary schema encoder. Like other structs, `==` compares identity; use `is_equal`, `is_before`, and `is_after` for chronological comparisons.
 
 A `Duration` stores signed nanoseconds in a private field. Its range is approximately 292 years in either direction, independently of the much wider timestamp range. It has no mutating methods.
 
@@ -2125,7 +2126,19 @@ let fixed = try time::fixed_timezone(19800)
 assert(fixed.name() == "UTC+05:30")
 ```
 
-Zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. The current `to_iso` and `Timestamp.to_string` methods still format UTC; system-local discovery and zone-aware formatting are not provided yet.
+Zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. System-local discovery and custom pattern formatting are not provided yet.
+
+`to_iso_string` applies the selected zone's offset at the timestamp, then writes local calendar fields and an explicit offset. Zero prints `Z`; other offsets print `+HH:MM` or `-HH:MM`. Applying an offset can move the displayed date across a day, year, or the epoch-millisecond integer boundary; wide calendar arithmetic keeps the represented timestamp unchanged. DST changes can skip or repeat local clock readings, with the explicit suffix distinguishing repeated times.
+
+```dusk
+let timestamp = try time::from_iso_string("2024-07-15T00:00:00Z")
+let new_york = try time::load_timezone("America/New_York")
+assert((try timestamp.to_iso_string(new_york)) == "2024-07-14T20:00:00.000-04:00")
+assert((try time::to_iso_string(timestamp)) == "2024-07-15T00:00:00.000Z")
+assert(time::to_utc_iso_string(timestamp) == "2024-07-15T00:00:00.000Z")
+```
+
+ISO suffixes represent whole minutes. If a fixed or historical named-zone offset contains seconds, formatting fails with `TimeError.PrecisionLoss`; it never rounds the offset or changes the moment. `offset_seconds` still reports the exact offset, and `to_utc_iso_string` always provides a UTC representation. Serialization through the UTC adapter writes canonical UTC text and accepts any supported explicit offset when reading.
 
 ### std/task
 
@@ -2898,7 +2911,7 @@ A schema is a named set of outside names for one consumer: an API, a database ta
 
 ```nim
 schema Api(case = "snake")
-    time::Timestamp: via(time::to_iso, time::from_iso_string)
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
 
     struct models::Address
         zipCode: "postcode"
@@ -3139,7 +3152,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
 | `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
 | `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration factory or arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
-| `TimeError.PrecisionLoss` | Timestamp addition or subtraction with a duration containing fractional milliseconds. |
+| `TimeError.PrecisionLoss` | Timestamp arithmetic with fractional milliseconds, or ISO formatting in a zone whose offset contains seconds. |
 | `TimeError.UnknownTimeZone` | A name is invalid or absent from the bundled timezone database. |
 | `TimeError.InvalidOffset` | A fixed timezone offset is outside the supported range. |
 

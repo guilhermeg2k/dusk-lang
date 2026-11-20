@@ -1,0 +1,42 @@
+import std/time
+import std/json
+
+schema Api
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
+end
+
+struct Event
+    at: time::Timestamp
+    other: ?time::Timestamp = null
+end
+
+func expect_invalid_value(text: string) -> void
+    let value = json::decode[time::Timestamp, Api](text) catch e then
+        assert(e == json::JsonError.InvalidValue)
+        return
+    end
+    assert(false)
+end
+
+func main() -> !void
+    for [-9223372036854775807 - 1, -62167219200000, -1, 0, 1, 253402300800000, 9223372036854775807]: milliseconds do
+        let timestamp = time::from_unix_ms(milliseconds)
+        let text = try json::encode[time::Timestamp, Api](timestamp)
+        assert(text == "\"${time::to_utc_iso_string(timestamp)}\"")
+        let decoded = try json::decode[time::Timestamp, Api](text)
+        assert(decoded.is_equal(timestamp))
+        let event = Event(at = timestamp)
+        let event_text = try json::encode[Event, Api](event)
+        let decoded_event = try json::decode[Event, Api](event_text)
+        assert(decoded_event.at.is_equal(timestamp))
+        assert(decoded_event.other == null)
+    end
+    let offset = try json::decode[time::Timestamp, Api]("\"1970-01-01T05:30:00+05:30\"")
+    assert(offset.unix_ms() == 0)
+    assert((try json::encode[time::Timestamp, Api](offset)) == "\"1970-01-01T00:00:00.000Z\"")
+    let expanded = try json::decode[time::Timestamp, Api]("\"+10000-01-01T05:30:00+05:30\"")
+    assert(time::to_utc_iso_string(expanded) == "+10000-01-01T00:00:00.000Z")
+    expect_invalid_value("\"not a timestamp\"")
+    expect_invalid_value("\"2023-02-29T00:00:00Z\"")
+    expect_invalid_value("\"+292278994-08-17T07:12:55.808Z\"")
+end

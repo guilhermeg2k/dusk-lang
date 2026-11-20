@@ -37,7 +37,7 @@ func wire_to_total(wire: Wire) -> Total
 end
 
 schema Api
-    time::Timestamp: via(time::to_iso, time::from_iso_string)
+    time::Timestamp: via(time::to_utc_iso_string, time::from_iso_string)
     Stamp: via(stamp_to_time, time_to_stamp)
     Total: via(total_to_wire, wire_to_total)
 end
@@ -68,7 +68,7 @@ func at(milliseconds: int) -> time::Timestamp
 end
 
 func iso(milliseconds: int) -> string
-    return "\"${time::to_iso(at(milliseconds))}\""
+    return "\"${time::to_utc_iso_string(at(milliseconds))}\""
 end
 
 func failure_path(text: string) -> string

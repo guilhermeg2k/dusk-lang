@@ -5,7 +5,9 @@ import std/array
 func check(milliseconds: int, expected: string) -> !void
     let timestamp = time::from_unix_ms(milliseconds)
     assert(timestamp.unix_ms() == milliseconds)
-    assert(timestamp.to_string() == expected)
+    assert((try timestamp.to_iso_string()) == expected)
+    assert((try time::to_iso_string(timestamp)) == expected)
+    assert(time::to_utc_iso_string(timestamp) == expected)
     assert((try time::from_iso_string(expected)).unix_ms() == milliseconds)
 end
 
@@ -131,11 +133,11 @@ func main() -> !void
     let mut kept: []time::Timestamp = []
     for 1..20000: i do
         let mut timestamp = time::from_unix_ms(i - 10000)
-        assert(timestamp.to_string() == time::from_unix_ms(i - 10000).to_string())
+        assert((try timestamp.to_iso_string()) == (try time::from_unix_ms(i - 10000).to_iso_string()))
         if i % 5000 == 0 then
             array::append(kept, timestamp)
         end
     end
-    assert(kept[0].to_string() == "1969-12-31T23:59:55.000Z")
-    assert(kept[3].to_string() == "1970-01-01T00:00:10.000Z")
+    assert((try kept[0].to_iso_string()) == "1969-12-31T23:59:55.000Z")
+    assert((try kept[3].to_iso_string()) == "1970-01-01T00:00:10.000Z")
 end

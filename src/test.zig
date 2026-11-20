@@ -213,6 +213,24 @@ test "time: bundled named zones, fixed offsets, aliases, transitions and GC" {
     try runCaseError("sema/time-timezone-argument.dsk", error.InvalidType);
 }
 
+test "time: zone-aware ISO formatting, precision, round trips and GC" {
+    try runCase("time-iso-formatting.dsk");
+}
+
+test "time: unary UTC serialization adapter and full-range proxy round trips" {
+    try runCase("time-iso-serialization.dsk");
+    try runCaseError("sema/time-iso-failing-encoder.dsk", error.InvalidSchema);
+}
+
+test "time: ISO API migration and error handling" {
+    try runCaseError("sema/time-iso-module-removed.dsk", error.NotDefined);
+    try runCaseError("sema/time-timestamp-to-string-removed.dsk", error.InvalidStructField);
+    try runCaseError("sema/time-iso-module-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-iso-method-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-iso-zone-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-iso-utc-extra-argument.dsk", error.InvalidNumberOfArgs);
+}
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);

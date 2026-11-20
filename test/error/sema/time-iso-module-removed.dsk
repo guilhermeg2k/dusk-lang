@@ -1,0 +1,5 @@
+import std/time
+
+func main() -> !void
+    let text = time::to_iso(time::from_unix_ms(0))
+end

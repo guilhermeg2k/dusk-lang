@@ -6,6 +6,10 @@ error TimeError
     InvalidOffset
 end
 
+func utc_timezone() -> TimeZone
+    return TimeZone(zone_id = 0)
+end
+
 struct Timestamp
     ~milliseconds: int
 
@@ -13,8 +17,8 @@ struct Timestamp
         return self.milliseconds
     end
 
-    func to_string(self: @) -> string
-        return format_timestamp(self.milliseconds)
+    func to_iso_string(self: @, zone: TimeZone = utc_timezone()) -> TimeError!string
+        return try format_timestamp(self.milliseconds, zone.zone_id)
     end
 
     func is_equal(self: @, other: Timestamp) -> bool
@@ -116,10 +120,15 @@ end
 
 extern func now_ms() -> int
 extern func monotonic_ns() -> int
-extern func ~format_timestamp(milliseconds: int) -> string
+extern func ~format_timestamp(milliseconds: int, zone_id: int) -> TimeError!string
+extern func ~format_utc_timestamp(milliseconds: int) -> string
 
-func to_iso(timestamp: Timestamp) -> string
-    return format_timestamp(timestamp.milliseconds)
+func to_iso_string(timestamp: Timestamp, zone: TimeZone = utc_timezone()) -> TimeError!string
+    return try format_timestamp(timestamp.milliseconds, zone.zone_id)
+end
+
+func to_utc_iso_string(timestamp: Timestamp) -> string
+    return format_utc_timestamp(timestamp.milliseconds)
 end
 
 func from_iso_string(text: string) -> TimeError!Timestamp
@@ -166,10 +175,6 @@ extern func ~subtract_nanoseconds(left: int, right: int) -> TimeError!int
 extern func ~add_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
 extern func ~subtract_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
 extern func ~timestamp_difference_nanoseconds(left: int, right: int) -> TimeError!int
-
-func utc_timezone() -> TimeZone
-    return TimeZone(zone_id = 0)
-end
 
 func fixed_timezone(offset_seconds: int) -> TimeError!TimeZone
     let is_valid_offset = offset_seconds > -86400 and offset_seconds < 86400

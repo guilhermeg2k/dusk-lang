@@ -3,6 +3,7 @@ const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
 const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
 const Civil = @import("../../calendar.zig").Civil;
+const formatIsoMilliseconds = @import("../../time_format.zig").formatIsoMilliseconds;
 const native = @import("../native.zig");
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
@@ -11,6 +12,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "now_ms", Binding{ .native = &nowMilliseconds } },
     .{ "monotonic_ns", Binding{ .native = &monotonicNanoseconds } },
     .{ "format_timestamp", Binding{ .native = &formatTimestamp } },
+    .{ "format_utc_timestamp", Binding{ .native = &formatUtcTimestamp } },
     .{ "parse_timestamp", Binding{ .native = &parseTimestamp } },
     .{ "scale_nanoseconds", Binding{ .native = &scaleNanoseconds } },
     .{ "add_nanoseconds", Binding{ .native = &addNanoseconds } },
@@ -35,26 +37,23 @@ fn monotonicNanoseconds(_: *VM, _: []v.Value) anyerror!NativeResult {
 }
 
 fn formatTimestamp(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    var buffer: [32]u8 = undefined;
-    const text = formatUnixMilliseconds(args[0].int64, &buffer);
+    const milliseconds = args[0].int64;
+    const offset_seconds = vm.timezones.offsetSeconds(args[1].int64, milliseconds);
+    var buffer: [40]u8 = undefined;
+    const text = formatIsoMilliseconds(milliseconds, offset_seconds, &buffer) catch return native.fail(TimeError.PrecisionLoss);
+    return allocateTimestampString(vm, text);
+}
+
+fn allocateTimestampString(vm: *VM, text: []const u8) !NativeResult {
     const result = try vm.allocString(text.len);
     @memcpy(result.mutableSlice(), text);
     return native.stringResult(result);
 }
 
-fn formatUnixMilliseconds(milliseconds: i64, buffer: *[32]u8) []const u8 {
-    const civil = Civil.fromUnixMilliseconds(milliseconds);
-    const sign: []const u8 = if (civil.year < 0) "-" else if (civil.year > 9999) "+" else "";
-    return std.fmt.bufPrint(buffer, "{s}{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z", .{
-        sign,
-        @abs(civil.year),
-        civil.month,
-        civil.day,
-        civil.hour,
-        civil.minute,
-        civil.second,
-        civil.millisecond,
-    }) catch unreachable;
+fn formatUtcTimestamp(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    var buffer: [40]u8 = undefined;
+    const text = formatIsoMilliseconds(args[0].int64, 0, &buffer) catch unreachable;
+    return allocateTimestampString(vm, text);
 }
 
 fn parseTimestamp(_: *VM, args: []v.Value) anyerror!NativeResult {

@@ -4,7 +4,7 @@ import std/string
 func check(text: string, milliseconds: int) -> !void
     let timestamp = try time::from_iso_string(text)
     assert(timestamp.unix_ms() == milliseconds)
-    assert((try time::from_iso_string(time::to_iso(timestamp))).unix_ms() == milliseconds)
+    assert((try time::from_iso_string(try time::to_iso_string(timestamp))).unix_ms() == milliseconds)
 end
 
 func check_error(text: string, expected: time::TimeError) -> void
