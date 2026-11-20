@@ -258,9 +258,9 @@ The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`,
 
 ## std/process
 
-External programs with asynchronous exit waiting and pipe I/O. Import with `import std/process`.
+Runs other programs. `run` starts one, collects its output and waits for it to finish; `start` gives back a `Child` to talk to while it runs. Waiting parks only the running task: other tasks, timers and I/O keep going (see [Tasks](language-ref.md#13-tasks)).
 
-```dusk
+```nim
 import std/process
 import std/io
 
@@ -271,377 +271,335 @@ func main() -> !void
 end
 ```
 
-`run(args: []string, cwd: ?string = null, env: ?map[string, string] = null, timeout_ms: int = -1, max_output: int = 16777216) -> ProcessError!Result` launches a program, captures stdout/stderr concurrently and waits for completion. Only the calling task waits; other tasks, timers and I/O continue. Launch setup, path lookup and validation are synchronous. The first argument is the executable; later arguments are passed literally, preserving empty strings and spaces. There is no implicit shell expansion, redirection or pipeline syntax.
+Functions that can fail return an error union with the module's error set `ProcessError`:
 
-Default stdin is an EOF source. `cwd` changes only the child's directory; relative paths resolve against the parent directory at submission. `env = null` uses the VM's supplied environment snapshot, matching `std/os`; absent embedding context means an empty environment. A supplied map replaces the child environment. On Windows, libuv may add required platform variables that are absent from it. Names must be nonempty and contain no `=` or zero byte, except host-supported drive environment names on Windows. Arguments, names, values and paths cannot contain zero bytes; host context text must be valid UTF-8.
+| Variant | When |
+| :------ | :--- |
+| `InvalidArgument` | An empty argument list or program name, a zero byte in an argument, path or variable, a bad variable name, or a negative `timeout_ms` (other than `-1`) or `max_output` |
+| `NotFound` | The program isn't on `PATH`, the path doesn't exist, or `cwd` doesn't exist |
+| `PermissionDenied` | The program exists but can't be run |
+| `InvalidExecutable` | The file can't be run as a program (on Windows, a `.bat` or `.cmd` file: run it through its interpreter) |
+| `ResourceLimit` | The system won't start another process |
+| `TimedOut` | `timeout_ms` ran out |
+| `OutputTooLarge` | `run` received more than `max_output` bytes |
+| `InvalidUtf8` | An argument, path or variable isn't valid UTF-8, or `stdout_text` / `stderr_text` on output that isn't text |
+| `Unsupported` | Not available here (a program embedding Dusk without a host, or inheriting an output that the embedding program redirected) |
+| `Busy` | Another task is already waiting for the child, or `close` while it's still running |
+| `Closed` | The child was closed |
+| `NotPiped` | `stdin()`, `stdout()` or `stderr()` on a stream that wasn't set to `Stdio.Pipe` |
+| `Other` | Any other failure |
 
-A bare executable name is searched using the VM parent environment's `PATH`, even when `env` supplies a different child environment. Empty or relative PATH entries resolve against the child's working directory. Explicit executable paths resolve against that directory and bypass PATH search. Windows lookup also considers `.exe` and `.com`; `.bat` and `.cmd` files require an explicit interpreter.
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `run(args, cwd = null, env = null, timeout_ms = -1, max_output = 16777216)` | `ProcessError!Result` | Runs a program and waits for it, collecting its stdout and stderr. |
+| `start(args, cwd = null, env = null, stdin_mode = Stdio.Ignore, stdout_mode = Stdio.Inherit, stderr_mode = Stdio.Inherit)` | `ProcessError!Child` | Starts a program and returns right away. |
 
-`Result` contains `stdout: buffer`, `stderr: buffer` and `termination: Termination`. The termination union has `Exited: int` and `Signaled: int` variants. Exit codes and signal numbers retain the host-reported value; signal numbers are platform-specific. `is_success()` is true only for `Exited = 0`. Nonzero exits are results, not errors. `stdout_text()` and `stderr_text()` return `ProcessError!string`, failing with `InvalidUtf8` for binary data while preserving the original buffers.
+**Arguments.** `args[0]` is the program and the rest are passed exactly as written: spaces, quotes and empty strings stay as they are. Nothing goes through a shell, so `*`, `>` and `|` are plain characters. A program name with a `/` (or on Windows a `\` or `:`) is a path, relative to the child's folder; a bare name is looked up in the folders of `PATH`, from the program's own environment even when `env` gives the child a different one. Empty or relative `PATH` entries are relative to the child's folder. On Windows the lookup also tries the `.exe` and `.com` endings.
 
-`max_output` limits combined stdout/stderr bytes, defaulting to 16 MiB. It must be nonnegative; zero permits empty output only. Overflow returns `OutputTooLarge` after terminating and reaping the direct child. Output is not silently truncated into a successful result.
+**Folder and environment.** `cwd` is the child's folder; a relative one is relative to the program's current folder. `env = null` gives the child the program's environment (the same one `os::env` reads); a map replaces it entirely (on Windows the system may add a few variables it needs). Names can't be empty or contain `=`. The child's stdin is empty: it reads the end of input right away.
 
-`timeout_ms = -1` means no deadline, `0` means immediate expiry, and lower values are invalid. The deadline covers launch accounting, output capture and child exit. It stays active if a child closes its outputs but continues running, or exits while a descendant retains a pipe. Expiry closes capture pipes, requests forced termination of the direct child and waits for its exit notification before returning `TimedOut`. Cleanup may outlast the nominal deadline while the host completes termination; descendants are not automatically terminated.
+**Results.** `Result` holds `stdout: buffer`, `stderr: buffer` and `termination: Termination`, a union of `Exited: int` (the exit code) and `Signaled: int` (the signal number, which differs between systems). A program that exits with a code other than 0 isn't an error: check `is_success()`, true only for `Exited = 0`. `stdout_text()` and `stderr_text()` give the output as a string, failing with `InvalidUtf8` when it isn't text; the buffers stay available either way.
 
-#### Interactive children
+**Limits.** `max_output` caps the bytes of stdout and stderr together (16 MiB by default; `0` allows no output at all). Going over kills the child and fails with `OutputTooLarge`: the output is never cut short quietly. `timeout_ms = -1` waits forever and `0` fails at once. The time covers starting the program, reading its output and its exit, so it still runs while a child that closed its output keeps going, or while a program it started keeps the output open. When it runs out, the child is killed and `run` fails with `TimedOut` once the child is really gone, which can take a moment past the deadline. Programs the child started itself aren't killed.
 
-`start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit) -> ProcessError!Child` uses the same argument/path/environment rules and returns after launch. Modes are `Stdio.Inherit`, `Stdio.Ignore` and `Stdio.Pipe`. Inherited streams are OS standard descriptors; inheriting an embedded custom stdout/stderr writer fails with `Unsupported`. Preceding Dusk output is flushed before an inheriting child starts.
+### Children
 
-| Child method | Returns | Description |
-| :----------- | :------ | :---------- |
-| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for exit; completed status is cached for repeat calls. A wait timeout leaves the child running. |
-| `kill()` | `ProcessError!void` | Requests forced termination without waiting. Use `wait()` to observe exit. Does nothing after observed exit. |
-| `stdin()` | `ProcessError!PipeWriter` | Gets piped stdin, or fails with `NotPiped`. |
-| `stdout()` / `stderr()` | `ProcessError!PipeReader` | Gets a piped reader, or fails with `NotPiped`. |
-| `close()` | `ProcessError!void` | Releases pipes/resources after exit; `Busy` while running. Repeated close does nothing. |
+`start` takes the same arguments, folder and environment as `run`. Each standard stream is `Stdio.Inherit` (shared with the program), `Stdio.Ignore` or `Stdio.Pipe` (read or written through the `Child`). Before a child that inherits stdout or stderr starts, the program's own pending output is written, so the two don't mix out of order.
 
-Only one task can wait for a child at once (`Busy` otherwise). Waiting after close fails with `Closed`. Child wrappers share the same OS process, including wrappers made by `copy`; closing one closes its aliases.
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for the child to exit. Calling it again gives the same answer. Running out of time fails with `TimedOut` and leaves the child running. |
+| `kill()` | `ProcessError!void` | Asks the system to stop the child, without waiting; `wait` tells when it's gone. Does nothing once it has exited. |
+| `stdin()` | `ProcessError!PipeWriter` | Writes to the child's stdin. |
+| `stdout()` / `stderr()` | `ProcessError!PipeReader` | Reads the child's output. |
+| `close()` | `ProcessError!void` | Frees the child once it has exited, closing its pipes and dropping unread output. Fails with `Busy` while it runs; closing again does nothing. |
 
-A `PipeReader` supports `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`. A `PipeWriter` supports `write(text)`, `write_bytes(buffer)`, `flush()` and `close()`. Both fit the `std/io` reader/writer traits. Pipe operations use `io::IoError` and the same EOF, text/bytes and backpressure rules as other streams.
+Only one task at a time can wait for a child. Copies of a `Child` (including `copy`) all refer to the same process, so closing one closes them all.
 
-Closing stdin sends EOF; closing a pipe does not kill the child. Exit does not discard buffered output. Drain piped stdout/stderr concurrently while waiting, or use `run` for automatic collection. `Child.close()` closes remaining pipes and discards unread output. The program doesn't end while a child it started is still running, even if nothing waits for it: like a task, a child runs to the end. When the program stops on an error instead, the remaining children are killed.
+`PipeReader` has `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`; `PipeWriter` has `write(text)`, `write_bytes(data)`, `flush()` and `close()`. They fail with `io::IoError`, read and write like the other streams (see [std/io](#stdio)), and fit the `io::Reader` and `io::Writer` traits, so `io::copy` works with them.
 
-Close children explicitly. A `Child` the program no longer reaches (no variable, field or copy holds it or one of its pipes) is cleaned up after a garbage collection finds it: one that has exited is released, and one still running has its pipes closed, so it sees the end of its input, and is released when it exits.
+Closing the stdin writer sends the end of input; closing a pipe doesn't stop the child, and output the child wrote before exiting can still be read. Read stdout and stderr in their own tasks while waiting (a child blocks once a pipe it writes to is full), or let `run` collect them.
 
-`ProcessError` contains `InvalidArgument`, `NotFound`, `PermissionDenied`, `InvalidExecutable`, `ResourceLimit`, `TimedOut`, `OutputTooLarge`, `InvalidUtf8`, `Unsupported`, `Other`, `Busy`, `Closed` and `NotPiped`.
+**Lifetime.** The program doesn't end while a child it started is still running, even if nothing waits for it: like a task, a child runs to the end. When the program stops on an error instead, its remaining children are killed. Close children when done with them. A `Child` the program no longer reaches (no variable, field or copy holds it or one of its pipes) is cleaned up after a garbage collection finds it: one that has exited is freed, and one still running has its pipes closed, so it sees the end of its input, and is freed when it exits.
 
 ## std/random
 
-Random numbers, buffers and reproducible generators. Import with `import std/random`.
+Random numbers and bytes, plus seeded generators that repeat the same sequence. Functions that can fail return an error union with the module's error set `RandomError`:
+
+| Variant | When |
+| :------ | :--- |
+| `InvalidBounds` | `integer` with `min > max` |
+| `NegativeSize` | `bytes` or `secure_bytes` with a negative size |
+| `EntropyUnavailable` | The system's secure random source failed |
+| `Unsupported` | No random source here (a program embedding Dusk without a host) |
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `integer(min: int, max: int)` | `RandomError!int` | Uniform integer with both bounds included. |
-| `decimal()` | `RandomError!float` | A value from `0.0` inclusive to `1.0` exclusive. |
-| `bytes(size: int)` | `RandomError!buffer` | A fresh buffer of ordinary random bytes. |
-| `secure_bytes(size: int)` | `RandomError!buffer` | A fresh buffer from the host's secure entropy source. |
-| `seeded(seed: int)` | `Generator` | An independent deterministic generator. |
+| `integer(min, max)` | `RandomError!int` | A random `int` from `min` to `max`, both included. Any range works, up to the whole `int` range. |
+| `decimal()` | `RandomError!float` | A random `float` from `0.0` (included) to `1.0` (not included). |
+| `bytes(size)` | `RandomError!buffer` | A new buffer of `size` random bytes. |
+| `secure_bytes(size)` | `RandomError!buffer` | A new buffer of `size` bytes from the system's secure random source. Use it for keys, tokens and anything secret. |
+| `seeded(seed)` | `Generator` | A generator that gives the same sequence for the same seed. |
 
-Integer bounds can span the complete `int` range. `min > max` fails with `InvalidBounds`; equal bounds return that value without consuming randomness. Byte counts must be nonnegative (`NegativeSize` otherwise). Zero-byte requests return a fresh empty buffer without consulting a source or advancing a sequence. Invalid bounds and negative sizes also leave sequences unchanged.
+`integer`, `decimal` and `bytes` share one sequence per program, started from the system's random source on first use; tasks draw from it in the order they run. They're fast but not secure: for secrets, use `secure_bytes`, which reads the system source on every call, never falls back to anything weaker, and fails with `EntropyUnavailable` instead of returning a partial buffer. Equal bounds (`integer(5, 5)`) and zero sizes don't use the sequence at all, and neither do calls that fail.
 
-The ordinary module functions share one generator per execution, initialized lazily from the host. Tasks share this sequence, so scheduling affects which task receives each draw. An embedded VM without the required host I/O context gets `Unsupported` when initialization or secure entropy is needed. Normal CLI executions supply that context. `decimal()` needs `try` because its source may need initialization.
-
-`secure_bytes` obtains fresh secure entropy directly from the host. It fails with `EntropyUnavailable` if the source cannot complete, including host cancellation; it never falls back to the ordinary generator and returns no partial buffer on failure. Ordinary module functions and seeded generators provide no security guarantee; use `secure_bytes` for secrets. Calls are synchronous; host entropy acquisition can wait.
-
-A `Generator` has these methods, all taking `mut self`:
+A `Generator` holds its own state, so it needs `let mut`, and draws from it don't touch the shared sequence:
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `integer(min: int, max: int)` | `RandomError!int` | The same inclusive integer bounds. |
-| `decimal()` | `float` | The same `[0, 1)` range; no host source or `try` needed. |
-| `bytes(size: int)` | `RandomError!buffer` | Deterministic bytes with the same size rules. |
+| `integer(min, max)` | `RandomError!int` | Like `random::integer`. |
+| `decimal()` | `float` | Like `random::decimal`, but can't fail. |
+| `bytes(size)` | `RandomError!buffer` | Like `random::bytes`. |
 
-Every `int` seed is valid, including zero and negative values. The same seed and the same method calls with the same arguments reproduce the same results within a Dusk version. Sequence compatibility across versions is not guaranteed. Call boundaries matter: concatenating two `bytes(4)` results need not match one `bytes(8)` result.
+Any `int` is a valid seed. The same seed and the same calls (with the same arguments, in the same order) give the same results; a different Dusk version may give different ones. Two `bytes(4)` calls don't have to match one `bytes(8)`. Generators are structs: two variables holding the same generator share its state, and `copy(rng)` makes one that continues on its own from the same point.
 
-Generators are ordinary shared structs. Aliases advance the same state; use `copy(rng)` to continue independently from the current state. Store a generator in a `let mut` binding to draw from it. Seeded generators do not consult host entropy and are unaffected by unrelated module draws. Their state and construction fields are private.
-
-```dusk
-import std/random
-import std/buffer
-
-func main() -> !void
-    let die = try random::integer(1, 6)
-    assert(die >= 1 and die <= 6)
-    let mut rng = random::seeded(42)
-    let mut replay = copy(rng)
-    assert(try rng.integer(-10, 10) == try replay.integer(-10, 10))
-    let fraction = rng.decimal()
-    assert(fraction >= 0.0 and fraction < 1.0)
-    let token = try random::secure_bytes(32)
-    assert(buffer::len(token) == 32)
-end
+```nim
+let die = try random::integer(1, 6)
+let mut rng = random::seeded(42)
+let mut replay = copy(rng)
+assert(try rng.integer(-10, 10) == try replay.integer(-10, 10))
+let token = try random::secure_bytes(32)
 ```
-
-`RandomError` contains `InvalidBounds`, `NegativeSize`, `EntropyUnavailable` and `Unsupported`. Impossible buffer sizes and allocation failures follow the runtime allocation-error rules.
 
 ## std/path
 
-Lexical path operations. Import with `import std/path`. Paths follow the runtime platform's syntax: slash separators on Unix, and drive/UNC paths with slash or backslash separators on Windows. These functions do not access the filesystem, check existence, follow symlinks or read the working directory.
+Works with paths as text: joining, splitting and cleaning them up. Nothing here touches the disk: these functions don't check that a path exists, don't follow symbolic links and don't read the current folder. Paths use the system's rules: `/` on Linux and macOS; on Windows, drive letters and network shares with `\` or `/`.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `join(parts: []string)` | `string` | Joins nonempty parts with native separators, avoiding a duplicate separator at a boundary. Empty input produces `""`. |
-| `normalize(text)` | `string` | Collapses redundant separators, `.` and lexical `..` components. Empty or cancelled relative paths become `"."`. |
-| `basename(text)` | `string` | Last component, ignoring trailing separators. Empty paths and roots produce `""`. |
-| `dirname(text)` | `?string` | Parent component text, ignoring trailing separators. Empty paths, bare names and roots have no parent (`null`). |
-| `extension(text)` | `string` | Final extension of the last component, including its dot; absent extensions produce `""`. |
-| `stem(text)` | `string` | Last component with its final extension removed. |
-| `is_absolute(text)` | `bool` | Whether the path has a fully qualified root. |
-| `resolve(base, text)` | `PathError!string` | Normalizes `text` against an absolute base. A fully absolute `text` replaces the base. |
-| `relative(from, to)` | `PathError!string` | Computes a path from the absolute directory `from` to the absolute destination `to`. |
+| `join(parts)` | `string` | Joins the parts with the system's separator, without doubling one where two parts meet. `join([])` is `""`. |
+| `normalize(text)` | `string` | Removes repeated separators, `.` parts, and `..` parts with a folder before them. An empty result is `"."`. |
+| `basename(text)` | `string` | The last part (`"logo.png"` for `"assets/logo.png"`), ignoring a separator at the end. `""` for an empty path or a root. |
+| `dirname(text)` | `?string` | Everything before the last part, or `null` for an empty path, a bare name or a root. |
+| `extension(text)` | `string` | The last part's extension with its dot (`".gz"` for `"a.tar.gz"`), or `""`. |
+| `stem(text)` | `string` | The last part without its extension (`"a.tar"`). |
+| `is_absolute(text)` | `bool` | Whether the path starts from a root. |
+| `resolve(base, text)` | `PathError!string` | `text` taken from the absolute folder `base`, normalized. An absolute `text` stays as it is (normalized). |
+| `relative(from, to)` | `PathError!string` | The path that leads from the absolute folder `from` to the absolute path `to`; `"."` when they're the same. |
 
-`join` combines text without normalizing dot components or discarding earlier parts when a later part starts with a separator. For example, `join(["a/", "/b"])` gives `"a/b"`. Use `normalize` or `resolve` for lexical dot-component processing. `normalize` preserves leading parent components in relative paths and clamps parent traversal at absolute roots. It removes trailing separators except where required for a root. Component queries preserve the input's component text rather than normalizing it.
+`resolve` and `relative` fail with `PathError.NotAbsolute` when a path that must be absolute isn't; there's no implicit current folder, so pass `os::cwd()` when that's what you mean.
 
-A leading dot alone does not introduce an extension: `extension("config/.env")` is `""`, and its stem is `".env"`. `extension(".env.local")` is `".local"`, `stem("archive.tar.gz")` is `"archive.tar"`, and `extension("name.")` is `"."`. The special components `.` and `..` have no extension.
+- `join` doesn't clean up: `join(["a", "/b"])` is `"a/b"` and `.` or `..` parts stay. `normalize` and `resolve` clean up.
+- `normalize` keeps the `..` parts a relative path starts with (`"a/../../b"` is `"../b"`), stops `..` at the root of an absolute path (`"/../etc"` is `"/etc"`), and drops a separator at the end unless the path is a root.
+- A name that only starts with a dot has no extension: `extension(".env")` is `""` and its stem is `".env"`. `extension(".env.local")` is `".local"` and `extension("name.")` is `"."`. `.` and `..` have none.
+- `basename`, `dirname`, `extension` and `stem` return the text as written, without normalizing it.
 
-`resolve` requires an absolute base even when `text` is absolute. `relative` requires both inputs to be absolute, and returns `"."` for identical normalized paths. A relative input fails with `PathError.NotAbsolute`. Neither function has an implicit working directory; pass `os::cwd()` explicitly when needed.
+On Windows, `is_absolute` is true for a drive with a root (`C:\x`), a network share or a device path; `\x` (no drive) and `C:x` (no root) aren't absolute. `resolve` can complete `\x` from a base with a drive, and fails with `NotAbsolute` when the result still has no root. Normalized paths use `\` and uppercase drive letters. `relative` between different drives or shares returns the destination itself. Names compare by the system's path rules, not by asking the disk.
 
-On Windows, `is_absolute` accepts drive-qualified, UNC and device absolute roots; a rooted path such as `\folder` and a drive-relative path such as `C:folder` are not fully absolute. `resolve` can use a drive-qualified base to resolve a rooted path, but fails with `NotAbsolute` if a drive-relative destination remains unresolved. Normalization uses backslash separators and uppercase drive letters. `relative` returns the normalized absolute destination when the inputs are on different drives or shares. Ordinary component comparison follows the platform path rules; it does not query filesystem-specific case behavior.
+These functions don't check that a name is allowed on the disk, and don't expand `~`, variables, wildcards or URL escapes. `..` is handled as text, so through a symbolic link it can lead somewhere else than on the disk, and resolving against a folder doesn't guarantee the result stays inside it.
 
-```dusk
-import std/path
-import std/os
-
-func main() -> !void
-    let base = try os::cwd()
-    let file = try path::resolve(base, "assets/./images/../logo.png")
-    assert(path::basename(file) == "logo.png")
-    assert(path::stem(file) == "logo")
-    assert(path::extension(file) == ".png")
-    assert(try path::relative(base, file) == path::join(["assets", "logo.png"]))
-end
+```nim
+let base = try os::cwd()
+let file = try path::resolve(base, "assets/./images/../logo.png")
+assert(path::basename(file) == "logo.png")
+assert(path::stem(file) == "logo")
+assert(path::extension(file) == ".png")
+assert(try path::relative(base, file) == path::join(["assets", "logo.png"]))
 ```
-
-These operations work on path text and do not validate whether it names a legal filesystem entry. They do not expand `~`, environment variables, wildcards or URL escapes. Lexical `..` processing can differ from physical traversal through symlinks; resolving against a base does not ensure the result stays inside that directory.
 
 ## std/os
 
-Program context and shutdown notifications. Import with `import std/os`.
+The program's surroundings: its arguments, environment, current folder and exit code, and signals asking it to stop. Functions that can fail return an error union with the module's error set `OsError`:
+
+| Variant | When |
+| :------ | :--- |
+| `InvalidArgument` | `env` with an empty name or one containing `=`, or `set_exit_code` outside `0..255` |
+| `InvalidUtf8` | An argument, environment value or the current folder isn't valid UTF-8 |
+| `NotFound` | The current folder no longer exists |
+| `Unsupported` | Not available on this system (`Signal.Terminate` on Windows, or a program embedding Dusk without a host) |
+| `Busy` | Another task is already waiting on the signal stream |
+| `Closed` | The signal stream was closed |
+| `Other` | Any other failure |
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `platform()` | `Platform` | The operating system targeted by the running runtime: `Linux`, `MacOS`, `Windows` or `Other`. |
-| `args()` | `OsError![]string` | A fresh array of program arguments. |
-| `env(name)` | `OsError!?string` | An environment value, or `null` when absent. An empty value is `""`. |
-| `cwd()` | `OsError!string` | The absolute current working directory. |
-| `set_exit_code(code)` | `OsError!void` | Sets the status for normal completion; execution continues. |
-| `watch_signal(signal)` | `OsError!SignalStream` | Subscribes to a shutdown signal immediately. |
+| `platform()` | `Platform` | The system the program runs on: `Linux`, `MacOS`, `Windows` or `Other`. |
+| `args()` | `OsError![]string` | The program's arguments. |
+| `env(name)` | `OsError!?string` | An environment variable's value, or `null` when it isn't set (a variable set to nothing is `""`). |
+| `cwd()` | `OsError!string` | The current folder, as an absolute path. |
+| `set_exit_code(code)` | `OsError!void` | The code the program exits with when it ends normally. The program keeps running. |
+| `watch_signal(signal)` | `OsError!SignalStream` | Starts listening for a signal. |
 
-For `dusk app.dsk first --flag`, `args()` returns `["first", "--flag"]`: it excludes the runtime executable and script path. Arguments after the script path belong to the program, including `--version`. The CLI reads environment values from its startup environment map. Environment names follow host case rules; empty names and names containing `=` or a zero byte fail with `InvalidArgument`. Invalid UTF-8 in arguments, returned environment values or the working-directory path fails with `InvalidUtf8`. These calls copy results into program values.
+**Arguments and environment.** For `dusk app.dsk first --flag`, `args()` is `["first", "--flag"]`: everything after the script belongs to the program, `--version` included. The environment is the one the program started with; names follow the system's rules for case. This module doesn't change variables or the current folder. The current folder is the one the program was started from, not necessarily the script's folder.
 
-Embedded executions receive arguments and a read-only environment map from the host; both default to empty. The host keeps their storage alive and unchanged during execution. `cwd()` uses the host-provided I/O context. It reports the process working directory, which can differ from the entry module's directory. This module does not change environment variables or the working directory.
+**Exit code.** The exit code starts at `0`. `set_exit_code` takes `0` to `255`; a bad code fails and keeps the previous one. The last successful call wins, from any task. Setting it doesn't end anything: the program still ends when all its tasks are done, and output is written out first. A runtime error or a task error nobody handled still exits with a failure, whatever the code.
 
-Exit status starts at `0` for each execution. `set_exit_code` accepts `0` through `255`; an invalid code fails with `InvalidArgument` and leaves the previous status unchanged. The last successful call wins, including calls from other tasks. All tasks continue under the normal execution rules; output is flushed and runtime resources are released before the CLI exits. Runtime errors and unhandled task failures still produce failure regardless of the selected status. Embedded executions return control to their host, which can read `Dusk.exit_code` after execution.
+When a program embeds Dusk, it passes the arguments and environment in (both empty by default) and reads the code from `Dusk.exit_code` afterwards.
 
-`Signal` has `Interrupt` (usually Ctrl+C) and `Terminate` variants. Both are supported on Unix hosts; on Windows, `Terminate` fails with `Unsupported`, while `Interrupt` receives console notifications. Ctrl+C does not generate an interrupt while the terminal is in raw mode.
+### Signals
 
-| SignalStream method | Returns | Description |
-| :------------------ | :------ | :---------- |
-| `wait()` | `OsError!void` | Consumes a pending notification or waits while other tasks continue. |
-| `close()` | `void` | Stops the subscription; repeated calls do nothing. |
-
-Subscribe before starting work to receive signals that arrive before `wait()`. Each subscription retains at most one pending notification; repeated arrivals can coalesce. Separate subscriptions each receive a notification. Only one task can wait on a subscription at a time (`Busy` otherwise). Closing wakes a waiting task with `Closed`; waiting after close also fails with `Closed`. A subscription without a waiting task does not keep execution alive; a waiting task does. Open subscriptions are closed when execution ends.
-
-While subscribed, repeated interrupts follow the same notification rule and do not force an exit. Closing the last subscription ends interception of that signal. A `SignalStream` the program no longer reaches is closed after a garbage collection finds it. Signal handling does not cancel tasks or automatically execute application cleanup; the waiting task performs that cleanup explicitly.
-
-```dusk
-import std/os
-import std/io
-
-func main() -> !void
-    let shutdown = try os::watch_signal(os::Signal.Interrupt)
-    io::println("Press Ctrl+C to stop.")
-    try shutdown.wait()
-    shutdown.close()
-    io::println("Shutting down...")
-end
-```
-
-`OsError` contains `InvalidArgument`, `InvalidUtf8`, `NotFound`, `Unsupported`, `Busy`, `Closed` and `Other`. `NotFound` can occur when the current directory no longer exists; `Other` covers host failures without a more specific variant. `SignalStream` construction and its native handle are private to the module.
-
-## std/time
-
-Clocks, timestamps, durations, and monotonic instants. Import with `import std/time`. A [complete example](../examples/time.dsk) combines timestamp arithmetic, named zones, custom formatting, monotonic timing, and timestamp serialization.
-
-| Function | Returns | Description |
-| :------- | :------ | :---------- |
-| `now()` | `Timestamp` | A timestamp from the current wall-clock reading. |
-| `from_unix_ms(milliseconds)` | `Timestamp` | A timestamp from any `int` epoch-millisecond value, including negative values. |
-| `to_unix_ms(timestamp)` | `int` | The timestamp's epoch milliseconds. |
-| `to_iso_string(timestamp, zone = utc_timezone())` | `TimeError!string` | Formats an ISO timestamp in the selected zone, defaulting to UTC. |
-| `to_utc_iso_string(timestamp)` | `string` | Infallible unary UTC formatter for serialization and other function-value uses. |
-| `from_iso_string(text)` | `TimeError!Timestamp` | Reads a full Gregorian timestamp with an explicit `Z` or numeric `+HH:MM` / `-HH:MM` offset. Supports expanded years and optional fractions, truncated to milliseconds. Invalid text fails with `TimeError.InvalidTimestamp`; a valid value outside the `int` millisecond range fails with `TimeError.Overflow`. |
-| `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
-| `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
-| `instant()` | `Instant` | Captures the current monotonic reading for elapsed-time measurements. |
-| `nanoseconds(value)` | `Duration` | A duration from any signed `int` nanosecond count. |
-| `microseconds(value)` | `Duration` | `value` microseconds. |
-| `milliseconds(value)` | `Duration` | `value` milliseconds. |
-| `seconds(value)` | `Duration` | `value` seconds. |
-| `minutes(value)` | `Duration` | `value` minutes. |
-| `hours(value)` | `Duration` | `value` hours. |
-
-A `Duration` holds at most about 292 years either way. A factory given more stops the program with a runtime error (`2562048 hours doesn't fit in a Duration`), since no correct program asks for that; adding and subtracting durations are checked instead and fail with `TimeError.Overflow`.
-| `utc_timezone()` | `TimeZone` | The UTC zone, with offset zero for every timestamp. |
-| `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A constant offset east of UTC; requires strictly more than -86400 and less than +86400 seconds. |
-| `load_timezone(name)` | `TimeError!TimeZone` | Loads a named zone or alias from the bundled database. Unknown or invalid names return `UnknownTimeZone`. |
-| `local_timezone()` | `TimeError!TimeZone` | Discovers and snapshots the configured local zone on its first successful call. Failure returns `LocalTimeUnavailable`. |
-
-`now_ms` is wall-clock time: system clock adjustments can move it forward or backward. It is independent of the local time zone. Fractions are rounded down to milliseconds, including before the epoch.
-
-`monotonic_ns` ignores jumps in the system wall clock. Consecutive readings may be equal; nanosecond units do not guarantee nanosecond resolution. Elapsed time includes waiting for tasks or I/O, rather than only time spent executing. Inclusion of time while the whole system is suspended is platform-dependent. Use differences within a program run; do not persist monotonic readings as timestamps or compare them across runs or machines.
-
-The raw clock calls return immediately, without allocating or yielding to another task. Neither needs `try`. A platform clock failure or a reading outside `int` range is a runtime error. Waiting remains `task::sleep` in `std/task`.
-
-```dusk
-import std/time
-import std/array
-import std/io
-
-func main() -> void
-    let mut numbers = [3, 1, 2]
-    let start = time::monotonic_ns()
-    array::sort(numbers)
-    let elapsed_ns = time::monotonic_ns() - start
-    let elapsed_ms = to_float(elapsed_ns) / 1000000.0
-    io::println("Sorted in $elapsed_ms ms")
-end
-```
-
-A `Timestamp` stores epoch milliseconds in a private field and has no mutating methods. Create one with `now` or `from_unix_ms`, and read it back with `time::to_unix_ms` or `time::to_iso_string`. It exposes:
+`Signal` is `Interrupt` (usually Ctrl+C) or `Terminate` (a request to stop, like the one a service manager sends). Both work on Linux and macOS; on Windows, `Interrupt` comes from the console and `Terminate` fails with `Unsupported`. Ctrl+C doesn't send `Interrupt` while the terminal is in raw mode.
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `format(pattern, zone = utc_timezone())` | `TimeError!string` | Formats numeric calendar fields and literal text using a custom pattern. |
-| `is_equal(other)` | `bool` | Whether both timestamps represent the same epoch milliseconds. |
-| `is_before(other)` | `bool` | Whether this timestamp precedes the other. |
-| `is_after(other)` | `bool` | Whether this timestamp follows the other. |
-| `add(duration)` | `TimeError!Timestamp` | Adds elapsed time, requiring exact whole milliseconds. |
-| `subtract(duration)` | `TimeError!Timestamp` | Subtracts elapsed time, requiring exact whole milliseconds. |
-| `since(other)` | `TimeError!Duration` | Signed elapsed time: this timestamp minus the other, in nanoseconds. |
+| `wait()` | `OsError!void` | Waits for the signal (or returns at once if it already arrived). Other tasks keep running. |
+| `close()` | `void` | Stops listening. Closing again does nothing. |
 
-UTC formatting works for every `int` timestamp, including both integer limits. `to_iso_string` requires `try` or `catch`, including when the zone defaults to UTC. The unary module adapter `to_utc_iso_string` returns a plain string. Years `0000–9999` use four digits. Larger years have a leading `+` and all digits; negative years have a leading `-` and at least four digits. The Gregorian calendar extends backward through year zero. Unix milliseconds do not represent leap seconds. Expanded-year output is not strict RFC 3339.
+While a program listens for a signal, the signal no longer stops it: it's delivered to the stream instead, and the program decides what to do (finish its work, close connections) and ends on its own. Closing the last stream for a signal brings back the default, so the next one stops the program.
 
-```dusk
-let epoch = time::from_unix_ms(0)
-io::println(try time::to_iso_string(epoch))
-let before_epoch = time::from_unix_ms(-1)
-io::println(try time::to_iso_string(before_epoch))
-let modified = time::from_unix_ms(info.modified_ms)
+- Listen before starting the work, so a signal that arrives early isn't missed.
+- A stream remembers at most one signal that arrived while nobody was waiting; several in a row count as one. Each stream gets its own copy.
+- Only one task at a time can wait on a stream. Closing it wakes that task with `Closed`, and waiting on a closed stream fails with `Closed`.
+- A stream nobody waits on doesn't keep the program running; a task waiting on one does. Streams still open when the program ends are closed. A `SignalStream` the program no longer reaches is closed after a garbage collection finds it.
+- Signals don't cancel tasks or run cleanup on their own: the task that waits does the cleanup.
+
+```nim
+let shutdown = try os::watch_signal(os::Signal.Interrupt)
+io::println("Press Ctrl+C to stop.")
+try shutdown.wait()
+shutdown.close()
+io::println("Shutting down...")
 ```
 
-The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC. With no explicit zone, output always uses UTC, independently of local settings. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
+## std/time
 
-The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and ISO formatting allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior.
+Clocks, timestamps, durations and time zones. A [complete example](../examples/time.dsk) uses most of the module. Functions that can fail return an error union with the module's error set `TimeError`:
 
-`from_iso_string` requires uppercase `T` and a final uppercase `Z` or offset, with no surrounding whitespace or trailing text. Years use four digits, a negative sign with at least four digits, or a positive sign for years above 9999. The Gregorian calendar extends through year zero. A fraction must contain at least one digit; one or two digits are padded to milliseconds, and digits after the third are validated and discarded. Leap seconds, `24:00`, date-only and time-only input, week dates, ordinal dates, and intervals are rejected. Offset hours range from 00 to 23 and minutes from 00 to 59. Both `+00:00` and `-00:00` mean zero offset; the original offset is not retained.
+| Variant | When |
+| :------ | :--- |
+| `InvalidTimestamp` | `from_iso_string` with text that isn't a valid timestamp |
+| `Overflow` | A result outside the range a `Timestamp` or `Duration` can hold |
+| `PrecisionLoss` | Adding a duration with a fraction of a millisecond to a timestamp, or writing an offset with seconds in it as ISO text or with the `Z` token |
+| `UnknownTimeZone` | `load_timezone` with a name the bundled database doesn't have |
+| `InvalidOffset` | `fixed_timezone` with an offset of a day or more |
+| `LocalTimeUnavailable` | `local_timezone` can't find or read the system's zone |
+| `InvalidFormat` | `format` with a pattern it doesn't understand |
 
-For example, `1970-01-01T05:30:00+05:30` represents epoch millisecond zero, and `+10000-01-01T00:00:00Z` is accepted. Every successful `to_iso_string` result can be read back to recover the same timestamp, including both `int` limits. An offset can move the local date across a day or year boundary; only the resulting UTC epoch milliseconds must fit in `int`.
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `now()` | `Timestamp` | The current date and time. |
+| `from_unix_ms(milliseconds)` | `Timestamp` | The timestamp `milliseconds` after 1970-01-01T00:00:00Z (negative for earlier). Any `int` works. |
+| `to_unix_ms(timestamp)` | `int` | The other way around. |
+| `from_iso_string(text)` | `TimeError!Timestamp` | Reads ISO text such as `2024-07-15T09:30:00Z` (below). |
+| `to_iso_string(timestamp, zone = utc_timezone())` | `TimeError!string` | Writes ISO text in a time zone, UTC by default. |
+| `to_utc_iso_string(timestamp)` | `string` | Writes ISO text in UTC. Never fails. |
+| `nanoseconds(value)` | `Duration` | A duration of `value` nanoseconds (negative is fine). |
+| `microseconds(value)`, `milliseconds(value)`, `seconds(value)`, `minutes(value)`, `hours(value)` | `Duration` | A duration of `value` of that unit. |
+| `instant()` | `Instant` | A reading of the monotonic clock, for measuring how long something takes. |
+| `utc_timezone()` | `TimeZone` | UTC. |
+| `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A zone always `offset_seconds` ahead of UTC (behind when negative), less than a day either way. |
+| `load_timezone(name)` | `TimeError!TimeZone` | A named zone such as `"America/Sao_Paulo"`. |
+| `local_timezone()` | `TimeError!TimeZone` | The system's zone. |
+| `now_ms()` | `int` | The current time as Unix milliseconds, without making a `Timestamp`. |
+| `monotonic_ns()` | `int` | The monotonic clock as nanoseconds, without making an `Instant`. |
 
-`to_utc_iso_string` / `from_iso_string` and `to_unix_ms` / `from_unix_ms` are pairs of unary functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Use `via(time::to_utc_iso_string, time::from_iso_string)` for text. The general `to_iso_string` function takes two parameters, even though the zone has a default, and returns a fallible result; it is not a unary schema encoder. Like other structs, `==` compares identity; use `is_equal`, `is_before`, and `is_after` for chronological comparisons.
+### Timestamps
 
-A `Duration` stores signed nanoseconds in a private field. Its range is approximately 292 years in either direction, independently of the much wider timestamp range. It has no mutating methods.
+A `Timestamp` is a moment, stored as milliseconds since 1970-01-01T00:00:00Z. It doesn't change: its methods return new values. `==` on two timestamps compares identity, like any struct, so compare moments with these methods:
 
-| Duration method | Returns | Description |
-| :-------------- | :------ | :---------- |
-| `nanoseconds()` | `int` | The exact signed nanosecond count. |
-| `microseconds()` | `int` | Whole microseconds, truncated toward zero. |
-| `milliseconds()` | `int` | Whole milliseconds, truncated toward zero. |
-| `seconds()` | `float` | Seconds as a floating-point value; large values may round. |
-| `add(other)` | `TimeError!Duration` | The sum, failing with `Overflow` if it exceeds the signed nanosecond range. |
-| `subtract(other)` | `TimeError!Duration` | This duration minus the other, with the same overflow check. |
-| `is_equal(other)` | `bool` | Whether both durations have equal nanosecond counts. |
-| `is_less_than(other)` | `bool` | Whether this duration has a smaller signed nanosecond count. |
-| `is_greater_than(other)` | `bool` | Whether this duration has a larger signed nanosecond count. |
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `is_equal(other)` / `is_before(other)` / `is_after(other)` | `bool` | Compares two moments. |
+| `add(duration)` / `subtract(duration)` | `TimeError!Timestamp` | The moment `duration` later or earlier. The duration must be whole milliseconds (`PrecisionLoss` otherwise). |
+| `since(other)` | `TimeError!Duration` | How long after `other` this moment is (negative when before). `Overflow` when that's more than a `Duration` holds. |
+| `format(pattern, zone = utc_timezone())` | `TimeError!string` | Writes the date and time with a pattern (see [Custom formats](#custom-formats)). |
 
-Timestamp `add` and `subtract` reject durations containing fractional milliseconds with `TimeError.PrecisionLoss`, including negative fractions. They return `Overflow` when the resulting epoch milliseconds do not fit. Timestamp `since` returns `Overflow` when the signed difference cannot fit in a Duration, even if both timestamps are valid. These operations measure elapsed time; calendar months and years are not units of Duration. The operands remain unchanged.
+Durations measure elapsed time, so there's no adding "a month": months and years aren't a fixed length.
 
-```dusk
+**ISO text.** `to_iso_string` writes `2024-07-15T09:30:00.000Z`: always three digits of milliseconds, and `Z` for UTC or the offset (`-03:00`) in another zone. The date and time are the ones on the clock in that zone, so the same moment reads `2024-07-14T20:00:00.000-04:00` in New York. Years 0000 to 9999 have four digits; later years start with `+` (`+10000-01-01T00:00:00.000Z`) and years before 1 with `-`. The calendar is the Gregorian one, extended back past year 1 through year 0, and there are no leap seconds. Every `int` timestamp can be written, and what `to_iso_string` writes always reads back as the same moment. An offset that isn't a whole number of minutes can't be written as ISO text: `to_iso_string` fails with `PrecisionLoss` instead of rounding (`to_utc_iso_string` always works).
+
+`from_iso_string` reads the same form: a date, an uppercase `T`, a time, and then `Z` or an offset like `+05:30`, with nothing before or after. Seconds can have a fraction of one or more digits; past milliseconds, digits are checked and dropped. It rejects leap seconds, `24:00`, a date or time on its own, week and ordinal dates, and ranges. The offset only places the moment and isn't kept: `1970-01-01T05:30:00+05:30` is the same timestamp as `from_unix_ms(0)`.
+
+`to_utc_iso_string` with `from_iso_string`, and `to_unix_ms` with `from_unix_ms`, are pairs of one-argument functions, so a schema's `via` can store timestamps as text or as numbers: `via(time::to_utc_iso_string, time::from_iso_string)` (see [std/serialization](#stdserialization)). `to_iso_string` doesn't fit there, since it takes a zone and can fail.
+
+```nim
 let epoch = time::from_unix_ms(0)
-let later = try epoch.add(try time::seconds(2))
+io::println(try time::to_iso_string(epoch))                       # 1970-01-01T00:00:00.000Z
+io::println(try time::to_iso_string(time::from_unix_ms(-1)))      # 1969-12-31T23:59:59.999Z
+let later = try epoch.add(time::seconds(2))
 assert(later.is_after(epoch))
 assert((try later.since(epoch)).milliseconds() == 2000)
-assert(time::nanoseconds(-1500000).milliseconds() == -1)
 ```
 
-An `Instant` stores a private monotonic reading. `instant()` retains the clock resolution, suspend behavior, and runtime clock errors of `monotonic_ns()`. It has no date or time-zone representation; use it only within one program execution.
+### Durations
 
-| Instant method | Returns | Description |
-| :------------- | :------ | :---------- |
-| `elapsed()` | `TimeError!Duration` | The current monotonic reading minus this instant. |
-| `since(other)` | `TimeError!Duration` | This instant minus the other; reversing operands gives a negative duration. |
+A `Duration` is a length of time in nanoseconds, positive or negative, up to about 292 years either way. A factory given more (`time::hours(2562048)`) stops the program with a runtime error, since no correct program asks for that; adding durations is checked and fails with `Overflow` instead.
 
-Both methods check the signed nanosecond range and return `Overflow` when needed. Consecutive instants may have equal readings. Timestamp, Duration, and Instant factories create ordinary structs; copying them preserves their stored values. Use Duration comparison methods rather than struct `==` to compare nanosecond counts. Sleeping continues to take integer milliseconds in `task::sleep`.
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `nanoseconds()` | `int` | The exact length. |
+| `microseconds()` / `milliseconds()` | `int` | Whole units, dropping the rest (toward zero: `-1.5` ms is `-1`). |
+| `seconds()` | `float` | Seconds with a fraction (very long durations lose some precision). |
+| `add(other)` / `subtract(other)` | `TimeError!Duration` | The sum or difference. |
+| `is_equal(other)` / `is_less_than(other)` / `is_greater_than(other)` | `bool` | Compares two lengths. |
 
-```dusk
+`task::sleep` takes a `Duration`: `task::sleep(time::milliseconds(250))`.
+
+### Measuring elapsed time
+
+`now()` follows the system clock, which can jump when someone sets it or it syncs. To measure how long something takes, use an `Instant`, a reading of the monotonic clock, which only moves forward:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `elapsed()` | `TimeError!Duration` | How long ago the instant was taken. |
+| `since(other)` | `TimeError!Duration` | How long after `other` this instant was taken (negative when before). |
+
+```nim
 let started = time::instant()
-let elapsed = try started.elapsed()
-io::println("Elapsed: ${elapsed.seconds()} seconds")
+work()
+io::println("took ${(try started.elapsed()).seconds()} s")
 ```
 
-A `TimeZone` is an immutable value with private representation. Dusk bundles IANA tzdb 2026f: 597 named zones and aliases, with no network or host timezone-database requirement at runtime. Use exact case-sensitive names such as `America/Sao_Paulo`, `America/New_York`, or `Asia/Kathmandu`. `load_timezone` requires a bundled name; absolute paths, traversal, NUL bytes, raw offset strings and `right/` or `posix/` database trees are not accepted by that function. An alias keeps its requested name.
+Two readings in a row can be equal, and nanosecond units don't promise nanosecond precision. Elapsed time includes time spent waiting (for other tasks or I/O); whether it includes time the computer sleeps depends on the system. An instant only means something within one run of the program: don't store it or compare it across runs or machines. `now_ms()` and `monotonic_ns()` read the same two clocks as plain `int`s. Reading a clock never fails or waits; if the system clock itself fails, that's a runtime error.
 
-| TimeZone method | Returns | Description |
-| :-------------- | :------ | :---------- |
-| `name()` | `string` | The requested bundled name, a stable UTC/fixed-offset name, or `Local` for anonymous local rules. |
-| `offset_seconds(timestamp)` | `int` | The UTC offset at this timestamp, in seconds, positive east of UTC. |
+### Time zones
 
-Named offsets use historical transitions and recurring future rules across the full timestamp range. Before the first transition, the zone's initial time type applies. Future values extrapolate the bundled rules; governments can change those rules after this database release. Historical second-level offsets are preserved. Two named zones can share an offset today and have different rules for another date.
+A `TimeZone` turns a moment into the date and time on a clock somewhere. Dusk carries its own copy of the IANA time zone database (release 2026f, 597 names and aliases), so named zones work the same everywhere, with nothing to install and no network.
 
-Fixed offsets never change with the timestamp. Their names are `UTC` at zero, `UTC+05:30` for an offset of 19800 seconds, or `UTC-00:00:30` for -30 seconds. Unsupported fixed offsets return `TimeError.InvalidOffset`. `utc_timezone()` and `fixed_timezone(0)` both represent UTC.
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `name()` | `string` | The zone's name: the name it was loaded with (an alias keeps its own name), `UTC`, `UTC+05:30` for a fixed offset, or `Local` for system rules without a name. |
+| `offset_seconds(timestamp)` | `int` | How far ahead of UTC the zone's clocks are at that moment, in seconds (negative when behind). |
 
-```dusk
+- `load_timezone` takes the exact, case-sensitive name (`America/New_York`, `Asia/Kathmandu`). It doesn't take file paths or offsets like `+03:00`; use `fixed_timezone` for an offset.
+- A named zone follows its full history of changes (summer time, governments moving the offset) and its current rules into the future. Rules can change after this release of the database. Two zones with the same offset today can differ on other dates.
+- A fixed zone never changes. `fixed_timezone(0)` is UTC; others are named like `UTC+05:30` and `UTC-00:00:30`.
+- Summer time can skip or repeat an hour on the clock; ISO text tells repeated times apart by their offset.
+
+```nim
 let new_york = try time::load_timezone("America/New_York")
-let winter = try time::from_iso_string("2024-01-15T00:00:00Z")
 let summer = try time::from_iso_string("2024-07-15T00:00:00Z")
-assert(new_york.offset_seconds(winter) == -18000)
 assert(new_york.offset_seconds(summer) == -14400)
-let fixed = try time::fixed_timezone(19800)
-assert(fixed.name() == "UTC+05:30")
+assert((try time::to_iso_string(summer, new_york)) == "2024-07-14T20:00:00.000-04:00")
+assert((try time::fixed_timezone(19800)).name() == "UTC+05:30")
 ```
 
-Named-zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. Custom numeric patterns use the same zone rules and calendar conversion as ISO formatting.
+**The system's zone.** `local_timezone()` finds the zone the system is set to. The first time, it reads the settings in the background while other tasks run; after it succeeds, later calls return the same zone at once, even if the settings change. If it fails, it returns `LocalTimeUnavailable` (never UTC as a guess), and a later call tries again. Nothing else in the module uses the system's zone: without a zone argument, everything is UTC.
 
-`to_iso_string` applies the selected zone's offset at the timestamp, then writes local calendar fields and an explicit offset. Zero prints `Z`; other offsets print `+HH:MM` or `-HH:MM`. Applying an offset can move the displayed date across a day, year, or the epoch-millisecond integer boundary; wide calendar arithmetic keeps the represented timestamp unchanged. DST changes can skip or repeat local clock readings, with the explicit suffix distinguishing repeated times.
+When the `TZ` environment variable is set, it decides, on every system:
 
-```dusk
-let timestamp = try time::from_iso_string("2024-07-15T00:00:00Z")
-let new_york = try time::load_timezone("America/New_York")
-assert((try time::to_iso_string(timestamp, new_york)) == "2024-07-14T20:00:00.000-04:00")
-assert((try time::to_iso_string(timestamp)) == "2024-07-15T00:00:00.000Z")
-assert(time::to_utc_iso_string(timestamp) == "2024-07-15T00:00:00.000Z")
-```
+- empty: UTC;
+- a zone name (`America/New_York`, or `:America/New_York`): that zone from the bundled database;
+- an absolute path to a zone file (optionally after `:`): the rules in that file, named `Local`;
+- a rule string such as `STD-5:30` or one with summer time rules: those rules, named `Local`. In these strings the sign is reversed: `-5:30` means 5 hours 30 minutes ahead of UTC;
+- anything else, or anything after `:` that isn't a name or a path: `LocalTimeUnavailable`, without trying other sources.
 
-ISO suffixes represent whole minutes. If a fixed or historical named-zone offset contains seconds, formatting fails with `TimeError.PrecisionLoss`; it never rounds the offset or changes the moment. `offset_seconds` still reports the exact offset, and `to_utc_iso_string` always provides a UTC representation. Serialization through the UTC adapter writes canonical UTC text and accepts any supported explicit offset when reading.
+Without `TZ`, Linux and macOS read `/etc/localtime`: when it links to a known zone, that zone is used from the bundled database; otherwise its rules are read and named `Local`. Windows reads the system's zone setting and maps it to a named zone. A zone file must be a regular file of at most 4 MiB holding complete, supported rules; files with leap seconds, version 4 files and broken data aren't accepted. On Windows, customized settings (such as automatic summer time turned off) aren't supported.
 
-`local_timezone()` snapshots the first successful discovery for the runtime. Cold calls wait for a worker, allowing other tasks to continue; cached calls do not yield. Later environment, file, or system-setting changes do not refresh that snapshot. A failed discovery leaves the cache empty, so a later call can retry. Failure never silently substitutes UTC.
+### Custom formats
 
-When `TZ` is present, it is authoritative on every platform:
+`timestamp.format(pattern, zone = utc_timezone())` writes the date and time in a zone, following a pattern:
 
-- An empty value selects UTC. A bundled name, optionally prefixed with `:`, selects that named zone and preserves aliases.
-- An absolute file path, optionally prefixed with `:`, loads an owned TZif snapshot named `Local`.
-- A supported explicit recurrence string such as `STD-5:30` selects rules named `Local`. Its offset uses the configuration convention: `-5:30` means 5 hours 30 minutes east of UTC. Recurrence forms include Julian and ordinal days, month/week/weekday rules, and signed transition times.
-- A `:` prefix permits only a zone name or absolute file path. Invalid or unsupported settings return `LocalTimeUnavailable` without trying another source.
+| Token | Writes | Example |
+| :---- | :----- | :------ |
+| `YYYY` | Year, at least four digits (signs like ISO text) | `2026` |
+| `MM` | Month | `11` |
+| `DD` | Day | `18` |
+| `HH` | Hour, `00` to `23` | `14` |
+| `mm` | Minute | `30` |
+| `ss` | Second | `45` |
+| `SSS` | Millisecond | `123` |
+| `Z` | Offset: `Z` for UTC, otherwise `+HH:MM` or `-HH:MM` | `-03:00` |
 
-With no `TZ`, Unix systems inspect `/etc/localtime`. A recognized zone name in a standard zoneinfo symlink selects bundled rules; other files are copied into a snapshot named `Local`. Local files must be regular, no larger than 4 MiB, and readable with supported complete rules. Static version-1 TZif and supported version-2/3 files are accepted. Leap-second data, version 4, unspecified time types, out-of-range offsets, malformed data, and transition-bearing files without future rules return `LocalTimeUnavailable`.
+Tokens are case-sensitive and can touch (`YYYYMMDD`). Every run of the same letter must be a whole token, so `MMMM`, `YYYYY`, `SS` and `ZZ` are errors, and so is any other letter outside brackets; digits, punctuation, spaces and other characters are written as they are. Text in brackets is written as is (`[at]`, `[Z]` for a literal Z); `[[` and `]]` write `[` and `]`. An unclosed bracket or a lone `]` is `InvalidFormat`. `Z` fails with `PrecisionLoss` for an offset with seconds, which old local times have: midnight UTC on 1800-01-01 is `00:09:21` in `Europe/Paris`. Without `Z`, those times are written exactly.
 
-With no `TZ`, Windows reads the nonlocalized system zone key and maps it through the bundled CLDR release-48 global mappings. The resulting zone uses the mapping's representative name and bundled rules. Unsupported customized settings, including disabled dynamic rules, return `LocalTimeUnavailable`; a verified plain UTC configuration is supported. This discovery does not change process-wide timezone settings.
-
-```dusk
-let local = try time::local_timezone()
-let current = time::now()
-io::println(try time::to_iso_string(current, local))
-```
-
-The default formatter and serialization adapter continue to use UTC. Local discovery does not change their behavior, and ISO formatting can still return `PrecisionLoss` when a local historical offset has seconds.
-
-`timestamp.format(pattern, zone = utc_timezone())` writes numeric calendar fields in the selected zone. It defaults to UTC, requires `try` or `catch`, and supports these case-sensitive tokens:
-
-| Token | Meaning | Example |
-| :---- | :------ | :------ |
-| `YYYY` | Year with at least four digits and the ISO expanded-year sign rules. | `2026` |
-| `MM` | Two-digit month. | `11` |
-| `DD` | Two-digit day. | `18` |
-| `HH` | Two-digit hour, from 00 to 23. | `14` |
-| `mm` | Two-digit minute. | `30` |
-| `ss` | Two-digit second. | `45` |
-| `SSS` | Three-digit millisecond. | `123` |
-| `Z` | UTC offset, with `Z` at zero and `+HH:MM` or `-HH:MM` otherwise. | `-03:00` |
-
-Adjacent different tokens work without separators (`YYYYMMDD`). Each complete repeated-letter run must be a recognized token: `MMMM`, `YYYYY`, `SS`, and `ZZ` are errors. Unescaped ASCII letters must form tokens; punctuation, spaces, digits, and non-ASCII UTF-8 bytes pass through as literals.
-
-Bracketed text is literal: `[Created on]` writes `Created on`, and `[Z]` writes the letter `Z`. Outside bracketed text, `[[` writes `[` and `]]` writes `]`. Brackets cannot nest; unclosed literals and unmatched single closing brackets return `TimeError.InvalidFormat`. Empty literals (`[]`) are allowed, and an empty pattern produces an empty string.
-
-```dusk
+```nim
 let timestamp = try time::from_iso_string("2026-11-18T14:30:45.123Z")
-assert((try timestamp.format("YYYY-MM-DD")) == "2026-11-18")
 assert((try timestamp.format("DD/MM/YYYY")) == "18/11/2026")
 assert((try timestamp.format("[Created on] DD/MM/YYYY [at] HH:mm")) == "Created on 18/11/2026 at 14:30")
 assert((try timestamp.format("[[YYYY]]")) == "[2026]")
 assert((try timestamp.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ")) == (try time::to_iso_string(timestamp)))
 ```
-
-`Z` requires an offset that is an exact number of minutes. An offset with a seconds component returns `TimeError.PrecisionLoss` when the pattern contains that token. Patterns without `Z` still display the exact local fields, including historical second-level adjustments. An escaped `[Z]` is literal and imposes no offset-precision requirement. For example, midnight UTC on 1800-01-01 formats as `00:09:21` with `HH:mm:ss` in `Europe/Paris`.
 
 ## std/math
 
@@ -1731,7 +1689,7 @@ Paths use forms such as `users[2].age`; map keys and field names containing punc
 
 ## Shared error sets
 
-Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name. Each module's section lists its own error set; these are the ones the reference lists in one place: the small sets shared by the collection modules and `std/time`'s `TimeError`:
+Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name. Each module's section lists its own error set; these are the small ones shared by the collection modules:
 
 | Error | When |
 | :---- | :--- |
@@ -1741,13 +1699,6 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
-| `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
-| `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration or Timestamp arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
-| `TimeError.PrecisionLoss` | Timestamp arithmetic with fractional milliseconds, or ISO formatting/custom `Z` with an offset that is not an exact number of minutes. |
-| `TimeError.UnknownTimeZone` | A name is invalid or absent from the bundled timezone database. |
-| `TimeError.InvalidOffset` | A fixed timezone offset is outside the supported range. |
-| `TimeError.LocalTimeUnavailable` | Explicit local configuration is invalid, the system zone cannot be discovered or mapped, or its local rules are unsupported or unreadable. |
-| `TimeError.InvalidFormat` | A custom timestamp pattern has an unsupported token or malformed bracket escaping. |
 
 ## Known limitations
 
