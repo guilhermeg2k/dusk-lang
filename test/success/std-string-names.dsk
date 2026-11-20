@@ -13,6 +13,8 @@ func main() -> !void
         when e
             buffer::BufferError.NegativeSize then return end
             buffer::BufferError.OutOfRange then return end
+            buffer::BufferError.ValueOutOfRange then return end
+            buffer::BufferError.InvalidNumber then return end
         end
     end
 end

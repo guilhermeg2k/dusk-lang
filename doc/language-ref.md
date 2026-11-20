@@ -240,7 +240,7 @@ let text = string::from_bytes(bytes) catch "not UTF-8"
 - The type is written `buffer`: `let mut data: buffer = try buffer::new(4)`, `?buffer`, `[]buffer`, struct fields and parameters.
 - Writing requires a `let mut` variable (or a mutable struct holding the buffer). A function that writes to a buffer argument takes it as `mut b: buffer`, and the caller must pass a mutable value (see [Mutable parameters](#mutable-parameters)). An index outside the buffer stops the program with a runtime error.
 - `buffer::from_string(s)` copies a string's UTF-8 bytes into a new buffer. `string::from_bytes(b)` copies a buffer into a new string, and fails with `StringError.InvalidUtf8` when the bytes aren't valid UTF-8. Changing the buffer afterwards never changes the string.
-- `==` on buffers compares identity: a buffer is only equal to itself.
+- `==` on buffers compares identity: a buffer is only equal to itself. `buffer::equal(a, b)` compares their bytes.
 
 ### Multiline strings
 

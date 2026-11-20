@@ -2001,7 +2001,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 16 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 18 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {
@@ -2490,6 +2490,10 @@ test "buffer annotations and parameters" {
 
 test "buffer put, put_bytes and slice" {
     try runCase("buffer-put.dsk");
+}
+
+test "buffer binary numbers, search, fill, copy and parse_int" {
+    try runCase("buffer-binary.dsk");
 }
 
 test "buffer GC" {

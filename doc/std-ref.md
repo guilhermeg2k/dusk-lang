@@ -178,8 +178,14 @@ end
 | `put(data, at, text)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
 | `put_bytes(data, at, source)` | `BufferError!int` | Same, copying another buffer. |
 | `slice(data, start, stop)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
+| `equal(a, b)` | `bool` | Whether both buffers hold the same bytes. |
+| `starts_with(data, prefix)` | `bool` | Whether `data` begins with the bytes of `prefix`. |
+| `index_of(data, needle, from = 0)` | `?int` | Position of the first copy of `needle` at or after `from`, or `null` for no match, an empty needle, or a `from` outside the buffer. |
+| `fill(data, value, start, stop)` | `BufferError!void` | Sets bytes `start` to `stop` (not included) to `value`. |
+| `copy_within(data, from, to, count)` | `BufferError!void` | Copies `count` bytes from position `from` to position `to` of the same buffer; the two parts may overlap. |
+| `parse_int(data, start, stop)` | `BufferError!int` | Reads the decimal number written in bytes `start` to `stop`, without making a string. |
 
-`put` and `put_bytes` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or `at` is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` fails the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`:
+`put`, `put_bytes`, `fill` and `copy_within` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or a position is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` and `parse_int` fail the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`. Numbers go in as text through interpolation:
 
 ```nim
 let mut frame = try buffer::new(4096)
@@ -188,7 +194,45 @@ used = try buffer::put(frame, used, "$done%\n")
 try out.write_bytes(try buffer::slice(frame, 0, used))
 ```
 
-The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). See [Buffers](language-ref.md#buffers).
+`==` on buffers checks whether both sides are the same buffer; `buffer::equal` compares their bytes. `copy_within` moves bytes inside one buffer, for example to drop the part of a reused buffer that was already handled:
+
+```nim
+try buffer::copy_within(pending, handled, 0, used - handled)
+used = used - handled
+```
+
+`parse_int` takes an optional `-` followed by digits, nothing else (no `+`, spaces or `_`). Other text fails with `InvalidNumber`, and a number outside the `int` range with `ValueOutOfRange`.
+
+### Binary numbers
+
+File formats and network protocols store numbers in a fixed number of bytes rather than as text. `read_*` reads one at a position, and `write_*` writes one and returns the position after it, so writes chain:
+
+| Type | Bytes | Values | Read | Write |
+| :--- | :---- | :----- | :--- | :---- |
+| `u8` / `i8` | 1 | `0..255` / `-128..127` | `read_u8(data, at)`, `read_i8` | `write_u8(data, at, value)`, `write_i8` |
+| `u16` / `i16` | 2 | `0..65535` / `-32768..32767` | `read_u16(data, at, order)`, `read_i16` | `write_u16(data, at, value, order)`, `write_i16` |
+| `u32` / `i32` | 4 | `0..4294967295` / `-2147483648..2147483647` | `read_u32`, `read_i32` | `write_u32`, `write_i32` |
+| `i64` | 8 | any `int` | `read_i64` | `write_i64` |
+| `f32` / `f64` | 4 / 8 | `float` | `read_f32`, `read_f64` (return `float`) | `write_f32`, `write_f64` (take `float`) |
+
+Every number wider than one byte takes a `buffer::Order`, the order of its bytes: `Little` puts the smallest byte first (most file formats, like WAV and ZIP), and `Big` puts the largest first (network protocols, PNG). 513 as a `u16` is the bytes `1, 2` in `Little` and `2, 1` in `Big`.
+
+```nim
+let data = try fs::read_bytes("photo.png")
+let width = try buffer::read_u32(data, 16, buffer::Order.Big)
+let height = try buffer::read_u32(data, 20, buffer::Order.Big)
+
+let body = buffer::from_string("hello")
+let mut message = try buffer::new(4 + buffer::len(body))
+let at = try buffer::write_u32(message, 0, buffer::len(body), buffer::Order.Big)
+try buffer::put_bytes(message, at, body)
+```
+
+- A read or write that doesn't fit between `at` and the end of the buffer fails with `OutOfRange`.
+- A value outside its type's range (`300` as a `u8`, `-1` as a `u16`) fails with `ValueOutOfRange` and writes nothing. So does a `float` too large for an `f32`; other values are rounded to the nearest `f32`, and infinities and NaN are kept.
+- There is no `u64`, since an `int` can't hold values above `9223372036854775807`; read 8 unsigned bytes with `read_i64` when the value is known to be smaller.
+
+The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`, `ValueOutOfRange`, `InvalidNumber`). See [Buffers](language-ref.md#buffers).
 
 ## std/compression
 
