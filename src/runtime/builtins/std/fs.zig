@@ -40,7 +40,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_file_size", Binding{ .native = &streamFileSize } },
 });
 
-fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const job = try FsJob.create(vm.event_loop.allocator, .open_file, bytesArg(args, 0), "");
     errdefer job.destroy();
     job.open_mode = @enumFromInt(args[1].int64);
@@ -50,7 +50,7 @@ fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return native.parked();
 }
 
-fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), args[1].int64, @enumFromInt(args[2].int64));
     return native.ok(.{ .int64 = @intCast(handle) });
 }
