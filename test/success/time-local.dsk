@@ -12,7 +12,7 @@ func main() -> !void
     let counter = spawn(func() -> void
         for !is_done do
             ticks = ticks + 1
-            task::sleep(0)
+            task::sleep(time::milliseconds(0))
         end
     end)
     let mut requests: []Task[time::TimeZone, time::TimeError] = []

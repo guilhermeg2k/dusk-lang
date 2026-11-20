@@ -4,6 +4,7 @@ import std/task
 import std/string
 import std/buffer
 import std/io
+import std/time
 
 func main() -> !void
     let helper = (try os::args())[0]
@@ -53,7 +54,7 @@ func main() -> !void
     end
     assert(has_busy)
     let waiter = spawn(func() -> return try sleeping.wait())
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     let mut has_waiter = false
     sleeping.wait() catch e then
         assert(e == process::ProcessError.Busy)

@@ -673,8 +673,8 @@ WakeResult {                    // src/runtime/tasks/scheduler.zig
 | Native | What it does |
 |---|---|
 | `await(t)` | Marks `t` as awaited. If `t` is done, returns its result (or fails with its error id) without parking. If `t` is the running task, a runtime error. Otherwise adds the running task to `t.waiters` and parks. |
-| `sleep(0)` | Delivers `void` to the running task right away (back of the queue) and parks. |
-| `sleep(ms)` | Starts a libuv timer for the running task and parks; the timer's callback wakes it with `void`. |
+| `sleep` with no time left | `task::sleep` (a Dusk function) rounds its `Duration` up to milliseconds and calls the native `~sleep_ms`. At `0` or below, it delivers `void` to the running task right away (back of the queue) and parks. |
+| `sleep` with time left | `~sleep_ms` starts a libuv timer for the running task and parks; the timer's callback wakes it with `void`. |
 | `std/fs` functions | Copy their paths (and the data to write) into an `FsJob`, start it on libuv's thread pool ([std-internals](std-internals.md) 2) and park; the job's callback wakes the task with the result or an `FsError` variant. |
 | stream reads (stdin, sockets, files) | Return right away when the stream's buffer already holds the answer; otherwise park as the stream's waiter ([std-internals](std-internals.md) 3), woken by data, the end of input, a timeout or `close()`. |
 

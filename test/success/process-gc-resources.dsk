@@ -4,6 +4,7 @@ import std/os
 import std/process
 import std/string
 import std/task
+import std/time
 
 func churn() -> void
     let mut kept: []string = []
@@ -43,7 +44,7 @@ func main() -> !void
         if drained != "" then
             break
         end
-        task::sleep(10)
+        task::sleep(time::milliseconds(10))
     end
     assert(drained == "drained")
 

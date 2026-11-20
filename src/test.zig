@@ -841,7 +841,7 @@ test "stdout: flushed before the scheduler waits for events" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("import std/io\nimport std/task\nfunc main() -> void io::println(\"1\") task::sleep(20) io::println(\"2\") end", &recorder.interface);
+    try runSourceWithStdout("import std/io\nimport std/task\nimport std/time\nfunc main() -> void io::println(\"1\") task::sleep(time::milliseconds(20)) io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(2, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -1138,6 +1138,10 @@ test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw an
 test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {
     try runCase("net-tls.dsk");
     try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
+}
+
+test "time: a Duration factory past about 292 years is a runtime error" {
+    try runCaseRuntimeError("time-duration-out-of-range.dsk", error.DurationOutOfRange);
 }
 
 test "net: start_tls on a plain connection, handshake() and its errors, handshake timeouts" {
@@ -1445,6 +1449,7 @@ test "io: a stdin read parks until data arrives while other tasks run" {
     const source =
         \\import std/io
         \\import std/task
+        \\import std/time
         \\import std/string
         \\func main() -> !void
         \\    let mut is_done = false
@@ -1452,7 +1457,7 @@ test "io: a stdin read parks until data arrives while other tasks run" {
         \\    let counter = spawn(func() -> void
         \\        for !is_done do
         \\            ticks = ticks + 1
-        \\            task::sleep(1)
+        \\            task::sleep(time::milliseconds(1))
         \\        end
         \\    end)
         \\    let input = io::stdin()
@@ -1479,6 +1484,7 @@ test "io: a second task reading stdin at the same time gets Busy" {
     const source =
         \\import std/io
         \\import std/task
+        \\import std/time
         \\import std/string
         \\func main() -> !void
         \\    let reader = spawn(func() -> !string
@@ -1488,7 +1494,7 @@ test "io: a second task reading stdin at the same time gets Busy" {
         \\        end
         \\        return "none"
         \\    end)
-        \\    task::sleep(5)
+        \\    task::sleep(time::milliseconds(5))
         \\    io::stdin().read_bytes(8) catch e then
         \\        io::println("${e == io::IoError.Busy}")
         \\    end
@@ -1712,6 +1718,7 @@ test "io: close, reading after close, and a parked reader woken by close" {
     const woken =
         \\import std/io
         \\import std/task
+        \\import std/time
         \\func main() -> !void
         \\    let reader = spawn(func() -> bool
         \\        io::stdin().read_line() catch e then
@@ -1719,7 +1726,7 @@ test "io: close, reading after close, and a parked reader woken by close" {
         \\        end
         \\        return false
         \\    end)
-        \\    task::sleep(5)
+        \\    task::sleep(time::milliseconds(5))
         \\    io::stdin().close()
         \\    io::println("${await(reader)}")
         \\end
@@ -1776,6 +1783,7 @@ test "io: a timer that doesn't fire doesn't delay the program, and close beats i
     const closed =
         \\import std/io
         \\import std/task
+        \\import std/time
         \\func main() -> !void
         \\    let reader = spawn(func() -> bool
         \\        io::stdin().read_all(timeout_ms = 5000) catch e then
@@ -1783,7 +1791,7 @@ test "io: a timer that doesn't fire doesn't delay the program, and close beats i
         \\        end
         \\        return false
         \\    end)
-        \\    task::sleep(5)
+        \\    task::sleep(time::milliseconds(5))
         \\    io::stdin().close()
         \\    io::println("${await(reader)}")
         \\end

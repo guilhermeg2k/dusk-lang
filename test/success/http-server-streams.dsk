@@ -6,6 +6,7 @@ import std/io
 import std/net
 import std/string
 import std/task
+import std/time
 
 func pieces(mut writer: http::BodyWriter, words: []string) -> io::IoError!void
     for words: word do
@@ -29,7 +30,7 @@ func events(mut writer: http::BodyWriter) -> io::IoError!void
         try writer.write("data: $n\n\n")
         try writer.flush()
         n = n + 1
-        task::sleep(5)
+        task::sleep(time::milliseconds(5))
     end
 end
 

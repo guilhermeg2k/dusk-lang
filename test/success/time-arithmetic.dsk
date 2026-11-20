@@ -9,7 +9,7 @@ func expect_error[T](expected: time::TimeError, call: func() -> time::TimeError!
     assert(false)
 end
 
-func check_factories() -> !void
+func check_factories() -> void
     let maximum = 9223372036854775807
     let minimum = -9223372036854775807 - 1
     let factories = [time::microseconds, time::milliseconds, time::seconds, time::minutes, time::hours]
@@ -19,23 +19,11 @@ func check_factories() -> !void
         let scale = scales[i]
         let upper = maximum // scale
         let lower = minimum // scale
-        assert((try factory(0)).nanoseconds() == 0)
-        assert((try factory(1)).nanoseconds() == scale)
-        assert((try factory(-1)).nanoseconds() == -scale)
-        assert((try factory(upper)).nanoseconds() == upper * scale)
-        assert((try factory(lower)).nanoseconds() == lower * scale)
-        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
-            return try factory(upper + 1)
-        end)
-        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
-            return try factory(lower - 1)
-        end)
-        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
-            return try factory(maximum)
-        end)
-        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
-            return try factory(minimum)
-        end)
+        assert(factory(0).nanoseconds() == 0)
+        assert(factory(1).nanoseconds() == scale)
+        assert(factory(-1).nanoseconds() == -scale)
+        assert(factory(upper).nanoseconds() == upper * scale)
+        assert(factory(lower).nanoseconds() == lower * scale)
     end
 end
 
@@ -60,7 +48,7 @@ func check_durations() -> !void
     assert(time::nanoseconds(1000001).milliseconds() == 1)
     assert(time::nanoseconds(1500000000).seconds() == 1.5)
     assert(time::nanoseconds(-1500000000).seconds() == -1.5)
-    assert((try time::hours(1)).seconds() == 3600.0)
+    assert(time::hours(1).seconds() == 3600.0)
     assert((try largest.add(zero)).nanoseconds() == maximum)
     assert((try smallest.subtract(zero)).nanoseconds() == minimum)
     assert((try smallest.subtract(smallest)).is_equal(zero))
@@ -106,8 +94,8 @@ func check_timestamps() -> !void
     let largest = time::from_unix_ms(maximum)
     let smallest = time::from_unix_ms(minimum)
     let zero = time::nanoseconds(0)
-    let positive = try time::milliseconds(1)
-    let negative = try time::milliseconds(-1)
+    let positive = time::milliseconds(1)
+    let negative = time::milliseconds(-1)
     assert(time::to_unix_ms(try epoch.add(positive)) == 1)
     assert(time::to_unix_ms(try epoch.subtract(positive)) == -1)
     assert(time::to_unix_ms(try epoch.add(negative)) == -1)
@@ -116,7 +104,7 @@ func check_timestamps() -> !void
     assert(time::to_unix_ms(try smallest.subtract(zero)) == minimum)
     assert(time::to_unix_ms(try largest.subtract(positive)) == maximum - 1)
     assert(time::to_unix_ms(try smallest.add(positive)) == minimum + 1)
-    assert(time::to_unix_ms(try epoch.add(try time::hours(24))) == 86400000)
+    assert(time::to_unix_ms(try epoch.add(time::hours(24))) == 86400000)
     assert((try largest.since(largest)).is_equal(zero))
     assert((try smallest.since(smallest)).is_equal(zero))
     let nearby = time::from_unix_ms(maximum - 2)
@@ -182,7 +170,7 @@ func check_gc() -> !void
     let mut kept: []time::Duration = []
     let mut timestamps: []time::Timestamp = []
     for 0..19999: i do
-        let duration = try time::milliseconds(i - 10000)
+        let duration = time::milliseconds(i - 10000)
         let timestamp = try time::from_unix_ms(i).subtract(duration)
         assert(time::to_unix_ms(timestamp) == 10000)
         if i % 5000 == 0 then
@@ -196,7 +184,7 @@ func check_gc() -> !void
 end
 
 func main() -> !void
-    try check_factories()
+    check_factories()
     try check_durations()
     try check_timestamps()
     try check_gc()

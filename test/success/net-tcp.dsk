@@ -1,6 +1,7 @@
 import std/io
 import std/net
 import std/task
+import std/time
 
 func net_error_name(e: net::NetError) -> string
     return when e
@@ -67,7 +68,7 @@ func main() -> !void
         let conn = try listener.accept()
         conn.close()
     end)
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     let mut second_error = ""
     listener.accept() catch e then
         second_error = io_error_name(e)

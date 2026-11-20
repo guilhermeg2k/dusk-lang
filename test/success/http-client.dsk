@@ -7,6 +7,7 @@ import std/io
 import std/net
 import std/string
 import std/task
+import std/time
 
 struct Received
     lines: []string
@@ -93,7 +94,7 @@ func accept_and_wait(listener: net::TcpListener, response: string, wait_ms: int)
         end
         conn.write(response) catch e then
         end
-        task::sleep(wait_ms)
+        task::sleep(time::milliseconds(wait_ms))
         conn.close()
     end)
 end

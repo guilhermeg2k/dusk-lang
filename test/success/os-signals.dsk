@@ -1,5 +1,6 @@
 import std/os
 import std/task
+import std/time
 
 func await_close(subscription: os::SignalStream) -> !bool
     subscription.wait() catch e then
@@ -12,7 +13,7 @@ end
 func main() -> !void
     let subscription = try os::watch_signal(os::Signal.Interrupt)
     let waiter = spawn(func() -> return try await_close(subscription))
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     let mut has_busy_error = false
     subscription.wait() catch e then
         assert(e == os::OsError.Busy)

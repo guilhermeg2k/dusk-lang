@@ -6,6 +6,7 @@ const Civil = @import("../../calendar.zig").Civil;
 const formatIsoMilliseconds = @import("../../time_format.zig").formatIsoMilliseconds;
 const PatternFormatter = @import("../../time_format.zig").PatternFormatter;
 const LocalJob = @import("../../tasks/timezone_job.zig").LocalJob;
+const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const native = @import("../native.zig");
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
@@ -214,7 +215,20 @@ const IsoParser = struct {
 };
 
 fn scaleNanoseconds(_: *VM, args: []v.Value) anyerror!NativeResult {
-    return checkedIntegerResult(@as(i128, args[0].int64) * args[1].int64);
+    const value = args[0].int64;
+    const multiplier = args[1].int64;
+    const nanoseconds = std.math.cast(i64, @as(i128, value) * multiplier) orelse return RuntimeErrorReporter.durationOutOfRange(value, unitName(multiplier));
+    return native.ok(.{ .int64 = nanoseconds });
+}
+
+fn unitName(multiplier: i64) []const u8 {
+    return switch (multiplier) {
+        1000 => "microseconds",
+        1000000 => "milliseconds",
+        1000000000 => "seconds",
+        60000000000 => "minutes",
+        else => "hours",
+    };
 }
 
 fn checkedIntegerResult(value: i128) NativeResult {

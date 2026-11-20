@@ -4,6 +4,7 @@ import std/io
 import std/net
 import std/string
 import std/task
+import std/time
 
 func fill_until_failure(conn: net::TcpConn) -> io::IoError!void
     let piece = string::repeat("x", 65536) catch ""
@@ -51,7 +52,7 @@ func check_http_stream() -> !void
     try silent.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
     let mut waited = 0
     for stream_failure == null and waited < 300 do
-        task::sleep(10)
+        task::sleep(time::milliseconds(10))
         waited = waited + 1
     end
     assert(stream_failure == io::IoError.TimedOut)
@@ -81,7 +82,7 @@ func check_slow_reader() -> !void
         let piece = try body.read_bytes(262144)
         if piece: data then
             received = received + buffer::len(data)
-            task::sleep(20)
+            task::sleep(time::milliseconds(20))
         else
             break
         end

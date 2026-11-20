@@ -1,0 +1,6 @@
+import std/time
+
+func main() -> void
+    let fine = time::hours(2562047)
+    let too_long = time::hours(2562048)
+end

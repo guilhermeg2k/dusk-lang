@@ -3,6 +3,7 @@ import std/string
 import std/buffer
 import std/array
 import std/task
+import std/time
 
 struct JsonReader
     text: string
@@ -252,7 +253,7 @@ struct JsonWriter
 end
 
 func slow_default() -> int
-    task::sleep(1)
+    task::sleep(time::milliseconds(1))
     return 42
 end
 

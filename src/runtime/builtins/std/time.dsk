@@ -148,27 +148,27 @@ func nanoseconds(value: int) -> Duration
     return Duration(nanosecond_count = value)
 end
 
-func microseconds(value: int) -> TimeError!Duration
-    return nanoseconds(try scale_nanoseconds(value, 1000))
+func microseconds(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 1000))
 end
 
-func milliseconds(value: int) -> TimeError!Duration
-    return nanoseconds(try scale_nanoseconds(value, 1000000))
+func milliseconds(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 1000000))
 end
 
-func seconds(value: int) -> TimeError!Duration
-    return nanoseconds(try scale_nanoseconds(value, 1000000000))
+func seconds(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 1000000000))
 end
 
-func minutes(value: int) -> TimeError!Duration
-    return nanoseconds(try scale_nanoseconds(value, 60000000000))
+func minutes(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 60000000000))
 end
 
-func hours(value: int) -> TimeError!Duration
-    return nanoseconds(try scale_nanoseconds(value, 3600000000000))
+func hours(value: int) -> Duration
+    return nanoseconds(scale_nanoseconds(value, 3600000000000))
 end
 
-extern func ~scale_nanoseconds(value: int, multiplier: int) -> TimeError!int
+extern func ~scale_nanoseconds(value: int, multiplier: int) -> int
 extern func ~add_nanoseconds(left: int, right: int) -> TimeError!int
 extern func ~subtract_nanoseconds(left: int, right: int) -> TimeError!int
 extern func ~add_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int

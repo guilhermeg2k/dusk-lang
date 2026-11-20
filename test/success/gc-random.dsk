@@ -1,6 +1,7 @@
 import std/random
 import std/buffer
 import std/task
+import std/time
 
 func main() -> !void
     let mut rng = random::seeded(123)
@@ -16,7 +17,7 @@ func main() -> !void
     end
     let mut snapshot = copy(rng)
     let worker = spawn(func() -> !int
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
         let data = try rng.bytes(1100000)
         return try rng.integer(1, 100)
     end)

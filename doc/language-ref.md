@@ -1630,7 +1630,7 @@ There are no line numbers yet.
 
 ## 13. Tasks
 
-A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import std/task`) pauses the running task:
+A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import std/task`) pauses the running task for a `time::Duration` (from `import std/time`):
 
 ```nim
 func main() -> void
@@ -1644,17 +1644,17 @@ end
 | :------- | :-------- | :---------- |
 | `spawn` | `spawn(body: func() -> E!T) -> Task[T, E]` | Starts a task that runs `body`. |
 | `await` | `await(task: Task[T, E]) -> E!T` | Waits until the task is done and returns its result, or fails with its error. |
-| `task::sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds; `0` or a negative time (a deadline already passed) just gives other ready tasks a turn. In `std/task`. |
+| `task::sleep` | `sleep(duration: time::Duration) -> void` | Pauses the running task for `duration`, rounded up to whole milliseconds; zero or a negative duration (a deadline already passed) just gives other ready tasks a turn. In `std/task`. |
 
 ### Running order
 
-All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `task::sleep(0)` gives the other ready tasks a turn:
+All tasks run on one thread, one at a time. A task keeps running until it waits (`await` on a task that isn't done, `sleep`) or ends; then the next ready task runs. A new task starts the first time the task that spawned it waits or ends, and ready tasks take turns in the order they became ready. `task::sleep(time::milliseconds(0))` gives the other ready tasks a turn:
 
 ```nim
 func step(name: string) -> void
     for 1..2: i do
         io::println("$name $i")
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
     end
 end
 
@@ -1671,7 +1671,7 @@ Waiting doesn't change a function's type: `step` above is a plain `-> void` func
 
 ```nim
 func slow_double(x: int) -> int
-    task::sleep(100)
+    task::sleep(time::milliseconds(100))
     return x * 2
 end
 
@@ -1682,7 +1682,7 @@ func main() -> void
 end
 ```
 
-A task that never waits keeps the others from running until it ends: put a `task::sleep(0)` in long loops that should share time.
+A task that never waits keeps the others from running until it ends: put a `task::sleep(time::milliseconds(0))` in long loops that should share time.
 
 Lambdas given to `spawn` share the variables they use with the function around them, as any closure does. Values that tasks share change only while the task changing them runs, but any call that waits lets other tasks run in between:
 
@@ -1692,7 +1692,7 @@ func main() -> void
     let counter = spawn(func()
         for 1..3: _ do
             count = count + 1
-            task::sleep(0)
+            task::sleep(time::milliseconds(0))
         end
     end)
     await(counter)
@@ -1737,7 +1737,7 @@ The program ends when every task is done, so a task spawned near the end still f
 ```nim
 func main() -> void
     spawn(func()
-        task::sleep(50)
+        task::sleep(time::milliseconds(50))
         io::println("background work done")
     end)
     io::println("top level done")

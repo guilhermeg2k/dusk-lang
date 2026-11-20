@@ -455,11 +455,13 @@ Clocks, timestamps, durations, and monotonic instants. Import with `import std/t
 | `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
 | `instant()` | `Instant` | Captures the current monotonic reading for elapsed-time measurements. |
 | `nanoseconds(value)` | `Duration` | A duration from any signed `int` nanosecond count. |
-| `microseconds(value)` | `TimeError!Duration` | Multiplies by 1,000, failing with `Overflow` if the nanoseconds do not fit. |
-| `milliseconds(value)` | `TimeError!Duration` | Multiplies by 1,000,000 with the same overflow check. |
-| `seconds(value)` | `TimeError!Duration` | A whole-number seconds count converted to nanoseconds with an overflow check. |
-| `minutes(value)` | `TimeError!Duration` | A whole-number minutes count converted to nanoseconds with an overflow check. |
-| `hours(value)` | `TimeError!Duration` | A whole-number hours count converted to nanoseconds with an overflow check. |
+| `microseconds(value)` | `Duration` | `value` microseconds. |
+| `milliseconds(value)` | `Duration` | `value` milliseconds. |
+| `seconds(value)` | `Duration` | `value` seconds. |
+| `minutes(value)` | `Duration` | `value` minutes. |
+| `hours(value)` | `Duration` | `value` hours. |
+
+A `Duration` holds at most about 292 years either way. A factory given more stops the program with a runtime error (`2562048 hours doesn't fit in a Duration`), since no correct program asks for that; adding and subtracting durations are checked instead and fail with `TimeError.Overflow`.
 | `utc_timezone()` | `TimeZone` | The UTC zone, with offset zero for every timestamp. |
 | `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A constant offset east of UTC; requires strictly more than -86400 and less than +86400 seconds. |
 | `load_timezone(name)` | `TimeError!TimeZone` | Loads a named zone or alias from the bundled database. Unknown or invalid names return `UnknownTimeZone`. |
@@ -666,7 +668,7 @@ The module declares the error set `MathError` (`InvalidBounds`, `Empty`).
 
 | Function    | Returns | Description                                                     |
 | :---------- | :------ | :-------------------------------------------------------------- |
-| `sleep(ms)` | `void`  | Pauses the running task for `ms` milliseconds; `0` or a negative time (a deadline already passed) just gives other ready tasks a turn (see [Tasks](language-ref.md#13-tasks)). |
+| `sleep(duration: time::Duration)` | `void`  | Pauses the running task for `duration`, rounded up to whole milliseconds; zero or a negative duration (a deadline already passed) just gives other ready tasks a turn (see [Tasks](language-ref.md#13-tasks)). |
 
 ## std/io
 
@@ -1413,7 +1415,7 @@ A `reason` left empty is filled from the status code (`"Not Found"`). The server
             try events.write("data: tick $n\n\n")
             try events.flush()
             n = n + 1
-            task::sleep(1000)
+            task::sleep(time::milliseconds(1000))
         end
     end, content_type = "text/event-stream")
 end
@@ -1740,7 +1742,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
 | `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
-| `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration factory or arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
+| `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration or Timestamp arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
 | `TimeError.PrecisionLoss` | Timestamp arithmetic with fractional milliseconds, or ISO formatting/custom `Z` with an offset that is not an exact number of minutes. |
 | `TimeError.UnknownTimeZone` | A name is invalid or absent from the bundled timezone database. |
 | `TimeError.InvalidOffset` | A fixed timezone offset is outside the supported range. |

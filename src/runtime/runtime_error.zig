@@ -23,6 +23,7 @@ pub const RuntimeError = error{
     TlsAlreadyStarted,
     HttpBodyGivenTwice,
     HttpInvalidCompressionLevel,
+    DurationOutOfRange,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -91,6 +92,11 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn negationOverflow(operand: i64) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.IntegerOverflow, "integer overflow: -({d}) doesn't fit in an int", .{operand});
+    }
+
+    pub noinline fn durationOutOfRange(value: i64, unit: []const u8) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.DurationOutOfRange, "{d} {s} doesn't fit in a Duration (at most about 292 years)", .{ value, unit });
     }
 
     pub noinline fn floatOutOfIntRange(value: f64) RuntimeError {

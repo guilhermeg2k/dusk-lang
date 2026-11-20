@@ -201,14 +201,14 @@ struct Server
                 if server_is_closing(self.state) then
                     break
                 end
-                task::sleep(1)
+                task::sleep(time::milliseconds(1))
                 continue
             end
             let conn = self.listener.accept() catch e then
                 if e == io::IoError.Closed then
                     break
                 end
-                task::sleep(10)
+                task::sleep(time::milliseconds(10))
                 continue
             end
             active = active + 1
@@ -218,7 +218,7 @@ struct Server
             end)
         end
         for active > 0 do
-            task::sleep(10)
+            task::sleep(time::milliseconds(10))
         end
     end
 end

@@ -1,6 +1,7 @@
 import std/net
 import std/string
 import std/task
+import std/time
 
 func send_number(port: int, number: int) -> !void
     let conn = try net::tcp_connect("127.0.0.1", port)
@@ -37,7 +38,7 @@ func main() -> !void
     assert(sum == total * (total - 1) // 2)
 
     let held = try net::tcp_connect("127.0.0.1", port)
-    task::sleep(10)
+    task::sleep(time::milliseconds(10))
     listener.close()
     held.close()
 end

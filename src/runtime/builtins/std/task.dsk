@@ -1,1 +1,12 @@
-extern func sleep(ms: int) -> void
+import std/time
+
+func sleep(duration: time::Duration) -> void
+    let nanoseconds = duration.nanoseconds()
+    let mut milliseconds = nanoseconds // 1000000
+    if nanoseconds % 1000000 > 0 then
+        milliseconds = milliseconds + 1
+    end
+    sleep_ms(milliseconds)
+end
+
+extern func ~sleep_ms(milliseconds: int) -> void

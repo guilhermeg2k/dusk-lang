@@ -18,7 +18,7 @@ func main() -> !void
     let child = spawn(func() -> return time::instant())
     let from_task = await(child)
     assert((try from_task.since(start)).nanoseconds() >= 0)
-    task::sleep(1)
+    task::sleep(time::milliseconds(1))
     assert((try start.elapsed()).nanoseconds() >= elapsed.nanoseconds())
     let mut kept: []time::Instant = [copy(start)]
     for 0..19999: i do

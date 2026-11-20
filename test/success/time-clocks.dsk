@@ -3,7 +3,7 @@ import std/task
 import std/array
 
 func read_clock() -> int
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     return time::monotonic_ns()
 end
 
@@ -21,7 +21,7 @@ func main() -> void
     let after_task = time::monotonic_ns()
     assert(from_task >= start and after_task >= from_task)
     let before_sleep = time::monotonic_ns()
-    task::sleep(20)
+    task::sleep(time::milliseconds(20))
     let elapsed = time::monotonic_ns() - before_sleep
     assert(elapsed >= 1000000)
     let mut values = [3, 1, 2]

@@ -1,6 +1,7 @@
 import std/fs
 import std/string
 import std/task
+import std/time
 
 func parse(text: string) -> ConversionError!int
     return try string::to_int(text)
@@ -12,7 +13,7 @@ func main() -> void
     let counter = spawn(func() -> void
         for !is_done do
             ticks = ticks + 1
-            task::sleep(0)
+            task::sleep(time::milliseconds(0))
         end
     end)
     let mut i = 0

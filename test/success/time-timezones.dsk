@@ -105,7 +105,7 @@ func check_gc_and_tasks() -> !void
     assert(early.name() == "Europe/Paris")
     assert(early.offset_seconds(minimum) == 561)
     let child = spawn(func() -> time::TimeError!time::TimeZone
-        task::sleep(0)
+        task::sleep(time::milliseconds(0))
         return try time::load_timezone("Australia/Sydney")
     end)
     let zone = try await(child)

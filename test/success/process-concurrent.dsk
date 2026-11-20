@@ -13,7 +13,7 @@ func main() -> !void
     let four = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
     let five = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
     let six = spawn(func() -> return try process::run([helper, "wait_file", gate], timeout_ms = 3000))
-    task::sleep(0)
+    task::sleep(time::milliseconds(0))
     try fs::write(gate, "ready")
     assert((try await(one)).is_success())
     assert((try await(two)).is_success())

@@ -14,7 +14,7 @@ end
 func main() -> !void
     let started = time::instant()
     let event = Event(title = "Launch", startsAt = try time::from_iso_string("2026-11-18T14:30:45.123Z"))
-    let duration = try time::minutes(90)
+    let duration = time::minutes(90)
     let ends_at = try event.startsAt.add(duration)
     let zone = try time::load_timezone("America/Sao_Paulo")
     io::println(try time::to_iso_string(event.startsAt))
