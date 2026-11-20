@@ -54,7 +54,7 @@ const Cli = struct {
         var argv: std.ArrayList([]const u8) = .empty;
         try argv.appendSlice(self.arena.allocator(), &.{ self.dusk, program });
         try argv.appendSlice(self.arena.allocator(), args);
-        return std.process.run(self.arena.allocator(), testing.io, .{ .argv = argv.items, .environ_map = map });
+        return std.process.run(self.arena.allocator(), testing.io, .{ .argv = argv.items, .environ_map = map, .timeout = .{ .duration = .{ .raw = .fromSeconds(30), .clock = .awake } } });
     }
 };
 
@@ -174,6 +174,20 @@ test "os CLI: signal streams receive signals, and closing them restores the defa
     }
 }
 
+fn readToEnd(allocator: std.mem.Allocator, file: std.Io.File) ![]const u8 {
+    var output: std.ArrayList(u8) = .empty;
+    var chunk: [4096]u8 = undefined;
+    while (true) {
+        const count = file.readStreaming(testing.io, &.{&chunk}) catch |failure| {
+            if (failure == error.EndOfStream) break;
+            return failure;
+        };
+        if (count == 0) break;
+        try output.appendSlice(allocator, chunk[0..count]);
+    }
+    return output.items;
+}
+
 fn expectLine(file: std.Io.File, expected: []const u8) !void {
     var line: [64]u8 = undefined;
     var length: usize = 0;
@@ -206,6 +220,16 @@ test "process CLI: the program waits for children, keeps output order, and kills
     , &.{ cli.helper, marker }, map), 0);
     try testing.expectEqualStrings("finished", try cli.temporary.dir.readFileAlloc(testing.io, "finished", cli.arena.allocator(), .unlimited));
 
+    try expectExit(try cli.run(
+        \\import std/process
+        \\import std/os
+        \\func main() -> !void
+        \\    let helper = (try os::args())[0]
+        \\    let reader = try process::start([helper, "copy"], stdin_mode = process::Stdio.Pipe, stdout_mode = process::Stdio.Ignore, stderr_mode = process::Stdio.Ignore)
+        \\    let writer = try process::start([helper, "dual", "1000000"], stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Pipe)
+        \\end
+    , &.{cli.helper}, map), 0);
+
     const ordered = try cli.run(
         \\import std/process
         \\import std/os
@@ -237,6 +261,35 @@ test "process CLI: the program waits for children, keeps output order, and kills
     if (!is_posix) return;
     const pid = try std.fmt.parseInt(std.posix.pid_t, std.mem.trim(u8, failed.stdout, " \r\n"), 10);
     try testing.expectError(error.ProcessNotFound, std.posix.kill(pid, @enumFromInt(0)));
+}
+
+test "process CLI: a child that inherits stdin gets the input that arrives after it starts" {
+    if (!is_posix) return error.SkipZigTest;
+    var cli: Cli = undefined;
+    try cli.init();
+    defer cli.deinit();
+    const program = try cli.write("inherit.dsk",
+        \\import std/io
+        \\import std/process
+        \\func main() -> !void
+        \\    let first = try io::stdin().read_line()
+        \\    let child = try process::start(["sh", "-c", "sleep 0.3; exec cat"], stdin_mode = process::Stdio.Inherit)
+        \\    io::println("ready ${first orelse "none"}")
+        \\    try io::stdout().flush()
+        \\    let term = try child.wait()
+        \\end
+    );
+    var child = try std.process.spawn(testing.io, .{ .argv = &.{ cli.dusk, program }, .stdin = .pipe, .stdout = .pipe, .stderr = .ignore });
+    defer child.kill(testing.io);
+    try child.stdin.?.writeStreamingAll(testing.io, "first\n");
+    try expectLine(child.stdout.?, "ready first");
+    try child.stdin.?.writeStreamingAll(testing.io, "second\n");
+    child.stdin.?.close(testing.io);
+    child.stdin = null;
+    try testing.expectEqualStrings("second\n", try readToEnd(cli.arena.allocator(), child.stdout.?));
+    const term = try child.wait(testing.io);
+    const has_succeeded = term == .exited and term.exited == 0;
+    try testing.expect(has_succeeded);
 }
 
 const local_zone_source =

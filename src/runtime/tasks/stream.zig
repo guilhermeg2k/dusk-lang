@@ -589,6 +589,11 @@ pub const Stream = struct {
         }
     }
 
+    pub fn pauseReadingWhenIdle(self: *Self) void {
+        if (self.waiter != null) return;
+        self.stopReading();
+    }
+
     fn stopReading(self: *Self) void {
         if (!self.is_reading) return;
         _ = uv.uv_read_stop(self.uvHandle());

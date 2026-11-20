@@ -304,7 +304,7 @@ Functions that can fail return an error union with the module's error set `Proce
 
 ### Children
 
-`start` takes the same arguments, folder and environment as `run`. Each standard stream is `Stdio.Inherit` (shared with the program), `Stdio.Ignore` or `Stdio.Pipe` (read or written through the `Child`). Before a child that inherits stdout or stderr starts, the program's own pending output is written, so the two don't mix out of order.
+`start` takes the same arguments, folder and environment as `run`. Each standard stream is `Stdio.Inherit` (shared with the program), `Stdio.Ignore` or `Stdio.Pipe` (read or written through the `Child`). Before a child that inherits stdout or stderr starts, the program's own pending output is written, so the two don't mix out of order. When a child inherits stdin, the program stops reading stdin ahead (unless a task is reading it right then), so input that arrives while the child runs goes to the child. Input the program already received stays with the program, and its next read of stdin picks up again.
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
@@ -320,7 +320,7 @@ Only one task at a time can wait for a child. Copies of a `Child` (including `co
 
 Closing the stdin writer sends the end of input; closing a pipe doesn't stop the child, and output the child wrote before exiting can still be read. Read stdout and stderr in their own tasks while waiting (a child blocks once a pipe it writes to is full), or let `run` collect them.
 
-**Lifetime.** The program doesn't end while a child it started is still running, even if nothing waits for it: like a task, a child runs to the end. When the program stops on an error instead, its remaining children are killed. Close children when done with them. A `Child` the program no longer reaches (no variable, field or copy holds it or one of its pipes) is cleaned up after a garbage collection finds it: one that has exited is freed, and one still running has its pipes closed, so it sees the end of its input, and is freed when it exits.
+**Lifetime.** The program doesn't end while a child it started is still running, even if nothing waits for it: like a task, a child runs to the end. Once all of the program's tasks have finished, nothing can use the children's pipes anymore, so they're closed: a child waiting for input sees the end of it, and one writing gets a broken pipe. When the program stops on an error instead, its remaining children are killed. Close children when done with them. A `Child` the program no longer reaches (no variable, field or copy holds it or one of its pipes) is cleaned up after a garbage collection finds it: one that has exited is freed, and one still running has its pipes closed, so it sees the end of its input, and is freed when it exits.
 
 ## std/random
 

@@ -237,6 +237,9 @@ fn startHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (prepared.launch.modes[2] == 0) {
         try vm.stdio.tryFlush(.stderr);
     }
+    if (prepared.launch.modes[0] == 0) {
+        vm.event_loop.pauseStdinWhenIdle();
+    }
     if (prepared.candidates) |candidates| {
         const task = vm.running_task.?;
         process.ExecutableLookup.start(&vm.event_loop, &vm.scheduler, task, arena, candidates, prepared.launch) catch |failure| return launchFailure(failure);

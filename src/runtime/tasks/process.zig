@@ -177,7 +177,7 @@ pub const Process = struct {
         self.should_release_on_exit = true;
     }
 
-    fn closePipes(self: *Process) void {
+    pub fn closePipes(self: *Process) void {
         for (&self.pipe_handles) |*entry| {
             const stream_handle = entry.* orelse continue;
             self.event_loop.closeStream(@intCast(stream_handle));

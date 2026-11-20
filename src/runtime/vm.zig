@@ -93,6 +93,9 @@ pub const VM = struct {
             }
 
             if (self.event_loop.hasPendingOperations()) {
+                if (!self.scheduler.hasUnfinishedTasks()) {
+                    self.event_loop.closeChildPipes();
+                }
                 try self.stdio.flushStdout();
                 try self.event_loop.waitForEvent();
                 continue;

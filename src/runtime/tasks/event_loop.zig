@@ -282,6 +282,19 @@ pub const EventLoop = struct {
         return handle;
     }
 
+    pub fn pauseStdinWhenIdle(self: *Self) void {
+        const handle = self.stdin_handle orelse return;
+        const stream = self.streamAt(@intCast(handle)) orelse return;
+        stream.pauseReadingWhenIdle();
+    }
+
+    pub fn closeChildPipes(self: *Self) void {
+        for (self.processes.entries.items) |entry| {
+            const process = entry orelse continue;
+            process.closePipes();
+        }
+    }
+
     pub fn processAt(self: *Self, handle: i64) ?*Process {
         const process = self.processes.get(handle) orelse return null;
         if (process.is_released) {
