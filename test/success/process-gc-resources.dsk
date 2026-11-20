@@ -1,0 +1,67 @@
+import std/array: append
+import std/fs
+import std/os
+import std/process
+import std/string
+import std/task
+
+func churn() -> void
+    let mut kept: []string = []
+    for 0..300: i do
+        let piece = string::repeat("x", 10000) catch ""
+        if i % 100 == 0 then
+            append(kept, piece)
+        end
+    end
+end
+
+func drop_draining_child(helper: string, marker: string) -> !void
+    let child = try process::start([helper, "drain_file", marker], stdin_mode = process::Stdio.Pipe)
+    let input = try child.stdin()
+    try input.write("never closed by the program")
+end
+
+func drop_finished_child(helper: string) -> !void
+    let child = try process::start([helper, "exit", "0"], stdout_mode = process::Stdio.Pipe)
+    let output = try child.stdout()
+    let term = try child.wait()
+end
+
+func drop_signal_stream() -> !void
+    let stream = try os::watch_signal(os::Signal.Interrupt)
+end
+
+func main() -> !void
+    let helper = (try os::args())[0]
+    let marker = "${(try os::args())[3]}.drained"
+
+    try drop_draining_child(helper, marker)
+    let mut drained = ""
+    for 0..300: i do
+        churn()
+        drained = fs::read(marker) catch ""
+        if drained != "" then
+            break
+        end
+        task::sleep(10)
+    end
+    assert(drained == "drained")
+
+    for 0..200: i do
+        try drop_finished_child(helper)
+    end
+    churn()
+    let kept = try process::start([helper, "exit", "0"], stdout_mode = process::Stdio.Pipe)
+    churn()
+    let mut output = try kept.stdout()
+    let rest = try output.read_all_bytes()
+    let term = try kept.wait()
+    try kept.close()
+
+    for 0..100: i do
+        try drop_signal_stream()
+    end
+    churn()
+    let watched = try os::watch_signal(os::Signal.Interrupt)
+    watched.close()
+end

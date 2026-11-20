@@ -33,7 +33,7 @@ pub const EventLoop = struct {
     loop: ?*uv.Loop = null,
     pending_operations: usize = 0,
     live_processes: usize = 0,
-    processes: std.ArrayList(?*Process) = .empty,
+    processes: HandleTable(Process) = .{},
     is_shutting_down: bool = false,
     callback_failure: ?anyerror = null,
     streams: HandleTable(Stream) = .{},
@@ -46,23 +46,21 @@ pub const EventLoop = struct {
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
     stdin_handle: ?usize = null,
-    signal_subscriptions: std.ArrayList(?*Subscription) = .empty,
+    signal_subscriptions: HandleTable(Subscription) = .{},
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
-        for (self.processes.items) |entry| {
-            if (entry) |process| {
-                process.release();
-            }
+        for (self.processes.entries.items) |entry| {
+            const process = entry orelse continue;
+            process.release();
         }
         while (self.live_processes > 0) {
             _ = uv.uv_run(self.loop.?, .once);
         }
         defer self.processes.deinit(self.allocator);
-        for (self.signal_subscriptions.items) |entry| {
-            if (entry) |subscription| {
-                subscription.close();
-            }
+        for (self.signal_subscriptions.entries.items) |entry| {
+            const subscription = entry orelse continue;
+            subscription.close();
         }
         defer self.signal_subscriptions.deinit(self.allocator);
         for (self.streams.entries.items) |entry| {
@@ -111,24 +109,17 @@ pub const EventLoop = struct {
     }
 
     pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !usize {
-        try self.signal_subscriptions.ensureUnusedCapacity(self.allocator, 1);
+        try self.signal_subscriptions.reserve(self.allocator);
         const subscription = try Subscription.create(self, scheduler, signal);
-        const index = self.signal_subscriptions.items.len;
-        self.signal_subscriptions.appendAssumeCapacity(subscription);
-        return index;
+        return self.signal_subscriptions.addAssumeCapacity(subscription);
     }
 
     pub fn signalAt(self: *Self, handle: i64) ?*Subscription {
-        const index = std.math.cast(usize, handle) orelse return null;
-        if (index >= self.signal_subscriptions.items.len) {
-            return null;
-        }
-        return self.signal_subscriptions.items[index];
+        return self.signal_subscriptions.get(handle);
     }
 
     pub fn closeSignal(self: *Self, handle: i64) void {
-        const subscription = self.signalAt(handle) orelse return;
-        self.signal_subscriptions.items[@intCast(handle)] = null;
+        const subscription = self.signal_subscriptions.remove(handle) orelse return;
         subscription.close();
     }
 
@@ -239,6 +230,11 @@ pub const EventLoop = struct {
             },
             .listener => self.closeListener(slot.handle),
             .compression => self.compression_streams.remove(slot.handle),
+            .process => {
+                const process = self.processAt(slot.handle) orelse return;
+                process.releaseOnceExited();
+            },
+            .signal => self.closeSignal(slot.handle),
         }
     }
 
@@ -287,11 +283,7 @@ pub const EventLoop = struct {
     }
 
     pub fn processAt(self: *Self, handle: i64) ?*Process {
-        const index = std.math.cast(usize, handle) orelse return null;
-        if (index >= self.processes.items.len) {
-            return null;
-        }
-        const process = self.processes.items[index] orelse return null;
+        const process = self.processes.get(handle) orelse return null;
         if (process.is_released) {
             return null;
         }

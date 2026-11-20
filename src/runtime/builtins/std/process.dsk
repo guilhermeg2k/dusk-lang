@@ -59,6 +59,7 @@ end
 
 struct Child
     ~handle: int
+    ~owner: resource
 
     func wait(self: @, timeout_ms: int = -1) -> ProcessError!Termination
         return make_termination(try child_wait(self.handle, timeout_ms))
@@ -69,24 +70,26 @@ struct Child
     end
 
     func stdin(self: @) -> ProcessError!PipeWriter
-        return PipeWriter(handle = try child_pipe(self.handle, 0))
+        return PipeWriter(handle = try child_pipe(self.handle, 0), owner = self.owner)
     end
 
     func stdout(self: @) -> ProcessError!PipeReader
-        return PipeReader(handle = try child_pipe(self.handle, 1))
+        return PipeReader(handle = try child_pipe(self.handle, 1), owner = self.owner)
     end
 
     func stderr(self: @) -> ProcessError!PipeReader
-        return PipeReader(handle = try child_pipe(self.handle, 2))
+        return PipeReader(handle = try child_pipe(self.handle, 2), owner = self.owner)
     end
 
     func close(self: @) -> ProcessError!void
         try child_close(self.handle)
+        release(self.owner)
     end
 end
 
 func start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit) -> ProcessError!Child
-    return Child(handle = try start_handle(args, cwd, env, stdin_mode, stdout_mode, stderr_mode))
+    let handle = try start_handle(args, cwd, env, stdin_mode, stdout_mode, stderr_mode)
+    return Child(handle = handle, owner = own(3, handle))
 end
 
 func ~make_termination(values: []int) -> Termination
@@ -98,6 +101,7 @@ end
 
 struct PipeReader
     ~handle: int
+    ~owner: resource
 
     func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
         return try stream_read_line(self.handle, max, timeout_ms)
@@ -126,6 +130,7 @@ end
 
 struct PipeWriter
     ~handle: int
+    ~owner: resource
 
     func write(self: @, text: string) -> io::IoError!void
         try stream_write(self.handle, text)
@@ -163,3 +168,5 @@ extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
 extern func ~stream_flush(handle: int) -> io::IoError!void
 extern func ~stream_close(handle: int) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void

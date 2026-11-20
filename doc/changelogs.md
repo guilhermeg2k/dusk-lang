@@ -17,6 +17,7 @@
 - `std/path`: lexical path joining, normalization, basename/dirname, extension/stem, absolute-path detection and explicit-base resolution/relative paths. Uses the runtime platform’s path syntax without filesystem access; `resolve` and `relative` report `PathError.NotAbsolute` for nonabsolute bases/inputs or unresolved drive-relative destinations
 - `std/random`: inclusive `integer`, `[0, 1)` `decimal`, ordinary bytes, secure bytes without a weaker fallback, and mutable seeded generators with reproducible sequences and independent `copy` snapshots. Default generator state is separate for each execution; zero-byte requests and equal integer bounds do not consume randomness
 - `std/process`: captured `run` with binary stdout/stderr, termination status, explicit text decoding, whole-operation deadlines and a combined output cap; interactive `start` with inherited/ignored/piped stdio, cached waits, forced termination and explicit close. Child waits and pipe I/O park only the calling task. Timeout, overflow and runtime shutdown terminate/reap owned direct children through libuv
+- A `process::Child` (with its pipes) or `os::SignalStream` the program drops without `close()` is cleaned up after a garbage collection. A dropped child that's still running has its pipes closed and is released when it exits; the program still waits for it. Closed children and signal streams no longer keep a little memory each
 
 ## v0.16 - Shigeo
 

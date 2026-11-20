@@ -41,6 +41,7 @@ pub const Process = struct {
     term_signal: i64 = 0,
     is_captured: bool = false,
     is_released: bool = false,
+    should_release_on_exit: bool = false,
     is_timer_running: bool = false,
     has_spawned: bool = false,
     has_exited: bool = false,
@@ -48,11 +49,11 @@ pub const Process = struct {
     pub fn launch(event_loop: *EventLoop, scheduler: *Scheduler, options: Launch) !*Process {
         const loop = try event_loop.ensureLoopStarted();
         const allocator = event_loop.allocator;
-        try event_loop.processes.ensureUnusedCapacity(allocator, 1);
+        try event_loop.processes.reserve(allocator);
         const self = try allocator.create(Process);
-        self.* = .{ .event_loop = event_loop, .scheduler = scheduler, .table_index = event_loop.processes.items.len, .is_captured = options.is_captured, .max_output = options.max_output };
+        self.* = .{ .event_loop = event_loop, .scheduler = scheduler, .table_index = 0, .is_captured = options.is_captured, .max_output = options.max_output };
         self.captures = .{ .{ .process = self, .channel = 0 }, .{ .process = self, .channel = 1 } };
-        event_loop.processes.appendAssumeCapacity(self);
+        self.table_index = event_loop.processes.addAssumeCapacity(self);
         errdefer self.release();
         var pipes: [3]?*uv.Handle = .{ null, null, null };
         for (options.modes, 0..) |mode, channel| {
@@ -152,12 +153,7 @@ pub const Process = struct {
         for (&self.captures) |*capture| {
             capture.close();
         }
-        for (&self.pipe_handles) |*entry| {
-            if (entry.*) |index| {
-                self.event_loop.closeStream(@intCast(index));
-                entry.* = null;
-            }
-        }
+        self.closePipes();
         self.stopTimer();
         if (self.timer_memory.len != 0) {
             if (uv.uv_is_closing(self.timer()) == 0) {
@@ -165,6 +161,24 @@ pub const Process = struct {
             }
         }
         self.freeIfClosed();
+    }
+
+    pub fn releaseOnceExited(self: *Process) void {
+        const is_running = self.has_spawned and !self.has_exited;
+        if (!is_running) {
+            self.release();
+            return;
+        }
+        self.closePipes();
+        self.should_release_on_exit = true;
+    }
+
+    fn closePipes(self: *Process) void {
+        for (&self.pipe_handles) |*entry| {
+            const stream_handle = entry.* orelse continue;
+            self.event_loop.closeStream(@intCast(stream_handle));
+            entry.* = null;
+        }
     }
 
     fn stopTimer(self: *Process) void {
@@ -182,7 +196,7 @@ pub const Process = struct {
         const can_free = self.is_released and self.open_handles == 0;
         if (!can_free) return;
         const allocator = self.event_loop.allocator;
-        self.event_loop.processes.items[self.table_index] = null;
+        _ = self.event_loop.processes.remove(@intCast(self.table_index));
         for (&self.outputs) |*output| {
             output.deinit(allocator);
         }
@@ -321,6 +335,10 @@ fn onExit(handle: *uv.Handle, status: i64, signal: c_int) callconv(.c) void {
     self.event_loop.live_processes -= 1;
     uv.uv_close(handle, onHandleClosed);
     self.completeIfReady();
+    const should_release = self.should_release_on_exit and !self.is_released;
+    if (should_release) {
+        self.release();
+    }
 }
 
 fn onTimeout(timer: *uv.Handle) callconv(.c) void {

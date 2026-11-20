@@ -183,6 +183,10 @@ test "process: captured results and interactive streams survive collection" {
     try runProcessCase("process-gc.dsk");
 }
 
+test "process: dropped children and signal streams are released after collection" {
+    try runProcessCase("process-gc-resources.dsk");
+}
+
 test "process: private construction and native access" {
     try runCaseError("sema/process-child-private.dsk", error.CantBuildOutsideModule);
     try runCaseError("sema/process-native-private.dsk", error.NotVisible);
@@ -208,9 +212,7 @@ test "process: failed launches release native records before returning" {
         try testing.expectEqual(@as(i64, @intFromEnum(ProcessError.NotFound)), result.value.int64);
         try testing.expectEqual(@as(usize, 0), vm.event_loop.live_processes);
         try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
-        for (vm.event_loop.processes.items) |entry| {
-            try testing.expect(entry == null);
-        }
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.processes.liveCount());
     }
 }
 

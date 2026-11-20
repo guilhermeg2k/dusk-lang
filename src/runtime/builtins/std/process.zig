@@ -31,6 +31,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_flush", Binding{ .native = &io.streamFlush } },
     .{ "stream_close", Binding{ .native = &io.streamClose } },
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
 });
 
 pub const error_sets = .{ProcessError};

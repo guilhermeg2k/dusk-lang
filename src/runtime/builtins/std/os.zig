@@ -16,6 +16,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "signal_watch", Binding{ .native = &watchSignal } },
     .{ "signal_wait", Binding{ .native = &waitSignal } },
     .{ "signal_close", Binding{ .native = &closeSignal } },
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
 });
 
 pub const error_sets = .{OsError};

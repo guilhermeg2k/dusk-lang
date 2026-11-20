@@ -299,7 +299,9 @@ Only one task can wait for a child at once (`Busy` otherwise). Waiting after clo
 
 A `PipeReader` supports `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`. A `PipeWriter` supports `write(text)`, `write_bytes(buffer)`, `flush()` and `close()`. Both fit the `std/io` reader/writer traits. Pipe operations use `io::IoError` and the same EOF, text/bytes and backpressure rules as other streams.
 
-Closing stdin sends EOF; closing a pipe does not kill the child. Exit does not discard buffered output. Drain piped stdout/stderr concurrently while waiting, or use `run` for automatic collection. `Child.close()` closes remaining pipes and discards unread output. A running owned child keeps execution alive even without an active waiter. Runtime teardown terminates/reaps remaining owned children before releasing process handles.
+Closing stdin sends EOF; closing a pipe does not kill the child. Exit does not discard buffered output. Drain piped stdout/stderr concurrently while waiting, or use `run` for automatic collection. `Child.close()` closes remaining pipes and discards unread output. The program doesn't end while a child it started is still running, even if nothing waits for it: like a task, a child runs to the end. When the program stops on an error instead, the remaining children are killed.
+
+Close children explicitly. A `Child` the program no longer reaches (no variable, field or copy holds it or one of its pipes) is cleaned up after a garbage collection finds it: one that has exited is released, and one still running has its pipes closed, so it sees the end of its input, and is released when it exits.
 
 `ProcessError` contains `InvalidArgument`, `NotFound`, `PermissionDenied`, `InvalidExecutable`, `ResourceLimit`, `TimedOut`, `OutputTooLarge`, `InvalidUtf8`, `Unsupported`, `Other`, `Busy`, `Closed` and `NotPiped`.
 
@@ -420,7 +422,7 @@ Exit status starts at `0` for each execution. `set_exit_code` accepts `0` throug
 
 Subscribe before starting work to receive signals that arrive before `wait()`. Each subscription retains at most one pending notification; repeated arrivals can coalesce. Separate subscriptions each receive a notification. Only one task can wait on a subscription at a time (`Busy` otherwise). Closing wakes a waiting task with `Closed`; waiting after close also fails with `Closed`. A subscription without a waiting task does not keep execution alive; a waiting task does. Open subscriptions are closed when execution ends.
 
-While subscribed, repeated interrupts follow the same notification rule and do not force an exit. Closing the last subscription ends interception of that signal. Signal handling does not cancel tasks or automatically execute application cleanup; the waiting task performs that cleanup explicitly.
+While subscribed, repeated interrupts follow the same notification rule and do not force an exit. Closing the last subscription ends interception of that signal. A `SignalStream` the program no longer reaches is closed after a garbage collection finds it. Signal handling does not cancel tasks or automatically execute application cleanup; the waiting task performs that cleanup explicitly.
 
 ```dusk
 import std/os

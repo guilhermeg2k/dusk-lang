@@ -78,6 +78,18 @@ int main(int argc, char **argv) {
         fputs("eof", stderr);
         return 0;
     }
+    if (strcmp(mode, "drain_file") == 0) {
+        char bytes[4096];
+        while (fread(bytes, 1, sizeof(bytes), stdin) > 0) {
+        }
+        FILE *file = fopen(argv[2], "wb");
+        if (file == NULL) {
+            return 3;
+        }
+        fputs("drained", file);
+        fclose(file);
+        return 0;
+    }
     if (strcmp(mode, "env") == 0) {
         const char *value = getenv(argv[2]);
         if (value == NULL) {
