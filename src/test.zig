@@ -5111,3 +5111,7 @@ test "http request parser: smuggling shapes, unknown methods and malformed heads
         try testing.expectError(error.InvalidRequest, feedRequest(allocator, &.{message}));
     }
 }
+
+test {
+    _ = @import("cli_test.zig");
+}

@@ -23,20 +23,11 @@ After cloning the project you can also direct running it
 
 ## Tests
 
-The suite compiles and runs assertion cases, checks expected diagnostics, and exercises native helpers and task/I/O integration. Run it in both modes:
+The suite compiles and runs assertion cases, checks expected diagnostics, and exercises native helpers and task/I/O integration. It also builds the `dusk` binary and a small helper program, and runs `dusk` as a separate process for what only the command line shows: arguments and exit codes, signals, child processes, and the local time zone under different `TZ` settings. Run it in both modes:
 
 ```sh
 zig build test --summary all
 zig build test -Doptimize=ReleaseFast --summary all
-```
-
-The local-time CLI checks cover explicit configuration, file snapshots, failure/retry, and shutdown in isolated processes:
-
-```sh
-zig build
-python3 test/time_local_cli.py
-zig build -Doptimize=ReleaseFast --prefix .zig-cache/validation-release
-python3 test/time_local_cli.py --dusk .zig-cache/validation-release/bin/dusk
 ```
 
 Run the time example with `./zig-out/bin/dusk examples/time.dsk`. Named-zone examples use bundled rules and do not depend on the host's timezone setting.

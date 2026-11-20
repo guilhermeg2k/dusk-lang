@@ -55,6 +55,7 @@ pub fn build(b: *std.Build) void {
     process_fixture.root_module.addCSourceFile(.{ .file = b.path("test/fixtures/process/child.c"), .flags = &.{"-std=c99"} });
     const fixture_paths = b.addOptions();
     fixture_paths.addOptionPath("process_fixture", process_fixture.getEmittedBin());
+    fixture_paths.addOptionPath("dusk", exe.getEmittedBin());
     tests.root_module.addOptions("test_paths", fixture_paths);
     const install_fixture = b.addInstallArtifact(process_fixture, .{});
     const fixture_step = b.step("process-fixture", "Build the process test helper");
