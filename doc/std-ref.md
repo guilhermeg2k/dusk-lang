@@ -1392,17 +1392,38 @@ end
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024, max_connections = -1, write_timeout_ms = 30000, compress = true, compression_level = 6)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. |
+| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024, max_connections = -1, write_timeout_ms = 30000, compress = true, compression_level = 6, stop_on_signal = true, shutdown_timeout_ms = 10000)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. `stop_on_signal` and `shutdown_timeout_ms` control how the server stops (see Stopping). |
 
 **`Server`**
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `serve(handler)` | `void` | Accepts connections until `close()`, calls `handler` for each request, and returns once every connection is done. |
+| `serve(handler)` | `void` | Accepts connections until `close()` or a stop signal, calls `handler` for each request, and returns once every connection is done (see Stopping). |
 | `port()` | `int` | The port it listens on. |
 | `close()` | `void` | Stops the server (see below). |
 
 `close()` stops accepting and closes the connections that are waiting for their next request; requests already being handled finish, and their responses close the connection. Calling it again does nothing.
+
+**Stopping.** While `serve` runs, Ctrl+C (`os::Signal.Interrupt`) or a stop request (`os::Signal.Terminate`, what a service manager sends before a restart) calls `close()` instead of ending the program. `serve` then waits for the requests being handled, up to `shutdown_timeout_ms` (`-1` waits as long as they take); past that it closes the connections still open and returns. The code after `serve`, and the `defer`s of the function that called it, run as usual. `shutdown_timeout_ms` applies to a `close()` called by the program too.
+
+- A second signal stops the program at once: the server stops listening for signals after the first one, so a stuck program can still be stopped.
+- The program ends when every task is done. A handler still computing past the time limit, or another task the program started, keeps it running; a second signal ends it.
+- `stop_on_signal = false` leaves signals alone: they stop the program right away, unless it listens itself with `os::watch_signal`. A program can also listen itself while `stop_on_signal` is on, since each `SignalStream` gets its own copy of a signal.
+- On Windows only Ctrl+C is handled, since `Terminate` isn't available there.
+
+```nim
+func main() -> !void
+    let server = try http::listen("0.0.0.0", 8080)
+    let log = try fs::open("access.log", fs::Mode.Append)
+    defer log.close()
+    server.serve(func(req: http::Request) -> !http::Response
+        try log.write("${req.method} ${req.path}\n")
+        return http::text("hello")
+    end)
+end
+```
+
+Here Ctrl+C lets the requests in flight finish, then `log.close()` writes what's left in the file's buffer.
 
 **`Request`**
 

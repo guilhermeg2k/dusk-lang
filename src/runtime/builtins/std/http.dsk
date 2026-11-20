@@ -5,6 +5,7 @@ import std/fs
 import std/io
 import std/map
 import std/net
+import std/os
 import std/string
 import std/task
 import std/time
@@ -183,6 +184,8 @@ struct Server
     ~max_connections: int
     ~compress: bool
     ~compression_level: int
+    ~stop_on_signal: bool
+    ~shutdown_timeout_ms: int
 
     func port(self: @) -> int
         return self.listener.port()
@@ -194,6 +197,8 @@ struct Server
     end
 
     func serve[E: error](self: @, handler: func(Request) -> E!Response) -> void
+        let stop_signals = if self.stop_on_signal then watch_stop_signals(self) else [] end
+        let mut open_connections: map[int, bool] = {}
         let mut active = 0
         for true do
             let is_full = self.max_connections > 0 and active >= self.max_connections
@@ -211,15 +216,58 @@ struct Server
                 task::sleep(time::milliseconds(10))
                 continue
             end
+            let handle = conn_handle(conn)
+            open_connections[handle] = true
             active = active + 1
             spawn(func() -> void
                 serve_connection(self, conn, handler)
+                map::remove(open_connections, handle)
                 active = active - 1
             end)
         end
+        let closed_ns = time::monotonic_ns()
         for active > 0 do
+            let waited_ms = (time::monotonic_ns() - closed_ns) // 1000000
+            let has_waited_enough = self.shutdown_timeout_ms >= 0 and waited_ms >= self.shutdown_timeout_ms
+            if has_waited_enough then
+                for open_connections: _, handle do
+                    stream_close(handle)
+                end
+                break
+            end
             task::sleep(time::milliseconds(10))
         end
+        close_all(stop_signals)
+    end
+end
+
+func ~watch_stop_signals(server: Server) -> []os::SignalStream
+    let mut streams: []os::SignalStream = []
+    for [os::Signal.Interrupt, os::Signal.Terminate]: signal do
+        let mut stream = os::watch_signal(signal) catch e then
+            continue
+        end
+        append(streams, stream)
+    end
+    for streams: stream do
+        close_on_signal(server, stream, streams)
+    end
+    return streams
+end
+
+func ~close_on_signal(server: Server, stream: os::SignalStream, streams: []os::SignalStream) -> void
+    spawn(func() -> void
+        stream.wait() catch e then
+            return
+        end
+        close_all(streams)
+        server.close()
+    end)
+end
+
+func ~close_all(streams: []os::SignalStream) -> void
+    for streams: stream do
+        stream.close()
     end
 end
 
@@ -1262,14 +1310,14 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000) -> HttpError!Server
     if compression_level < 0 or compression_level > 9 then
         invalid_compression_level(compression_level)
     end
     let listener = open_listener(host, port, cert, backlog) catch e then
         return from_net(e)
     end
-    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level)
+    return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level, stop_on_signal = stop_on_signal, shutdown_timeout_ms = shutdown_timeout_ms)
 end
 
 func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener

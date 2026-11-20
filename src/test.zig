@@ -1136,6 +1136,56 @@ test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw an
     try runCase("http-server.dsk");
 }
 
+test "http server: stops on SIGTERM / SIGINT, finishes requests, gives up after shutdown_timeout_ms, a second signal stops the program" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try expectStopOnSignal("graceful", &.{.TERM}, .{ .exited = 0 }, &.{ "handling", "client: 200 done", "serve returned", "stopped" });
+    try expectStopOnSignal("timeout", &.{ .INT, .INT }, .{ .signal = .INT }, &.{ "handling", "client: failed", "serve returned", "stopped" });
+    try expectStopOnSignal("off", &.{.TERM}, .{ .signal = .TERM }, &.{"handling"});
+}
+
+fn expectStopOnSignal(mode: []const u8, signals: []const std.posix.SIG, expected_term: std.process.Child.Term, expected_lines: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const parent = try std.process.currentPathAlloc(testing.io, allocator);
+    const dusk = try std.fs.path.resolve(allocator, &.{ parent, @import("test_paths").dusk });
+    var child = try std.process.spawn(testing.io, .{
+        .argv = &.{ dusk, "test/fixtures/http/stop-on-signal.dsk", mode },
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+    defer child.kill(testing.io);
+    const pid = child.id.?;
+    var buffer: [4096]u8 = undefined;
+    var reader = child.stdout.?.reader(testing.io, &buffer);
+    var lines: std.ArrayList([]const u8) = .empty;
+    var next_signal: usize = 0;
+    while (try reader.interface.takeDelimiter('\n')) |line| {
+        try lines.append(allocator, try allocator.dupe(u8, line));
+        if (next_signal == signals.len) continue;
+        const is_first_due = next_signal == 0 and std.mem.eql(u8, line, "handling");
+        const is_next_due = next_signal > 0 and areAllLinesPresent(lines.items, expected_lines);
+        if (!is_first_due and !is_next_due) continue;
+        try std.posix.kill(pid, signals[next_signal]);
+        next_signal += 1;
+    }
+    const term = try child.wait(testing.io);
+    try testing.expectEqual(signals.len, next_signal);
+    try testing.expectEqualDeep(expected_term, term);
+    try testing.expectEqual(expected_lines.len, lines.items.len);
+    try testing.expect(areAllLinesPresent(lines.items, expected_lines));
+}
+
+fn areAllLinesPresent(lines: []const []const u8, expected_lines: []const []const u8) bool {
+    for (expected_lines) |expected| {
+        const is_present = for (lines) |line| {
+            if (std.mem.eql(u8, line, expected)) break true;
+        } else false;
+        if (!is_present) return false;
+    }
+    return true;
+}
+
 test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {
     try runCase("net-tls.dsk");
     try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
