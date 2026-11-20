@@ -21,6 +21,9 @@ pub const JsonError = enum {
 };
 
 var scratch: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
+var encoded: std.ArrayList(u8) = .empty;
+
+const kept_output_capacity = 1 << 20;
 
 fn releaseScratch() void {
     _ = scratch.reset(.{ .retain_with_limit = 1 << 20 });
@@ -30,20 +33,21 @@ pub fn encode(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
     defer releaseScratch();
     const allocator = scratch.allocator();
     const max_depth = encodeDepth(args[1]) orelse return native.fail(JsonError.InvalidOptions);
-    var output: std.Io.Writer.Allocating = .init(allocator);
-    var encoder = Encoder{
-        .vm = vm,
-        .allocator = allocator,
-        .writer = .{ .writer = &output.writer, .options = .{} },
-        .max_depth = max_depth,
-    };
+    encoded.clearRetainingCapacity();
+    defer releaseEncodedOutput();
+    var encoder = Encoder{ .vm = vm, .allocator = allocator, .max_depth = max_depth };
     if (args.len > 3) {
         try encoder.levels.append(allocator, .{ .list = arrayOf(args[3]) });
     }
     encoder.visit(.write, @intCast(args[2].int64), args[0], 0) catch |failure| {
         return encodeFailure(failure);
     };
-    return native.ok(try vm.allocBytesValue(output.written(), .string));
+    return native.ok(try vm.allocBytesValue(encoded.items, .string));
+}
+
+fn releaseEncodedOutput() void {
+    if (encoded.capacity <= kept_output_capacity) return;
+    encoded.clearAndFree(std.heap.c_allocator);
 }
 
 pub fn collectSites(vm: *VM, args: []v.Value) anyerror!native.NativeResult {
@@ -120,7 +124,6 @@ const FoundSite = struct {
 const Encoder = struct {
     vm: *VM,
     allocator: std.mem.Allocator,
-    writer: std.json.Stringify = undefined,
     max_depth: usize,
     ancestors: std.ArrayList(*v.HeapValue) = .empty,
     levels: std.ArrayList(Level) = .empty,
@@ -131,7 +134,7 @@ const Encoder = struct {
         if (plan.shape == .nullable) {
             if (@as(u64, @bitCast(value)) == 0) {
                 if (mode == .write) {
-                    try self.writer.write(null);
+                    try writeAll("null");
                 }
                 return;
             }
@@ -161,20 +164,22 @@ const Encoder = struct {
         switch (plan.shape) {
             .int, .byte, .float, .boolean, .string, .enumeration => {
                 if (mode == .collect) return;
-                try self.writeScalar(plan.shape, value);
+                try writeScalar(plan.shape, value);
             },
             .structure => |structure| {
                 const object = v.HeapValue.getParentPtr(v.Struct, value.heap_obj);
                 if (mode == .write) {
-                    try self.writer.beginObject();
+                    try writeByte('{');
                 }
+                var is_first = true;
                 for (structure.fields) |field| {
                     const item = object.get(field.slot);
                     const is_omitted = field.omits_null and @as(u64, @bitCast(item)) == 0;
                     if (is_omitted) continue;
                     if (mode == .write) {
-                        try self.writer.objectField(field.name);
+                        try writeKey(field.name, is_first);
                     }
+                    is_first = false;
                     if (field.proxy) |site| {
                         try self.visitSite(mode, site, item, self.planKind(field.plan), depth);
                         continue;
@@ -182,15 +187,18 @@ const Encoder = struct {
                     try self.visit(mode, field.plan, item, depth + 1);
                 }
                 if (mode == .write) {
-                    try self.writer.endObject();
+                    try writeByte('}');
                 }
             },
             .array => |items| {
                 const array = arrayOf(value);
                 if (mode == .write) {
-                    try self.writer.beginArray();
+                    try writeByte('[');
                 }
-                for (array.getDataPtr()[0..array.len]) |item| {
+                for (array.getDataPtr()[0..array.len], 0..) |item, index| {
+                    if (mode == .write and index > 0) {
+                        try writeByte(',');
+                    }
                     if (items.proxy) |site| {
                         try self.visitSite(mode, site, item, self.planKind(items.item), depth);
                         continue;
@@ -198,15 +206,16 @@ const Encoder = struct {
                     try self.visit(mode, items.item, item, depth + 1);
                 }
                 if (mode == .write) {
-                    try self.writer.endArray();
+                    try writeByte(']');
                 }
             },
             .map => |items| {
                 const map = v.HeapValue.getParentPtr(v.Map, value.heap_obj);
                 if (mode == .write) {
-                    try self.writer.beginObject();
+                    try writeByte('{');
                 }
                 if (map.getStorage()) |storage| {
+                    var is_first = true;
                     for (storage.entries()[0..storage.len]) |entry| {
                         if (entry.isRemoved()) continue;
                         if (mode == .write) {
@@ -214,8 +223,9 @@ const Encoder = struct {
                             if (!std.unicode.utf8ValidateSlice(key)) {
                                 return error.InvalidJson;
                             }
-                            try self.writer.objectField(key);
+                            try writeKey(key, is_first);
                         }
+                        is_first = false;
                         if (items.proxy) |site| {
                             try self.visitSite(mode, site, entry.value, self.planKind(items.item), depth);
                             continue;
@@ -224,7 +234,7 @@ const Encoder = struct {
                     }
                 }
                 if (mode == .write) {
-                    try self.writer.endObject();
+                    try writeByte('}');
                 }
             },
             .tagged_union => |tagged| {
@@ -235,8 +245,8 @@ const Encoder = struct {
                     }
                 } else return error.InvalidUnion;
                 if (mode == .write) {
-                    try self.writer.beginObject();
-                    try self.writer.objectField(variant.name);
+                    try writeByte('{');
+                    try writeKey(variant.name, true);
                 }
                 if (variant.proxy) |site| {
                     try self.visitSite(mode, site, object.get(variant.tag), self.planKind(variant.plan), depth);
@@ -244,40 +254,11 @@ const Encoder = struct {
                     try self.visit(mode, variant.plan, object.get(variant.tag), depth + 1);
                 }
                 if (mode == .write) {
-                    try self.writer.endObject();
+                    try writeByte('}');
                 }
             },
             .proxy => |site| try self.visitSite(mode, site, value, plan.kind, depth),
             .nullable => unreachable,
-        }
-    }
-
-    fn writeScalar(self: *Encoder, shape: serialization_plan.Shape, value: v.Value) !void {
-        switch (shape) {
-            .int, .byte => try self.writer.write(value.int64),
-            .float => {
-                if (!std.math.isFinite(value.float64)) {
-                    return error.NonFiniteNumber;
-                }
-                try self.writer.write(value.float64);
-            },
-            .boolean => try self.writer.write(value.bool),
-            .string => {
-                const text = bytes(value);
-                if (!std.unicode.utf8ValidateSlice(text)) {
-                    return error.InvalidJson;
-                }
-                try self.writer.write(text);
-            },
-            .enumeration => |variants| {
-                for (variants) |variant| {
-                    if (variant.value != value.int64) continue;
-                    try self.writer.write(variant.name);
-                    return;
-                }
-                return error.UnknownVariant;
-            },
-            else => unreachable,
         }
     }
 
@@ -289,7 +270,7 @@ const Encoder = struct {
         const is_null = site.is_nullable_target and @as(u64, @bitCast(value)) == 0;
         if (is_null) {
             if (mode == .write) {
-                try self.writer.write(null);
+                try writeAll("null");
             }
             return;
         }
@@ -327,6 +308,130 @@ const Encoder = struct {
         }
     }
 };
+
+fn writeScalar(shape: serialization_plan.Shape, value: v.Value) !void {
+    switch (shape) {
+        .int, .byte => try writeInt(value.int64),
+        .float => {
+            if (!std.math.isFinite(value.float64)) {
+                return error.NonFiniteNumber;
+            }
+            try writeFloat(value.float64);
+        },
+        .boolean => try writeAll(if (value.bool) "true" else "false"),
+        .string => {
+            const text = bytes(value);
+            if (!std.unicode.utf8ValidateSlice(text)) {
+                return error.InvalidJson;
+            }
+            try writeString(text);
+        },
+        .enumeration => |variants| {
+            for (variants) |variant| {
+                if (variant.value != value.int64) continue;
+                try writeString(variant.name);
+                return;
+            }
+            return error.UnknownVariant;
+        },
+        else => unreachable,
+    }
+}
+
+fn writeKey(name: []const u8, is_first: bool) !void {
+    try encoded.ensureUnusedCapacity(std.heap.c_allocator, longestEscapedSize(name.len) + 2);
+    if (!is_first) {
+        encoded.appendAssumeCapacity(',');
+    }
+    appendStringAssumeCapacity(name);
+    encoded.appendAssumeCapacity(':');
+}
+
+inline fn writeByte(byte: u8) !void {
+    if (encoded.items.len < encoded.capacity) {
+        encoded.appendAssumeCapacity(byte);
+        return;
+    }
+    try encoded.append(std.heap.c_allocator, byte);
+}
+
+fn writeAll(text: []const u8) !void {
+    try encoded.appendSlice(std.heap.c_allocator, text);
+}
+
+fn writeInt(number: i64) !void {
+    var digits: [20]u8 = undefined;
+    var position: usize = digits.len;
+    var magnitude: u64 = @abs(number);
+    while (true) {
+        position -= 1;
+        digits[position] = @intCast('0' + magnitude % 10);
+        magnitude /= 10;
+        if (magnitude == 0) break;
+    }
+    try encoded.ensureUnusedCapacity(std.heap.c_allocator, digits.len - position + 1);
+    if (number < 0) {
+        encoded.appendAssumeCapacity('-');
+    }
+    for (digits[position..]) |digit| {
+        encoded.appendAssumeCapacity(digit);
+    }
+}
+
+fn writeFloat(number: f64) !void {
+    var text: [std.fmt.float.bufferSize(.decimal, f64) + 1]u8 = undefined;
+    try writeAll(std.fmt.bufPrint(&text, "{}", .{number}) catch unreachable);
+}
+
+fn writeString(text: []const u8) !void {
+    try encoded.ensureUnusedCapacity(std.heap.c_allocator, longestEscapedSize(text.len));
+    appendStringAssumeCapacity(text);
+}
+
+fn longestEscapedSize(length: usize) usize {
+    return length * 6 + 2;
+}
+
+fn appendStringAssumeCapacity(text: []const u8) void {
+    const out = encoded.unusedCapacitySlice();
+    out[0] = '"';
+    var written: usize = 1;
+    for (text) |char| {
+        if (!needsEscape(char)) {
+            out[written] = char;
+            written += 1;
+            continue;
+        }
+        written += writeEscapeInto(out[written..], char);
+    }
+    out[written] = '"';
+    encoded.items.len += written + 1;
+}
+
+fn needsEscape(char: u8) bool {
+    return char < 0x20 or char == '"' or char == '\\';
+}
+
+fn writeEscapeInto(out: []u8, char: u8) usize {
+    const short: ?u8 = switch (char) {
+        '\\' => '\\',
+        '"' => '"',
+        0x08 => 'b',
+        0x0C => 'f',
+        '\n' => 'n',
+        '\r' => 'r',
+        '\t' => 't',
+        else => null,
+    };
+    out[0] = '\\';
+    if (short) |letter| {
+        out[1] = letter;
+        return 2;
+    }
+    const hex = "0123456789abcdef";
+    @memcpy(out[1..6], &[_]u8{ 'u', '0', '0', hex[char >> 4], hex[char & 0xF] });
+    return 6;
+}
 
 fn bytes(value: v.Value) []const u8 {
     return v.HeapValue.getParentPtr(v.Bytes, value.heap_obj).slice();

@@ -1,0 +1,18 @@
+import std/json
+import std/string
+
+func main() -> !void
+    let largest = 179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0
+    let smallest = 1.0 / largest / 4503599627370496.0
+    let values = [largest, -largest, smallest, -smallest, 0.1, -0.0, 1000000000000000000000.0]
+    let text = try json::encode(values)
+    assert(string::starts_with(text, "[17976931348623160000"))
+    assert(string::contains(text, ",-0.000000000000000000000"))
+    let back = try json::decode[[]float](text)
+    assert(back[0] == largest and back[1] == -largest)
+    assert(back[2] == smallest and back[3] == -smallest)
+    assert(back[4] == 0.1 and back[5] == 0.0 and back[6] == 1000000000000000000000.0)
+    let ints = [0, -1, 9223372036854775807, -9223372036854775807 - 1]
+    assert((try json::encode(ints)) == "[0,-1,9223372036854775807,-9223372036854775808]")
+    assert((try json::encode("a\"b\\c\u{1}\u{1f}\n\t\u{8}\u{c}\r/é")) == "\"a\\\"b\\\\c\\u0001\\u001f\\n\\t\\b\\f\\r/é\"")
+end
