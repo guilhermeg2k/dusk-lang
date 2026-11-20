@@ -25,6 +25,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
     .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
     .{ "base64", Binding{ .native = &base64 } },
+    .{ "encoded_url", Binding{ .native = &encodedUrl } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_set_write_timeout", Binding{ .native = &io.streamSetWriteTimeout } },
@@ -412,6 +413,52 @@ fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
     defer std.heap.smp_allocator.free(encoded);
     _ = encoder.encode(encoded, text);
     return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn encodedUrl(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const rest_start = urlPathStart(text);
+    var extra: usize = 0;
+    for (text[rest_start..]) |byte| {
+        if (needsUrlEscape(byte)) {
+            extra += 2;
+        }
+    }
+    if (extra == 0) {
+        return ok(args[0]);
+    }
+    const allocator = std.heap.smp_allocator;
+    const encoded = try allocator.alloc(u8, text.len + extra);
+    defer allocator.free(encoded);
+    @memcpy(encoded[0..rest_start], text[0..rest_start]);
+    var at = rest_start;
+    for (text[rest_start..]) |byte| {
+        if (!needsUrlEscape(byte)) {
+            encoded[at] = byte;
+            at += 1;
+            continue;
+        }
+        const digits = "0123456789ABCDEF";
+        encoded[at] = '%';
+        encoded[at + 1] = digits[byte >> 4];
+        encoded[at + 2] = digits[byte & 0x0f];
+        at += 3;
+    }
+    return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn urlPathStart(text: []const u8) usize {
+    const scheme_end = std.mem.indexOf(u8, text, "://") orelse return 0;
+    const authority_start = scheme_end + 3;
+    const authority_end = std.mem.indexOfAnyPos(u8, text, authority_start, "/?#") orelse return text.len;
+    return authority_end;
+}
+
+fn needsUrlEscape(byte: u8) bool {
+    if (byte <= 0x20 or byte >= 0x7f) {
+        return true;
+    }
+    return std.mem.indexOfScalar(u8, "\"<>\\^`{|}", byte) != null;
 }
 
 fn invalidCompressionLevel(_: *VM, args: []v.Value) anyerror!NativeResult {

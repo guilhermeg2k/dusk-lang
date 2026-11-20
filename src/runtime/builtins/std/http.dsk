@@ -427,6 +427,7 @@ extern func ~is_header_value(text: string) -> bool
 extern func ~body_given_twice() -> void
 extern func ~stream_start_tunneled_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~base64(text: string) -> string
+extern func ~encoded_url(text: string) -> string
 extern func ~invalid_compression_level(level: int) -> void
 
 let ~USER_AGENT = "dusk/0.16"
@@ -458,6 +459,11 @@ end
 
 struct ~Proxy
     url: url::Url
+    authorization: ?string
+end
+
+struct ~UserInfoSplit
+    url: string
     authorization: ?string
 end
 
@@ -511,36 +517,37 @@ func ~proxy_of(text: ?string) -> HttpError!?Proxy
     if address == "" then
         return null
     end
-    let scheme_end = string::find(address, "://") orelse -1
-    if scheme_end <= 0 then
-        return HttpError.InvalidUrl
-    end
-    let authority_start = scheme_end + 3
-    let authority_end = authority_end_of(address, authority_start)
-    let authority = string::slice(address, authority_start, authority_end) catch ""
-    let at = string::find_reverse(authority, "@") orelse -1
-    let mut authorization: ?string = null
-    let mut cleaned = address
-    if at >= 0 then
-        let user_info = string::slice(authority, 0, at) catch ""
-        let parts = string::split(user_info, ":", limit = 2)
-        let user = url::decode(parts[0]) catch e then
-            return HttpError.InvalidUrl
-        end
-        let password = if len(parts) > 1 then url::decode(parts[1]) catch "" else "" end
-        authorization = "Basic ${base64("$user:$password")}"
-        let scheme = string::slice(address, 0, authority_start) catch ""
-        let rest = string::slice(address, authority_start + at + 1, string::len(address)) catch ""
-        cleaned = "$scheme$rest"
-    end
-    let parsed = url::parse(cleaned) catch e then
+    let split = try without_user_info(address)
+    let parsed = url::parse(split.url) catch e then
         return HttpError.InvalidUrl
     end
     let is_supported = parsed.scheme == "http" or parsed.scheme == "https"
     if !is_supported then
         return HttpError.UnsupportedScheme
     end
-    return Proxy(url = parsed, authorization = authorization)
+    return Proxy(url = parsed, authorization = split.authorization)
+end
+
+func ~without_user_info(address: string) -> HttpError!UserInfoSplit
+    let scheme_end = string::find(address, "://") orelse -1
+    if scheme_end <= 0 then
+        return HttpError.InvalidUrl
+    end
+    let authority_start = scheme_end + 3
+    let authority = string::slice(address, authority_start, authority_end_of(address, authority_start)) catch ""
+    let at = string::find_reverse(authority, "@") orelse -1
+    if at < 0 then
+        return UserInfoSplit(url = address, authorization = null)
+    end
+    let user_info = string::slice(authority, 0, at) catch ""
+    let parts = string::split(user_info, ":", limit = 2)
+    let user = url::decode(parts[0]) catch e then
+        return HttpError.InvalidUrl
+    end
+    let password = if len(parts) > 1 then url::decode(parts[1]) catch "" else "" end
+    let scheme = string::slice(address, 0, authority_start) catch ""
+    let rest = string::slice(address, authority_start + at + 1, string::len(address)) catch ""
+    return UserInfoSplit(url = "$scheme$rest", authorization = "Basic ${base64("$user:$password")}")
 end
 
 func ~authority_end_of(address: string, start: int) -> int
@@ -623,12 +630,24 @@ func ~start(url: string, query: map[string, string], exchange: Exchange, max_red
     if exchange.body != null and exchange.body_bytes != null then
         body_given_twice()
     end
-    let target = try parse_target(url, query)
+    let split = try without_user_info(url)
+    let target = try parse_target(encoded_url(split.url), query)
     if !is_method(exchange.method) then
         return HttpError.InvalidMethod
     end
     try check_headers(exchange.headers)
+    if split.authorization: credentials then
+        if !has_header_name(exchange.headers, "authorization") then
+            return try follow(target, with_authorization(exchange, credentials), max_redirects)
+        end
+    end
     return try follow(target, exchange, max_redirects)
+end
+
+func ~with_authorization(exchange: Exchange, credentials: string) -> Exchange
+    let mut headers = copy(exchange.headers)
+    headers["Authorization"] = credentials
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy)
 end
 
 func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Opened
