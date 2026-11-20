@@ -2011,10 +2011,26 @@ for lines: line do
     try out.write_bytes(try compressor.write_bytes(buffer::from_string(line)))
 end
 try out.write_bytes(try compressor.finish())
-try out.close()
+out.close()
 ```
 
 A level outside `0..9` fails with `InvalidLevel` on the first call. Once `finish()` or `close()` ran, every call fails with `Finished`. `flush()` costs a few bytes of output each time, so call it when the other side needs what was sent (a message, an event), not after every write. A `Decompressor` follows the same rules as `decompress`: a gzip stream may hold several members, other bytes after the end fail with `InvalidData`, and `max` counts all its output across calls. After a failure, `close()` the stream. A stream that's neither finished nor closed keeps its memory (about 300 KB for a compressor) until the program ends.
+
+**Wrapping readers and writers.** `compression::writer(inner, format, level = 6)` returns a `compression::Writer` that compresses what's written to it into `inner`, any [`io::Writer`](#stdio) (a file, a connection, your own struct), and `compression::reader(inner, format, max = -1)` returns a `compression::Reader` that decompresses what it reads from `inner`, any `io::Reader`. Both fit the same traits, so they work with `io::copy` and anywhere else a reader or writer goes. They fail with `InvalidLevel` right away for a bad level.
+
+```nim
+let mut file = try fs::open("data.json.gz", fs::Mode.Write)
+let mut gz = try compression::writer(file, compression::Format.Gzip)
+try gz.write(json_text)
+try gz.finish()
+file.close()
+
+let mut source = try fs::open("data.json.gz")
+let mut plain = try compression::reader(source, compression::Format.Gzip, max = 100000000)
+let copied = try io::copy(plain, io::stdout())
+```
+
+A `Writer` has `write`, `write_bytes`, `flush` (also flushes `inner`) and `finish`, which ends the compressed stream and must be called last; it doesn't close `inner`. A `Reader` has `read_bytes(max, timeout_ms = -1)`, returning `null` after the end of the compressed stream, and `close()`. Errors are `io::IoError`: input that ends before the compressed stream does is `UnexpectedEnd`, bad data or going past `max` is `Other`, and writing after `finish` is `Closed`. `timeout_ms` applies to each read from `inner`.
 
 The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Finished`, `Other`). It uses a bundled zlib-ng.
 

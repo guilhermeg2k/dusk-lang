@@ -327,6 +327,10 @@ test "compression: streamed Compressor and Decompressor (pieces of any size, flu
     try runCase("compression-stream.dsk");
 }
 
+test "compression: writer and reader wrap any io::Writer and io::Reader (files, io::copy, flush, cut-short and bad input, max, Closed after finish)" {
+    try runCaseInTmpDir("compression-io.dsk");
+}
+
 test "compression: the stream table reuses slots and rejects stale handles" {
     const compression = @import("runtime/compression.zig");
     const allocator = testing.allocator;
