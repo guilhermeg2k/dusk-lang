@@ -8,13 +8,6 @@ func put_error(mut data: buffer, at: int, text: string) -> ?buffer::BufferError
     return null
 end
 
-func put_int_error(mut data: buffer, at: int, number: int) -> ?buffer::BufferError
-    let next = buffer::put_int(data, at, number) catch e then
-        return e
-    end
-    return null
-end
-
 func slice_error(data: buffer, start: int, stop: int) -> ?buffer::BufferError
     let part = buffer::slice(data, start, stop) catch e then
         return e
@@ -25,11 +18,11 @@ end
 func main() -> !void
     let mut frame = try buffer::new(32)
     let mut at = try buffer::put(frame, 0, "x=")
-    at = try buffer::put_int(frame, at, -42)
+    at = try buffer::put(frame, at, "${-42}")
     at = try buffer::put(frame, at, " olá")
     assert(at == 10)
     assert((try string::from_bytes(try buffer::slice(frame, 0, at))) == "x=-42 olá")
-    at = try buffer::put_int(frame, at, 0)
+    at = try buffer::put(frame, at, "${0}")
     assert(at == 11 and frame[10] == '0')
 
     let mut tail = try buffer::new(2)
@@ -44,9 +37,9 @@ func main() -> !void
     assert(put_error(frame, -1, "a") == buffer::BufferError.OutOfRange)
     assert(put_error(frame, 33, "") == buffer::BufferError.OutOfRange)
     assert((try buffer::put(frame, 32, "")) == 32)
-    assert(put_int_error(frame, 25, -9223372036854775807 - 1) == buffer::BufferError.OutOfRange)
+    assert(put_error(frame, 25, "${-9223372036854775807 - 1}") == buffer::BufferError.OutOfRange)
     assert(frame[25] == 0)
-    assert((try buffer::put_int(frame, 12, -9223372036854775807 - 1)) == 32)
+    assert((try buffer::put(frame, 12, "${-9223372036854775807 - 1}")) == 32)
     assert((try string::from_bytes(try buffer::slice(frame, 12, 32))) == "-9223372036854775808")
 
     assert(slice_error(frame, 5, 2) == buffer::BufferError.OutOfRange)
@@ -59,7 +52,7 @@ func main() -> !void
     for 0..1999: i do
         let label = try string::repeat("y", 40)
         let mut stop = try buffer::put(scratch, 0, label)
-        stop = try buffer::put_int(scratch, stop, i)
+        stop = try buffer::put(scratch, stop, "$i")
         let mut part = try buffer::slice(scratch, 0, stop)
         if i % 500 == 0 then
             parts = [part]

@@ -82,7 +82,7 @@ func main() -> !void
 
     let mut frame = try buffer::new(64)
     let mut used = try buffer::put(frame, 0, "frame ")
-    used = try buffer::put_int(frame, used, 7)
+    used = try buffer::put(frame, used, "${7}")
     let framed = try fs::open("DIR/frame.txt", fs::Mode.Write)
     try framed.write_bytes(try buffer::slice(frame, 0, used))
     framed.close()
