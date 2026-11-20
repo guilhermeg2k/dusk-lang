@@ -1992,7 +1992,31 @@ let text = try string::from_bytes(try compression::decompress(try fs::read_bytes
 
 `decompress` checks the data's checksum and fails with `InvalidData` for corrupted or cut-short data, data in another format, or bytes left after the end. A gzip file made of several members back to back (as `cat a.gz b.gz` makes) decodes to their contents joined. Pass `max` whenever the data comes from outside: a few kilobytes of compressed data can expand to gigabytes.
 
-The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Other`). It uses a bundled zlib-ng.
+**Streams.** For data that arrives or leaves in pieces (a file read in chunks, a response sent as it's produced), `compression::Compressor(format, level = 6)` and `compression::Decompressor(format, max = -1)` take bytes in and give bytes out, keeping their state between calls. They do no I/O themselves, so their output can go anywhere: a file, a connection, a buffer.
+
+| Method                          | Returns                    | Description                                                                                       |
+| :------------------------------ | :------------------------- | :------------------------------------------------------------------------------------------------ |
+| `Compressor.write_bytes(data)`  | `CompressionError!buffer`  | Compresses more input; returns the compressed bytes ready so far, often none for small inputs.   |
+| `Compressor.flush()`            | `CompressionError!buffer`  | Returns everything still held back, so what was sent so far can be decompressed on the other side. |
+| `Compressor.finish()`           | `CompressionError!buffer`  | Ends the stream (the rest plus the format's trailer).                                             |
+| `Decompressor.write_bytes(data)`| `CompressionError!buffer`  | Decompresses more input; returns the bytes ready so far.                                          |
+| `Decompressor.finish()`         | `CompressionError!void`    | Ends the stream; fails with `InvalidData` if it was cut short.                                    |
+| `Decompressor.is_done()`        | `bool`                     | Whether the input seen so far is a whole stream.                                                  |
+| `close()` (both)                | `void`                     | Drops a stream without finishing it.                                                              |
+
+```nim
+let mut compressor = compression::Compressor(compression::Format.Gzip, level = 1)
+let mut out = try fs::open("log.gz", fs::Mode.Write)
+for lines: line do
+    try out.write_bytes(try compressor.write_bytes(buffer::from_string(line)))
+end
+try out.write_bytes(try compressor.finish())
+try out.close()
+```
+
+A level outside `0..9` fails with `InvalidLevel` on the first call. Once `finish()` or `close()` ran, every call fails with `Finished`. `flush()` costs a few bytes of output each time, so call it when the other side needs what was sent (a message, an event), not after every write. A `Decompressor` follows the same rules as `decompress`: a gzip stream may hold several members, other bytes after the end fail with `InvalidData`, and `max` counts all its output across calls. After a failure, `close()` the stream. A stream that's neither finished nor closed keeps its memory (about 300 KB for a compressor) until the program ends.
+
+The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Finished`, `Other`). It uses a bundled zlib-ng.
 
 ### std/time
 

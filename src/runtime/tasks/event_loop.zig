@@ -8,6 +8,7 @@ const Stream = @import("stream.zig").Stream;
 const Listener = @import("tcp.zig").Listener;
 const OpenRequest = @import("tcp.zig").OpenRequest;
 const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
+const CompressionStreams = @import("../compression.zig").StreamTable;
 const TrustStore = @import("trust_store.zig").TrustStore;
 const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
 const ServerState = @import("http_server.zig").ServerState;
@@ -30,6 +31,7 @@ pub const EventLoop = struct {
     trust_store: TrustStore = .{},
     connection_pool: ConnectionPool = .{},
     http_servers: std.ArrayList(ServerState) = .empty,
+    compression_streams: CompressionStreams = .{},
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -47,6 +49,7 @@ pub const EventLoop = struct {
         defer self.freeCertificates();
         defer self.connection_pool.deinit(self.allocator);
         defer self.freeHttpServers();
+        defer self.compression_streams.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);

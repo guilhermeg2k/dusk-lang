@@ -323,6 +323,33 @@ test "compression: compress and decompress gzip, zlib and raw deflate (levels, f
     try runCase("compression.dsk");
 }
 
+test "compression: streamed Compressor and Decompressor (pieces of any size, flush, finish, gzip members, Finished, bad data, max across writes, slot reuse, many live streams)" {
+    try runCase("compression-stream.dsk");
+}
+
+test "compression: the stream table reuses slots and rejects stale handles" {
+    const compression = @import("runtime/compression.zig");
+    const allocator = testing.allocator;
+    var table: compression.StreamTable = .{};
+    defer table.deinit(allocator);
+    const first = try table.add(allocator, compression.dusk_zip_compressor_new(.gzip, 6).?, .gzip, null);
+    const second = try table.add(allocator, compression.dusk_zip_decompressor_new(.zlib).?, .zlib, 10);
+    try testing.expect(first != second);
+    try testing.expect(table.find(first) != null);
+    try testing.expectEqual(@as(?usize, 10), table.find(second).?.max);
+    table.remove(first);
+    try testing.expect(table.find(first) == null);
+    table.remove(first);
+    const third = try table.add(allocator, compression.dusk_zip_compressor_new(.deflate, 1).?, .deflate, null);
+    try testing.expectEqual(first & 0xffff_ffff, third & 0xffff_ffff);
+    try testing.expect(third != first);
+    try testing.expect(table.find(first) == null);
+    try testing.expectEqual(compression.Format.deflate, table.find(third).?.format);
+    try testing.expect(table.find(-1) == null);
+    try testing.expect(table.find(12345) == null);
+    try testing.expectEqual(@as(usize, 2), table.slots.items.len);
+}
+
 test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_query" {
     try runCase("url.dsk");
 }

@@ -89,3 +89,151 @@ pub fn decompressAll(allocator: std.mem.Allocator, format: Format, input: []cons
         }
     }
 }
+
+pub const StreamError = error{ Finished, InvalidData, TooLarge, OutOfMemory };
+
+const first_part_capacity = 16 * 1024;
+
+pub const StreamTable = struct {
+    slots: std.ArrayList(Slot) = .empty,
+    free_indexes: std.ArrayList(u32) = .empty,
+
+    pub const Slot = struct {
+        zip: ?*Zip = null,
+        generation: u32 = 1,
+        format: Format = .gzip,
+        max: ?usize = null,
+        produced: usize = 0,
+        is_at_end: bool = false,
+    };
+
+    pub fn deinit(self: *StreamTable, allocator: std.mem.Allocator) void {
+        for (self.slots.items) |slot| {
+            dusk_zip_free(slot.zip);
+        }
+        self.slots.deinit(allocator);
+        self.free_indexes.deinit(allocator);
+    }
+
+    pub fn add(self: *StreamTable, allocator: std.mem.Allocator, zip: *Zip, format: Format, max: ?usize) !i64 {
+        try self.free_indexes.ensureTotalCapacity(allocator, self.slots.items.len + 1);
+        const index = self.free_indexes.pop() orelse blk: {
+            try self.slots.append(allocator, .{});
+            break :blk @as(u32, @intCast(self.slots.items.len - 1));
+        };
+        const slot = &self.slots.items[index];
+        slot.* = .{ .zip = zip, .generation = slot.generation, .format = format, .max = max };
+        return handleOf(index, slot.generation);
+    }
+
+    pub fn find(self: *StreamTable, handle: i64) ?*Slot {
+        if (handle < 0) {
+            return null;
+        }
+        const index: usize = @intCast(handle & 0xffff_ffff);
+        if (index >= self.slots.items.len) {
+            return null;
+        }
+        const slot = &self.slots.items[index];
+        const is_current = slot.zip != null and handleOf(@intCast(index), slot.generation) == handle;
+        return if (is_current) slot else null;
+    }
+
+    pub fn remove(self: *StreamTable, handle: i64) void {
+        const slot = self.find(handle) orelse return;
+        dusk_zip_free(slot.zip);
+        slot.zip = null;
+        slot.generation +%= 1;
+        if (slot.generation == 0) {
+            slot.generation = 1;
+        }
+        const index: u32 = @intCast(handle & 0xffff_ffff);
+        self.free_indexes.appendAssumeCapacity(index);
+    }
+
+    fn handleOf(index: u32, generation: u32) i64 {
+        return @intCast((@as(u64, generation & 0x7fff_ffff) << 32) | index);
+    }
+};
+
+pub fn compressPart(allocator: std.mem.Allocator, zip: *Zip, input: []const u8, mode: FlushMode) StreamError![]u8 {
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    var rest = input;
+    while (true) {
+        try output.ensureUnusedCapacity(allocator, @max(first_part_capacity, rest.len / 2));
+        const room = output.unusedCapacitySlice();
+        var consumed: usize = 0;
+        var produced: usize = 0;
+        const status = dusk_zip_compress(zip, rest.ptr, rest.len, room.ptr, room.len, mode, &consumed, &produced);
+        output.items.len += produced;
+        rest = rest[consumed..];
+        switch (status) {
+            .done => return output.toOwnedSlice(allocator),
+            .ok => {
+                const is_complete = rest.len == 0 and produced < room.len;
+                if (is_complete) {
+                    return output.toOwnedSlice(allocator);
+                }
+            },
+            .out_of_memory => return error.OutOfMemory,
+            else => return error.InvalidData,
+        }
+    }
+}
+
+pub fn decompressPart(allocator: std.mem.Allocator, slot: *StreamTable.Slot, input: []const u8) StreamError![]u8 {
+    const zip = slot.zip orelse return error.Finished;
+    var output: std.ArrayList(u8) = .empty;
+    errdefer output.deinit(allocator);
+    if (input.len == 0) {
+        return output.toOwnedSlice(allocator);
+    }
+    if (slot.is_at_end) {
+        if (slot.format != .gzip or dusk_zip_restart(zip) != .ok) {
+            return error.InvalidData;
+        }
+        slot.is_at_end = false;
+    }
+    const limit = if (slot.max) |max| (max -| slot.produced) +| 1 else std.math.maxInt(usize);
+    try output.ensureTotalCapacity(allocator, @min(@max(input.len *| 4, first_part_capacity), limit));
+    var rest = input;
+    while (true) {
+        if (output.items.len == output.capacity) {
+            try output.ensureTotalCapacity(allocator, @min(output.capacity *| 2, limit));
+        }
+        const room = output.unusedCapacitySlice();
+        var consumed: usize = 0;
+        var produced: usize = 0;
+        const status = dusk_zip_decompress(zip, rest.ptr, rest.len, room.ptr, room.len, &consumed, &produced);
+        output.items.len += produced;
+        rest = rest[consumed..];
+        if (output.items.len >= limit) {
+            return error.TooLarge;
+        }
+        switch (status) {
+            .done => {
+                if (rest.len == 0) {
+                    slot.is_at_end = true;
+                    break;
+                }
+                if (slot.format != .gzip or dusk_zip_restart(zip) != .ok) {
+                    return error.InvalidData;
+                }
+            },
+            .ok => {
+                const needs_more_input = rest.len == 0 and produced < room.len;
+                if (needs_more_input) {
+                    break;
+                }
+                if (consumed == 0 and produced == 0) {
+                    return error.InvalidData;
+                }
+            },
+            .out_of_memory => return error.OutOfMemory,
+            else => return error.InvalidData,
+        }
+    }
+    slot.produced += output.items.len;
+    return output.toOwnedSlice(allocator);
+}
