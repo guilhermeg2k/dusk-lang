@@ -54,6 +54,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "is_header_name", Binding{ .native = &isHeaderName } },
     .{ "is_header_value", Binding{ .native = &isHeaderValue } },
     .{ "body_given_twice", Binding{ .native = &bodyGivenTwice } },
+    .{ "invalid_compression_level", Binding{ .native = &invalidCompressionLevel } },
 });
 
 fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -400,4 +401,8 @@ fn isHeaderValue(_: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn bodyGivenTwice(_: *VM, _: []v.Value) anyerror!NativeResult {
     return RuntimeErrorReporter.httpBodyGivenTwice();
+}
+
+fn invalidCompressionLevel(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return RuntimeErrorReporter.httpInvalidCompressionLevel(args[0].int64);
 }

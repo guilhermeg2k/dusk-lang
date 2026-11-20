@@ -23,6 +23,7 @@ pub const RuntimeError = error{
     ClockOutOfRange,
     TlsAlreadyStarted,
     HttpBodyGivenTwice,
+    HttpInvalidCompressionLevel,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -46,6 +47,11 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn httpBodyGivenTwice() RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.HttpBodyGivenTwice, "http request with both body and body_bytes", .{});
+    }
+
+    pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.HttpInvalidCompressionLevel, "http server compression_level must be from 0 to 9: {d}", .{level});
     }
 
     pub noinline fn invalidReadSize(max: i64) RuntimeError {

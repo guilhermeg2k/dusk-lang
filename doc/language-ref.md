@@ -2714,7 +2714,7 @@ end
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024, max_connections = -1, write_timeout_ms = 30000)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. |
+| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024, max_connections = -1, write_timeout_ms = 30000, compress = true, compression_level = 6)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. |
 
 **`Server`**
 
@@ -2804,6 +2804,15 @@ Server-sent events are a stream with `content_type = "text/event-stream"` and a 
 - A body the handler didn't read is read and dropped after the response if it's at most 64 KiB; a bigger one closes the connection.
 - `Expect: 100-continue`: the client gets `100 Continue` when the handler first reads the body. If it never does, the response goes out and the connection closes, so the client never sends a body nobody wants.
 - A `HEAD` request runs the handler like a `GET` (`req.method` is `"HEAD"`); the body isn't sent, and `Content-Length` keeps its size.
+
+**Compression.** Responses are gzip-compressed (`Content-Encoding: gzip`) when all of these hold, so text crosses the network at a fraction of its size:
+
+- the request's `Accept-Encoding` accepts `gzip` (`gzip;q=0` refuses it, `*` accepts it, no header means no compression);
+- the response has a body (not `1xx`, `204` or `304`) and the handler didn't set `Content-Encoding` itself (a body that's already compressed, or `identity` to opt one response out);
+- its `Content-Type` is text: `text/*`, `application/json`, `application/javascript`, `application/xml`, `application/wasm`, or a type ending in `+json` or `+xml` (`image/svg+xml`);
+- a whole body is at least 1 KiB and actually gets smaller; a stream is compressed unless its `length` is under 1 KiB.
+
+Every response that could be compressed gets `Vary: Accept-Encoding` (added to a `Vary` the handler set), so caches keep both versions. A compressed whole body gets the compressed `Content-Length`, also for `HEAD`. A compressed stream (`http::stream`, `http::file`) is sent chunked even when it has a `length`, since the compressed size isn't known in advance; `flush()` also flushes the compressor, so server-sent events still arrive one by one. `compression_level` goes from `0` to `9` like in `std/compression`: `6` (the default) is a good balance, `1` saves CPU on busy servers. `compress = false` turns it all off.
 - With `cert`, each connection's TLS handshake runs in its own task; a client that fails it is just disconnected.
 
 | `http::HttpError` | When |
@@ -2874,5 +2883,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
-- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client doesn't use proxies (`HTTP_PROXY` and similar variables are ignored), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); it decompresses gzip and deflate, not `br` or `zstd`. The server has no router (handlers match `req.path` themselves), sends response bodies whole (no streaming, no server-sent events), doesn't compress responses, and has no limit on the number of connections. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
+- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client doesn't use proxies (`HTTP_PROXY` and similar variables are ignored), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); it decompresses gzip and deflate, not `br` or `zstd`. The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
 - **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

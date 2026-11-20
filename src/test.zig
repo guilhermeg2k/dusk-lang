@@ -367,6 +367,11 @@ test "http: requests, response streams and the connection pool over loopback (he
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
+test "http server: response compression (gzip when accepted, q-values, compressible types, minimum size, Vary, HEAD, handler encodings, streams, files, flushed events, compress = false, levels)" {
+    try runCase("http-server-compression.dsk");
+    try runCaseRuntimeError("http-compression-level.dsk", error.HttpInvalidCompressionLevel);
+}
+
 test "http server: routing, helpers, headers, failures, HEAD, keep-alive, raw and malformed requests, request bodies, limits, 100-continue, timeouts, shutdown" {
     try runCase("http-server.dsk");
 }

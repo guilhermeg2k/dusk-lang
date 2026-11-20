@@ -102,7 +102,7 @@ func main() -> !void
     end
     try fs::write("DIR/data.csv", rows)
 
-    let server = try http::listen("127.0.0.1", 0)
+    let server = try http::listen("127.0.0.1", 0, compress = false)
     let running = spawn(func() -> void
         server.serve(route)
     end)
