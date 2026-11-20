@@ -1,0 +1,6 @@
+import std/time
+
+func main() -> !void
+    let mut value = time::instant()
+    value.reading_ns = 1
+end

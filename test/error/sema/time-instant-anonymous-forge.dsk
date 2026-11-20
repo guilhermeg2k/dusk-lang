@@ -1,0 +1,6 @@
+import std/time
+
+func main() -> !void
+    let raw = @(reading_ns = 0)
+    let value: time::Instant = raw
+end

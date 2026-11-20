@@ -1,0 +1,6 @@
+import std/time
+
+func main() -> !void
+    let raw = @(nanosecond_count = 0)
+    let value: time::Duration = raw
+end

@@ -181,6 +181,28 @@ test "time: ISO parsing, offsets, expanded years and errors" {
     try runCase("time-parsing.dsk");
 }
 
+test "time: durations, checked timestamp arithmetic and comparisons" {
+    try runCase("time-arithmetic.dsk");
+}
+
+test "time: monotonic instants, tasks and GC" {
+    try runCase("time-instants.dsk");
+}
+
+test "time: duration and instant privacy and argument types" {
+    try runCaseError("sema/time-duration-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-duration-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-duration-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-duration-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-instant-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/time-instant-field-read.dsk", error.NotVisible);
+    try runCaseError("sema/time-instant-field-write.dsk", error.NotVisible);
+    try runCaseError("sema/time-instant-anonymous-forge.dsk", error.NotVisible);
+    try runCaseError("sema/time-duration-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-instant-argument.dsk", error.InvalidType);
+    try runCaseError("sema/time-arithmetic-native-private.dsk", error.NotVisible);
+}
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);

@@ -12,9 +12,15 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "monotonic_ns", Binding{ .native = &monotonicNanoseconds } },
     .{ "format_timestamp", Binding{ .native = &formatTimestamp } },
     .{ "parse_timestamp", Binding{ .native = &parseTimestamp } },
+    .{ "scale_nanoseconds", Binding{ .native = &scaleNanoseconds } },
+    .{ "add_nanoseconds", Binding{ .native = &addNanoseconds } },
+    .{ "subtract_nanoseconds", Binding{ .native = &subtractNanoseconds } },
+    .{ "add_timestamp_duration", Binding{ .native = &addTimestampDuration } },
+    .{ "subtract_timestamp_duration", Binding{ .native = &subtractTimestampDuration } },
+    .{ "timestamp_difference_nanoseconds", Binding{ .native = &timestampDifferenceNanoseconds } },
 });
 
-pub const TimeError = enum { InvalidTimestamp, Overflow };
+pub const TimeError = enum { InvalidTimestamp, Overflow, PrecisionLoss };
 pub const error_sets = .{TimeError};
 
 fn nowMilliseconds(_: *VM, _: []v.Value) anyerror!NativeResult {
@@ -185,3 +191,41 @@ const IsoParser = struct {
         return (digits[0] - '0') * 10 + digits[1] - '0';
     }
 };
+
+fn scaleNanoseconds(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return checkedIntegerResult(@as(i128, args[0].int64) * args[1].int64);
+}
+
+fn checkedIntegerResult(value: i128) NativeResult {
+    const result = std.math.cast(i64, value) orelse return native.fail(TimeError.Overflow);
+    return native.ok(.{ .int64 = result });
+}
+
+fn addNanoseconds(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return checkedIntegerResult(@as(i128, args[0].int64) + args[1].int64);
+}
+
+fn subtractNanoseconds(_: *VM, args: []v.Value) anyerror!NativeResult {
+    return checkedIntegerResult(@as(i128, args[0].int64) - args[1].int64);
+}
+
+fn addTimestampDuration(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const nanoseconds = args[1].int64;
+    if (@rem(nanoseconds, 1000000) != 0) {
+        return native.fail(TimeError.PrecisionLoss);
+    }
+    return checkedIntegerResult(@as(i128, args[0].int64) + @divTrunc(nanoseconds, 1000000));
+}
+
+fn subtractTimestampDuration(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const nanoseconds = args[1].int64;
+    if (@rem(nanoseconds, 1000000) != 0) {
+        return native.fail(TimeError.PrecisionLoss);
+    }
+    return checkedIntegerResult(@as(i128, args[0].int64) - @divTrunc(nanoseconds, 1000000));
+}
+
+fn timestampDifferenceNanoseconds(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const difference = @as(i128, args[0].int64) - args[1].int64;
+    return checkedIntegerResult(difference * 1000000);
+}

@@ -1,0 +1,5 @@
+import std/time
+
+func main() -> !void
+    let value = time::scale_nanoseconds(1, 1000)
+end

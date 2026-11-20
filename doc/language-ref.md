@@ -1989,7 +1989,7 @@ The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). 
 
 ### std/time
 
-Clocks and timestamp values. Import with `import std/time`.
+Clocks, timestamps, durations, and monotonic instants. Import with `import std/time`.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
@@ -2000,6 +2000,13 @@ Clocks and timestamp values. Import with `import std/time`.
 | `from_iso_string(text)` | `TimeError!Timestamp` | Reads a full Gregorian timestamp with an explicit `Z` or numeric `+HH:MM` / `-HH:MM` offset. Supports expanded years and optional fractions, truncated to milliseconds. Invalid text fails with `TimeError.InvalidTimestamp`; a valid value outside the `int` millisecond range fails with `TimeError.Overflow`. |
 | `now_ms()` | `int` | Milliseconds since 1970-01-01T00:00:00Z (the Unix epoch), matching filesystem timestamp units. |
 | `monotonic_ns()` | `int` | A nondecreasing nanosecond reading from an unspecified origin. Subtract two readings to measure elapsed time. |
+| `instant()` | `Instant` | Captures the current monotonic reading for elapsed-time measurements. |
+| `nanoseconds(value)` | `Duration` | A duration from any signed `int` nanosecond count. |
+| `microseconds(value)` | `TimeError!Duration` | Multiplies by 1,000, failing with `Overflow` if the nanoseconds do not fit. |
+| `milliseconds(value)` | `TimeError!Duration` | Multiplies by 1,000,000 with the same overflow check. |
+| `seconds(value)` | `TimeError!Duration` | A whole-number seconds count converted to nanoseconds with an overflow check. |
+| `minutes(value)` | `TimeError!Duration` | A whole-number minutes count converted to nanoseconds with an overflow check. |
+| `hours(value)` | `TimeError!Duration` | A whole-number hours count converted to nanoseconds with an overflow check. |
 
 `now_ms` is wall-clock time: system clock adjustments can move it forward or backward. It is independent of the local time zone. Fractions are rounded down to milliseconds, including before the epoch.
 
@@ -2028,6 +2035,12 @@ A `Timestamp` stores epoch milliseconds in a private field and has no mutating m
 | :----- | :------ | :---------- |
 | `unix_ms()` | `int` | The stored epoch milliseconds, unchanged. |
 | `to_string()` | `string` | ISO 8601-style UTC text with exactly three fractional millisecond digits. |
+| `is_equal(other)` | `bool` | Whether both timestamps represent the same epoch milliseconds. |
+| `is_before(other)` | `bool` | Whether this timestamp precedes the other. |
+| `is_after(other)` | `bool` | Whether this timestamp follows the other. |
+| `add(duration)` | `TimeError!Timestamp` | Adds elapsed time, requiring exact whole milliseconds. |
+| `subtract(duration)` | `TimeError!Timestamp` | Subtracts elapsed time, requiring exact whole milliseconds. |
+| `since(other)` | `TimeError!Duration` | Signed elapsed time: this timestamp minus the other, in nanoseconds. |
 
 Formatting works for every `int` timestamp, without `try` or a date-range error. Years `0000–9999` use four digits. Larger years have a leading `+` and all digits; negative years have a leading `-` and at least four digits. The Gregorian calendar extends backward through year zero. Unix milliseconds do not represent leap seconds. Expanded-year output is not strict RFC 3339.
 
@@ -2041,13 +2054,52 @@ let modified = time::from_unix_ms(info.modified_ms)
 
 The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
 
-The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Date arithmetic and timestamp comparison methods are not provided.
+The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior.
 
 `from_iso_string` requires uppercase `T` and a final uppercase `Z` or offset, with no surrounding whitespace or trailing text. Years use four digits, a negative sign with at least four digits, or a positive sign for years above 9999. The Gregorian calendar extends through year zero. A fraction must contain at least one digit; one or two digits are padded to milliseconds, and digits after the third are validated and discarded. Leap seconds, `24:00`, date-only and time-only input, week dates, ordinal dates, and intervals are rejected. Offset hours range from 00 to 23 and minutes from 00 to 59. Both `+00:00` and `-00:00` mean zero offset; the original offset is not retained.
 
 For example, `1970-01-01T05:30:00+05:30` represents epoch millisecond zero, and `+10000-01-01T00:00:00Z` is accepted. Every timestamp produced by `to_iso` can be read back, including both `int` limits. An offset can move the local date across a day or year boundary; only the resulting UTC epoch milliseconds must fit in `int`.
 
-`to_iso` / `from_iso_string` and `to_unix_ms` / `from_unix_ms` are pairs of plain functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
+`to_iso` / `from_iso_string` and `to_unix_ms` / `from_unix_ms` are pairs of plain functions, so they can be given to a schema's `via` to write timestamps as text or numbers (see [std/serialization](#stdserialization)). Like other structs, `==` compares identity; use `is_equal`, `is_before`, and `is_after` for chronological comparisons.
+
+A `Duration` stores signed nanoseconds in a private field. Its range is approximately 292 years in either direction, independently of the much wider timestamp range. It has no mutating methods.
+
+| Duration method | Returns | Description |
+| :-------------- | :------ | :---------- |
+| `nanoseconds()` | `int` | The exact signed nanosecond count. |
+| `microseconds()` | `int` | Whole microseconds, truncated toward zero. |
+| `milliseconds()` | `int` | Whole milliseconds, truncated toward zero. |
+| `seconds()` | `float` | Seconds as a floating-point value; large values may round. |
+| `add(other)` | `TimeError!Duration` | The sum, failing with `Overflow` if it exceeds the signed nanosecond range. |
+| `subtract(other)` | `TimeError!Duration` | This duration minus the other, with the same overflow check. |
+| `is_equal(other)` | `bool` | Whether both durations have equal nanosecond counts. |
+| `is_less_than(other)` | `bool` | Whether this duration has a smaller signed nanosecond count. |
+| `is_greater_than(other)` | `bool` | Whether this duration has a larger signed nanosecond count. |
+
+Timestamp `add` and `subtract` reject durations containing fractional milliseconds with `TimeError.PrecisionLoss`, including negative fractions. They return `Overflow` when the resulting epoch milliseconds do not fit. Timestamp `since` returns `Overflow` when the signed difference cannot fit in a Duration, even if both timestamps are valid. These operations measure elapsed time; calendar months and years are not units of Duration. The operands remain unchanged.
+
+```dusk
+let epoch = time::from_unix_ms(0)
+let later = try epoch.add(try time::seconds(2))
+assert(later.is_after(epoch))
+assert((try later.since(epoch)).milliseconds() == 2000)
+assert(time::nanoseconds(-1500000).milliseconds() == -1)
+```
+
+An `Instant` stores a private monotonic reading. `instant()` retains the clock resolution, suspend behavior, and runtime clock errors of `monotonic_ns()`. It has no date or time-zone representation; use it only within one program execution.
+
+| Instant method | Returns | Description |
+| :------------- | :------ | :---------- |
+| `elapsed()` | `TimeError!Duration` | The current monotonic reading minus this instant. |
+| `since(other)` | `TimeError!Duration` | This instant minus the other; reversing operands gives a negative duration. |
+
+Both methods check the signed nanosecond range and return `Overflow` when needed. Consecutive instants may have equal readings. Timestamp, Duration, and Instant factories create ordinary structs; copying them preserves their stored values. Use Duration comparison methods rather than struct `==` to compare nanosecond counts. Sleeping continues to take integer milliseconds in `task::sleep`.
+
+```dusk
+let started = time::instant()
+let elapsed = try started.elapsed()
+io::println("Elapsed: ${elapsed.seconds()} seconds")
+```
 
 ### std/task
 
@@ -3060,7 +3112,8 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
 | `TimeError.InvalidTimestamp` | `time::from_iso_string` with malformed or unsupported timestamp text, an impossible calendar date, or an invalid offset. |
-| `TimeError.Overflow` | `time::from_iso_string` with an otherwise valid timestamp whose epoch milliseconds exceed the `int` range. |
+| `TimeError.Overflow` | A valid parsed timestamp outside the epoch-millisecond range, an overflowing Duration factory or arithmetic operation, or a timestamp/instant difference outside the signed nanosecond range. |
+| `TimeError.PrecisionLoss` | Timestamp addition or subtraction with a duration containing fractional milliseconds. |
 
 ## 16. Errors
 

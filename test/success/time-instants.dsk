@@ -1,0 +1,32 @@
+import std/time
+import std/task
+import std/array
+
+func main() -> !void
+    let start = time::instant()
+    let zero = try start.since(start)
+    assert(zero.nanoseconds() == 0)
+    assert((try copy(start).since(start)).nanoseconds() == 0)
+    let next = time::instant()
+    let forward = try next.since(start)
+    let backward = try start.since(next)
+    assert(forward.nanoseconds() >= 0)
+    assert(backward.nanoseconds() <= 0)
+    assert((try forward.add(backward)).nanoseconds() == 0)
+    let elapsed = try start.elapsed()
+    assert(elapsed.nanoseconds() >= forward.nanoseconds())
+    let child = spawn(func() -> return time::instant())
+    let from_task = await(child)
+    assert((try from_task.since(start)).nanoseconds() >= 0)
+    task::sleep(1)
+    assert((try start.elapsed()).nanoseconds() >= elapsed.nanoseconds())
+    let mut kept: []time::Instant = [copy(start)]
+    for 0..19999: i do
+        let current = time::instant()
+        assert((try current.since(start)).nanoseconds() >= 0)
+        if i % 5000 == 0 then
+            array::append(kept, copy(current))
+        end
+    end
+    assert((try kept[4].since(kept[0])).nanoseconds() >= 0)
+end

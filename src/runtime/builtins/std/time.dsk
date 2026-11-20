@@ -1,6 +1,7 @@
 error TimeError
     InvalidTimestamp
     Overflow
+    PrecisionLoss
 end
 
 struct Timestamp
@@ -12,6 +13,82 @@ struct Timestamp
 
     func to_string(self: @) -> string
         return format_timestamp(self.milliseconds)
+    end
+
+    func is_equal(self: @, other: Timestamp) -> bool
+        return self.milliseconds == other.milliseconds
+    end
+
+    func is_before(self: @, other: Timestamp) -> bool
+        return self.milliseconds < other.milliseconds
+    end
+
+    func is_after(self: @, other: Timestamp) -> bool
+        return self.milliseconds > other.milliseconds
+    end
+
+    func add(self: @, duration: Duration) -> TimeError!Timestamp
+        return from_unix_ms(try add_timestamp_duration(self.milliseconds, duration.nanosecond_count))
+    end
+
+    func subtract(self: @, duration: Duration) -> TimeError!Timestamp
+        return from_unix_ms(try subtract_timestamp_duration(self.milliseconds, duration.nanosecond_count))
+    end
+
+    func since(self: @, other: Timestamp) -> TimeError!Duration
+        return nanoseconds(try timestamp_difference_nanoseconds(self.milliseconds, other.milliseconds))
+    end
+end
+
+struct Duration
+    ~nanosecond_count: int
+
+    func nanoseconds(self: @) -> int
+        return self.nanosecond_count
+    end
+
+    func microseconds(self: @) -> int
+        return self.nanosecond_count // 1000
+    end
+
+    func milliseconds(self: @) -> int
+        return self.nanosecond_count // 1000000
+    end
+
+    func seconds(self: @) -> float
+        return to_float(self.nanosecond_count) / 1000000000.0
+    end
+
+    func add(self: @, other: Duration) -> TimeError!Duration
+        return nanoseconds(try add_nanoseconds(self.nanosecond_count, other.nanosecond_count))
+    end
+
+    func subtract(self: @, other: Duration) -> TimeError!Duration
+        return nanoseconds(try subtract_nanoseconds(self.nanosecond_count, other.nanosecond_count))
+    end
+
+    func is_equal(self: @, other: Duration) -> bool
+        return self.nanosecond_count == other.nanosecond_count
+    end
+
+    func is_less_than(self: @, other: Duration) -> bool
+        return self.nanosecond_count < other.nanosecond_count
+    end
+
+    func is_greater_than(self: @, other: Duration) -> bool
+        return self.nanosecond_count > other.nanosecond_count
+    end
+end
+
+struct Instant
+    ~reading_ns: int
+
+    func elapsed(self: @) -> TimeError!Duration
+        return try instant().since(self)
+    end
+
+    func since(self: @, other: Instant) -> TimeError!Duration
+        return nanoseconds(try subtract_nanoseconds(self.reading_ns, other.reading_ns))
     end
 end
 
@@ -40,3 +117,38 @@ func to_unix_ms(timestamp: Timestamp) -> int
 end
 
 extern func ~parse_timestamp(text: string) -> TimeError!int
+
+func instant() -> Instant
+    return Instant(reading_ns = monotonic_ns())
+end
+
+func nanoseconds(value: int) -> Duration
+    return Duration(nanosecond_count = value)
+end
+
+func microseconds(value: int) -> TimeError!Duration
+    return nanoseconds(try scale_nanoseconds(value, 1000))
+end
+
+func milliseconds(value: int) -> TimeError!Duration
+    return nanoseconds(try scale_nanoseconds(value, 1000000))
+end
+
+func seconds(value: int) -> TimeError!Duration
+    return nanoseconds(try scale_nanoseconds(value, 1000000000))
+end
+
+func minutes(value: int) -> TimeError!Duration
+    return nanoseconds(try scale_nanoseconds(value, 60000000000))
+end
+
+func hours(value: int) -> TimeError!Duration
+    return nanoseconds(try scale_nanoseconds(value, 3600000000000))
+end
+
+extern func ~scale_nanoseconds(value: int, multiplier: int) -> TimeError!int
+extern func ~add_nanoseconds(left: int, right: int) -> TimeError!int
+extern func ~subtract_nanoseconds(left: int, right: int) -> TimeError!int
+extern func ~add_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
+extern func ~subtract_timestamp_duration(milliseconds: int, nanoseconds: int) -> TimeError!int
+extern func ~timestamp_difference_nanoseconds(left: int, right: int) -> TimeError!int

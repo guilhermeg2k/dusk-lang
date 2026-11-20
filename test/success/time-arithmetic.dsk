@@ -1,0 +1,203 @@
+import std/time
+import std/array
+
+func expect_error[T](expected: time::TimeError, call: func() -> time::TimeError!T) -> void
+    call() catch e then
+        assert(e == expected)
+        return
+    end
+    assert(false)
+end
+
+func check_factories() -> !void
+    let maximum = 9223372036854775807
+    let minimum = -9223372036854775807 - 1
+    let factories = [time::microseconds, time::milliseconds, time::seconds, time::minutes, time::hours]
+    let scales = [1000, 1000000, 1000000000, 60000000000, 3600000000000]
+    for 0..4: i do
+        let factory = factories[i]
+        let scale = scales[i]
+        let upper = maximum // scale
+        let lower = minimum // scale
+        assert((try factory(0)).nanoseconds() == 0)
+        assert((try factory(1)).nanoseconds() == scale)
+        assert((try factory(-1)).nanoseconds() == -scale)
+        assert((try factory(upper)).nanoseconds() == upper * scale)
+        assert((try factory(lower)).nanoseconds() == lower * scale)
+        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+            return try factory(upper + 1)
+        end)
+        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+            return try factory(lower - 1)
+        end)
+        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+            return try factory(maximum)
+        end)
+        expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+            return try factory(minimum)
+        end)
+    end
+end
+
+func check_durations() -> !void
+    let maximum = 9223372036854775807
+    let minimum = -9223372036854775807 - 1
+    let zero = time::nanoseconds(0)
+    let one = time::nanoseconds(1)
+    let negative_one = time::nanoseconds(-1)
+    let largest = time::nanoseconds(maximum)
+    let smallest = time::nanoseconds(minimum)
+    assert(largest.nanoseconds() == maximum)
+    assert(smallest.nanoseconds() == minimum)
+    assert(smallest.microseconds() == -9223372036854775)
+    assert(smallest.milliseconds() == -9223372036854)
+    assert(largest.microseconds() == 9223372036854775)
+    assert(largest.milliseconds() == 9223372036854)
+    assert(time::nanoseconds(-999).microseconds() == 0)
+    assert(time::nanoseconds(-1001).microseconds() == -1)
+    assert(time::nanoseconds(-999999).milliseconds() == 0)
+    assert(time::nanoseconds(-1000001).milliseconds() == -1)
+    assert(time::nanoseconds(1000001).milliseconds() == 1)
+    assert(time::nanoseconds(1500000000).seconds() == 1.5)
+    assert(time::nanoseconds(-1500000000).seconds() == -1.5)
+    assert((try time::hours(1)).seconds() == 3600.0)
+    assert((try largest.add(zero)).nanoseconds() == maximum)
+    assert((try smallest.subtract(zero)).nanoseconds() == minimum)
+    assert((try smallest.subtract(smallest)).is_equal(zero))
+    assert((try largest.subtract(largest)).is_equal(zero))
+    assert((try negative_one.subtract(smallest)).is_equal(largest))
+    assert((try smallest.add(largest)).is_equal(negative_one))
+    assert((try smallest.add(one)).nanoseconds() == minimum + 1)
+    assert((try largest.subtract(one)).nanoseconds() == maximum - 1)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try largest.add(one)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try smallest.add(negative_one)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try smallest.subtract(one)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try largest.subtract(negative_one)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try zero.subtract(smallest)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try largest.subtract(smallest)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try smallest.subtract(largest)
+    end)
+    assert(smallest.is_less_than(largest))
+    assert(largest.is_greater_than(smallest))
+    assert(zero.is_equal(time::nanoseconds(0)))
+    assert(!zero.is_less_than(zero) and !zero.is_greater_than(zero))
+    assert(!one.is_equal(negative_one))
+    assert(one.nanoseconds() == 1)
+    assert(copy(smallest).is_equal(smallest))
+end
+
+func check_timestamps() -> !void
+    let maximum = 9223372036854775807
+    let minimum = -9223372036854775807 - 1
+    let epoch = time::from_unix_ms(0)
+    let largest = time::from_unix_ms(maximum)
+    let smallest = time::from_unix_ms(minimum)
+    let zero = time::nanoseconds(0)
+    let positive = try time::milliseconds(1)
+    let negative = try time::milliseconds(-1)
+    assert((try epoch.add(positive)).unix_ms() == 1)
+    assert((try epoch.subtract(positive)).unix_ms() == -1)
+    assert((try epoch.add(negative)).unix_ms() == -1)
+    assert((try epoch.subtract(negative)).unix_ms() == 1)
+    assert((try largest.add(zero)).unix_ms() == maximum)
+    assert((try smallest.subtract(zero)).unix_ms() == minimum)
+    assert((try largest.subtract(positive)).unix_ms() == maximum - 1)
+    assert((try smallest.add(positive)).unix_ms() == minimum + 1)
+    assert((try epoch.add(try time::hours(24))).unix_ms() == 86400000)
+    assert((try largest.since(largest)).is_equal(zero))
+    assert((try smallest.since(smallest)).is_equal(zero))
+    let nearby = time::from_unix_ms(maximum - 2)
+    assert((try largest.since(nearby)).nanoseconds() == 2000000)
+    assert((try nearby.since(largest)).nanoseconds() == -2000000)
+    let difference_limit = time::from_unix_ms(9223372036854)
+    assert((try difference_limit.since(epoch)).nanoseconds() == 9223372036854000000)
+    assert((try epoch.since(difference_limit)).nanoseconds() == -9223372036854000000)
+    let too_far = time::from_unix_ms(9223372036855)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try too_far.since(epoch)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try epoch.since(too_far)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try largest.since(smallest)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Duration
+        return try smallest.since(largest)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Timestamp
+        return try largest.add(positive)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Timestamp
+        return try smallest.subtract(positive)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Timestamp
+        return try smallest.add(negative)
+    end)
+    expect_error(time::TimeError.Overflow, func() -> time::TimeError!time::Timestamp
+        return try largest.subtract(negative)
+    end)
+    for [1, -1, 999999, -999999, 1000001, -1000001, maximum, minimum]: value do
+        let duration = time::nanoseconds(value)
+        expect_error(time::TimeError.PrecisionLoss, func() -> time::TimeError!time::Timestamp
+            return try epoch.add(duration)
+        end)
+        expect_error(time::TimeError.PrecisionLoss, func() -> time::TimeError!time::Timestamp
+            return try epoch.subtract(duration)
+        end)
+        expect_error(time::TimeError.PrecisionLoss, func() -> time::TimeError!time::Timestamp
+            return try largest.add(duration)
+        end)
+        expect_error(time::TimeError.PrecisionLoss, func() -> time::TimeError!time::Timestamp
+            return try smallest.subtract(duration)
+        end)
+    end
+    let large_duration = time::nanoseconds(9223372036854000000)
+    let negative_duration = time::nanoseconds(-9223372036854000000)
+    assert((try epoch.add(large_duration)).is_equal(difference_limit))
+    assert((try epoch.subtract(negative_duration)).is_equal(difference_limit))
+    assert((try epoch.add(negative_duration)).unix_ms() == -9223372036854)
+    assert((try epoch.subtract(large_duration)).unix_ms() == -9223372036854)
+    assert(epoch.is_equal(time::from_unix_ms(0)))
+    assert(smallest.is_before(largest) and largest.is_after(smallest))
+    assert(!epoch.is_before(epoch) and !epoch.is_after(epoch))
+    assert(!epoch.is_equal(largest))
+    assert(epoch.unix_ms() == 0)
+end
+
+func check_gc() -> !void
+    let mut kept: []time::Duration = []
+    let mut timestamps: []time::Timestamp = []
+    for 0..19999: i do
+        let duration = try time::milliseconds(i - 10000)
+        let timestamp = try time::from_unix_ms(i).subtract(duration)
+        assert(timestamp.unix_ms() == 10000)
+        if i % 5000 == 0 then
+            array::append(kept, copy(duration))
+            array::append(timestamps, copy(timestamp))
+        end
+    end
+    assert(kept[0].nanoseconds() == -10000000000)
+    assert(kept[3].nanoseconds() == 5000000000)
+    assert(timestamps[0].is_equal(timestamps[3]))
+end
+
+func main() -> !void
+    try check_factories()
+    try check_durations()
+    try check_timestamps()
+    try check_gc()
+end
