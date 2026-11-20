@@ -3,15 +3,15 @@ import std/array
 
 func check(milliseconds: int, zone: time::TimeZone, expected: string) -> !void
     let timestamp = time::from_unix_ms(milliseconds)
-    assert((try timestamp.to_iso_string(zone)) == expected)
     assert((try time::to_iso_string(timestamp, zone)) == expected)
-    assert((try time::from_iso_string(expected)).unix_ms() == milliseconds)
-    assert(timestamp.unix_ms() == milliseconds)
+    assert((try time::to_iso_string(timestamp, zone)) == expected)
+    assert(time::to_unix_ms(try time::from_iso_string(expected)) == milliseconds)
+    assert(time::to_unix_ms(timestamp) == milliseconds)
 end
 
 func check_named(zone: time::TimeZone, utc_text: string, expected: string) -> !void
     let timestamp = try time::from_iso_string(utc_text)
-    try check(timestamp.unix_ms(), zone, expected)
+    try check(time::to_unix_ms(timestamp), zone, expected)
 end
 
 func expect_precision(format: func() -> time::TimeError!string) -> void
@@ -24,7 +24,7 @@ end
 
 func check_precision(zone: time::TimeZone, timestamp: time::Timestamp) -> void
     expect_precision(func() -> time::TimeError!string
-        return try timestamp.to_iso_string(zone)
+        return try time::to_iso_string(timestamp, zone)
     end)
     expect_precision(func() -> time::TimeError!string
         return try time::to_iso_string(timestamp, zone)
@@ -54,12 +54,12 @@ func check_fixed() -> !void
     let offsets = [-86340, -12600, -60, 0, 60, 19800, 86340]
     for [-9223372036854775807 - 1, -62167219200000, -1, 0, 1, 253402300800000, 9223372036854775807]: milliseconds do
         let timestamp = time::from_unix_ms(milliseconds)
-        assert((try timestamp.to_iso_string()) == time::to_utc_iso_string(timestamp))
+        assert((try time::to_iso_string(timestamp)) == time::to_utc_iso_string(timestamp))
         assert((try time::to_iso_string(timestamp)) == time::to_utc_iso_string(timestamp))
         for offsets: offset do
             let zone = try time::fixed_timezone(offset)
-            let text = try timestamp.to_iso_string(zone)
-            assert((try time::from_iso_string(text)).unix_ms() == milliseconds)
+            let text = try time::to_iso_string(timestamp, zone)
+            assert(time::to_unix_ms(try time::from_iso_string(text)) == milliseconds)
         end
     end
     for [-86399, -30, 1, 30, 86399]: offset do
@@ -105,7 +105,7 @@ func check_gc() -> !void
         let text = try time::to_iso_string(timestamp, zone)
         let expected = if i % 2 == 0 then "2024-07-14T20:00:00.000-04:00" else "2024-07-15T05:45:00.000+05:45" end
         assert(text == expected)
-        assert((try timestamp.to_iso_string(zone)) == expected)
+        assert((try time::to_iso_string(timestamp, zone)) == expected)
         assert(time::to_utc_iso_string(timestamp) == "2024-07-15T00:00:00.000Z")
         if i % 5000 == 0 then
             array::append(kept, text)
@@ -114,7 +114,7 @@ func check_gc() -> !void
     assert(kept[0] == "2024-07-14T20:00:00.000-04:00")
     assert(kept[3] == kept[0])
     assert(new_york.name() == "America/New_York")
-    assert(timestamp.unix_ms() == 1721001600000)
+    assert(time::to_unix_ms(timestamp) == 1721001600000)
 end
 
 func main() -> !void

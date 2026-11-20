@@ -80,7 +80,7 @@ func check_zones() -> !void
         assert((try sample.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ")) == time::to_utc_iso_string(sample))
         for [-86340, -60, 0, 60, 19800, 86340]: offset do
             let zone = try time::fixed_timezone(offset)
-            assert((try sample.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ", zone)) == (try sample.to_iso_string(zone)))
+            assert((try sample.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ", zone)) == (try time::to_iso_string(sample, zone)))
         end
     end
 end

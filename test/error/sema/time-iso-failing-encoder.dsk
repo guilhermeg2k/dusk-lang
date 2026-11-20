@@ -1,7 +1,7 @@
 import std/time
 
 func encode(timestamp: time::Timestamp) -> time::TimeError!string
-    return try timestamp.to_iso_string()
+    return try time::to_iso_string(timestamp)
 end
 
 schema Api

@@ -24,7 +24,7 @@ func window_to_span(window: Window) -> Span
 end
 
 func span_to_window(span: Span) -> Window
-    return Window(from_ms = span.starts.unix_ms(), to_ms = span.starts.unix_ms() + label_width(span.label))
+    return Window(from_ms = time::to_unix_ms(span.starts), to_ms = time::to_unix_ms(span.starts) + label_width(span.label))
 end
 
 func label_width(label: string) -> int
@@ -312,7 +312,7 @@ func main() -> !void
     assert((try native_text(boxed)) == text)
     assert(native.events[0].durationMs == 61000)
     if native.events[0].byName["d"]: d then
-        assert(d.unix_ms() == 4000)
+        assert(time::to_unix_ms(d) == 4000)
     else
         assert(false)
     end
@@ -345,7 +345,7 @@ func main() -> !void
     assert(many_text == (try boxed_text(EventsBox(value = many))))
     assert(many_text == (try derived_text(many)))
     let many_back = try json::decode[[]Event, Api](many_text)
-    assert(array::len(many_back) == 2000 and many_back[1999].marks[0].unix_ms() == 1999)
+    assert(array::len(many_back) == 2000 and time::to_unix_ms(many_back[1999].marks[0]) == 1999)
     assert((try native_text(many_back)) == many_text)
 
     let totals_text = "{\"one\":{\"base\":1},\"many\":[{\"base\":2},{\"base\":3,\"extra\":0}],\"named\":{\"k\":{\"base\":4}}}"

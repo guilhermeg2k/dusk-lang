@@ -4,11 +4,11 @@ import std/array
 
 func check(milliseconds: int, expected: string) -> !void
     let timestamp = time::from_unix_ms(milliseconds)
-    assert(timestamp.unix_ms() == milliseconds)
-    assert((try timestamp.to_iso_string()) == expected)
+    assert(time::to_unix_ms(timestamp) == milliseconds)
+    assert((try time::to_iso_string(timestamp)) == expected)
     assert((try time::to_iso_string(timestamp)) == expected)
     assert(time::to_utc_iso_string(timestamp) == expected)
-    assert((try time::from_iso_string(expected)).unix_ms() == milliseconds)
+    assert(time::to_unix_ms(try time::from_iso_string(expected)) == milliseconds)
 end
 
 func main() -> !void
@@ -125,19 +125,19 @@ func main() -> !void
     try check(9223340681059199999, "+292278000-12-31T23:59:59.999Z")
     try check(9223340654534400000, "+292278000-02-29T00:00:00.000Z")
     let current = time::now()
-    let difference = current.unix_ms() - time::now_ms()
+    let difference = time::to_unix_ms(current) - time::now_ms()
     assert(difference > -60000 and difference < 60000)
     let info = try fs::stat("test/fixtures/fs/hello.txt")
     let modified = time::from_unix_ms(info.modified_ms)
-    assert(modified.unix_ms() == info.modified_ms)
+    assert(time::to_unix_ms(modified) == info.modified_ms)
     let mut kept: []time::Timestamp = []
     for 1..20000: i do
         let mut timestamp = time::from_unix_ms(i - 10000)
-        assert((try timestamp.to_iso_string()) == (try time::from_unix_ms(i - 10000).to_iso_string()))
+        assert((try time::to_iso_string(timestamp)) == (try time::to_iso_string(time::from_unix_ms(i - 10000))))
         if i % 5000 == 0 then
             array::append(kept, timestamp)
         end
     end
-    assert((try kept[0].to_iso_string()) == "1969-12-31T23:59:55.000Z")
-    assert((try kept[3].to_iso_string()) == "1970-01-01T00:00:10.000Z")
+    assert((try time::to_iso_string(kept[0])) == "1969-12-31T23:59:55.000Z")
+    assert((try time::to_iso_string(kept[3])) == "1970-01-01T00:00:10.000Z")
 end

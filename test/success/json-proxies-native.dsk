@@ -103,12 +103,12 @@ func main() -> !void
 
     assert((try json::encode[Stamp, Api](Stamp(at = at(0)))) == iso(0))
     let stamp = try json::decode[Stamp, Api](iso(1000))
-    assert(stamp.at.unix_ms() == 1000)
+    assert(time::to_unix_ms(stamp.at) == 1000)
     let missing = try json::decode[?time::Timestamp, Api]("null")
     assert(missing == null)
     let present = try json::decode[?time::Timestamp, Api](iso(7))
     if present: found then
-        assert(found.unix_ms() == 7)
+        assert(time::to_unix_ms(found) == 7)
     else
         assert(false)
     end
@@ -119,14 +119,14 @@ func main() -> !void
 
     let moment = try json::decode[Moment, Api]("{\"at\":${iso(5)}}")
     if moment.at: value then
-        assert(value.unix_ms() == 5)
+        assert(time::to_unix_ms(value) == 5)
     else
         assert(false)
     end
     assert((try json::encode[Moment, Api](moment)) == "{\"at\":${iso(5)}}")
     let stamped = try json::decode[Moment, Api]("{\"stamp\":${iso(9)}}")
     if stamped.stamp: value then
-        assert(value.at.unix_ms() == 9)
+        assert(time::to_unix_ms(value.at) == 9)
     else
         assert(false)
     end
@@ -138,7 +138,7 @@ func main() -> !void
     assert(text == expected)
     let back = try json::decode[Everything, Api](text)
     assert((try json::encode[Everything, Api](back)) == expected)
-    assert(back.stamps[1].at.unix_ms() == 3)
+    assert(time::to_unix_ms(back.stamps[1].at) == 3)
     assert(back.total.value == 8)
 
     let good = "{\"stamp\":${iso(1)},\"stamps\":[${iso(2)}],\"named\":{},\"moments\":[],\"total\":{\"base\":1}}"
@@ -160,7 +160,7 @@ func main() -> !void
     let many_back = try json::decode[Node, Api](many)
     assert(array::len(many_back.children) == 20000)
     if many_back.children[19999].children[0].seen: last then
-        assert(last.unix_ms() == 20000)
+        assert(time::to_unix_ms(last) == 20000)
     else
         assert(false)
     end

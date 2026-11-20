@@ -1,5 +1,5 @@
 import std/time
 
 func main() -> !void
-    let value = try time::from_unix_ms(0).to_iso_string(time::utc_timezone(), time::utc_timezone())
+    let value = try time::to_iso_string(time::from_unix_ms(0), time::utc_timezone(), time::utc_timezone())
 end

@@ -632,7 +632,7 @@ test "time: ISO API migration and error handling" {
     try runCaseError("sema/time-iso-module-removed.dsk", error.NotDefined);
     try runCaseError("sema/time-timestamp-to-string-removed.dsk", error.InvalidStructField);
     try runCaseError("sema/time-iso-module-unhandled.dsk", error.UnhandledError);
-    try runCaseError("sema/time-iso-method-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-iso-unhandled.dsk", error.UnhandledError);
     try runCaseError("sema/time-iso-zone-argument.dsk", error.InvalidType);
     try runCaseError("sema/time-iso-utc-extra-argument.dsk", error.InvalidNumberOfArgs);
 }

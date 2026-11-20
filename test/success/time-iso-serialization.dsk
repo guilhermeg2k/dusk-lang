@@ -32,7 +32,7 @@ func main() -> !void
         assert(decoded_event.other == null)
     end
     let offset = try json::decode[time::Timestamp, Api]("\"1970-01-01T05:30:00+05:30\"")
-    assert(offset.unix_ms() == 0)
+    assert(time::to_unix_ms(offset) == 0)
     assert((try json::encode[time::Timestamp, Api](offset)) == "\"1970-01-01T00:00:00.000Z\"")
     let expanded = try json::decode[time::Timestamp, Api]("\"+10000-01-01T05:30:00+05:30\"")
     assert(time::to_utc_iso_string(expanded) == "+10000-01-01T00:00:00.000Z")

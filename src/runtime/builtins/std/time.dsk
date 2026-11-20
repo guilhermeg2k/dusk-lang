@@ -15,14 +15,6 @@ end
 struct Timestamp
     ~milliseconds: int
 
-    func unix_ms(self: @) -> int
-        return self.milliseconds
-    end
-
-    func to_iso_string(self: @, zone: TimeZone = utc_timezone()) -> TimeError!string
-        return try format_timestamp(self.milliseconds, zone.zone_id)
-    end
-
     func format(self: @, pattern: string, zone: TimeZone = utc_timezone()) -> TimeError!string
         return try format_timestamp_pattern(self.milliseconds, pattern, zone.zone_id)
     end
