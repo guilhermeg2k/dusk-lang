@@ -371,6 +371,7 @@ pub const Stream = struct {
         if (self.feedHttpBody(reader, std.math.maxInt(usize)) != null) {
             return .{ .result = .{ .failure = .Other } };
         }
+        reader.decodeBody(read.decodeLimit()) catch return .{ .result = .{ .failure = .Other } };
         var has_ended = reader.isMessageComplete();
         const has_no_more_input = self.has_ended and self.bufferedBytes().len == 0;
         if (!has_ended and has_no_more_input) {
@@ -378,6 +379,11 @@ pub const Stream = struct {
                 return .{ .result = .{ .failure = .UnexpectedEnd } };
             }
             has_ended = true;
+        }
+        if (has_ended and reader.hasUndecodedBody()) {
+            has_ended = false;
+        } else if (has_ended and !reader.isDecodedToEnd()) {
+            return .{ .result = .{ .failure = .UnexpectedEnd } };
         }
         const source: ReadSource = .{ .available = reader.pendingBody(), .has_ended = has_ended, .failure = if (has_ended) null else self.failure };
         const found = switch (read) {
@@ -1122,7 +1128,16 @@ pub const BodyRead = union(enum) {
     line: ?usize,
     all_text,
     all_bytes,
+
+    fn decodeLimit(self: BodyRead) usize {
+        return switch (self) {
+            .bytes => |max| @max(max, min_decoded_bytes),
+            .line, .all_text, .all_bytes => std.math.maxInt(usize),
+        };
+    }
 };
+
+const min_decoded_bytes = 64 * 1024;
 
 pub const ReadOutcome = struct {
     result: union(enum) {

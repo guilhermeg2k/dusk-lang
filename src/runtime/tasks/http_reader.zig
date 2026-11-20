@@ -1,9 +1,11 @@
 const std = @import("std");
 const http = @import("http.zig");
+const compression = @import("../compression.zig");
 const IoError = @import("stream.zig").IoError;
 const HttpError = http.HttpError;
 
 pub const max_head_size = 64 * 1024;
+const decode_chunk_size = 64 * 1024;
 
 pub const HttpReader = struct {
     const Self = @This();
@@ -18,6 +20,12 @@ pub const HttpReader = struct {
     has_sent_continue: bool = false,
     was_body_too_large: bool = false,
     was_body_invalid: bool = false,
+    decoder: ?*compression.Zip = null,
+    decoder_format: compression.Format = .gzip,
+    plain: std.ArrayList(u8) = .empty,
+    plain_offset: usize = 0,
+    has_decoded_any: bool = false,
+    is_decoder_at_end: bool = false,
 
     pub fn create(allocator: std.mem.Allocator, kind: MessageKind) !*Self {
         const reader = try allocator.create(Self);
@@ -28,7 +36,9 @@ pub const HttpReader = struct {
 
     pub fn destroy(self: *Self) void {
         http.dusk_http_parser_free(self.parser);
+        compression.dusk_zip_free(self.decoder);
         self.body.deinit(self.allocator);
+        self.plain.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
@@ -44,19 +54,44 @@ pub const HttpReader = struct {
         self.has_sent_continue = false;
         self.was_body_too_large = false;
         self.was_body_invalid = false;
+        self.stopDecoding();
     }
 
     pub fn releaseBody(self: *Self) void {
         self.body.clearAndFree(self.allocator);
         self.body_offset = 0;
         self.taken = 0;
+        self.stopDecoding();
+        self.plain.clearAndFree(self.allocator);
+    }
+
+    pub fn startDecoding(self: *Self, format: compression.Format) !void {
+        self.stopDecoding();
+        self.decoder = compression.dusk_zip_decompressor_new(format) orelse return error.OutOfMemory;
+        self.decoder_format = format;
+    }
+
+    fn stopDecoding(self: *Self) void {
+        compression.dusk_zip_free(self.decoder);
+        self.decoder = null;
+        self.plain.clearRetainingCapacity();
+        self.plain_offset = 0;
+        self.has_decoded_any = false;
+        self.is_decoder_at_end = false;
     }
 
     pub fn pendingBody(self: *const Self) []const u8 {
+        if (self.decoder != null) {
+            return self.plain.items[self.plain_offset..];
+        }
         return self.body.items[self.body_offset..];
     }
 
     pub fn dropTakenBody(self: *Self) void {
+        if (self.decoder != null) {
+            self.dropTakenPlain();
+            return;
+        }
         self.body_offset += self.taken;
         self.taken = 0;
         if (self.body_offset == 0) return;
@@ -64,6 +99,77 @@ pub const HttpReader = struct {
         std.mem.copyForwards(u8, self.body.items[0..remaining], self.body.items[self.body_offset..]);
         self.body.shrinkRetainingCapacity(remaining);
         self.body_offset = 0;
+    }
+
+    fn dropTakenPlain(self: *Self) void {
+        self.plain_offset += self.taken;
+        self.taken = 0;
+        if (self.plain_offset == 0) return;
+        const remaining = self.plain.items.len - self.plain_offset;
+        std.mem.copyForwards(u8, self.plain.items[0..remaining], self.plain.items[self.plain_offset..]);
+        self.plain.shrinkRetainingCapacity(remaining);
+        self.plain_offset = 0;
+    }
+
+    pub fn decodeBody(self: *Self, limit: usize) error{ InvalidBody, OutOfMemory }!void {
+        if (self.decoder == null) return;
+        defer self.dropDecodedBody();
+        while (self.hasUndecodedBody()) {
+            const plain_pending = self.plain.items.len - self.plain_offset;
+            if (plain_pending >= limit) return;
+            if (self.is_decoder_at_end) {
+                if (self.decoder_format != .gzip or compression.dusk_zip_restart(self.decoder.?) != .ok) {
+                    return error.InvalidBody;
+                }
+                self.is_decoder_at_end = false;
+            }
+            try self.plain.ensureUnusedCapacity(self.allocator, decode_chunk_size);
+            const raw = self.body.items[self.body_offset..];
+            const room = self.plain.unusedCapacitySlice();
+            var consumed: usize = 0;
+            var produced: usize = 0;
+            const status = compression.dusk_zip_decompress(self.decoder.?, raw.ptr, raw.len, room.ptr, room.len, &consumed, &produced);
+            if (status == .invalid and self.canRetryAsRawDeflate()) {
+                try self.startDecoding(.deflate);
+                continue;
+            }
+            self.plain.items.len += produced;
+            self.body_offset += consumed;
+            self.has_decoded_any = self.has_decoded_any or consumed > 0;
+            switch (status) {
+                .done => self.is_decoder_at_end = true,
+                .ok => {
+                    if (consumed == 0 and produced == 0) {
+                        return error.InvalidBody;
+                    }
+                },
+                .out_of_memory => return error.OutOfMemory,
+                else => return error.InvalidBody,
+            }
+        }
+    }
+
+    fn canRetryAsRawDeflate(self: *const Self) bool {
+        return self.decoder_format == .zlib and !self.has_decoded_any and self.plain.items.len == 0;
+    }
+
+    fn dropDecodedBody(self: *Self) void {
+        if (self.body_offset == 0) return;
+        const remaining = self.body.items.len - self.body_offset;
+        std.mem.copyForwards(u8, self.body.items[0..remaining], self.body.items[self.body_offset..]);
+        self.body.shrinkRetainingCapacity(remaining);
+        self.body_offset = 0;
+    }
+
+    pub fn hasUndecodedBody(self: *const Self) bool {
+        return self.decoder != null and self.body.items.len > self.body_offset;
+    }
+
+    pub fn isDecodedToEnd(self: *const Self) bool {
+        if (self.decoder == null) {
+            return true;
+        }
+        return self.is_decoder_at_end or !self.has_decoded_any;
     }
 
     pub fn feedHead(self: *Self, available: []const u8) HeadStep {

@@ -1,5 +1,6 @@
 import std/array: append, contains, len
 import std/buffer
+import std/compression
 import std/fs
 import std/io
 import std/map
@@ -342,7 +343,7 @@ extern func ~stream_body_line(handle: int, max: int, timeout_ms: int) -> io::IoE
 extern func ~stream_body_all(handle: int, timeout_ms: int) -> io::IoError!string
 extern func ~stream_body_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~parse_head(head: buffer, is_head_request: bool) -> HttpError![]string
-extern func ~gunzip(data: buffer, cap: int) -> HttpError!buffer
+extern func ~stream_decode_body(handle: int, format: compression::Format) -> void
 extern func ~pool_take(key: string) -> int
 extern func ~pool_put(key: string, handle: int) -> void
 extern func ~conn_handle(conn: net::TcpConn) -> int
@@ -404,6 +405,9 @@ func open(url: string, method: string = "GET", headers: map[string, string] = {}
     let exchange = Exchange(method = method, headers = headers, body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms, started_ns = time::monotonic_ns(), ca = ca, verify = verify, follows_redirects = max_redirects > 0, reads_body = false)
     let opened = try start(url, query, exchange, max_redirects)
     let response = opened.response
+    if body_format(response.status, response.headers, exchange): format then
+        stream_decode_body(opened.handle, format)
+    end
     return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key)
 end
 
@@ -619,8 +623,8 @@ func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Re
         let headers = headers_of(parts)
         let skips_body = !exchange.reads_body or is_followed(status, headers, exchange)
         let body = if skips_body then buffer::from_string("") else try stream_read_whole_body(handle, exchange.max_body, remaining_ms(exchange)) end
-        let is_gzip = asks_for_gzip(exchange) and is_gzip_encoding(headers.get("content-encoding") orelse "")
-        let plain = if is_gzip and !skips_body then try gunzip(body, exchange.max_body) else body end
+        let format = if skips_body then null else body_format(status, headers, exchange) end
+        let plain = if format: encoding then try decoded(body, encoding, exchange.max_body) else body end
         return Response(status = status, reason = parts[1], headers = headers, body = plain, url = target.to_string())
     end
     return HttpError.ConnectionReset
@@ -644,8 +648,8 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     if !map::has(given, "user-agent") then
         append(lines, "User-Agent: $USER_AGENT")
     end
-    if asks_for_gzip(exchange) then
-        append(lines, "Accept-Encoding: gzip")
+    if asks_for_encoding(exchange) then
+        append(lines, "Accept-Encoding: gzip, deflate")
     end
     let length = body_length(exchange)
     if length >= 0 then
@@ -654,8 +658,8 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     return "${string::join(lines, "\r\n")}\r\n\r\n"
 end
 
-func ~asks_for_gzip(exchange: Exchange) -> bool
-    if !exchange.reads_body or exchange.method == "HEAD" then
+func ~asks_for_encoding(exchange: Exchange) -> bool
+    if exchange.method == "HEAD" then
         return false
     end
     for exchange.headers: value, name do
@@ -666,9 +670,33 @@ func ~asks_for_gzip(exchange: Exchange) -> bool
     return true
 end
 
-func ~is_gzip_encoding(value: string) -> bool
-    let encoding = string::lower(string::trim(value))
-    return encoding == "gzip" or encoding == "x-gzip"
+func ~body_format(status: int, headers: Headers, exchange: Exchange) -> ?compression::Format
+    let has_no_body = status < 200 or status == 204 or status == 304
+    if has_no_body or !asks_for_encoding(exchange) then
+        return null
+    end
+    let encoding = string::lower(string::trim(headers.get("content-encoding") orelse ""))
+    return when encoding
+        "gzip", "x-gzip" then compression::Format.Gzip end
+        "deflate" then compression::Format.Zlib end
+        else then null end
+    end
+end
+
+func ~decoded(body: buffer, format: compression::Format, max: int) -> HttpError!buffer
+    if buffer::len(body) == 0 then
+        return body
+    end
+    let plain = compression::decompress(body, format, max) catch e then
+        if e == compression::CompressionError.TooLarge then
+            return HttpError.BodyTooLarge
+        end
+        if format != compression::Format.Zlib then
+            return HttpError.InvalidResponse
+        end
+        return try decoded(body, compression::Format.Deflate, max)
+    end
+    return plain
 end
 
 func ~host_header(target: url::Url) -> string

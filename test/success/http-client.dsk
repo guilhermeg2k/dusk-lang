@@ -1,5 +1,6 @@
 import std/array: append, len
 import std/buffer
+import std/compression
 import std/fs
 import std/http
 import std/io
@@ -714,6 +715,21 @@ func encoded_head(encoding: string, body: buffer) -> string
     return "HTTP/1.1 200 OK\r\nContent-Encoding: $encoding\r\nContent-Length: ${buffer::len(body)}\r\nConnection: close\r\n\r\n"
 end
 
+func stream_error(mut stream: http::ResponseStream) -> ?io::IoError
+    let data = stream.read_all_bytes() catch e then
+        return e
+    end
+    return null
+end
+
+func to_hex(value: int) -> string
+    let digits = "0123456789abcdef"
+    if value < 16 then
+        return string::slice(digits, value, value + 1) catch ""
+    end
+    return "${to_hex(value // 16)}${to_hex(value % 16)}"
+end
+
 func check_gzip(listener: net::TcpListener) -> !void
     let hello = try fs::read_bytes("test/fixtures/http/hello.gz")
     let zeros = try fs::read_bytes("test/fixtures/http/zeros.gz")
@@ -723,7 +739,7 @@ func check_gzip(listener: net::TcpListener) -> !void
     let plain_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
     let plain = try http::request(base(listener))
     let plain_request = await(plain_server)
-    assert(has_line(plain_request, "Accept-Encoding: gzip"))
+    assert(has_line(plain_request, "Accept-Encoding: gzip, deflate"))
     assert(try plain.text() == expected)
     assert(plain.headers.get("content-encoding") == "gzip")
     assert(plain.headers.get("content-length") == "${buffer::len(hello)}")
@@ -738,7 +754,7 @@ func check_gzip(listener: net::TcpListener) -> !void
     let raw_request = await(raw_server)
     assert(buffer::len(raw.body) == buffer::len(hello))
     assert(has_line(raw_request, "accept-encoding: gzip"))
-    assert(!has_line(raw_request, "Accept-Encoding: gzip"))
+    assert(!has_line(raw_request, "Accept-Encoding: gzip, deflate"))
 
     let bomb_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
     expect_error(http::HttpError.BodyTooLarge, func() -> return try http::request(base(listener), max_body = 100000))
@@ -759,11 +775,108 @@ func check_gzip(listener: net::TcpListener) -> !void
     assert(buffer::len(unknown.body) == buffer::len(hello))
     await(unknown_server)
 
+    let text = buffer::from_string(expected)
+    let mut zlibbed = try compression::compress(text, compression::Format.Zlib)
+    let deflate_server = serve_body_once(listener, encoded_head("deflate", zlibbed), zlibbed)
+    assert(try (try http::request(base(listener))).text() == expected)
+    await(deflate_server)
+    let mut raw_deflate = try compression::compress(text, compression::Format.Deflate)
+    let raw_deflate_server = serve_body_once(listener, encoded_head("Deflate", raw_deflate), raw_deflate)
+    assert(try (try http::request(base(listener))).text() == expected)
+    await(raw_deflate_server)
+    let mut bad_deflate = buffer::from_string("not deflate at all")
+    let bad_deflate_server = serve_body_once(listener, encoded_head("deflate", bad_deflate), bad_deflate)
+    expect_error(http::HttpError.InvalidResponse, func() -> return try http::request(base(listener)))
+    await(bad_deflate_server)
+    let empty_gzip_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    assert(buffer::len((try http::request(base(listener))).body) == 0)
+    await(empty_gzip_server)
+
     let streamed_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
     let mut streamed = try http::open(base(listener))
-    assert(buffer::len(try streamed.read_all_bytes()) == buffer::len(hello))
+    assert(try string::from_bytes(try streamed.read_all_bytes()) == expected)
     streamed.close()
-    assert(!has_header_named(await(streamed_server), "accept-encoding"))
+    assert(has_line(await(streamed_server), "Accept-Encoding: gzip, deflate"))
+
+    let lines_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut lines = try http::open(base(listener))
+    let mut line_count = 0
+    for true do
+        let next = try lines.read_line()
+        if next: line then
+            assert(line == "hello from gzip")
+            line_count = line_count + 1
+        else
+            break
+        end
+    end
+    assert(line_count == 64)
+    lines.close()
+    await(lines_server)
+
+    let pieces_server = serve_body_once(listener, encoded_head("deflate", zlibbed), zlibbed)
+    let mut pieces = try http::open(base(listener))
+    let mut collected: []string = []
+    for true do
+        let next = try pieces.read_bytes(10)
+        if next: piece then
+            assert(buffer::len(piece) <= 10)
+            append(collected, try string::from_bytes(piece))
+        else
+            break
+        end
+    end
+    assert(string::join(collected) == expected)
+    pieces.close()
+    await(pieces_server)
+
+    let big_server = serve_body_once(listener, encoded_head("gzip", zeros), zeros)
+    let mut big = try http::open(base(listener))
+    let mut total = 0
+    for true do
+        let next = try big.read_bytes(1000)
+        if next: piece then
+            total = total + buffer::len(piece)
+        else
+            break
+        end
+    end
+    assert(total == 1048576)
+    big.close()
+    await(big_server)
+
+    let mut framed = try buffer::new(buffer::len(hello) + 32)
+    let half = buffer::len(hello) // 2
+    let mut at = try buffer::put(framed, 0, "${string::lower(to_hex(half))}\r\n")
+    at = try buffer::put_bytes(framed, at, try buffer::slice(hello, 0, half))
+    at = try buffer::put(framed, at, "\r\n${to_hex(buffer::len(hello) - half)}\r\n")
+    at = try buffer::put_bytes(framed, at, try buffer::slice(hello, half, buffer::len(hello)))
+    at = try buffer::put(framed, at, "\r\n0\r\n\r\n")
+    let mut chunked_body = try buffer::slice(framed, 0, at)
+    let chunked_server = serve_body_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", chunked_body)
+    let mut chunked = try http::open(base(listener))
+    assert(try chunked.read_all() == expected)
+    chunked.close()
+    await(chunked_server)
+
+    let broken_stream_server = serve_body_once(listener, encoded_head("gzip", broken), broken)
+    let mut broken_stream = try http::open(base(listener))
+    assert(stream_error(broken_stream) == io::IoError.Other)
+    broken_stream.close()
+    await(broken_stream_server)
+
+    let mut cut = try buffer::slice(hello, 0, buffer::len(hello) - 4)
+    let cut_server = serve_body_once(listener, encoded_head("gzip", cut), cut)
+    let mut cut_stream = try http::open(base(listener))
+    assert(stream_error(cut_stream) == io::IoError.UnexpectedEnd)
+    cut_stream.close()
+    await(cut_server)
+
+    let raw_stream_server = serve_body_once(listener, encoded_head("gzip", hello), hello)
+    let mut raw_stream = try http::open(base(listener), headers = {"Accept-Encoding": "gzip"})
+    assert(buffer::len(try raw_stream.read_all_bytes()) == buffer::len(hello))
+    raw_stream.close()
+    await(raw_stream_server)
 
     let head_server = serve_once(listener, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 45\r\n\r\n")
     let head = try http::request(base(listener), method = "HEAD")
