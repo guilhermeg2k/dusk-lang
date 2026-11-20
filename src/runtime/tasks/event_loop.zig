@@ -11,6 +11,7 @@ const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const CompressionStreams = @import("../compression.zig").StreamTable;
 const CompressionJob = @import("compression_job.zig").CompressionJob;
 const HostSlots = @import("host_slots.zig").HostSlots;
+const ResourceRegistry = @import("resource_registry.zig").ResourceRegistry;
 const HttpError = @import("http.zig").HttpError;
 const WakeResult = @import("scheduler.zig").WakeResult;
 const TrustStore = @import("trust_store.zig").TrustStore;
@@ -37,6 +38,7 @@ pub const EventLoop = struct {
     http_servers: std.ArrayList(ServerState) = .empty,
     compression_streams: CompressionStreams = .{},
     host_slots: HostSlots = .{},
+    resources: ResourceRegistry = .{},
     stdin_handle: ?usize = null,
 
     pub fn deinit(self: *Self) void {
@@ -56,6 +58,7 @@ pub const EventLoop = struct {
         defer self.freeHttpServers();
         defer self.compression_streams.deinit(self.allocator);
         defer self.host_slots.deinit(self.allocator);
+        defer self.resources.deinit(self.allocator);
         const loop = self.loop orelse return;
         uv.uv_walk(loop, closeLeftoverHandle, null);
         _ = uv.uv_run(loop, .default);
@@ -178,6 +181,21 @@ pub const EventLoop = struct {
         _ = uv.uv_timer_stop(waiter.timer());
         self.pending_operations -= 1;
         uv.uv_close(waiter.timer(), onHandleClosed);
+    }
+
+    pub fn closeResource(self: *Self, id: v.ResourceId) void {
+        const slot = self.resources.take(id) orelse return;
+        if (slot.is_released) return;
+        switch (slot.kind) {
+            .stream => {
+                if (self.streamAt(slot.handle)) |stream| {
+                    stream.flushOutputBeforeClose();
+                }
+                self.closeStream(slot.handle);
+            },
+            .listener => self.closeListener(slot.handle),
+            .compression => self.compression_streams.remove(slot.handle),
+        }
     }
 
     pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !usize {

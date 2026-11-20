@@ -711,6 +711,10 @@ pub const Stream = struct {
         return failure;
     }
 
+    pub fn flushOutputBeforeClose(self: *Self) void {
+        self.startOutputJob() catch self.writeOutputNow();
+    }
+
     fn startOutputJob(self: *Self) !void {
         const can_start = !self.has_output_in_flight and self.pending_output.items.len > 0;
         if (!can_start) return;

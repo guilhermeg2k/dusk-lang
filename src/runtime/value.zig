@@ -35,6 +35,7 @@ const HeapValueType = enum(u8) {
     task,
     map,
     map_storage,
+    resource,
 };
 
 pub const HeapValue = extern struct {
@@ -693,6 +694,37 @@ pub const Task = extern struct {
     }
 };
 
+pub const ResourceId = struct {
+    index: u32,
+    generation: u32,
+};
+
+pub const Resource = extern struct {
+    const Self = @This();
+
+    obj: HeapValue,
+    index: u32,
+    generation: u32,
+
+    pub fn init(allocator: std.mem.Allocator, resource_id: ResourceId) !*Self {
+        const ptr = try allocator.create(Self);
+        ptr.* = .{ .obj = .{ .kind = .resource }, .index = resource_id.index, .generation = resource_id.generation };
+        return ptr;
+    }
+
+    pub fn clone(self: *Self, allocator: std.mem.Allocator) !*Self {
+        return Self.init(allocator, self.id());
+    }
+
+    pub fn id(self: *const Self) ResourceId {
+        return .{ .index = self.index, .generation = self.generation };
+    }
+
+    pub fn calc_size() usize {
+        return @sizeOf(Self);
+    }
+};
+
 pub const ValueType = enum(u8) {
     int64,
     float64,
@@ -710,17 +742,18 @@ pub const ValueType = enum(u8) {
     cell,
     task,
     map,
+    resource,
 
     pub fn isHeapType(self: ValueType) bool {
         return switch (self) {
-            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task, .map => true,
+            .string, .buffer, .array, .@"struct", .@"union", .nullable, .function, .cell, .task, .map, .resource => true,
             else => false,
         };
     }
 
     pub fn isImmutable(self: ValueType) bool {
         return switch (self) {
-            .int64, .float64, .bool, .null, .string => true,
+            .int64, .float64, .bool, .null, .string, .resource => true,
             else => false,
         };
     }

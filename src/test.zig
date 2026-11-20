@@ -335,6 +335,51 @@ test "compression: buffers over 256 KiB are compressed and decompressed on the t
     try runCase("compression-pool.dsk");
 }
 
+test "resources: the GC closes connections, listeners, files, response streams and compressors nothing can reach (copies keep them, explicit close and pooling win)" {
+    try runCaseInTmpDir("gc-resources.dsk");
+}
+
+test "resources: the registry hands out ids, rejects stale ones and keeps released slots until taken" {
+    const ResourceRegistry = @import("runtime/tasks/resource_registry.zig").ResourceRegistry;
+    const allocator = testing.allocator;
+    var registry: ResourceRegistry = .{};
+    defer registry.deinit(allocator);
+    const conn = try registry.add(allocator, .stream, 4);
+    const listener = try registry.add(allocator, .listener, 0);
+    try testing.expectEqual(@as(usize, 2), registry.liveCount());
+    registry.release(listener);
+    const taken = registry.take(conn).?;
+    try testing.expectEqual(@as(i64, 4), taken.handle);
+    try testing.expect(!taken.is_released);
+    try testing.expect(registry.take(conn) == null);
+    const reused = try registry.add(allocator, .compression, 99);
+    try testing.expectEqual(conn.index, reused.index);
+    try testing.expect(reused.generation != conn.generation);
+    try testing.expect(registry.take(conn) == null);
+    try testing.expect(registry.take(listener).?.is_released);
+    try testing.expectEqual(@as(usize, 1), registry.liveCount());
+}
+
+test "resources: a collection keeps moved owners and reports the ones nobody copied" {
+    const v = @import("runtime/value.zig");
+    const Heap = @import("runtime/gc.zig").Heap;
+    var heap = Heap.init(testing.allocator);
+    defer heap.deinit();
+    const allocator = heap.allocator();
+    const kept = try v.Resource.init(allocator, .{ .index = 1, .generation = 1 });
+    const dropped = try v.Resource.init(allocator, .{ .index = 2, .generation = 7 });
+    try heap.trackResource(&kept.obj);
+    try heap.trackResource(&dropped.obj);
+    const moved = try kept.clone(allocator);
+    kept.obj.gc_forward = &moved.obj;
+    try heap.sweepResources();
+    try testing.expectEqual(@as(usize, 1), heap.resources.items.len);
+    try testing.expectEqual(&moved.obj, heap.resources.items[0]);
+    try testing.expectEqual(@as(usize, 1), heap.dead_resource_ids.items.len);
+    try testing.expectEqual(@as(u32, 2), heap.dead_resource_ids.items[0].index);
+    try testing.expectEqual(@as(u32, 7), heap.dead_resource_ids.items[0].generation);
+}
+
 test "compression: the stream table reuses slots and rejects stale handles" {
     const compression = @import("runtime/compression.zig");
     const allocator = testing.allocator;

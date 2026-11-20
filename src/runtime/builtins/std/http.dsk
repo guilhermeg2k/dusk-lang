@@ -149,6 +149,7 @@ struct ResponseStream
     url: string
     ~handle: int
     ~pool_key: string
+    ~owner: resource
 
     func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
         return try stream_body_bytes(self.handle, max, timeout_ms)
@@ -168,6 +169,7 @@ struct ResponseStream
 
     func close(mut self: @) -> void
         pool_put(self.pool_key, self.handle)
+        release(self.owner)
     end
 end
 
@@ -433,6 +435,8 @@ extern func ~stream_has_final_status(handle: int) -> bool
 extern func ~host_slot_take(host: string, limit: int, timeout_ms: int) -> HttpError!void
 extern func ~host_slot_release(host: string) -> void
 extern func ~stream_hold_host_slot(handle: int, host: string) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void
 extern func ~invalid_compression_level(level: int) -> void
 
 let ~USER_AGENT = "dusk/0.16"
@@ -509,7 +513,7 @@ struct Client
         if body_format(response.status, response.headers, exchange): format then
             stream_decode_body(opened.handle, format)
         end
-        return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key)
+        return ResponseStream(status = response.status, reason = response.reason, headers = response.headers, url = response.url, handle = opened.handle, pool_key = opened.pool_key, owner = own(0, opened.handle))
     end
 end
 

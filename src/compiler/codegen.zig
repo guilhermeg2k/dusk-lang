@@ -1816,7 +1816,7 @@ const TypedValueHashContext = struct {
             .float64 => hasher.update(std.mem.asBytes(&@as(u64, @bitCast(tv.value.float64)))),
             .bool => hasher.update(std.mem.asBytes(&tv.value.bool)),
             .null => {},
-            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map => @panic("TypedValueHashContext.hash: constants are only primitives"),
+            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map, .resource => @panic("TypedValueHashContext.hash: constants are only primitives"),
         }
         return hasher.final();
     }
@@ -1828,7 +1828,7 @@ const TypedValueHashContext = struct {
             .float64 => @as(u64, @bitCast(a.value.float64)) == @as(u64, @bitCast(b.value.float64)),
             .bool => a.value.bool == b.value.bool,
             .null => true,
-            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map => @panic("TypedValueHashContext.eql: constants are only primitives"),
+            .string, .buffer, .array, .nullable, .@"struct", .@"union", .function, .cell, .task, .map, .resource => @panic("TypedValueHashContext.eql: constants are only primitives"),
         };
     }
 };
@@ -1858,6 +1858,7 @@ fn valueTypeFromTypeId(type_table: *tt.TypeTable, type_id: tt.TypeId) v.ValueTyp
         .func_type => .function,
         .task => .task,
         .cell => .cell,
+        .resource => .resource,
         .@"enum" => .int64,
         //note: void -> null
         .void => .null,

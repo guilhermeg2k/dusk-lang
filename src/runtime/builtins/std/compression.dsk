@@ -24,11 +24,14 @@ extern func ~decompress_part(handle: int, data: buffer) -> CompressionError!buff
 extern func ~decompress_finish(handle: int) -> CompressionError!void
 extern func ~is_stream_at_end(handle: int) -> bool
 extern func ~close_stream(handle: int) -> void
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void
 
 struct Compressor
     format: Format
     level: int = 6
     ~handle: int = -1
+    ~owner: ?resource = null
 
     func write_bytes(mut self: @, data: buffer) -> CompressionError!buffer
         try self.start()
@@ -42,11 +45,14 @@ struct Compressor
 
     func finish(mut self: @) -> CompressionError!buffer
         try self.start()
-        return try compress_part(self.handle, buffer::from_string(""), 2)
+        let tail = try compress_part(self.handle, buffer::from_string(""), 2)
+        release(self.owner)
+        return tail
     end
 
     func close(mut self: @) -> void
         close_stream(self.handle)
+        release(self.owner)
         self.handle = -2
     end
 
@@ -55,6 +61,7 @@ struct Compressor
             return
         end
         self.handle = try compressor_new(self.format, self.level)
+        self.owner = own(2, self.handle)
     end
 end
 
@@ -62,6 +69,7 @@ struct Decompressor
     format: Format
     max: int = -1
     ~handle: int = -1
+    ~owner: ?resource = null
     ~is_finished: bool = false
 
     func write_bytes(mut self: @, data: buffer) -> CompressionError!buffer
@@ -71,6 +79,7 @@ struct Decompressor
 
     func finish(mut self: @) -> CompressionError!void
         try self.start()
+        release(self.owner)
         try decompress_finish(self.handle)
         self.is_finished = true
     end
@@ -81,6 +90,7 @@ struct Decompressor
 
     func close(mut self: @) -> void
         close_stream(self.handle)
+        release(self.owner)
         self.handle = -2
     end
 
@@ -89,6 +99,7 @@ struct Decompressor
             return
         end
         self.handle = try decompressor_new(self.format, self.max)
+        self.owner = own(2, self.handle)
     end
 end
 

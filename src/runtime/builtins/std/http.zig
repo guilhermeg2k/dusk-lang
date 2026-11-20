@@ -21,6 +21,8 @@ pub const error_sets = .{HttpError};
 const replacement_character = "\u{FFFD}";
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
     .{ "tcp_connect_handle", Binding{ .native = &net.tcpConnect } },
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
     .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },

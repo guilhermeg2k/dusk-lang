@@ -11,6 +11,8 @@ const fail = native.fail;
 const bytesArg = native.bytesArg;
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
     .{ "compress", Binding{ .native = &compress } },
     .{ "decompress", Binding{ .native = &decompress } },
     .{ "compressor_new", Binding{ .native = &compressorNew } },

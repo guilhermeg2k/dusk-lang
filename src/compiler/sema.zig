@@ -17,6 +17,7 @@ pub const SemaAnalyzer = struct {
     const none_error_set_name = "none";
     const task_type_name = "Task";
     const map_type_name = "map";
+    const resource_type_name = "resource";
     const max_captures = 255;
 
     allocator: std.mem.Allocator,
@@ -6204,6 +6205,11 @@ pub const SemaAnalyzer = struct {
                 return CompileError.SemaError;
             },
             .@"struct" => |struct_name| {
+                const is_resource = self.module.bindings != null and std.mem.eql(u8, struct_name, resource_type_name);
+                if (is_resource) {
+                    const resource_type_id = self.type_table.getPrimitive(.resource);
+                    return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(resource_type_id) else resource_type_id;
+                }
                 if (std.mem.eql(u8, struct_name, map_type_name)) {
                     const map_type_id = try self.resolveMapTypeAnnotation(type_annotation, current_defined_type_type_id);
                     return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(map_type_id) else map_type_id;

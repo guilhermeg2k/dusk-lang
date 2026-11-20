@@ -11,6 +11,8 @@ pub const FsError = @import("../../tasks/fs_job.zig").FsError;
 pub const error_sets = .{FsError};
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
     .{ "exists", Binding{ .native = &exists } },
     .{ "stat_numbers", Binding{ .native = &statNumbers } },
     .{ "read", Binding{ .native = &readText } },

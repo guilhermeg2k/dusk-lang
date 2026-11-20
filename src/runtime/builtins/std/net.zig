@@ -21,6 +21,8 @@ const IoError = io.IoError;
 pub const error_sets = .{NetError};
 
 pub const bindings = native.BindingMap.initComptime(.{
+    .{ "own", Binding{ .native = &native.ownResource } },
+    .{ "release", Binding{ .native = &native.releaseResource } },
     .{ "tcp_connect_handle", Binding{ .native = &tcpConnect } },
     .{ "tcp_listen_handle", Binding{ .native = &tcpListen } },
     .{ "listener_accept", Binding{ .native = &listenerAccept } },
