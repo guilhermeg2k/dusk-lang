@@ -12,6 +12,7 @@ const CompressionStreams = @import("../compression.zig").StreamTable;
 const CompressionJob = @import("compression_job.zig").CompressionJob;
 const HostSlots = @import("host_slots.zig").HostSlots;
 const ResourceRegistry = @import("resource_registry.zig").ResourceRegistry;
+const HandleTable = @import("handle_table.zig").HandleTable;
 const HttpError = @import("http.zig").HttpError;
 const WakeResult = @import("scheduler.zig").WakeResult;
 const TrustStore = @import("trust_store.zig").TrustStore;
@@ -30,8 +31,8 @@ pub const EventLoop = struct {
     pending_operations: usize = 0,
     is_shutting_down: bool = false,
     callback_failure: ?anyerror = null,
-    streams: std.ArrayList(?*Stream) = .empty,
-    listeners: std.ArrayList(?*Listener) = .empty,
+    streams: HandleTable(Stream) = .{},
+    listeners: HandleTable(Listener) = .{},
     certificates: std.ArrayList(*ServerCertificate) = .empty,
     trust_store: TrustStore = .{},
     connection_pool: ConnectionPool = .{},
@@ -43,11 +44,11 @@ pub const EventLoop = struct {
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
-        for (self.streams.items) |entry| {
+        for (self.streams.entries.items) |entry| {
             const stream = entry orelse continue;
             stream.releaseAtExit();
         }
-        for (self.listeners.items) |entry| {
+        for (self.listeners.entries.items) |entry| {
             const listener = entry orelse continue;
             listener.releaseAtExit();
         }
@@ -203,44 +204,41 @@ pub const EventLoop = struct {
             return handle;
         }
         const loop = try self.ensureLoopStarted();
-        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        try self.streams.reserve(self.allocator);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
-        const handle = self.streams.items.len;
-        self.streams.appendAssumeCapacity(stream);
+        const handle = self.streams.addAssumeCapacity(stream);
+        stream.table_index = handle;
         self.stdin_handle = handle;
         return handle;
     }
 
     pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !usize {
         const loop = try self.ensureLoopStarted();
-        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        try self.streams.reserve(self.allocator);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
         stream.owns_file = true;
         stream.can_write_file = mode != .read;
         stream.is_append = mode == .append;
         stream.file_offset = if (mode == .append) size else 0;
-        const handle = self.streams.items.len;
+        const handle = self.streams.addAssumeCapacity(stream);
         stream.table_index = handle;
-        self.streams.appendAssumeCapacity(stream);
         return handle;
     }
 
     pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !usize {
         const loop = try self.ensureLoopStarted();
-        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        try self.streams.reserve(self.allocator);
         const stream = try Stream.openTcp(self.allocator, self, scheduler, loop);
-        const handle = self.streams.items.len;
+        const handle = self.streams.addAssumeCapacity(stream);
         stream.table_index = handle;
-        self.streams.appendAssumeCapacity(stream);
         return handle;
     }
 
     pub fn openListener(self: *Self, scheduler: *Scheduler) !usize {
         const loop = try self.ensureLoopStarted();
-        try self.listeners.ensureUnusedCapacity(self.allocator, 1);
+        try self.listeners.reserve(self.allocator);
         const listener = try Listener.create(self.allocator, self, scheduler, loop);
-        const handle = self.listeners.items.len;
-        self.listeners.appendAssumeCapacity(listener);
+        const handle = self.listeners.addAssumeCapacity(listener);
         return handle;
     }
 
@@ -266,22 +264,16 @@ pub const EventLoop = struct {
     }
 
     pub fn closeListener(self: *Self, handle: i64) void {
-        const listener = self.listenerAt(handle) orelse return;
-        self.listeners.items[@intCast(handle)] = null;
+        const listener = self.listeners.remove(handle) orelse return;
         listener.close();
     }
 
     pub fn listenerAt(self: *Self, handle: i64) ?*Listener {
-        const is_valid = handle >= 0 and handle < self.listeners.items.len;
-        if (!is_valid) {
-            return null;
-        }
-        return self.listeners.items[@intCast(handle)];
+        return self.listeners.get(handle);
     }
 
     pub fn closeStream(self: *Self, handle: i64) void {
-        const stream = self.streamAt(handle) orelse return;
-        self.streams.items[@intCast(handle)] = null;
+        const stream = self.streams.remove(handle) orelse return;
         stream.close();
     }
 
@@ -306,11 +298,7 @@ pub const EventLoop = struct {
     }
 
     pub fn streamAt(self: *Self, handle: i64) ?*Stream {
-        const is_valid = handle >= 0 and handle < self.streams.items.len;
-        if (!is_valid) {
-            return null;
-        }
-        return self.streams.items[@intCast(handle)];
+        return self.streams.get(handle);
     }
 
     pub fn ensureLoopStarted(self: *Self) !*uv.Loop {

@@ -715,7 +715,7 @@ Every `std/fs` call is one `FsJob` (`src/runtime/tasks/fs_job.zig`), run with `u
 
 ### 11.6 Streams (stdin, TCP connections and files)
 
-`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/tasks/stream.zig`) on the first call and keeps its index in `EventLoop.streams`. The Dusk value (`io::Stdin`) only holds that index in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
+`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/tasks/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
 
 | Kind | Opened as | Reads with |
 |---|---|---|
@@ -743,7 +743,7 @@ A `Stream` lives in C memory: the bytes read so far (a byte array and a read off
 
 ### 11.7 TCP
 
-`std/net` (`src/runtime/builtins/std/net.dsk` + `net.zig`) keeps the same shape as stdin: `net::TcpConn` and `net::TcpListener` hold an index in a file-only field, and their methods call file-only natives. A connection is a `tcp` `Stream` in `EventLoop.streams`, so it reuses the stream reads and writes (`net.zig` binds its `~stream_*` externs to the natives in `io.zig`). Listeners have their own table, `EventLoop.listeners`. Both tables are released at exit.
+`std/net` (`src/runtime/builtins/std/net.dsk` + `net.zig`) keeps the same shape as stdin: `net::TcpConn` and `net::TcpListener` hold a handle in a file-only field, and their methods call file-only natives. A connection is a `tcp` `Stream` in `EventLoop.streams`, so it reuses the stream reads and writes (`net.zig` binds its `~stream_*` externs to the natives in `io.zig`). Listeners have their own table, `EventLoop.listeners`. Both tables are released at exit.
 
 **Opening.** `tcp_connect` and `tcp_listen` both create an `OpenRequest`:
 

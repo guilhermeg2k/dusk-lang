@@ -47,6 +47,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- A long-running program kept a little memory for every connection, listener and opened file it ever had: closed ones are now reused, and a closed connection's old value can't reach a new one (it fails with `Closed`)
 - Method calls through `?.` work: `p?.get()` used to fail with "Invalid number of arguments" because `self` wasn't passed; it now calls the method when `p` isn't null and gives `null` otherwise (`mut self` and void methods included)
 - `?.` on a struct's field of its own nullable type (`node.next?.value` for `struct Node next: ?Node`) failed with "'value' does not exists": the nullable copy of a type is refreshed once the type's fields and methods are known
 - Generic functions and types from another module can name that module's other types in their signatures: a generic struct with a field like `make: func(Item) -> T`, or a generic function taking `func(Item) -> E!int`, used from another file, failed with `Invalid type 'Item'` (the copy, and a lambda's parameter types, were resolved in the caller's module)

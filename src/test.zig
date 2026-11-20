@@ -339,6 +339,33 @@ test "resources: the GC closes connections, listeners, files, response streams a
     try runCaseInTmpDir("gc-resources.dsk");
 }
 
+test "handles: the stream and listener tables reuse slots and reject stale handles" {
+    const HandleTable = @import("runtime/tasks/handle_table.zig").HandleTable;
+    const allocator = testing.allocator;
+    var table: HandleTable(u8) = .{};
+    defer table.deinit(allocator);
+    var a: u8 = 1;
+    var b: u8 = 2;
+    try table.reserve(allocator);
+    const first: i64 = @intCast(table.addAssumeCapacity(&a));
+    try testing.expectEqual(&a, table.get(first).?);
+    try testing.expectEqual(&a, table.remove(first).?);
+    try testing.expect(table.get(first) == null);
+    try testing.expect(table.remove(first) == null);
+    try table.reserve(allocator);
+    const second: i64 = @intCast(table.addAssumeCapacity(&b));
+    try testing.expect(second != first);
+    try testing.expectEqual(first & 0xffff_ffff, second & 0xffff_ffff);
+    try testing.expect(table.get(first) == null);
+    try testing.expectEqual(&b, table.get(second).?);
+    try testing.expect(table.get(-1) == null);
+    try testing.expectEqual(@as(usize, 1), table.entries.items.len);
+}
+
+test "net: a closed connection's handle can't reach a new connection that reuses its slot" {
+    try runCase("net-handle-reuse.dsk");
+}
+
 test "resources: the registry hands out ids, rejects stale ones and keeps released slots until taken" {
     const ResourceRegistry = @import("runtime/tasks/resource_registry.zig").ResourceRegistry;
     const allocator = testing.allocator;
