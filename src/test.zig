@@ -2620,7 +2620,7 @@ test "sema error: a number passed where text is expected (the message suggests i
     try runCaseError("sema/print-number-hint.dsk", error.InvalidType);
 }
 
-test "field and parameter defaults can call functions declared further down (also as values, failing calls with catch, inline returns)" {
+test "field and parameter defaults can call functions and use structs declared further down (function values, catch, inline returns, fields, methods, static fields)" {
     try runCase("defaults-call-later-functions.dsk");
 }
 

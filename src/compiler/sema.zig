@@ -33,6 +33,7 @@ pub const SemaAnalyzer = struct {
 
     fn_depth: usize = 0,
     pending_signatures: std.AutoHashMapUnmanaged(tt.TypeId, PendingSignature) = .empty,
+    pending_structs: std.AutoHashMapUnmanaged(tt.TypeId, PendingStruct) = .empty,
     defer_scopes: std.ArrayList(DeferScope) = .empty,
     defer_base: usize = 0,
     loop_starts: std.ArrayList(usize) = .empty,
@@ -716,6 +717,7 @@ pub const SemaAnalyzer = struct {
                     symbol.is_file_only = ss.is_file_only;
                     try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
+                    try self.pending_structs.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .symbol = symbol, .def = &stmt.data.@"struct".def, .module = self.module });
                 },
                 .@"enum" => |es| {
                     var symbol = try self.createEmptyEnumSymbol(es.identifier);
@@ -768,7 +770,7 @@ pub const SemaAnalyzer = struct {
                         try self.createOpaqueCopy(symbol.kind.generic_type);
                         continue;
                     }
-                    try self.fulfillStructType(symbol, &ss.def);
+                    try self.ensureStructFields(symbol.kind.defined_type.blueprint_type_id);
                 },
 
                 .@"enum" => |ss| {
@@ -837,6 +839,21 @@ pub const SemaAnalyzer = struct {
         defer self.scope.symbol_table = saved_table;
         try self.fulfillFuncType(pending.symbol, pending.def, null, pending.loc);
         self.pending_signatures.getPtr(type_id).?.state = .filled;
+    }
+
+    fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const entry = self.pending_structs.getPtr(base_id) orelse return;
+        if (entry.state != .pending) return;
+        entry.state = .filling;
+        const pending = entry.*;
+        const saved_module = self.enterModuleContext(pending.module);
+        defer self.exitModuleContext(saved_module);
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = self.module.root;
+        defer self.scope.symbol_table = saved_table;
+        try self.fulfillStructType(pending.symbol, pending.def);
+        self.pending_structs.getPtr(base_id).?.state = .filled;
     }
 
     fn resolveConstant(self: *Self, index: usize) CompileError!*ir.Value {
@@ -4846,6 +4863,7 @@ pub const SemaAnalyzer = struct {
                         uid = func.uid;
                     },
                     .defined_type => |dt| {
+                        try self.ensureStructFields(dt.blueprint_type_id);
                         const bt = self.type_table.getTypePtrById(dt.blueprint_type_id);
                         switch (bt.kind) {
                             .@"struct" => {
@@ -4922,6 +4940,7 @@ pub const SemaAnalyzer = struct {
                 callee = try self.evalCallee(fn_call.target);
             } else {
                 const target = try self.evalExp(indexed.target);
+                try self.ensureStructFields(target.type_id);
                 const fn_name = indexed.index.data.identifier;
                 if (self.genericMethodOf(target.type_id, fn_name)) |index| {
                     const generic = self.generic_functions.items[index];
@@ -5320,6 +5339,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn indexInto(self: *Self, exp: *const ast.ExpNode, target: *ir.Value) !*ir.Value {
+        try self.ensureStructFields(target.type_id);
         const indexed_exp = exp.data.indexed;
         const is_nullable = indexed_exp.is_nullable;
         const target_type = target.type_id;
@@ -6643,6 +6663,13 @@ const VisitedBlock = struct {
 };
 
 const ExitQuery = enum { returns, leaves_block };
+
+const PendingStruct = struct {
+    symbol: Symbol,
+    def: *const ast.Struct,
+    module: *ModuleScope,
+    state: enum { pending, filling, filled } = .pending,
+};
 
 const PendingSignature = struct {
     symbol: Symbol,

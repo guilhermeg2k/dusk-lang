@@ -48,7 +48,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
-- A struct field or parameter default calling a function declared further down in the file (`port: int = default_port()`) failed with a wrong argument count or type, or crashed the compiler: function signatures are now filled in when a default first needs them
+- A struct field or parameter default calling a function declared further down in the file (`port: int = default_port()`) failed with a wrong argument count or type, or crashed the compiler; reading a field, method or static field of a struct declared further down (`x: int = origin().x`) failed with "does not exists": function signatures and struct fields are now filled in when a default first needs them
 - A long-running program kept a little memory for every connection, listener and opened file it ever had: closed ones are now reused, and a closed connection's old value can't reach a new one (it fails with `Closed`)
 - Method calls through `?.` work: `p?.get()` used to fail with "Invalid number of arguments" because `self` wasn't passed; it now calls the method when `p` isn't null and gives `null` otherwise (`mut self` and void methods included)
 - `?.` on a struct's field of its own nullable type (`node.next?.value` for `struct Node next: ?Node`) failed with "'value' does not exists": the nullable copy of a type is refreshed once the type's fields and methods are known

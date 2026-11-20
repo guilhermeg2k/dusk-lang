@@ -8,13 +8,11 @@ struct Config
     safe: int = risky(true) catch 7
 end
 
-struct Origin
-    x: int = 5
-end
-
 struct Point
     x: int = origin().x
-    y: int = 1
+    y: int = Origin().scaled(3)
+    z: int = Limits.MAX
+    name: string = Origin(x = 9).label()
 end
 
 func make(base: int = default_port(), text: string = label("p", 1)) -> string
@@ -28,7 +26,11 @@ func main() -> void
     assert(config.retries == 6)
     assert(config.pick(4) == 8)
     assert(config.safe == 7)
-    assert(Point().x == 5)
+    let point = Point()
+    assert(point.x == 5)
+    assert(point.y == 15)
+    assert(point.z == 99)
+    assert(point.name == "origin 9")
     assert(make() == "p-1:8080")
     assert(make(1) == "p-1:1")
     assert(inline_twice(3) == 12)
@@ -66,3 +68,19 @@ func origin() -> Origin
 end
 
 func inline_twice(n: int) -> return doubled(doubled(n))
+
+struct Origin
+    x: int = 5
+
+    func scaled(self: @, n: int) -> int
+        return self.x * n
+    end
+
+    func label(self: @) -> string
+        return "origin ${self.x}"
+    end
+end
+
+struct Limits
+    let MAX = 99
+end
