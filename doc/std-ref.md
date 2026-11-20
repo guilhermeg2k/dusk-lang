@@ -1460,14 +1460,14 @@ The body is read only when the handler asks for it. `text` and `bytes` fail with
 ```nim
 "/logo" then return try http::file("assets/logo.svg", http::ContentType.SVG) end
 else then
-    let path = "public${req.path}"
-    return http::file(path, http::content_type_of(path)) catch e then
+    let file = path::join(["public", path::normalize(req.path)])
+    return http::file(file, http::content_type_of(file)) catch e then
         return http::status(404)
     end
 end
 ```
 
-A static file server like this must check `req.path` first: a path with `..` reaches files outside `public`.
+`http::file` opens the path it's given, like `fs::open`. `req.path` always starts with `/`, so `path::normalize` can't take `..` above that root (`/../secret.env` becomes `/secret.env`), and joining the result to `public` keeps the file inside it. Gluing `req.path` to the folder directly (`"public${req.path}"`) would let `/../secret.env` read a file outside it.
 
 Headers change through `Headers` methods on a `let mut` response: `set(name, value)` replaces every value of that header, `add(name, value)` adds one more, and `remove(name)` drops them all.
 
