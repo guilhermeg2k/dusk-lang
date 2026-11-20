@@ -1,0 +1,52 @@
+import std/path
+import std/os
+
+func main() -> !void
+    assert(path::join([]) == "")
+    assert(path::join(["", ""]) == "")
+    assert(path::join(["a/", "/b"]) == "a/b")
+    assert(path::join(["a", "/b"]) == "a/b")
+    assert(path::join(["a", ".."]) != ".")
+    assert(path::join(["one", "", "two"]) == path::join(["one", "two"]))
+    assert(path::basename("folder/file.dsk///") == "file.dsk")
+    assert(path::basename("") == "")
+    assert(path::basename("/") == "")
+    assert(path::dirname("file.dsk") == null)
+    assert(path::dirname("") == null)
+    assert(path::dirname("/") == null)
+    assert(path::dirname("folder/file.dsk/") == "folder")
+    assert(path::extension("folder/archive.tar.gz") == ".gz")
+    assert(path::extension("folder/.env") == "")
+    assert(path::extension("folder/.env.local") == ".local")
+    assert(path::extension("folder/name.") == ".")
+    assert(path::extension("..") == "")
+    assert(path::stem("folder/.env") == ".env")
+    assert(path::stem("folder/.env.local") == ".env")
+    assert(path::stem("folder/archive.tar.gz") == "archive.tar")
+    assert(path::stem("folder/") == "folder")
+    assert(path::stem("..") == "..")
+    assert(path::stem("folder/世界.dsk") == "世界")
+    assert(path::extension("folder.name/README") == "")
+    assert(path::normalize("") == ".")
+    assert(path::normalize("one/..") == ".")
+    assert(path::normalize("a/./b/../c/") == path::join(["a", "c"]))
+    assert(!path::is_absolute("relative"))
+    let cwd = try os::cwd()
+    assert(path::is_absolute(cwd))
+    let destination = try path::resolve(cwd, "folder/../sub/file.dsk")
+    assert(destination == path::join([path::normalize(cwd), "sub", "file.dsk"]))
+    assert(try path::relative(cwd, destination) == path::join(["sub", "file.dsk"]))
+    assert(try path::relative(cwd, cwd) == ".")
+    let mut has_base_error = false
+    path::resolve("relative", "child") catch e then
+        assert(e == path::PathError.NotAbsolute)
+        has_base_error = true
+    end
+    assert(has_base_error)
+    let mut has_relative_error = false
+    path::relative(cwd, "relative") catch e then
+        assert(e == path::PathError.NotAbsolute)
+        has_relative_error = true
+    end
+    assert(has_relative_error)
+end

@@ -1,6 +1,6 @@
 # Language Reference
 
-This is the reference for **v0.16 - Shigeo** (in development). Planned features are listed in the [roadmap](roadmap.md).
+This is the reference for **v0.17 - Fujiwara** (in development). Planned features are listed in the [roadmap](roadmap.md).
 
 Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 
@@ -1733,7 +1733,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`, `std/os`, `std/path`, `std/random`, `std/process`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -1986,6 +1986,187 @@ try out.write_bytes(try buffer::slice(frame, 0, used))
 ```
 
 The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). See [Buffers](#buffers).
+
+### std/process
+
+External programs with asynchronous exit waiting and pipe I/O. Import with `import std/process`.
+
+```dusk
+import std/process
+import std/io
+
+func main() -> !void
+    let result = try process::run(["git", "--version"])
+    io::print(try result.stdout_text())
+    assert(result.is_success())
+end
+```
+
+`run(args: []string, cwd: ?string = null, env: ?map[string, string] = null, timeout_ms: int = -1, max_output: int = 16777216) -> ProcessError!Result` launches a program, captures stdout/stderr concurrently and waits for completion. Only the calling task waits; other tasks, timers and I/O continue. Launch setup, path lookup and validation are synchronous. The first argument is the executable; later arguments are passed literally, preserving empty strings and spaces. There is no implicit shell expansion, redirection or pipeline syntax.
+
+Default stdin is an EOF source. `cwd` changes only the child's directory; relative paths resolve against the parent directory at submission. `env = null` uses the VM's supplied environment snapshot, matching `std/os`; absent embedding context means an empty environment. A supplied map replaces the child environment. On Windows, libuv may add required platform variables that are absent from it. Names must be nonempty and contain no `=` or zero byte, except host-supported drive environment names on Windows. Arguments, names, values and paths cannot contain zero bytes; host context text must be valid UTF-8.
+
+A bare executable name is searched using the VM parent environment's `PATH`, even when `env` supplies a different child environment. Empty or relative PATH entries resolve against the child's working directory. Explicit executable paths resolve against that directory and bypass PATH search. Windows lookup also considers `.exe` and `.com`; `.bat` and `.cmd` files require an explicit interpreter.
+
+`Result` contains `stdout: buffer`, `stderr: buffer` and `termination: Termination`. The termination union has `Exited: int` and `Signaled: int` variants. Exit codes and signal numbers retain the host-reported value; signal numbers are platform-specific. `is_success()` is true only for `Exited = 0`. Nonzero exits are results, not errors. `stdout_text()` and `stderr_text()` return `ProcessError!string`, failing with `InvalidUtf8` for binary data while preserving the original buffers.
+
+`max_output` limits combined stdout/stderr bytes, defaulting to 16 MiB. It must be nonnegative; zero permits empty output only. Overflow returns `OutputTooLarge` after terminating and reaping the direct child. Output is not silently truncated into a successful result.
+
+`timeout_ms = -1` means no deadline, `0` means immediate expiry, and lower values are invalid. The deadline covers launch accounting, output capture and child exit. It stays active if a child closes its outputs but continues running, or exits while a descendant retains a pipe. Expiry closes capture pipes, requests forced termination of the direct child and waits for its exit notification before returning `TimedOut`. Cleanup may outlast the nominal deadline while the host completes termination; descendants are not automatically terminated.
+
+#### Interactive children
+
+`start(args: []string, cwd: ?string = null, env: ?map[string, string] = null, stdin_mode: Stdio = Stdio.Ignore, stdout_mode: Stdio = Stdio.Inherit, stderr_mode: Stdio = Stdio.Inherit) -> ProcessError!Child` uses the same argument/path/environment rules and returns after launch. Modes are `Stdio.Inherit`, `Stdio.Ignore` and `Stdio.Pipe`. Inherited streams are OS standard descriptors; inheriting an embedded custom stdout/stderr writer fails with `Unsupported`. Preceding Dusk output is flushed before an inheriting child starts.
+
+| Child method | Returns | Description |
+| :----------- | :------ | :---------- |
+| `wait(timeout_ms = -1)` | `ProcessError!Termination` | Waits for exit; completed status is cached for repeat calls. A wait timeout leaves the child running. |
+| `kill()` | `ProcessError!void` | Requests forced termination without waiting. Use `wait()` to observe exit. Does nothing after observed exit. |
+| `stdin()` | `ProcessError!PipeWriter` | Gets piped stdin, or fails with `NotPiped`. |
+| `stdout()` / `stderr()` | `ProcessError!PipeReader` | Gets a piped reader, or fails with `NotPiped`. |
+| `close()` | `ProcessError!void` | Releases pipes/resources after exit; `Busy` while running. Repeated close does nothing. |
+
+Only one task can wait for a child at once (`Busy` otherwise). Waiting after close fails with `Closed`. Child wrappers share the same OS process, including wrappers made by `copy`; closing one closes its aliases.
+
+A `PipeReader` supports `read_line(max = -1, timeout_ms = -1)`, `read_bytes(max, timeout_ms = -1)`, `read_exact(count, timeout_ms = -1)`, `read_all(timeout_ms = -1)`, `read_all_bytes(timeout_ms = -1)` and `close()`. A `PipeWriter` supports `write(text)`, `write_bytes(buffer)`, `flush()` and `close()`. Both fit the `std/io` reader/writer traits. Pipe operations use `io::IoError` and the same EOF, text/bytes and backpressure rules as other streams.
+
+Closing stdin sends EOF; closing a pipe does not kill the child. Exit does not discard buffered output. Drain piped stdout/stderr concurrently while waiting, or use `run` for automatic collection. `Child.close()` closes remaining pipes and discards unread output. A running owned child keeps execution alive even without an active waiter. Runtime teardown terminates/reaps remaining owned children before releasing process handles.
+
+`ProcessError` contains `InvalidArgument`, `NotFound`, `PermissionDenied`, `InvalidExecutable`, `ResourceLimit`, `TimedOut`, `OutputTooLarge`, `InvalidUtf8`, `Unsupported`, `Other`, `Busy`, `Closed` and `NotPiped`.
+
+### std/random
+
+Random numbers, buffers and reproducible generators. Import with `import std/random`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `integer(min: int, max: int)` | `RandomError!int` | Uniform integer with both bounds included. |
+| `decimal()` | `RandomError!float` | A value from `0.0` inclusive to `1.0` exclusive. |
+| `bytes(size: int)` | `RandomError!buffer` | A fresh buffer of ordinary random bytes. |
+| `secure_bytes(size: int)` | `RandomError!buffer` | A fresh buffer from the host's secure entropy source. |
+| `seeded(seed: int)` | `Generator` | An independent deterministic generator. |
+
+Integer bounds can span the complete `int` range. `min > max` fails with `InvalidBounds`; equal bounds return that value without consuming randomness. Byte counts must be nonnegative (`NegativeSize` otherwise). Zero-byte requests return a fresh empty buffer without consulting a source or advancing a sequence. Invalid bounds and negative sizes also leave sequences unchanged.
+
+The ordinary module functions share one generator per execution, initialized lazily from the host. Tasks share this sequence, so scheduling affects which task receives each draw. An embedded VM without the required host I/O context gets `Unsupported` when initialization or secure entropy is needed. Normal CLI executions supply that context. `decimal()` needs `try` because its source may need initialization.
+
+`secure_bytes` obtains fresh secure entropy directly from the host. It fails with `EntropyUnavailable` if the source cannot complete, including host cancellation; it never falls back to the ordinary generator and returns no partial buffer on failure. Ordinary module functions and seeded generators provide no security guarantee; use `secure_bytes` for secrets. Calls are synchronous; host entropy acquisition can wait.
+
+A `Generator` has these methods, all taking `mut self`:
+
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `integer(min: int, max: int)` | `RandomError!int` | The same inclusive integer bounds. |
+| `decimal()` | `float` | The same `[0, 1)` range; no host source or `try` needed. |
+| `bytes(size: int)` | `RandomError!buffer` | Deterministic bytes with the same size rules. |
+
+Every `int` seed is valid, including zero and negative values. The same seed and the same method calls with the same arguments reproduce the same results within a Dusk version. Sequence compatibility across versions is not guaranteed. Call boundaries matter: concatenating two `bytes(4)` results need not match one `bytes(8)` result.
+
+Generators are ordinary shared structs. Aliases advance the same state; use `copy(rng)` to continue independently from the current state. Store a generator in a `let mut` binding to draw from it. Seeded generators do not consult host entropy and are unaffected by unrelated module draws. Their state and construction fields are private.
+
+```dusk
+import std/random
+import std/buffer
+
+func main() -> !void
+    let die = try random::integer(1, 6)
+    assert(die >= 1 and die <= 6)
+    let mut rng = random::seeded(42)
+    let mut replay = copy(rng)
+    assert(try rng.integer(-10, 10) == try replay.integer(-10, 10))
+    let fraction = rng.decimal()
+    assert(fraction >= 0.0 and fraction < 1.0)
+    let token = try random::secure_bytes(32)
+    assert(buffer::len(token) == 32)
+end
+```
+
+`RandomError` contains `InvalidBounds`, `NegativeSize`, `EntropyUnavailable` and `Unsupported`. Impossible buffer sizes and allocation failures follow the runtime allocation-error rules.
+
+### std/path
+
+Lexical path operations. Import with `import std/path`. Paths follow the runtime platform's syntax: slash separators on Unix, and drive/UNC paths with slash or backslash separators on Windows. These functions do not access the filesystem, check existence, follow symlinks or read the working directory.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `join(parts: []string)` | `string` | Joins nonempty parts with native separators, avoiding a duplicate separator at a boundary. Empty input produces `""`. |
+| `normalize(text)` | `string` | Collapses redundant separators, `.` and lexical `..` components. Empty or cancelled relative paths become `"."`. |
+| `basename(text)` | `string` | Last component, ignoring trailing separators. Empty paths and roots produce `""`. |
+| `dirname(text)` | `?string` | Parent component text, ignoring trailing separators. Empty paths, bare names and roots have no parent (`null`). |
+| `extension(text)` | `string` | Final extension of the last component, including its dot; absent extensions produce `""`. |
+| `stem(text)` | `string` | Last component with its final extension removed. |
+| `is_absolute(text)` | `bool` | Whether the path has a fully qualified root. |
+| `resolve(base, text)` | `PathError!string` | Normalizes `text` against an absolute base. A fully absolute `text` replaces the base. |
+| `relative(from, to)` | `PathError!string` | Computes a path from the absolute directory `from` to the absolute destination `to`. |
+
+`join` combines text without normalizing dot components or discarding earlier parts when a later part starts with a separator. For example, `join(["a/", "/b"])` gives `"a/b"`. Use `normalize` or `resolve` for lexical dot-component processing. `normalize` preserves leading parent components in relative paths and clamps parent traversal at absolute roots. It removes trailing separators except where required for a root. Component queries preserve the input's component text rather than normalizing it.
+
+A leading dot alone does not introduce an extension: `extension("config/.env")` is `""`, and its stem is `".env"`. `extension(".env.local")` is `".local"`, `stem("archive.tar.gz")` is `"archive.tar"`, and `extension("name.")` is `"."`. The special components `.` and `..` have no extension.
+
+`resolve` requires an absolute base even when `text` is absolute. `relative` requires both inputs to be absolute, and returns `"."` for identical normalized paths. A relative input fails with `PathError.NotAbsolute`. Neither function has an implicit working directory; pass `os::cwd()` explicitly when needed.
+
+On Windows, `is_absolute` accepts drive-qualified, UNC and device absolute roots; a rooted path such as `\folder` and a drive-relative path such as `C:folder` are not fully absolute. `resolve` can use a drive-qualified base to resolve a rooted path, but fails with `NotAbsolute` if a drive-relative destination remains unresolved. Normalization uses backslash separators and uppercase drive letters. `relative` returns the normalized absolute destination when the inputs are on different drives or shares. Ordinary component comparison follows the platform path rules; it does not query filesystem-specific case behavior.
+
+```dusk
+import std/path
+import std/os
+
+func main() -> !void
+    let base = try os::cwd()
+    let file = try path::resolve(base, "assets/./images/../logo.png")
+    assert(path::basename(file) == "logo.png")
+    assert(path::stem(file) == "logo")
+    assert(path::extension(file) == ".png")
+    assert(try path::relative(base, file) == path::join(["assets", "logo.png"]))
+end
+```
+
+These operations work on path text and do not validate whether it names a legal filesystem entry. They do not expand `~`, environment variables, wildcards or URL escapes. Lexical `..` processing can differ from physical traversal through symlinks; resolving against a base does not ensure the result stays inside that directory.
+
+### std/os
+
+Program context and shutdown notifications. Import with `import std/os`.
+
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `platform()` | `Platform` | The operating system targeted by the running runtime: `Linux`, `MacOS`, `Windows` or `Other`. |
+| `args()` | `OsError![]string` | A fresh array of program arguments. |
+| `env(name)` | `OsError!?string` | An environment value, or `null` when absent. An empty value is `""`. |
+| `cwd()` | `OsError!string` | The absolute current working directory. |
+| `set_exit_code(code)` | `OsError!void` | Sets the status for normal completion; execution continues. |
+| `watch_signal(signal)` | `OsError!SignalStream` | Subscribes to a shutdown signal immediately. |
+
+For `dusk app.dsk first --flag`, `args()` returns `["first", "--flag"]`: it excludes the runtime executable and script path. Arguments after the script path belong to the program, including `--version`. The CLI reads environment values from its startup environment map. Environment names follow host case rules; empty names and names containing `=` or a zero byte fail with `InvalidArgument`. Invalid UTF-8 in arguments, returned environment values or the working-directory path fails with `InvalidUtf8`. These calls copy results into program values.
+
+Embedded executions receive arguments and a read-only environment map from the host; both default to empty. The host keeps their storage alive and unchanged during execution. `cwd()` uses the host-provided I/O context. It reports the process working directory, which can differ from the entry module's directory. This module does not change environment variables or the working directory.
+
+Exit status starts at `0` for each execution. `set_exit_code` accepts `0` through `255`; an invalid code fails with `InvalidArgument` and leaves the previous status unchanged. The last successful call wins, including calls from other tasks. All tasks continue under the normal execution rules; output is flushed and runtime resources are released before the CLI exits. Runtime errors and unhandled task failures still produce failure regardless of the selected status. Embedded executions return control to their host, which can read `Dusk.exit_code` after execution.
+
+`Signal` has `Interrupt` (usually Ctrl+C) and `Terminate` variants. Both are supported on Unix hosts; on Windows, `Terminate` fails with `Unsupported`, while `Interrupt` receives console notifications. Ctrl+C does not generate an interrupt while the terminal is in raw mode.
+
+| SignalStream method | Returns | Description |
+| :------------------ | :------ | :---------- |
+| `wait()` | `OsError!void` | Consumes a pending notification or waits while other tasks continue. |
+| `close()` | `void` | Stops the subscription; repeated calls do nothing. |
+
+Subscribe before starting work to receive signals that arrive before `wait()`. Each subscription retains at most one pending notification; repeated arrivals can coalesce. Separate subscriptions each receive a notification. Only one task can wait on a subscription at a time (`Busy` otherwise). Closing wakes a waiting task with `Closed`; waiting after close also fails with `Closed`. A subscription without a waiting task does not keep execution alive; a waiting task does. Open subscriptions are closed when execution ends.
+
+While subscribed, repeated interrupts follow the same notification rule and do not force an exit. Closing the last subscription ends interception of that signal. Signal handling does not cancel tasks or automatically execute application cleanup; the waiting task performs that cleanup explicitly.
+
+```dusk
+import std/os
+import std/io
+
+func main() -> !void
+    let shutdown = try os::watch_signal(os::Signal.Interrupt)
+    io::println("Press Ctrl+C to stop.")
+    try shutdown.wait()
+    shutdown.close()
+    io::println("Shutting down...")
+end
+```
+
+`OsError` contains `InvalidArgument`, `InvalidUtf8`, `NotFound`, `Unsupported`, `Busy`, `Closed` and `Other`. `NotFound` can occur when the current directory no longer exists; `Other` covers host failures without a more specific variant. `SignalStream` construction and its native handle are private to the module.
 
 ### std/time
 

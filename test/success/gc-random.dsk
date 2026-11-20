@@ -1,0 +1,25 @@
+import std/random
+import std/buffer
+import std/task
+
+func main() -> !void
+    let mut rng = random::seeded(123)
+    let mut expected = random::seeded(123)
+    for 0..3: i do
+        let bytes = try rng.bytes(1100000)
+        let reference = try expected.bytes(1100000)
+        assert(buffer::len(bytes) == 1100000)
+        for bytes: value, index do
+            assert(value == reference[index])
+        end
+        assert(rng.decimal() == expected.decimal())
+    end
+    let mut snapshot = copy(rng)
+    let worker = spawn(func() -> !int
+        task::sleep(0)
+        let data = try rng.bytes(1100000)
+        return try rng.integer(1, 100)
+    end)
+    let discarded = try snapshot.bytes(1100000)
+    assert(try await(worker) == try snapshot.integer(1, 100))
+end

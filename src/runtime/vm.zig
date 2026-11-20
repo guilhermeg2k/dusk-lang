@@ -9,6 +9,7 @@ const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
 const Stdio = @import("stdio.zig").Stdio;
+const RandomEngine = @import("random.zig").Engine;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
 const TimeZones = @import("timezone.zig").Registry;
@@ -25,6 +26,11 @@ pub const VM = struct {
     scratch: std.Io.Writer.Allocating,
     stdio: Stdio,
     stdin_fd: c_int = 0,
+    io: ?std.Io = null,
+    program_args: []const []const u8 = &.{},
+    environment: ?*const std.process.Environ.Map = null,
+    exit_code: u8 = 0,
+    random_engine: ?RandomEngine = null,
     stack: []v.Value,
     heap: Heap,
     scheduler: Scheduler,

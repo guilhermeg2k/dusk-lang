@@ -120,6 +120,19 @@ pub const Stream = struct {
         return stream;
     }
 
+    pub fn openProcessPipe(allocator: std.mem.Allocator, event_loop: *EventLoop, scheduler: *Scheduler, loop: *uv.Loop) !*Self {
+        const stream = try allocator.create(Self);
+        errdefer allocator.destroy(stream);
+        const memory = try allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.named_pipe));
+        errdefer allocator.free(memory);
+        if (uv.uv_pipe_init(loop, @ptrCast(memory.ptr), 0) < 0) {
+            return error.PipeInitFailed;
+        }
+        stream.* = .{ .allocator = allocator, .event_loop = event_loop, .scheduler = scheduler, .kind = .pipe, .loop = loop, .file = -1, .handle_memory = memory, .open_handles = 1 };
+        uv.uv_handle_set_data(stream.uvHandle(), &stream.owner);
+        return stream;
+    }
+
     pub fn rememberPeer(self: *Self) void {
         var address: uv.SocketAddress = .{};
         var length: c_int = @sizeOf(uv.SocketAddress);

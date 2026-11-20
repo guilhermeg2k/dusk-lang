@@ -13,6 +13,9 @@ const ConnectionPool = @import("connection_pool.zig").ConnectionPool;
 const ServerState = @import("http_server.zig").ServerState;
 const RuntimeError = @import("../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
+const Process = @import("process.zig").Process;
+const process_runtime = @import("process.zig");
+const Subscription = @import("signal.zig").Subscription;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -22,6 +25,8 @@ pub const EventLoop = struct {
     allocator: std.mem.Allocator,
     loop: ?*uv.Loop = null,
     pending_operations: usize = 0,
+    live_processes: usize = 0,
+    processes: std.ArrayList(?*Process) = .empty,
     is_shutting_down: bool = false,
     callback_failure: ?anyerror = null,
     streams: std.ArrayList(?*Stream) = .empty,
@@ -31,9 +36,25 @@ pub const EventLoop = struct {
     connection_pool: ConnectionPool = .{},
     http_servers: std.ArrayList(ServerState) = .empty,
     stdin_handle: ?usize = null,
+    signal_subscriptions: std.ArrayList(?*Subscription) = .empty,
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
+        for (self.processes.items) |entry| {
+            if (entry) |process| {
+                process.release();
+            }
+        }
+        while (self.live_processes > 0) {
+            _ = uv.uv_run(self.loop.?, .once);
+        }
+        defer self.processes.deinit(self.allocator);
+        for (self.signal_subscriptions.items) |entry| {
+            if (entry) |subscription| {
+                subscription.close();
+            }
+        }
+        defer self.signal_subscriptions.deinit(self.allocator);
         for (self.streams.items) |entry| {
             const stream = entry orelse continue;
             stream.releaseAtExit();
@@ -74,6 +95,28 @@ pub const EventLoop = struct {
     fn loopMemory(loop: *uv.Loop) []align(16) u8 {
         const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
         return bytes[0..uv.uv_loop_size()];
+    }
+
+    pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !usize {
+        try self.signal_subscriptions.ensureUnusedCapacity(self.allocator, 1);
+        const subscription = try Subscription.create(self, scheduler, signal);
+        const index = self.signal_subscriptions.items.len;
+        self.signal_subscriptions.appendAssumeCapacity(subscription);
+        return index;
+    }
+
+    pub fn signalAt(self: *Self, handle: i64) ?*Subscription {
+        const index = std.math.cast(usize, handle) orelse return null;
+        if (index >= self.signal_subscriptions.items.len) {
+            return null;
+        }
+        return self.signal_subscriptions.items[index];
+    }
+
+    pub fn closeSignal(self: *Self, handle: i64) void {
+        const subscription = self.signalAt(handle) orelse return;
+        self.signal_subscriptions.items[@intCast(handle)] = null;
+        subscription.close();
     }
 
     pub fn startTimer(self: *Self, scheduler: *Scheduler, ms: u64, task: *TaskState) !void {
@@ -148,6 +191,28 @@ pub const EventLoop = struct {
         stream.table_index = handle;
         self.streams.appendAssumeCapacity(stream);
         return handle;
+    }
+
+    pub fn openProcessPipe(self: *Self, scheduler: *Scheduler) !usize {
+        const loop = try self.ensureLoopStarted();
+        try self.streams.ensureUnusedCapacity(self.allocator, 1);
+        const stream = try Stream.openProcessPipe(self.allocator, self, scheduler, loop);
+        const index = self.streams.items.len;
+        stream.table_index = index;
+        self.streams.appendAssumeCapacity(stream);
+        return index;
+    }
+
+    pub fn processAt(self: *Self, handle: i64) ?*Process {
+        const index = std.math.cast(usize, handle) orelse return null;
+        if (index >= self.processes.items.len) {
+            return null;
+        }
+        const process = self.processes.items[index] orelse return null;
+        if (process.is_released) {
+            return null;
+        }
+        return process;
     }
 
     pub fn openListener(self: *Self, scheduler: *Scheduler) !usize {
@@ -241,7 +306,7 @@ pub const EventLoop = struct {
     }
 
     pub fn hasPendingOperations(self: *const Self) bool {
-        return self.pending_operations > 0;
+        return self.pending_operations > 0 or self.live_processes > 0;
     }
 
     pub fn wallTimeMilliseconds() RuntimeError!i64 {
@@ -270,7 +335,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer };
+    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -285,6 +350,19 @@ fn closeLeftoverHandle(handle: *uv.Handle, _: ?*anyopaque) callconv(.c) void {
 pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
     const owner = HandleOwner.of(handle);
     switch (owner.kind) {
+        .process => {
+            const process: *Process = @alignCast(@fieldParentPtr("owner", owner));
+            process.markHandleClosed();
+        },
+        .process_timer => {
+            const process: *Process = @alignCast(@fieldParentPtr("timer_owner", owner));
+            process.markHandleClosed();
+        },
+        .process_pipe => process_runtime.captureHandleClosed(owner),
+        .signal => {
+            const subscription: *Subscription = @alignCast(@fieldParentPtr("owner", owner));
+            subscription.destroy();
+        },
         .timer => {
             const request: *TimerRequest = @alignCast(@fieldParentPtr("owner", owner));
             const allocator = request.event_loop.allocator;

@@ -163,6 +163,410 @@ test "serialization: reference formats written in Dusk (JSON-like, record notati
     try runCaseError("sema/serialization-missing-capability.dsk", error.FormatLacksMethod);
 }
 
+test "process: captured output, arguments, environment, directory and termination" {
+    try runProcessCase("process-run.dsk");
+}
+
+test "process: interactive pipes, waits, deadlines, kill and close" {
+    try runProcessCase("process-child.dsk");
+}
+
+test "process: output caps, whole-operation deadlines and launch cleanup" {
+    try runProcessCase("process-errors.dsk");
+}
+
+test "process: parked children do not occupy the filesystem pool" {
+    try runProcessCase("process-concurrent.dsk");
+}
+
+test "process: captured results and interactive streams survive collection" {
+    try runProcessCase("process-gc.dsk");
+}
+
+test "process: private construction and native access" {
+    try runCaseError("sema/process-child-private.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/process-native-private.dsk", error.NotVisible);
+}
+
+test "process: failed launches release native records before returning" {
+    const VM = @import("runtime/vm.zig").VM;
+    const value = @import("runtime/value.zig");
+    const native = @import("runtime/builtins/std/process.zig");
+    const ProcessError = @import("runtime/tasks/process.zig").ProcessError;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{});
+    defer vm.deinit();
+    vm.io = testing.io;
+    const argv = try vm.allocStringArray(&.{"/dusk/missing/executable"});
+    var args = [_]value.Value{ argv, value.NULL_VALUE, value.NULL_VALUE, .{ .int64 = -1 }, .{ .int64 = 16777216 } };
+    for (0..50) |_| {
+        const result = try native.bindings.get("run_handle").?.native(&vm, &args);
+        try testing.expect(result.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(ProcessError.NotFound)), result.value.int64);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.live_processes);
+        try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+        for (vm.event_loop.processes.items) |entry| {
+            try testing.expect(entry == null);
+        }
+    }
+}
+
+fn runProcessCase(name: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var environment = std.process.Environ.Map.init(arena.allocator());
+    defer environment.deinit();
+    const parent = try std.process.currentPathAlloc(testing.io, arena.allocator());
+    const helper = try std.fs.path.resolve(arena.allocator(), &.{ parent, @import("test_paths").process_fixture });
+    const directory = std.fs.path.dirname(helper).?;
+    try environment.put("PATH", directory);
+    try environment.put("DUSK_PROCESS_PARENT", "parent");
+    const filename = try std.fmt.allocPrint(arena.allocator(), "test/success/{s}", .{name});
+    const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, filename, arena.allocator(), .unlimited);
+    var temporary = testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const gate = try std.fs.path.resolve(arena.allocator(), &.{ parent, ".zig-cache", "tmp", &temporary.sub_path, "process-gate" });
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .environment = &environment, .program_args = &.{ helper, std.fs.path.basename(helper), directory, gate } };
+    try dusk.compileAndRun(source);
+}
+
+test "random: seeded replay, bounds, copy and default draws" {
+    try runCase("random.dsk");
+}
+
+test "random: generator allocation across GC and captured state" {
+    try runCase("gc-random.dsk");
+}
+
+test "random: generator mutation and visibility" {
+    try runCaseError("sema/random-generator-immutable.dsk", error.NotMutable);
+    try runCaseError("sema/random-generator-private.dsk", error.NotVisible);
+    try runCaseError("sema/random-generator-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/random-native-private.dsk", error.NotVisible);
+}
+
+test "random: fixed engine, sampling vectors and non-consuming fast paths" {
+    const random = @import("runtime/random.zig");
+    var engine = random.seeded(0);
+    const expected = [_]u64{ 0x53175d61490b23df, 0x61da6f3dc380d507, 0x5c0fdf91ec9a7bfc };
+    for (expected) |word| {
+        try testing.expectEqual(word, engine.next());
+    }
+    engine = random.seeded(0);
+    try testing.expectEqual(@as(i64, 2), try random.nextInt(&engine, 1, 6));
+    engine = random.seeded(0);
+    try testing.expectEqual(@as(u64, 0x3fd75d61490b23df), @as(u64, @bitCast(random.nextFloat(&engine))));
+    engine = random.seeded(0);
+    var bytes: [9]u8 = undefined;
+    random.fillBytes(&engine, &bytes);
+    try testing.expectEqualSlices(u8, &.{ 0xdf, 0x23, 0x0b, 0x49, 0x61, 0x5d, 0x17, 0x53, 0x07 }, &bytes);
+    const state = engine.s;
+    try testing.expectError(error.InvalidBounds, random.nextInt(&engine, 1, -1));
+    try testing.expectEqual(@as(i64, -1), try random.nextInt(&engine, -1, -1));
+    random.fillBytes(&engine, &.{});
+    try testing.expectEqualSlices(u64, &state, &engine.s);
+}
+
+test "random: secure source failures never fall back to ordinary randomness" {
+    const native = @import("runtime/builtins/std/random.zig");
+    const RandomError = @import("runtime/random.zig").RandomError;
+    const value = @import("runtime/value.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{});
+    defer vm.deinit();
+    var source = RandomSourceProbe{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.random = RandomSourceProbe.fillRandom;
+    vtable.randomSecure = RandomSourceProbe.fillSecure;
+    vm.io = .{ .userdata = &source, .vtable = &vtable };
+    var args = [_]value.Value{.{ .int64 = 9 }};
+    vm.heap.threshold = 0;
+    const success = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(!success.has_failed);
+    try testing.expectEqualSlices(u8, &.{ 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5 }, value.HeapValue.getParentPtr(value.Bytes, success.value.heap_obj).slice());
+    try testing.expectEqual(@as(usize, 1), source.secure_calls);
+    try testing.expectEqual(@as(usize, 0), source.random_calls);
+    inline for (.{ RandomSourceProbe.Failure.unavailable, RandomSourceProbe.Failure.canceled }) |failure| {
+        source.failure = failure;
+        const result = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+        try testing.expect(result.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(RandomError.EntropyUnavailable)), result.value.int64);
+        try testing.expectEqual(@as(usize, 0), source.random_calls);
+        try testing.expect(vm.random_engine == null);
+    }
+    args[0].int64 = 0;
+    const before = source.secure_calls;
+    const empty = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(!empty.has_failed);
+    try testing.expectEqual(@as(usize, 0), value.HeapValue.getParentPtr(value.Bytes, empty.value.heap_obj).len);
+    try testing.expectEqual(before, source.secure_calls);
+    args[0].int64 = -1;
+    const negative = try native.bindings.get("secure_bytes").?.native(&vm, &args);
+    try testing.expect(negative.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(RandomError.NegativeSize)), negative.value.int64);
+    args[0].int64 = std.math.maxInt(i64);
+    const allocated = vm.heap.allocated;
+    try testing.expectError(error.OutOfMemory, native.bindings.get("secure_bytes").?.native(&vm, &args));
+    try testing.expectEqual(allocated, vm.heap.allocated);
+    try testing.expectEqual(before, source.secure_calls);
+}
+
+const RandomSourceProbe = struct {
+    const Failure = enum { none, unavailable, canceled };
+
+    random_calls: usize = 0,
+    secure_calls: usize = 0,
+    failure: Failure = .none,
+
+    fn fillRandom(userdata: ?*anyopaque, bytes: []u8) void {
+        const self: *RandomSourceProbe = @ptrCast(@alignCast(userdata.?));
+        self.random_calls += 1;
+        @memset(bytes, 0x3c);
+    }
+
+    fn fillSecure(userdata: ?*anyopaque, bytes: []u8) std.Io.RandomSecureError!void {
+        const self: *RandomSourceProbe = @ptrCast(@alignCast(userdata.?));
+        self.secure_calls += 1;
+        @memset(bytes, 0xa5);
+        switch (self.failure) {
+            .none => {},
+            .unavailable => return error.EntropyUnavailable,
+            .canceled => return error.Canceled,
+        }
+    }
+};
+
+test "random: lazy seeding is per VM and fast paths need no I/O" {
+    const native = @import("runtime/builtins/std/random.zig");
+    const random = @import("runtime/random.zig");
+    const value = @import("runtime/value.zig");
+    const VM = @import("runtime/vm.zig").VM;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = VM.init(&program, .{});
+    defer vm.deinit();
+    var int_args = [_]value.Value{ .{ .int64 = 5 }, .{ .int64 = 5 } };
+    const equal = try native.bindings.get("integer").?.native(&vm, &int_args);
+    try testing.expect(!equal.has_failed);
+    try testing.expectEqual(@as(i64, 5), equal.value.int64);
+    var size_args = [_]value.Value{.{ .int64 = 0 }};
+    inline for (.{ "bytes", "secure_bytes" }) |name| {
+        const empty = try native.bindings.get(name).?.native(&vm, &size_args);
+        try testing.expect(!empty.has_failed);
+    }
+    try testing.expect(vm.random_engine == null);
+    int_args[1].int64 = 4;
+    const invalid = try native.bindings.get("integer").?.native(&vm, &int_args);
+    try testing.expect(invalid.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.InvalidBounds)), invalid.value.int64);
+    var no_args: [0]value.Value = .{};
+    const unsupported = try native.bindings.get("decimal").?.native(&vm, &no_args);
+    try testing.expect(unsupported.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), unsupported.value.int64);
+    try testing.expect(vm.random_engine == null);
+    int_args[1].int64 = 6;
+    const missing_int_source = try native.bindings.get("integer").?.native(&vm, &int_args);
+    try testing.expect(missing_int_source.has_failed);
+    try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_int_source.value.int64);
+    size_args[0].int64 = 1;
+    inline for (.{ "bytes", "secure_bytes" }) |name| {
+        const missing_source = try native.bindings.get(name).?.native(&vm, &size_args);
+        try testing.expect(missing_source.has_failed);
+        try testing.expectEqual(@as(i64, @intFromEnum(random.RandomError.Unsupported)), missing_source.value.int64);
+    }
+    var source = RandomSourceProbe{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.random = RandomSourceProbe.fillRandom;
+    vtable.randomSecure = RandomSourceProbe.fillSecure;
+    const io = std.Io{ .userdata = &source, .vtable = &vtable };
+    vm.io = io;
+    const first = try native.bindings.get("decimal").?.native(&vm, &no_args);
+    var expected = random.seeded(0x3c3c3c3c3c3c3c3c);
+    try testing.expectEqual(random.nextFloat(&expected), first.value.float64);
+    const second = try native.bindings.get("decimal").?.native(&vm, &no_args);
+    try testing.expectEqual(random.nextFloat(&expected), second.value.float64);
+    try testing.expectEqual(@as(usize, 1), source.random_calls);
+    var fresh = VM.init(&program, .{});
+    defer fresh.deinit();
+    fresh.io = io;
+    const restarted = try native.bindings.get("decimal").?.native(&fresh, &no_args);
+    try testing.expectEqual(first.value.float64, restarted.value.float64);
+    try testing.expectEqual(@as(usize, 2), source.random_calls);
+    size_args[0].int64 = 1;
+    const secure = try native.bindings.get("secure_bytes").?.native(&vm, &size_args);
+    try testing.expect(!secure.has_failed);
+    try testing.expectEqual(@as(usize, 1), source.secure_calls);
+    try testing.expectEqual(@as(usize, 2), source.random_calls);
+    try testing.expectEqualSlices(u64, &expected.s, &vm.random_engine.?.s);
+}
+
+test "path: lexical components, normalization and explicit bases" {
+    try runCase("path.dsk");
+}
+
+test "path: GC moves input strings and arrays during native result allocation" {
+    try runCase("gc-path.dsk");
+    const value = @import("runtime/value.zig");
+    const path = @import("runtime/builtins/std/path.zig");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const program = try dusk.compile("func main() -> void end");
+    var vm = @import("runtime/vm.zig").VM.init(&program, .{});
+    defer vm.deinit();
+    const text = try vm.allocBytesValue("folder/.env", .string);
+    const root = try vm.heap.protectValue(text, .string);
+    inline for (.{ .{ "basename", ".env" }, .{ "dirname", "folder" }, .{ "extension", "" }, .{ "stem", ".env" }, .{ "normalize", if (@import("builtin").os.tag == .windows) "folder\\.env" else "folder/.env" } }) |case| {
+        vm.heap.threshold = 0;
+        const args: [*]value.Value = @ptrCast(&vm.heap.temporary_roots.items[root].value);
+        const result = try path.bindings.get(case[0]).?.native(&vm, args[0..1]);
+        try testing.expectEqualStrings(case[1], value.HeapValue.getParentPtr(value.Bytes, result.value.heap_obj).slice());
+    }
+    const parts = try vm.allocStringArray(&.{ "folder", "file.dsk" });
+    const array_root = try vm.heap.protectValue(parts, .array);
+    vm.heap.threshold = 0;
+    const args: [*]value.Value = @ptrCast(&vm.heap.temporary_roots.items[array_root].value);
+    const result = try path.bindings.get("join").?.native(&vm, args[0..1]);
+    const expected = try std.fs.path.join(testing.allocator, &.{ "folder", "file.dsk" });
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, value.HeapValue.getParentPtr(value.Bytes, result.value.heap_obj).slice());
+}
+
+test "path: argument types" {
+    try runCaseError("sema/path-join-non-string.dsk", error.InvalidType);
+    try runCaseError("sema/path-normalize-non-string.dsk", error.InvalidType);
+}
+
+test "path: POSIX and Windows lexical semantics independent of host" {
+    const path = @import("runtime/path.zig");
+    const posix = path.Paths(.posix);
+    const windows = path.Paths(.windows);
+    const allocator = testing.allocator;
+    const posix_normal = try posix.normalize(allocator, "/../../a//./b/../");
+    defer allocator.free(posix_normal);
+    try testing.expectEqualStrings("/a", posix_normal);
+    const leading_parents = try posix.normalize(allocator, "../../a/../b");
+    defer allocator.free(leading_parents);
+    try testing.expectEqualStrings("../../b", leading_parents);
+    const posix_resolved = try posix.resolve(allocator, "/base", "/other/../last");
+    defer allocator.free(posix_resolved);
+    try testing.expectEqualStrings("/last", posix_resolved);
+    const posix_relative = try posix.relative(allocator, "/a/b", "/a/c/leaf");
+    defer allocator.free(posix_relative);
+    try testing.expectEqualStrings("../c/leaf", posix_relative);
+    try testing.expectEqualStrings("a\\b", posix.basename("a\\b"));
+    try testing.expectEqualStrings(".env", windows.stem("C:\\folder\\.env"));
+    try testing.expectEqualStrings(".local", windows.extension("C:\\folder\\.env.local"));
+    try testing.expectEqualStrings("C:\\", windows.dirname("C:\\file").?);
+    try testing.expect(windows.dirname("C:\\") == null);
+    try testing.expectEqualStrings("", windows.basename("C:\\"));
+    try testing.expect(windows.isAbsolute("C:\\folder"));
+    try testing.expect(windows.isAbsolute("\\\\server\\share\\folder"));
+    try testing.expect(!windows.isAbsolute("\\folder"));
+    try testing.expect(!windows.isAbsolute("C:folder"));
+    const windows_normal = try windows.normalize(allocator, "c:/base//one/../two/");
+    defer allocator.free(windows_normal);
+    try testing.expectEqualStrings("C:\\base\\two", windows_normal);
+    const windows_resolved = try windows.resolve(allocator, "C:\\base", "\\rooted\\file");
+    defer allocator.free(windows_resolved);
+    try testing.expectEqualStrings("C:\\rooted\\file", windows_resolved);
+    try testing.expectError(error.NotAbsolute, windows.resolve(allocator, "C:\\base", "D:relative"));
+    try testing.expectError(error.NotAbsolute, windows.resolve(allocator, "\\base", "file"));
+    const windows_relative = try windows.relative(allocator, "C:\\one\\two", "c:/one/three");
+    defer allocator.free(windows_relative);
+    try testing.expectEqualStrings("..\\three", windows_relative);
+    const different_drive = try windows.relative(allocator, "C:\\one", "D:\\two");
+    defer allocator.free(different_drive);
+    try testing.expectEqualStrings("D:\\two", different_drive);
+    const unc = try windows.resolve(allocator, "\\\\server\\share\\base", "../file");
+    defer allocator.free(unc);
+    try testing.expectEqualStrings("\\\\server\\share\\file", unc);
+    const identical = try windows.relative(allocator, "C:\\folder", "c:/folder/.");
+    defer allocator.free(identical);
+    try testing.expectEqualStrings(".", identical);
+}
+
+test "os: platform, empty arguments, environment validation, cwd and status" {
+    try runCase("os.dsk");
+}
+
+test "os: runtime platform agrees with public enum" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const name = switch (@import("builtin").os.tag) {
+        .linux => "Linux",
+        .macos => "MacOS",
+        .windows => "Windows",
+        else => "Other",
+    };
+    const source = try std.fmt.allocPrint(arena.allocator(), "import std/os func main() -> void assert(os::platform() == os::Platform.{s}) end", .{name});
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "os: signal waiter close, concurrent wait and idle teardown" {
+    try runCase("os-signals.dsk");
+    try runCaseError("sema/os-signal-construct.dsk", error.CantBuildOutsideModule);
+    try runCaseError("sema/os-signal-native-private.dsk", error.NotVisible);
+}
+
+test "os: host arguments, environment snapshots and exit status reset" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var environment = std.process.Environ.Map.init(testing.allocator);
+    defer environment.deinit();
+    try environment.put("DUSK_TEST_VALUE", "héllo");
+    try environment.put("DUSK_TEST_EMPTY", "");
+    try environment.put("DUSK_TEST_INVALID", "\xff");
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .program_args = &.{ "one two", "--flag", "世界" }, .environment = &environment };
+    try dusk.compileAndRun(
+        \\import std/os
+        \\import std/array
+        \\func main() -> !void
+        \\    let mut args = try os::args()
+        \\    assert(array::len(args) == 3)
+        \\    assert(args[0] == "one two" and args[1] == "--flag" and args[2] == "世界")
+        \\    args[0] = "changed"
+        \\    let again = try os::args()
+        \\    assert(again[0] == "one two")
+        \\    assert(try os::env("DUSK_TEST_VALUE") == "héllo")
+        \\    assert(try os::env("DUSK_TEST_EMPTY") == "")
+        \\    assert(try os::env("DUSK_TEST_MISSING") == null)
+        \\    let invalid = os::env("DUSK_TEST_INVALID") catch e then
+        \\        assert(e == os::OsError.InvalidUtf8)
+        \\        return
+        \\    end
+        \\    assert(false)
+        \\end
+    );
+    try dusk.compileAndRun("import std/os func main() -> !void try os::set_exit_code(42) end");
+    try testing.expectEqual(@as(u8, 42), dusk.exit_code);
+    try dusk.compileAndRun("func main() -> void end");
+    try testing.expectEqual(@as(u8, 0), dusk.exit_code);
+    try dusk.compileAndRun("import std/os func main() -> !void try os::set_exit_code(42) end");
+    try testing.expectError(error.ParserError, dusk.compileAndRun("func"));
+    try testing.expectEqual(@as(u8, 1), dusk.exit_code);
+    dusk.program_args = &.{"\xff"};
+    try dusk.compileAndRun(
+        \\import std/os
+        \\func main() -> !void
+        \\    let args = os::args() catch e then
+        \\        assert(e == os::OsError.InvalidUtf8)
+        \\        return
+        \\    end
+        \\    assert(false)
+        \\end
+    );
+}
+
 test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }
@@ -4014,6 +4418,10 @@ fn expectExternsMatchBindings(source: []const u8, bindings: *const @import("runt
 
 test "builtins: each native error enum matches its error set, names and order" {
     const dusk = @import("dusk.zig");
+    try expectErrorEnumsMatchSets(dusk.stdSource("process"), @import("runtime/builtins/std/process.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("random"), @import("runtime/builtins/std/random.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("path"), @import("runtime/builtins/std/path.zig").error_sets);
+    try expectErrorEnumsMatchSets(dusk.stdSource("os"), @import("runtime/builtins/std/os.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("math"), @import("runtime/builtins/std/math.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("array"), @import("runtime/builtins/std/array.zig").error_sets);
     try expectErrorEnumsMatchSets(dusk.stdSource("string"), @import("runtime/builtins/std/string.zig").error_sets);

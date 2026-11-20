@@ -798,7 +798,37 @@ A plain-mode failure is an `IoError`; the head and whole-body modes fail with `H
 
 `http::listen` defaults to a backlog of 1024, so a burst waits in the system's queue while the accept loop drains it 64 at a time.
 
-### 11.10 Freeing tasks
+### 11.10 OS context and signals
+
+`Dusk` passes borrowed program arguments, an optional read-only `std.process.Environ.Map` and `std.Io` into each VM. The host keeps argument and environment storage alive and immutable during the run. The CLI supplies arguments after the script path and its startup environment map; embedded executions default to empty arguments/environment. `os::args` uses `VM.allocStringArray` after UTF-8 validation. Environment values and cwd results are copied into GC strings. Cwd uses `std.process.currentPathAlloc`; these operations do not use libuv.
+
+`VM.exit_code` starts at zero and `os::set_exit_code` updates it without changing scheduling. On success, `Dusk.runProgram` copies the status to `Dusk.exit_code`; failed execution leaves host status at one. The CLI returns the normal status after output flush and VM teardown; an embedded run never exits its host process.
+
+Signal subscriptions live in `tasks/signal.zig`, with append-only slots in `EventLoop.signal_subscriptions`. Their public struct stores a file-only integer handle. Closing clears the slot immediately, so an old handle cannot resolve to another subscription. A `HandleOwner.signal` field routes the close callback, which frees the watcher memory and subscription after libuv finishes with them.
+
+Each subscription registers a `uv_signal_t` immediately, stores one pending-notification flag and permits one parked task. Idle watchers are unreferenced. Parking references the watcher and increments `pending_operations`; delivery clears the waiter, unreferences the watcher, decrements the count and wakes the task. Notifications with no waiter set the pending flag. Closing stops the watcher and wakes a waiter with relative `OsError.Closed`, unless the event loop is already tearing down. A second waiter fails with `Busy`. At teardown all remaining watchers close before their C memory is freed.
+
+### 11.11 Random state
+
+`VM.random_engine` is an optional per-execution `Xoshiro256` engine, separate from map hashing. `std/random` initializes it lazily from eight host `std.Io.random` bytes. Integer sampling uses fixed-width unbiased inclusive bounds, float sampling uses `f64`, and byte generation uses the engine's byte interface. No interface containing a pointer to engine state is retained across calls.
+
+A seeded `Generator` is an ordinary struct with four private `int` fields storing the engine's four state words as bit patterns. Hidden natives reconstruct a local engine and write updated words back into those slots. No new heap kind, native resource table or finalizer is needed; normal struct sharing and deep copy provide alias and snapshot behavior. Byte allocation may move the generator, so its native argument is reread after allocation before loading and updating state.
+
+`secure_bytes` allocates a fresh buffer, calls `std.Io.randomSecure` directly and returns a relative `RandomError.EntropyUnavailable` if filling fails. It does not initialize or use the ordinary engine. Zero-byte calls skip source access, and invalid bounds/counts are rejected before engine state changes. Buffer allocation checks supported lengths and accounting arithmetic before collecting. These natives do not use libuv or park tasks.
+
+### 11.12 Child processes
+
+`tasks/process.zig` owns stable `Process` records in `EventLoop.processes`. `process_glue.c` constructs libuv's process/stdio options against the dependency headers, avoiding a mirrored platform ABI; process handles themselves remain opaque and are sized with `uv_handle_size`. Native wrappers validate and snapshot argv, cwd and environment into temporary host memory before synchronous `uv_spawn`. Executable lookup uses the VM parent PATH, then passes an explicit path so a replacement child environment cannot alter lookup.
+
+`live_processes` keeps scheduling active independently of parked native calls. Each successful launch increments it; only the exit callback decrements it, stores status and closes the process handle. `EventLoop.deinit` releases/kills owned children and drives their exit callbacks before generic handle closure. Failed `uv_spawn` handles also close asynchronously; the native failure path polls close callbacks so a synchronous failure loop does not accumulate native capture allocations.
+
+Captured runs use two dedicated raw capture pipes, each with a fixed read scratch buffer. Their callbacks drain concurrently into host arrays under one combined byte cap, independent of interactive Stream high-water backpressure. Completion requires both capture EOFs plus child exit. One first-failure latch handles read failure, output overflow and the monotonic deadline; it closes capture pipes and requests forced termination, then wakes the parked call once exit is observed. Deadlines remain active after EOF without exit, and after exit without EOF.
+
+A captured wait returns a private record index. Ordinary Dusk code builds Result/Termination and copies both capture buffers via allocating natives, then releases the record; no new VM result object or process-specific WakePayload is needed. Interactive waits snapshot status/signal into the existing ints wake payload. Errors after parking use the extern's relative error base. Process records are freed after release and all process/timer/capture close callbacks; stale wrapper indexes never resolve to later children.
+
+Interactive pipes reuse `Stream.openProcessPipe`, which initializes an unopened pipe for libuv to populate during spawn. They use the existing read outcomes, UTF-8/line rules, write queue, timers, reference counts and io traits. Stream callbacks do not reference the Process record. Closing a Child after exit closes its remaining stream indexes; a copied wrapper aliases those same indexes and child.
+
+### 11.13 Freeing tasks
 
 A task that isn't done is never freed, even with no handle left (a task nobody keeps still runs to the end). A done task is freed by `Scheduler.freeUnreachableTasks` after a collection when no handle reached it (section 9.3). A failed task that nobody awaited is kept until the program ends, so `run` can report it.
 

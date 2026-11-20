@@ -38,8 +38,12 @@ pub const Dusk = struct {
     stdio: Stdio = .{},
     stdin_fd: c_int = 0,
     io: std.Io,
+    program_args: []const []const u8 = &.{},
+    environment: ?*const std.process.Environ.Map = null,
+    exit_code: u8 = 0,
 
     pub fn runFile(self: *Self, file_path: []const u8) !void {
+        self.exit_code = 1;
         const cwd = std.Io.Dir.cwd();
         const input_file_content = cwd.readFileAlloc(self.io, file_path, self.allocator, .unlimited) catch |failure| {
             return CliErrorReporter.cantReadFile(file_path, failure);
@@ -72,15 +76,21 @@ pub const Dusk = struct {
     }
 
     pub fn compileAndRun(self: *Self, src: []const u8) !void {
+        self.exit_code = 1;
         const program = try self.compile(src);
         try self.runProgram(&program);
     }
 
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
+        self.exit_code = 1;
         Map.randomizeSeeds(self.io);
         var v = VM.init(program, self.stdio);
         v.stdin_fd = self.stdin_fd;
+        v.io = self.io;
+        v.program_args = self.program_args;
+        v.environment = self.environment;
         defer v.deinit();
         try v.run();
+        self.exit_code = v.exit_code;
     }
 };

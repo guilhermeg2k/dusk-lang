@@ -7,7 +7,7 @@ const Stdio = dusk.Stdio;
 const build_zon = @import("build_zon");
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init) !u8 {
     openMissingStandardFiles();
     const allocator = init.arena.allocator();
 
@@ -18,10 +18,11 @@ pub fn main(init: std.process.Init) !void {
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_file_writer = std.Io.File.stderr().writerStreaming(init.io, &stderr_buffer);
 
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "--version")) {
+    const is_version_request = args.len >= 2 and std.mem.eql(u8, args[1], "--version");
+    if (is_version_request) {
         try stdout_file_writer.interface.print("{s}\n", .{build_zon.version});
         try stdout_file_writer.interface.flush();
-        return;
+        return 0;
     }
 
     if (args.len < 2) {
@@ -35,13 +36,15 @@ pub fn main(init: std.process.Init) !void {
         .stderr = .{ .file = &stderr_file_writer },
         .is_stdout_terminal = std.Io.File.stdout().isTty(init.io) catch false,
     };
-    var dusk_c = Dusk{ .allocator = allocator, .stdio = stdio, .io = init.io };
+    var dusk_c = Dusk{ .allocator = allocator, .stdio = stdio, .io = init.io, .program_args = args[2..], .environment = init.environ_map };
     dusk_c.runFile(file_name) catch |failure| {
         if (failure == error.BrokenPipe) {
             exitAfterBrokenPipe();
         }
         std.process.exit(1);
     };
+    try stderr_file_writer.interface.flush();
+    return dusk_c.exit_code;
 }
 
 fn openMissingStandardFiles() void {
