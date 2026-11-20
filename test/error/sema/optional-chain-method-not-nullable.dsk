@@ -1,0 +1,12 @@
+struct Counter
+    count: int = 0
+
+    func get(self: @) -> int
+        return self.count
+    end
+end
+
+func main() -> void
+    let counter = Counter()
+    let value = counter?.get()
+end

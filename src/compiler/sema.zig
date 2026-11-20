@@ -1077,6 +1077,7 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".static_fields = static_fields;
         const methods = try self.createMethodSignatures(enum_def.funcs, enum_symbol);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
     fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef, loc: err.Loc) !void {
@@ -1101,6 +1102,7 @@ pub const SemaAnalyzer = struct {
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".static_fields = static_fields;
         const methods = try self.createMethodSignatures(union_def.funcs, union_symbol);
         self.type_table.getTypePtrById(blueprint_type_id).kind.@"union".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
@@ -1136,6 +1138,7 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.@"struct".fields = fields;
         struct_type_ptr.kind.@"struct".static_fields = static_fields;
         struct_type_ptr.kind.@"struct".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
     fn createStaticFields(self: *Self, fields: []const ast.Field, owner_type_id: tt.TypeId) CompileError!std.StringHashMap(tt.TypedIdentifier) {
@@ -2656,6 +2659,68 @@ pub const SemaAnalyzer = struct {
             if (!self.isSameType(required_param.type_id, actual_param.type_id)) return false;
         }
         return self.isSameType(required.return_type_id, actual.return_type_id);
+    }
+
+    fn isNullableMethodCall(fn_call: ast.FnCall) bool {
+        if (fn_call.target.data != .indexed) {
+            return false;
+        }
+        const indexed = fn_call.target.data.indexed;
+        return indexed.is_nullable and !indexed.is_bracket and indexed.index.data == .identifier;
+    }
+
+    fn evalNullableMethodCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        const fn_call = exp.data.fn_call;
+        const indexed = fn_call.target.data.indexed;
+        const target_type = (try self.evalExp(indexed.target)).type_id;
+        if (!self.type_table.getTypePtrById(target_type).is_nullable) {
+            return self.err_reporter.unnecessaryOptionalChain(try self.type_table.name(target_type, self.allocator), fn_call.target.loc);
+        }
+        const base_type = self.type_table.typeIdByNullableTypeId.get(target_type) orelse target_type;
+        const method = self.methodOf(base_type, indexed.index.data.identifier);
+        const method_metadata: ?tt.Func = if (method) |method_type| self.type_table.getTypePtrById(method_type).kind.function else null;
+        const is_void = if (method_metadata) |metadata| metadata.return_type_id == self.type_table.getPrimitive(.void) else false;
+        const needs_mut_self = if (method_metadata) |metadata| metadata.params.len > 0 and metadata.params[0].is_mut else false;
+
+        const receiver_name = "?. receiver";
+        const receiver = try ast.ExpNode.init(self.allocator, .{ .data = .{ .identifier = receiver_name }, .loc = indexed.target.loc });
+        const plain_target = try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .indexed = .{ .target = receiver, .index = indexed.index, .is_nullable = false } },
+            .loc = fn_call.target.loc,
+        });
+        var plain_call = fn_call;
+        plain_call.target = plain_target;
+        const call = try ast.ExpNode.init(self.allocator, .{ .data = .{ .fn_call = plain_call }, .loc = exp.loc });
+
+        var body: std.ArrayList(ast.StatementNode) = .empty;
+        try body.append(self.allocator, .{ .data = .{ .expression = call }, .loc = exp.loc });
+        var else_block: ?ast.Block = null;
+        if (!is_void) {
+            var fallback: std.ArrayList(ast.StatementNode) = .empty;
+            const null_node = try ast.ExpNode.init(self.allocator, .{ .data = .{ .null_literal = {} }, .loc = exp.loc });
+            try fallback.append(self.allocator, .{ .data = .{ .expression = null_node }, .loc = exp.loc });
+            else_block = .{ .statements = fallback };
+        }
+        const conditional = try ast.ExpNode.init(self.allocator, .{
+            .data = .{ .if_capture_exp = .{
+                .exp = indexed.target,
+                .identifier = .{ .name = receiver_name, .is_mut = needs_mut_self },
+                .body = .{ .statements = body },
+                .else_block = else_block,
+            } },
+            .loc = exp.loc,
+        });
+        if (!is_void) {
+            return self.evalConditional(conditional, expected_type);
+        }
+        return ir.Value.init(self.allocator, .{
+            .data = .{ .block_value = .{
+                .instructions = try self.lowerIfCapture(conditional, null),
+                .result_uid = self.scope.genUid(),
+                .can_complete = true,
+            } },
+            .type_id = self.type_table.getPrimitive(.void),
+        });
     }
 
     fn methodOf(self: *Self, type_id: tt.TypeId, name: []const u8) ?tt.TypeId {
@@ -4716,6 +4781,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalFnCall(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) !*ir.Value {
+        if (isNullableMethodCall(exp.data.fn_call)) {
+            return self.evalNullableMethodCall(exp, expected_type);
+        }
         const fn_call = try self.resolveCallTypeArguments(exp.data.fn_call, exp.loc);
         var fn_identifier: []const u8 = undefined;
         var uid: usize = undefined;

@@ -630,6 +630,8 @@ let user = User(country = null)
 io::println("${user.country?.name}")   # null
 ```
 
+A method call through `?.` (`maybe_user?.display_name()`) calls the method when the value isn't null and gives `null` otherwise, so its result is nullable too (`maybe_counter?.get() orelse 0`); the arguments are only evaluated when the call happens. A method that returns nothing (`maybe_file?.close()`) is simply skipped on null, and a `mut self` method needs the nullable value to be mutable, like `if x: mut y`. A struct's field of its own nullable type works in chains too: `node.next?.next?.value`.
+
 `?[` reads an item from a nullable array or map the same way: `maybe_items?[0]`, `grid[1]?[2]`.
 
 Using `?.` or `?[` on a value that can't be null is an error. Assigning through them (`user.country?.name = "x"`) is an error too: unwrap the value first with `if user.country: mut country then`.

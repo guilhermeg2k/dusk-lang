@@ -2581,6 +2581,14 @@ test "parser error: defer of a declaration or another defer" {
     try runCaseError("parser/defer-defer.dsk", error.ParserError);
 }
 
+test "optional chaining: method calls through ?. (values, void and mut self methods, arguments, chains, enums, unions) and fields of a struct's own nullable type" {
+    try runCase("optional-chain-methods.dsk");
+}
+
+test "sema error: ?. method call on a value that can't be null" {
+    try runCaseError("sema/optional-chain-method-not-nullable.dsk", error.UnecessaryOptionalChain);
+}
+
 test "sema error: try in non-failing function" {
     try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
 }

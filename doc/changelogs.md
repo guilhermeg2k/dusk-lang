@@ -47,6 +47,8 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 ### Fixes
 
+- Method calls through `?.` work: `p?.get()` used to fail with "Invalid number of arguments" because `self` wasn't passed; it now calls the method when `p` isn't null and gives `null` otherwise (`mut self` and void methods included)
+- `?.` on a struct's field of its own nullable type (`node.next?.value` for `struct Node next: ?Node`) failed with "'value' does not exists": the nullable copy of a type is refreshed once the type's fields and methods are known
 - Generic functions and types from another module can name that module's other types in their signatures: a generic struct with a field like `make: func(Item) -> T`, or a generic function taking `func(Item) -> E!int`, used from another file, failed with `Invalid type 'Item'` (the copy, and a lambda's parameter types, were resolved in the caller's module)
 - A local declared inside an `if` branch stayed a GC root while its `else` branch ran, so a collection there could treat a leftover number as a heap pointer and crash
 - An anonymous struct could be converted to a struct with private fields from another module (`let t: time::Timestamp = @(milliseconds = 0)`), also inside arrays and nullables, which built values the module never made. It is now `NotVisible`

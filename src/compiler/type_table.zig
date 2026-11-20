@@ -304,6 +304,11 @@ pub const TypeTable = struct {
         return @intCast(self.types.items.len - 1);
     }
 
+    pub fn syncNullableCopy(self: *Self, type_id: TypeId) void {
+        const nullable_id = self.nullableTypeIdByTypeId.get(type_id) orelse return;
+        self.getTypePtrById(nullable_id).kind = self.getTypePtrById(type_id).kind;
+    }
+
     pub fn getOrAddNullable(self: *Self, typeId: TypeId) !TypeId {
         if (self.getTypePtrById(typeId).is_nullable) return typeId;
 
