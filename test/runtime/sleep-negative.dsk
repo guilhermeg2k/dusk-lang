@@ -1,5 +1,0 @@
-import std/task
-
-func main() -> void
-    task::sleep(-5)
-end

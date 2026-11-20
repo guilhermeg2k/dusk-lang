@@ -1629,7 +1629,7 @@ end
 | :------- | :-------- | :---------- |
 | `spawn` | `spawn(body: func() -> E!T) -> Task[T, E]` | Starts a task that runs `body`. |
 | `await` | `await(task: Task[T, E]) -> E!T` | Waits until the task is done and returns its result, or fails with its error. |
-| `task::sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds. In `std/task`. |
+| `task::sleep` | `sleep(ms: int) -> void` | Pauses the running task for `ms` milliseconds; `0` or a negative time (a deadline already passed) just gives other ready tasks a turn. In `std/task`. |
 
 ### Running order
 
@@ -1734,7 +1734,6 @@ These stop the program like other runtime errors:
 
 - `await` on the running task itself.
 - Every unfinished task waiting for another one, with no `sleep` that could wake any of them (`all tasks are waiting: nothing can wake them up`).
-- `sleep` with a negative time.
 
 A runtime error in any task stops the whole program.
 
@@ -1753,7 +1752,7 @@ import std/string: split as split_text,
 ```
 
 - `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/compression`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
+- `std/` is the [standard library](#15-prelude-and-standard-library): `std/array`, `std/string`, `std/buffer`, `std/compression`, `std/math`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
 - Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
@@ -2123,6 +2122,27 @@ let modified = time::from_unix_ms(info.modified_ms)
 The first two lines printed are `1970-01-01T00:00:00.000Z` and `1969-12-31T23:59:59.999Z`. The `Z` denotes UTC; local time zone settings do not affect the output. A year beyond 9999 is written like `+10000-01-01T00:00:00.000Z`.
 
 The raw clock functions above do not allocate; timestamp factories allocate an ordinary struct, and `to_string` allocates its result string. `now` retains `now_ms`'s runtime clock-error behavior. Parsing, date arithmetic and timestamp comparison methods are not provided. Like other structs, `==` compares identity; use `unix_ms()` values when chronological equality or ordering is needed.
+
+### std/math
+
+Numbers. Import with `import std/math`.
+
+| Name | Returns | Description |
+| :--- | :------ | :---------- |
+| `pi`, `tau`, `e` | `float` | The constants π, 2π and e. |
+| `inf`, `nan` | `float` | Positive infinity and not-a-number. |
+| `min(values)`, `max(values)` | `MathError!T` | The smallest or largest item of an `[]int` or `[]float`; fails with `MathError.Empty` for an empty array. |
+| `abs(value)` | `int` | Absolute value of an `int`. `abs` of the smallest `int` doesn't fit and stops the program, like any integer overflow. |
+| `f_abs(value)` | `float` | Absolute value of a `float`. |
+| `clamp(value, lower, upper)`, `f_clamp(...)` | `MathError!int` / `MathError!float` | `value` limited to `lower..upper`; fails with `MathError.InvalidBounds` when `lower > upper` (or a bound is `nan`). `f_clamp` keeps a `nan` value as it is. |
+| `floor(value)`, `ceil(value)`, `round(value)`, `trunc(value)` | `int` | A `float` rounded down, up, to the nearest (halves away from zero: `round(2.5)` is `3`, `round(-2.5)` is `-3`) or toward zero, as an `int`. |
+| `sqrt`, `pow(base, exponent)`, `exp`, `log`, `log2`, `log10` | `float` | Roots, powers and logarithms. Out-of-domain inputs give `nan` (`sqrt(-1.0)`, `log(-1.0)`), not an error. |
+| `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)` | `float` | Trigonometry, in radians. |
+| `is_nan`, `is_inf`, `is_finite` | `bool` | Checks for `nan`, infinities, and neither. |
+
+`floor`, `ceil`, `round` and `trunc` return an `int`, so a `float` that isn't a finite number in the `int` range (`nan`, an infinity, `1e300`) stops the program. When the value comes from outside (parsed text, a computation that can overflow), check it with `math::is_finite` first, or use the prelude's `to_int`, which truncates toward zero and fails with `ConversionError.Overflow` instead of stopping.
+
+The module declares the error set `MathError` (`InvalidBounds`, `Empty`).
 
 ### std/task
 

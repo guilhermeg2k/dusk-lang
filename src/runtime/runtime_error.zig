@@ -16,7 +16,6 @@ pub const RuntimeError = error{
     AssertionFailed,
     TaskAwaitsItself,
     AllTasksWaiting,
-    NegativeSleep,
     UnhandledTaskError,
     OutputFailed,
     ClockFailed,
@@ -112,11 +111,6 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn allTasksWaiting() RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.AllTasksWaiting, "all tasks are waiting: nothing can wake them up", .{});
-    }
-
-    pub noinline fn negativeSleep(ms: i64) RuntimeError {
-        @branchHint(.cold);
-        return report(RuntimeError.NegativeSleep, "sleep time can't be negative: {d}", .{ms});
     }
 
     pub noinline fn unhandledTaskError(error_name: []const u8) RuntimeError {

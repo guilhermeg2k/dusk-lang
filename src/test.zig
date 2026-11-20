@@ -3520,7 +3520,7 @@ test "tasks: spawn, await and sleep(0) on the scheduler" {
     try runCaseRuntimeError("task-awaits-itself.dsk", error.TaskAwaitsItself);
     try runCaseRuntimeError("tasks-all-waiting.dsk", error.AllTasksWaiting);
     try runCaseRuntimeError("task-unhandled-error.dsk", error.UnhandledTaskError);
-    try runCaseRuntimeError("sleep-negative.dsk", error.NegativeSleep);
+    try runCase("sleep-negative.dsk");
     try runCaseRuntimeError("task-runtime-error.dsk", error.ArrayOutOfBounds);
 }
 
