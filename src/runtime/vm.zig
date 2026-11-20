@@ -794,7 +794,7 @@ pub const VM = struct {
     }
 
     pub fn allocString(self: *Self, len: usize) !*v.Bytes {
-        const size = v.Bytes.calc_size(len);
+        const size = std.math.add(usize, @sizeOf(v.Bytes), len) catch return error.OutOfMemory;
         try self.maybeCollectGarbage(size);
         const result = try v.Bytes.initUndefined(self.getCurrentHeapAllocator(), len, .string);
         self.increaseHeapAllocationCount(size);

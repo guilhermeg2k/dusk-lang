@@ -109,7 +109,8 @@ pub const Heap = struct {
     }
 
     pub fn needsCollection(self: *const Self, bytes: usize) bool {
-        return self.allocated + bytes > self.threshold;
+        const total = std.math.add(usize, self.allocated, bytes) catch return true;
+        return total > self.threshold;
     }
 
     pub fn allocator(self: *Self) std.mem.Allocator {

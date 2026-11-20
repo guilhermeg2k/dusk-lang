@@ -275,7 +275,6 @@ fn onLocalDone(request: *uv.Request, status: c_int) callconv(.c) void {
     }
     const wake_result = job.takeWakeResult();
     job.scheduler.?.wake(job.task.?, wake_result) catch |failure| {
-        job.task.?.wake_result = null;
         wake_result.payload.free(event_loop.allocator);
         event_loop.callback_failure = failure;
     };

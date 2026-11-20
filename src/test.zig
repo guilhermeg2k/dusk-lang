@@ -1140,6 +1140,10 @@ test "net: TLS over loopback with test certificates, errors on both sides, start
     try runCaseRuntimeError("net-start-tls-twice.dsk", error.TlsAlreadyStarted);
 }
 
+test "strings: a result too large for memory is an out-of-memory error, not an overflow" {
+    try runCaseRuntimeError("string-repeat-too-large.dsk", error.OutOfMemory);
+}
+
 test "time: a Duration factory past about 292 years is a runtime error" {
     try runCaseRuntimeError("time-duration-out-of-range.dsk", error.DurationOutOfRange);
 }

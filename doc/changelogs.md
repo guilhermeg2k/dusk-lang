@@ -15,6 +15,11 @@
 - `std/process`: `process::run(args)` runs a program and collects its output (with `timeout_ms` and `max_output`); `process::start(args)` returns a `Child` to wait for, kill, or talk to through pipes that work with `std/io`. Nothing goes through a shell. The program waits for the children it started before ending, and a `Child` it drops is cleaned up after a garbage collection
 - `task::sleep(duration)` takes a `time::Duration` (`task::sleep(time::milliseconds(10))`), rounded up to whole milliseconds. The `Duration` factories (`time::milliseconds`, `seconds`, ...) return a plain `Duration`; a value past about 292 years is a runtime error
 
+### Fixes
+
+- `string::repeat` with a result too large to fit in memory (`string::repeat("ab", 9223372036854775807)`) crashed, or wrote past its memory in release builds, instead of stopping with an out-of-memory error
+- Running out of memory while waking a task that waited for a file, a stream, a network call or a child process could free that call's result twice
+
 ## v0.16 - Shigeo
 
 Started v0.16 development: updated the CLI version to `0.16.0-devel`.
