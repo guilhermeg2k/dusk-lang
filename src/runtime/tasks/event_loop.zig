@@ -23,6 +23,8 @@ const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporte
 const Process = @import("process.zig").Process;
 const process_runtime = @import("process.zig");
 const Subscription = @import("signal.zig").Subscription;
+const TerminalOutput = @import("terminal.zig").TerminalOutput;
+const TerminalSize = @import("terminal.zig").TerminalSize;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -47,9 +49,12 @@ pub const EventLoop = struct {
     resources: ResourceRegistry = .{},
     stdin_handle: ?usize = null,
     signal_subscriptions: HandleTable(Subscription) = .{},
+    terminal_outputs: [2]?*TerminalOutput = .{ null, null },
+    has_used_raw_terminal: bool = false,
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
+        self.restoreTerminal();
         for (self.processes.entries.items) |entry| {
             const process = entry orelse continue;
             process.release();
@@ -63,6 +68,10 @@ pub const EventLoop = struct {
             subscription.close();
         }
         defer self.signal_subscriptions.deinit(self.allocator);
+        for (self.terminal_outputs) |entry| {
+            const output = entry orelse continue;
+            output.close();
+        }
         for (self.streams.entries.items) |entry| {
             const stream = entry orelse continue;
             stream.releaseAtExit();
@@ -282,6 +291,25 @@ pub const EventLoop = struct {
         return handle;
     }
 
+    pub fn restoreTerminal(self: *Self) void {
+        if (!self.has_used_raw_terminal) return;
+        _ = uv.uv_tty_reset_mode();
+    }
+
+    pub fn terminalSize(self: *Self, file: c_int) !?TerminalSize {
+        const slot = &self.terminal_outputs[if (file == 2) 1 else 0];
+        if (slot.* == null) {
+            const loop = try self.ensureLoopStarted();
+            slot.* = TerminalOutput.open(self.allocator, loop, file) catch |failure| {
+                if (failure == error.OutOfMemory) {
+                    return failure;
+                }
+                return null;
+            };
+        }
+        return slot.*.?.size();
+    }
+
     pub fn pauseStdinWhenIdle(self: *Self) void {
         const handle = self.stdin_handle orelse return;
         const stream = self.streamAt(@intCast(handle)) orelse return;
@@ -412,7 +440,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer };
+    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -449,6 +477,10 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         .stream => {
             const stream: *Stream = @alignCast(@fieldParentPtr("owner", owner));
             stream.markHandleClosed();
+        },
+        .terminal_output => {
+            const output: *TerminalOutput = @alignCast(@fieldParentPtr("owner", owner));
+            output.destroy();
         },
         .stream_timer => {
             const stream: *Stream = @alignCast(@fieldParentPtr("timer_owner", owner));

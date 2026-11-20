@@ -132,9 +132,17 @@ pub extern fn uv_timer_init(loop: *Loop, timer: *Handle) c_int;
 pub extern fn uv_timer_start(timer: *Handle, callback: TimerCallback, timeout: u64, repeat: u64) c_int;
 pub extern fn uv_timer_stop(timer: *Handle) c_int;
 
-// ---- Streams (terminals, pipes and sockets) ----
+// ---- Terminals ----
+
+pub const TtyMode = enum(c_int) { normal = 0, raw = 1, io = 2, raw_vt = 3 };
 
 pub extern fn uv_tty_init(loop: *Loop, tty: *Handle, file: c_int, readable: c_int) c_int;
+pub extern fn uv_tty_set_mode(tty: *Handle, mode: TtyMode) c_int;
+pub extern fn uv_tty_reset_mode() c_int;
+pub extern fn uv_tty_get_winsize(tty: *Handle, width: *c_int, height: *c_int) c_int;
+
+// ---- Streams (terminals, pipes and sockets) ----
+
 pub extern fn uv_pipe_init(loop: *Loop, pipe: *Handle, ipc: c_int) c_int;
 pub extern fn uv_pipe_open(pipe: *Handle, file: c_int) c_int;
 pub extern fn uv_read_start(stream: *Handle, alloc: AllocCallback, read: ReadCallback) c_int;

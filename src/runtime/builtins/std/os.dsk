@@ -24,6 +24,7 @@ extern func set_exit_code(code: int) -> OsError!void
 enum Signal
     Interrupt
     Terminate
+    WindowChange
 end
 
 struct SignalStream

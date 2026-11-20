@@ -594,6 +594,22 @@ pub const Stream = struct {
         self.stopReading();
     }
 
+    pub fn setTerminalMode(self: *Self, is_raw: bool) error{ NotTerminal, Other }!void {
+        if (self.kind != .tty) {
+            return error.NotTerminal;
+        }
+        if (self.handle_memory.len == 0) {
+            return error.Other;
+        }
+        const mode: uv.TtyMode = if (is_raw) .raw else .normal;
+        if (uv.uv_tty_set_mode(self.uvHandle(), mode) != 0) {
+            return error.Other;
+        }
+        if (is_raw) {
+            self.event_loop.has_used_raw_terminal = true;
+        }
+    }
+
     fn stopReading(self: *Self) void {
         if (!self.is_reading) return;
         _ = uv.uv_read_stop(self.uvHandle());
@@ -1386,6 +1402,7 @@ pub const IoError = enum {
     TimedOut,
     UnexpectedEnd,
     HandshakeFailed,
+    NotTerminal,
     Other,
 };
 

@@ -243,6 +243,6 @@ pub fn httpErrorFromIo(failure: IoError) HttpError {
         .TimedOut => .TimedOut,
         .UnexpectedEnd => .InvalidResponse,
         .HandshakeFailed => .HandshakeFailed,
-        .Busy, .LineTooLong, .InvalidUtf8, .Other => .Other,
+        .Busy, .LineTooLong, .InvalidUtf8, .NotTerminal, .Other => .Other,
     };
 }

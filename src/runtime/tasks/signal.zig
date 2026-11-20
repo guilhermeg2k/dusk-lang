@@ -95,6 +95,7 @@ fn signalNumber(signal: i64) !c_int {
     return switch (signal) {
         0 => if (builtin.os.tag == .windows) 2 else @intCast(@intFromEnum(std.posix.SIG.INT)),
         1 => if (builtin.os.tag == .windows) error.Unsupported else @intCast(@intFromEnum(std.posix.SIG.TERM)),
+        2 => if (builtin.os.tag == .windows) 28 else @intCast(@intFromEnum(std.posix.SIG.WINCH)),
         else => error.Unsupported,
     };
 }

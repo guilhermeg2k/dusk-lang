@@ -428,7 +428,7 @@ When a program embeds Dusk, it passes the arguments and environment in (both emp
 
 ### Signals
 
-`Signal` is `Interrupt` (usually Ctrl+C) or `Terminate` (a request to stop, like the one a service manager sends). Both work on Linux and macOS; on Windows, `Interrupt` comes from the console and `Terminate` fails with `Unsupported`. Ctrl+C doesn't send `Interrupt` while the terminal is in raw mode.
+`Signal` is `Interrupt` (usually Ctrl+C), `Terminate` (a request to stop, like the one a service manager sends) or `WindowChange` (the terminal window was resized; see [Terminal programs](#terminal-programs)). All three work on Linux and macOS; on Windows, `Interrupt` and `WindowChange` come from the console and `Terminate` fails with `Unsupported`. Ctrl+C doesn't send `Interrupt` while the terminal is in raw mode. `WindowChange` never stops a program, whether it listens or not.
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
@@ -670,6 +670,7 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | `read_all(timeout_ms = -1)` | `IoError!string` | Everything until the end of the input, as text. |
 | `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes. |
 | `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
+| `set_raw(is_raw)` | `IoError!void` | Turns the terminal's raw mode on or off (see [Terminal programs](#terminal-programs)). |
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
 
 ```nim
@@ -712,8 +713,64 @@ end
 | `write_bytes(data)` | `IoError!void` | Writes the bytes of a `buffer`. |
 | `flush()` | `IoError!void` | Sends what's buffered now. |
 | `is_terminal()` | `bool` | Whether the output is a terminal. |
+| `size()` | `?io::TerminalSize` | The terminal's size in characters (`columns`, `rows`), or `null` when the output isn't a terminal or its size is unknown. |
 
 When the program reading the output stopped (`dusk app.dsk | head -1`), they fail with `BrokenPipe` and the program keeps running; the output that couldn't be sent is dropped. Writes follow the same buffering rules as `io::print`, so a failure can show up at the next `write` or `flush` rather than at the write that caused it.
+
+#### Terminal programs
+
+Programs that take over the terminal, like a text editor or a game, read every key as it's pressed and draw the whole screen themselves. `std/io` gives them what only the runtime can do; the rest (escape sequences for colors and the cursor, decoding keys) is ordinary Dusk code that writes and reads bytes.
+
+**Raw mode.** `io::stdin().set_raw(true)` puts the terminal in raw mode: each key arrives as soon as it's pressed, without waiting for Enter, and nothing typed shows on the screen. Ctrl+C, Ctrl+Z and Ctrl+S arrive as bytes (`3`, `26`, `19`) instead of stopping or pausing the program, and Enter arrives as `\r`. Output still turns `\n` into a new line at the start of the row. `set_raw(false)` brings back the normal mode. On a pipe or a file `set_raw` fails with `NotTerminal`, and after `close()` with `Closed`.
+
+The terminal goes back to how it was when the program ends, even if it ends with a runtime error or a task error nobody handled, and the error message shows in the normal mode. A program killed from outside (by `kill` or a crash of the runtime) can leave the terminal in raw mode; the `reset` command fixes it.
+
+**Keys.** In raw mode, read keys with `read_bytes`: a letter is one byte, and keys like the arrows or Home come as escape sequences that start with byte `27` (Esc), such as `27 91 65` for the up arrow. To tell the Esc key from the start of a sequence, read the rest with a short timeout: when nothing follows within a few milliseconds, it was Esc (`is_escape_key` below returns `false` when more bytes came; a real key decoder keeps them).
+
+```nim
+func is_escape_key(input: io::Stdin) -> io::IoError!bool
+    input.read_bytes(8, timeout_ms = 50) catch e then
+        if e == io::IoError.TimedOut then
+            return true
+        end
+        return e
+    end
+    return false
+end
+```
+
+**Size.** `io::stdout().size()` gives the terminal's size, and the `os::Signal.WindowChange` signal (see [Signals](#signals)) tells the program when the window was resized, so it can read the size again and redraw.
+
+**Output.** Terminal output shows at the end of each line, so call `io::stdout().flush()` after drawing a screen. On Windows, escape sequences in the output are turned on when the program starts.
+
+```nim
+import std/io
+import std/os
+
+func main() -> !void
+    let input = io::stdin()
+    let mut out = io::stdout()
+    let resize = try os::watch_signal(os::Signal.WindowChange)
+    let size = out.size() orelse io::TerminalSize(columns = 80, rows = 24)
+    try input.set_raw(true)
+    try out.write("\u{1b}[2J\u{1b}[H${size.columns}x${size.rows}, press q to quit\r\n")
+    try out.flush()
+    for true do
+        let next = try input.read_bytes(16)
+        if next: key then
+            if key[0] == 'q' then
+                break
+            end
+            try out.write("byte ${key[0]}\r\n")
+            try out.flush()
+        else
+            break
+        end
+    end
+    try input.set_raw(false)
+    resize.close()
+end
+```
 
 #### Errors
 
@@ -728,6 +785,7 @@ When the program reading the output stopped (`dusk app.dsk | head -1`), they fai
 | `TimedOut` | A read with `timeout_ms` didn't complete in time |
 | `UnexpectedEnd` | `read_exact` reached the end of the input before `count` bytes |
 | `HandshakeFailed` | Reading or writing a TLS connection whose handshake failed |
+| `NotTerminal` | `set_raw` on an input that isn't a terminal |
 | `Other` | Any other failure |
 
 #### Readers, writers and `io::copy`

@@ -72,6 +72,7 @@ pub const VM = struct {
             self.saveCurrentTask();
             if (failure == error.BrokenPipe) return failure;
             self.stdio.flushStdout() catch {};
+            self.event_loop.restoreTerminal();
             self.reportErrorLocation(failure);
             return failure;
         };
@@ -1109,6 +1110,7 @@ pub const VM = struct {
         var failure: ?anyerror = null;
         for (self.scheduler.tasks.items) |task| {
             if (!task.hasUnhandledFailure()) continue;
+            self.event_loop.restoreTerminal();
             failure = RuntimeErrorReporter.unhandledTaskError(self.program.error_names[@intCast(task.result.int64)]);
         }
         if (failure) |found| return found;

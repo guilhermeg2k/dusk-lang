@@ -26,6 +26,8 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_read_all", Binding{ .native = &streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &streamReadAllBytes } },
     .{ "is_terminal_fd", Binding{ .native = &isTerminalFd } },
+    .{ "stdin_set_raw", Binding{ .native = &stdinSetRaw } },
+    .{ "terminal_size_numbers", Binding{ .native = &terminalSizeNumbers } },
     .{ "stream_close", Binding{ .native = &streamClose } },
     .{ "stdio_write", Binding{ .native = &stdioWrite } },
     .{ "stdio_write_bytes", Binding{ .native = &stdioWrite } },
@@ -178,11 +180,30 @@ fn writeFailure(failure: anyerror) NativeResult {
 }
 
 fn isTerminalFd(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const fd = args[0].int64;
-    const is_terminal = switch (fd) {
+    return ok(.{ .bool = isTerminal(vm, args[0].int64) });
+}
+
+fn isTerminal(vm: *VM, fd: i64) bool {
+    return switch (fd) {
         0 => uv.uv_guess_handle(vm.stdin_fd) == .tty,
         1 => vm.stdio.is_stdout_terminal,
         else => uv.uv_guess_handle(@intCast(fd)) == .tty,
     };
-    return ok(.{ .bool = is_terminal });
+}
+
+fn stdinSetRaw(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(IoError.Closed);
+    stream.setTerminalMode(args[1].bool) catch |failure| {
+        return fail(if (failure == error.NotTerminal) IoError.NotTerminal else IoError.Other);
+    };
+    return ok(.{ .null = {} });
+}
+
+fn terminalSizeNumbers(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const fd = args[0].int64;
+    if (!isTerminal(vm, fd)) {
+        return ok(v.NULL_VALUE);
+    }
+    const size = try vm.event_loop.terminalSize(@intCast(fd)) orelse return ok(v.NULL_VALUE);
+    return ok(try vm.allocIntArray(&.{ size.columns, size.rows }));
 }

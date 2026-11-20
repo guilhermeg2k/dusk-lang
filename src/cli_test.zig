@@ -472,3 +472,133 @@ fn duskStringLiteral(allocator: std.mem.Allocator, text: []const u8) ![]const u8
     }
     return escaped.items;
 }
+
+extern "c" fn posix_openpt(flags: c_int) c_int;
+extern "c" fn grantpt(fd: c_int) c_int;
+extern "c" fn unlockpt(fd: c_int) c_int;
+extern "c" fn ptsname(fd: c_int) ?[*:0]const u8;
+
+const Terminal = struct {
+    master: c_int,
+    replica: c_int,
+    output: std.ArrayList(u8) = .empty,
+    matched_until: usize = 0,
+
+    fn open(columns: u16, rows: u16) !Terminal {
+        const master = posix_openpt(@bitCast(std.posix.O{ .ACCMODE = .RDWR, .NOCTTY = true }));
+        if (master < 0) {
+            return error.SkipZigTest;
+        }
+        errdefer _ = std.c.close(master);
+        const is_unlocked = grantpt(master) == 0 and unlockpt(master) == 0;
+        if (!is_unlocked) {
+            return error.SkipZigTest;
+        }
+        const name = ptsname(master) orelse return error.SkipZigTest;
+        const replica = std.c.open(name, .{ .ACCMODE = .RDWR, .NOCTTY = true });
+        if (replica < 0) {
+            return error.SkipZigTest;
+        }
+        const terminal: Terminal = .{ .master = master, .replica = replica };
+        try terminal.resize(columns, rows);
+        return terminal;
+    }
+
+    fn close(self: *Terminal) void {
+        self.output.deinit(testing.allocator);
+        _ = std.c.close(self.replica);
+        _ = std.c.close(self.master);
+    }
+
+    fn file(self: Terminal) std.Io.File {
+        return .{ .handle = self.replica, .flags = .{ .nonblocking = false } };
+    }
+
+    fn resize(self: Terminal, columns: u16, rows: u16) !void {
+        const size: std.posix.winsize = .{ .row = rows, .col = columns, .xpixel = 0, .ypixel = 0 };
+        if (std.c.ioctl(self.master, std.posix.T.IOCSWINSZ, &size) != 0) {
+            return error.ResizeFailed;
+        }
+    }
+
+    fn isRaw(self: Terminal) !bool {
+        const attributes = try std.posix.tcgetattr(self.replica);
+        return !attributes.lflag.ECHO and !attributes.lflag.ICANON;
+    }
+
+    fn send(self: Terminal, bytes: []const u8) !void {
+        if (std.c.write(self.master, bytes.ptr, bytes.len) != bytes.len) {
+            return error.WriteFailed;
+        }
+    }
+
+    fn expectOutput(self: *Terminal, expected: []const u8) !void {
+        var chunk: [256]u8 = undefined;
+        while (true) {
+            const unmatched = self.output.items[self.matched_until..];
+            if (std.mem.indexOf(u8, unmatched, expected)) |position| {
+                self.matched_until += position + expected.len;
+                return;
+            }
+            var fds = [_]std.posix.pollfd{.{ .fd = self.master, .events = std.posix.POLL.IN, .revents = 0 }};
+            if (try std.posix.poll(&fds, 10_000) == 0) {
+                std.debug.print("expected {s}, got {s}\n", .{ expected, unmatched });
+                return error.TestUnexpectedResult;
+            }
+            const count = try std.posix.read(self.master, &chunk);
+            try self.output.appendSlice(testing.allocator, chunk[0..count]);
+        }
+    }
+};
+
+const terminal_source =
+    \\import std/io
+    \\import std/os
+    \\import std/buffer
+    \\func main() -> !void
+    \\    let input = io::stdin()
+    \\    let size = io::stdout().size() orelse io::TerminalSize(columns = 0, rows = 0)
+    \\    io::println("size ${size.columns}x${size.rows}")
+    \\    let resize = try os::watch_signal(os::Signal.WindowChange)
+    \\    try input.set_raw(true)
+    \\    io::println("raw")
+    \\    let first = try input.read_bytes(16) orelse try buffer::new(1)
+    \\    io::println("got ${buffer::len(first)} ${first[0]}")
+    \\    try resize.wait()
+    \\    let after = io::stdout().size() orelse size
+    \\    io::println("resized ${after.columns}x${after.rows}")
+    \\    if (try os::args())[0] == "crash" then
+    \\        let empty: []int = []
+    \\        io::println("${empty[1]}")
+    \\    end
+    \\end
+;
+
+fn expectTerminalRun(cli: *Cli, program: []const u8, ending: []const u8, code: u8) !void {
+    var terminal = try Terminal.open(100, 30);
+    defer terminal.close();
+    var child = try std.process.spawn(testing.io, .{ .argv = &.{ cli.dusk, program, ending }, .stdin = .{ .file = terminal.file() }, .stdout = .{ .file = terminal.file() }, .stderr = .{ .file = terminal.file() } });
+    defer child.kill(testing.io);
+    try terminal.expectOutput("size 100x30");
+    try terminal.expectOutput("raw");
+    try testing.expect(try terminal.isRaw());
+    try terminal.send("\x03");
+    try terminal.expectOutput("got 1 3");
+    try terminal.resize(120, 40);
+    try std.posix.kill(child.id.?, .WINCH);
+    try terminal.expectOutput("resized 120x40");
+    const term = try child.wait(testing.io);
+    const has_exited = term == .exited and term.exited == code;
+    try testing.expect(has_exited);
+    try testing.expect(!try terminal.isRaw());
+}
+
+test "terminal CLI: raw input, size, resize events and the terminal restored at the end" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var cli: Cli = undefined;
+    try cli.init();
+    defer cli.deinit();
+    const program = try cli.write("terminal.dsk", terminal_source);
+    try expectTerminalRun(&cli, program, "stay", 0);
+    try expectTerminalRun(&cli, program, "crash", 1);
+}

@@ -1622,6 +1622,27 @@ test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
     try expectStdinOutput(all_bytes, (try pipeWithInput("\xff\x00\x01"))[0], "3 255\n");
 }
 
+test "io: raw mode and terminal size on a pipe" {
+    const source =
+        \\import std/io
+        \\import std/os
+        \\func main() -> !void
+        \\    let input = io::stdin()
+        \\    input.set_raw(true) catch e then
+        \\        io::println("${e == io::IoError.NotTerminal}")
+        \\    end
+        \\    io::println("${io::stdout().size() == null}")
+        \\    let resize = try os::watch_signal(os::Signal.WindowChange)
+        \\    resize.close()
+        \\    input.close()
+        \\    input.set_raw(false) catch e then
+        \\        io::println("${e == io::IoError.Closed}")
+        \\    end
+        \\end
+    ;
+    try expectStdinOutput(source, (try pipeWithInput(""))[0], "true\ntrue\ntrue\n");
+}
+
 test "io: read_all collects 10 MB written while the program waits" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const big = try testing.allocator.alloc(u8, 10 * 1024 * 1024);
@@ -1980,7 +2001,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 15 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 16 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {

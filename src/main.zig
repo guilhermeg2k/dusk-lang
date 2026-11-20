@@ -30,6 +30,7 @@ pub fn main(init: std.process.Init) !u8 {
         std.process.exit(1);
     }
 
+    enableTerminalEscapeCodes(init.io);
     const file_name = args[1];
     const stdio = Stdio{
         .stdout = .{ .file = &stdout_file_writer },
@@ -45,6 +46,13 @@ pub fn main(init: std.process.Init) !u8 {
     };
     try stderr_file_writer.interface.flush();
     return dusk_c.exit_code;
+}
+
+fn enableTerminalEscapeCodes(io: std.Io) void {
+    if (builtin.os.tag != .windows) return;
+    for ([_]std.Io.File{ std.Io.File.stdout(), std.Io.File.stderr() }) |file| {
+        file.enableAnsiEscapeCodes(io) catch {};
+    }
 }
 
 fn openMissingStandardFiles() void {
