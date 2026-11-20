@@ -23,6 +23,8 @@ const replacement_character = "\u{FFFD}";
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "tcp_connect_handle", Binding{ .native = &net.tcpConnect } },
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
+    .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
+    .{ "base64", Binding{ .native = &base64 } },
     .{ "stream_write", Binding{ .native = &io.streamWrite } },
     .{ "stream_write_bytes", Binding{ .native = &io.streamWrite } },
     .{ "stream_set_write_timeout", Binding{ .native = &io.streamSetWriteTimeout } },
@@ -401,6 +403,15 @@ fn isHeaderValue(_: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn bodyGivenTwice(_: *VM, _: []v.Value) anyerror!NativeResult {
     return RuntimeErrorReporter.httpBodyGivenTwice();
+}
+
+fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const text = bytesArg(args, 0);
+    const encoder = std.base64.standard.Encoder;
+    const encoded = try std.heap.smp_allocator.alloc(u8, encoder.calcSize(text.len));
+    defer std.heap.smp_allocator.free(encoded);
+    _ = encoder.encode(encoded, text);
+    return ok(try vm.allocBytesValue(encoded, .string));
 }
 
 fn invalidCompressionLevel(_: *VM, args: []v.Value) anyerror!NativeResult {

@@ -34,6 +34,7 @@ error HttpError
     InvalidRequest
     AddressInUse
     PermissionDenied
+    ProxyRefused
     Other
 end
 
@@ -424,6 +425,8 @@ extern func ~is_method(text: string) -> bool
 extern func ~is_header_name(text: string) -> bool
 extern func ~is_header_value(text: string) -> bool
 extern func ~body_given_twice() -> void
+extern func ~stream_start_tunneled_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
+extern func ~base64(text: string) -> string
 extern func ~invalid_compression_level(level: int) -> void
 
 let ~USER_AGENT = "dusk/0.16"
@@ -450,6 +453,12 @@ struct ~Exchange
     verify: bool
     follows_redirects: bool
     reads_body: bool
+    proxy: ?Proxy
+end
+
+struct ~Proxy
+    url: url::Url
+    authorization: ?string
 end
 
 struct ~Opened
@@ -466,17 +475,18 @@ struct Client
     max_body: int = 67108864
     ca: ?string = null
     verify: bool = true
+    proxy: ?string = null
 
     func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!Response
         let redirects = max_redirects orelse self.max_redirects
-        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true)
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy))
         let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
         return opened.response
     end
 
     func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!ResponseStream
         let redirects = max_redirects orelse self.max_redirects
-        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false)
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy))
         let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
         let response = opened.response
         if body_format(response.status, response.headers, exchange): format then
@@ -494,6 +504,63 @@ end
 func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true) -> HttpError!ResponseStream
     let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, ca = ca, verify = verify)
     return try client.open(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query)
+end
+
+func ~proxy_of(text: ?string) -> HttpError!?Proxy
+    let address = text orelse ""
+    if address == "" then
+        return null
+    end
+    let scheme_end = string::find(address, "://") orelse -1
+    if scheme_end <= 0 then
+        return HttpError.InvalidUrl
+    end
+    let authority_start = scheme_end + 3
+    let authority_end = authority_end_of(address, authority_start)
+    let authority = string::slice(address, authority_start, authority_end) catch ""
+    let at = string::find_reverse(authority, "@") orelse -1
+    let mut authorization: ?string = null
+    let mut cleaned = address
+    if at >= 0 then
+        let user_info = string::slice(authority, 0, at) catch ""
+        let parts = string::split(user_info, ":", limit = 2)
+        let user = url::decode(parts[0]) catch e then
+            return HttpError.InvalidUrl
+        end
+        let password = if len(parts) > 1 then url::decode(parts[1]) catch "" else "" end
+        authorization = "Basic ${base64("$user:$password")}"
+        let scheme = string::slice(address, 0, authority_start) catch ""
+        let rest = string::slice(address, authority_start + at + 1, string::len(address)) catch ""
+        cleaned = "$scheme$rest"
+    end
+    let parsed = url::parse(cleaned) catch e then
+        return HttpError.InvalidUrl
+    end
+    let is_supported = parsed.scheme == "http" or parsed.scheme == "https"
+    if !is_supported then
+        return HttpError.UnsupportedScheme
+    end
+    return Proxy(url = parsed, authorization = authorization)
+end
+
+func ~authority_end_of(address: string, start: int) -> int
+    let mut end_at = string::len(address)
+    for ["/", "?", "#"]: mark do
+        let found = string::find(address, mark, start) orelse end_at
+        if found < end_at then
+            end_at = found
+        end
+    end
+    return end_at
+end
+
+func ~proxy_for(target: url::Url, exchange: Exchange) -> ?Proxy
+    let host = string::lower(target.host)
+    let is_local = host == "localhost" or string::ends_with(host, ".localhost") or string::starts_with(host, "127.") or host == "::1"
+    if is_local then
+        return null
+    end
+    return exchange.proxy
 end
 
 func ~merged_headers(base: map[string, string], extra: map[string, string]) -> map[string, string]
@@ -610,9 +677,9 @@ func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Excha
     end
     let headers = without_headers(exchange.headers, dropped)
     if becomes_get then
-        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body)
+        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy)
     end
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy)
 end
 
 func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
@@ -673,11 +740,15 @@ func ~send(target: url::Url, exchange: Exchange) -> HttpError!Opened
 end
 
 func ~pool_key_of(target: url::Url, exchange: Exchange) -> string
-    let origin = "${target.scheme}://${target.host}:${port_of(target)}"
-    if target.scheme != "https" then
-        return origin
+    let mut key = "${target.scheme}://${target.host}:${port_of(target)}"
+    if proxy_for(target, exchange): proxy then
+        key = "$key|via ${proxy.url.to_string()}|${proxy.authorization orelse ""}"
     end
-    return "$origin|${exchange.verify}|${exchange.ca orelse ""}"
+    let uses_tls = target.scheme == "https" or key != "${target.scheme}://${target.host}:${port_of(target)}"
+    if !uses_tls then
+        return key
+    end
+    return "$key|${exchange.verify}|${exchange.ca orelse ""}"
 end
 
 func ~exchange_on_reused(handle: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!?Opened
@@ -727,6 +798,9 @@ func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
 end
 
 func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
+    if proxy_for(target, exchange): proxy then
+        return try open_through_proxy(target, exchange, proxy)
+    end
     let is_tls = target.scheme == "https"
     let handle = tcp_connect_handle(target.host, port_of(target), remaining_ms(exchange)) catch e then
         return from_net(e)
@@ -739,6 +813,54 @@ func ~open_connection(target: url::Url, exchange: Exchange) -> HttpError!int
         return from_net(e)
     end
     return handle
+end
+
+func ~open_through_proxy(target: url::Url, exchange: Exchange, proxy: Proxy) -> HttpError!int
+    let handle = tcp_connect_handle(proxy.url.host, port_of(proxy.url), remaining_ms(exchange)) catch e then
+        return from_net(e)
+    end
+    if proxy.url.scheme == "https" then
+        stream_start_tls(handle, proxy.url.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+            stream_close(handle)
+            return from_net(e)
+        end
+    end
+    if target.scheme != "https" then
+        return handle
+    end
+    open_tunnel(handle, target, exchange, proxy) catch e then
+        stream_close(handle)
+        return e
+    end
+    stream_start_tunneled_tls(handle, target.host, exchange.ca, exchange.verify, remaining_ms(exchange)) catch e then
+        stream_close(handle)
+        return from_net(e)
+    end
+    return handle
+end
+
+func ~open_tunnel(handle: int, target: url::Url, exchange: Exchange, proxy: Proxy) -> HttpError!void
+    let host = if string::contains(target.host, ":") then "[${target.host}]" else target.host end
+    let authority = "$host:${port_of(target)}"
+    let mut lines = ["CONNECT $authority HTTP/1.1", "Host: $authority"]
+    if proxy.authorization: credentials then
+        append(lines, "Proxy-Authorization: $credentials")
+    end
+    stream_set_write_timeout(handle, remaining_ms(exchange))
+    stream_write(handle, "${string::join(lines, "\r\n")}\r\n\r\n") catch e then
+        return from_io(e)
+    end
+    let head = try stream_read_head(handle, false, remaining_ms(exchange))
+    if head: received then
+        let parts = try parse_head(received, false)
+        let status = string::to_int(parts[0]) catch 0
+        let is_open = status >= 200 and status < 300
+        if !is_open then
+            return HttpError.ProxyRefused
+        end
+        return
+    end
+    return HttpError.ConnectionReset
 end
 
 func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Response
@@ -774,7 +896,14 @@ end
 func ~request_head(target: url::Url, exchange: Exchange) -> string
     let mut lines: []string = []
     let path = if target.query: query then "${target.path}?$query" else target.path end
-    append(lines, "${exchange.method} $path HTTP/1.1")
+    let proxy = if target.scheme == "http" then proxy_for(target, exchange) else null end
+    let request_target = if proxy != null then "http://${host_header(target)}$path" else path end
+    append(lines, "${exchange.method} $request_target HTTP/1.1")
+    if proxy: through then
+        if through.authorization: credentials then
+            append(lines, "Proxy-Authorization: $credentials")
+        end
+    end
     let mut given: map[string, bool] = {}
     for exchange.headers: value, name do
         let lowered = string::lower(name)

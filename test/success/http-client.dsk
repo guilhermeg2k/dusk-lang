@@ -500,6 +500,152 @@ func check_client(listener: net::TcpListener) -> !void
     await(silent)
 end
 
+func pipe(from: net::TcpConn, to: net::TcpConn) -> void
+    for true do
+        let next = from.read_bytes(65536) catch e then
+            break
+        end
+        if next: data then
+            to.write_bytes(data) catch e then
+                break
+            end
+        else
+            break
+        end
+    end
+    to.close()
+    from.close()
+end
+
+func tunnel_once(proxy: net::TcpListener, target_port: int, answer: string) -> Task[Received]
+    return spawn(func() -> Received
+        let conn = proxy.accept() catch e then
+            return Received(lines = [], body = "")
+        end
+        let received = read_request(conn) catch e then
+            conn.close()
+            return Received(lines = [], body = "")
+        end
+        if answer != "" then
+            conn.write(answer) catch e then
+            end
+            conn.close()
+            return received
+        end
+        let target = net::tcp_connect("127.0.0.1", target_port) catch e then
+            conn.close()
+            return received
+        end
+        conn.write("HTTP/1.1 200 Connection established\r\n\r\n") catch e then
+        end
+        let upstream = spawn(func() -> void
+            pipe(conn, target)
+        end)
+        pipe(target, conn)
+        await(upstream)
+        return received
+    end)
+end
+
+func proxy_error(client: http::Client, url: string) -> ?http::HttpError
+    let resp = client.request(url, timeout_ms = 3000) catch e then
+        return e
+    end
+    return null
+end
+
+func check_proxy(listener: net::TcpListener) -> !void
+    let ok = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    let port = listener.port()
+    let via = http::Client(proxy = "http://127.0.0.1:$port")
+    let forward_server = serve_once(listener, ok)
+    let forwarded = try via.request("http://example.test/items?page=2", headers = {"X-Token": "abc"})
+    let forward_request = await(forward_server)
+    assert(try forwarded.text() == "hello")
+    assert(forward_request.lines[0] == "GET http://example.test/items?page=2 HTTP/1.1")
+    assert(has_line(forward_request, "Host: example.test"))
+    assert(has_line(forward_request, "X-Token: abc"))
+    assert(!has_header_named(forward_request, "proxy-authorization"))
+
+    let port_server = serve_once(listener, ok)
+    let with_port = try via.request("http://example.test:8080/x")
+    assert(await(port_server).lines[0] == "GET http://example.test:8080/x HTTP/1.1")
+
+    let secret = http::Client(proxy = "http://user:p%40ss@127.0.0.1:$port")
+    let secret_server = serve_once(listener, ok)
+    let authorized = try secret.request("http://example.test/")
+    assert(has_line(await(secret_server), "Proxy-Authorization: Basic dXNlcjpwQHNz"))
+
+    let nowhere = http::Client(proxy = "http://127.0.0.1:1")
+    let local_server = serve_once(listener, ok)
+    assert(try (try nowhere.request("${base(listener)}/local")).text() == "hello")
+    assert(await(local_server).lines[0] == "GET /local HTTP/1.1")
+    let named_local = serve_once(listener, ok)
+    assert(try (try nowhere.request("http://localhost:$port/named")).text() == "hello")
+    assert(await(named_local).lines[0] == "GET /named HTTP/1.1")
+    assert(proxy_error(nowhere, "http://example.test/") == http::HttpError.ConnectionRefused)
+    assert(proxy_error(http::Client(proxy = "not a url"), "http://example.test/") == http::HttpError.InvalidUrl)
+    assert(proxy_error(http::Client(proxy = "socks5://127.0.0.1:1080"), "http://example.test/") == http::HttpError.UnsupportedScheme)
+    let direct_server = serve_once(listener, ok)
+    assert(try (try http::Client(proxy = "").request("${base(listener)}/direct")).text() == "hello")
+    assert(await(direct_server).lines[0] == "GET /direct HTTP/1.1")
+end
+
+func check_proxy_tunnels() -> !void
+    let ca = try fixture("ca.pem")
+    let target = try tls_listener("other-host.pem")
+    let plain_proxy = try net::tcp_listen("127.0.0.1", 0)
+    let secure_proxy = try tls_listener("server.pem")
+    let secret = "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecret"
+
+    let tunnel = tunnel_once(plain_proxy, target.port(), "")
+    let target_server = serve_once(target, secret)
+    let through_plain = http::Client(proxy = "http://u:pw@127.0.0.1:${plain_proxy.port()}", ca = ca)
+    let tunneled = try through_plain.request("https://other.example/secure")
+    assert(try tunneled.text() == "secret")
+    let connect = await(tunnel)
+    assert(connect.lines[0] == "CONNECT other.example:443 HTTP/1.1")
+    assert(has_line(connect, "Host: other.example:443"))
+    assert(has_line(connect, "Proxy-Authorization: Basic dTpwdw=="))
+    let target_request = await(target_server)
+    assert(target_request.lines[0] == "GET /secure HTTP/1.1")
+    assert(!has_header_named(target_request, "proxy-authorization"))
+
+    let double = tunnel_once(secure_proxy, target.port(), "")
+    let double_server = serve_once(target, secret)
+    let through_secure = http::Client(proxy = "https://localhost:${secure_proxy.port()}", ca = ca)
+    let doubly = try through_secure.request("https://other.example:8443/twice")
+    assert(try doubly.text() == "secret")
+    assert(await(double).lines[0] == "CONNECT other.example:8443 HTTP/1.1")
+    assert(await(double_server).lines[0] == "GET /twice HTTP/1.1")
+
+    let streamed_tunnel = tunnel_once(secure_proxy, target.port(), "")
+    let streamed_server = serve_once(target, secret)
+    let mut streamed = try through_secure.open("https://other.example/stream")
+    assert(try streamed.read_all() == "secret")
+    streamed.close()
+    await(streamed_tunnel)
+    await(streamed_server)
+
+    let forward = tunnel_once(secure_proxy, 0, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+    let forwarded = try through_secure.request("http://example.test/plain")
+    assert(try forwarded.text() == "ok")
+    assert(await(forward).lines[0] == "GET http://example.test/plain HTTP/1.1")
+
+    let refusing = tunnel_once(plain_proxy, 0, "HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+    assert(proxy_error(through_plain, "https://other.example/") == http::HttpError.ProxyRefused)
+    await(refusing)
+
+    let untrusting = http::Client(proxy = "https://localhost:${secure_proxy.port()}")
+    let untrusted_proxy = tunnel_once(secure_proxy, 0, "x")
+    assert(proxy_error(untrusting, "https://other.example/") == http::HttpError.UntrustedCertificate)
+    await(untrusted_proxy)
+
+    target.close()
+    plain_proxy.close()
+    secure_proxy.close()
+end
+
 func check_https() -> !void
     let ca = try fixture("ca.pem")
     let secure = try tls_listener("server.pem")
@@ -986,6 +1132,8 @@ func main() -> !void
     try check_pool(listener)
     try check_gzip(listener)
     try check_client(listener)
+    try check_proxy(listener)
     listener.close()
     try check_https()
+    try check_proxy_tunnels()
 end

@@ -34,6 +34,7 @@ pub const HttpError = enum {
     InvalidRequest,
     AddressInUse,
     PermissionDenied,
+    ProxyRefused,
     Other,
 };
 

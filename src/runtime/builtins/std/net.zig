@@ -139,6 +139,19 @@ pub fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (stream.isTls()) {
         return RuntimeErrorReporter.tlsAlreadyStarted();
     }
+    return startClientTls(vm, stream, args);
+}
+
+pub fn streamStartTunneledTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
+    const can_start = !stream.isTls() or stream.moveTlsIntoTunnel();
+    if (!can_start) {
+        return fail(NetError.HandshakeFailed);
+    }
+    return startClientTls(vm, stream, args);
+}
+
+fn startClientTls(vm: *VM, stream: *Stream, args: []v.Value) anyerror!NativeResult {
     const should_verify = args[3].bool;
     const ca = native.optionalBytesArg(args, 2);
     const current = vm.running_task.?;

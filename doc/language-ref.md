@@ -2703,6 +2703,14 @@ api.headers["X-Trace"] = trace_id
 | `base_url` | `""` | Put in front of relative URLs, with exactly one `/` between: `.../v1` and `/users`, or `.../v1/` and `users`, both give `.../v1/users`. A URL with a scheme (`https://...`) ignores it. |
 | `headers` | `{}` | Sent with every request. A header given to a call replaces the client's header of the same name, ignoring case. |
 | `timeout_ms`, `max_redirects`, `max_body`, `ca`, `verify` | as in `request` | The defaults for each call. |
+| `proxy` | `null` | A proxy every request goes through (see Proxies); `null` or `""` connects directly. |
+
+**Proxies.** With `proxy = "http://proxy.example.com:3128"`, requests go through that proxy: an `http://` URL is sent to the proxy whole (`GET http://host/path`), and an `https://` one through a tunnel (`CONNECT host:443`) inside which the TLS connection to the server runs as usual, checked against `ca` / `verify`. The proxy can be `https://` too, so the connection to the proxy is encrypted as well (its certificate is checked with the same `ca` / `verify`); `https://` servers are then reached with TLS inside that TLS connection. Credentials go in the proxy URL (`http://user:pass@proxy:3128`, percent-encoded) and are sent as `Proxy-Authorization: Basic ...`, never to the server. Requests to `localhost`, `*.localhost`, `127.x.x.x` and `::1` always connect directly. A proxy that refuses a tunnel (a `407` for missing credentials, a `403`...) fails the request with `ProxyRefused`; a proxy URL that can't be parsed is `InvalidUrl`, and one that isn't `http://` or `https://` (SOCKS) is `UnsupportedScheme`. The environment isn't read on its own: pass the value of `HTTPS_PROXY` or similar yourself if you want it.
+
+```nim
+let corporate = http::Client(proxy = "http://alice:s3cret@proxy.internal:3128")
+let page = try corporate.request("https://example.com/")
+```
 
 `client.request(url, ...)` and `client.open(url, ...)` take the same arguments as `http::request` and `http::open`; a setting given to the call (`timeout_ms = 20000`) overrides the client's for that call only. Changing a field of a `let mut` client affects the requests after it. Every client shares the program's pool of open connections, so two clients talking to the same server reuse each other's connections.
 
@@ -2865,6 +2873,7 @@ Every response that could be compressed gets `Vary: Accept-Encoding` (added to a
 | `Closed` | The connection was closed |
 | `InvalidRequest` | A request body the client sent broken (bad chunks, or shorter than announced), read with `text` or `bytes` |
 | `AddressInUse`, `PermissionDenied` | `listen` failed, as in `net::NetError` |
+| `ProxyRefused` | The client's proxy refused to open a tunnel (any status other than `2xx` to `CONNECT`) |
 | `Other` | Any other failure |
 
 ### Errors from builtins
@@ -2915,5 +2924,5 @@ These are known gaps in v0.15. Most are planned in the [roadmap](roadmap.md).
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, no revocation checks, and no server-side `start_tls` (a server can't switch a plain connection to TLS).
-- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client doesn't use proxies (`HTTP_PROXY` and similar variables are ignored), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); it decompresses gzip and deflate, not `br` or `zstd`. The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
+- **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client uses only `http://` and `https://` proxies (no SOCKS, and `HTTP_PROXY` and similar variables aren't read on their own), doesn't store cookies between requests, has no client certificates, and sends request bodies whole (no streamed uploads); it decompresses gzip and deflate, not `br` or `zstd`. The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
 - **Generics**: an explicit type-argument list must fill every slot; partial lists are not supported. Traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.
