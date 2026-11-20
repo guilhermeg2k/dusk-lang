@@ -1989,7 +1989,7 @@ The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). 
 
 ### std/time
 
-Clocks, timestamps, durations, and monotonic instants. Import with `import std/time`.
+Clocks, timestamps, durations, and monotonic instants. Import with `import std/time`. A [complete example](../examples/time.dsk) combines timestamp arithmetic, named zones, custom formatting, monotonic timing, and timestamp serialization.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
@@ -2107,11 +2107,11 @@ let elapsed = try started.elapsed()
 io::println("Elapsed: ${elapsed.seconds()} seconds")
 ```
 
-A `TimeZone` is an immutable value with private representation. Dusk bundles IANA tzdb 2026f: 597 named zones and aliases, with no network or host timezone-database requirement at runtime. Use exact case-sensitive names such as `America/Sao_Paulo`, `America/New_York`, or `Asia/Kathmandu`. Names must identify a bundled zone; absolute paths, traversal, NUL bytes, raw offset strings and `right/` or `posix/` database trees are not accepted. An alias keeps its requested name.
+A `TimeZone` is an immutable value with private representation. Dusk bundles IANA tzdb 2026f: 597 named zones and aliases, with no network or host timezone-database requirement at runtime. Use exact case-sensitive names such as `America/Sao_Paulo`, `America/New_York`, or `Asia/Kathmandu`. `load_timezone` requires a bundled name; absolute paths, traversal, NUL bytes, raw offset strings and `right/` or `posix/` database trees are not accepted by that function. An alias keeps its requested name.
 
 | TimeZone method | Returns | Description |
 | :-------------- | :------ | :---------- |
-| `name()` | `string` | The requested bundled name, or a stable UTC/fixed-offset name. |
+| `name()` | `string` | The requested bundled name, a stable UTC/fixed-offset name, or `Local` for anonymous local rules. |
 | `offset_seconds(timestamp)` | `int` | The UTC offset at this timestamp, in seconds, positive east of UTC. |
 
 Named offsets use historical transitions and recurring future rules across the full timestamp range. Before the first transition, the zone's initial time type applies. Future values extrapolate the bundled rules; governments can change those rules after this database release. Historical second-level offsets are preserved. Two named zones can share an offset today and have different rules for another date.
