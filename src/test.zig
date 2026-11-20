@@ -231,6 +231,104 @@ test "time: ISO API migration and error handling" {
     try runCaseError("sema/time-iso-utc-extra-argument.dsk", error.InvalidNumberOfArgs);
 }
 
+test "time: local discovery parks cold callers, shares first snapshot and caches without yielding" {
+    var environment = try TestTimezoneEnvironment.init("America/New_York");
+    defer environment.deinit();
+    try runCase("time-local.dsk");
+}
+
+test "time: local failures are catchable through native calls and await without UTC fallback" {
+    var environment = try TestTimezoneEnvironment.init("Missing/LocalZone");
+    defer environment.deinit();
+    try runCase("time-local-errors.dsk");
+    try runCaseError("sema/time-local-unhandled.dsk", error.UnhandledError);
+    try runCaseError("sema/time-local-extra-argument.dsk", error.InvalidNumberOfArgs);
+    try runCaseError("sema/time-local-native-private.dsk", error.NotVisible);
+}
+
+test "time: local snapshot survives environment changes and failed discoveries can retry" {
+    var environment = try TestTimezoneEnvironment.init("Missing/LocalZone");
+    defer environment.deinit();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    const source =
+        \\import std/time
+        \\import std/io
+        \\func main() -> void
+        \\    let zone = time::local_timezone() catch e then
+        \\        assert(e == time::TimeError.LocalTimeUnavailable)
+        \\        io::println("unavailable")
+        \\        return
+        \\    end
+        \\    io::println(zone.name())
+        \\end
+    ;
+    const program = try dusk.compile(source);
+    const VM = @import("runtime/vm.zig").VM;
+    var vm = VM.init(&program, .{ .stdout = .{ .custom = &output.writer } });
+    defer vm.deinit();
+    try vm.run();
+    try testing.expectEqual(@as(?i64, null), vm.timezones.local_identifier);
+    try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+    try TestTimezoneEnvironment.set("America/New_York");
+    try vm.run();
+    const identifier = vm.timezones.local_identifier.?;
+    try TestTimezoneEnvironment.set("Missing/LocalZone");
+    try vm.run();
+    try testing.expectEqual(identifier, vm.timezones.local_identifier.?);
+    try testing.expectEqualStrings("unavailable\nAmerica/New_York\nAmerica/New_York\n", output.written());
+    const object_count = vm.heap.object_count;
+    var args: [0]@import("runtime/value.zig").Value = .{};
+    const native = @import("runtime/builtins/std/time.zig").bindings.get("local_timezone_id").?.native;
+    const cached = try native(&vm, &args);
+    try testing.expect(!cached.has_failed and !cached.is_parked);
+    try testing.expectEqual(identifier, cached.value.int64);
+    try testing.expectEqual(object_count, vm.heap.object_count);
+    try testing.expectEqual(@as(usize, 0), vm.event_loop.pending_operations);
+}
+
+const TestTimezoneEnvironment = struct {
+    previous: ?[:0]u8,
+
+    fn init(value: ?[:0]const u8) !TestTimezoneEnvironment {
+        var first: [1]u8 = undefined;
+        var length: usize = first.len;
+        const status = uv.uv_os_getenv("TZ", &first, &length);
+        const previous: ?[:0]u8 = if (status == 0) try testing.allocator.dupeZ(u8, "") else previous: {
+            const failure = std.mem.span(uv.uv_err_name(status));
+            if (std.mem.eql(u8, failure, "ENOENT")) {
+                break :previous null;
+            }
+            try testing.expectEqualStrings("ENOBUFS", failure);
+            const buffer = try testing.allocator.alloc(u8, length);
+            defer testing.allocator.free(buffer);
+            try testing.expectEqual(@as(c_int, 0), uv.uv_os_getenv("TZ", buffer.ptr, &length));
+            break :previous try testing.allocator.dupeZ(u8, buffer[0..length]);
+        };
+        errdefer if (previous) |text| {
+            testing.allocator.free(text);
+        };
+        try set(value);
+        return .{ .previous = previous };
+    }
+
+    fn deinit(self: *TestTimezoneEnvironment) void {
+        const status = if (self.previous) |value| uv.uv_os_setenv("TZ", value) else uv.uv_os_unsetenv("TZ");
+        std.debug.assert(status == 0);
+        if (self.previous) |value| {
+            testing.allocator.free(value);
+        }
+    }
+
+    fn set(value: ?[:0]const u8) !void {
+        const status = if (value) |text| uv.uv_os_setenv("TZ", text) else uv.uv_os_unsetenv("TZ");
+        try testing.expectEqual(@as(c_int, 0), status);
+    }
+};
+
 test "time: clocks and tasks" {
     try runCase("time-clocks.dsk");
     try runCaseError("sema/time-without-import.dsk", error.ModuleNotImported);

@@ -136,12 +136,17 @@ pub const VM = struct {
     }
 
     fn buildWakeValue(self: *Self, wake_result: WakeResult) !v.Value {
-        defer wake_result.payload.free(self.scheduler.allocator);
-        return switch (wake_result.payload) {
+        var payload = wake_result.payload;
+        defer payload.free(self.scheduler.allocator);
+        return switch (payload) {
             .none => wake_result.value,
             .ints => |ints| try self.allocIntArray(ints),
             .bytes => |bytes| try self.allocBytesValue(bytes, wake_result.kind),
             .names => |names| try self.allocStringArray(names),
+            .local_timezone => |*result| switch (result.*) {
+                .zone => |*snapshot| .{ .int64 = try self.timezones.installLocal(self.allocator, snapshot) },
+                .out_of_memory => error.OutOfMemory,
+            },
         };
     }
 

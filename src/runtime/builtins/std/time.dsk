@@ -4,6 +4,7 @@ error TimeError
     PrecisionLoss
     UnknownTimeZone
     InvalidOffset
+    LocalTimeUnavailable
 end
 
 func utc_timezone() -> TimeZone
@@ -191,3 +192,9 @@ end
 extern func ~load_timezone_id(name: string) -> TimeError!int
 extern func ~timezone_name(zone_id: int) -> string
 extern func ~timezone_offset_seconds(zone_id: int, milliseconds: int) -> int
+
+func local_timezone() -> TimeError!TimeZone
+    return TimeZone(zone_id = try local_timezone_id())
+end
+
+extern func ~local_timezone_id() -> TimeError!int

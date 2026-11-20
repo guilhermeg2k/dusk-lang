@@ -4,6 +4,7 @@ const VM = @import("../../vm.zig").VM;
 const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
 const Civil = @import("../../calendar.zig").Civil;
 const formatIsoMilliseconds = @import("../../time_format.zig").formatIsoMilliseconds;
+const LocalJob = @import("../../tasks/timezone_job.zig").LocalJob;
 const native = @import("../native.zig");
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
@@ -23,9 +24,10 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "load_timezone_id", Binding{ .native = &loadTimezoneId } },
     .{ "timezone_name", Binding{ .native = &timezoneName } },
     .{ "timezone_offset_seconds", Binding{ .native = &timezoneOffsetSeconds } },
+    .{ "local_timezone_id", Binding{ .native = &localTimezoneId } },
 });
 
-pub const TimeError = enum { InvalidTimestamp, Overflow, PrecisionLoss, UnknownTimeZone, InvalidOffset };
+pub const TimeError = @import("../../time_error.zig").TimeError;
 pub const error_sets = .{TimeError};
 
 fn nowMilliseconds(_: *VM, _: []v.Value) anyerror!NativeResult {
@@ -247,4 +249,19 @@ fn timezoneName(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn timezoneOffsetSeconds(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return native.ok(.{ .int64 = vm.timezones.offsetSeconds(args[0].int64, args[1].int64) });
+}
+
+fn localTimezoneId(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    if (vm.timezones.local_identifier) |identifier| {
+        return native.ok(.{ .int64 = identifier });
+    }
+    const current = vm.running_task.?;
+    LocalJob.start(&vm.event_loop, &vm.scheduler, current) catch |failure| {
+        if (failure == error.OutOfMemory) {
+            return failure;
+        }
+        return native.fail(TimeError.LocalTimeUnavailable);
+    };
+    current.park();
+    return native.parked();
 }

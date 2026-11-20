@@ -70,4 +70,8 @@ fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: Run
     const flags = &[_][]const u8{ "-std=c99", "-fno-strict-aliasing" };
     module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/tls_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/http_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/timezone_glue.c"), .flags = flags });
+    if (module.resolved_target.?.result.os.tag == .windows) {
+        module.linkSystemLibrary("advapi32", .{});
+    }
 }

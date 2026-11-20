@@ -157,6 +157,12 @@ pub extern fn uv_ip_name(address: *const SocketAddress, text: [*]u8, size: usize
 pub extern fn uv_gettimeofday(time: *Timeval64) c_int;
 pub extern fn uv_hrtime() u64;
 
+// ---- Environment ----
+
+pub extern fn uv_os_getenv(name: [*:0]const u8, buffer: [*]u8, size: *usize) c_int;
+pub extern fn uv_os_setenv(name: [*:0]const u8, value: [*:0]const u8) c_int;
+pub extern fn uv_os_unsetenv(name: [*:0]const u8) c_int;
+
 // ---- Requests (shared by every request type) ----
 
 pub extern fn uv_req_size(request_type: RequestType) usize;
@@ -183,6 +189,7 @@ pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback:
 // ---- File system: paths ----
 
 pub extern fn uv_fs_stat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_readlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_lstat(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_rename(loop: *Loop, request: *Request, path: [*:0]const u8, new_path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_unlink(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;

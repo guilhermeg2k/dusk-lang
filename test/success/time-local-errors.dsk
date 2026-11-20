@@ -1,0 +1,29 @@
+import std/time
+import std/string
+
+func read_local() -> time::TimeError!time::TimeZone
+    return try time::local_timezone()
+end
+
+func main() -> !void
+    assert((try string::to_int("42")) == 42)
+    for 0..19: i do
+        let zone = time::local_timezone() catch e then
+            assert(e == time::TimeError.LocalTimeUnavailable)
+            continue
+        end
+        assert(false)
+    end
+    let request = spawn(func() -> time::TimeError!time::TimeZone
+        return try read_local()
+    end)
+    let mut has_expected_error = false
+    await(request) catch e then
+        assert(e == time::TimeError.LocalTimeUnavailable)
+        has_expected_error = true
+    end
+    assert(has_expected_error)
+    let named = try time::load_timezone("Asia/Kathmandu")
+    assert(named.offset_seconds(time::from_unix_ms(0)) == 19800)
+    assert(time::to_utc_iso_string(time::from_unix_ms(0)) == "1970-01-01T00:00:00.000Z")
+end

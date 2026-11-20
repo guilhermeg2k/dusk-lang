@@ -2,12 +2,18 @@ const std = @import("std");
 const bundle = @import("timezone_data");
 const Recurrence = @import("timezone_recurrence.zig").Recurrence;
 const named_zone_base: i64 = 86400;
+const local_zone_id: i64 = named_zone_base + bundle.zones.len;
 
 pub const Registry = struct {
     rules: std.AutoHashMapUnmanaged(u32, Rules) = .empty,
+    local_identifier: ?i64 = null,
+    local_zone: ?LocalZone = null,
 
     pub fn deinit(self: *Registry, allocator: std.mem.Allocator) void {
         self.rules.deinit(allocator);
+        if (self.local_zone) |zone| {
+            zone.free(allocator);
+        }
         self.* = .{};
     }
 
@@ -21,7 +27,24 @@ pub const Registry = struct {
         return named_zone_base + @as(i64, @intCast(index));
     }
 
-    fn findZone(name: []const u8) ?usize {
+    pub fn installLocal(self: *Registry, allocator: std.mem.Allocator, snapshot: *LocalZone) !i64 {
+        if (self.local_identifier) |identifier| {
+            return identifier;
+        }
+        const identifier = switch (snapshot.*) {
+            .utc => @as(i64, 0),
+            .named => |index| (try self.loadNamed(allocator, bundle.zones[index].name)).?,
+            .file, .recurrence => local_zone_id,
+        };
+        if (identifier == local_zone_id) {
+            self.local_zone = snapshot.*;
+            snapshot.* = .utc;
+        }
+        self.local_identifier = identifier;
+        return identifier;
+    }
+
+    pub fn findZone(name: []const u8) ?usize {
         if (!isValidZoneName(name)) {
             return null;
         }
@@ -62,6 +85,9 @@ pub const Registry = struct {
     }
 
     pub fn zoneName(_: *const Registry, identifier: i64, buffer: *[32]u8) []const u8 {
+        if (identifier == local_zone_id) {
+            return "Local";
+        }
         if (identifier >= named_zone_base) {
             return bundle.zones[@intCast(identifier - named_zone_base)].name;
         }
@@ -80,6 +106,14 @@ pub const Registry = struct {
     }
 
     pub fn offsetSeconds(self: *const Registry, identifier: i64, milliseconds: i64) i32 {
+        if (identifier == local_zone_id) {
+            const timestamp = @divFloor(milliseconds, 1000);
+            return switch (self.local_zone.?) {
+                .file => |file| file.rules.offsetSeconds(timestamp),
+                .recurrence => |recurrence| recurrence.offsetSeconds(timestamp),
+                .utc, .named => unreachable,
+            };
+        }
         if (identifier < named_zone_base) {
             return @intCast(identifier);
         }
@@ -88,10 +122,37 @@ pub const Registry = struct {
     }
 };
 
+pub const LocalZone = union(enum) {
+    utc,
+    named: usize,
+    file: struct { bytes: []u8, rules: Rules },
+    recurrence: Recurrence,
+
+    pub fn free(self: LocalZone, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .file => |file| allocator.free(file.bytes),
+            else => {},
+        }
+    }
+};
+
+pub const LocalResult = union(enum) {
+    zone: LocalZone,
+    out_of_memory,
+
+    pub fn free(self: LocalResult, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .zone => |zone| zone.free(allocator),
+            .out_of_memory => {},
+        }
+    }
+};
+
 pub const Rules = struct {
     transition_times: []const u8,
     transition_types: []const u8,
     local_types: []const u8,
+    designations: []const u8,
     time_width: u8,
     recurrence: ?Recurrence,
 
@@ -133,6 +194,7 @@ pub const Rules = struct {
             .transition_times = transition_times,
             .transition_types = transition_types,
             .local_types = local_types,
+            .designations = designations,
             .time_width = time_width,
             .recurrence = null,
         };
@@ -185,6 +247,24 @@ pub const Rules = struct {
         return result;
     }
 
+    pub fn canRepresentLocal(self: Rules) bool {
+        for (0..self.local_types.len / 6) |index| {
+            const offset = self.typeOffset(index);
+            const is_supported_offset = offset > -86400 and offset < 86400;
+            if (!is_supported_offset) {
+                return false;
+            }
+            const designation = self.designations[self.local_types[index * 6 + 5]..];
+            if (std.mem.startsWith(u8, designation, "-00\x00")) {
+                return false;
+            }
+        }
+        if (self.recurrence) |recurrence| {
+            return canRepresentLocalRecurrence(recurrence);
+        }
+        return true;
+    }
+
     fn typeOffset(self: Rules, index: usize) i32 {
         return std.mem.readInt(i32, self.local_types[index * 6 ..][0..4], .big);
     }
@@ -216,6 +296,15 @@ pub const Rules = struct {
         return self.typeOffset(type_index);
     }
 };
+
+pub fn canRepresentLocalRecurrence(recurrence: Recurrence) bool {
+    const has_standard_offset = recurrence.standard_offset > -86400 and recurrence.standard_offset < 86400;
+    if (!has_standard_offset) {
+        return false;
+    }
+    const daylight_offset = recurrence.daylight_offset orelse return true;
+    return daylight_offset > -86400 and daylight_offset < 86400;
+}
 
 const Reader = struct {
     bytes: []const u8,
@@ -377,4 +466,39 @@ test "timezone reader permits static legacy files and long designations" {
     const rules = try Rules.parse(payload);
     try std.testing.expectEqual(@as(i32, 30), rules.offsetSeconds(std.math.minInt(i64)));
     try std.testing.expectEqual(@as(i32, 30), rules.offsetSeconds(std.math.maxInt(i64)));
+}
+
+test "local timezone installs one owned snapshot and releases unused results" {
+    const entry = bundle.zones[Registry.findZone("America/New_York").?];
+    const bytes = try std.testing.allocator.dupe(u8, bundle.bytes[entry.offset..][0..entry.length]);
+    var first = LocalZone{ .file = .{ .bytes = bytes, .rules = try Rules.parse(bytes) } };
+    defer first.free(std.testing.allocator);
+    var registry: Registry = .{};
+    defer registry.deinit(std.testing.allocator);
+    const identifier = try registry.installLocal(std.testing.allocator, &first);
+    try std.testing.expect(first == .utc);
+    var buffer: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("Local", registry.zoneName(identifier, &buffer));
+    try std.testing.expectEqual(@as(i32, -18000), registry.offsetSeconds(identifier, 0));
+    const other = try std.testing.allocator.dupe(u8, bytes);
+    var second = LocalZone{ .file = .{ .bytes = other, .rules = try Rules.parse(other) } };
+    defer second.free(std.testing.allocator);
+    try std.testing.expectEqual(identifier, try registry.installLocal(std.testing.allocator, &second));
+    try std.testing.expect(second == .file);
+    var utc: LocalZone = .utc;
+    try std.testing.expectEqual(identifier, try registry.installLocal(std.testing.allocator, &utc));
+    try std.testing.expectEqual(@as(i32, -18000), registry.offsetSeconds(identifier, 0));
+}
+
+test "local recurrence snapshots support full range and reject unrepresentable rules" {
+    var snapshot = LocalZone{ .recurrence = try Recurrence.parse("STD-1DST0,M10.5.0,M3.5.0/1") };
+    var registry: Registry = .{};
+    defer registry.deinit(std.testing.allocator);
+    const identifier = try registry.installLocal(std.testing.allocator, &snapshot);
+    for ([_]i64{ std.math.minInt(i64), 0, std.math.maxInt(i64) }) |milliseconds| {
+        const offset = registry.offsetSeconds(identifier, milliseconds);
+        try std.testing.expect(offset == 0 or offset == 3600);
+    }
+    try std.testing.expect(!canRepresentLocalRecurrence(try Recurrence.parse("UTC24")));
+    try std.testing.expect(!canRepresentLocalRecurrence(try Recurrence.parse("STD-23DST-24,M3.1.0,M10.1.0")));
 }

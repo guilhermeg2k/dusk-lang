@@ -1,0 +1,5 @@
+import std/time
+
+func main() -> !void
+    let zone = try time::local_timezone(1)
+end

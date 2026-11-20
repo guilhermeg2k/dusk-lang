@@ -2011,6 +2011,7 @@ Clocks, timestamps, durations, and monotonic instants. Import with `import std/t
 | `utc_timezone()` | `TimeZone` | The UTC zone, with offset zero for every timestamp. |
 | `fixed_timezone(offset_seconds)` | `TimeError!TimeZone` | A constant offset east of UTC; requires strictly more than -86400 and less than +86400 seconds. |
 | `load_timezone(name)` | `TimeError!TimeZone` | Loads a named zone or alias from the bundled database. Unknown or invalid names return `UnknownTimeZone`. |
+| `local_timezone()` | `TimeError!TimeZone` | Discovers and snapshots the configured local zone on its first successful call. Failure returns `LocalTimeUnavailable`. |
 
 `now_ms` is wall-clock time: system clock adjustments can move it forward or backward. It is independent of the local time zone. Fractions are rounded down to milliseconds, including before the epoch.
 
@@ -2126,7 +2127,7 @@ let fixed = try time::fixed_timezone(19800)
 assert(fixed.name() == "UTC+05:30")
 ```
 
-Zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. System-local discovery and custom pattern formatting are not provided yet.
+Named-zone loading and offset lookup do not yield. Parsed named rules are cached per runtime and released on teardown; copied wrappers share them. UTC and fixed zones need no retained registry allocation. Zone names are ordinary allocated strings. Custom pattern formatting is not provided yet.
 
 `to_iso_string` applies the selected zone's offset at the timestamp, then writes local calendar fields and an explicit offset. Zero prints `Z`; other offsets print `+HH:MM` or `-HH:MM`. Applying an offset can move the displayed date across a day, year, or the epoch-millisecond integer boundary; wide calendar arithmetic keeps the represented timestamp unchanged. DST changes can skip or repeat local clock readings, with the explicit suffix distinguishing repeated times.
 
@@ -2139,6 +2140,27 @@ assert(time::to_utc_iso_string(timestamp) == "2024-07-15T00:00:00.000Z")
 ```
 
 ISO suffixes represent whole minutes. If a fixed or historical named-zone offset contains seconds, formatting fails with `TimeError.PrecisionLoss`; it never rounds the offset or changes the moment. `offset_seconds` still reports the exact offset, and `to_utc_iso_string` always provides a UTC representation. Serialization through the UTC adapter writes canonical UTC text and accepts any supported explicit offset when reading.
+
+`local_timezone()` snapshots the first successful discovery for the runtime. Cold calls wait for a worker, allowing other tasks to continue; cached calls do not yield. Later environment, file, or system-setting changes do not refresh that snapshot. A failed discovery leaves the cache empty, so a later call can retry. Failure never silently substitutes UTC.
+
+When `TZ` is present, it is authoritative on every platform:
+
+- An empty value selects UTC. A bundled name, optionally prefixed with `:`, selects that named zone and preserves aliases.
+- An absolute file path, optionally prefixed with `:`, loads an owned TZif snapshot named `Local`.
+- A supported explicit recurrence string such as `STD-5:30` selects rules named `Local`. Its offset uses the configuration convention: `-5:30` means 5 hours 30 minutes east of UTC. Recurrence forms include Julian and ordinal days, month/week/weekday rules, and signed transition times.
+- A `:` prefix permits only a zone name or absolute file path. Invalid or unsupported settings return `LocalTimeUnavailable` without trying another source.
+
+With no `TZ`, Unix systems inspect `/etc/localtime`. A recognized zone name in a standard zoneinfo symlink selects bundled rules; other files are copied into a snapshot named `Local`. Local files must be regular, no larger than 4 MiB, and readable with supported complete rules. Static version-1 TZif and supported version-2/3 files are accepted. Leap-second data, version 4, unspecified time types, out-of-range offsets, malformed data, and transition-bearing files without future rules return `LocalTimeUnavailable`.
+
+With no `TZ`, Windows reads the nonlocalized system zone key and maps it through the bundled CLDR release-48 global mappings. The resulting zone uses the mapping's representative name and bundled rules. Unsupported customized settings, including disabled dynamic rules, return `LocalTimeUnavailable`; a verified plain UTC configuration is supported. This discovery does not change process-wide timezone settings.
+
+```dusk
+let local = try time::local_timezone()
+let current = time::now()
+io::println(try current.to_iso_string(local))
+```
+
+The default formatter and serialization adapter continue to use UTC. Local discovery does not change their behavior, and ISO formatting can still return `PrecisionLoss` when a local historical offset has seconds.
 
 ### std/task
 
@@ -3155,6 +3177,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `TimeError.PrecisionLoss` | Timestamp arithmetic with fractional milliseconds, or ISO formatting in a zone whose offset contains seconds. |
 | `TimeError.UnknownTimeZone` | A name is invalid or absent from the bundled timezone database. |
 | `TimeError.InvalidOffset` | A fixed timezone offset is outside the supported range. |
+| `TimeError.LocalTimeUnavailable` | Explicit local configuration is invalid, the system zone cannot be discovered or mapped, or its local rules are unsupported or unreadable. |
 
 ## 16. Errors
 
