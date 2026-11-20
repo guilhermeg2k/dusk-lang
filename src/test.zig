@@ -367,6 +367,10 @@ test "http: requests, response streams and the connection pool over loopback (he
     try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
+test "http: ContentType names common types and content_type_of guesses one from a file name" {
+    try runCase("http-content-type.dsk");
+}
+
 test "http server: response compression (gzip when accepted, q-values, compressible types, minimum size, Vary, HEAD, handler encodings, streams, files, flushed events, compress = false, levels)" {
     try runCase("http-server-compression.dsk");
     try runCaseRuntimeError("http-compression-level.dsk", error.HttpInvalidCompressionLevel);

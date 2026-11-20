@@ -2750,11 +2750,25 @@ The body is read only when the handler asks for it. `text` and `bytes` fail with
 | `text(body, status = 200)` | `body` with `Content-Type: text/plain; charset=utf-8` |
 | `json_text(body, status = 200)` | `body` with `Content-Type: application/json` |
 | `html(body, status = 200)` | `body` with `Content-Type: text/html; charset=utf-8` |
-| `bytes(data, content_type = "application/octet-stream", status = 200)` | the bytes of a `buffer` |
+| `bytes(data, content_type = ContentType.BINARY, status = 200)` | the bytes of a `buffer` |
 | `status(code)` | an empty body |
 | `redirect(location, status = 302)` | an empty body with `Location` |
-| `stream(write, content_type = "application/octet-stream", status = 200, length = -1)` | a body written by `write` after the head is sent (see Streamed responses) |
+| `stream(write, content_type = ContentType.BINARY, status = 200, length = -1)` | a body written by `write` after the head is sent (see Streamed responses) |
 | `file(path, content_type, status = 200)` | the file's contents, sent in pieces with its size as `Content-Length`; fails with `fs::FsError` when the file can't be opened |
+
+**Content types.** `content_type` is a string, so any type works (`"application/vnd.api+json"`). `http::ContentType` names the common ones: `HTML`, `CSS`, `JS`, `TEXT`, `CSV` (all with `; charset=utf-8`), `JSON`, `XML`, `SVG`, `PNG`, `JPEG`, `GIF`, `WEBP`, `ICO`, `WASM`, `PDF`, `EVENT_STREAM`, `FORM` and `BINARY` (`application/octet-stream`). `http::content_type_of(path)` picks one from a file name's extension, ignoring case: those types plus `.htm`, `.mjs`, `.map`, `.md`, `.avif`, fonts (`.woff`, `.woff2`, `.ttf`, `.otf`), `.mp4`, `.webm`, `.mp3`, `.ogg`, `.wav`, `.zip` and `.gz`. Anything else, including names without an extension and dotfiles like `.env`, gives `BINARY`.
+
+```nim
+"/logo" then return try http::file("assets/logo.svg", http::ContentType.SVG) end
+else then
+    let path = "public${req.path}"
+    return http::file(path, http::content_type_of(path)) catch e then
+        return http::status(404)
+    end
+end
+```
+
+A static file server like this must check `req.path` first: a path with `..` reaches files outside `public`.
 
 Headers change through `Headers` methods on a `let mut` response: `set(name, value)` replaces every value of that header, `add(name, value)` adds one more, and `remove(name)` drops them all.
 

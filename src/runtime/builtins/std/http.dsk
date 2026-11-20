@@ -120,6 +120,27 @@ struct Response
     end
 end
 
+struct ContentType
+    let HTML = "text/html; charset=utf-8"
+    let CSS = "text/css; charset=utf-8"
+    let JS = "text/javascript; charset=utf-8"
+    let JSON = "application/json"
+    let TEXT = "text/plain; charset=utf-8"
+    let CSV = "text/csv; charset=utf-8"
+    let XML = "application/xml"
+    let SVG = "image/svg+xml"
+    let PNG = "image/png"
+    let JPEG = "image/jpeg"
+    let GIF = "image/gif"
+    let WEBP = "image/webp"
+    let ICO = "image/x-icon"
+    let WASM = "application/wasm"
+    let PDF = "application/pdf"
+    let EVENT_STREAM = "text/event-stream"
+    let FORM = "application/x-www-form-urlencoded"
+    let BINARY = "application/octet-stream"
+end
+
 struct ResponseStream
     status: int
     reason: string
@@ -813,18 +834,18 @@ func ~from_io(failure: io::IoError) -> HttpError
 end
 
 func text(body: string, status: int = 200) -> Response
-    return response_with(status, "text/plain; charset=utf-8", buffer::from_string(body))
+    return response_with(status, ContentType.TEXT, buffer::from_string(body))
 end
 
 func json_text(body: string, status: int = 200) -> Response
-    return response_with(status, "application/json", buffer::from_string(body))
+    return response_with(status, ContentType.JSON, buffer::from_string(body))
 end
 
 func html(body: string, status: int = 200) -> Response
-    return response_with(status, "text/html; charset=utf-8", buffer::from_string(body))
+    return response_with(status, ContentType.HTML, buffer::from_string(body))
 end
 
-func bytes(data: buffer, content_type: string = "application/octet-stream", status: int = 200) -> Response
+func bytes(data: buffer, content_type: string = ContentType.BINARY, status: int = 200) -> Response
     return response_with(status, content_type, data)
 end
 
@@ -836,7 +857,7 @@ func redirect(location: string, status: int = 302) -> Response
     return Response(status = status, reason = "", headers = Headers(items = [Header(name = "Location", value = location)], lowered = ["location"]), body = buffer::from_string(""), url = "")
 end
 
-func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = "application/octet-stream", status: int = 200, length: int = -1) -> Response
+func stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = ContentType.BINARY, status: int = 200, length: int = -1) -> Response
     let mut response = response_with(status, content_type, buffer::from_string(""))
     response.stream = write
     response.stream_length = length
@@ -856,6 +877,47 @@ func file(path: string, content_type: string, status: int = 200) -> fs::FsError!
         end
         opened.close()
     end, content_type = content_type, status = status, length = size)
+end
+
+func content_type_of(path: string) -> string
+    let name = string::find_reverse(path, "/") orelse -1
+    let dot = string::find_reverse(path, ".") orelse -1
+    let has_extension = dot > name + 1
+    if !has_extension then
+        return ContentType.BINARY
+    end
+    let extension = string::lower(string::slice(path, dot + 1, string::len(path)) catch "")
+    return when extension
+        "html", "htm" then ContentType.HTML end
+        "css" then ContentType.CSS end
+        "js", "mjs" then ContentType.JS end
+        "json", "map" then ContentType.JSON end
+        "txt" then ContentType.TEXT end
+        "md" then "text/markdown; charset=utf-8" end
+        "csv" then ContentType.CSV end
+        "xml" then ContentType.XML end
+        "svg" then ContentType.SVG end
+        "png" then ContentType.PNG end
+        "jpg", "jpeg" then ContentType.JPEG end
+        "gif" then ContentType.GIF end
+        "webp" then ContentType.WEBP end
+        "avif" then "image/avif" end
+        "ico" then ContentType.ICO end
+        "wasm" then ContentType.WASM end
+        "pdf" then ContentType.PDF end
+        "woff" then "font/woff" end
+        "woff2" then "font/woff2" end
+        "ttf" then "font/ttf" end
+        "otf" then "font/otf" end
+        "mp4" then "video/mp4" end
+        "webm" then "video/webm" end
+        "mp3" then "audio/mpeg" end
+        "ogg" then "audio/ogg" end
+        "wav" then "audio/wav" end
+        "zip" then "application/zip" end
+        "gz" then "application/gzip" end
+        else then ContentType.BINARY end
+    end
 end
 
 func ~send_file(opened: fs::File, mut writer: BodyWriter) -> io::IoError!void
