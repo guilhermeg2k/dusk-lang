@@ -1,0 +1,6 @@
+import std/sqlite
+
+func main() -> !void
+    let db = try sqlite::open(":memory:")
+    let changes = try db.execute_with("select :ids", @(ids = [1, 2]))
+end

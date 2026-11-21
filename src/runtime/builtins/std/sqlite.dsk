@@ -1,3 +1,6 @@
+import std/array: append
+import std/serialization
+
 error SqliteError
     CantOpen
     ReadOnly
@@ -43,9 +46,83 @@ struct Database
         return Changes(rows = numbers[0], last_id = numbers[1])
     end
 
+    func execute_with[P, S: schema](self: @, sql: string, params: P, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        let mut writer = ParamWriter()
+        serialization::encode[P, ParamWriter, S](params, writer) catch e then
+            describe_params_failure(diagnostic)
+            return SqliteError.TypeMismatch
+        end
+        let numbers = execute_with_handle(self.handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts) catch e then
+            describe_failure(diagnostic)
+            return e
+        end
+        return Changes(rows = numbers[0], last_id = numbers[1])
+    end
+
     func close(self: @) -> void
         close_handle(self.handle)
         release(self.owner)
+    end
+end
+
+struct ~ParamWriter
+    names: []string = []
+    kinds: []int = []
+    ints: []int = []
+    floats: []float = []
+    texts: []string = []
+    depth: int = 0
+    name: string = ""
+
+    func begin_struct(mut self: @, fields: int, count: int) -> serialization::SerializationError!void
+        self.depth = self.depth + 1
+        if self.depth > 1 then
+            return serialization::SerializationError.TypeMismatch
+        end
+    end
+
+    func field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        self.name = serialization::field_name(fields, index)
+    end
+
+    func end_struct(mut self: @) -> serialization::SerializationError!void
+        self.depth = self.depth - 1
+    end
+
+    func write_null(mut self: @) -> serialization::SerializationError!void
+        try self.add(0)
+    end
+
+    func write_int(mut self: @, value: int) -> serialization::SerializationError!void
+        try self.add(1)
+        append(self.ints, value)
+    end
+
+    func write_bool(mut self: @, value: bool) -> serialization::SerializationError!void
+        try self.add(1)
+        append(self.ints, if value then 1 else 0 end)
+    end
+
+    func write_float(mut self: @, value: float) -> serialization::SerializationError!void
+        try self.add(2)
+        append(self.floats, value)
+    end
+
+    func write_string(mut self: @, value: string) -> serialization::SerializationError!void
+        try self.add(3)
+        append(self.texts, value)
+    end
+
+    func write_variant(mut self: @, variants: int, index: int) -> serialization::SerializationError!void
+        try self.write_string(serialization::variant_name(variants, index))
+    end
+
+    func add(mut self: @, kind: int) -> serialization::SerializationError!void
+        if self.depth != 1 then
+            return serialization::SerializationError.TypeMismatch
+        end
+        append(self.names, self.name)
+        append(self.kinds, kind)
     end
 end
 
@@ -55,6 +132,13 @@ func open(path: string, journal: Journal = Journal.Wal, foreign_keys: bool = tru
         return e
     end
     return Database(handle = handle, owner = own(6, handle))
+end
+
+func ~describe_params_failure(mut diagnostic: ?Diagnostic) -> void
+    if diagnostic: mut found then
+        found.message = "parameters must be a struct whose fields are ints, floats, bools, strings, enums or nullables of them"
+        found.offset = null
+    end
 end
 
 func ~describe_failure(mut diagnostic: ?Diagnostic) -> void
@@ -72,6 +156,7 @@ end
 extern func version() -> string
 extern func ~open_handle(path: string, journal: Journal, foreign_keys: bool, busy_timeout_ms: int, read_only: bool, create: bool) -> SqliteError!int
 extern func ~execute_handle(handle: int, sql: string) -> SqliteError![]int
+extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string) -> SqliteError![]int
 extern func ~close_handle(handle: int) -> void
 extern func ~error_offset() -> int
 extern func ~take_error_message() -> string

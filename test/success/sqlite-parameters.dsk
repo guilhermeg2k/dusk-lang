@@ -1,0 +1,100 @@
+import std/array: append
+import std/sqlite
+import std/string
+
+schema Db end
+
+enum Role
+    Admin
+    Member
+end
+
+struct NewUser
+    user_name: string
+    age: int
+
+    schema Db
+        user_name: "name"
+    end
+end
+
+func expect_failure(db: sqlite::Database, sql: string, expected: sqlite::SqliteError, needle: string) -> void
+    let mut diagnostic = sqlite::Diagnostic()
+    let mut has_failed = false
+    db.execute_with(sql, @(name = "x", age = 1), diagnostic) catch e then
+        assert(e == expected)
+        has_failed = true
+    end
+    assert(has_failed)
+    assert(string::contains(diagnostic.message, needle))
+end
+
+func insert_user(db: sqlite::Database, name: string) -> sqlite::SqliteError!int
+    let changes = try db.execute_with("insert into users (name, age) values (:name, :age)", @(name = name, age = 20))
+    return changes.last_id
+end
+
+func main() -> !void
+    let db = try sqlite::open(":memory:")
+    let created = try db.execute("create table users (id integer primary key, name text not null, age integer, score real, active integer, role text, note text)")
+
+    let note: ?string = null
+    let inserted = try db.execute_with("insert into users (name, age, score, active, role, note) values (:name, :age, :score, :active, :role, :note)", @(name = "Ana", age = 30, score = 1.5, active = true, role = Role.Admin, note = note))
+    assert(inserted.rows == 1 and inserted.last_id == 1)
+    let matched = try db.execute_with("update users set age = age + 1 where name = :name and age = :age and score = :score and active = :active and role = :role and note is null", @(name = "Ana", age = 30, score = 1.5, active = true, role = Role.Admin))
+    assert(matched.rows == 1)
+    let quoted = try db.execute_with("insert into users (name, age) values (:name, :age)", @(name = "O'Brien; drop table users; --", age = 40))
+    assert(quoted.last_id == 2)
+    let still_there = try db.execute_with("update users set age = :age where name = :name", @(name = "O'Brien; drop table users; --", age = 41))
+    assert(still_there.rows == 1)
+
+    expect_failure(db, "insert into users (name) values (:name)", sqlite::SqliteError.UnknownParameter, ":age")
+    expect_failure(db, "insert into users (name, age, score) values (:name, :age, :score)", sqlite::SqliteError.MissingParameter, ":score")
+    expect_failure(db, "insert into users (name, age, score) values (:name, :age, ?)", sqlite::SqliteError.MissingParameter, "no name")
+    expect_failure(db, "insert into users (name, age) values (:name, :age); select 1", sqlite::SqliteError.InvalidSql, "one statement")
+    expect_failure(db, "insert into nope (name, age) values (:name, :age)", sqlite::SqliteError.InvalidSql, "no such table")
+    expect_failure(db, "   ", sqlite::SqliteError.InvalidSql, "no statement")
+
+    let mut diagnostic = sqlite::Diagnostic()
+    let mut has_failed = false
+    db.execute_with("insert into users (name) values (:name)", @(name = "x", inner = @(a = 1)), diagnostic) catch e then
+        assert(e == sqlite::SqliteError.TypeMismatch)
+        has_failed = true
+    end
+    assert(has_failed)
+    assert(string::contains(diagnostic.message, "parameters must be a struct"))
+
+    let renamed = try db.execute_with[NewUser, Db]("insert into users (name, age) values (:name, :age)", NewUser(user_name = "Bo", age = 25))
+    assert(renamed.last_id == 3)
+
+    for 1..200: i do
+        let repeated = try db.execute_with("update users set age = :age where id = :id", @(age = i, id = 1))
+        assert(repeated.rows == 1)
+    end
+    for 1..100: i do
+        let distinct = try db.execute_with("update users set score = :score where id = :id -- statement $i", @(score = to_float(i), id = 2))
+        assert(distinct.rows == 1)
+    end
+    let reused = try db.execute_with("update users set score = :score where id = :id -- statement 1", @(score = 0.5, id = 2))
+    assert(reused.rows == 1)
+
+    let mut tasks: []Task[int, sqlite::SqliteError] = []
+    for 1..10: i do
+        let name = "task$i"
+        let mut started = spawn(func() -> sqlite::SqliteError!int
+            return try insert_user(db, name)
+        end)
+        append(tasks, started)
+    end
+    for tasks: started, index do
+        assert((try await(started)) == index + 4)
+    end
+
+    db.close()
+    has_failed = false
+    db.execute_with("select :x", @(x = 1)) catch e then
+        assert(e == sqlite::SqliteError.Closed)
+        has_failed = true
+    end
+    assert(has_failed)
+end

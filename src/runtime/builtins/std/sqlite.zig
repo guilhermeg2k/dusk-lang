@@ -13,6 +13,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "version", Binding{ .native = &version } },
     .{ "open_handle", Binding{ .native = &openHandle } },
     .{ "execute_handle", Binding{ .native = &executeHandle } },
+    .{ "execute_with_handle", Binding{ .native = &executeWithHandle } },
     .{ "close_handle", Binding{ .native = &closeHandle } },
     .{ "error_offset", Binding{ .native = &errorOffset } },
     .{ "take_error_message", Binding{ .native = &takeErrorMessage } },
@@ -56,6 +57,72 @@ fn executeHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     task.park();
     return native.parked();
+}
+
+fn executeWithHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const sql = bytesArg(args, 1);
+    if (std.mem.indexOfScalar(u8, sql, 0) != null) {
+        return native.fail(SqliteError.InvalidSql);
+    }
+    const allocator = vm.event_loop.allocator;
+    const params = try copyParams(allocator, args[2..7]);
+    const task = vm.running_task.?;
+    const is_queued = vm.event_loop.sqlite.executeWith(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params) catch |failure| {
+        sqlite.freeParams(allocator, params);
+        return failure;
+    };
+    if (!is_queued) {
+        sqlite.freeParams(allocator, params);
+        return native.fail(SqliteError.Closed);
+    }
+    task.park();
+    return native.parked();
+}
+
+fn copyParams(allocator: std.mem.Allocator, arrays: []v.Value) ![]sqlite.Param {
+    const names = itemsOf(arrays[0]);
+    const kinds = itemsOf(arrays[1]);
+    const ints = itemsOf(arrays[2]);
+    const floats = itemsOf(arrays[3]);
+    const texts = itemsOf(arrays[4]);
+    const params = try allocator.alloc(sqlite.Param, kinds.len);
+    var copied: usize = 0;
+    errdefer {
+        sqlite.freeParams(allocator, params[0..copied]);
+    }
+    var next_int: usize = 0;
+    var next_float: usize = 0;
+    var next_text: usize = 0;
+    for (kinds, names, params) |kind_value, name_value, *param| {
+        const name = try std.fmt.allocPrintSentinel(allocator, ":{s}", .{textOf(name_value)}, 0);
+        param.* = .{ .name = name, .kind = @enumFromInt(kind_value.int64) };
+        copied += 1;
+        switch (param.kind) {
+            .null => {},
+            .int => {
+                param.int = ints[next_int].int64;
+                next_int += 1;
+            },
+            .float => {
+                param.float = floats[next_float].float64;
+                next_float += 1;
+            },
+            .text => {
+                param.text = try allocator.dupe(u8, textOf(texts[next_text]));
+                next_text += 1;
+            },
+        }
+    }
+    return params;
+}
+
+fn itemsOf(value: v.Value) []v.Value {
+    const array = v.HeapValue.getParentPtr(v.Array, value.heap_obj.followRelocated());
+    return array.getDataPtr()[0..array.len];
+}
+
+fn textOf(value: v.Value) []const u8 {
+    return v.HeapValue.getParentPtr(v.Bytes, value.heap_obj.followRelocated()).slice();
 }
 
 fn closeHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {

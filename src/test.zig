@@ -40,6 +40,11 @@ test "sqlite: open, execute, errors with diagnostics, ordering on one connection
     try runCaseInTmpDir("sqlite-connections.dsk");
 }
 
+test "sqlite: named parameters from structs, schemas, unknown and missing parameters, one statement, statement cache" {
+    try runCase("sqlite-parameters.dsk");
+    try runCaseError("sema/sqlite-array-parameter.dsk", error.FormatLacksMethod);
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");

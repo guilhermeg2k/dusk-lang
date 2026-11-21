@@ -22,6 +22,16 @@ pub const OpenSettings = struct {
     can_create: bool = true,
 };
 
+pub const Param = struct {
+    pub const Kind = enum { null, int, float, text };
+
+    name: [:0]u8,
+    kind: Kind,
+    int: i64 = 0,
+    float: f64 = 0,
+    text: []u8 = &.{},
+};
+
 pub const Failure = struct {
     message: ?[]u8,
     offset: i64,
@@ -72,6 +82,14 @@ pub const Databases = struct {
         return true;
     }
 
+    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param) !bool {
+        const connection = self.openConnection(handle) orelse return false;
+        const operation = try Operation.create(event_loop, scheduler, task, connection, .execute_one, sql);
+        operation.params = params;
+        self.enqueue(connection, operation);
+        return true;
+    }
+
     pub fn close(self: *Self, event_loop: *EventLoop, scheduler: ?*Scheduler, task: ?*TaskState, handle: i64) !bool {
         const connection = self.openConnection(handle) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .close, "");
@@ -112,6 +130,7 @@ pub const Databases = struct {
         if (connection.is_running) return;
         const operation = connection.queued.peek() orelse return;
         operation.database = connection.database;
+        operation.cache = &connection.cache;
         self.dispatch.?.submit(&operation.job) catch {
             self.markBlocked(connection);
             return;
@@ -167,11 +186,13 @@ pub const Connection = struct {
     queued: OperationQueue = .{},
     is_running: bool = false,
     is_closing: bool = false,
+    cache: StatementCache = .{},
 
     fn closeNow(self: *Connection, allocator: std.mem.Allocator) void {
         while (self.queued.pop()) |operation| {
             operation.destroy();
         }
+        self.cache.finalizeAll();
         if (self.database) |database| {
             _ = api.sqlite3_close_v2(database);
         }
@@ -180,7 +201,7 @@ pub const Connection = struct {
 };
 
 const Operation = struct {
-    const Kind = enum { open, execute, close };
+    const Kind = enum { open, execute, execute_one, close };
 
     job: Job = .{ .execute = runOnWorker, .finish = finishOnLoop },
     kind: Kind,
@@ -190,7 +211,10 @@ const Operation = struct {
     connection: *Connection,
     text: [:0]u8,
     settings: OpenSettings = .{},
+    params: []Param = &.{},
     database: ?*api.Database = null,
+    cache: ?*StatementCache = null,
+    fixed_error: ?SqliteError = null,
     next: ?*Operation = null,
     code: c_int = 0,
     rows: i64 = 0,
@@ -210,6 +234,7 @@ const Operation = struct {
         const allocator = self.event_loop.allocator;
         freeMessage(self.message);
         allocator.free(self.text);
+        freeParams(allocator, self.params);
         allocator.destroy(self);
     }
 
@@ -218,7 +243,9 @@ const Operation = struct {
         switch (self.kind) {
             .open => self.openOnWorker(),
             .execute => self.executeOnWorker(),
+            .execute_one => self.executeOneOnWorker(),
             .close => {
+                self.cache.?.finalizeAll();
                 _ = api.sqlite3_close_v2(self.database);
                 self.database = null;
             },
@@ -297,6 +324,86 @@ const Operation = struct {
         self.last_id = api.sqlite3_last_insert_rowid(database);
     }
 
+    fn executeOneOnWorker(self: *Operation) void {
+        const database = self.database.?;
+        const prepared = self.cache.?.take(database, self.text);
+        const statement = switch (prepared) {
+            .statement => |found| found,
+            .failure => |status| {
+                self.recordWorkerFailure(database, status);
+                return;
+            },
+            .several_statements => {
+                self.recordFixedFailure(.InvalidSql, "execute_with and queries take one statement; use execute for several", .{});
+                return;
+            },
+            .empty => {
+                self.recordFixedFailure(.InvalidSql, "the SQL text holds no statement", .{});
+                return;
+            },
+        };
+        defer {
+            _ = api.sqlite3_reset(statement);
+            _ = api.sqlite3_clear_bindings(statement);
+        }
+        if (!self.bindParams(statement)) return;
+        const status = stepToEnd(statement);
+        if (status != @intFromEnum(api.ResultCode.done)) {
+            self.recordWorkerFailure(database, status);
+            return;
+        }
+        self.rows = api.sqlite3_changes64(database);
+        self.last_id = api.sqlite3_last_insert_rowid(database);
+    }
+
+    fn bindParams(self: *Operation, statement: *api.Statement) bool {
+        for (self.params) |param| {
+            const index = api.sqlite3_bind_parameter_index(statement, param.name.ptr);
+            if (index == 0) {
+                self.recordFixedFailure(.UnknownParameter, "the statement has no parameter {s}", .{param.name});
+                return false;
+            }
+            const status = switch (param.kind) {
+                .null => api.sqlite3_bind_null(statement, index),
+                .int => api.sqlite3_bind_int64(statement, index, param.int),
+                .float => api.sqlite3_bind_double(statement, index, param.float),
+                .text => api.sqlite3_bind_text64(statement, index, param.text.ptr, param.text.len, api.transient_destructor, api.utf8_encoding),
+            };
+            if (status != 0) {
+                self.recordWorkerFailure(self.database, status);
+                return false;
+            }
+        }
+        const count = api.sqlite3_bind_parameter_count(statement);
+        var index: c_int = 1;
+        while (index <= count) : (index += 1) {
+            const name = api.sqlite3_bind_parameter_name(statement, index) orelse {
+                self.recordFixedFailure(.MissingParameter, "parameter {d} has no name; write :name and pass it in the parameters", .{index});
+                return false;
+            };
+            const text = std.mem.span(name);
+            if (!self.hasParam(text)) {
+                self.recordFixedFailure(.MissingParameter, "no value for parameter {s}", .{text});
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn hasParam(self: *Operation, name: []const u8) bool {
+        for (self.params) |param| {
+            if (std.mem.eql(u8, param.name, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn recordFixedFailure(self: *Operation, failure: SqliteError, comptime format: []const u8, args: anytype) void {
+        self.fixed_error = failure;
+        self.message = std.fmt.allocPrint(std.heap.c_allocator, format, args) catch null;
+    }
+
     fn shiftOffset(self: *Operation, position: usize) void {
         if (self.offset < 0) return;
         self.offset += @intCast(position);
@@ -334,7 +441,7 @@ const Operation = struct {
     fn releaseConnection(self: *Operation, databases: *Databases, connection: *Connection) bool {
         const has_run = self.job.outcome == .executed;
         switch (self.kind) {
-            .execute => return false,
+            .execute, .execute_one => return false,
             .open => {
                 if (has_run and self.code == 0) {
                     connection.database = self.database;
@@ -356,14 +463,15 @@ const Operation = struct {
     }
 
     fn wakeResult(self: *Operation, databases: *Databases, task: *TaskState) !WakeResult {
-        if (self.code != 0) {
+        const has_failed = self.code != 0 or self.fixed_error != null;
+        if (has_failed) {
             databases.recordFailure(self.event_loop.allocator, task, .{ .message = self.message, .offset = self.offset });
             self.message = null;
-            return failed(errorOf(self.code));
+            return failed(self.fixed_error orelse errorOf(self.code));
         }
         return switch (self.kind) {
             .open => .{ .value = .{ .int64 = self.connection.handle }, .kind = .int64 },
-            .execute => result: {
+            .execute, .execute_one => result: {
                 const numbers = try self.event_loop.allocator.alloc(i64, 2);
                 numbers[0] = self.rows;
                 numbers[1] = self.last_id;
@@ -373,6 +481,103 @@ const Operation = struct {
         };
     }
 };
+
+const statement_cache_size = 64;
+
+const Prepared = union(enum) {
+    statement: *api.Statement,
+    failure: c_int,
+    several_statements,
+    empty,
+};
+
+const StatementCache = struct {
+    entries: [statement_cache_size]?Entry = @splat(null),
+    clock: u64 = 0,
+
+    const Entry = struct {
+        sql: []u8,
+        statement: *api.Statement,
+        last_used: u64,
+    };
+
+    fn take(self: *StatementCache, database: *api.Database, sql: []const u8) Prepared {
+        self.clock += 1;
+        for (&self.entries) |*slot| {
+            const entry = &(slot.* orelse continue);
+            if (!std.mem.eql(u8, entry.sql, sql)) continue;
+            entry.last_used = self.clock;
+            return .{ .statement = entry.statement };
+        }
+        var statement: ?*api.Statement = null;
+        var tail: ?[*]const u8 = null;
+        const status = api.sqlite3_prepare_v3(database, sql.ptr, @intCast(sql.len), api.prepare_persistent, &statement, &tail);
+        if (status != 0) {
+            return .{ .failure = status };
+        }
+        const prepared = statement orelse return .empty;
+        if (hasMoreStatements(database, sql, tail)) {
+            _ = api.sqlite3_finalize(prepared);
+            return .several_statements;
+        }
+        const owned_sql = std.heap.c_allocator.dupe(u8, sql) catch return .{ .statement = prepared };
+        const slot = self.freeSlot();
+        slot.* = .{ .sql = owned_sql, .statement = prepared, .last_used = self.clock };
+        return .{ .statement = prepared };
+    }
+
+    fn freeSlot(self: *StatementCache) *?Entry {
+        var oldest: *?Entry = &self.entries[0];
+        for (&self.entries) |*slot| {
+            const entry = slot.* orelse return slot;
+            if (entry.last_used < oldest.*.?.last_used) {
+                oldest = slot;
+            }
+        }
+        freeEntry(oldest.*.?);
+        oldest.* = null;
+        return oldest;
+    }
+
+    fn finalizeAll(self: *StatementCache) void {
+        for (&self.entries) |*slot| {
+            const entry = slot.* orelse continue;
+            freeEntry(entry);
+            slot.* = null;
+        }
+    }
+
+    fn freeEntry(entry: Entry) void {
+        _ = api.sqlite3_finalize(entry.statement);
+        std.heap.c_allocator.free(entry.sql);
+    }
+};
+
+fn hasMoreStatements(database: *api.Database, sql: []const u8, tail: ?[*]const u8) bool {
+    const end = tail orelse return false;
+    const consumed = @intFromPtr(end) - @intFromPtr(sql.ptr);
+    const rest = sql[consumed..];
+    if (rest.len == 0) {
+        return false;
+    }
+    var statement: ?*api.Statement = null;
+    var rest_tail: ?[*]const u8 = null;
+    const status = api.sqlite3_prepare_v2(database, rest.ptr, @intCast(rest.len), &statement, &rest_tail);
+    if (status != 0) {
+        return true;
+    }
+    const found = statement orelse return false;
+    _ = api.sqlite3_finalize(found);
+    return true;
+}
+
+pub fn freeParams(allocator: std.mem.Allocator, params: []Param) void {
+    for (params) |param| {
+        allocator.free(param.name);
+        allocator.free(param.text);
+    }
+    allocator.free(params);
+}
 
 fn stepToEnd(statement: *api.Statement) c_int {
     while (true) {
