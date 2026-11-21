@@ -6,6 +6,8 @@ const Stdio = @import("dusk.zig").Stdio;
 const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
 const Lexer = @import("compiler/lexer.zig").Lexer;
 const uv = @import("runtime/tasks/uv.zig");
+const WorkerPool = @import("runtime/tasks/worker_pool.zig").WorkerPool;
+const PoolJob = @import("runtime/tasks/worker_pool.zig").Job;
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -1181,9 +1183,327 @@ fn areAllLinesPresent(lines: []const []const u8, expected_lines: []const []const
         const is_present = for (lines) |line| {
             if (std.mem.eql(u8, line, expected)) break true;
         } else false;
-        if (!is_present) return false;
+        if (!is_present) {
+            return false;
+        }
     }
     return true;
+}
+
+test "worker pool: runs a job on a worker thread and hands it back" {
+    var notified = TestGate{};
+    var job = TestJob{ .id = 0 };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 4 }, notified.notifier());
+    try pool.submit(&job.job);
+    notified.waitFor(1);
+    try testing.expectEqual(&job.job, pool.takeCompleted().?);
+    try testing.expect(pool.takeCompleted() == null);
+    try testing.expectEqual(PoolJob.Outcome.executed, job.job.outcome);
+    try testing.expect(job.execute_thread != std.Thread.getCurrentId());
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: one worker takes jobs in submission order" {
+    var notified = TestGate{};
+    var release = TestGate{};
+    var order = TestOrder{};
+    var jobs = [_]TestJob{ .{ .id = 0, .release = &release, .order = &order }, .{ .id = 1, .order = &order }, .{ .id = 2, .order = &order }, .{ .id = 3, .order = &order } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 4 }, notified.notifier());
+    for (&jobs) |*job| {
+        try pool.submit(&job.job);
+    }
+    release.add();
+    notified.waitFor(4);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2, 3 }, order.ids[0..order.count]);
+    while (pool.takeCompleted()) |_| {}
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: two workers run two jobs at the same time" {
+    var notified = TestGate{};
+    var started = TestGate{};
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .started = &started, .release = &release }, .{ .id = 1, .started = &started, .release = &release } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 2, .max_outstanding = 2 }, notified.notifier());
+    try pool.submit(&jobs[0].job);
+    try pool.submit(&jobs[1].job);
+    started.waitFor(2);
+    try testing.expect(jobs[0].execute_thread != jobs[1].execute_thread);
+    release.add();
+    notified.waitFor(2);
+    while (pool.takeCompleted()) |_| {}
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: the limit counts finished jobs nobody took yet" {
+    var notified = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0 }, .{ .id = 1 }, .{ .id = 2 } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 2 }, notified.notifier());
+    try pool.submit(&jobs[0].job);
+    try pool.submit(&jobs[1].job);
+    try testing.expectError(error.QueueFull, pool.submit(&jobs[2].job));
+    notified.waitFor(2);
+    try testing.expectError(error.QueueFull, pool.submit(&jobs[2].job));
+    try testing.expect(jobs[2].job.outcome == .pending and jobs[2].execute_thread == 0);
+    _ = pool.takeCompleted().?;
+    try pool.submit(&jobs[2].job);
+    notified.waitFor(3);
+    while (pool.takeCompleted()) |_| {}
+    pool.stopAndJoin();
+    pool.destroy();
+}
+
+test "worker pool: stopping abandons queued jobs, waits for the running one and refuses new ones" {
+    var notified = TestGate{};
+    var started = TestGate{};
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .started = &started, .release = &release }, .{ .id = 1 }, .{ .id = 2 } };
+    const pool = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 4 }, notified.notifier());
+    for (&jobs) |*job| {
+        try pool.submit(&job.job);
+    }
+    started.waitFor(1);
+    const releaser = try std.Thread.spawn(.{}, releaseOnceStopping, .{ pool, &release });
+    pool.stopAndJoin();
+    releaser.join();
+    try testing.expectError(error.ShuttingDown, pool.submit(&jobs[1].job));
+    var taken: usize = 0;
+    while (pool.takeCompleted()) |_| {
+        taken += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), taken);
+    try testing.expectEqual(PoolJob.Outcome.executed, jobs[0].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[1].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[2].job.outcome);
+    try testing.expectEqual(@as(usize, 0), jobs[1].execute_thread);
+    pool.destroy();
+}
+
+test "worker pool: options must ask for threads and room, and pools are independent" {
+    var notified = TestGate{};
+    try testing.expectError(error.InvalidOptions, WorkerPool.create(testing.allocator, .{ .thread_count = 0, .max_outstanding = 1 }, notified.notifier()));
+    try testing.expectError(error.InvalidOptions, WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 0 }, notified.notifier()));
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .release = &release }, .{ .id = 1 }, .{ .id = 2 } };
+    const busy = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 1 }, notified.notifier());
+    const idle = try WorkerPool.create(testing.allocator, .{ .thread_count = 1, .max_outstanding = 1 }, notified.notifier());
+    try busy.submit(&jobs[0].job);
+    try testing.expectError(error.QueueFull, busy.submit(&jobs[1].job));
+    try idle.submit(&jobs[2].job);
+    notified.waitFor(1);
+    try testing.expectEqual(&jobs[2].job, idle.takeCompleted().?);
+    idle.stopAndJoin();
+    idle.destroy();
+    release.add();
+    notified.waitFor(2);
+    _ = busy.takeCompleted().?;
+    busy.stopAndJoin();
+    busy.destroy();
+}
+
+test "worker dispatch: finishes run on the loop thread, and an idle pool doesn't keep the loop alive" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 2, .max_outstanding = 3 });
+    const loop = event_loop.loop.?;
+    try testing.expectEqual(@as(c_int, 0), uv.uv_run(loop, .nowait));
+    var jobs = [_]TestJob{ .{ .id = 0 }, .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 } };
+    for (jobs[0..3]) |*job| {
+        try dispatch.submit(&job.job);
+    }
+    try testing.expectError(error.QueueFull, dispatch.submit(&jobs[3].job));
+    try testing.expectEqual(@as(usize, 3), event_loop.pending_operations);
+    while (event_loop.hasPendingOperations()) {
+        try event_loop.waitForEvent();
+    }
+    for (jobs[0..3]) |job| {
+        try testing.expectEqual(@as(usize, 1), job.finish_count);
+        try testing.expectEqual(PoolJob.Delivery.deliver, job.delivery.?);
+        try testing.expectEqual(std.Thread.getCurrentId(), job.finish_thread);
+        try testing.expect(job.execute_thread != job.finish_thread);
+    }
+    try testing.expectEqual(@as(usize, 0), jobs[3].finish_count);
+    try testing.expectEqual(@as(c_int, 0), uv.uv_run(loop, .nowait));
+}
+
+test "worker dispatch: libuv's pool keeps working while every worker is busy" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 2, .max_outstanding = 2 });
+    var started = TestGate{};
+    var release = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .started = &started, .release = &release }, .{ .id = 1, .started = &started, .release = &release } };
+    try dispatch.submit(&jobs[0].job);
+    try dispatch.submit(&jobs[1].job);
+    started.waitFor(2);
+    const work_memory = try testing.allocator.alignedAlloc(u8, .@"16", uv.uv_req_size(.work));
+    defer testing.allocator.free(work_memory);
+    var is_work_done = false;
+    const work: *uv.Request = @ptrCast(work_memory.ptr);
+    uv.uv_req_set_data(work, &is_work_done);
+    try testing.expectEqual(@as(c_int, 0), uv.uv_queue_work(event_loop.loop.?, work, doNothingOnPool, markWorkDone));
+    while (!is_work_done) {
+        try event_loop.waitForEvent();
+    }
+    try testing.expectEqual(@as(usize, 0), jobs[0].finish_count + jobs[1].finish_count);
+    release.add();
+    while (event_loop.hasPendingOperations()) {
+        try event_loop.waitForEvent();
+    }
+    try testing.expectEqual(@as(usize, 2), jobs[0].finish_count + jobs[1].finish_count);
+}
+
+test "worker dispatch: a failing finish is reported and the other jobs still finish" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    defer event_loop.deinit();
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 1, .max_outstanding = 3 });
+    var jobs = [_]TestJob{ .{ .id = 0 }, .{ .id = 1, .should_fail_finish = true }, .{ .id = 2 } };
+    for (&jobs) |*job| {
+        try dispatch.submit(&job.job);
+    }
+    var failure: ?anyerror = null;
+    while (event_loop.hasPendingOperations()) {
+        event_loop.waitForEvent() catch |err| {
+            failure = err;
+        };
+    }
+    try testing.expectEqual(@as(?anyerror, error.TestFinishFailed), failure);
+    for (jobs) |job| {
+        try testing.expectEqual(@as(usize, 1), job.finish_count);
+    }
+}
+
+test "worker dispatch: teardown discards finished, running and queued jobs exactly once" {
+    const EventLoop = @import("runtime/tasks/event_loop.zig").EventLoop;
+    var event_loop = EventLoop{ .allocator = testing.allocator };
+    const dispatch = try event_loop.startWorkerDispatch(.{ .thread_count = 1, .max_outstanding = 4 });
+    var started = TestGate{};
+    var release = TestGate{};
+    var executed = TestGate{};
+    var jobs = [_]TestJob{ .{ .id = 0, .executed = &executed }, .{ .id = 1, .started = &started, .release = &release }, .{ .id = 2 }, .{ .id = 3 } };
+    try dispatch.submit(&jobs[0].job);
+    executed.waitFor(1);
+    try dispatch.submit(&jobs[1].job);
+    started.waitFor(1);
+    try dispatch.submit(&jobs[2].job);
+    try dispatch.submit(&jobs[3].job);
+    const releaser = try std.Thread.spawn(.{}, releaseOnceStopping, .{ dispatch.pool.?, &release });
+    event_loop.deinit();
+    releaser.join();
+    for (jobs) |job| {
+        try testing.expectEqual(@as(usize, 1), job.finish_count);
+        try testing.expectEqual(PoolJob.Delivery.discard, job.delivery.?);
+    }
+    try testing.expectEqual(PoolJob.Outcome.executed, jobs[0].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.executed, jobs[1].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[2].job.outcome);
+    try testing.expectEqual(PoolJob.Outcome.abandoned, jobs[3].job.outcome);
+    try testing.expectEqual(@as(usize, 0), event_loop.pending_operations);
+}
+
+const TestGate = struct {
+    threaded: std.Io.Threaded = .init_single_threaded,
+    mutex: std.Io.Mutex = .init,
+    changed: std.Io.Condition = .init,
+    count: usize = 0,
+
+    fn add(self: *TestGate) void {
+        const io = self.threaded.io();
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        self.count += 1;
+        self.changed.broadcast(io);
+    }
+
+    fn waitFor(self: *TestGate, count: usize) void {
+        const io = self.threaded.io();
+        self.mutex.lockUncancelable(io);
+        defer self.mutex.unlock(io);
+        while (self.count < count) {
+            self.changed.waitUncancelable(io, &self.mutex);
+        }
+    }
+
+    fn notifier(self: *TestGate) WorkerPool.Notifier {
+        return .{ .context = self, .notify = addFromNotifier };
+    }
+
+    fn addFromNotifier(context: *anyopaque) void {
+        const self: *TestGate = @ptrCast(@alignCast(context));
+        self.add();
+    }
+};
+
+const TestOrder = struct {
+    ids: [8]usize = undefined,
+    count: usize = 0,
+};
+
+const TestJob = struct {
+    job: PoolJob = .{ .execute = execute, .finish = finish },
+    id: usize,
+    started: ?*TestGate = null,
+    release: ?*TestGate = null,
+    executed: ?*TestGate = null,
+    order: ?*TestOrder = null,
+    should_fail_finish: bool = false,
+    execute_thread: std.Thread.Id = 0,
+    finish_thread: std.Thread.Id = 0,
+    finish_count: usize = 0,
+    delivery: ?PoolJob.Delivery = null,
+
+    fn execute(job: *PoolJob) void {
+        const self: *TestJob = @alignCast(@fieldParentPtr("job", job));
+        self.execute_thread = std.Thread.getCurrentId();
+        if (self.started) |started| {
+            started.add();
+        }
+        if (self.release) |release| {
+            release.waitFor(1);
+        }
+        if (self.order) |order| {
+            order.ids[order.count] = self.id;
+            order.count += 1;
+        }
+        if (self.executed) |executed| {
+            executed.add();
+        }
+    }
+
+    fn finish(job: *PoolJob, delivery: PoolJob.Delivery) anyerror!void {
+        const self: *TestJob = @alignCast(@fieldParentPtr("job", job));
+        self.finish_thread = std.Thread.getCurrentId();
+        self.finish_count += 1;
+        self.delivery = delivery;
+        if (self.should_fail_finish) {
+            return error.TestFinishFailed;
+        }
+    }
+};
+
+fn releaseOnceStopping(pool: *WorkerPool, release: *TestGate) void {
+    const io = pool.threaded.io();
+    while (true) {
+        pool.mutex.lockUncancelable(io);
+        const is_stopping = pool.is_stopping;
+        pool.mutex.unlock(io);
+        if (is_stopping) break;
+        std.Thread.yield() catch {};
+    }
+    release.add();
+}
+
+fn doNothingOnPool(_: *uv.Request) callconv(.c) void {}
+
+fn markWorkDone(work: *uv.Request, _: c_int) callconv(.c) void {
+    const is_done: *bool = @ptrCast(@alignCast(uv.uv_req_get_data(work).?));
+    is_done.* = true;
 }
 
 test "net: TLS over loopback with test certificates, errors on both sides, start_tls twice" {

@@ -9,7 +9,7 @@ pub const Handle = opaque {};
 pub const Request = opaque {};
 
 pub const RunMode = enum(c_int) { default = 0, once = 1, nowait = 2 };
-pub const HandleType = enum(c_int) { unknown = 0, named_pipe = 7, process = 10, tcp = 12, timer = 13, tty = 14, signal = 16, file = 17, _ };
+pub const HandleType = enum(c_int) { unknown = 0, async = 1, named_pipe = 7, process = 10, tcp = 12, timer = 13, tty = 14, signal = 16, file = 17, _ };
 pub const RequestType = enum(c_int) { connect = 2, write = 3, fs = 6, work = 7, getaddrinfo = 8 };
 pub const DirEntryType = enum(c_int) { unknown = 0, file = 1, dir = 2, link = 3, _ };
 pub const OsFile = if (@import("builtin").os.tag == .windows) ?*anyopaque else c_int;
@@ -82,6 +82,7 @@ pub const Stat = extern struct {
 // ---- Callbacks ----
 
 pub const TimerCallback = *const fn (timer: *Handle) callconv(.c) void;
+pub const AsyncCallback = *const fn (handle: *Handle) callconv(.c) void;
 pub const CloseCallback = *const fn (handle: *Handle) callconv(.c) void;
 pub const WalkCallback = *const fn (handle: *Handle, arg: ?*anyopaque) callconv(.c) void;
 pub const WorkCallback = *const fn (request: *Request) callconv(.c) void;
@@ -125,6 +126,11 @@ pub extern fn dusk_process_kill(process: *Handle) c_int;
 pub extern fn uv_signal_init(loop: *Loop, signal: *Handle) c_int;
 pub extern fn uv_signal_start(signal: *Handle, callback: *const fn (*Handle, c_int) callconv(.c) void, number: c_int) c_int;
 pub extern fn uv_signal_stop(signal: *Handle) c_int;
+
+// ---- Async handles (wake the loop from another thread) ----
+
+pub extern fn uv_async_init(loop: *Loop, handle: *Handle, callback: AsyncCallback) c_int;
+pub extern fn uv_async_send(handle: *Handle) c_int;
 
 // ---- Timers ----
 

@@ -25,6 +25,8 @@ const process_runtime = @import("process.zig");
 const Subscription = @import("signal.zig").Subscription;
 const TerminalOutput = @import("terminal.zig").TerminalOutput;
 const TerminalSize = @import("terminal.zig").TerminalSize;
+const WorkerDispatch = @import("worker_dispatch.zig").WorkerDispatch;
+const WorkerPool = @import("worker_pool.zig").WorkerPool;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -51,6 +53,7 @@ pub const EventLoop = struct {
     signal_subscriptions: HandleTable(Subscription) = .{},
     terminal_outputs: [2]?*TerminalOutput = .{ null, null },
     has_used_raw_terminal: bool = false,
+    worker_dispatches: std.ArrayList(*WorkerDispatch) = .empty,
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
@@ -63,6 +66,10 @@ pub const EventLoop = struct {
             _ = uv.uv_run(self.loop.?, .once);
         }
         defer self.processes.deinit(self.allocator);
+        for (self.worker_dispatches.items) |dispatch| {
+            dispatch.shutDown();
+        }
+        defer self.worker_dispatches.deinit(self.allocator);
         for (self.signal_subscriptions.entries.items) |entry| {
             const subscription = entry orelse continue;
             subscription.close();
@@ -115,6 +122,13 @@ pub const EventLoop = struct {
     fn loopMemory(loop: *uv.Loop) []align(16) u8 {
         const bytes: [*]align(16) u8 = @ptrCast(@alignCast(loop));
         return bytes[0..uv.uv_loop_size()];
+    }
+
+    pub fn startWorkerDispatch(self: *Self, options: WorkerPool.Options) !*WorkerDispatch {
+        try self.worker_dispatches.ensureUnusedCapacity(self.allocator, 1);
+        const dispatch = try WorkerDispatch.create(self, options);
+        self.worker_dispatches.appendAssumeCapacity(dispatch);
+        return dispatch;
     }
 
     pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !usize {
@@ -440,7 +454,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output };
+    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output, worker_async };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -505,6 +519,10 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         .open_timer => {
             const request: *OpenRequest = @alignCast(@fieldParentPtr("owner", owner));
             request.markTimerClosed();
+        },
+        .worker_async => {
+            const dispatch: *WorkerDispatch = @alignCast(@fieldParentPtr("owner", owner));
+            dispatch.destroy();
         },
         .slot_timer => {
             const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", owner));
