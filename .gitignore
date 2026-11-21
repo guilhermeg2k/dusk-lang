@@ -11,13 +11,10 @@ benchmarks/results/
 benchmarks/build/
 benchmarks/.venv_bench/
 
-# claude code
-CLAUDE.md
-.claude/
-
-# codex
+# IA
 AGENTS.md
-.tasks/
+.claude/
+.antigravitycli/
 
 # obsidian
 .obsidian/
