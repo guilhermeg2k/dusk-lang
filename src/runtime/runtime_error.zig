@@ -28,6 +28,7 @@ pub const RuntimeError = error{
 
 pub const RuntimeErrorReporter = struct {
     pub var stdout_to_flush_first: ?*std.Io.Writer = null;
+    pub var has_reported_error: bool = false;
 
     pub noinline fn arrayOutOfBounds(index: i64, len: usize) RuntimeError {
         @branchHint(.cold);
@@ -167,6 +168,7 @@ pub const RuntimeErrorReporter = struct {
 
     fn print(comptime fmt: []const u8, args: anytype) void {
         if (@import("builtin").is_test) return;
+        has_reported_error = true;
         if (stdout_to_flush_first) |stdout| {
             stdout.flush() catch {};
         }

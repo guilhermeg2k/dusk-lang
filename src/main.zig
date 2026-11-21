@@ -6,6 +6,8 @@ const Stdio = dusk.Stdio;
 
 const build_zon = @import("build_zon");
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
+const CompileErrorReporter = @import("compiler/compile_error.zig").CompileErrorReporter;
+const RuntimeErrorReporter = @import("runtime/runtime_error.zig").RuntimeErrorReporter;
 
 pub fn main(init: std.process.Init) !u8 {
     openMissingStandardFiles();
@@ -53,6 +55,7 @@ pub fn main(init: std.process.Init) !u8 {
         if (failure == error.BrokenPipe) {
             exitAfterBrokenPipe();
         }
+        reportUnreportedFailure(failure);
         std.process.exit(1);
     };
     try stderr_file_writer.interface.flush();
@@ -87,4 +90,10 @@ fn exitAfterBrokenPipe() noreturn {
         std.posix.raise(.PIPE) catch {};
     }
     std.process.exit(1);
+}
+
+fn reportUnreportedFailure(failure: anyerror) void {
+    const is_reported = CompileErrorReporter.has_reported_error or RuntimeErrorReporter.has_reported_error or CliErrorReporter.has_reported_error;
+    if (is_reported) return;
+    std.debug.print("error: {s}\n", .{@errorName(failure)});
 }

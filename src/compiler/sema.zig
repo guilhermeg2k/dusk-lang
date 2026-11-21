@@ -1082,10 +1082,11 @@ pub const SemaAnalyzer = struct {
         };
     }
 
-    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !tt.Struct {
+    fn createAnonymousStruct(self: *Self, exp: *const ast.ExpNode, is_mut: bool) !AnonymousStruct {
         const anonymous_init = exp.data.anonymous_init;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
+        var values: std.ArrayList(*ir.Value) = .empty;
 
         if (anonymous_init.are_arguments_named == false) {
             return self.err_reporter.cantInferAnonymousStruct(exp.loc);
@@ -1108,13 +1109,14 @@ pub const SemaAnalyzer = struct {
                 .identifier = arg.identifier.?,
                 .is_mut = is_mut,
                 .type_id = field_type_id,
-                .default_value = exp_value,
+                .default_value = null,
             };
             try fields_in_order.append(
                 self.allocator,
                 field,
             );
             try fields.put(arg.identifier.?, field);
+            try values.append(self.allocator, exp_value);
         }
 
         var field_index_by_name: std.StringHashMap(u8) = .init(self.allocator);
@@ -1122,7 +1124,7 @@ pub const SemaAnalyzer = struct {
             try field_index_by_name.put(field.identifier, @intCast(i));
         }
 
-        return tt.Struct{
+        const definition = tt.Struct{
             .identifier = "@",
             .fields = fields,
             .fields_in_order = try fields_in_order.toOwnedSlice(self.allocator),
@@ -1130,6 +1132,7 @@ pub const SemaAnalyzer = struct {
             .static_fields = .init(self.allocator),
             .methods = .init(self.allocator),
         };
+        return .{ .definition = definition, .values = try values.toOwnedSlice(self.allocator) };
     }
 
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
@@ -6790,17 +6793,15 @@ pub const SemaAnalyzer = struct {
 
     fn evalAnonymousStructInit(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
         const anonymous_struct = try self.createAnonymousStruct(exp, false);
-        const keys = try self.allocator.alloc([]const u8, anonymous_struct.fields_in_order.len);
-        const values = try self.allocator.alloc(*ir.Value, anonymous_struct.fields_in_order.len);
-
-        for (anonymous_struct.fields_in_order, 0..) |field, i| {
+        const fields_in_order = anonymous_struct.definition.fields_in_order;
+        const keys = try self.allocator.alloc([]const u8, fields_in_order.len);
+        for (fields_in_order, 0..) |field, i| {
             keys[i] = field.identifier;
-            values[i] = field.default_value.?;
         }
 
         return ir.Value.init(self.allocator, .{
-            .data = .{ .struct_init = .{ .keys = keys, .values = values } },
-            .type_id = try self.type_table.getOrAddAnonymousStruct(anonymous_struct),
+            .data = .{ .struct_init = .{ .keys = keys, .values = anonymous_struct.values } },
+            .type_id = try self.type_table.getOrAddAnonymousStruct(anonymous_struct.definition),
         });
     }
 
@@ -8176,6 +8177,11 @@ const VisitedBlock = struct {
 };
 
 const ExitQuery = enum { returns, leaves_block };
+
+const AnonymousStruct = struct {
+    definition: tt.Struct,
+    values: []*ir.Value,
+};
 
 const PendingStruct = struct {
     symbol: Symbol,

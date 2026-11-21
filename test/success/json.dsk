@@ -104,4 +104,15 @@ func main() -> !void
     assert((try json::encode("\u{0}")) == "\"\\u0000\"")
     let box = try json::decode[Box[User]]("{\"value\":{\"name\":\"Ada\",\"age\":42}}")
     assert(box.value.name == "Ada")
+    let absent_id: ?int = null
+    let known_id: ?int = 5
+    assert((try json::encode(@(id = absent_id))) == "{\"id\":null}")
+    assert((try json::encode(@(id = known_id))) == "{\"id\":5}")
+    assert((try encode_id(7)) == "{\"id\":7}")
+    assert((try json::encode(@(id = known_id, tags = ["a"]))) == "{\"id\":5,\"tags\":[\"a\"]}")
+end
+
+func encode_id(value: int) -> !string
+    let id: ?int = value
+    return try json::encode(@(id = id))
 end

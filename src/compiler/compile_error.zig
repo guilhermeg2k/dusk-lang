@@ -3,6 +3,8 @@ pub const Loc = @import("lexer.zig").Loc;
 pub const CompileErrorReporter = struct {
     const Self = @This();
 
+    pub var has_reported_error: bool = false;
+
     src: []const u8,
     allocator: std.mem.Allocator,
     copy_context: ?CopyContext = null,
@@ -1012,11 +1014,13 @@ pub const CompileErrorReporter = struct {
     fn logAt(self: *Self, message: []const u8, loc: ?Loc) void {
         if (loc) |known| return self.log(message, known);
         if (@import("builtin").is_test) return;
+        has_reported_error = true;
         std.debug.print("error: {s}\n", .{self.withCopyContext(message)});
     }
 
     pub fn log(self: *Self, message: []const u8, loc: Loc) void {
         if (@import("builtin").is_test) return;
+        has_reported_error = true;
         const msg = self.withCopyContext(message);
 
         const exactLoc = self.findExactLoc(loc.start);
