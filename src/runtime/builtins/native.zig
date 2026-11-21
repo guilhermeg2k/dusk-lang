@@ -14,9 +14,10 @@ pub const NativeFnPtr = *const fn (vm: *VM, args: []v.Value) anyerror!NativeResu
 pub const NativeResult = struct { value: v.Value, has_failed: bool = false, is_parked: bool = false };
 
 pub fn ownResource(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const id = try vm.event_loop.resources.add(vm.event_loop.allocator, @enumFromInt(args[0].int64), args[1].int64);
     const size = v.Resource.calc_size();
     try vm.maybeCollectGarbage(size);
+    const id = try vm.event_loop.resources.add(vm.event_loop.allocator, @enumFromInt(args[0].int64), args[1].int64);
+    errdefer _ = vm.event_loop.resources.take(id);
     const owner = try v.Resource.init(vm.getCurrentHeapAllocator(), id);
     vm.increaseHeapAllocationCount(size);
     try vm.heap.trackResource(&owner.obj);

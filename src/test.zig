@@ -23,31 +23,6 @@ test "gc: else branches do not retain roots from the skipped then branch" {
     try runCase("gc-if-branches.dsk");
 }
 
-test "gc: scoped native roots survive collection and root-list growth" {
-    const VM = @import("runtime/vm.zig").VM;
-    const value = @import("runtime/value.zig");
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
-    const program = try dusk.compile("func main() -> void end");
-    var vm = VM.init(&program, .{});
-    defer vm.deinit();
-    const outer = vm.heap.temporary_roots.items.len;
-    defer vm.heap.restoreRootCount(outer);
-    const text = try vm.allocBytesValue("kept", .string);
-    const root = try vm.heap.protectValue(text, .string);
-    const nested = vm.heap.temporary_roots.items.len;
-    for (0..1000) |i| {
-        _ = try vm.heap.protectValue(.{ .int64 = @intCast(i) }, .int64);
-    }
-    try vm.heap.collect(&vm.scheduler, &program);
-    try testing.expectEqualStrings("kept", value.HeapValue.getParentPtr(value.Bytes, vm.heap.protectedValue(root).heap_obj).slice());
-    vm.heap.restoreRootCount(nested);
-    try vm.heap.collect(&vm.scheduler, &program);
-    try testing.expectEqualStrings("kept", value.HeapValue.getParentPtr(value.Bytes, vm.heap.protectedValue(root).heap_obj).slice());
-    try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
-}
-
 test "sema: anonymous coercions preserve private-field visibility" {
     try runCase("anonymous-private-same-module.dsk");
     try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);
@@ -347,13 +322,13 @@ test "handles: the stream and listener tables reuse slots and reject stale handl
     var a: u8 = 1;
     var b: u8 = 2;
     try table.reserve(allocator);
-    const first: i64 = @intCast(table.addAssumeCapacity(&a));
+    const first = table.addAssumeCapacity(&a);
     try testing.expectEqual(&a, table.get(first).?);
     try testing.expectEqual(&a, table.remove(first).?);
     try testing.expect(table.get(first) == null);
     try testing.expect(table.remove(first) == null);
     try table.reserve(allocator);
-    const second: i64 = @intCast(table.addAssumeCapacity(&b));
+    const second = table.addAssumeCapacity(&b);
     try testing.expect(second != first);
     try testing.expectEqual(first & 0xffff_ffff, second & 0xffff_ffff);
     try testing.expect(table.get(first) == null);

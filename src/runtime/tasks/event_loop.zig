@@ -40,7 +40,7 @@ pub const EventLoop = struct {
     compression_streams: CompressionStreams = .{},
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
-    stdin_handle: ?usize = null,
+    stdin_handle: ?i64 = null,
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
@@ -199,7 +199,7 @@ pub const EventLoop = struct {
         }
     }
 
-    pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !usize {
+    pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !i64 {
         if (self.stdin_handle) |handle| {
             return handle;
         }
@@ -212,7 +212,7 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !usize {
+    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
@@ -225,7 +225,7 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !usize {
+    pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.openTcp(self.allocator, self, scheduler, loop);
@@ -234,7 +234,7 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openListener(self: *Self, scheduler: *Scheduler) !usize {
+    pub fn openListener(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.listeners.reserve(self.allocator);
         const listener = try Listener.create(self.allocator, self, scheduler, loop);

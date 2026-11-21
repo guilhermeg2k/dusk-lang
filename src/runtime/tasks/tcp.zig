@@ -57,7 +57,7 @@ pub const Purpose = union(enum) {
 
 pub const OpenProgress = union(enum) {
     waiting,
-    opened: usize,
+    opened: i64,
     failed: NetError,
 };
 
@@ -100,7 +100,7 @@ pub const OpenRequest = struct {
     is_finished: bool = false,
 
     const Attempt = struct {
-        handle: usize,
+        handle: i64,
         stream: *Stream,
     };
 
@@ -185,10 +185,10 @@ pub const OpenRequest = struct {
             uv.uv_req_set_data(self.connectRequest(), self);
         }
         const handle = self.event_loop.openTcpStream(self.scheduler) catch return .{ .failed = .Other };
-        const stream = self.event_loop.streamAt(@intCast(handle)).?;
+        const stream = self.event_loop.streamAt(handle).?;
         const status = uv.uv_tcp_connect(self.connectRequest(), stream.uvHandle(), address, onConnect);
         if (status != 0) {
-            self.event_loop.closeStream(@intCast(handle));
+            self.event_loop.closeStream(handle);
             return .{ .failed = netErrorFromStatus(status) };
         }
         stream.requests_in_flight += 1;
@@ -198,9 +198,9 @@ pub const OpenRequest = struct {
 
     fn listenOn(self: *Self, address: *const uv.SocketAddress, backlog: c_int) OpenProgress {
         const handle = self.event_loop.openListener(self.scheduler) catch return .{ .failed = .Other };
-        const listener = self.event_loop.listenerAt(@intCast(handle)).?;
+        const listener = self.event_loop.listenerAt(handle).?;
         if (listener.bindAndListen(address, backlog)) |failure| {
-            self.event_loop.closeListener(@intCast(handle));
+            self.event_loop.closeListener(handle);
             return .{ .failed = failure };
         }
         return .{ .opened = handle };
@@ -348,14 +348,14 @@ pub const Listener = struct {
     open_handles: u8 = 1,
     is_timer_running: bool = false,
     is_closed: bool = false,
-    ready_connections: std.ArrayList(usize) = .empty,
+    ready_connections: std.ArrayList(i64) = .empty,
     has_unaccepted_connection: bool = false,
     failure: ?IoError = null,
     waiter: ?*TaskState = null,
     tls_certificate: ?*ServerCertificate = null,
 
     pub const AcceptOutcome = union(enum) {
-        connection: usize,
+        connection: i64,
         failure: IoError,
     };
 
@@ -435,18 +435,18 @@ pub const Listener = struct {
         }
     }
 
-    fn acceptConnection(self: *Self) !usize {
+    fn acceptConnection(self: *Self) !i64 {
         const handle = try self.event_loop.openTcpStream(self.scheduler);
-        const stream = self.event_loop.streamAt(@intCast(handle)).?;
+        const stream = self.event_loop.streamAt(handle).?;
         if (uv.uv_accept(self.uvHandle(), stream.uvHandle()) != 0) {
-            self.event_loop.closeStream(@intCast(handle));
+            self.event_loop.closeStream(handle);
             return error.AcceptFailed;
         }
         try self.prepareAcceptedStream(handle);
         return handle;
     }
 
-    fn acceptNextFromSocket(self: *Self) ?usize {
+    fn acceptNextFromSocket(self: *Self) ?i64 {
         if (builtin.os.tag == .windows) {
             return null;
         }
@@ -459,18 +459,18 @@ pub const Listener = struct {
             _ = std.c.close(socket);
             return null;
         };
-        const stream = self.event_loop.streamAt(@intCast(handle)).?;
+        const stream = self.event_loop.streamAt(handle).?;
         if (uv.uv_tcp_open(stream.uvHandle(), socket) != 0) {
             _ = std.c.close(socket);
-            self.event_loop.closeStream(@intCast(handle));
+            self.event_loop.closeStream(handle);
             return null;
         }
         self.prepareAcceptedStream(handle) catch return null;
         return handle;
     }
 
-    fn prepareAcceptedStream(self: *Self, handle: usize) !void {
-        const stream = self.event_loop.streamAt(@intCast(handle)).?;
+    fn prepareAcceptedStream(self: *Self, handle: i64) !void {
+        const stream = self.event_loop.streamAt(handle).?;
         stream.rememberPeer();
         const certificate = self.tls_certificate orelse return;
         stream.useServerTls(certificate.config) catch {
@@ -521,7 +521,7 @@ pub const Listener = struct {
             };
         }
         for (self.ready_connections.items) |handle| {
-            self.event_loop.closeStream(@intCast(handle));
+            self.event_loop.closeStream(handle);
         }
         self.ready_connections.clearRetainingCapacity();
         self.is_closed = true;
@@ -655,8 +655,8 @@ fn netErrorFromStatus(status: c_int) NetError {
     return net_errors_by_name.get(std.mem.span(uv.uv_err_name(status))) orelse .Other;
 }
 
-fn handleResult(handle: usize) WakeResult {
-    return .{ .value = .{ .int64 = @intCast(handle) }, .kind = .int64 };
+fn handleResult(handle: i64) WakeResult {
+    return .{ .value = .{ .int64 = handle }, .kind = .int64 };
 }
 
 fn netFailure(failure: NetError) WakeResult {

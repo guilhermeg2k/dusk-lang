@@ -6,7 +6,7 @@ pub const idle_timeout_ms = 30_000;
 pub const ConnectionPool = struct {
     const Self = @This();
 
-    idle: std.StringArrayHashMapUnmanaged(std.ArrayList(usize)) = .empty,
+    idle: std.StringArrayHashMapUnmanaged(std.ArrayList(i64)) = .empty,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         for (self.idle.keys(), self.idle.values()) |key, *handles| {
@@ -16,12 +16,12 @@ pub const ConnectionPool = struct {
         self.idle.deinit(allocator);
     }
 
-    pub fn takeNewest(self: *Self, key: []const u8) ?usize {
+    pub fn takeNewest(self: *Self, key: []const u8) ?i64 {
         const handles = self.idle.getPtr(key) orelse return null;
         return handles.pop();
     }
 
-    pub fn add(self: *Self, allocator: std.mem.Allocator, key: []const u8, handle: usize) !?usize {
+    pub fn add(self: *Self, allocator: std.mem.Allocator, key: []const u8, handle: i64) !?i64 {
         if (!self.idle.contains(key)) {
             const owned_key = try allocator.dupe(u8, key);
             errdefer allocator.free(owned_key);
@@ -33,9 +33,9 @@ pub const ConnectionPool = struct {
         return evicted;
     }
 
-    pub fn remove(self: *Self, key: []const u8, handle: usize) void {
+    pub fn remove(self: *Self, key: []const u8, handle: i64) void {
         const handles = self.idle.getPtr(key) orelse return;
-        const index = std.mem.indexOfScalar(usize, handles.items, handle) orelse return;
+        const index = std.mem.indexOfScalar(i64, handles.items, handle) orelse return;
         _ = handles.orderedRemove(index);
     }
 };

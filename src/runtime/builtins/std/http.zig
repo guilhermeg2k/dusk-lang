@@ -199,13 +199,13 @@ fn poolTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
     try event_loop.poll();
     const key = bytesArg(args, 0);
     while (event_loop.connection_pool.takeNewest(key)) |handle| {
-        const stream = event_loop.streamAt(@intCast(handle)) orelse continue;
+        const stream = event_loop.streamAt(handle) orelse continue;
         stream.leavePool();
         if (!stream.isReusable()) {
-            event_loop.closeStream(@intCast(handle));
+            event_loop.closeStream(handle);
             continue;
         }
-        return ok(.{ .int64 = @intCast(handle) });
+        return ok(.{ .int64 = handle });
     }
     return ok(.{ .int64 = -1 });
 }
@@ -223,16 +223,16 @@ fn poolPut(vm: *VM, args: []v.Value) anyerror!NativeResult {
         event_loop.closeStream(handle);
         return ok(.{ .null = {} });
     };
-    const evicted = event_loop.connection_pool.add(event_loop.allocator, bytesArg(args, 0), @intCast(handle)) catch {
+    const evicted = event_loop.connection_pool.add(event_loop.allocator, bytesArg(args, 0), handle) catch {
         stream.leavePool();
         event_loop.closeStream(handle);
         return ok(.{ .null = {} });
     };
     const oldest = evicted orelse return ok(.{ .null = {} });
-    if (event_loop.streamAt(@intCast(oldest))) |oldest_stream| {
+    if (event_loop.streamAt(oldest)) |oldest_stream| {
         oldest_stream.leavePool();
     }
-    event_loop.closeStream(@intCast(oldest));
+    event_loop.closeStream(oldest);
     return ok(.{ .null = {} });
 }
 

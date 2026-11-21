@@ -52,8 +52,8 @@ pub const Scheduler = struct {
     }
 
     pub fn wake(self: *Self, task: *TaskState, wake_result: WakeResult) !void {
-        task.wake_result = wake_result;
         try self.makeReady(task);
+        task.wake_result = wake_result;
     }
 
     pub fn finish(self: *Self, task: *TaskState) !void {
