@@ -1831,8 +1831,9 @@ Close connections with `defer db.close()` when finished. A `Database` dropped wi
 | :--------------------------- | :------ | :---------- |
 | `execute(sql, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one or more statements separated by `;` (no parameters). |
 | `execute_with[P, S: schema](sql, params, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement, binding `:name` parameters from a struct. |
+| `execute_many[P, S: schema](sql, rows, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement once for each struct in `rows`, in a single worker job. |
 
-`Changes` has `rows: int` (total rows changed) and `last_id: int` (the last inserted rowid). `execute_with` takes exactly one statement and caches prepared statements per connection.
+`Changes` has `rows: int` (total rows changed) and `last_id: int` (the last inserted rowid). `execute_with` and `execute_many` take exactly one statement and cache prepared statements per connection. Wrap `execute_many` in `db.transaction` when inserting many rows so all rows commit atomically.
 
 **Always pass values through `_with` parameters rather than string interpolation.** Interpolating user input into SQL strings (`"where name = '$name'"`) allows SQL injection; use `:name` placeholders and pass a named or anonymous struct instead:
 

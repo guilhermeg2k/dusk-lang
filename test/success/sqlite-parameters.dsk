@@ -67,6 +67,23 @@ func main() -> !void
     let renamed = try db.execute_with[NewUser, Db]("insert into users (name, age) values (:name, :age)", NewUser(user_name = "Bo", age = 25))
     assert(renamed.last_id == 3)
 
+    let batch = try db.execute_many[NewUser, Db](
+        "insert into users (name, age) values (:name, :age)",
+        [NewUser(user_name = "Cy", age = 28), NewUser(user_name = "Di", age = 32)],
+    )
+    assert(batch.rows == 2 and batch.last_id == 5)
+    let empty_batch: []NewUser = []
+    let empty_changes = try db.execute_many[NewUser, Db]("insert into users (name, age) values (:name, :age)", empty_batch)
+    assert(empty_changes.rows == 0)
+
+    let tx_batch = try db.transaction(func(tx)
+        return try tx.execute_many(
+            "insert into users (name, age) values (:name, :age)",
+            [@(name = "Eli", age = 22), @(name = "Fay", age = 24)],
+        )
+    end)
+    assert(tx_batch.rows == 2 and tx_batch.last_id == 7)
+
     for 1..200: i do
         let repeated = try db.execute_with("update users set age = :age where id = :id", @(age = i, id = 1))
         assert(repeated.rows == 1)
@@ -87,7 +104,7 @@ func main() -> !void
         append(tasks, started)
     end
     for tasks: started, index do
-        assert((try await(started)) == index + 4)
+        assert((try await(started)) == index + 8)
     end
 
     db.close()

@@ -31,11 +31,29 @@ pub const OpenSettings = struct {
 pub const Param = struct {
     pub const Kind = enum { null, int, float, text };
 
-    name: [:0]u8,
+    name: [:0]const u8,
     kind: Kind,
     int: i64 = 0,
     float: f64 = 0,
-    text: []u8 = &.{},
+    text: []const u8 = &.{},
+};
+
+pub const ParamBatch = struct {
+    items: []Param = &.{},
+    bytes: []u8 = &.{},
+    row_counts: []usize = &.{},
+
+    pub fn deinit(self: ParamBatch, allocator: std.mem.Allocator) void {
+        if (self.items.len > 0) {
+            allocator.free(self.items);
+        }
+        if (self.bytes.len > 0) {
+            allocator.free(self.bytes);
+        }
+        if (self.row_counts.len > 0) {
+            allocator.free(self.row_counts);
+        }
+    }
 };
 
 pub const ResultSet = struct {
@@ -162,7 +180,7 @@ pub const Databases = struct {
         return true;
     }
 
-    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, is_in_transaction: bool, timeout_ms: i64) !bool {
+    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: ParamBatch, is_in_transaction: bool, timeout_ms: i64) !bool {
         const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .execute_one, sql);
         errdefer operation.destroy();
@@ -172,7 +190,17 @@ pub const Databases = struct {
         return true;
     }
 
-    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, max_bytes: i64, is_in_transaction: bool, timeout_ms: i64) !bool {
+    pub fn executeMany(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: ParamBatch, is_in_transaction: bool, timeout_ms: i64) !bool {
+        const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
+        const operation = try Operation.create(event_loop, scheduler, task, connection, .execute_many, sql);
+        errdefer operation.destroy();
+        try operation.startTimeout(timeout_ms);
+        operation.params = params;
+        self.enqueue(connection, operation);
+        return true;
+    }
+
+    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: ParamBatch, max_bytes: i64, is_in_transaction: bool, timeout_ms: i64) !bool {
         const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .query, sql);
         errdefer operation.destroy();
@@ -433,7 +461,7 @@ fn onOperationTimeout(handle: *uv.Handle) callconv(.c) void {
 }
 
 const Operation = struct {
-    const Kind = enum { open, execute, execute_one, query, begin, commit, rollback, close };
+    const Kind = enum { open, execute, execute_one, execute_many, query, begin, commit, rollback, close };
 
     job: Job = .{ .execute = runOnWorker, .finish = finishOnLoop },
     kind: Kind,
@@ -443,7 +471,7 @@ const Operation = struct {
     connection: *Connection,
     text: [:0]u8,
     settings: OpenSettings = .{},
-    params: []Param = &.{},
+    params: ParamBatch = .{},
     database: ?*api.Database = null,
     cache: ?*StatementCache = null,
     fixed_error: ?SqliteError = null,
@@ -486,7 +514,7 @@ const Operation = struct {
         const allocator = self.event_loop.allocator;
         freeMessage(self.message);
         allocator.free(self.text);
-        freeParams(allocator, self.params);
+        self.params.deinit(allocator);
         if (self.result) |result| {
             result.destroy();
         }
@@ -499,6 +527,7 @@ const Operation = struct {
             .open => self.openOnWorker(),
             .execute => self.executeOnWorker(),
             .execute_one, .begin, .commit, .rollback => self.executeOneOnWorker(),
+            .execute_many => self.executeManyOnWorker(),
             .query => self.queryOnWorker(),
             .close => {
                 self.cache.?.finalizeAll();
@@ -590,7 +619,7 @@ const Operation = struct {
             return;
         }
         const database = self.database.?;
-        const statement = self.preparedWithParams(database) orelse return;
+        const statement = self.preparedWithParams(database, self.params.items) orelse return;
         defer resetStatement(statement);
         const status = stepToEnd(statement);
         if (status != @intFromEnum(api.ResultCode.done)) {
@@ -601,13 +630,44 @@ const Operation = struct {
         self.last_id = api.sqlite3_last_insert_rowid(database);
     }
 
+    fn executeManyOnWorker(self: *Operation) void {
+        if (self.is_interrupted.load(.acquire)) {
+            self.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{self.timeout_ms});
+            return;
+        }
+        const database = self.database.?;
+        const statement = self.preparedStatement(database) orelse return;
+        defer resetStatement(statement);
+        const changes_before = api.sqlite3_total_changes64(database);
+        var offset: usize = 0;
+        for (self.params.row_counts) |count| {
+            if (self.is_interrupted.load(.acquire)) {
+                self.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{self.timeout_ms});
+                return;
+            }
+            const row_params = self.params.items[offset .. offset + count];
+            offset += count;
+            if (!self.bindParams(statement, row_params)) {
+                return;
+            }
+            const status = stepToEnd(statement);
+            if (status != @intFromEnum(api.ResultCode.done)) {
+                self.recordWorkerFailure(database, status);
+                return;
+            }
+            resetStatement(statement);
+        }
+        self.rows = api.sqlite3_total_changes64(database) - changes_before;
+        self.last_id = api.sqlite3_last_insert_rowid(database);
+    }
+
     fn queryOnWorker(self: *Operation) void {
         if (self.is_interrupted.load(.acquire)) {
             self.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{self.timeout_ms});
             return;
         }
         const database = self.database.?;
-        const statement = self.preparedWithParams(database) orelse return;
+        const statement = self.preparedWithParams(database, self.params.items) orelse return;
         defer resetStatement(statement);
         const result = ResultSet.create() catch {
             self.recordFixedFailure(.Other, "out of memory", .{});
@@ -653,9 +713,9 @@ const Operation = struct {
         }
     }
 
-    fn preparedWithParams(self: *Operation, database: *api.Database) ?*api.Statement {
+    fn preparedStatement(self: *Operation, database: *api.Database) ?*api.Statement {
         const prepared = self.cache.?.take(database, self.text);
-        const statement = switch (prepared) {
+        return switch (prepared) {
             .statement => |found| found,
             .failure => |status| {
                 self.recordWorkerFailure(database, status);
@@ -670,15 +730,19 @@ const Operation = struct {
                 return null;
             },
         };
-        if (!self.bindParams(statement)) {
+    }
+
+    fn preparedWithParams(self: *Operation, database: *api.Database, params: []const Param) ?*api.Statement {
+        const statement = self.preparedStatement(database) orelse return null;
+        if (!self.bindParams(statement, params)) {
             resetStatement(statement);
             return null;
         }
         return statement;
     }
 
-    fn bindParams(self: *Operation, statement: *api.Statement) bool {
-        for (self.params) |param| {
+    fn bindParams(self: *Operation, statement: *api.Statement, params: []const Param) bool {
+        for (params) |param| {
             const index = api.sqlite3_bind_parameter_index(statement, param.name.ptr);
             if (index == 0) {
                 self.recordFixedFailure(.UnknownParameter, "the statement has no parameter {s}", .{param.name});
@@ -703,7 +767,7 @@ const Operation = struct {
                 return false;
             };
             const text = std.mem.span(name);
-            if (!self.hasParam(text)) {
+            if (!hasParam(params, text)) {
                 self.recordFixedFailure(.MissingParameter, "no value for parameter {s}", .{text});
                 return false;
             }
@@ -711,8 +775,8 @@ const Operation = struct {
         return true;
     }
 
-    fn hasParam(self: *Operation, name: []const u8) bool {
-        for (self.params) |param| {
+    fn hasParam(params: []const Param, name: []const u8) bool {
+        for (params) |param| {
             if (std.mem.eql(u8, param.name, name)) {
                 return true;
             }
@@ -764,7 +828,7 @@ const Operation = struct {
         const has_run = self.job.outcome == .executed;
         const has_failed = self.code != 0 or self.fixed_error != null;
         switch (self.kind) {
-            .execute, .execute_one, .query => return false,
+            .execute, .execute_one, .execute_many, .query => return false,
             .begin => {
                 if (has_run and !has_failed) {
                     connection.transaction_owner = self.task;
@@ -820,7 +884,7 @@ const Operation = struct {
         }
         return switch (self.kind) {
             .open => .{ .value = .{ .int64 = self.connection.handle }, .kind = .int64 },
-            .execute, .execute_one => result: {
+            .execute, .execute_one, .execute_many => result: {
                 const numbers = try self.event_loop.allocator.alloc(i64, 2);
                 numbers[0] = self.rows;
                 numbers[1] = self.last_id;
@@ -924,14 +988,6 @@ fn hasMoreStatements(database: *api.Database, sql: []const u8, tail: ?[*]const u
     const found = statement orelse return false;
     _ = api.sqlite3_finalize(found);
     return true;
-}
-
-pub fn freeParams(allocator: std.mem.Allocator, params: []Param) void {
-    for (params) |param| {
-        allocator.free(param.name);
-        allocator.free(param.text);
-    }
-    allocator.free(params);
 }
 
 fn copyCell(statement: *api.Statement, column: c_int, result: *ResultSet) !ResultSet.Cell {

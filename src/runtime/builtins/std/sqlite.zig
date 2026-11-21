@@ -14,6 +14,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "open_handle", Binding{ .native = &openHandle } },
     .{ "execute_handle", Binding{ .native = &executeHandle } },
     .{ "execute_with_handle", Binding{ .native = &executeWithHandle } },
+    .{ "execute_many_handle", Binding{ .native = &executeManyHandle } },
     .{ "query_handle", Binding{ .native = &queryHandle } },
     .{ "begin_handle", Binding{ .native = &beginHandle } },
     .{ "commit_handle", Binding{ .native = &commitHandle } },
@@ -77,14 +78,34 @@ fn executeWithHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return native.fail(SqliteError.InvalidSql);
     }
     const allocator = vm.event_loop.allocator;
-    const params = try copyParams(allocator, args[2..7]);
+    const params = try copyParams(allocator, args[2..7], null);
     const task = vm.running_task.?;
     const is_queued = vm.event_loop.sqlite.executeWith(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[7].bool, args[8].int64) catch |failure| {
-        sqlite.freeParams(allocator, params);
+        params.deinit(allocator);
         return failure;
     };
     if (!is_queued) {
-        sqlite.freeParams(allocator, params);
+        params.deinit(allocator);
+        return native.fail(SqliteError.Closed);
+    }
+    task.park();
+    return native.parked();
+}
+
+fn executeManyHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const sql = bytesArg(args, 1);
+    if (std.mem.indexOfScalar(u8, sql, 0) != null) {
+        return native.fail(SqliteError.InvalidSql);
+    }
+    const allocator = vm.event_loop.allocator;
+    const params = try copyParams(allocator, args[2..7], args[7]);
+    const task = vm.running_task.?;
+    const is_queued = vm.event_loop.sqlite.executeMany(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[8].bool, args[9].int64) catch |failure| {
+        params.deinit(allocator);
+        return failure;
+    };
+    if (!is_queued) {
+        params.deinit(allocator);
         return native.fail(SqliteError.Closed);
     }
     task.park();
@@ -97,14 +118,14 @@ fn queryHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return native.fail(SqliteError.InvalidSql);
     }
     const allocator = vm.event_loop.allocator;
-    const params = try copyParams(allocator, args[2..7]);
+    const params = try copyParams(allocator, args[2..7], null);
     const task = vm.running_task.?;
     const is_queued = vm.event_loop.sqlite.query(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[7].int64, args[8].bool, args[9].int64) catch |failure| {
-        sqlite.freeParams(allocator, params);
+        params.deinit(allocator);
         return failure;
     };
     if (!is_queued) {
-        sqlite.freeParams(allocator, params);
+        params.deinit(allocator);
         return native.fail(SqliteError.Closed);
     }
     task.park();
@@ -187,24 +208,49 @@ fn cellText(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return native.ok(try vm.allocBytesValue(text, .string));
 }
 
-fn copyParams(allocator: std.mem.Allocator, arrays: []v.Value) ![]sqlite.Param {
+fn copyParams(allocator: std.mem.Allocator, arrays: []v.Value, row_counts_value: ?v.Value) !sqlite.ParamBatch {
     const names = itemsOf(arrays[0]);
     const kinds = itemsOf(arrays[1]);
     const ints = itemsOf(arrays[2]);
     const floats = itemsOf(arrays[3]);
     const texts = itemsOf(arrays[4]);
-    const params = try allocator.alloc(sqlite.Param, kinds.len);
-    var copied: usize = 0;
-    errdefer {
-        sqlite.freeParams(allocator, params[0..copied]);
+    var total_bytes: usize = 0;
+    var text_count: usize = 0;
+    for (kinds, names) |kind_value, name_value| {
+        total_bytes += textOf(name_value).len + 2;
+        if (@as(sqlite.Param.Kind, @enumFromInt(kind_value.int64)) == .text) {
+            total_bytes += textOf(texts[text_count]).len;
+            text_count += 1;
+        }
     }
+    const items = try allocator.alloc(sqlite.Param, kinds.len);
+    errdefer allocator.free(items);
+    const bytes = try allocator.alloc(u8, total_bytes);
+    errdefer allocator.free(bytes);
+    var row_counts: []usize = &.{};
+    if (row_counts_value) |value| {
+        const raw_counts = itemsOf(value);
+        row_counts = try allocator.alloc(usize, raw_counts.len);
+        for (raw_counts, row_counts) |item, *dest| {
+            dest.* = @intCast(item.int64);
+        }
+    }
+    errdefer if (row_counts.len > 0) allocator.free(row_counts);
+    var cursor: usize = 0;
     var next_int: usize = 0;
     var next_float: usize = 0;
     var next_text: usize = 0;
-    for (kinds, names, params) |kind_value, name_value, *param| {
-        const name = try std.fmt.allocPrintSentinel(allocator, ":{s}", .{textOf(name_value)}, 0);
+    for (kinds, names, items) |kind_value, name_value, *param| {
+        const raw_name = textOf(name_value);
+        const name_start = cursor;
+        bytes[cursor] = ':';
+        cursor += 1;
+        @memcpy(bytes[cursor..][0..raw_name.len], raw_name);
+        cursor += raw_name.len;
+        bytes[cursor] = 0;
+        const name = bytes[name_start..cursor :0];
+        cursor += 1;
         param.* = .{ .name = name, .kind = @enumFromInt(kind_value.int64) };
-        copied += 1;
         switch (param.kind) {
             .null => {},
             .int => {
@@ -216,12 +262,16 @@ fn copyParams(allocator: std.mem.Allocator, arrays: []v.Value) ![]sqlite.Param {
                 next_float += 1;
             },
             .text => {
-                param.text = try allocator.dupe(u8, textOf(texts[next_text]));
+                const raw_text = textOf(texts[next_text]);
+                const text_start = cursor;
+                @memcpy(bytes[cursor..][0..raw_text.len], raw_text);
+                cursor += raw_text.len;
+                param.text = bytes[text_start..cursor];
                 next_text += 1;
             },
         }
     }
-    return params;
+    return .{ .items = items, .bytes = bytes, .row_counts = row_counts };
 }
 
 fn itemsOf(value: v.Value) []v.Value {

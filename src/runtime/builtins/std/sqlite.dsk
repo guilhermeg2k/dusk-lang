@@ -51,6 +51,10 @@ struct Tx
         return try run_execute_with[P, S](self.handle, sql, params, true, timeout_ms, diagnostic)
     end
 
+    func execute_many[P, S: schema](self: @, sql: string, rows: []P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute_many[P, S](self.handle, sql, rows, true, timeout_ms, diagnostic)
+    end
+
     func query[T, S: schema](self: @, sql: string, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
         let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, timeout_ms, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
@@ -84,6 +88,10 @@ struct Database
 
     func execute_with[P, S: schema](self: @, sql: string, params: P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
         return try run_execute_with[P, S](self.handle, sql, params, false, timeout_ms, diagnostic)
+    end
+
+    func execute_many[P, S: schema](self: @, sql: string, rows: []P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute_many[P, S](self.handle, sql, rows, false, timeout_ms, diagnostic)
     end
 
     func query[T, S: schema](self: @, sql: string, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
@@ -363,6 +371,24 @@ func ~run_execute_with[P, S: schema](handle: int, sql: string, params: P, is_in_
     return Changes(rows = numbers[0], last_id = numbers[1])
 end
 
+func ~run_execute_many[P, S: schema](handle: int, sql: string, rows: []P, is_in_transaction: bool, timeout_ms: int, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
+    let mut writer = ParamWriter()
+    let mut counts: []int = []
+    for rows: row do
+        let before = len(writer.kinds)
+        serialization::encode[P, ParamWriter, S](row, writer) catch e then
+            describe_message(diagnostic, "parameters must be a struct whose fields are ints, floats, bools, strings, enums or nullables of them")
+            return SqliteError.TypeMismatch
+        end
+        append(counts, len(writer.kinds) - before)
+    end
+    let numbers = execute_many_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, counts, is_in_transaction, timeout_ms) catch e then
+        describe_failure(diagnostic)
+        return e
+    end
+    return Changes(rows = numbers[0], last_id = numbers[1])
+end
+
 func ~params_of[P, S: schema](params: P, mut diagnostic: ?Diagnostic) -> SqliteError!ParamWriter
     let mut writer = ParamWriter()
     serialization::encode[P, ParamWriter, S](params, writer) catch e then
@@ -439,6 +465,7 @@ extern func version() -> string
 extern func ~open_handle(path: string, journal: Journal, foreign_keys: bool, busy_timeout_ms: int, read_only: bool, create: bool) -> SqliteError!int
 extern func ~execute_handle(handle: int, sql: string, is_in_transaction: bool, timeout_ms: int) -> SqliteError![]int
 extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, is_in_transaction: bool, timeout_ms: int) -> SqliteError![]int
+extern func ~execute_many_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, row_counts: []int, is_in_transaction: bool, timeout_ms: int) -> SqliteError![]int
 extern func ~query_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, max_bytes: int, is_in_transaction: bool, timeout_ms: int) -> SqliteError!int
 extern func ~begin_handle(handle: int) -> SqliteError!void
 extern func ~commit_handle(handle: int) -> SqliteError!void
