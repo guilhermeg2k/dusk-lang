@@ -271,6 +271,11 @@ pub const CompileErrorReporter = struct {
         return error.NotMutable;
     }
 
+    pub fn variableNotInitialized(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "'{s}' may not be initialized here", .{identifier}), loc);
+        return error.VariableNotInitialized;
+    }
+
 
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
@@ -1250,6 +1255,7 @@ pub const CompileError = error{
     ReservedTypeName,
     CantAssignThroughOptionalChain,
     CyclicDefault,
+    VariableNotInitialized,
 };
 
 const std = @import("std");

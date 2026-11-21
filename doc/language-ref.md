@@ -73,6 +73,18 @@ let name = "Dusk"
 let count: int = 100
 ```
 
+A local variable with a type annotation can also be declared without an initial value and assigned later. The compiler checks that every path reaching a read has assigned it; an immutable `let` can be assigned once per path (and not inside a loop when declared outside it), while `let mut` can be reassigned freely afterward.
+
+```nim
+let user: User
+if is_admin then
+    user = load_admin()
+else
+    user = load_guest()
+end
+io::println(user.name)
+```
+
 Variables are immutable by default. Add `mut` to allow reassignment.
 
 ```nim

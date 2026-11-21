@@ -2613,7 +2613,7 @@ test "string escapes decode into UTF-8 literals" {
         const tokens = try lexer.list();
         var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
-        const decoded = root.statements.items[0].data.let.value.data.string_literal;
+        const decoded = root.statements.items[0].data.let.value.?.data.string_literal;
         try testing.expectEqualStrings(case.expected, decoded);
         try testing.expect(std.unicode.utf8ValidateSlice(decoded));
     }
@@ -2640,7 +2640,7 @@ test "multiline strings strip the closing indentation" {
         const tokens = try lexer.list();
         var parser = @import("compiler/parser.zig").Parser.init(arena.allocator(), source, tokens.items);
         const root = try parser.parse();
-        try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.data.string_literal);
+        try testing.expectEqualStrings(case.expected, root.statements.items[0].data.let.value.?.data.string_literal);
     }
 }
 
@@ -2985,6 +2985,17 @@ fn runCaseRuntimeError(src_file: []const u8, expected: anytype) !void {
 
 test "a name starting with a builtin's name" {
     try runCase("builtin-name-prefix.dsk");
+}
+
+test "definite assignment allows deferred initialization on all paths and rejects uninitialized use" {
+    try runCase("definite-assignment.dsk");
+    try runCaseError("sema/definite-assignment-read-unassigned.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-partial-if.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-immutable-reassign.dsk", error.NotMutable);
+    try runCaseError("sema/definite-assignment-immutable-in-loop.dsk", error.NotMutable);
+    try runCaseError("sema/definite-assignment-capture-before-init.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-defer-before-init.dsk", error.VariableNotInitialized);
+    try runCaseError("sema/definite-assignment-top-level.dsk", error.TopLevelLetNotConstant);
 }
 
 test "fibonacci" {

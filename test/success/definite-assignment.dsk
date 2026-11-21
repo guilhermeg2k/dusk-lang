@@ -1,0 +1,111 @@
+import std/array: append, len
+
+enum Role
+    Admin
+    Member
+end
+
+struct User
+    name: string
+    role: Role
+end
+
+error LoadError
+    Missing
+end
+
+func maybe_name(should_fail: bool) -> LoadError!string
+    if should_fail then
+        return LoadError.Missing
+    end
+    return "Cy"
+end
+
+func early_exit_init(flag: bool) -> User
+    let user: User
+    if flag then
+        return User(name = "Early", role = Role.Admin)
+    end
+    user = User(name = "Normal", role = Role.Member)
+    return user
+end
+
+func branch_exit_init(flag: bool) -> int
+    let value: int
+    if flag then
+        value = 42
+    else
+        return -1
+    end
+    return value
+end
+
+func catch_exit_init(should_fail: bool) -> string
+    let user: User
+    let name = maybe_name(should_fail) catch _ then
+        return "fallback"
+    end
+    user = User(name = name, role = Role.Member)
+    return user.name
+end
+
+func main() -> void
+    let x: int
+    x = 10
+    assert(x == 10)
+
+    let user: User
+    let mut garbage: []string = []
+    for 1..2000: i do
+        append(garbage, "item $i")
+    end
+    assert(len(garbage) == 2000)
+    if true then
+        user = User(name = "Ana", role = Role.Admin)
+    else
+        user = User(name = "Bo", role = Role.Member)
+    end
+    assert(user.name == "Ana" and user.role == Role.Admin)
+
+    assert(early_exit_init(true).name == "Early")
+    assert(early_exit_init(false).name == "Normal")
+    assert(branch_exit_init(true) == 42)
+    assert(branch_exit_init(false) == -1)
+    assert(catch_exit_init(true) == "fallback")
+    assert(catch_exit_init(false) == "Cy")
+
+    let label: string
+    when user.role
+        Role.Admin then label = "admin" end
+        Role.Member then label = "member" end
+    end
+    assert(label == "admin")
+
+    let maybe_user: ?User = User(name = "Di", role = Role.Member)
+    let picked: string
+    if maybe_user: found then
+        picked = found.name
+    else
+        picked = "none"
+    end
+    assert(picked == "Di")
+
+    let mut opt: ?User
+    if false then
+        opt = User(name = "Eli", role = Role.Admin)
+    else
+        opt = null
+    end
+    assert(opt == null)
+
+    let mut counter: int
+    if false then
+        counter = 1
+    end
+    counter = 5
+    let read_counter = func() -> int
+        return counter
+    end
+    counter = counter + 2
+    assert(read_counter() == 7)
+end

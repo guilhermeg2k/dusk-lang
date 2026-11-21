@@ -144,10 +144,10 @@ pub const Parser = struct {
             },
             .let_kw => {
                 const file_only_refusal: ?[]const u8 = if (self.block_depth == 1) null else "local variables already exist only inside their function";
-                const let_stmt_value = try self.parseLetStmt(file_only_refusal);
+                const let_stmt_value = try self.parseLetStmt(file_only_refusal, false);
                 return ast.StatementNode{
                     .data = .{ .let = let_stmt_value },
-                    .loc = .{ .start = tk.loc.start, .end = let_stmt_value.value.loc.end },
+                    .loc = .{ .start = tk.loc.start, .end = if (let_stmt_value.value) |value| value.loc.end else self.tokens[self.cur_index - 1].loc.end },
                 };
             },
             .func_kw => {
@@ -271,7 +271,7 @@ pub const Parser = struct {
         }
     }
 
-    fn parseLetStmt(self: *Self, file_only_refusal: ?[]const u8) !ast.LetStmt {
+    fn parseLetStmt(self: *Self, file_only_refusal: ?[]const u8, must_have_value: bool) !ast.LetStmt {
         self.walk();
         const is_mutable = self.match(.mut_kw);
         const is_file_only = try self.matchFileOnly(file_only_refusal);
@@ -283,8 +283,13 @@ pub const Parser = struct {
             type_annotation = try self.parseTypeAnnotation(false);
         }
 
-        _ = try self.expect(.eq);
-        const value = try self.parseExp(0);
+        const needs_value = must_have_value or !has_type_annotation;
+        var value: ?*ast.ExpNode = null;
+        if (self.match(.eq)) {
+            value = try self.parseExp(0);
+        } else if (needs_value) {
+            _ = try self.expect(.eq);
+        }
 
         return ast.LetStmt{
             .identifier = identifier_token.value(self.src),
@@ -820,12 +825,12 @@ pub const Parser = struct {
             switch (tk.tag) {
                 .schema_kw => try schema_sections.append(self.allocator, try self.parseSchemaSection()),
                 .let_kw => {
-                    const let_stmt = try self.parseLetStmt(static_field_refusal);
+                    const let_stmt = try self.parseLetStmt(static_field_refusal, true);
                     try static_fields.append(self.allocator, .{
                         .identifier = let_stmt.identifier,
                         .is_mut = let_stmt.is_mut,
                         .type = let_stmt.type_annotation,
-                        .default_value = let_stmt.value,
+                        .default_value = let_stmt.value.?,
                     });
                 },
                 .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
@@ -958,12 +963,12 @@ pub const Parser = struct {
                 },
                 .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .let_kw => {
-                    const let_stmt = try self.parseLetStmt(static_field_refusal);
+                    const let_stmt = try self.parseLetStmt(static_field_refusal, true);
                     try static_fields.append(self.allocator, .{
                         .identifier = let_stmt.identifier,
                         .is_mut = let_stmt.is_mut,
                         .type = let_stmt.type_annotation,
-                        .default_value = let_stmt.value,
+                        .default_value = let_stmt.value.?,
                     });
                 },
                 .end_kw => {
@@ -1005,12 +1010,12 @@ pub const Parser = struct {
                 },
                 .func_kw => try funcs.append(self.allocator, try self.parseMethod()),
                 .let_kw => {
-                    const let_stmt = try self.parseLetStmt(static_field_refusal);
+                    const let_stmt = try self.parseLetStmt(static_field_refusal, true);
                     try static_fields.append(self.allocator, .{
                         .identifier = let_stmt.identifier,
                         .is_mut = let_stmt.is_mut,
                         .type = let_stmt.type_annotation,
-                        .default_value = let_stmt.value,
+                        .default_value = let_stmt.value.?,
                     });
                 },
                 .end_kw => {

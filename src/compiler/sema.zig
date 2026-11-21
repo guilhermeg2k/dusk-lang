@@ -90,6 +90,8 @@ pub const SemaAnalyzer = struct {
     derived_function_aliases: std.AutoHashMapUnmanaged(usize, []const u8) = .empty,
     proxy_converter_count: usize = 0,
     proxy_encoders: std.AutoHashMapUnmanaged(ProxyEncoderKey, ir.SiteFunction) = .empty,
+    var_init_states: std.AutoHashMapUnmanaged(usize, InitState) = .empty,
+    var_decl_loop_depth: std.AutoHashMapUnmanaged(usize, usize) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var type_table = try tt.TypeTable.init(allocator);
@@ -411,7 +413,8 @@ pub const SemaAnalyzer = struct {
             if (isDeclaration(stmt.data)) continue;
             if (stmt.data != .let) return self.err_reporter.statementOutsideMain(stmt.loc);
             const let_stmt = stmt.data.let;
-            if (self.constant_by_exp.contains(let_stmt.value)) continue;
+            const value = let_stmt.value orelse return self.err_reporter.topLevelLetNotConstant(let_stmt.identifier, stmt.loc);
+            if (self.constant_by_exp.contains(value)) continue;
             return self.err_reporter.topLevelLetNotConstant(let_stmt.identifier, stmt.loc);
         }
     }
@@ -780,7 +783,7 @@ pub const SemaAnalyzer = struct {
             if (!self.isConstantCandidate(let_stmt)) continue;
             const index = self.constants.items.len;
             try self.constants.append(self.allocator, .{ .let_stmt = let_stmt, .loc = stmt.loc, .module = self.module });
-            try self.constant_by_exp.put(self.allocator, let_stmt.value, index);
+            try self.constant_by_exp.put(self.allocator, let_stmt.value.?, index);
             self.scope.symbol_table.put(.{
                 .identifier = let_stmt.identifier,
                 .uid = self.scope.genUid(),
@@ -834,10 +837,11 @@ pub const SemaAnalyzer = struct {
 
     fn isConstantCandidate(self: *Self, let_stmt: ast.LetStmt) bool {
         if (let_stmt.is_mut) return false;
+        const value = let_stmt.value orelse return false;
         if (let_stmt.type_annotation) |annotation| {
             if (annotation.is_nullable or annotation.type == .array or annotation.type == .anonymous_struct) return false;
         }
-        return self.isConstantExp(let_stmt.value);
+        return self.isConstantExp(value);
     }
 
     fn isConstantExp(self: *Self, exp: *const ast.ExpNode) bool {
@@ -911,19 +915,20 @@ pub const SemaAnalyzer = struct {
         defer self.scope.symbol_table = saved_table;
 
         const annotated_type_id = if (constant.let_stmt.type_annotation) |annotation| try self.resolveTypeAnnotation(annotation, null) else null;
-        var value = try self.evalExpExpecting(constant.let_stmt.value, annotated_type_id);
+        const value_exp = constant.let_stmt.value.?;
+        var value = try self.evalExpExpecting(value_exp, annotated_type_id);
         if (annotated_type_id) |type_id| {
-            if (!try self.canCoerce(value.type_id, type_id, constant.let_stmt.value.loc)) {
+            if (!try self.canCoerce(value.type_id, type_id, value_exp.loc)) {
                 return self.err_reporter.invalidType(
                     try self.type_table.name(type_id, self.allocator),
                     try self.type_table.name(value.type_id, self.allocator),
-                    constant.let_stmt.value.loc,
+                    value_exp.loc,
                 );
             }
             if (value.type_id != type_id) value = try ir.Value.init(self.allocator, .{ .data = value.data, .type_id = type_id });
         }
         if (!self.isConstantType(value.type_id)) {
-            return self.err_reporter.invalidConstantType(constant.let_stmt.identifier, try self.type_table.name(value.type_id, self.allocator), constant.let_stmt.value.loc);
+            return self.err_reporter.invalidConstantType(constant.let_stmt.identifier, try self.type_table.name(value.type_id, self.allocator), value_exp.loc);
         }
 
         self.constants.items[index].value = value;
@@ -1493,6 +1498,8 @@ pub const SemaAnalyzer = struct {
             self.deferred_depth -= 1;
             self.deferred_loop_floor = saved_floor;
         }
+        const saved_init_states = try self.snapshotInitStates();
+        defer self.var_init_states = saved_init_states;
         var statements: std.ArrayList(ast.StatementNode) = .empty;
         try statements.append(self.allocator, defer_stmt.statement.*);
         const lowered = try self.visitBlock(&.{ .statements = statements });
@@ -1791,7 +1798,14 @@ pub const SemaAnalyzer = struct {
                 defer self.scope.exit(self.scope.return_type_id);
                 try self.scope.symbol_table.put(captured_symbol);
 
+                const before_catch = try self.snapshotInitStates();
                 const body = try self.visitBlock(&block.body);
+                const catch_states = self.var_init_states;
+                const catch_leaves = isBlockLeaving(body.block);
+                try self.mergeInitStates(&before_catch, &.{
+                    .{ .states = before_catch, .is_leaving = false },
+                    .{ .states = catch_states, .is_leaving = catch_leaves },
+                });
                 const is_value_used = !is_statement and payload != self.type_table.getPrimitive(.void);
                 if (is_value_used and !isBlockLeaving(body.block)) {
                     return self.err_reporter.catchBlockMustLeave(exp.loc);
@@ -1835,9 +1849,11 @@ pub const SemaAnalyzer = struct {
         var var_type_id: tt.TypeId = undefined;
         const let_stmt = stmt.data.let;
 
-        if (self.constant_by_exp.get(let_stmt.value)) |index| {
-            _ = try self.resolveConstant(index);
-            return null;
+        if (let_stmt.value) |value_exp| {
+            if (self.constant_by_exp.get(value_exp)) |index| {
+                _ = try self.resolveConstant(index);
+                return null;
+            }
         }
 
         const annotated_type_id = if (let_stmt.type_annotation) |type_annotation|
@@ -1845,9 +1861,30 @@ pub const SemaAnalyzer = struct {
         else
             null;
 
+        const value_exp = let_stmt.value orelse {
+            const type_id = annotated_type_id.?;
+            const uid = self.scope.genUid();
+            self.scope.symbol_table.put(.{
+                .identifier = let_stmt.identifier,
+                .uid = uid,
+                .type_id = type_id,
+                .kind = .{ .variable = .{ .is_mut = let_stmt.is_mut } },
+            }) catch {
+                return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
+            };
+            try self.var_init_states.put(self.allocator, uid, .unassigned);
+            try self.var_decl_loop_depth.put(self.allocator, uid, self.loop_starts.items.len);
+            return ir.Instruction{ .store_var = .{
+                .uid = uid,
+                .identifier = let_stmt.identifier,
+                .type_id = type_id,
+                .value = try ir.Value.init(self.allocator, .{ .data = .{ .i_null = {} }, .type_id = type_id }),
+            } };
+        };
+
         const saved_binding = self.lambda_binding;
-        self.lambda_binding = if (let_stmt.value.data == .lambda) let_stmt.identifier else null;
-        const expression_value = try self.evalExpExpecting(let_stmt.value, annotated_type_id);
+        self.lambda_binding = if (value_exp.data == .lambda) let_stmt.identifier else null;
+        const expression_value = try self.evalExpExpecting(value_exp, annotated_type_id);
         self.lambda_binding = saved_binding;
         const expression_type_id = expression_value.type_id;
 
@@ -1857,11 +1894,11 @@ pub const SemaAnalyzer = struct {
             var_type_id = expression_type_id;
             const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
             if (var_type_ptr.kind == .array and self.type_table.getTypePtrById(var_type_ptr.kind.array).kind == .unknown) {
-                return self.err_reporter.cantInferArrayLiteralType(let_stmt.value.loc);
+                return self.err_reporter.cantInferArrayLiteralType(value_exp.loc);
             }
         }
 
-        const boxed_value = try self.coerceValue(expression_value, var_type_id, stmt.data.let.value.loc);
+        const boxed_value = try self.coerceValue(expression_value, var_type_id, value_exp.loc);
 
         const expr_type = self.type_table.getTypePtrById(expression_type_id);
         if (expr_type.kind == .array and self.type_table.getTypePtrById(expr_type.kind.array).kind == .unknown) {
@@ -1879,7 +1916,7 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.alreadyDefined(let_stmt.identifier, stmt.loc);
         };
         if (let_stmt.is_mut) {
-            try self.ensureNotReadOnlySource(let_stmt.value);
+            try self.ensureNotReadOnlySource(value_exp);
         }
 
         return ir.Instruction{ .store_var = .{
@@ -3128,10 +3165,21 @@ pub const SemaAnalyzer = struct {
             return .{ .block = (try self.visitBranchBlock(&else_block, null)).block };
         }
 
+        const before_if = try self.snapshotInitStates();
+        const then_visited = try self.visitBranchBlock(&if_stmt.then_block, result);
+        const then_states = self.var_init_states;
+        self.var_init_states = try cloneInitStates(self.allocator, &before_if);
+        const else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{};
+        const else_states = self.var_init_states;
+        try self.mergeInitStates(&before_if, &.{
+            .{ .states = then_states, .is_leaving = isBlockLeaving(then_visited.block) },
+            .{ .states = else_states, .is_leaving = if (if_stmt.else_block != null) isBlockLeaving(else_block) else false },
+        });
+
         return ir.Instruction{ .branch_if = .{
             .condition = condition_value,
-            .then_block = (try self.visitBranchBlock(&if_stmt.then_block, result)).block,
-            .else_block = if (if_stmt.else_block) |else_blc| (try self.visitBranchBlock(&else_blc, result)).block else &.{},
+            .then_block = then_visited.block,
+            .else_block = else_block,
         } };
     }
 
@@ -3172,13 +3220,24 @@ pub const SemaAnalyzer = struct {
             } }
         else
             .{ .store_var = .{ .uid = captured_symbol.uid, .identifier = captured_symbol.identifier, .type_id = captured_type_id, .value = subject_ref } });
+        const before_if = try self.snapshotInitStates();
+        var then_leaves = false;
         {
             try self.scope.enter(self.scope.return_type_id);
             defer self.scope.exit(self.scope.return_type_id);
             try self.scope.symbol_table.put(captured_symbol);
-            try then_instructions.appendSlice(self.allocator, (try self.visitBranchBlock(&capture.body, result)).block);
+            const visited = try self.visitBranchBlock(&capture.body, result);
+            then_leaves = isBlockLeaving(visited.block);
+            try then_instructions.appendSlice(self.allocator, visited.block);
         }
+        const then_states = self.var_init_states;
+        self.var_init_states = try cloneInitStates(self.allocator, &before_if);
         const else_instructions = if (capture.else_block) |else_block| (try self.visitBranchBlock(&else_block, result)).block else &.{};
+        const else_states = self.var_init_states;
+        try self.mergeInitStates(&before_if, &.{
+            .{ .states = then_states, .is_leaving = then_leaves },
+            .{ .states = else_states, .is_leaving = if (capture.else_block != null) isBlockLeaving(else_instructions) else false },
+        });
         const condition = if (unboxed_read) |read| read.found else try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = subject_ref } },
             .type_id = self.type_table.getPrimitive(.boolean),
@@ -3207,15 +3266,21 @@ pub const SemaAnalyzer = struct {
         var default_block: ir.Block = &.{};
         var null_body: ?ir.Block = null;
 
+        const before_when = try self.snapshotInitStates();
+        var branch_states: std.ArrayList(BranchInitState) = .empty;
         for (when_stmt.prongs, 0..) |*prong, prong_idx| {
+            self.var_init_states = try cloneInitStates(self.allocator, &before_when);
             const lowered = switch (prong.pattern) {
                 .null_case => {
-                    null_body = (try self.visitBranchBlock(&prong.body, result)).block;
+                    const visited = try self.visitBranchBlock(&prong.body, result);
+                    null_body = visited.block;
+                    try branch_states.append(self.allocator, .{ .states = self.var_init_states, .is_leaving = isBlockLeaving(visited.block) });
                     continue;
                 },
                 .variant => try self.lowerWhenVariantProng(prong, subject, refs.unwrapped, result),
                 .values => try self.lowerWhenValuesProng(prong, prongs.values[prong_idx], prongs.ranges[prong_idx], refs.unwrapped, result),
             };
+            try branch_states.append(self.allocator, .{ .states = self.var_init_states, .is_leaving = isBlockLeaving(lowered.body) });
             if (unconditional_prong_idx == prong_idx) {
                 default_block = lowered.body;
                 continue;
@@ -3223,7 +3288,16 @@ pub const SemaAnalyzer = struct {
             case_of_prong[prong_idx] = cases.items.len;
             try cases.append(self.allocator, .{ .condition = lowered.condition, .body = lowered.body });
         }
-        if (when_stmt.else_block) |else_block| default_block = (try self.visitBranchBlock(&else_block, result)).block;
+        if (when_stmt.else_block) |else_block| {
+            self.var_init_states = try cloneInitStates(self.allocator, &before_when);
+            default_block = (try self.visitBranchBlock(&else_block, result)).block;
+            try branch_states.append(self.allocator, .{ .states = self.var_init_states, .is_leaving = isBlockLeaving(default_block) });
+        }
+        const is_when_exhaustive = when_stmt.else_block != null or unconditional_prong_idx != null or subject.base_kind == .@"enum" or subject.base_kind == .@"union" or subject.base_kind == .boolean or self.type_table.isErrorSet(subject.base_type);
+        if (!is_when_exhaustive) {
+            try branch_states.append(self.allocator, .{ .states = before_when, .is_leaving = false });
+        }
+        try self.mergeInitStates(&before_when, branch_states.items);
 
         const null_check: ?*ir.Value = if (subject.is_nullable) try ir.Value.init(self.allocator, .{
             .data = .{ .unary_op = .{ .kind = .box_not_null, .right = refs.subject } },
@@ -3764,13 +3838,28 @@ pub const SemaAnalyzer = struct {
 
                 const assignment_value = try self.evalExpExpecting(assign_stmt.exp, id_symbol.type_id);
 
+                const init_state = self.var_init_states.getPtr(id_symbol.uid);
+                const is_outer = self.outerVariableContext(id_symbol) != null;
                 if (!id_symbol.kind.variable.is_mut) {
-                    return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                    const state = init_state orelse return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                    const decl_loop_depth = self.var_decl_loop_depth.get(id_symbol.uid) orelse 0;
+                    const can_init_immutable = state.* == .unassigned and !is_outer and self.deferred_depth == 0 and self.loop_starts.items.len == decl_loop_depth;
+                    if (!can_init_immutable) {
+                        return self.err_reporter.notMutable(id, assign_stmt.target.loc);
+                    }
+                    state.* = .assigned;
+                } else {
+                    if (id_symbol.kind.variable.is_borrowed) {
+                        return self.err_reporter.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
+                    }
+                    if (init_state) |state| {
+                        if (is_outer and state.* != .assigned) {
+                            return self.err_reporter.variableNotInitialized(id, assign_stmt.target.loc);
+                        }
+                        state.* = .assigned;
+                    }
+                    try self.ensureNotReadOnlySource(assign_stmt.exp);
                 }
-                if (id_symbol.kind.variable.is_borrowed) {
-                    return self.err_reporter.mutBorrowCantBeReassigned(id, assign_stmt.target.loc);
-                }
-                try self.ensureNotReadOnlySource(assign_stmt.exp);
 
                 const boxed_value = try self.coerceValue(assignment_value, id_symbol.type_id, assign_stmt.exp.loc);
 
@@ -3904,9 +3993,15 @@ pub const SemaAnalyzer = struct {
             );
         }
 
+        const before_loop = try self.snapshotInitStates();
         try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
         const block = try self.visitBlock(&for_stmt.do_block);
         _ = self.loop_starts.pop();
+        const body_states = self.var_init_states;
+        try self.mergeInitStates(&before_loop, &.{
+            .{ .states = before_loop, .is_leaving = false },
+            .{ .states = body_states, .is_leaving = false },
+        });
 
         return ir.Instruction{ .loop = .{
             .condition = condition_value,
@@ -3939,9 +4034,15 @@ pub const SemaAnalyzer = struct {
         defer self.scope.exit(self.scope.return_type_id);
         _ = try self.bindLoopCapture(&body, capture.item, item, capture.is_item_mut, loc);
         if (capture.index) |name| _ = try self.bindLoopCapture(&body, name, index, false, loc);
+        const before_loop = try self.snapshotInitStates();
         try self.loop_starts.append(self.allocator, self.defer_scopes.items.len);
         defer _ = self.loop_starts.pop();
         try body.appendSlice(self.allocator, (try self.visitBlock(&capture.do_block)).block);
+        const body_states = self.var_init_states;
+        try self.mergeInitStates(&before_loop, &.{
+            .{ .states = before_loop, .is_leaving = false },
+            .{ .states = body_states, .is_leaving = false },
+        });
         return body.toOwnedSlice(self.allocator);
     }
 
@@ -7020,6 +7121,13 @@ pub const SemaAnalyzer = struct {
                 try self.ensureSignature(symbol.type_id);
                 return self.evalFuncRef(symbol.type_id, exp.loc);
             }
+            if (symbol.kind == .variable) {
+                if (self.var_init_states.get(symbol.uid)) |state| {
+                    if (state != .assigned) {
+                        return self.err_reporter.variableNotInitialized(symbol.identifier, exp.loc);
+                    }
+                }
+            }
             if (self.outerVariableContext(symbol)) |context_index| {
                 return self.evalCaptureRef(context_index, symbol, exp.loc);
             }
@@ -8031,7 +8139,63 @@ pub const SemaAnalyzer = struct {
             .not => .not,
         };
     }
+
+    fn snapshotInitStates(self: *Self) CompileError!InitStateMap {
+        return cloneInitStates(self.allocator, &self.var_init_states);
+    }
+
+    fn mergeInitStates(self: *Self, before: *const InitStateMap, branches: []const BranchInitState) CompileError!void {
+        var merged: InitStateMap = .empty;
+        var entries = before.iterator();
+        while (entries.next()) |entry| {
+            const uid = entry.key_ptr.*;
+            var has_non_leaving = false;
+            var all_assigned = true;
+            var all_unassigned = true;
+            for (branches) |branch| {
+                if (branch.is_leaving) continue;
+                has_non_leaving = true;
+                const state = branch.states.get(uid) orelse entry.value_ptr.*;
+                if (state != .assigned) {
+                    all_assigned = false;
+                }
+                if (state != .unassigned) {
+                    all_unassigned = false;
+                }
+            }
+            const next_state: InitState = if (!has_non_leaving)
+                entry.value_ptr.*
+            else if (all_assigned)
+                .assigned
+            else if (all_unassigned)
+                .unassigned
+            else
+                .maybe_assigned;
+            try merged.put(self.allocator, uid, next_state);
+        }
+        self.var_init_states = merged;
+    }
 };
+
+const InitState = enum {
+    unassigned,
+    maybe_assigned,
+    assigned,
+};
+
+const InitStateMap = std.AutoHashMapUnmanaged(usize, InitState);
+
+const BranchInitState = struct {
+    states: InitStateMap,
+    is_leaving: bool,
+};
+
+fn cloneInitStates(allocator: std.mem.Allocator, source: *const InitStateMap) CompileError!InitStateMap {
+    if (source.count() == 0) {
+        return .empty;
+    }
+    return source.clone(allocator);
+}
 
 const ErrorEdge = struct {
     from: tt.TypeId,

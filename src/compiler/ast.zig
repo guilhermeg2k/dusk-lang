@@ -165,7 +165,7 @@ pub const LetStmt = struct {
     is_mut: bool,
     is_file_only: bool = false,
     type_annotation: ?*TypeAnnotation,
-    value: *ExpNode,
+    value: ?*ExpNode,
 };
 
 pub const IfStmt = struct {
