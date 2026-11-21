@@ -4429,3 +4429,9 @@ test "cr phase 1: defer re-emission, return try errdefer, when gc, anonymous nul
     try runCaseError("sema/cyclic-struct-default.dsk", error.CyclicDefault);
     try runCaseError("sema/cyclic-param-default.dsk", error.CyclicDefault);
 }
+
+test "cr phase 2: generic methods, optional chain calls, lambda hints, errdefer lambdas, forward defaults, catch inference" {
+    try runCase("compiler-phase2-edge-cases.dsk");
+    try runCaseError("sema/errdefer-inferred-lambda.dsk", error.ErrdeferOutsideFailingFunction);
+    try runCaseError("sema/copy-unknown-named-arg.dsk", error.UnknownArgumentName);
+}

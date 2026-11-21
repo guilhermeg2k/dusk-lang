@@ -1639,7 +1639,6 @@ pub const Parser = struct {
                     node = try ast.ExpNode.init(self.allocator, .{
                         .data = .{
                             .fn_call = .{
-                                .are_arguments_named = ast.areAllArgumentsNamed(args),
                                 .target = node,
                                 .arguments = args,
                             },
@@ -1691,7 +1690,8 @@ pub const Parser = struct {
     fn parseIndexAccess(self: *Self, target: *ast.ExpNode, is_nullable: bool) CompileError!*ast.ExpNode {
         const bracket_index = self.cur_index;
         const can_start_type = switch (self.peekNext().tag) {
-            .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw, .question_mark, .at, .func_kw => true,
+            .int_kw, .byte_kw, .float_kw, .bool_kw, .void_kw, .question_mark, .func_kw => true,
+            .at => self.peekNextN(2).tag != .l_paren,
             .string_kw, .buffer_kw => self.peekNextN(2).tag != .double_colon,
             .l_bracket => self.peekNextN(2).tag == .r_bracket,
             else => false,

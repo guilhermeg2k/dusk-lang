@@ -1,0 +1,5 @@
+func main() -> void
+    let x = [1, 2]
+    let y = copy(bogus = x)
+    assert(y[0] == 1)
+end
