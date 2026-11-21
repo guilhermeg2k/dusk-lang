@@ -51,13 +51,24 @@ pub fn decompressAll(allocator: std.mem.Allocator, format: Format, input: []cons
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
     const limit = if (max) |bytes| bytes +| 1 else std.math.maxInt(usize);
-    try output.ensureTotalCapacity(allocator, @min(@max(input.len *| 4, first_output_capacity), limit));
+    const first_capacity = @min(@max(input.len *| 4, first_output_capacity), limit);
+    if (max != null) {
+        try output.ensureTotalCapacityPrecise(allocator, first_capacity);
+    } else {
+        try output.ensureTotalCapacity(allocator, first_capacity);
+    }
     var rest = input;
     while (true) {
         if (output.items.len == output.capacity) {
-            try output.ensureTotalCapacity(allocator, @min(output.capacity *| 2, limit));
+            const next_capacity = @min(output.capacity *| 2, limit);
+            if (max != null) {
+                try output.ensureTotalCapacityPrecise(allocator, next_capacity);
+            } else {
+                try output.ensureTotalCapacity(allocator, next_capacity);
+            }
         }
-        const room = output.allocatedSlice()[output.items.len..];
+        const raw_room = output.allocatedSlice()[output.items.len..];
+        const room = raw_room[0..@min(raw_room.len, limit - output.items.len)];
         var consumed: usize = 0;
         var produced: usize = 0;
         const status = dusk_zip_decompress(zip, rest.ptr, rest.len, room.ptr, room.len, &consumed, &produced);
@@ -198,19 +209,32 @@ pub fn decompressPart(allocator: std.mem.Allocator, slot: *StreamTable.Slot, inp
         slot.is_at_end = false;
     }
     const limit = if (slot.max) |max| (max -| slot.produced) +| 1 else std.math.maxInt(usize);
-    try output.ensureTotalCapacity(allocator, @min(@max(input.len *| 4, first_part_capacity), limit));
+    const first_capacity = @min(@max(input.len *| 4, first_part_capacity), limit);
+    if (slot.max != null) {
+        try output.ensureTotalCapacityPrecise(allocator, first_capacity);
+    } else {
+        try output.ensureTotalCapacity(allocator, first_capacity);
+    }
     var rest = input;
     while (true) {
         if (output.items.len == output.capacity) {
-            try output.ensureTotalCapacity(allocator, @min(output.capacity *| 2, limit));
+            const next_capacity = @min(output.capacity *| 2, limit);
+            if (slot.max != null) {
+                try output.ensureTotalCapacityPrecise(allocator, next_capacity);
+            } else {
+                try output.ensureTotalCapacity(allocator, next_capacity);
+            }
         }
-        const room = output.unusedCapacitySlice();
+        const raw_room = output.unusedCapacitySlice();
+        const room = raw_room[0..@min(raw_room.len, limit - output.items.len)];
         var consumed: usize = 0;
         var produced: usize = 0;
         const status = dusk_zip_decompress(zip, rest.ptr, rest.len, room.ptr, room.len, &consumed, &produced);
         output.items.len += produced;
         rest = rest[consumed..];
         if (output.items.len >= limit) {
+            dusk_zip_free(slot.zip);
+            slot.zip = null;
             return error.TooLarge;
         }
         switch (status) {

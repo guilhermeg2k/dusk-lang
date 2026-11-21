@@ -14,9 +14,11 @@ pub const TlsLayer = struct {
     allocator: std.mem.Allocator,
     session: *tls.Session,
     owned_config: ?*tls.Config,
+    server_certificate: ?*ServerCertificate = null,
     role: Role,
     handshake: Handshake = .pending,
     handshake_failure: NetError = .HandshakeFailed,
+    handshake_bytes_received: usize = 0,
     handshake_waiters: std.ArrayList(HandshakeWaiter) = .empty,
     cipher_scratch: [cipher_chunk_size]u8 = undefined,
 
@@ -28,11 +30,12 @@ pub const TlsLayer = struct {
         return layer;
     }
 
-    pub fn createServer(allocator: std.mem.Allocator, config: *tls.Config) !*Self {
-        const session = tls.dusk_tls_session_new(config, null, 0) orelse return error.TlsSessionFailed;
+    pub fn createServer(allocator: std.mem.Allocator, certificate: *ServerCertificate) !*Self {
+        const session = tls.dusk_tls_session_new(certificate.config, null, 0) orelse return error.TlsSessionFailed;
         errdefer tls.dusk_tls_session_free(session);
         const layer = try allocator.create(Self);
-        layer.* = .{ .allocator = allocator, .session = session, .owned_config = null, .role = .server };
+        certificate.retain();
+        layer.* = .{ .allocator = allocator, .session = session, .owned_config = null, .server_certificate = certificate, .role = .server };
         return layer;
     }
 
@@ -44,6 +47,9 @@ pub const TlsLayer = struct {
         tls.dusk_tls_session_free(self.session);
         if (self.owned_config) |config| {
             tls.dusk_tls_config_free(config);
+        }
+        if (self.server_certificate) |certificate| {
+            certificate.release(self.allocator);
         }
         self.allocator.destroy(self);
     }
@@ -73,6 +79,7 @@ pub const HandshakeWaiter = struct {
 pub const ServerCertificate = struct {
     certificate: *tls.Certificate,
     config: *tls.Config,
+    refs: usize = 1,
 
     pub fn create(allocator: std.mem.Allocator, cert_pem: []const u8, key_pem: []const u8) CertificateError!*ServerCertificate {
         try ensureTlsReady();
@@ -86,6 +93,17 @@ pub const ServerCertificate = struct {
         const server_certificate = try allocator.create(ServerCertificate);
         server_certificate.* = .{ .certificate = certificate, .config = config };
         return server_certificate;
+    }
+
+    pub fn retain(self: *ServerCertificate) void {
+        self.refs += 1;
+    }
+
+    pub fn release(self: *ServerCertificate, allocator: std.mem.Allocator) void {
+        self.refs -= 1;
+        if (self.refs == 0) {
+            self.destroy(allocator);
+        }
     }
 
     pub fn destroy(self: *ServerCertificate, allocator: std.mem.Allocator) void {

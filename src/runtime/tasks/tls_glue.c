@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,16 +49,26 @@ typedef struct {
 } DuskTlsSession;
 
 static int byte_queue_append(ByteQueue *queue, const unsigned char *data, size_t length) {
+    if (length == 0) {
+        return DUSK_TLS_DONE;
+    }
     if (queue->offset > 0) {
         size_t remaining = queue->length - queue->offset;
         memmove(queue->bytes, queue->bytes + queue->offset, remaining);
         queue->length = remaining;
         queue->offset = 0;
     }
+    if (length > SIZE_MAX - queue->length) {
+        return DUSK_TLS_OUT_OF_MEMORY;
+    }
     size_t needed = queue->length + length;
     if (needed > queue->capacity) {
         size_t capacity = queue->capacity == 0 ? DUSK_TLS_FIRST_QUEUE_CAPACITY : queue->capacity;
         while (capacity < needed) {
+            if (capacity > SIZE_MAX / 2) {
+                capacity = needed;
+                break;
+            }
             capacity *= 2;
         }
         unsigned char *bytes = realloc(queue->bytes, capacity);
@@ -216,10 +227,11 @@ int dusk_tls_config_add_ca_der(DuskTlsConfig *config, const unsigned char *der, 
 
 static int send_to_output(void *context, const unsigned char *data, size_t length) {
     DuskTlsSession *session = context;
-    if (byte_queue_append(&session->output, data, length) != DUSK_TLS_DONE) {
+    size_t chunk = length > (size_t)INT_MAX ? (size_t)INT_MAX : length;
+    if (byte_queue_append(&session->output, data, chunk) != DUSK_TLS_DONE) {
         return MBEDTLS_ERR_SSL_ALLOC_FAILED;
     }
-    return (int)length;
+    return (int)chunk;
 }
 
 static int receive_from_input(void *context, unsigned char *buffer, size_t capacity) {
@@ -229,6 +241,9 @@ static int receive_from_input(void *context, unsigned char *buffer, size_t capac
         return MBEDTLS_ERR_SSL_WANT_READ;
     }
     size_t count = available < capacity ? available : capacity;
+    if (count > (size_t)INT_MAX) {
+        count = (size_t)INT_MAX;
+    }
     memcpy(buffer, session->input.bytes + session->input.offset, count);
     byte_queue_consume(&session->input, count);
     return (int)count;
@@ -252,6 +267,10 @@ DuskTlsSession *dusk_tls_session_new(DuskTlsConfig *config, const char *host, si
         return NULL;
     }
     if (host != NULL) {
+        if (memchr(host, 0, host_length) != NULL) {
+            dusk_tls_session_free(session);
+            return NULL;
+        }
         char *host_name = (char *)copy_with_terminator((const unsigned char *)host, host_length);
         int status = host_name == NULL ? -1 : mbedtls_ssl_set_hostname(&session->ssl, host_name);
         free(host_name);

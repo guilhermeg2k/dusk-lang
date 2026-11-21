@@ -33,7 +33,7 @@ pub const EventLoop = struct {
     callback_failure: ?anyerror = null,
     streams: HandleTable(Stream) = .{},
     listeners: HandleTable(Listener) = .{},
-    certificates: std.ArrayList(*ServerCertificate) = .empty,
+    certificates: HandleTable(ServerCertificate) = .{},
     trust_store: TrustStore = .{},
     connection_pool: ConnectionPool = .{},
     http_servers: std.ArrayList(ServerState) = .empty,
@@ -196,6 +196,7 @@ pub const EventLoop = struct {
             },
             .listener => self.closeListener(slot.handle),
             .compression => self.compression_streams.remove(slot.handle),
+            .certificate => self.closeCertificate(slot.handle),
         }
     }
 
@@ -242,22 +243,24 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn addCertificate(self: *Self, certificate: *ServerCertificate) !usize {
-        try self.certificates.append(self.allocator, certificate);
-        return self.certificates.items.len - 1;
+    pub fn addCertificate(self: *Self, certificate: *ServerCertificate) !i64 {
+        try self.certificates.reserve(self.allocator);
+        return self.certificates.addAssumeCapacity(certificate);
     }
 
     pub fn certificateAt(self: *Self, handle: i64) ?*ServerCertificate {
-        const is_valid = handle >= 0 and handle < self.certificates.items.len;
-        if (!is_valid) {
-            return null;
-        }
-        return self.certificates.items[@intCast(handle)];
+        return self.certificates.get(handle);
+    }
+
+    pub fn closeCertificate(self: *Self, handle: i64) void {
+        const certificate = self.certificates.remove(handle) orelse return;
+        certificate.release(self.allocator);
     }
 
     fn freeCertificates(self: *Self) void {
-        for (self.certificates.items) |certificate| {
-            certificate.destroy(self.allocator);
+        for (self.certificates.entries.items) |entry| {
+            const certificate = entry orelse continue;
+            certificate.release(self.allocator);
         }
         self.certificates.deinit(self.allocator);
         self.trust_store.deinit(self.allocator);

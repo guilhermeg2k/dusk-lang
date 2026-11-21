@@ -159,7 +159,9 @@ struct Reader[R: io::Reader]
             end
             try self.refill(timeout_ms)
         end
-        let stop = if self.held_at + max < buffer::len(self.held) then self.held_at + max else buffer::len(self.held) end
+        let remaining = buffer::len(self.held) - self.held_at
+        let take = if max < remaining then max else remaining end
+        let stop = self.held_at + take
         let part = buffer::slice(self.held, self.held_at, stop) catch e then
             return io::IoError.Other
         end
@@ -169,6 +171,7 @@ struct Reader[R: io::Reader]
 
     func close(mut self: @) -> void
         self.decompressor.close()
+        self.held_at = buffer::len(self.held)
         self.is_ended = true
     end
 

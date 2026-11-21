@@ -101,6 +101,7 @@ pub extern fn uv_loop_init(loop: *Loop) c_int;
 pub extern fn uv_loop_close(loop: *Loop) c_int;
 pub extern fn uv_run(loop: *Loop, mode: RunMode) c_int;
 pub extern fn uv_update_time(loop: *Loop) void;
+pub extern fn uv_now(loop: *const Loop) u64;
 pub extern fn uv_walk(loop: *Loop, callback: WalkCallback, arg: ?*anyopaque) void;
 
 // ---- Handles (shared by every handle type) ----

@@ -9,6 +9,7 @@ const WakeResult = @import("scheduler.zig").WakeResult;
 const FsJob = @import("fs_job.zig").FsJob;
 const tls = @import("tls.zig");
 const TlsLayer = @import("tls_layer.zig").TlsLayer;
+const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const HandshakeWaiter = @import("tls_layer.zig").HandshakeWaiter;
 const cipher_chunk_size = @import("tls_layer.zig").cipher_chunk_size;
 const netErrorFromHandshake = @import("tls_layer.zig").netErrorFromHandshake;
@@ -28,6 +29,7 @@ const tls_record_size = 16 * 1024 + 256;
 
 const file_output_limit = 64 * 1024;
 const max_uv_chunk: usize = 1 << 30;
+const max_tls_handshake_bytes: usize = 256 * 1024;
 
 pub const Stream = struct {
     const Self = @This();
@@ -65,6 +67,7 @@ pub const Stream = struct {
     peer: ?uv.SocketAddress = null,
     tls_layer: ?*TlsLayer = null,
     tunnel_layer: ?*TlsLayer = null,
+    is_starting_tls: bool = false,
     is_reuse_forbidden: bool = false,
     host_key: ?[]u8 = null,
     http_reader: ?*HttpReader = null,
@@ -226,6 +229,11 @@ pub const Stream = struct {
         }
         if (self.tls_layer) |layer| {
             self.closeTls(layer);
+        } else if (self.tunnel_layer) |tunnel| {
+            if (tunnel.handshake == .done and self.failure == null) {
+                _ = tls.dusk_tls_close_notify(tunnel.session);
+                _ = self.sendTunnelOutput(tunnel, null) catch {};
+            }
         }
         self.failOutputWaiters(.Closed);
         self.is_closed = true;
@@ -875,31 +883,34 @@ pub const Stream = struct {
         return self.tls_layer != null;
     }
 
-    pub fn moveTlsIntoTunnel(self: *Self) bool {
+    pub fn canMoveTlsIntoTunnel(self: *const Self) bool {
         const layer = self.tls_layer orelse return false;
-        const can_move = layer.handshake == .done and self.tunnel_layer == null;
-        if (!can_move) {
-            return false;
-        }
-        self.tunnel_layer = layer;
-        self.tls_layer = null;
-        return true;
+        return layer.handshake == .done and self.tunnel_layer == null;
     }
 
-    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, owns_config: bool, host: []const u8, timeout_ms: ?u64) !HandshakeWait {
+    pub fn beginWaitingForTrustStore(self: *Self) void {
+        self.is_starting_tls = true;
+        self.stopReading();
+    }
+
+    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, owns_config: bool, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) !HandshakeWait {
+        self.is_starting_tls = false;
         const layer = TlsLayer.createClient(self.allocator, config, owns_config, host) catch |failure| {
             if (owns_config) {
                 tls.dusk_tls_config_free(config);
             }
             return failure;
         };
+        if (is_tunneled and self.tls_layer != null) {
+            self.tunnel_layer = self.tls_layer;
+        }
         self.tls_layer = layer;
         self.feedBufferedIntoTls(layer);
         return self.awaitHandshake(task, timeout_ms);
     }
 
-    pub fn startServerTls(self: *Self, task: *TaskState, config: *tls.Config, timeout_ms: ?u64) !HandshakeWait {
-        const layer = try TlsLayer.createServer(self.allocator, config);
+    pub fn startServerTls(self: *Self, task: *TaskState, certificate: *ServerCertificate, timeout_ms: ?u64) !HandshakeWait {
+        const layer = try TlsLayer.createServer(self.allocator, certificate);
         self.tls_layer = layer;
         self.feedBufferedIntoTls(layer);
         return self.awaitHandshake(task, timeout_ms);
@@ -941,8 +952,8 @@ pub const Stream = struct {
         return @ptrCast(self.handshake_timer_memory.ptr);
     }
 
-    pub fn useServerTls(self: *Self, config: *tls.Config) !void {
-        self.tls_layer = try TlsLayer.createServer(self.allocator, config);
+    pub fn useServerTls(self: *Self, certificate: *ServerCertificate) !void {
+        self.tls_layer = try TlsLayer.createServer(self.allocator, certificate);
     }
 
     pub fn ensureHandshakeStarted(self: *Self) void {
@@ -1011,6 +1022,7 @@ pub const Stream = struct {
             return failureResult(.HandshakeFailed);
         }
         if (tls.dusk_tls_write(layer.session, bytes.ptr, bytes.len) < 0) {
+            self.failure = .Other;
             return failureResult(.Other);
         }
         const sent = self.sendCipherOutput(waiter.task) catch return failureResult(.Other);
@@ -1048,8 +1060,7 @@ pub const Stream = struct {
             return;
         }
         if (tls.dusk_tls_feed(tunnel.session, &tunnel.cipher_scratch, @intCast(read_count)) != .done) {
-            self.failure = .Other;
-            self.serveWaiter();
+            self.failTlsRead(layer, .Other);
             return;
         }
         self.forwardTunnelPlaintext(tunnel, layer);
@@ -1064,27 +1075,48 @@ pub const Stream = struct {
             }
             if (count == @intFromEnum(tls.Status.end)) {
                 self.has_ended = true;
+                if (layer.handshake == .running) {
+                    self.finishHandshake(.failed);
+                    return;
+                }
                 self.serveWaiter();
+                self.applyBackpressure();
             } else if (count < 0) {
-                self.failure = .Other;
-                self.serveWaiter();
+                self.failTlsRead(layer, .Other);
+                return;
             }
             break;
         }
         const outcome = self.sendTunnelOutput(tunnel, null) catch {
-            self.failure = .Other;
+            self.failTlsRead(layer, .Other);
             return;
         };
         switch (outcome) {
-            .failure => |failure| self.failure = failure,
+            .failure => |failure| self.failTlsRead(layer, failure),
             .done, .parked => {},
         }
     }
 
+    fn failTlsRead(self: *Self, layer: *TlsLayer, failure: IoError) void {
+        self.failure = failure;
+        if (layer.handshake == .running) {
+            self.finishHandshake(.failed);
+            return;
+        }
+        self.serveWaiter();
+        self.applyBackpressure();
+    }
+
     fn receiveCiphertext(self: *Self, layer: *TlsLayer, data: []const u8) void {
+        if (layer.handshake == .running) {
+            layer.handshake_bytes_received +|= data.len;
+            if (layer.handshake_bytes_received > max_tls_handshake_bytes) {
+                self.finishHandshake(.failed);
+                return;
+            }
+        }
         if (tls.dusk_tls_feed(layer.session, data.ptr, data.len) != .done) {
-            self.failure = .Other;
-            self.serveWaiter();
+            self.failTlsRead(layer, .Other);
             return;
         }
         switch (layer.handshake) {
@@ -1226,6 +1258,11 @@ fn onWrite(uv_request: *uv.Request, status: c_int) callconv(.c) void {
         stream.wakeTask(task, wake_result);
     } else if (status != 0 and !stream.is_closed) {
         stream.failure = failure;
+        if (stream.tls_layer) |layer| {
+            if (layer.handshake == .running) {
+                stream.finishHandshake(.failed);
+            }
+        }
     }
     stream.finishRequest();
 }

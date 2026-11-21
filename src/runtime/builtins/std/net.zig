@@ -125,70 +125,83 @@ fn certificateHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
         return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
     };
     const handle = vm.event_loop.addCertificate(certificate) catch {
-        certificate.destroy(allocator);
+        certificate.release(allocator);
         return fail(NetError.Other);
     };
-    return ok(.{ .int64 = @intCast(handle) });
+    return ok(.{ .int64 = handle });
 }
 
 fn listenerUseTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const listener = vm.event_loop.listenerAt(args[0].int64) orelse return ok(.{ .null = {} });
-    listener.tls_certificate = vm.event_loop.certificateAt(args[1].int64);
+    listener.setTlsCertificate(vm.event_loop.certificateAt(args[1].int64));
     return ok(.{ .null = {} });
 }
 
 pub fn streamStartTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
-    if (stream.isTls()) {
+    if (stream.isTls() or stream.is_starting_tls) {
         return RuntimeErrorReporter.tlsAlreadyStarted();
     }
-    return startClientTls(vm, stream, args);
+    if (stream.waiter != null) {
+        return fail(NetError.HandshakeFailed);
+    }
+    return startClientTls(vm, stream, args, false);
 }
 
 pub fn streamStartTunneledTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
-    const can_start = !stream.isTls() or stream.moveTlsIntoTunnel();
+    if (stream.is_starting_tls or stream.waiter != null) {
+        return fail(NetError.HandshakeFailed);
+    }
+    const can_start = !stream.isTls() or stream.canMoveTlsIntoTunnel();
     if (!can_start) {
         return fail(NetError.HandshakeFailed);
     }
-    return startClientTls(vm, stream, args);
+    return startClientTls(vm, stream, args, stream.isTls());
 }
 
-fn startClientTls(vm: *VM, stream: *Stream, args: []v.Value) anyerror!NativeResult {
+fn startClientTls(vm: *VM, stream: *Stream, args: []v.Value, is_tunneled: bool) anyerror!NativeResult {
     const should_verify = args[3].bool;
     const ca = native.optionalBytesArg(args, 2);
     const current = vm.running_task.?;
     const timeout_ms = timeoutArg(args[4].int64);
     const uses_system_roots = should_verify and ca == null;
     if (uses_system_roots) {
-        return startWithSystemRoots(vm, stream, current, @intCast(args[0].int64), bytesArg(args, 1), timeout_ms);
+        return startWithSystemRoots(vm, stream, current, args[0].int64, bytesArg(args, 1), timeout_ms, is_tunneled);
     }
     const config = tls_layer.newClientConfig(should_verify, ca) catch |failure| {
         return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
     };
-    const wait = stream.startClientTls(current, config, true, bytesArg(args, 1), timeout_ms) catch return fail(NetError.Other);
+    const wait = stream.startClientTls(current, config, true, bytesArg(args, 1), timeout_ms, is_tunneled) catch return fail(NetError.Other);
     return handshakeResult(current, wait);
 }
 
-fn startWithSystemRoots(vm: *VM, stream: *Stream, current: *TaskState, handle: usize, host: []const u8, timeout_ms: ?u64) anyerror!NativeResult {
+fn startWithSystemRoots(vm: *VM, stream: *Stream, current: *TaskState, handle: i64, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) anyerror!NativeResult {
     const trust_store = &vm.event_loop.trust_store;
     if (trust_store.config) |config| {
-        const wait = stream.startClientTls(current, config, false, host, timeout_ms) catch return fail(NetError.Other);
+        const wait = stream.startClientTls(current, config, false, host, timeout_ms, is_tunneled) catch return fail(NetError.Other);
         return handshakeResult(current, wait);
     }
-    trust_store.parkStarter(&vm.event_loop, &vm.scheduler, current, handle, host, timeout_ms) catch return fail(NetError.Other);
+    stream.beginWaitingForTrustStore();
+    trust_store.parkStarter(&vm.event_loop, &vm.scheduler, current, handle, host, timeout_ms, is_tunneled) catch {
+        stream.is_starting_tls = false;
+        return fail(NetError.Other);
+    };
     current.park();
     return native.parked();
 }
 
 fn streamAcceptTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const stream = vm.event_loop.streamAt(args[0].int64) orelse return fail(NetError.HandshakeFailed);
-    if (stream.isTls()) {
+    if (stream.isTls() or stream.is_starting_tls) {
         return RuntimeErrorReporter.tlsAlreadyStarted();
+    }
+    if (stream.waiter != null) {
+        return fail(NetError.HandshakeFailed);
     }
     const certificate = vm.event_loop.certificateAt(args[1].int64) orelse return fail(NetError.InvalidCertificate);
     const current = vm.running_task.?;
-    const wait = stream.startServerTls(current, certificate.config, timeoutArg(args[2].int64)) catch return fail(NetError.Other);
+    const wait = stream.startServerTls(current, certificate, timeoutArg(args[2].int64)) catch return fail(NetError.Other);
     return handshakeResult(current, wait);
 }
 

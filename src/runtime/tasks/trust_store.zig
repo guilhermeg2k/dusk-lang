@@ -25,9 +25,11 @@ pub const TrustStore = struct {
 
     pub const Waiter = struct {
         task: *TaskState,
-        stream_handle: usize,
+        stream_handle: i64,
         host: []u8,
         timeout_ms: ?u64,
+        started_at_ms: u64,
+        is_tunneled: bool,
     };
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
@@ -40,16 +42,25 @@ pub const TrustStore = struct {
         }
     }
 
-    pub fn parkStarter(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, stream_handle: usize, host: []const u8, timeout_ms: ?u64) !void {
+    pub fn parkStarter(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, stream_handle: i64, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) !void {
         const allocator = event_loop.allocator;
         self.scheduler = scheduler;
+        const loop = try event_loop.ensureLoopStarted();
         if (self.state == .idle) {
             try LoadJob.start(event_loop);
             self.state = .loading;
         }
         const host_copy = try allocator.dupe(u8, host);
         errdefer allocator.free(host_copy);
-        try self.waiters.append(allocator, .{ .task = task, .stream_handle = stream_handle, .host = host_copy, .timeout_ms = timeout_ms });
+        uv.uv_update_time(loop);
+        try self.waiters.append(allocator, .{
+            .task = task,
+            .stream_handle = stream_handle,
+            .host = host_copy,
+            .timeout_ms = timeout_ms,
+            .started_at_ms = uv.uv_now(loop),
+            .is_tunneled = is_tunneled,
+        });
         event_loop.pending_operations += 1;
     }
 
@@ -71,9 +82,19 @@ pub const TrustStore = struct {
 };
 
 fn continueStarter(event_loop: *EventLoop, config: ?*tls.Config, waiter: TrustStore.Waiter) ?WakeResult {
+    const stream = event_loop.streamAt(waiter.stream_handle) orelse return netFailure(.HandshakeFailed);
+    stream.is_starting_tls = false;
     const shared_config = config orelse return netFailure(.Other);
-    const stream = event_loop.streamAt(@intCast(waiter.stream_handle)) orelse return netFailure(.HandshakeFailed);
-    const wait = stream.startClientTls(waiter.task, shared_config, false, waiter.host, waiter.timeout_ms) catch return netFailure(.Other);
+    const remaining_timeout: ?u64 = if (waiter.timeout_ms) |ms| blk: {
+        const loop = event_loop.loop orelse break :blk ms;
+        uv.uv_update_time(loop);
+        const elapsed = uv.uv_now(loop) -| waiter.started_at_ms;
+        if (elapsed >= ms) {
+            return netFailure(.TimedOut);
+        }
+        break :blk ms - elapsed;
+    } else null;
+    const wait = stream.startClientTls(waiter.task, shared_config, false, waiter.host, remaining_timeout, waiter.is_tunneled) catch return netFailure(.Other);
     return switch (wait) {
         .parked => null,
         .done => .{ .value = v.NULL_VALUE, .kind = .null },

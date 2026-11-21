@@ -373,10 +373,23 @@ pub const Listener = struct {
     }
 
     pub fn destroy(self: *Self) void {
+        if (self.tls_certificate) |certificate| {
+            certificate.release(self.allocator);
+        }
         self.ready_connections.deinit(self.allocator);
         self.allocator.free(self.handle_memory);
         self.allocator.free(self.timer_memory);
         self.allocator.destroy(self);
+    }
+
+    pub fn setTlsCertificate(self: *Self, certificate: ?*ServerCertificate) void {
+        if (self.tls_certificate) |previous| {
+            previous.release(self.allocator);
+        }
+        if (certificate) |next| {
+            next.retain();
+        }
+        self.tls_certificate = certificate;
     }
 
     pub fn bindAndListen(self: *Self, address: *const uv.SocketAddress, backlog: c_int) ?NetError {
@@ -474,8 +487,8 @@ pub const Listener = struct {
         const stream = self.event_loop.streamAt(handle).?;
         stream.rememberPeer();
         const certificate = self.tls_certificate orelse return;
-        stream.useServerTls(certificate.config) catch {
-            self.event_loop.closeStream(@intCast(handle));
+        stream.useServerTls(certificate) catch {
+            self.event_loop.closeStream(handle);
             return error.AcceptFailed;
         };
     }

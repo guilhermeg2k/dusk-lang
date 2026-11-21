@@ -1,7 +1,7 @@
 const std = @import("std");
 const ResourceId = @import("../value.zig").ResourceId;
 
-pub const ResourceKind = enum(i64) { stream, listener, compression };
+pub const ResourceKind = enum(i64) { stream, listener, compression, certificate };
 
 pub const ResourceRegistry = struct {
     const Self = @This();

@@ -4414,3 +4414,7 @@ test "cr phase 2: generic methods, optional chain calls, lambda hints, errdefer 
 test "cr phase 4: file close races, seek overflow, write-only read, nul path, split crlf line boundary" {
     try runCase("stream-fs-phase4.dsk");
 }
+
+test "cr phase 5: compression reader overflow and close, decompressor too large invalidation" {
+    try runCase("tls-compression-phase5.dsk");
+}
