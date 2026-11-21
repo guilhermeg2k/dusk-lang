@@ -1,5 +1,11 @@
-import std/array: append
+import std/array: append, len
 import std/serialization
+
+let ~DEFAULT_MAX_BYTES = 67108864
+let ~CELL_NULL = 0
+let ~CELL_INT = 1
+let ~CELL_FLOAT = 2
+let ~CELL_TEXT = 3
 
 error SqliteError
     CantOpen
@@ -47,16 +53,42 @@ struct Database
     end
 
     func execute_with[P, S: schema](self: @, sql: string, params: P, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        let mut writer = ParamWriter()
-        serialization::encode[P, ParamWriter, S](params, writer) catch e then
-            describe_params_failure(diagnostic)
-            return SqliteError.TypeMismatch
-        end
+        let writer = try params_of[P, S](params, diagnostic)
         let numbers = execute_with_handle(self.handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts) catch e then
             describe_failure(diagnostic)
             return e
         end
         return Changes(rows = numbers[0], last_id = numbers[1])
+    end
+
+    func query[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, diagnostic)
+        return try decode_rows[T, S](result, -1, diagnostic)
+    end
+
+    func query_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+        let writer = try params_of[P, S](params, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, diagnostic)
+        return try decode_rows[T, S](result, -1, diagnostic)
+    end
+
+    func query_one[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, diagnostic)
+        let items = try decode_rows[T, S](result, 1, diagnostic)
+        if len(items) == 0 then
+            return null
+        end
+        return items[0]
+    end
+
+    func query_one_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+        let writer = try params_of[P, S](params, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, diagnostic)
+        let items = try decode_rows[T, S](result, 1, diagnostic)
+        if len(items) == 0 then
+            return null
+        end
+        return items[0]
     end
 
     func close(self: @) -> void
@@ -134,9 +166,196 @@ func open(path: string, journal: Journal = Journal.Wal, foreign_keys: bool = tru
     return Database(handle = handle, owner = own(6, handle))
 end
 
-func ~describe_params_failure(mut diagnostic: ?Diagnostic) -> void
+struct ~Rows
+    result: int
+    row_count: int
+    columns: []string
+    row: int = -1
+    column: int = 0
+    bound_fields: int = -1
+    positions: []int = []
+    problem: string = ""
+
+    func next_row(mut self: @) -> bool
+        self.row = self.row + 1
+        self.column = 0
+        return self.row < self.row_count
+    end
+
+    func begin_struct(mut self: @, fields: int) -> serialization::SerializationError!void
+        if self.bound_fields != fields then
+            try self.bind(fields)
+        end
+        self.column = -1
+    end
+
+    func bind(mut self: @, fields: int) -> serialization::SerializationError!void
+        self.positions = []
+        let mut owners: []int = []
+        for 1..serialization::field_count(fields): _ do
+            append(owners, -1)
+        end
+        for self.columns: name, index do
+            let field = serialization::find_field(fields, name)
+            if field >= 0 then
+                if owners[field] >= 0 then
+                    self.problem = "two columns are named '$name'; rename one with AS"
+                    return serialization::SerializationError.DuplicateField
+                end
+                owners[field] = index
+            end
+            append(self.positions, field)
+        end
+        self.bound_fields = fields
+    end
+
+    func next_field(mut self: @, fields: int) -> serialization::SerializationError!int
+        for true do
+            self.column = self.column + 1
+            if self.column >= len(self.positions) then
+                return -1
+            end
+            let field = self.positions[self.column]
+            if field >= 0 then
+                return field
+            end
+        end
+        return -1
+    end
+
+    func missing_field(mut self: @, fields: int, index: int) -> serialization::SerializationError!void
+        self.problem = "no column for field '${serialization::field_name(fields, index)}'"
+        return serialization::SerializationError.MissingField
+    end
+
+    func read_null(mut self: @) -> serialization::SerializationError!bool
+        return self.kind() == CELL_NULL
+    end
+
+    func read_int(mut self: @) -> serialization::SerializationError!int
+        if self.kind() != CELL_INT then
+            try self.mismatch("an int")
+        end
+        return cell_int(self.result, self.row, self.current())
+    end
+
+    func read_float(mut self: @) -> serialization::SerializationError!float
+        let kind = self.kind()
+        if kind != CELL_FLOAT and kind != CELL_INT then
+            try self.mismatch("a float")
+        end
+        return cell_float(self.result, self.row, self.current())
+    end
+
+    func read_bool(mut self: @) -> serialization::SerializationError!bool
+        if self.kind() != CELL_INT then
+            try self.mismatch("a bool (0 or 1)")
+        end
+        let value = cell_int(self.result, self.row, self.current())
+        if value != 0 and value != 1 then
+            try self.mismatch("a bool (0 or 1)")
+        end
+        return value == 1
+    end
+
+    func read_string(mut self: @) -> serialization::SerializationError!string
+        if self.kind() != CELL_TEXT then
+            try self.mismatch("text")
+        end
+        if cell_text(self.result, self.row, self.current()): text then
+            return text
+        end
+        try self.mismatch("valid UTF-8 text")
+        return ""
+    end
+
+    func read_variant(mut self: @, variants: int) -> serialization::SerializationError!int
+        let name = try self.read_string()
+        let index = serialization::find_variant(variants, name)
+        if index < 0 then
+            self.problem = "column '${self.column_name()}' in row ${self.row + 1}: '$name' isn't one of the enum's variants"
+            return serialization::SerializationError.UnknownVariant
+        end
+        return index
+    end
+
+    func kind(self: @) -> int
+        return cell_kind(self.result, self.row, self.current())
+    end
+
+    func current(self: @) -> int
+        if self.column < 0 then
+            return 0
+        end
+        return self.column
+    end
+
+    func column_name(self: @) -> string
+        let index = self.current()
+        if index < len(self.columns) then
+            return self.columns[index]
+        end
+        return "?"
+    end
+
+    func mismatch(mut self: @, expected: string) -> serialization::SerializationError!void
+        let found = when self.kind()
+            0 then "NULL" end
+            1 then "an int" end
+            2 then "a float" end
+            3 then "text" end
+            else then "a blob" end
+        end
+        self.problem = "column '${self.column_name()}' in row ${self.row + 1}: expected $expected, found $found"
+        return serialization::SerializationError.TypeMismatch
+    end
+end
+
+func ~params_of[P, S: schema](params: P, mut diagnostic: ?Diagnostic) -> SqliteError!ParamWriter
+    let mut writer = ParamWriter()
+    serialization::encode[P, ParamWriter, S](params, writer) catch e then
+        describe_message(diagnostic, "parameters must be a struct whose fields are ints, floats, bools, strings, enums or nullables of them")
+        return SqliteError.TypeMismatch
+    end
+    return writer
+end
+
+func ~run_query(handle: int, sql: string, writer: ParamWriter, max_bytes: int, mut diagnostic: ?Diagnostic) -> SqliteError!int
+    let result = query_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, max_bytes) catch e then
+        describe_failure(diagnostic)
+        return e
+    end
+    return result
+end
+
+func ~decode_rows[T, S: schema](result: int, limit: int, mut diagnostic: ?Diagnostic) -> SqliteError![]T
+    defer result_free(result)
+    let mut rows = Rows(result = result, row_count = result_rows(result), columns = result_columns(result))
+    let mut items: []T = []
+    for rows.next_row() do
+        let has_enough = limit >= 0 and len(items) >= limit
+        if has_enough then
+            break
+        end
+        let mut item = serialization::decode[T, Rows, S](rows) catch e then
+            describe_message(diagnostic, rows.problem)
+            return sqlite_error_of(e)
+        end
+        append(items, item)
+    end
+    return items
+end
+
+func ~sqlite_error_of(failure: serialization::SerializationError) -> SqliteError
+    if failure == serialization::SerializationError.MissingField then
+        return SqliteError.MissingColumn
+    end
+    return SqliteError.TypeMismatch
+end
+
+func ~describe_message(mut diagnostic: ?Diagnostic, message: string) -> void
     if diagnostic: mut found then
-        found.message = "parameters must be a struct whose fields are ints, floats, bools, strings, enums or nullables of them"
+        found.message = message
         found.offset = null
     end
 end
@@ -157,6 +376,14 @@ extern func version() -> string
 extern func ~open_handle(path: string, journal: Journal, foreign_keys: bool, busy_timeout_ms: int, read_only: bool, create: bool) -> SqliteError!int
 extern func ~execute_handle(handle: int, sql: string) -> SqliteError![]int
 extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string) -> SqliteError![]int
+extern func ~query_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, max_bytes: int) -> SqliteError!int
+extern func ~result_rows(result: int) -> int
+extern func ~result_columns(result: int) -> []string
+extern func ~result_free(result: int) -> void
+extern func ~cell_kind(result: int, row: int, column: int) -> int
+extern func ~cell_int(result: int, row: int, column: int) -> int
+extern func ~cell_float(result: int, row: int, column: int) -> float
+extern func ~cell_text(result: int, row: int, column: int) -> ?string
 extern func ~close_handle(handle: int) -> void
 extern func ~error_offset() -> int
 extern func ~take_error_message() -> string

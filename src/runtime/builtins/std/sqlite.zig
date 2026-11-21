@@ -14,6 +14,14 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "open_handle", Binding{ .native = &openHandle } },
     .{ "execute_handle", Binding{ .native = &executeHandle } },
     .{ "execute_with_handle", Binding{ .native = &executeWithHandle } },
+    .{ "query_handle", Binding{ .native = &queryHandle } },
+    .{ "result_rows", Binding{ .native = &resultRows } },
+    .{ "result_columns", Binding{ .native = &resultColumns } },
+    .{ "result_free", Binding{ .native = &resultFree } },
+    .{ "cell_kind", Binding{ .native = &cellKind } },
+    .{ "cell_int", Binding{ .native = &cellInt } },
+    .{ "cell_float", Binding{ .native = &cellFloat } },
+    .{ "cell_text", Binding{ .native = &cellText } },
     .{ "close_handle", Binding{ .native = &closeHandle } },
     .{ "error_offset", Binding{ .native = &errorOffset } },
     .{ "take_error_message", Binding{ .native = &takeErrorMessage } },
@@ -77,6 +85,72 @@ fn executeWithHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     task.park();
     return native.parked();
+}
+
+fn queryHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const sql = bytesArg(args, 1);
+    if (std.mem.indexOfScalar(u8, sql, 0) != null) {
+        return native.fail(SqliteError.InvalidSql);
+    }
+    const allocator = vm.event_loop.allocator;
+    const params = try copyParams(allocator, args[2..7]);
+    const task = vm.running_task.?;
+    const is_queued = vm.event_loop.sqlite.query(&vm.event_loop, &vm.scheduler, task, args[0].int64, sql, params, args[7].int64) catch |failure| {
+        sqlite.freeParams(allocator, params);
+        return failure;
+    };
+    if (!is_queued) {
+        sqlite.freeParams(allocator, params);
+        return native.fail(SqliteError.Closed);
+    }
+    task.park();
+    return native.parked();
+}
+
+fn resultRows(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const result = vm.event_loop.sqlite.resultAt(args[0].int64) orelse return native.ok(.{ .int64 = 0 });
+    return native.ok(.{ .int64 = @intCast(result.rowCount()) });
+}
+
+fn resultColumns(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const result = vm.event_loop.sqlite.resultAt(args[0].int64) orelse return native.ok(try vm.allocStringArray(&.{}));
+    return native.ok(try vm.allocStringArray(result.column_names.items));
+}
+
+fn resultFree(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    vm.event_loop.sqlite.freeResult(args[0].int64);
+    return native.ok(v.NULL_VALUE);
+}
+
+fn cellOf(vm: *VM, args: []v.Value) ?sqlite.ResultSet.Cell {
+    const result = vm.event_loop.sqlite.resultAt(args[0].int64) orelse return null;
+    return result.cellAt(args[1].int64, args[2].int64);
+}
+
+fn cellKind(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const cell = cellOf(vm, args) orelse return native.ok(.{ .int64 = @intFromEnum(sqlite.ResultSet.CellKind.null) });
+    return native.ok(.{ .int64 = @intFromEnum(cell.kind) });
+}
+
+fn cellInt(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const cell = cellOf(vm, args) orelse return native.ok(.{ .int64 = 0 });
+    return native.ok(.{ .int64 = cell.int });
+}
+
+fn cellFloat(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const cell = cellOf(vm, args) orelse return native.ok(.{ .float64 = 0 });
+    const value: f64 = if (cell.kind == .int) @floatFromInt(cell.int) else cell.float;
+    return native.ok(.{ .float64 = value });
+}
+
+fn cellText(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const cell = cellOf(vm, args) orelse return native.ok(v.NULL_VALUE);
+    const result = vm.event_loop.sqlite.resultAt(args[0].int64).?;
+    const text = result.bytesOf(cell);
+    if (!std.unicode.utf8ValidateSlice(text)) {
+        return native.ok(v.NULL_VALUE);
+    }
+    return native.ok(try vm.allocBytesValue(text, .string));
 }
 
 fn copyParams(allocator: std.mem.Allocator, arrays: []v.Value) ![]sqlite.Param {

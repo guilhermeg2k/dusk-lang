@@ -45,6 +45,11 @@ test "sqlite: named parameters from structs, schemas, unknown and missing parame
     try runCaseError("sema/sqlite-array-parameter.dsk", error.FormatLacksMethod);
 }
 
+test "sqlite: typed queries into structs and scalars, query_one, schemas, decoding errors, max_bytes, tasks" {
+    try runCase("sqlite-queries.dsk");
+    try runCaseError("sema/sqlite-array-column.dsk", error.FormatLacksMethod);
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");

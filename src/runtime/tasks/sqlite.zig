@@ -32,6 +32,60 @@ pub const Param = struct {
     text: []u8 = &.{},
 };
 
+pub const ResultSet = struct {
+    pub const CellKind = enum { null, int, float, text, blob };
+
+    pub const Cell = struct {
+        kind: CellKind,
+        int: i64 = 0,
+        float: f64 = 0,
+        start: usize = 0,
+        len: usize = 0,
+    };
+
+    column_names: std.ArrayList([]u8) = .empty,
+    cells: std.ArrayList(Cell) = .empty,
+    bytes: std.ArrayList(u8) = .empty,
+
+    fn create() !*ResultSet {
+        const result = try std.heap.c_allocator.create(ResultSet);
+        result.* = .{};
+        return result;
+    }
+
+    pub fn destroy(self: *ResultSet) void {
+        const allocator = std.heap.c_allocator;
+        for (self.column_names.items) |name| {
+            allocator.free(name);
+        }
+        self.column_names.deinit(allocator);
+        self.cells.deinit(allocator);
+        self.bytes.deinit(allocator);
+        allocator.destroy(self);
+    }
+
+    pub fn rowCount(self: *const ResultSet) usize {
+        const column_count = self.column_names.items.len;
+        if (column_count == 0) {
+            return 0;
+        }
+        return self.cells.items.len / column_count;
+    }
+
+    pub fn cellAt(self: *const ResultSet, row: i64, column: i64) ?Cell {
+        const column_count = self.column_names.items.len;
+        const is_inside = row >= 0 and column >= 0 and row < self.rowCount() and column < column_count;
+        if (!is_inside) {
+            return null;
+        }
+        return self.cells.items[@as(usize, @intCast(row)) * column_count + @as(usize, @intCast(column))];
+    }
+
+    pub fn bytesOf(self: *const ResultSet, cell: Cell) []const u8 {
+        return self.bytes.items[cell.start..][0..cell.len];
+    }
+};
+
 pub const Failure = struct {
     message: ?[]u8,
     offset: i64,
@@ -43,6 +97,7 @@ pub const Databases = struct {
     const Self = @This();
 
     connections: HandleTable(Connection) = .{},
+    results: HandleTable(ResultSet) = .{},
     dispatch: ?*WorkerDispatch = null,
     blocked: std.ArrayList(*Connection) = .empty,
     failures: std.AutoHashMapUnmanaged(*TaskState, Failure) = .empty,
@@ -53,6 +108,11 @@ pub const Databases = struct {
             connection.closeNow(allocator);
         }
         self.connections.deinit(allocator);
+        for (self.results.entries.items) |entry| {
+            const result = entry orelse continue;
+            result.destroy();
+        }
+        self.results.deinit(allocator);
         self.blocked.deinit(allocator);
         var failures = self.failures.valueIterator();
         while (failures.next()) |failure| {
@@ -88,6 +148,24 @@ pub const Databases = struct {
         operation.params = params;
         self.enqueue(connection, operation);
         return true;
+    }
+
+    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, max_bytes: i64) !bool {
+        const connection = self.openConnection(handle) orelse return false;
+        const operation = try Operation.create(event_loop, scheduler, task, connection, .query, sql);
+        operation.params = params;
+        operation.max_bytes = max_bytes;
+        self.enqueue(connection, operation);
+        return true;
+    }
+
+    pub fn resultAt(self: *Self, handle: i64) ?*ResultSet {
+        return self.results.get(handle);
+    }
+
+    pub fn freeResult(self: *Self, handle: i64) void {
+        const result = self.results.remove(handle) orelse return;
+        result.destroy();
     }
 
     pub fn close(self: *Self, event_loop: *EventLoop, scheduler: ?*Scheduler, task: ?*TaskState, handle: i64) !bool {
@@ -201,7 +279,7 @@ pub const Connection = struct {
 };
 
 const Operation = struct {
-    const Kind = enum { open, execute, execute_one, close };
+    const Kind = enum { open, execute, execute_one, query, close };
 
     job: Job = .{ .execute = runOnWorker, .finish = finishOnLoop },
     kind: Kind,
@@ -215,6 +293,8 @@ const Operation = struct {
     database: ?*api.Database = null,
     cache: ?*StatementCache = null,
     fixed_error: ?SqliteError = null,
+    max_bytes: i64 = 0,
+    result: ?*ResultSet = null,
     next: ?*Operation = null,
     code: c_int = 0,
     rows: i64 = 0,
@@ -235,6 +315,9 @@ const Operation = struct {
         freeMessage(self.message);
         allocator.free(self.text);
         freeParams(allocator, self.params);
+        if (self.result) |result| {
+            result.destroy();
+        }
         allocator.destroy(self);
     }
 
@@ -244,6 +327,7 @@ const Operation = struct {
             .open => self.openOnWorker(),
             .execute => self.executeOnWorker(),
             .execute_one => self.executeOneOnWorker(),
+            .query => self.queryOnWorker(),
             .close => {
                 self.cache.?.finalizeAll();
                 _ = api.sqlite3_close_v2(self.database);
@@ -326,27 +410,8 @@ const Operation = struct {
 
     fn executeOneOnWorker(self: *Operation) void {
         const database = self.database.?;
-        const prepared = self.cache.?.take(database, self.text);
-        const statement = switch (prepared) {
-            .statement => |found| found,
-            .failure => |status| {
-                self.recordWorkerFailure(database, status);
-                return;
-            },
-            .several_statements => {
-                self.recordFixedFailure(.InvalidSql, "execute_with and queries take one statement; use execute for several", .{});
-                return;
-            },
-            .empty => {
-                self.recordFixedFailure(.InvalidSql, "the SQL text holds no statement", .{});
-                return;
-            },
-        };
-        defer {
-            _ = api.sqlite3_reset(statement);
-            _ = api.sqlite3_clear_bindings(statement);
-        }
-        if (!self.bindParams(statement)) return;
+        const statement = self.preparedWithParams(database) orelse return;
+        defer resetStatement(statement);
         const status = stepToEnd(statement);
         if (status != @intFromEnum(api.ResultCode.done)) {
             self.recordWorkerFailure(database, status);
@@ -354,6 +419,78 @@ const Operation = struct {
         }
         self.rows = api.sqlite3_changes64(database);
         self.last_id = api.sqlite3_last_insert_rowid(database);
+    }
+
+    fn queryOnWorker(self: *Operation) void {
+        const database = self.database.?;
+        const statement = self.preparedWithParams(database) orelse return;
+        defer resetStatement(statement);
+        const result = ResultSet.create() catch {
+            self.recordFixedFailure(.Other, "out of memory", .{});
+            return;
+        };
+        self.result = result;
+        self.collectRows(database, statement, result) catch {
+            self.recordFixedFailure(.Other, "out of memory", .{});
+        };
+        const has_succeeded = self.code == 0 and self.fixed_error == null;
+        if (has_succeeded) return;
+        result.destroy();
+        self.result = null;
+    }
+
+    fn collectRows(self: *Operation, database: *api.Database, statement: *api.Statement, result: *ResultSet) !void {
+        const allocator = std.heap.c_allocator;
+        const column_count = api.sqlite3_column_count(statement);
+        var column: c_int = 0;
+        while (column < column_count) : (column += 1) {
+            const name = if (api.sqlite3_column_name(statement, column)) |found| std.mem.span(found) else "";
+            try result.column_names.append(allocator, try allocator.dupe(u8, name));
+        }
+        var size: usize = 0;
+        while (true) {
+            const status = api.sqlite3_step(statement);
+            if (status == @intFromEnum(api.ResultCode.done)) return;
+            if (status != @intFromEnum(api.ResultCode.row)) {
+                self.recordWorkerFailure(database, status);
+                return;
+            }
+            column = 0;
+            while (column < column_count) : (column += 1) {
+                const cell = try copyCell(statement, column, result);
+                size += @sizeOf(ResultSet.Cell) + cell.len;
+                const is_too_large = self.max_bytes >= 0 and size > @as(usize, @intCast(self.max_bytes));
+                if (is_too_large) {
+                    self.recordFixedFailure(.TooLarge, "the result is larger than max_bytes ({d} bytes)", .{self.max_bytes});
+                    return;
+                }
+                try result.cells.append(allocator, cell);
+            }
+        }
+    }
+
+    fn preparedWithParams(self: *Operation, database: *api.Database) ?*api.Statement {
+        const prepared = self.cache.?.take(database, self.text);
+        const statement = switch (prepared) {
+            .statement => |found| found,
+            .failure => |status| {
+                self.recordWorkerFailure(database, status);
+                return null;
+            },
+            .several_statements => {
+                self.recordFixedFailure(.InvalidSql, "execute_with and queries take one statement; use execute for several", .{});
+                return null;
+            },
+            .empty => {
+                self.recordFixedFailure(.InvalidSql, "the SQL text holds no statement", .{});
+                return null;
+            },
+        };
+        if (!self.bindParams(statement)) {
+            resetStatement(statement);
+            return null;
+        }
+        return statement;
     }
 
     fn bindParams(self: *Operation, statement: *api.Statement) bool {
@@ -441,7 +578,7 @@ const Operation = struct {
     fn releaseConnection(self: *Operation, databases: *Databases, connection: *Connection) bool {
         const has_run = self.job.outcome == .executed;
         switch (self.kind) {
-            .execute, .execute_one => return false,
+            .execute, .execute_one, .query => return false,
             .open => {
                 if (has_run and self.code == 0) {
                     connection.database = self.database;
@@ -476,6 +613,12 @@ const Operation = struct {
                 numbers[0] = self.rows;
                 numbers[1] = self.last_id;
                 break :result .{ .value = v.NULL_VALUE, .kind = .array, .payload = .{ .ints = numbers } };
+            },
+            .query => result: {
+                const result = self.result.?;
+                try databases.results.reserve(self.event_loop.allocator);
+                self.result = null;
+                break :result .{ .value = .{ .int64 = databases.results.addAssumeCapacity(result) }, .kind = .int64 };
             },
             .close => .{ .value = v.NULL_VALUE, .kind = .null },
         };
@@ -577,6 +720,29 @@ pub fn freeParams(allocator: std.mem.Allocator, params: []Param) void {
         allocator.free(param.text);
     }
     allocator.free(params);
+}
+
+fn copyCell(statement: *api.Statement, column: c_int, result: *ResultSet) !ResultSet.Cell {
+    const column_type = api.sqlite3_column_type(statement, column);
+    return switch (column_type) {
+        api.integer_type => .{ .kind = .int, .int = api.sqlite3_column_int64(statement, column) },
+        api.float_type => .{ .kind = .float, .float = api.sqlite3_column_double(statement, column) },
+        api.text_type, api.blob_type => cell: {
+            const pointer: ?[*]const u8 = if (column_type == api.text_type) api.sqlite3_column_text(statement, column) else @ptrCast(api.sqlite3_column_blob(statement, column));
+            const len: usize = @intCast(api.sqlite3_column_bytes(statement, column));
+            const start = result.bytes.items.len;
+            if (pointer) |bytes| {
+                try result.bytes.appendSlice(std.heap.c_allocator, bytes[0..len]);
+            }
+            break :cell .{ .kind = if (column_type == api.text_type) .text else .blob, .start = start, .len = len };
+        },
+        else => .{ .kind = .null },
+    };
+}
+
+fn resetStatement(statement: *api.Statement) void {
+    _ = api.sqlite3_reset(statement);
+    _ = api.sqlite3_clear_bindings(statement);
 }
 
 fn stepToEnd(statement: *api.Statement) c_int {
