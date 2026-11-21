@@ -25,7 +25,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (args.len >= 2 and std.mem.eql(u8, args[1], "--version")) {
-        stdio.write(.stdout, build_zon.version, true) catch |failure| {
+        stdio.writeLine(.stdout, build_zon.version) catch |failure| {
             if (failure == error.BrokenPipe) {
                 exitAfterBrokenPipe();
             }
