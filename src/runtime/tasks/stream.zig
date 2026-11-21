@@ -9,6 +9,7 @@ const WakeResult = @import("scheduler.zig").WakeResult;
 const FsJob = @import("fs_job.zig").FsJob;
 const tls = @import("tls.zig");
 const TlsLayer = @import("tls_layer.zig").TlsLayer;
+const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 const HandshakeWaiter = @import("tls_layer.zig").HandshakeWaiter;
 const cipher_chunk_size = @import("tls_layer.zig").cipher_chunk_size;
 const netErrorFromHandshake = @import("tls_layer.zig").netErrorFromHandshake;
@@ -27,6 +28,8 @@ const high_water_mark = 1024 * 1024;
 const tls_record_size = 16 * 1024 + 256;
 
 const file_output_limit = 64 * 1024;
+const max_uv_chunk: usize = 1 << 30;
+const max_tls_handshake_bytes: usize = 256 * 1024;
 
 pub const Stream = struct {
     const Self = @This();
@@ -64,10 +67,11 @@ pub const Stream = struct {
     peer: ?uv.SocketAddress = null,
     tls_layer: ?*TlsLayer = null,
     tunnel_layer: ?*TlsLayer = null,
+    is_starting_tls: bool = false,
     is_reuse_forbidden: bool = false,
     host_key: ?[]u8 = null,
     http_reader: ?*HttpReader = null,
-    table_index: usize = 0,
+    table_index: i64 = 0,
     owns_file: bool = false,
     can_write_file: bool = false,
     is_append: bool = false,
@@ -238,7 +242,13 @@ pub const Stream = struct {
         }
         if (self.tls_layer) |layer| {
             self.closeTls(layer);
+        } else if (self.tunnel_layer) |tunnel| {
+            if (tunnel.handshake == .done and self.failure == null) {
+                _ = tls.dusk_tls_close_notify(tunnel.session);
+                _ = self.sendTunnelOutput(tunnel, null) catch {};
+            }
         }
+        self.failOutputWaiters(.Closed);
         self.is_closed = true;
         self.releaseHostSlot();
         if (self.handle_memory.len > 0) {
@@ -382,9 +392,9 @@ pub const Stream = struct {
 
     fn evictFromPool(self: *Self) void {
         const key = self.pool_key orelse return;
-        self.event_loop.connection_pool.remove(key, self.table_index);
+        self.event_loop.connection_pool.remove(self.allocator, key, self.table_index);
         self.leavePool();
-        self.event_loop.closeStream(@intCast(self.table_index));
+        self.event_loop.closeStream(self.table_index);
     }
 
     fn httpHeadOutcome(self: *Self) ?ReadOutcome {
@@ -449,17 +459,25 @@ pub const Stream = struct {
     }
 
     fn feedHttpBody(self: *Self, reader: *HttpReader, max: usize) ?HttpError {
+        const wire_limit = max +| max_http_head_size;
         while (!reader.isMessageComplete()) {
             const available = self.bufferedBytes();
             const room = max -| reader.body.items.len;
-            const used = reader.feedBody(available[0..@min(available.len, room)]) catch |failure| {
+            const wire_room = wire_limit -| reader.body_wire_bytes;
+            const step_limit = @min(room, wire_room);
+            const used = reader.feedBody(available[0..@min(available.len, step_limit)]) catch |failure| {
                 if (failure == error.OutOfMemory) {
                     return .Other;
                 }
                 reader.was_body_invalid = true;
                 return reader.invalidMessage();
             };
+            reader.body_wire_bytes +|= used;
             self.consume(used);
+            if (!reader.isMessageComplete() and reader.body_wire_bytes >= wire_limit) {
+                reader.was_body_too_large = true;
+                return .BodyTooLarge;
+            }
             if (used == 0) break;
         }
         return null;
@@ -467,7 +485,7 @@ pub const Stream = struct {
 
     fn httpWholeBodyOutcome(self: *Self, cap: usize) ?ReadOutcome {
         const reader = self.http_reader orelse return httpFailure(.Other);
-        if (self.feedHttpBody(reader, cap + 1)) |failure| {
+        if (self.feedHttpBody(reader, cap +| 1)) |failure| {
             return httpFailure(failure);
         }
         if (reader.body.items.len > cap) {
@@ -491,8 +509,10 @@ pub const Stream = struct {
 
     pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode, timeout_ms: ?u64) !void {
         try self.startReading();
-        if (timeout_ms) |ms| {
-            try self.startTimer(ms);
+        if (self.kind != .file) {
+            if (timeout_ms) |ms| {
+                try self.startTimer(ms);
+            }
         }
         self.waiter = .{ .task = task, .mode = mode };
         self.event_loop.pending_operations += 1;
@@ -532,7 +552,12 @@ pub const Stream = struct {
 
     fn startReading(self: *Self) !void {
         switch (self.kind) {
-            .file => try self.startChunk(),
+            .file => {
+                if (self.can_write_file) {
+                    return error.StreamReadFailed;
+                }
+                try self.startChunk();
+            },
             .closed_input => {},
             .tty, .pipe, .tcp => {
                 if (self.is_reading) return;
@@ -564,7 +589,7 @@ pub const Stream = struct {
             }
         }
         if (self.is_closed) {
-            self.destroy();
+            self.releaseIfDone();
             return;
         }
         if (has_failed) {
@@ -725,7 +750,7 @@ pub const Stream = struct {
         if (!can_seek) {
             return .Other;
         }
-        if (self.waiter != null) {
+        if (self.waiter != null or self.has_chunk_in_flight) {
             return .Busy;
         }
         const has_output = self.pending_output.items.len > 0 or self.has_output_in_flight;
@@ -754,21 +779,27 @@ pub const Stream = struct {
         if (!can_start) return;
         const job = try FsJob.create(self.allocator, .write_chunk, "", "");
         errdefer job.destroy();
-        job.output = try self.pending_output.toOwnedSlice(self.allocator);
+        const owned_output = try self.pending_output.toOwnedSlice(self.allocator);
+        job.output = owned_output;
         job.file = self.file;
         job.offset = if (self.is_append) -1 else self.file_offset;
         job.stream = self;
-        self.file_offset += @intCast(job.output.?.len);
-        try self.event_loop.startFsJob(self.scheduler, null, job);
+        self.event_loop.startFsJob(self.scheduler, null, job) catch |failure| {
+            self.pending_output = std.ArrayList(u8).fromOwnedSlice(owned_output);
+            job.output = null;
+            return failure;
+        };
         self.has_output_in_flight = true;
     }
 
-    pub fn finishOutput(self: *Self, has_failed: bool) void {
+    pub fn finishOutput(self: *Self, written_bytes: usize, has_failed: bool) void {
         self.has_output_in_flight = false;
+        self.file_offset += @intCast(written_bytes);
         if (has_failed) {
             self.output_failure = .Other;
         }
         if (self.is_closed) {
+            self.failOutputWaiters(.Closed);
             self.writeOutputNow();
             self.releaseIfDone();
             return;
@@ -779,6 +810,14 @@ pub const Stream = struct {
             };
         }
         self.wakeOutputWaiters();
+    }
+
+    fn failOutputWaiters(self: *Self, failure: IoError) void {
+        for (self.output_waiters.items) |waiter| {
+            self.event_loop.pending_operations -= 1;
+            self.wakeTask(waiter.task, failureResult(failure));
+        }
+        self.output_waiters.clearRetainingCapacity();
     }
 
     fn wakeOutputWaiters(self: *Self) void {
@@ -814,19 +853,22 @@ pub const Stream = struct {
         var written: usize = 0;
         const output = self.pending_output.items;
         while (written < output.len) {
-            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
+            const chunk_len = @min(output.len - written, max_uv_chunk);
+            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(chunk_len) };
             const offset: i64 = if (self.is_append) -1 else self.file_offset + @as(i64, @intCast(written));
             const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, offset, null);
             uv.uv_fs_req_cleanup(request);
-            if (status < 0) break;
+            if (status <= 0) break;
             written += @intCast(status);
         }
+        self.file_offset += @intCast(written);
         self.pending_output.clearRetainingCapacity();
     }
 
     fn sendBytes(self: *Self, task: ?*TaskState, data: []const u8) !WriteOutcome {
         if (data.len == 0) return .done;
-        const buffers = [_]uv.Buffer{.{ .base = @constCast(data.ptr), .len = @intCast(data.len) }};
+        const try_len = @min(data.len, max_uv_chunk);
+        const buffers = [_]uv.Buffer{.{ .base = @constCast(data.ptr), .len = @intCast(try_len) }};
         const status = uv.uv_try_write(self.uvHandle(), &buffers, 1);
         const written: usize = if (status >= 0) @intCast(status) else 0;
         if (written == data.len) return .done;
@@ -846,7 +888,7 @@ pub const Stream = struct {
             self.event_loop.pending_operations += 1;
         }
         if (!self.is_write_timer_running) {
-            try self.startWriteTimer();
+            self.startWriteTimer() catch {};
         }
         return .parked;
     }
@@ -883,31 +925,34 @@ pub const Stream = struct {
         return self.tls_layer != null;
     }
 
-    pub fn moveTlsIntoTunnel(self: *Self) bool {
+    pub fn canMoveTlsIntoTunnel(self: *const Self) bool {
         const layer = self.tls_layer orelse return false;
-        const can_move = layer.handshake == .done and self.tunnel_layer == null;
-        if (!can_move) {
-            return false;
-        }
-        self.tunnel_layer = layer;
-        self.tls_layer = null;
-        return true;
+        return layer.handshake == .done and self.tunnel_layer == null;
     }
 
-    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, owns_config: bool, host: []const u8, timeout_ms: ?u64) !HandshakeWait {
+    pub fn beginWaitingForTrustStore(self: *Self) void {
+        self.is_starting_tls = true;
+        self.stopReading();
+    }
+
+    pub fn startClientTls(self: *Self, task: *TaskState, config: *tls.Config, owns_config: bool, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) !HandshakeWait {
+        self.is_starting_tls = false;
         const layer = TlsLayer.createClient(self.allocator, config, owns_config, host) catch |failure| {
             if (owns_config) {
                 tls.dusk_tls_config_free(config);
             }
             return failure;
         };
+        if (is_tunneled and self.tls_layer != null) {
+            self.tunnel_layer = self.tls_layer;
+        }
         self.tls_layer = layer;
         self.feedBufferedIntoTls(layer);
         return self.awaitHandshake(task, timeout_ms);
     }
 
-    pub fn startServerTls(self: *Self, task: *TaskState, config: *tls.Config, timeout_ms: ?u64) !HandshakeWait {
-        const layer = try TlsLayer.createServer(self.allocator, config);
+    pub fn startServerTls(self: *Self, task: *TaskState, certificate: *ServerCertificate, timeout_ms: ?u64) !HandshakeWait {
+        const layer = try TlsLayer.createServer(self.allocator, certificate);
         self.tls_layer = layer;
         self.feedBufferedIntoTls(layer);
         return self.awaitHandshake(task, timeout_ms);
@@ -949,8 +994,8 @@ pub const Stream = struct {
         return @ptrCast(self.handshake_timer_memory.ptr);
     }
 
-    pub fn useServerTls(self: *Self, config: *tls.Config) !void {
-        self.tls_layer = try TlsLayer.createServer(self.allocator, config);
+    pub fn useServerTls(self: *Self, certificate: *ServerCertificate) !void {
+        self.tls_layer = try TlsLayer.createServer(self.allocator, certificate);
     }
 
     pub fn ensureHandshakeStarted(self: *Self) void {
@@ -1019,6 +1064,7 @@ pub const Stream = struct {
             return failureResult(.HandshakeFailed);
         }
         if (tls.dusk_tls_write(layer.session, bytes.ptr, bytes.len) < 0) {
+            self.failure = .Other;
             return failureResult(.Other);
         }
         const sent = self.sendCipherOutput(waiter.task) catch return failureResult(.Other);
@@ -1056,8 +1102,7 @@ pub const Stream = struct {
             return;
         }
         if (tls.dusk_tls_feed(tunnel.session, &tunnel.cipher_scratch, @intCast(read_count)) != .done) {
-            self.failure = .Other;
-            self.serveWaiter();
+            self.failTlsRead(layer, .Other);
             return;
         }
         self.forwardTunnelPlaintext(tunnel, layer);
@@ -1072,27 +1117,48 @@ pub const Stream = struct {
             }
             if (count == @intFromEnum(tls.Status.end)) {
                 self.has_ended = true;
+                if (layer.handshake == .running) {
+                    self.finishHandshake(.failed);
+                    return;
+                }
                 self.serveWaiter();
+                self.applyBackpressure();
             } else if (count < 0) {
-                self.failure = .Other;
-                self.serveWaiter();
+                self.failTlsRead(layer, .Other);
+                return;
             }
             break;
         }
         const outcome = self.sendTunnelOutput(tunnel, null) catch {
-            self.failure = .Other;
+            self.failTlsRead(layer, .Other);
             return;
         };
         switch (outcome) {
-            .failure => |failure| self.failure = failure,
+            .failure => |failure| self.failTlsRead(layer, failure),
             .done, .parked => {},
         }
     }
 
+    fn failTlsRead(self: *Self, layer: *TlsLayer, failure: IoError) void {
+        self.failure = failure;
+        if (layer.handshake == .running) {
+            self.finishHandshake(.failed);
+            return;
+        }
+        self.serveWaiter();
+        self.applyBackpressure();
+    }
+
     fn receiveCiphertext(self: *Self, layer: *TlsLayer, data: []const u8) void {
+        if (layer.handshake == .running) {
+            layer.handshake_bytes_received +|= data.len;
+            if (layer.handshake_bytes_received > max_tls_handshake_bytes) {
+                self.finishHandshake(.failed);
+                return;
+            }
+        }
         if (tls.dusk_tls_feed(layer.session, data.ptr, data.len) != .done) {
-            self.failure = .Other;
-            self.serveWaiter();
+            self.failTlsRead(layer, .Other);
             return;
         }
         switch (layer.handshake) {
@@ -1234,6 +1300,11 @@ fn onWrite(uv_request: *uv.Request, status: c_int) callconv(.c) void {
         stream.wakeTask(task, wake_result);
     } else if (status != 0 and !stream.is_closed) {
         stream.failure = failure;
+        if (stream.tls_layer) |layer| {
+            if (layer.handshake == .running) {
+                stream.finishHandshake(.failed);
+            }
+        }
     }
     stream.finishRequest();
 }
@@ -1242,7 +1313,7 @@ fn onWriteTimeout(timer: *uv.Handle) callconv(.c) void {
     const stream: *Stream = @alignCast(@fieldParentPtr("write_timer_owner", HandleOwner.of(timer)));
     stream.is_write_timer_running = false;
     stream.has_write_timed_out = true;
-    stream.event_loop.closeStream(@intCast(stream.table_index));
+    stream.event_loop.closeStream(stream.table_index);
 }
 
 pub const ReadMode = union(enum) {
@@ -1333,7 +1404,8 @@ const ReadSource = struct {
             return lineFrom(available[0..newline], newline + 1, max);
         }
         if (max) |limit| {
-            if (available.len > limit) {
+            const might_end_with_crlf = available.len == limit + 1 and available[limit] == '\r' and !self.has_ended;
+            if (available.len > limit and !might_end_with_crlf) {
                 return .{ .result = .{ .failure = .LineTooLong } };
             }
         }

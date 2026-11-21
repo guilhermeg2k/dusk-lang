@@ -113,6 +113,9 @@ struct File
             SeekFrom.End then try self.size() end
         end
         try stream_flush(self.handle)
+        if offset > 0 and base > 9223372036854775807 - offset then
+            return io::IoError.Other
+        end
         try stream_seek(self.handle, base + offset)
         return base + offset
     end

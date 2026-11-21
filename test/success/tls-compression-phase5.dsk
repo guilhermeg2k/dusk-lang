@@ -1,0 +1,53 @@
+import std/buffer
+import std/compression
+import std/fs
+import std/io
+import std/net
+import std/string
+
+struct FakeReader
+    chunks: []buffer
+    index: int = 0
+
+    func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        if self.index >= 1 then
+            return null
+        end
+        let chunk = self.chunks[self.index]
+        self.index = self.index + 1
+        return chunk
+    end
+end
+
+func main() -> !void
+    let raw = buffer::from_string("hello compressed world")
+    let mut packed = try compression::compress(raw, compression::Format.Gzip)
+    let mut reader = try compression::reader(FakeReader(chunks = [packed]), compression::Format.Gzip)
+
+    let first = try reader.read_bytes(5)
+    assert(first != null)
+    if first: part then
+        assert((try string::from_bytes(part)) == "hello")
+    end
+
+    let rest = try reader.read_bytes(9223372036854775807)
+    assert(rest != null)
+    if rest: part then
+        assert((try string::from_bytes(part)) == " compressed world")
+    end
+    reader.close()
+
+    let mut reader2 = try compression::reader(FakeReader(chunks = [packed]), compression::Format.Gzip)
+    let head = try reader2.read_bytes(5)
+    assert(head != null)
+    reader2.close()
+    let after_close = try reader2.read_bytes(5)
+    assert(after_close == null)
+
+    let mut decomp = compression::Decompressor(compression::Format.Gzip, max = 5)
+    let too_big = decomp.write_bytes(packed) catch e then
+        assert(e == compression::CompressionError.TooLarge)
+        return
+    end
+    assert(buffer::len(too_big) < 0)
+end

@@ -305,10 +305,10 @@ fn childKill(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn childPipe(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const child = vm.event_loop.processAt(args[0].int64) orelse return native.fail(ProcessError.Closed);
     const index = child.pipe_handles[@intCast(args[1].int64)] orelse return native.fail(ProcessError.NotPiped);
-    if (vm.event_loop.streamAt(@intCast(index)) == null) {
+    if (vm.event_loop.streamAt(index) == null) {
         return native.fail(ProcessError.Closed);
     }
-    return native.ok(.{ .int64 = @intCast(index) });
+    return native.ok(.{ .int64 = index });
 }
 
 fn childClose(vm: *VM, args: []v.Value) anyerror!NativeResult {

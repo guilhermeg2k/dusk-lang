@@ -1,0 +1,67 @@
+import std/buffer
+import std/fs
+import std/io
+import std/net
+import std/string
+import std/task
+import std/time
+
+func main() -> !void
+    let path = "/tmp/dusk-cr-phase4-file.txt"
+    defer fs::delete(path) catch e then end
+    try fs::write(path, "hello world\n")
+
+    let mut reader = try fs::open(path, fs::Mode.Read)
+    let reader_copy = reader
+    let closer = spawn(func() -> void
+        reader_copy.close()
+    end)
+    let ignored1 = reader.read_bytes(64, timeout_ms = 0) catch null
+    await(closer)
+    reader.close()
+
+    let mut reader2 = try fs::open(path, fs::Mode.Read)
+    let reader2_copy = reader2
+    let closer2 = spawn(func() -> void
+        reader2_copy.close()
+    end)
+    let ignored2 = reader2.size() catch -1
+    await(closer2)
+    reader2.close()
+
+    let mut reader3 = try fs::open(path, fs::Mode.Read)
+    defer reader3.close()
+    assert((try reader3.seek(1, fs::SeekFrom.Start)) == 1)
+    let overflowed = reader3.seek(9223372036854775807, fs::SeekFrom.Current) catch -1
+    assert(overflowed == -1)
+
+    let mut writer = try fs::open(path, fs::Mode.Write)
+    defer writer.close()
+    let read_on_writer = writer.read_bytes(4) catch null
+    assert(read_on_writer == null)
+
+    let mut raw_path = try buffer::new(3)
+    raw_path[0] = 97
+    raw_path[1] = 0
+    raw_path[2] = 98
+    let bad_path = try string::from_bytes(raw_path)
+    assert(!fs::exists(bad_path))
+    let nul_read = fs::read(bad_path) catch "rejected"
+    assert(nul_read == "rejected")
+
+    let mut listener = try net::tcp_listen("127.0.0.1", 0)
+    defer listener.close()
+    let port = listener.port()
+    let server = spawn(func() -> io::IoError!void
+        let mut conn = try listener.accept()
+        defer conn.close()
+        try conn.write("hello\r")
+        task::sleep(time::milliseconds(20))
+        try conn.write("\n")
+    end)
+    let mut client = try net::tcp_connect("127.0.0.1", port)
+    defer client.close()
+    let line = try client.read_line(max = 5)
+    assert(line == "hello")
+    try await(server)
+end

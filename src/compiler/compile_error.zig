@@ -89,6 +89,11 @@ pub const CompileErrorReporter = struct {
         return CompileError.ParserError;
     }
 
+    pub fn cyclicDefault(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Default value for '{s}' depends on itself", .{name}), loc);
+        return error.CyclicDefault;
+    }
+
     pub fn anonymousStructLayoutDiffers(self: *Self, expected: []const u8, field_names: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(
             self.allocator,
@@ -111,15 +116,23 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn textExpected(self: *Self, found: []const u8, loc: Loc) CompileError {
-        const source = self.src[loc.start..@min(loc.end + 1, self.src.len)];
-        self.log(
+        const start = @min(loc.start, self.src.len);
+        const end = @min(loc.end + 1, self.src.len);
+        const source = if (start < end) self.src[start..end] else "";
+        const is_single_line = source.len > 0 and std.mem.indexOfAny(u8, source, "\r\n") == null;
+        const message = if (is_single_line)
             try allocPrint(
                 self.allocator,
                 "Invalid type: expected 'string' found '{s}': use interpolation to turn it into text, \"${{{s}}}\"",
                 .{ found, source },
-            ),
-            loc,
-        );
+            )
+        else
+            try allocPrint(
+                self.allocator,
+                "Invalid type: expected 'string' found '{s}': use interpolation to turn it into text",
+                .{found},
+            );
+        self.log(message, loc);
         return error.InvalidType;
     }
 
@@ -1232,6 +1245,7 @@ pub const CompileError = error{
     DuplicateMapKey,
     ReservedTypeName,
     CantAssignThroughOptionalChain,
+    CyclicDefault,
 };
 
 const std = @import("std");

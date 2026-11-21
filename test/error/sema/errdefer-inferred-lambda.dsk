@@ -1,0 +1,7 @@
+func main() -> void
+    let f = func()
+        errdefer assert(false)
+        return 1
+    end
+    assert(f() == 1)
+end

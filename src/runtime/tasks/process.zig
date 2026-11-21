@@ -30,12 +30,12 @@ pub const Process = struct {
     timer_owner: HandleOwner = .{ .kind = .process_timer },
     event_loop: *EventLoop,
     scheduler: *Scheduler,
-    table_index: usize,
+    table_index: i64,
     process_memory: []align(16) u8 = &.{},
     timer_memory: []align(16) u8 = &.{},
     captures: [2]CapturePipe = undefined,
     outputs: [2]std.ArrayList(u8) = .{ .empty, .empty },
-    pipe_handles: [3]?usize = .{ null, null, null },
+    pipe_handles: [3]?i64 = .{ null, null, null },
     open_handles: usize = 0,
     max_output: usize = 0,
     output_size: usize = 0,
@@ -68,7 +68,7 @@ pub const Process = struct {
             } else {
                 const index = try event_loop.openProcessPipe(scheduler);
                 self.pipe_handles[channel] = index;
-                pipes[channel] = event_loop.streamAt(@intCast(index)).?.uvHandle();
+                pipes[channel] = event_loop.streamAt(index).?.uvHandle();
             }
         }
         self.process_memory = try allocator.alignedAlloc(u8, .@"16", uv.uv_handle_size(.process));
@@ -180,7 +180,7 @@ pub const Process = struct {
     pub fn closePipes(self: *Process) void {
         for (&self.pipe_handles) |*entry| {
             const stream_handle = entry.* orelse continue;
-            self.event_loop.closeStream(@intCast(stream_handle));
+            self.event_loop.closeStream(stream_handle);
             entry.* = null;
         }
     }
@@ -200,7 +200,7 @@ pub const Process = struct {
         const can_free = self.is_released and self.open_handles == 0;
         if (!can_free) return;
         const allocator = self.event_loop.allocator;
-        _ = self.event_loop.processes.remove(@intCast(self.table_index));
+        _ = self.event_loop.processes.remove(self.table_index);
         for (&self.outputs) |*output| {
             output.deinit(allocator);
         }
@@ -242,7 +242,7 @@ pub const Process = struct {
             return;
         }
         if (self.is_captured) {
-            self.wake(task, .{ .value = .{ .int64 = @intCast(self.table_index) }, .kind = .int64 });
+            self.wake(task, .{ .value = .{ .int64 = self.table_index }, .kind = .int64 });
             return;
         }
         const values = self.event_loop.allocator.dupe(i64, &.{ self.exit_status, self.term_signal }) catch {
@@ -350,7 +350,7 @@ pub const ExecutableLookup = struct {
             return;
         };
         if (!launch.is_captured) {
-            self.wake(.{ .value = .{ .int64 = @intCast(child.table_index) }, .kind = .int64 });
+            self.wake(.{ .value = .{ .int64 = child.table_index }, .kind = .int64 });
             return;
         }
         child.park(self.task, null) catch |failure| {

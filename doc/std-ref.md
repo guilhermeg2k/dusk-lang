@@ -175,8 +175,8 @@ end
 | `len(data)`         | `int`                | Number of bytes.                                                                                  |
 | `new(size)`         | `BufferError!buffer` | A new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size.     |
 | `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
-| `put(data, at, text)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
-| `put_bytes(data, at, source)` | `BufferError!int` | Same, copying another buffer. |
+| `put(mut data, at, text)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
+| `put_bytes(mut data, at, source)` | `BufferError!int` | Same, copying another buffer. |
 | `slice(data, start, stop)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
 | `equal(a, b)` | `bool` | Whether both buffers hold the same bytes. |
 | `starts_with(data, prefix)` | `bool` | Whether `data` begins with the bytes of `prefix`. |
@@ -280,7 +280,7 @@ out.close()
 
 A level outside `0..9` fails with `InvalidLevel` on the first call. Once `finish()` or `close()` ran, every call fails with `Finished`. `flush()` costs a few bytes of output each time, so call it when the other side needs what was sent (a message, an event), not after every write. A `Decompressor` follows the same rules as `decompress`: a gzip stream may hold several members, other bytes after the end fail with `InvalidData`, and `max` counts all its output across calls. After a failure, `close()` the stream. A stream that's neither finished nor closed keeps its memory (about 300 KB for a compressor) until the garbage collector finds it unreachable, or the program ends.
 
-**Wrapping readers and writers.** `compression::writer(inner, format, level = 6)` returns a `compression::Writer` that compresses what's written to it into `inner`, any [`io::Writer`](#stdio) (a file, a connection, your own struct), and `compression::reader(inner, format, max = -1)` returns a `compression::Reader` that decompresses what it reads from `inner`, any `io::Reader`. Both fit the same traits, so they work with `io::copy` and anywhere else a reader or writer goes. They fail with `InvalidLevel` right away for a bad level.
+**Wrapping readers and writers.** `compression::writer(inner, format, level = 6)` returns a `compression::Writer` that compresses what's written to it into `inner`, any [`io::Writer`](#stdio) (a file, a connection, your own struct), and `compression::reader(inner, format, max = -1)` returns a `compression::Reader` that decompresses what it reads from `inner`, any `io::Reader`. Both fit the same traits, so they work with `io::copy` and anywhere else a reader or writer goes. `writer` fails with `InvalidLevel` right away for a bad level.
 
 ```nim
 let mut file = try fs::open("data.json.gz", fs::Mode.Write)
@@ -961,7 +961,7 @@ end
 | :----- | :------ | :---------- |
 | `read_line(max = -1, timeout_ms = -1)` | `IoError!?string` | The next line, without `\n` or `\r\n`; `null` at the end of the file. With `max`, a longer line fails with `LineTooLong`. |
 | `read_bytes(max, timeout_ms = -1)` | `IoError!?buffer` | Up to `max` bytes; `null` at the end. |
-| `read_exact(count, timeout_ms = -1)` | `IoError!?buffer` | Exactly `count` bytes, `null` when the file ends first. |
+| `read_exact(count, timeout_ms = -1)` | `IoError!?buffer` | Exactly `count` bytes, `null` at the end of the file (`UnexpectedEnd` if fewer than `count` bytes remain). |
 | `read_all(timeout_ms = -1)` | `IoError!string` | The rest of the file as text (`InvalidUtf8` if it isn't). |
 | `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | The rest of the file as bytes. |
 | `write(text)` / `write_bytes(data)` | `IoError!void` | Adds text or bytes at the current position. |
@@ -1149,7 +1149,7 @@ end
 
 #### Errors
 
-Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`) and the handshake calls (`start_tls`, `handshake`) fail with `NetError`; using a listener or a connection fails with `io::IoError` (see [std/io](#stdio)), so generic code like `io::copy` has one error type.
+Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`) and the handshake calls (`start_tls`, `accept_tls`, `handshake`) fail with `NetError`; using a listener or a connection fails with `io::IoError` (see [std/io](#stdio)), so generic code like `io::copy` has one error type.
 
 | `net::NetError` | When |
 | :-------------- | :--- |
@@ -1159,7 +1159,7 @@ Opening (`tcp_connect`, `tcp_listen`, `tls_connect`, `tls_listen`, `certificate`
 | `NetworkUnreachable` | No route to the address |
 | `PermissionDenied` | The system doesn't allow it (a port below 1024 without the rights, for example) |
 | `InvalidAddress` | An empty host, a port outside `0..65535`, or an address that isn't on this machine (`tcp_listen`) |
-| `TimedOut` | `tcp_connect`, `tls_connect`, `start_tls` or `handshake` didn't finish within `timeout_ms` |
+| `TimedOut` | `tcp_connect`, `tls_connect`, `start_tls`, `accept_tls` or `handshake` didn't finish within `timeout_ms` |
 | `HandshakeFailed` | The TLS handshake failed for another reason (the other side doesn't speak TLS, has no protocol in common, or closed the connection) |
 | `UntrustedCertificate` | The server's certificate wasn't issued by a trusted authority (self-signed, an unknown authority, or no trusted authorities at all) |
 | `ExpiredCertificate` | The server's certificate is expired, or not valid yet |
@@ -1820,6 +1820,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
+| `BufferError.OutOfRange` | `buffer::put`, `buffer::put_bytes` or `buffer::slice` with bounds outside the buffer (or `start > stop`). |
 
 ## Known limitations
 

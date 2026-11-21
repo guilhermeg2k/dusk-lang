@@ -1,0 +1,6 @@
+struct Node
+    next: Node = Node()
+end
+
+func main() -> void
+end

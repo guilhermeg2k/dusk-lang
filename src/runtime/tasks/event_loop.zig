@@ -42,14 +42,14 @@ pub const EventLoop = struct {
     callback_failure: ?anyerror = null,
     streams: HandleTable(Stream) = .{},
     listeners: HandleTable(Listener) = .{},
-    certificates: std.ArrayList(*ServerCertificate) = .empty,
+    certificates: HandleTable(ServerCertificate) = .{},
     trust_store: TrustStore = .{},
     connection_pool: ConnectionPool = .{},
     http_servers: std.ArrayList(ServerState) = .empty,
     compression_streams: CompressionStreams = .{},
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
-    stdin_handle: ?usize = null,
+    stdin_handle: ?i64 = null,
     signal_subscriptions: HandleTable(Subscription) = .{},
     terminal_outputs: [2]?*TerminalOutput = .{ null, null },
     has_used_raw_terminal: bool = false,
@@ -131,7 +131,7 @@ pub const EventLoop = struct {
         return dispatch;
     }
 
-    pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !usize {
+    pub fn watchSignal(self: *Self, scheduler: *Scheduler, signal: i64) !i64 {
         try self.signal_subscriptions.reserve(self.allocator);
         const subscription = try Subscription.create(self, scheduler, signal);
         return self.signal_subscriptions.addAssumeCapacity(subscription);
@@ -208,11 +208,11 @@ pub const EventLoop = struct {
         try self.host_slots.addWaiter(self.allocator, key, waiter);
         const ms = timeout_ms orelse return;
         waiter.timer_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer)) catch |failure| {
-            self.host_slots.removeWaiter(key, waiter);
+            self.host_slots.removeWaiter(self.allocator, key, waiter);
             return failure;
         };
         if (uv.uv_timer_init(loop, waiter.timer()) != 0) {
-            self.host_slots.removeWaiter(key, waiter);
+            self.host_slots.removeWaiter(self.allocator, key, waiter);
             self.allocator.free(waiter.timer_memory);
             waiter.timer_memory = &.{};
             return error.TimerFailed;
@@ -224,7 +224,7 @@ pub const EventLoop = struct {
     }
 
     pub fn releaseHostSlot(self: *Self, key: []const u8) void {
-        const waiter = self.host_slots.release(key) orelse return;
+        const waiter = self.host_slots.release(self.allocator, key) orelse return;
         self.handSlotToWaiter(waiter);
     }
 
@@ -258,10 +258,11 @@ pub const EventLoop = struct {
                 process.releaseOnceExited();
             },
             .signal => self.closeSignal(slot.handle),
+            .certificate => self.closeCertificate(slot.handle),
         }
     }
 
-    pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !usize {
+    pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !i64 {
         if (self.stdin_handle) |handle| {
             return handle;
         }
@@ -274,7 +275,7 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !usize {
+    pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
@@ -287,7 +288,7 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !usize {
+    pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.openTcp(self.allocator, self, scheduler, loop);
@@ -296,7 +297,7 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn openProcessPipe(self: *Self, scheduler: *Scheduler) !usize {
+    pub fn openProcessPipe(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.openProcessPipe(self.allocator, self, scheduler, loop);
@@ -326,7 +327,7 @@ pub const EventLoop = struct {
 
     pub fn pauseStdinWhenIdle(self: *Self) void {
         const handle = self.stdin_handle orelse return;
-        const stream = self.streamAt(@intCast(handle)) orelse return;
+        const stream = self.streamAt(handle) orelse return;
         stream.pauseReadingWhenIdle();
     }
 
@@ -345,7 +346,7 @@ pub const EventLoop = struct {
         return process;
     }
 
-    pub fn openListener(self: *Self, scheduler: *Scheduler) !usize {
+    pub fn openListener(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.listeners.reserve(self.allocator);
         const listener = try Listener.create(self.allocator, self, scheduler, loop);
@@ -353,22 +354,24 @@ pub const EventLoop = struct {
         return handle;
     }
 
-    pub fn addCertificate(self: *Self, certificate: *ServerCertificate) !usize {
-        try self.certificates.append(self.allocator, certificate);
-        return self.certificates.items.len - 1;
+    pub fn addCertificate(self: *Self, certificate: *ServerCertificate) !i64 {
+        try self.certificates.reserve(self.allocator);
+        return self.certificates.addAssumeCapacity(certificate);
     }
 
     pub fn certificateAt(self: *Self, handle: i64) ?*ServerCertificate {
-        const is_valid = handle >= 0 and handle < self.certificates.items.len;
-        if (!is_valid) {
-            return null;
-        }
-        return self.certificates.items[@intCast(handle)];
+        return self.certificates.get(handle);
+    }
+
+    pub fn closeCertificate(self: *Self, handle: i64) void {
+        const certificate = self.certificates.remove(handle) orelse return;
+        certificate.release(self.allocator);
     }
 
     fn freeCertificates(self: *Self) void {
-        for (self.certificates.items) |certificate| {
-            certificate.destroy(self.allocator);
+        for (self.certificates.entries.items) |entry| {
+            const certificate = entry orelse continue;
+            certificate.release(self.allocator);
         }
         self.certificates.deinit(self.allocator);
         self.trust_store.deinit(self.allocator);
@@ -526,7 +529,7 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         },
         .slot_timer => {
             const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", owner));
-            waiter.event_loop.host_slots.removeWaiter(waiter.key, waiter);
+            waiter.event_loop.host_slots.removeWaiter(waiter.event_loop.allocator, waiter.key, waiter);
             waiter.destroy();
         },
     }
@@ -557,7 +560,7 @@ pub const SlotWaiter = struct {
 fn onSlotTimeout(handle: *uv.Handle) callconv(.c) void {
     const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
     const event_loop = waiter.event_loop;
-    event_loop.host_slots.removeWaiter(waiter.key, waiter);
+    event_loop.host_slots.removeWaiter(event_loop.allocator, waiter.key, waiter);
     event_loop.pending_operations -= 1;
     const failure: WakeResult = .{ .value = .{ .int64 = @intFromEnum(HttpError.TimedOut) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
     waiter.scheduler.wake(waiter.task, failure) catch |wake_failure| {
@@ -626,13 +629,31 @@ fn onFsJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
     defer job.destroy();
     const event_loop = job.event_loop;
     event_loop.pending_operations -= 1;
+    if (event_loop.is_shutting_down) {
+        if (job.kind == .open_file and job.failure == null and job.file >= 0) {
+            job.closeFile(job.file);
+        }
+        if (job.stream) |stream| {
+            if (job.kind == .file_size) {
+                stream.finishRequest();
+            } else if (job.kind == .write_chunk) {
+                stream.finishOutput(job.written_bytes, job.failure != null);
+            } else {
+                stream.finishChunk(job.takeContents(), job.failure != null);
+            }
+        }
+        return;
+    }
     if (job.stream) |stream| {
         if (job.kind == .write_chunk) {
-            stream.finishOutput(job.failure != null);
+            stream.finishOutput(job.written_bytes, job.failure != null);
             return;
         }
-        stream.finishChunk(job.takeContents(), job.failure != null);
-        return;
+        if (job.kind == .read_chunk) {
+            stream.finishChunk(job.takeContents(), job.failure != null);
+            return;
+        }
+        stream.finishRequest();
     }
     const wake_result = job.takeWakeResult();
     job.scheduler.wake(job.task.?, wake_result) catch |failure| {

@@ -20,7 +20,7 @@ pub fn HandleTable(comptime T: type) type {
             try self.free_indexes.ensureTotalCapacity(allocator, self.entries.items.len + 1);
         }
 
-        pub fn addAssumeCapacity(self: *Self, item: *T) usize {
+        pub fn addAssumeCapacity(self: *Self, item: *T) i64 {
             if (self.free_indexes.pop()) |index| {
                 self.entries.items[index] = item;
                 return handleOf(index, self.generations.items[index]);
@@ -64,8 +64,8 @@ pub fn HandleTable(comptime T: type) type {
             return if (is_current) index else null;
         }
 
-        fn handleOf(index: u32, generation: u32) usize {
-            return (@as(usize, generation) << 32) | index;
+        fn handleOf(index: u32, generation: u32) i64 {
+            return @intCast((@as(u64, generation) << 32) | index);
         }
     };
 }

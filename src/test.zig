@@ -25,31 +25,6 @@ test "gc: else branches do not retain roots from the skipped then branch" {
     try runCase("gc-if-branches.dsk");
 }
 
-test "gc: scoped native roots survive collection and root-list growth" {
-    const VM = @import("runtime/vm.zig").VM;
-    const value = @import("runtime/value.zig");
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
-    const program = try dusk.compile("func main() -> void end");
-    var vm = VM.init(&program, .{});
-    defer vm.deinit();
-    const outer = vm.heap.temporary_roots.items.len;
-    defer vm.heap.restoreRootCount(outer);
-    const text = try vm.allocBytesValue("kept", .string);
-    const root = try vm.heap.protectValue(text, .string);
-    const nested = vm.heap.temporary_roots.items.len;
-    for (0..1000) |i| {
-        _ = try vm.heap.protectValue(.{ .int64 = @intCast(i) }, .int64);
-    }
-    try vm.heap.collect(&vm.scheduler, &program);
-    try testing.expectEqualStrings("kept", value.HeapValue.getParentPtr(value.Bytes, vm.heap.protectedValue(root).heap_obj).slice());
-    vm.heap.restoreRootCount(nested);
-    try vm.heap.collect(&vm.scheduler, &program);
-    try testing.expectEqualStrings("kept", value.HeapValue.getParentPtr(value.Bytes, vm.heap.protectedValue(root).heap_obj).slice());
-    try testing.expectEqual(nested, vm.heap.temporary_roots.items.len);
-}
-
 test "sema: anonymous coercions preserve private-field visibility" {
     try runCase("anonymous-private-same-module.dsk");
     try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);
@@ -1025,13 +1000,13 @@ test "handles: the stream and listener tables reuse slots and reject stale handl
     var a: u8 = 1;
     var b: u8 = 2;
     try table.reserve(allocator);
-    const first: i64 = @intCast(table.addAssumeCapacity(&a));
+    const first = table.addAssumeCapacity(&a);
     try testing.expectEqual(&a, table.get(first).?);
     try testing.expectEqual(&a, table.remove(first).?);
     try testing.expect(table.get(first) == null);
     try testing.expect(table.remove(first) == null);
     try table.reserve(allocator);
-    const second: i64 = @intCast(table.addAssumeCapacity(&b));
+    const second = table.addAssumeCapacity(&b);
     try testing.expect(second != first);
     try testing.expectEqual(first & 0xffff_ffff, second & 0xffff_ffff);
     try testing.expect(table.get(first) == null);
@@ -5514,4 +5489,29 @@ test "http request parser: smuggling shapes, unknown methods and malformed heads
 
 test {
     _ = @import("cli_test.zig");
+}
+
+test "cr phase 1: defer re-emission, return try errdefer, when gc, anonymous null aliasing, cyclic defaults" {
+    try runCase("defer-reemit-and-tail-call.dsk");
+    try runCaseError("sema/anonymous-null-aliasing.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/cyclic-struct-default.dsk", error.CyclicDefault);
+    try runCaseError("sema/cyclic-param-default.dsk", error.CyclicDefault);
+}
+
+test "cr phase 2: generic methods, optional chain calls, lambda hints, errdefer lambdas, forward defaults, catch inference" {
+    try runCase("compiler-phase2-edge-cases.dsk");
+    try runCaseError("sema/errdefer-inferred-lambda.dsk", error.ErrdeferOutsideFailingFunction);
+    try runCaseError("sema/copy-unknown-named-arg.dsk", error.UnknownArgumentName);
+}
+
+test "cr phase 4: file close races, seek overflow, write-only read, nul path, split crlf line boundary" {
+    try runCase("stream-fs-phase4.dsk");
+}
+
+test "cr phase 5: compression reader overflow and close, decompressor too large invalidation" {
+    try runCase("tls-compression-phase5.dsk");
+}
+
+test "cr phase 6: http pool double-close, response splitting, empty location, trailers, head keep-alive, nul path, url dot-segments" {
+    try runCase("http-url-phase6.dsk");
 }

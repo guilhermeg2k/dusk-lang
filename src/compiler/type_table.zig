@@ -119,7 +119,9 @@ pub const TypeTable = struct {
     pub fn isAnonymousStructForNamedStruct(self: *Self, from: TypeId, to: TypeId) bool {
         const kind_from = self.getTypePtrById(from).kind;
         const kind_to = self.getTypePtrById(to).kind;
-        if (kind_from != .@"struct" or kind_to != .@"struct") return false;
+        if (kind_from != .@"struct" or kind_to != .@"struct") {
+            return false;
+        }
         const from_is_anonymous = std.mem.eql(u8, kind_from.@"struct".identifier, "@");
         const to_is_anonymous = std.mem.eql(u8, kind_to.@"struct".identifier, "@");
         return from_is_anonymous and !to_is_anonymous;
@@ -128,7 +130,9 @@ pub const TypeTable = struct {
     pub fn fieldNameList(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {
         var names: std.ArrayList(u8) = .empty;
         for (self.getTypePtrById(id).kind.@"struct".fields_in_order, 0..) |field, i| {
-            if (i > 0) try names.appendSlice(allocator, ", ");
+            if (i > 0) {
+                try names.appendSlice(allocator, ", ");
+            }
             try names.appendSlice(allocator, field.identifier);
         }
         return names.toOwnedSlice(allocator);
@@ -137,27 +141,63 @@ pub const TypeTable = struct {
     fn canReuseAnonymousStructAs(self: *Self, from: Struct, to: Struct) bool {
         const from_is_anonymous = std.mem.eql(u8, from.identifier, "@");
         const to_is_anonymous = std.mem.eql(u8, to.identifier, "@");
-        if (!from_is_anonymous or to_is_anonymous) return false;
-        if (from.fields_in_order.len != to.fields_in_order.len) return false;
+        if (!from_is_anonymous or to_is_anonymous) {
+            return false;
+        }
+        if (from.fields_in_order.len != to.fields_in_order.len) {
+            return false;
+        }
         for (from.fields_in_order, to.fields_in_order) |from_field, to_field| {
-            if (!std.mem.eql(u8, from_field.identifier, to_field.identifier)) return false;
-            if (!self.isSameFieldLayout(from_field.type_id, to_field.type_id)) return false;
+            if (!std.mem.eql(u8, from_field.identifier, to_field.identifier)) {
+                return false;
+            }
+            if (!self.isSameFieldLayout(from_field.type_id, to_field.type_id)) {
+                return false;
+            }
         }
         return true;
     }
 
     fn isSameFieldLayout(self: *Self, from: TypeId, to: TypeId) bool {
-        if (from == to) return true;
+        if (from == to) {
+            return true;
+        }
         const type_from = self.getTypePtrById(from);
         const type_to = self.getTypePtrById(to);
-        if (!type_from.is_nullable or !type_to.is_nullable) return false;
-        if (type_from.kind == .unknown) return true;
+        if (!type_from.is_nullable or !type_to.is_nullable) {
+            return false;
+        }
+        if (type_from.kind == .unknown) {
+            return true;
+        }
         const inner_from = self.typeIdByNullableTypeId.get(from) orelse return false;
         const inner_to = self.typeIdByNullableTypeId.get(to) orelse return false;
         const kind_from = self.getTypePtrById(inner_from).kind;
         const kind_to = self.getTypePtrById(inner_to).kind;
-        if (kind_from != .@"struct" or kind_to != .@"struct") return false;
+        if (kind_from != .@"struct" or kind_to != .@"struct") {
+            return false;
+        }
         return self.canReuseAnonymousStructAs(kind_from.@"struct", kind_to.@"struct");
+    }
+
+    pub fn containsUnknownType(self: *Self, id: TypeId) bool {
+        const type_ptr = self.getTypePtrById(id);
+        return switch (type_ptr.kind) {
+            .unknown => true,
+            .array => |item| self.containsUnknownType(item),
+            .@"struct" => |structure| {
+                if (!std.mem.eql(u8, structure.identifier, "@")) {
+                    return false;
+                }
+                for (structure.fields_in_order) |field| {
+                    if (self.containsUnknownType(field.type_id)) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+            else => false,
+        };
     }
 
     pub fn syntaxName(self: *Self, id: TypeId, allocator: std.mem.Allocator) ![]const u8 {

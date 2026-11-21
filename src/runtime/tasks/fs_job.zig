@@ -53,6 +53,7 @@ pub const FsJob = struct {
     stat_numbers: ?[]i64 = null,
     contents: ?[]u8 = null,
     output: ?[]u8 = null,
+    written_bytes: usize = 0,
     names: ?[][]u8 = null,
 
     pub fn create(allocator: std.mem.Allocator, kind: Kind, path: []const u8, input: []const u8) !*Self {
@@ -128,16 +129,19 @@ pub const FsJob = struct {
         var written: usize = 0;
         const request = self.fsRequest();
         while (written < output.len) {
-            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
+            const chunk_len = @min(output.len - written, 1 << 30);
+            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(chunk_len) };
             const offset: i64 = if (self.offset < 0) -1 else self.offset + @as(i64, @intCast(written));
             const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, offset, null);
             uv.uv_fs_req_cleanup(request);
-            if (status < 0) {
-                self.failure = failureFromStatus(status);
+            if (status <= 0) {
+                self.written_bytes = written;
+                self.failure = if (status < 0) failureFromStatus(status) else .Other;
                 return;
             }
             written += @intCast(status);
         }
+        self.written_bytes = written;
     }
 
     fn openFile(self: *Self) void {
@@ -269,11 +273,12 @@ pub const FsJob = struct {
         var written: usize = 0;
         while (written < self.input.len) {
             const remaining = self.input[written..];
-            const buffer = uv.Buffer{ .base = remaining.ptr, .len = @intCast(remaining.len) };
+            const chunk_len = @min(remaining.len, 1 << 30);
+            const buffer = uv.Buffer{ .base = remaining.ptr, .len = @intCast(chunk_len) };
             const status = uv.uv_fs_write(self.loop, request, file, @ptrCast(&buffer), 1, -1, null);
             uv.uv_fs_req_cleanup(request);
-            if (status < 0) {
-                self.failure = failureFromStatus(status);
+            if (status <= 0) {
+                self.failure = if (status < 0) failureFromStatus(status) else .Other;
                 return;
             }
             written += @intCast(status);
@@ -283,6 +288,15 @@ pub const FsJob = struct {
     fn readDir(self: *Self) void {
         const entries = self.readDirEntries(self.path) orelse return;
         defer self.allocator.free(entries);
+        for (entries) |entry| {
+            if (!std.unicode.utf8ValidateSlice(entry.name)) {
+                for (entries) |item| {
+                    self.allocator.free(item.name);
+                }
+                self.failure = .InvalidUtf8;
+                return;
+            }
+        }
         const names = self.allocator.alloc([]u8, entries.len) catch {
             for (entries) |entry| {
                 self.allocator.free(entry.name);
@@ -505,7 +519,7 @@ pub const FsJob = struct {
         return null;
     }
 
-    fn closeFile(self: *Self, file: c_int) void {
+    pub fn closeFile(self: *Self, file: c_int) void {
         const request = self.fsRequest();
         _ = uv.uv_fs_close(self.loop, request, file, null);
         uv.uv_fs_req_cleanup(request);
@@ -528,7 +542,10 @@ pub const FsJob = struct {
             .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
             .read_chunk, .write_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
             .open_file => result: {
-                const numbers = self.allocator.alloc(i64, 2) catch break :result .{ .value = .{ .int64 = @intFromEnum(FsError.Other) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+                const numbers = self.allocator.alloc(i64, 2) catch {
+                    self.closeFile(self.file);
+                    break :result .{ .value = .{ .int64 = @intFromEnum(FsError.Other) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
+                };
                 numbers[0] = self.file;
                 numbers[1] = self.file_size;
                 break :result .{ .value = v.NULL_VALUE, .kind = .array, .payload = .{ .ints = numbers } };

@@ -70,8 +70,8 @@ pub const VM = struct {
         defer RuntimeErrorReporter.stdout_to_flush_first = null;
         self.runScheduler() catch |failure| {
             self.saveCurrentTask();
+            self.stdio.tryFlush(.stdout) catch {};
             if (failure == error.BrokenPipe) return failure;
-            self.stdio.flushStdout() catch {};
             self.event_loop.restoreTerminal();
             self.reportErrorLocation(failure);
             return failure;
@@ -843,7 +843,7 @@ pub const VM = struct {
         self.scratch.clearRetainingCapacity();
         for (parts, kinds) |part, kind| {
             if (kind == .string) {
-                try self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice());
+                self.scratch.writer.writeAll(v.HeapValue.getParentPtr(v.Bytes, part.heap_obj).slice()) catch return error.OutOfMemory;
                 continue;
             }
             format.printValue(&self.scratch.writer, part, kind) catch return error.OutOfMemory;
@@ -949,7 +949,7 @@ pub const VM = struct {
         if (@as(u64, @bitCast(self.stack[source_index])) == 0) {
             return self.stack[source_index];
         }
-        try self.maybeCollectGarbage(gc.heapObjectSize(self.stack[source_index].heap_obj));
+        try self.maybeCollectGarbage(gc.heapObjectSize(self.stack[source_index].heap_obj.followRelocated()));
 
         var copies: std.AutoHashMapUnmanaged(*v.HeapValue, *v.HeapValue) = .empty;
         defer copies.deinit(self.allocator);

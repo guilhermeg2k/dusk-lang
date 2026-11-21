@@ -56,7 +56,7 @@ fn eprintln(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn stdinHandle(vm: *VM, _: []v.Value) anyerror!NativeResult {
     const handle = try vm.event_loop.openStdin(&vm.scheduler, vm.stdin_fd);
-    return ok(.{ .int64 = @intCast(handle) });
+    return ok(.{ .int64 = handle });
 }
 
 pub fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -110,7 +110,7 @@ pub fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerro
             .http_failure => return fail(IoError.Other),
         }
     }
-    const is_stdin = vm.event_loop.stdin_handle == @as(usize, @intCast(handle));
+    const is_stdin = vm.event_loop.stdin_handle == handle;
     if (is_stdin) {
         try vm.stdio.flushStdout();
     }

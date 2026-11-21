@@ -45,6 +45,7 @@ extern func ~release(owner: ?resource) -> void
 
 struct Certificate
     ~handle: int
+    ~owner: resource
 end
 
 struct Address
@@ -153,7 +154,8 @@ func ~open_conn(handle: int) -> TcpConn
 end
 
 func certificate(cert_pem: string, key_pem: string) -> NetError!Certificate
-    return Certificate(handle = try certificate_handle(cert_pem, key_pem))
+    let handle = try certificate_handle(cert_pem, key_pem)
+    return Certificate(handle = handle, owner = own(5, handle))
 end
 
 func tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = null, verify: bool = true) -> NetError!TcpConn

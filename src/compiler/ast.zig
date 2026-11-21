@@ -406,7 +406,6 @@ pub const FnParam = struct {
 
 pub const FnCall = struct {
     target: *ExpNode,
-    are_arguments_named: bool,
     arguments: []const FnCallArg,
     type_arguments: []const *TypeAnnotation = &.{},
 };

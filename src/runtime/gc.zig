@@ -177,7 +177,7 @@ const Collector = struct {
         const new_ptr = try cloneHeapObj(self.to_space, current);
         current.gc_forward = new_ptr;
         value.heap_obj = new_ptr;
-        const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer and new_ptr.kind != .resource;
+        const has_references = new_ptr.kind != .string and new_ptr.kind != .buffer and new_ptr.kind != .resource and new_ptr.kind != .null_box;
         if (has_references) {
             try self.heap.gc_queue.append(self.heap.queue_allocator, new_ptr);
         }

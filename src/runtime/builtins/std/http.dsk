@@ -169,7 +169,12 @@ struct ResponseStream
     end
 
     func close(mut self: @) -> void
-        pool_put(self.pool_key, self.handle)
+        if self.handle < 0 then
+            return
+        end
+        let handle = self.handle
+        self.handle = -1
+        pool_put(self.pool_key, handle)
         release(self.owner)
     end
 end
@@ -424,6 +429,10 @@ struct Request
     end
 
     func bytes(self: @, timeout_ms: int = -1) -> HttpError!buffer
+        if self.is_declared_too_large() then
+            mark_request_body_too_large(self.handle)
+            return HttpError.BodyTooLarge
+        end
         self.send_continue() catch e then
             return from_io(e)
         end
@@ -431,8 +440,20 @@ struct Request
     end
 
     func read_bytes(self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+        if self.is_declared_too_large() then
+            mark_request_body_too_large(self.handle)
+            return io::IoError.Other
+        end
         try self.send_continue()
         return try stream_body_bytes(self.handle, max, timeout_ms)
+    end
+
+    func ~is_declared_too_large(self: @) -> bool
+        if self.headers.get("content-length"): text then
+            let declared = string::to_int(string::trim(text)) catch -1
+            return declared > self.max_body
+        end
+        return false
     end
 
     func ~send_continue(self: @) -> io::IoError!void
@@ -481,7 +502,9 @@ extern func ~body_given_twice() -> void
 extern func ~stream_start_tunneled_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~base64(text: string) -> string
 extern func ~encoded_url(text: string) -> string
+extern func ~is_loopback_host(host: string) -> bool
 extern func ~stream_forbid_reuse(handle: int) -> void
+extern func ~mark_request_body_too_large(handle: int) -> void
 extern func ~stream_has_final_status(handle: int) -> bool
 extern func ~host_slot_take(host: string, limit: int, timeout_ms: int) -> HttpError!void
 extern func ~host_slot_release(host: string) -> void
@@ -610,7 +633,9 @@ func ~without_user_info(address: string) -> HttpError!UserInfoSplit
     let user = url::decode(parts[0]) catch e then
         return HttpError.InvalidUrl
     end
-    let password = if len(parts) > 1 then url::decode(parts[1]) catch "" else "" end
+    let password = if len(parts) > 1 then url::decode(parts[1]) catch e then
+        return HttpError.InvalidUrl
+    end else "" end
     let scheme = string::slice(address, 0, authority_start) catch ""
     let rest = string::slice(address, authority_start + at + 1, string::len(address)) catch ""
     return UserInfoSplit(url = "$scheme$rest", authorization = "Basic ${base64("$user:$password")}")
@@ -628,9 +653,7 @@ func ~authority_end_of(address: string, start: int) -> int
 end
 
 func ~proxy_for(target: url::Url, exchange: Exchange) -> ?Proxy
-    let host = string::lower(target.host)
-    let is_local = host == "localhost" or string::ends_with(host, ".localhost") or string::starts_with(host, "127.") or host == "::1"
-    if is_local then
+    if is_loopback_host(target.host) then
         return null
     end
     return exchange.proxy
@@ -755,9 +778,11 @@ func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Excha
     if becomes_get then
         append(dropped, "content-type")
         append(dropped, "content-length")
+        append(dropped, "content-encoding")
     end
     if !is_same_origin then
         append(dropped, "authorization")
+        append(dropped, "proxy-authorization")
         append(dropped, "cookie")
         append(dropped, "host")
     end
@@ -891,7 +916,7 @@ func ~drain(handle: int, exchange: Exchange) -> bool
 end
 
 func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
-    return can_follow(status, exchange) and headers.has("location")
+    return can_follow(status, exchange) and (headers.get("location") orelse "") != ""
 end
 
 func ~can_follow(status: int, exchange: Exchange) -> bool
@@ -947,6 +972,13 @@ func ~open_tunnel(handle: int, target: url::Url, exchange: Exchange, proxy: Prox
     let mut lines = ["CONNECT $authority HTTP/1.1", "Host: $authority"]
     if proxy.authorization: credentials then
         append(lines, "Proxy-Authorization: $credentials")
+    else
+        for exchange.headers: value, name do
+            if string::lower(name) == "proxy-authorization" then
+                append(lines, "Proxy-Authorization: $value")
+                break
+            end
+        end
     end
     stream_set_write_timeout(handle, remaining_ms(exchange))
     stream_write(handle, "${string::join(lines, "\r\n")}\r\n\r\n") catch e then
@@ -998,6 +1030,9 @@ func ~should_send_body(handle: int, exchange: Exchange) -> HttpError!bool
     let wait_ms = if left >= 0 and left < CONTINUE_WAIT_MS then left else CONTINUE_WAIT_MS end
     stream_wait_data(handle, wait_ms) catch e then
         if e == io::IoError.TimedOut then
+            if exchange.timeout_ms >= 0 and remaining_ms(exchange) == 0 then
+                return HttpError.TimedOut
+            end
             return true
         end
         return from_io(e)
@@ -1062,18 +1097,26 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     let proxy = if target.scheme == "http" then proxy_for(target, exchange) else null end
     let request_target = if proxy != null then "http://${host_header(target)}$path" else path end
     append(lines, "${exchange.method} $request_target HTTP/1.1")
+    let mut given: map[string, bool] = {}
     if proxy: through then
         if through.authorization: credentials then
             append(lines, "Proxy-Authorization: $credentials")
+            given["proxy-authorization"] = true
         end
     end
-    let mut given: map[string, bool] = {}
     for exchange.headers: value, name do
         let lowered = string::lower(name)
-        given[lowered] = true
-        if lowered != "content-length" then
-            append(lines, "$name: $value")
+        if lowered == "content-length" then
+            continue
         end
+        if lowered == "proxy-authorization" and (proxy == null or map::has(given, "proxy-authorization")) then
+            continue
+        end
+        if lowered == "host" and map::has(given, "host") then
+            continue
+        end
+        given[lowered] = true
+        append(lines, "$name: $value")
     end
     if !map::has(given, "host") then
         append(lines, "Host: ${host_header(target)}")
@@ -1421,11 +1464,22 @@ func ~request_of(head: buffer, conn: net::TcpConn, handle: int, server: Server) 
         raw_path = absolute.path
         query = absolute.query
     end
+    if string::find(string::lower(raw_path), "%00") != null then
+        return HttpError.InvalidRequest
+    end
     let path = url::decode(raw_path) catch e then
         return HttpError.InvalidRequest
     end
     let headers = headers_of(parts, first = 4)
-    let expects_continue = string::lower(string::trim(headers.get("expect") orelse "")) == "100-continue"
+    let is_http_11 = parts[2] == "11"
+    if is_http_11 and len(headers.get_all("host")) != 1 then
+        return HttpError.InvalidRequest
+    end
+    let expect_value = string::lower(string::trim(headers.get("expect") orelse ""))
+    if expect_value != "" and expect_value != "100-continue" then
+        return HttpError.InvalidRequest
+    end
+    let expects_continue = is_http_11 and expect_value == "100-continue"
     return Request(method = parts[0], target = target, path = path, query = query, headers = headers, remote_address = conn.remote_address(), handle = handle, keeps_alive = parts[3] == "1", max_body = server.max_body, expects_continue = expects_continue)
 end
 
@@ -1435,9 +1489,20 @@ func ~finish(server: Server, request: Request, response: Response) -> bool
     if !is_body_done then
         return write_response(server, request, checked_response(request, response), false) and false
     end
-    let wants_close = string::lower(response.headers.get("connection") orelse "") == "close"
+    let wants_close = has_connection_token(response.headers, "close")
     let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.state)
     return write_response(server, request, checked_response(request, response), keeps_alive) and keeps_alive
+end
+
+func ~has_connection_token(headers: Headers, token: string) -> bool
+    for headers.get_all("connection"): value do
+        for string::split(value, ","): entry do
+            if string::lower(string::trim(entry)) == token then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 func ~drain_request(server: Server, request: Request) -> bool
@@ -1448,6 +1513,15 @@ func ~drain_request(server: Server, request: Request) -> bool
 end
 
 func ~checked_response(request: Request, response: Response) -> Response
+    let is_valid_status = response.status >= 100 and response.status <= 599
+    if !is_valid_status then
+        io::eprintln("http: ${request.method} ${request.path} failed: invalid response status '${response.status}'")
+        return status(500)
+    end
+    if response.reason != "" and !is_header_value(response.reason) then
+        io::eprintln("http: ${request.method} ${request.path} failed: invalid response reason")
+        return status(500)
+    end
     for response.headers.items: header do
         let is_valid = is_header_name(header.name) and is_header_value(header.value)
         if !is_valid then
@@ -1463,21 +1537,28 @@ func ~write_response(server: Server, request: Request, response: Response, keeps
     let reason = if response.reason == "" then reason_phrase(code) else response.reason end
     let has_body = !(code < 200 or code == 204 or code == 304)
     let can_compress = has_body and is_compressible(server, response)
-    let is_gzip_accepted = can_compress and accepts_gzip(request.headers.get("accept-encoding") orelse "")
+    let accept_encoding = string::join(request.headers.get_all("accept-encoding"), ",")
+    let is_gzip_accepted = can_compress and accepts_gzip(accept_encoding)
     let packed = if is_gzip_accepted and response.stream == null then gzipped(server, response.body) else null end
     let is_stream_large_enough = response.stream_length < 0 or response.stream_length >= MIN_COMPRESSED_BODY
     let is_stream_compressed = is_gzip_accepted and response.stream != null and is_stream_large_enough
+    let is_compressed = packed != null or is_stream_compressed
     let body = packed orelse response.body
     let mut lines: []string = ["HTTP/1.1 $code $reason"]
     let mut has_vary = false
     for response.headers.items: header do
-        if is_managed_header(response.headers, header.name) then
+        if is_managed_header(header.name) then
             continue
         end
-        let needs_vary = can_compress and string::lower(header.name) == "vary"
+        let lowered = string::lower(header.name)
+        let needs_vary = can_compress and lowered == "vary"
         if needs_vary then
             append(lines, "${header.name}: ${with_accept_encoding(header.value)}")
             has_vary = true
+            continue
+        end
+        if is_compressed and lowered == "etag" and string::starts_with(string::trim(header.value), "\"") then
+            append(lines, "${header.name}: W/${string::trim(header.value)}")
             continue
         end
         append(lines, "${header.name}: ${header.value}")
@@ -1485,7 +1566,7 @@ func ~write_response(server: Server, request: Request, response: Response, keeps
     if can_compress and !has_vary then
         append(lines, "Vary: Accept-Encoding")
     end
-    if packed != null or is_stream_compressed then
+    if is_compressed then
         append(lines, "Content-Encoding: gzip")
     end
     if !response.headers.has("date") then
@@ -1566,9 +1647,17 @@ func ~has_zero_quality(parts: []string) -> bool
 end
 
 func ~with_accept_encoding(vary: string) -> string
-    let lowered = string::lower(vary)
-    let has_it = string::contains(lowered, "accept-encoding") or string::trim(lowered) == "*"
-    return if has_it then vary else "$vary, Accept-Encoding" end
+    let trimmed = string::trim(vary)
+    if trimmed == "" then
+        return "Accept-Encoding"
+    end
+    for string::split(trimmed, ","): entry do
+        let token = string::lower(string::trim(entry))
+        if token == "accept-encoding" or token == "*" then
+            return vary
+        end
+    end
+    return "$trimmed, Accept-Encoding"
 end
 
 func ~gzipped(server: Server, body: buffer) -> ?buffer
@@ -1598,6 +1687,9 @@ end
 
 func ~send_stream_body(request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool) -> bool
     write(writer) catch e then
+        if !sends_body and e == io::IoError.Closed then
+            return true
+        end
         let is_expected = !sends_body or e == io::IoError.Closed
         if !is_expected then
             io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e")
@@ -1644,7 +1736,7 @@ func ~write_joined(handle: int, head: string, body: buffer) -> bool
     return true
 end
 
-func ~is_managed_header(headers: Headers, name: string) -> bool
+func ~is_managed_header(name: string) -> bool
     let lowered = string::lower(name)
     return lowered == "content-length" or lowered == "transfer-encoding" or lowered == "connection" or lowered == "keep-alive"
 end

@@ -18,10 +18,26 @@ pub fn main(init: std.process.Init) !u8 {
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_file_writer = std.Io.File.stderr().writerStreaming(init.io, &stderr_buffer);
 
+    var stdio = Stdio{
+        .stdout = .{ .file = &stdout_file_writer },
+        .stderr = .{ .file = &stderr_file_writer },
+        .is_stdout_terminal = std.Io.File.stdout().isTty(init.io) catch false,
+    };
+
     const is_version_request = args.len >= 2 and std.mem.eql(u8, args[1], "--version");
     if (is_version_request) {
-        try stdout_file_writer.interface.print("{s}\n", .{build_zon.version});
-        try stdout_file_writer.interface.flush();
+        stdio.writeLine(.stdout, build_zon.version) catch |failure| {
+            if (failure == error.BrokenPipe) {
+                exitAfterBrokenPipe();
+            }
+            std.process.exit(1);
+        };
+        stdio.flushStdout() catch |failure| {
+            if (failure == error.BrokenPipe) {
+                exitAfterBrokenPipe();
+            }
+            std.process.exit(1);
+        };
         return 0;
     }
 
@@ -32,11 +48,6 @@ pub fn main(init: std.process.Init) !u8 {
 
     enableTerminalEscapeCodes(init.io);
     const file_name = args[1];
-    const stdio = Stdio{
-        .stdout = .{ .file = &stdout_file_writer },
-        .stderr = .{ .file = &stderr_file_writer },
-        .is_stdout_terminal = std.Io.File.stdout().isTty(init.io) catch false,
-    };
     var dusk_c = Dusk{ .allocator = allocator, .stdio = stdio, .io = init.io, .program_args = args[2..], .environment = init.environ_map };
     dusk_c.runFile(file_name) catch |failure| {
         if (failure == error.BrokenPipe) {
