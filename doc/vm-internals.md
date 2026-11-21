@@ -118,10 +118,12 @@ How Dusk types map to values (`valueTypeFromTypeId` in `codegen.zig`):
 | `?string`, `?[]T`, `?Struct`, ... | the pointer itself, or `0` |
 | `func(...) -> T` | pointer to `Closure` |
 | `Task[T, E]` | pointer to `Task` |
+| `resource` (std/prelude internal) | pointer to `Resource` |
 | captured `let mut` (internal) | pointer to `Cell` |
 
 The few places that need a type at runtime carry it explicitly:
-- `Array.kind`: the element kind, used for printing and GC tracing.- `Map.key_type` / `Map.value_type` (copied into `MapStorage`): how to hash and compare keys, and what the GC traces.
+- `Array.kind`: the element kind, used for printing and GC tracing.
+- `Map.key_type` / `Map.value_type` (copied into `MapStorage`): how to hash and compare keys, and what the GC traces.
 - `NullBox.kind` and `Cell.kind`: the kind of the boxed value.
 - Struct and union descriptors.
 - `capture_kinds` for closures.
@@ -352,7 +354,7 @@ Growing an array can't update every reference to it: other registers, struct fie
 
 - Array instructions read their register through `getArrayFromHeapValuePtr`, which follows the chain with `Array.newestCopy()` and also updates the register to the newest copy.
 - Natives and the formatter that read an array call `newestCopy()` too.
-- Code that handles any kind of object (the GC, `copy`, JSON cycle checks) calls `HeapValue.followRelocated()`, which follows the chain for an array and returns any other object unchanged.
+- Code that handles any kind of object (the GC, `copy`) calls `HeapValue.followRelocated()`, which follows the chain for an array and returns any other object unchanged.
 - The GC copies the newest version and makes every reference point to it (`copyHeapValue` follows the chain first), so after a collection no chains are left.
 
 Between collections the old copies stay in the heap, and an array that grows many times leaves a chain that later reads must walk.
@@ -459,10 +461,6 @@ if (result.has_failed) {
 
 `array::pop`, `array::insert` and `array::remove` are checked natives. They return `ArrayError.Empty` or `ArrayError.OutOfRange` through the native error path; `array::pop_or_null` is a Dusk wrapper over `pop`.
 
-The two raw `std/time` clock natives return unboxed integers without parking. Static `EventLoop` clock helpers call `uv_gettimeofday` for Unix-epoch milliseconds and `uv_hrtime` for monotonic nanoseconds; they do not initialize a loop or allocate GC objects. Wall-clock conversion uses a wide intermediate and floors fractional milliseconds. Both conversions check the final signed integer range. Platform failures and unrepresentable readings go through `RuntimeErrorReporter`. The cached `uv_now` reading is not used.
-
-`time::Timestamp` is an ordinary Dusk struct with a private millisecond field. Its Dusk factories wrap `now_ms` or an explicit integer; methods read the field or call the file-only `format_timestamp` native. Formatting uses floor division, nonnegative day remainders and Gregorian 400-year cycles, supporting the full signed millisecond range. A fixed 32-byte local buffer holds UTC text with a signed expanded year where necessary. The native finishes formatting before allocating one result string, so no moving heap references survive the allocation.
-
 **Intrinsics** never run as calls. Codegen evaluates the arguments into `R[a+1 ..]` as usual, then emits the instruction for that intrinsic (`genIntrinsicCall`), for example `len` → `ARRAY_LEN`, `append` → `ARRAY_APPEND` + `LOAD` (returning the array after any growth), `copy` → `DEEP_COPY`, `to_float` → `LOAD` + `I_TO_F`. `==` and `!=` on strings are lowered by sema to the hidden prelude intrinsic `~strings_equal`, which becomes `STR_EQ` (`!=` adds a `B_NOT`).
 
 ### 7.4 Tail calls
@@ -564,8 +562,6 @@ for each register i < owned with bit i set: copy stack[base + i]
 
 So the two rules for adding an allocating instruction are: **record a heap map in codegen, and set `cur_inst` in the VM before allocating.** A frame stopped at an instruction with no heap map fails the debug assertion in `copyTaskRoots`.
 
-**Temporary roots.** A native that allocates many objects while building one result can't keep pointers in Zig locals across allocations, since a collection moves them. It registers each value it still needs with `Heap.protectValue(value, kind)`, which returns an index, reads it back with `protectedValue(index)` after any allocation, and drops everything it added with `restoreRootCount(count)` before returning.
-
 A register's type is changed only *after* the heap map of the instruction that writes it is recorded. For example, `ARRAY_INIT R[3]` records its map while `R[3]` is still typed `void`. So the GC never reads a target register whose content is stale.
 
 ### 9.3 Copying
@@ -575,7 +571,7 @@ A register's type is changed only *after* the heap map of the instruction that w
 1. Skip `0`, pointers into the string pool, and static closures.
 2. Follow `Array.relocated` to the newest copy of an array.
 3. If the object already has `gc_forward` set, point the slot at the copy.
-4. Otherwise clone the object into the new arena, set `gc_forward` on the old object, point the slot at the clone, and push the clone onto `gc_queue` unless it is a string or buffer (those hold no pointers).
+4. Otherwise clone the object into the new arena, set `gc_forward` on the old object, point the slot at the clone, and push the clone onto `gc_queue` unless it is a string, buffer, null box or resource (those hold no pointers).
 
 Then the GC empties `gc_queue`, which is used as a stack, so objects are visited depth first. For each object it copies the fields that hold pointers:
 
@@ -604,7 +600,7 @@ Then `Scheduler.freeUnreachableTasks` frees every done task that no `Task` handl
 
 - **Identity.** A map from original to copy ensures shared objects stay shared once, and cycles end.
 - **Order.** A worklist processes objects in the same order as GC tracing.
-- **What is shared instead of cloned.** Strings, null boxes, closures and cells are treated as immutable or shared by design, so copies point to the same object. Map keys are shared too: the copy clones the `Map` and its `MapStorage` and deep-copies only the values, so a struct key still finds its entry. Struct copies get `identity = 0`.
+- **What is shared instead of cloned.** Strings, null boxes, closures, cells, tasks and resources are treated as immutable or shared by design, so copies point to the same object. Map keys are shared too: the copy clones the `Map` and its `MapStorage` and deep-copies only the values, so a struct key still finds its entry. Struct copies get `identity = 0`.
 - **GC check.** `maybeCollectGarbage` runs once, at the start, for the size of the root object. The copies after that are allocated without checks, because the objects still waiting in the worklist aren't GC roots, so a collection in the middle would lose them.
 
 ## 11. Tasks
@@ -649,7 +645,7 @@ run:
 
 - The ready queue is first in, first out. `spawn` adds the new task at the back, so it runs after the tasks already waiting.
 - Ready tasks run in batches: the tasks ready when the batch starts. Polling the event loop between batches lets timers fire and fs jobs finish even while some task keeps giving way with `sleep(0)`, which would otherwise keep the queue full forever.
-- "Pending" counts parked tasks waiting on libuv (`EventLoop.pending_operations`: one per timer, fs job, stream read, write, flush or handshake wait, open request, accept wait, or trust store load), never open handles.
+- "Pending" counts parked tasks waiting on libuv (`EventLoop.pending_operations`: one per timer, fs job, compression job, stream read, write, flush or handshake wait, open request, accept wait, connection slot wait, or trust store load), never open handles.
 - Before blocking, the loop flushes stdout (`Stdio.flushStdout`), so output printed before a long wait shows up even when stdout is a pipe.
 - `enterTask` puts the task's stack and frames in `VM.stack`, `VM.frames` and `VM.frame_count`; `leaveTask` saves them back, since a call may have grown them. The error path saves them too.
 - `finish` copies `stack[0]` into `result`, frees the stack and frames, marks the task done, and wakes every waiter with the result.
@@ -685,7 +681,7 @@ WakeResult {                    // src/runtime/tasks/scheduler.zig
 
 ### 11.4 The event loop
 
-`EventLoop` (`src/runtime/tasks/event_loop.zig`), the fs jobs (`src/runtime/tasks/fs_job.zig`, [std-internals](std-internals.md) 2), the streams (`src/runtime/tasks/stream.zig`, [std-internals](std-internals.md) 3), TCP (`src/runtime/tasks/tcp.zig`, [std-internals](std-internals.md) 4) and the trust store (`src/runtime/tasks/trust_store.zig`, [std-internals](std-internals.md) 5) are the only code that calls libuv, apart from `uv_guess_handle` in the `~is_terminal_fd` native. mbedTLS is called only from `src/runtime/tasks/tls_glue.c` ([std-internals](std-internals.md) 5). `EventLoop` creates its `uv_loop_t` on first use (`ensureLoopStarted`: a `sleep` above 0, an fs call, a stream, a socket), so programs that use none of them don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
+`EventLoop` (`src/runtime/tasks/event_loop.zig`), the fs jobs (`src/runtime/tasks/fs_job.zig`, [std-internals](std-internals.md) 2), the streams (`src/runtime/tasks/stream.zig`, [std-internals](std-internals.md) 3), TCP (`src/runtime/tasks/tcp.zig`, [std-internals](std-internals.md) 4) and the trust store (`src/runtime/tasks/trust_store.zig`, [std-internals](std-internals.md) 5) are the only code that calls libuv, apart from `uv_guess_handle` in the `~is_terminal_fd` native. mbedTLS is called only from `src/runtime/tasks/tls_glue.c` ([std-internals](std-internals.md) 5). `EventLoop` creates its `uv_loop_t` on first use (`ensureLoopStarted`: a `sleep` above 0, an fs call, a stream, a socket, a compression job, or a connection slot wait), so programs that use none of them don't start one. Each `sleep` allocates a request holding the timer handle, the scheduler and the task; the timer's callback only calls `Scheduler.wake` and closes the handle (the close callback frees the request). Dusk code never runs inside a libuv callback.
 
 libuv's structs differ per OS, so Dusk mostly doesn't use their layout: `src/runtime/tasks/uv.zig` declares the functions it calls with opaque `Loop`, `Handle` and `Request` types, and their memory is allocated with the sizes libuv reports (`uv_loop_size`, `uv_handle_size`, `uv_req_size`). The few plain C structs whose fields Dusk reads or fills are mirrored as `extern struct`s: `Stat` (`uv_stat_t`, with `c_long` times so it also matches Windows), `Buffer` (`uv_buf_t`, whose field order differs on Windows), the first public fields of `uv_dirent_t` and `uv_dir_t`, and `SocketAddress`, 128 zeroed bytes big enough for any `sockaddr` (Dusk only reads the port, at the same offset for IPv4 and IPv6). `addrinfo` comes from Zig's `std.c`, which already knows each OS's layout. Every handle's `data` (`uv_handle_set_data`) points to a `HandleOwner` field (`kind`: `timer`, `stream`, `stream_timer`, `stream_handshake_timer`, `stream_write_timer`, `listener`, `listener_timer`, `open_timer` or `slot_timer`, the timeout of an HTTP request waiting for a connection slot) inside the struct that owns it, and `@fieldParentPtr` gets from the field back to the owner, so `onHandleClosed` and the exit cleanup know what they're freeing. `uv_update_time` runs before each timer starts, since the loop's clock only moves when the loop runs. At exit, `deinit` closes every handle still open, runs the loop until they are closed, and closes the loop.
 
