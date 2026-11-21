@@ -26,6 +26,7 @@ pub const modules = [_]Module{
     .{ .path = "http", .source = @embedFile("std/http.dsk"), .bindings = &@import("std/http.zig").bindings },
     .{ .path = "json", .source = @embedFile("std/json.dsk"), .bindings = &@import("std/json.zig").bindings },
     .{ .path = "serialization", .source = @embedFile("std/serialization.dsk"), .bindings = &@import("std/serialization.zig").bindings },
+    .{ .path = "sqlite", .source = @embedFile("std/sqlite.dsk"), .bindings = &@import("std/sqlite.zig").bindings },
     .{ .path = "compression", .source = @embedFile("std/compression.dsk"), .bindings = &@import("std/compression.zig").bindings },
 };
 

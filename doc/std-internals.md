@@ -38,6 +38,7 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 | `src/runtime/path.zig` | Path rules for each system, over Zig's `std.fs.path` |
 | `src/runtime/tasks/process.zig` | `Process` records, captured runs and the `PATH` lookup job (section 12) |
 | `src/runtime/tasks/process_glue.c` | Filling libuv's spawn options (section 12) |
+| `src/runtime/tasks/sqlite_api.zig` | The only code that declares SQLite's C API, by hand (no `@cImport`). SQLite 3.54.1 comes from the `dusqlang/sqlite` fork like the other C libraries: its `dusk/v3.54.1` branch holds the official amalgamation and a `build.zig` (`SQLITE_THREADSAFE=2`, extension loading, deprecated APIs and shared cache left out). `std/sqlite` only has `version()` so far |
 | `src/runtime/builtins/std/*.dsk`, `std/*.zig` | Each module's Dusk code and natives |
 
 Every module is a `.dsk` file with the Dusk side (structs, methods, functions written in Dusk) and a `.zig` file with its natives and `bindings` (see [vm-internals.md](vm-internals.md) section 7.3). Natives that wait park the calling task and are woken from libuv callbacks ([vm-internals.md](vm-internals.md) section 11.3).

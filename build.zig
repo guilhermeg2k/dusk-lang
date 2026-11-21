@@ -9,7 +9,8 @@ pub fn build(b: *std.Build) void {
     const llhttp = b.dependency("llhttp", .{ .target = target, .optimize = optimize }).artifact("llhttp");
     const timezone_data = b.dependency("timezone_data", .{}).module("timezone_data");
     const zlib_ng = b.dependency("zlib_ng", .{ .target = target, .optimize = optimize }).artifact("z-ng");
-    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp, .zlib_ng = zlib_ng };
+    const sqlite = b.dependency("sqlite", .{ .target = target, .optimize = optimize }).artifact("sqlite");
+    const libraries: RuntimeLibraries = .{ .libuv = libuv, .mbedtls = mbedtls, .llhttp = llhttp, .zlib_ng = zlib_ng, .sqlite = sqlite };
 
     const exe = b.addExecutable(.{
         .name = "dusk",
@@ -76,6 +77,7 @@ const RuntimeLibraries = struct {
     mbedtls: *std.Build.Step.Compile,
     llhttp: *std.Build.Step.Compile,
     zlib_ng: *std.Build.Step.Compile,
+    sqlite: *std.Build.Step.Compile,
 };
 
 fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: RuntimeLibraries) void {
@@ -83,6 +85,7 @@ fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: Run
     module.linkLibrary(libraries.mbedtls);
     module.linkLibrary(libraries.llhttp);
     module.linkLibrary(libraries.zlib_ng);
+    module.linkLibrary(libraries.sqlite);
     const flags = &[_][]const u8{ "-std=c99", "-fno-strict-aliasing" };
     module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/tls_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/http_glue.c"), .flags = flags });

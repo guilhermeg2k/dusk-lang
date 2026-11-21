@@ -32,6 +32,10 @@ test "sema: anonymous coercions preserve private-field visibility" {
     try runCaseError("sema/time-timestamp-nullable-forge.dsk", error.NotVisible);
 }
 
+test "sqlite: the bundled library links and reports its version" {
+    try runCase("sqlite-version.dsk");
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");

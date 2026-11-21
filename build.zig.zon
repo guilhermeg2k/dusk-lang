@@ -21,6 +21,10 @@
             .url = "https://github.com/dusqlang/zlib-ng/archive/refs/tags/v2.3.3-dusk.tar.gz",
             .hash = "zlib_ng-2.3.3-hIW1UEDOcACH4VXxmhLLqXhJLZeHBu1NEhTsT2icMaqg",
         },
+        .sqlite = .{
+            .url = "https://github.com/dusqlang/sqlite/archive/refs/tags/v3.54.1-dusk.tar.gz",
+            .hash = "sqlite-3.54.1-9go_m6acnQBOTbOcTPMO8aNTC0aI4qBbVEIuAtcHb47C",
+        },
     },
     .paths = .{
         "build.zig",

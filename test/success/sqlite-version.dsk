@@ -1,0 +1,8 @@
+import std/sqlite
+import std/string
+
+func main() -> void
+    let version = sqlite::version()
+    assert(string::starts_with(version, "3."))
+    assert(version == "3.54.1")
+end
