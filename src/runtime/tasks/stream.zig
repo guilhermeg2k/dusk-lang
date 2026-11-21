@@ -27,6 +27,7 @@ const high_water_mark = 1024 * 1024;
 const tls_record_size = 16 * 1024 + 256;
 
 const file_output_limit = 64 * 1024;
+const max_uv_chunk: usize = 1 << 30;
 
 pub const Stream = struct {
     const Self = @This();
@@ -226,6 +227,7 @@ pub const Stream = struct {
         if (self.tls_layer) |layer| {
             self.closeTls(layer);
         }
+        self.failOutputWaiters(.Closed);
         self.is_closed = true;
         self.releaseHostSlot();
         if (self.handle_memory.len > 0) {
@@ -478,8 +480,10 @@ pub const Stream = struct {
 
     pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode, timeout_ms: ?u64) !void {
         try self.startReading();
-        if (timeout_ms) |ms| {
-            try self.startTimer(ms);
+        if (self.kind != .file) {
+            if (timeout_ms) |ms| {
+                try self.startTimer(ms);
+            }
         }
         self.waiter = .{ .task = task, .mode = mode };
         self.event_loop.pending_operations += 1;
@@ -519,7 +523,12 @@ pub const Stream = struct {
 
     fn startReading(self: *Self) !void {
         switch (self.kind) {
-            .file => try self.startChunk(),
+            .file => {
+                if (self.can_write_file) {
+                    return error.StreamReadFailed;
+                }
+                try self.startChunk();
+            },
             .closed_input => {},
             .tty, .pipe, .tcp => {
                 if (self.is_reading) return;
@@ -551,7 +560,7 @@ pub const Stream = struct {
             }
         }
         if (self.is_closed) {
-            self.destroy();
+            self.releaseIfDone();
             return;
         }
         if (has_failed) {
@@ -691,7 +700,7 @@ pub const Stream = struct {
         if (!can_seek) {
             return .Other;
         }
-        if (self.waiter != null) {
+        if (self.waiter != null or self.has_chunk_in_flight) {
             return .Busy;
         }
         const has_output = self.pending_output.items.len > 0 or self.has_output_in_flight;
@@ -720,21 +729,27 @@ pub const Stream = struct {
         if (!can_start) return;
         const job = try FsJob.create(self.allocator, .write_chunk, "", "");
         errdefer job.destroy();
-        job.output = try self.pending_output.toOwnedSlice(self.allocator);
+        const owned_output = try self.pending_output.toOwnedSlice(self.allocator);
+        job.output = owned_output;
         job.file = self.file;
         job.offset = if (self.is_append) -1 else self.file_offset;
         job.stream = self;
-        self.file_offset += @intCast(job.output.?.len);
-        try self.event_loop.startFsJob(self.scheduler, null, job);
+        self.event_loop.startFsJob(self.scheduler, null, job) catch |failure| {
+            self.pending_output = std.ArrayList(u8).fromOwnedSlice(owned_output);
+            job.output = null;
+            return failure;
+        };
         self.has_output_in_flight = true;
     }
 
-    pub fn finishOutput(self: *Self, has_failed: bool) void {
+    pub fn finishOutput(self: *Self, written_bytes: usize, has_failed: bool) void {
         self.has_output_in_flight = false;
+        self.file_offset += @intCast(written_bytes);
         if (has_failed) {
             self.output_failure = .Other;
         }
         if (self.is_closed) {
+            self.failOutputWaiters(.Closed);
             self.writeOutputNow();
             self.releaseIfDone();
             return;
@@ -745,6 +760,14 @@ pub const Stream = struct {
             };
         }
         self.wakeOutputWaiters();
+    }
+
+    fn failOutputWaiters(self: *Self, failure: IoError) void {
+        for (self.output_waiters.items) |waiter| {
+            self.event_loop.pending_operations -= 1;
+            self.wakeTask(waiter.task, failureResult(failure));
+        }
+        self.output_waiters.clearRetainingCapacity();
     }
 
     fn wakeOutputWaiters(self: *Self) void {
@@ -780,19 +803,22 @@ pub const Stream = struct {
         var written: usize = 0;
         const output = self.pending_output.items;
         while (written < output.len) {
-            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(output.len - written) };
+            const chunk_len = @min(output.len - written, max_uv_chunk);
+            const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(chunk_len) };
             const offset: i64 = if (self.is_append) -1 else self.file_offset + @as(i64, @intCast(written));
             const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, offset, null);
             uv.uv_fs_req_cleanup(request);
-            if (status < 0) break;
+            if (status <= 0) break;
             written += @intCast(status);
         }
+        self.file_offset += @intCast(written);
         self.pending_output.clearRetainingCapacity();
     }
 
     fn sendBytes(self: *Self, task: ?*TaskState, data: []const u8) !WriteOutcome {
         if (data.len == 0) return .done;
-        const buffers = [_]uv.Buffer{.{ .base = @constCast(data.ptr), .len = @intCast(data.len) }};
+        const try_len = @min(data.len, max_uv_chunk);
+        const buffers = [_]uv.Buffer{.{ .base = @constCast(data.ptr), .len = @intCast(try_len) }};
         const status = uv.uv_try_write(self.uvHandle(), &buffers, 1);
         const written: usize = if (status >= 0) @intCast(status) else 0;
         if (written == data.len) return .done;
@@ -812,7 +838,7 @@ pub const Stream = struct {
             self.event_loop.pending_operations += 1;
         }
         if (!self.is_write_timer_running) {
-            try self.startWriteTimer();
+            self.startWriteTimer() catch {};
         }
         return .parked;
     }
@@ -1299,7 +1325,8 @@ const ReadSource = struct {
             return lineFrom(available[0..newline], newline + 1, max);
         }
         if (max) |limit| {
-            if (available.len > limit) {
+            const might_end_with_crlf = available.len == limit + 1 and available[limit] == '\r' and !self.has_ended;
+            if (available.len > limit and !might_end_with_crlf) {
                 return .{ .result = .{ .failure = .LineTooLong } };
             }
         }

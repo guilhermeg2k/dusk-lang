@@ -4410,3 +4410,7 @@ test "cr phase 2: generic methods, optional chain calls, lambda hints, errdefer 
     try runCaseError("sema/errdefer-inferred-lambda.dsk", error.ErrdeferOutsideFailingFunction);
     try runCaseError("sema/copy-unknown-named-arg.dsk", error.UnknownArgumentName);
 }
+
+test "cr phase 4: file close races, seek overflow, write-only read, nul path, split crlf line boundary" {
+    try runCase("stream-fs-phase4.dsk");
+}

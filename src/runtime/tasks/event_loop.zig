@@ -494,13 +494,31 @@ fn onFsJobDone(work: *uv.Request, _: c_int) callconv(.c) void {
     defer job.destroy();
     const event_loop = job.event_loop;
     event_loop.pending_operations -= 1;
+    if (event_loop.is_shutting_down) {
+        if (job.kind == .open_file and job.failure == null and job.file >= 0) {
+            job.closeFile(job.file);
+        }
+        if (job.stream) |stream| {
+            if (job.kind == .file_size) {
+                stream.finishRequest();
+            } else if (job.kind == .write_chunk) {
+                stream.finishOutput(job.written_bytes, job.failure != null);
+            } else {
+                stream.finishChunk(job.takeContents(), job.failure != null);
+            }
+        }
+        return;
+    }
     if (job.stream) |stream| {
         if (job.kind == .write_chunk) {
-            stream.finishOutput(job.failure != null);
+            stream.finishOutput(job.written_bytes, job.failure != null);
             return;
         }
-        stream.finishChunk(job.takeContents(), job.failure != null);
-        return;
+        if (job.kind == .read_chunk) {
+            stream.finishChunk(job.takeContents(), job.failure != null);
+            return;
+        }
+        stream.finishRequest();
     }
     const wake_result = job.takeWakeResult();
     job.scheduler.wake(job.task.?, wake_result) catch |failure| {

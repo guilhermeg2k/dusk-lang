@@ -1,3 +1,4 @@
+const std = @import("std");
 const v = @import("../../value.zig");
 const io = @import("io.zig");
 const VM = @import("../../vm.zig").VM;
@@ -41,7 +42,11 @@ pub const bindings = native.BindingMap.initComptime(.{
 });
 
 fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const job = try FsJob.create(vm.event_loop.allocator, .open_file, bytesArg(args, 0), "");
+    const path = bytesArg(args, 0);
+    if (std.mem.indexOfScalar(u8, path, 0) != null) {
+        return native.fail(FsError.Other);
+    }
+    const job = try FsJob.create(vm.event_loop.allocator, .open_file, path, "");
     errdefer job.destroy();
     job.open_mode = @enumFromInt(args[1].int64);
     const current = vm.running_task.?;
@@ -73,6 +78,9 @@ fn streamFileSize(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const job = try FsJob.create(vm.event_loop.allocator, .file_size, "", "");
     errdefer job.destroy();
     job.file = stream.file;
+    job.stream = stream;
+    stream.requests_in_flight += 1;
+    errdefer stream.requests_in_flight -= 1;
     const current = vm.running_task.?;
     try vm.event_loop.startFsJob(&vm.scheduler, current, job);
     current.park();
@@ -122,6 +130,13 @@ fn rename(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn startFsJob(vm: *VM, kind: FsJob.Kind, path: []const u8, input: []const u8) anyerror!NativeResult {
+    const has_nul_path = std.mem.indexOfScalar(u8, path, 0) != null or (kind == .rename and std.mem.indexOfScalar(u8, input, 0) != null);
+    if (has_nul_path) {
+        if (kind == .exists) {
+            return native.ok(.{ .bool = false });
+        }
+        return native.fail(FsError.Other);
+    }
     const job = try FsJob.create(vm.event_loop.allocator, kind, path, input);
     errdefer job.destroy();
     const current = vm.running_task.?;

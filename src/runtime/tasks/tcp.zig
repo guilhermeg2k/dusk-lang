@@ -465,6 +465,7 @@ pub const Listener = struct {
             self.event_loop.closeStream(handle);
             return null;
         }
+        _ = uv.uv_tcp_nodelay(stream.uvHandle(), 1);
         self.prepareAcceptedStream(handle) catch return null;
         return handle;
     }
