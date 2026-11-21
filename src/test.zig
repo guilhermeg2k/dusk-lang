@@ -2998,6 +2998,12 @@ test "definite assignment allows deferred initialization on all paths and reject
     try runCaseError("sema/definite-assignment-top-level.dsk", error.TopLevelLetNotConstant);
 }
 
+test "missing struct fields report the field name and untyped null literals are rejected" {
+    try runCaseError("sema/struct-missing-field.dsk", error.MissingArgument);
+    try runCaseError("sema/untyped-null-let.dsk", error.CantInferNullType);
+    try runCaseError("sema/untyped-null-array.dsk", error.CantInferArrayLiteralType);
+}
+
 test "fibonacci" {
     try runCase("fibonnaci.dsk");
 }

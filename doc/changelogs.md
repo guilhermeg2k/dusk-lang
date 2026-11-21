@@ -29,6 +29,7 @@
 - An error that reached the command line without a message (an internal compiler error) made `dusk` exit with code 1 and print nothing; it now prints `error:` and the error's name
 - `string::repeat` with a result too large to fit in memory (`string::repeat("ab", 9223372036854775807)`) crashed, or wrote past its memory in release builds, instead of stopping with an out-of-memory error
 - Running out of memory while waking a task that waited for a file, a stream, a network call or a child process could free that call's result twice
+- Missing required fields in struct construction (`Point()`) now report `Missing argument '<field>'` instead of `Invalid number of arguments`, and untyped `let x = null` / `let xs = [null]` now fail to compile instead of inferring an internal `null` type
 
 ## v0.16 - Shigeo
 

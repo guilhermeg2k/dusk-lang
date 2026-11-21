@@ -276,6 +276,11 @@ pub const CompileErrorReporter = struct {
         return error.VariableNotInitialized;
     }
 
+    pub fn cantInferNullType(self: *Self, loc: Loc) CompileError {
+        self.log("Cannot infer type for 'null': add a type annotation like 'let x: ?int = null'", loc);
+        return error.CantInferNullType;
+    }
+
 
     pub fn unwrappedValueCantBeMutable(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "Unwrapped value '{s}' cannot be mutable", .{identifier}), loc);
@@ -1256,6 +1261,7 @@ pub const CompileError = error{
     CantAssignThroughOptionalChain,
     CyclicDefault,
     VariableNotInitialized,
+    CantInferNullType,
 };
 
 const std = @import("std");

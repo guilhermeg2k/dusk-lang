@@ -1893,6 +1893,9 @@ pub const SemaAnalyzer = struct {
         } else {
             var_type_id = expression_type_id;
             const var_type_ptr = self.type_table.getTypePtrById(var_type_id);
+            if (var_type_ptr.kind == .null) {
+                return self.err_reporter.cantInferNullType(value_exp.loc);
+            }
             if (var_type_ptr.kind == .array and self.type_table.getTypePtrById(var_type_ptr.kind.array).kind == .unknown) {
                 return self.err_reporter.cantInferArrayLiteralType(value_exp.loc);
             }
@@ -5275,7 +5278,7 @@ pub const SemaAnalyzer = struct {
         //call args + auto binded struct
         const total_args_len = call_args_len + fn_call_arguments_values.items.len;
 
-        if (required_params_len > total_args_len) {
+        if (!is_struct_init and required_params_len > total_args_len) {
             return self.err_reporter.invalidNumberOfArgs(required_params_len, total_args_len, exp.loc);
         }
 
@@ -7398,6 +7401,10 @@ pub const SemaAnalyzer = struct {
             const item_value = try self.coerceValue(exp_value, array_literal_type, exp.loc);
 
             try values.append(self.allocator, item_value);
+        }
+
+        if (expected_item_type_id == null and array_literal_type == self.type_table.getPrimitive(.null)) {
+            return self.err_reporter.cantInferArrayLiteralType(exp.loc);
         }
 
         const array_type_id = try self.type_table.getOrAddArray(array_literal_type);
