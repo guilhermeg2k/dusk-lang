@@ -219,9 +219,9 @@ func check_raw(port: int) -> !void
     assert(string::contains(old, "Connection: close"))
     assert(string::ends_with(old, "hello old"))
 
-    let absolute = try raw_exchange(port, "GET http://example.com/?name=abs HTTP/1.1\r\nConnection: close\r\n\r\n")
+    let absolute = try raw_exchange(port, "GET http://example.com/?name=abs HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
     assert(string::ends_with(absolute, "hello abs"))
-    let star = try raw_exchange(port, "OPTIONS * HTTP/1.1\r\nConnection: close\r\n\r\n")
+    let star = try raw_exchange(port, "OPTIONS * HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
     assert(string::ends_with(star, "star OPTIONS"))
 end
 

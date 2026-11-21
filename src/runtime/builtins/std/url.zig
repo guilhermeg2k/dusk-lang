@@ -247,13 +247,20 @@ const Reference = struct {
 
 fn appendResolved(allocator: std.mem.Allocator, out: *std.ArrayList(u8), base_text: []const u8, reference_text: []const u8) (SplitError || error{OutOfMemory})!void {
     if (hasScheme(reference_text)) {
-        try out.appendSlice(allocator, reference_text);
+        const absolute = try splitUrl(reference_text);
+        try out.appendSlice(allocator, reference_text[0..absolute.path.start]);
+        try appendWithoutDotSegments(allocator, out, absolute.path.of(reference_text));
+        try out.appendSlice(allocator, reference_text[absolute.path.end..]);
         return;
     }
     const base = try splitUrl(base_text);
     if (std.mem.startsWith(u8, reference_text, "//")) {
-        try out.appendSlice(allocator, base_text[0 .. base.scheme_end + 1]);
-        try out.appendSlice(allocator, reference_text);
+        const combined = try std.mem.concat(allocator, u8, &.{ base_text[0 .. base.scheme_end + 1], reference_text });
+        defer allocator.free(combined);
+        const resolved = try splitUrl(combined);
+        try out.appendSlice(allocator, combined[0..resolved.path.start]);
+        try appendWithoutDotSegments(allocator, out, resolved.path.of(combined));
+        try out.appendSlice(allocator, combined[resolved.path.end..]);
         return;
     }
     const reference = Reference.split(reference_text);

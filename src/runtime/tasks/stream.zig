@@ -379,7 +379,7 @@ pub const Stream = struct {
 
     fn evictFromPool(self: *Self) void {
         const key = self.pool_key orelse return;
-        self.event_loop.connection_pool.remove(key, self.table_index);
+        self.event_loop.connection_pool.remove(self.allocator, key, self.table_index);
         self.leavePool();
         self.event_loop.closeStream(self.table_index);
     }
@@ -446,17 +446,25 @@ pub const Stream = struct {
     }
 
     fn feedHttpBody(self: *Self, reader: *HttpReader, max: usize) ?HttpError {
+        const wire_limit = max +| max_http_head_size;
         while (!reader.isMessageComplete()) {
             const available = self.bufferedBytes();
             const room = max -| reader.body.items.len;
-            const used = reader.feedBody(available[0..@min(available.len, room)]) catch |failure| {
+            const wire_room = wire_limit -| reader.body_wire_bytes;
+            const step_limit = @min(room, wire_room);
+            const used = reader.feedBody(available[0..@min(available.len, step_limit)]) catch |failure| {
                 if (failure == error.OutOfMemory) {
                     return .Other;
                 }
                 reader.was_body_invalid = true;
                 return reader.invalidMessage();
             };
+            reader.body_wire_bytes +|= used;
             self.consume(used);
+            if (!reader.isMessageComplete() and reader.body_wire_bytes >= wire_limit) {
+                reader.was_body_too_large = true;
+                return .BodyTooLarge;
+            }
             if (used == 0) break;
         }
         return null;
@@ -464,7 +472,7 @@ pub const Stream = struct {
 
     fn httpWholeBodyOutcome(self: *Self, cap: usize) ?ReadOutcome {
         const reader = self.http_reader orelse return httpFailure(.Other);
-        if (self.feedHttpBody(reader, cap + 1)) |failure| {
+        if (self.feedHttpBody(reader, cap +| 1)) |failure| {
             return httpFailure(failure);
         }
         if (reader.body.items.len > cap) {

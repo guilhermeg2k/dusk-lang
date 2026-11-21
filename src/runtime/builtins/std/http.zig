@@ -28,6 +28,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
     .{ "base64", Binding{ .native = &base64 } },
     .{ "encoded_url", Binding{ .native = &encodedUrl } },
+    .{ "is_loopback_host", Binding{ .native = &isLoopbackHost } },
     .{ "stream_forbid_reuse", Binding{ .native = &streamForbidReuse } },
     .{ "stream_has_final_status", Binding{ .native = &streamHasFinalStatus } },
     .{ "host_slot_take", Binding{ .native = &hostSlotTake } },
@@ -53,6 +54,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "claim_continue", Binding{ .native = &claimContinue } },
     .{ "request_body_state", Binding{ .native = &requestBodyState } },
     .{ "request_body_failure", Binding{ .native = &requestBodyFailure } },
+    .{ "mark_request_body_too_large", Binding{ .native = &markRequestBodyTooLarge } },
     .{ "server_state_new", Binding{ .native = &serverStateNew } },
     .{ "server_set_idle", Binding{ .native = &serverSetIdle } },
     .{ "server_close", Binding{ .native = &serverClose } },
@@ -198,7 +200,7 @@ fn poolTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const event_loop = &vm.event_loop;
     try event_loop.poll();
     const key = bytesArg(args, 0);
-    while (event_loop.connection_pool.takeNewest(key)) |handle| {
+    while (event_loop.connection_pool.takeNewest(event_loop.allocator, key)) |handle| {
         const stream = event_loop.streamAt(handle) orelse continue;
         stream.leavePool();
         if (!stream.isReusable()) {
@@ -214,6 +216,9 @@ fn poolPut(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const event_loop = &vm.event_loop;
     const handle = args[1].int64;
     const stream = event_loop.streamAt(handle) orelse return ok(.{ .null = {} });
+    if (stream.pool_key != null) {
+        return ok(.{ .null = {} });
+    }
     if (!stream.isReusable()) {
         event_loop.closeStream(handle);
         return ok(.{ .null = {} });
@@ -299,6 +304,15 @@ fn requestBodyFailure(vm: *VM, args: []v.Value) anyerror!NativeResult {
         break :blk if (reader.was_body_too_large) .too_large else if (reader.was_body_invalid) .invalid else .none;
     };
     return ok(.{ .int64 = @intFromEnum(failure) });
+}
+
+fn markRequestBodyTooLarge(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    if (vm.event_loop.streamAt(args[0].int64)) |stream| {
+        if (stream.http_reader) |reader| {
+            reader.was_body_too_large = true;
+        }
+    }
+    return ok(.{ .null = {} });
 }
 
 fn serverStateNew(vm: *VM, _: []v.Value) anyerror!NativeResult {
@@ -425,7 +439,7 @@ fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
 fn hostSlotTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const event_loop = &vm.event_loop;
     const host = bytesArg(args, 0);
-    const limit: ?usize = if (args[1].int64 < 0) null else @intCast(args[1].int64);
+    const limit: ?usize = if (args[1].int64 <= 0) null else @intCast(args[1].int64);
     if (try event_loop.host_slots.tryTake(event_loop.allocator, host, limit)) {
         return ok(.{ .null = {} });
     }
@@ -434,6 +448,28 @@ fn hostSlotTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
     try event_loop.parkForHostSlot(&vm.scheduler, current, bytesArg(args, 0), timeout_ms);
     current.park();
     return native.parked();
+}
+
+fn isLoopbackHost(_: *VM, args: []v.Value) anyerror!NativeResult {
+    const raw = bytesArg(args, 0);
+    const host = if (std.mem.endsWith(u8, raw, ".")) raw[0 .. raw.len - 1] else raw;
+    if (std.ascii.eqlIgnoreCase(host, "localhost")) {
+        return ok(.{ .bool = true });
+    }
+    if (host.len > ".localhost".len and std.ascii.endsWithIgnoreCase(host, ".localhost")) {
+        return ok(.{ .bool = true });
+    }
+    if (std.Io.net.Ip4Address.parse(host, 0)) |ip4| {
+        return ok(.{ .bool = ip4.bytes[0] == 127 });
+    } else |_| {}
+    const unbracketed = if (host.len >= 2 and host[0] == '[' and host[host.len - 1] == ']') host[1 .. host.len - 1] else host;
+    if (std.Io.net.Ip6Address.parse(unbracketed, 0)) |ip6| {
+        const b = ip6.bytes;
+        const is_v6_loopback = std.mem.eql(u8, b[0..15], &([_]u8{0} ** 15)) and b[15] == 1;
+        const is_v4_mapped_loopback = std.mem.eql(u8, b[0..10], &([_]u8{0} ** 10)) and b[10] == 0xff and b[11] == 0xff and b[12] == 127;
+        return ok(.{ .bool = is_v6_loopback or is_v4_mapped_loopback });
+    } else |_| {}
+    return ok(.{ .bool = false });
 }
 
 fn hostSlotRelease(vm: *VM, args: []v.Value) anyerror!NativeResult {

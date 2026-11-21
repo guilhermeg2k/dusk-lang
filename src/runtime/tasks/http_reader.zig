@@ -14,6 +14,7 @@ pub const HttpReader = struct {
     parser: *http.Parser,
     is_request: bool,
     head_fed: usize = 0,
+    body_wire_bytes: usize = 0,
     body: std.ArrayList(u8) = .empty,
     body_offset: usize = 0,
     taken: usize = 0,
@@ -26,6 +27,7 @@ pub const HttpReader = struct {
     plain_offset: usize = 0,
     has_decoded_any: bool = false,
     is_decoder_at_end: bool = false,
+    has_pending_decoder_output: bool = false,
 
     pub fn create(allocator: std.mem.Allocator, kind: MessageKind) !*Self {
         const reader = try allocator.create(Self);
@@ -48,12 +50,14 @@ pub const HttpReader = struct {
         self.parser = parser;
         self.is_request = kind == .request;
         self.head_fed = 0;
+        self.body_wire_bytes = 0;
         self.body.clearRetainingCapacity();
         self.body_offset = 0;
         self.taken = 0;
         self.has_sent_continue = false;
         self.was_body_too_large = false;
         self.was_body_invalid = false;
+        self.has_pending_decoder_output = false;
         self.stopDecoding();
     }
 
@@ -137,8 +141,12 @@ pub const HttpReader = struct {
             self.body_offset += consumed;
             self.has_decoded_any = self.has_decoded_any or consumed > 0;
             switch (status) {
-                .done => self.is_decoder_at_end = true,
+                .done => {
+                    self.is_decoder_at_end = true;
+                    self.has_pending_decoder_output = false;
+                },
                 .ok => {
+                    self.has_pending_decoder_output = produced == room.len;
                     if (consumed == 0 and produced == 0) {
                         return error.InvalidBody;
                     }
@@ -162,7 +170,7 @@ pub const HttpReader = struct {
     }
 
     pub fn hasUndecodedBody(self: *const Self) bool {
-        return self.decoder != null and self.body.items.len > self.body_offset;
+        return self.decoder != null and (self.body.items.len > self.body_offset or self.has_pending_decoder_output);
     }
 
     pub fn isDecodedToEnd(self: *const Self) bool {

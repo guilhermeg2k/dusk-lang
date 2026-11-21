@@ -4418,3 +4418,7 @@ test "cr phase 4: file close races, seek overflow, write-only read, nul path, sp
 test "cr phase 5: compression reader overflow and close, decompressor too large invalidation" {
     try runCase("tls-compression-phase5.dsk");
 }
+
+test "cr phase 6: http pool double-close, response splitting, empty location, trailers, head keep-alive, nul path, url dot-segments" {
+    try runCase("http-url-phase6.dsk");
+}

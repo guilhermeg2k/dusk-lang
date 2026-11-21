@@ -151,11 +151,11 @@ pub const EventLoop = struct {
         try self.host_slots.addWaiter(self.allocator, key, waiter);
         const ms = timeout_ms orelse return;
         waiter.timer_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer)) catch |failure| {
-            self.host_slots.removeWaiter(key, waiter);
+            self.host_slots.removeWaiter(self.allocator, key, waiter);
             return failure;
         };
         if (uv.uv_timer_init(loop, waiter.timer()) != 0) {
-            self.host_slots.removeWaiter(key, waiter);
+            self.host_slots.removeWaiter(self.allocator, key, waiter);
             self.allocator.free(waiter.timer_memory);
             waiter.timer_memory = &.{};
             return error.TimerFailed;
@@ -167,7 +167,7 @@ pub const EventLoop = struct {
     }
 
     pub fn releaseHostSlot(self: *Self, key: []const u8) void {
-        const waiter = self.host_slots.release(key) orelse return;
+        const waiter = self.host_slots.release(self.allocator, key) orelse return;
         self.handSlotToWaiter(waiter);
     }
 
@@ -397,7 +397,7 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
         },
         .slot_timer => {
             const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", owner));
-            waiter.event_loop.host_slots.removeWaiter(waiter.key, waiter);
+            waiter.event_loop.host_slots.removeWaiter(waiter.event_loop.allocator, waiter.key, waiter);
             waiter.destroy();
         },
     }
@@ -428,7 +428,7 @@ pub const SlotWaiter = struct {
 fn onSlotTimeout(handle: *uv.Handle) callconv(.c) void {
     const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
     const event_loop = waiter.event_loop;
-    event_loop.host_slots.removeWaiter(waiter.key, waiter);
+    event_loop.host_slots.removeWaiter(event_loop.allocator, waiter.key, waiter);
     event_loop.pending_operations -= 1;
     const failure: WakeResult = .{ .value = .{ .int64 = @intFromEnum(HttpError.TimedOut) }, .kind = .int64, .has_failed = true, .error_is_relative = true };
     waiter.scheduler.wake(waiter.task, failure) catch |wake_failure| {

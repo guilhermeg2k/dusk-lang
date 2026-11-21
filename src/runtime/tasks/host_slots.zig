@@ -33,12 +33,18 @@ pub const HostSlots = struct {
         return true;
     }
 
-    pub fn release(self: *Self, key: []const u8) ?*SlotWaiter {
-        const host = self.hosts.getPtr(key) orelse return null;
-        if (takeFirst(host)) |waiter| {
+    pub fn release(self: *Self, allocator: std.mem.Allocator, key: []const u8) ?*SlotWaiter {
+        const entry = self.hosts.getEntry(key) orelse return null;
+        if (takeFirst(entry.value_ptr)) |waiter| {
             return waiter;
         }
-        host.open -|= 1;
+        entry.value_ptr.open -|= 1;
+        if (entry.value_ptr.open == 0 and entry.value_ptr.waiters.items.len == 0) {
+            const owned_key = entry.key_ptr.*;
+            entry.value_ptr.waiters.deinit(allocator);
+            _ = self.hosts.swapRemove(key);
+            allocator.free(owned_key);
+        }
         return null;
     }
 
@@ -47,10 +53,16 @@ pub const HostSlots = struct {
         try host.waiters.append(allocator, waiter);
     }
 
-    pub fn removeWaiter(self: *Self, key: []const u8, waiter: *SlotWaiter) void {
-        const host = self.hosts.getPtr(key) orelse return;
-        const index = std.mem.indexOfScalar(*SlotWaiter, host.waiters.items, waiter) orelse return;
-        _ = host.waiters.orderedRemove(index);
+    pub fn removeWaiter(self: *Self, allocator: std.mem.Allocator, key: []const u8, waiter: *SlotWaiter) void {
+        const entry = self.hosts.getEntry(key) orelse return;
+        const index = std.mem.indexOfScalar(*SlotWaiter, entry.value_ptr.waiters.items, waiter) orelse return;
+        _ = entry.value_ptr.waiters.orderedRemove(index);
+        if (entry.value_ptr.open == 0 and entry.value_ptr.waiters.items.len == 0) {
+            const owned_key = entry.key_ptr.*;
+            entry.value_ptr.waiters.deinit(allocator);
+            _ = self.hosts.swapRemove(key);
+            allocator.free(owned_key);
+        }
     }
 
     fn hostFor(self: *Self, allocator: std.mem.Allocator, key: []const u8) !*Host {

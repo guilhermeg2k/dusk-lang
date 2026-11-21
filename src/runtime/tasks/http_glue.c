@@ -85,12 +85,18 @@ static int on_url(llhttp_t *parser, const char *at, size_t length) {
 
 static int on_header_field(llhttp_t *parser, const char *at, size_t length) {
     DuskHttpParser *self = parser_of(parser);
+    if (self->is_head_complete) {
+        return 0;
+    }
     extend_span(self, &self->field, at, length);
     return 0;
 }
 
 static int on_header_value(llhttp_t *parser, const char *at, size_t length) {
     DuskHttpParser *self = parser_of(parser);
+    if (self->is_head_complete) {
+        return 0;
+    }
     extend_span(self, &self->value, at, length);
     return 0;
 }
@@ -116,6 +122,9 @@ static int append_header(DuskHttpParser *self) {
 
 static int on_header_value_complete(llhttp_t *parser) {
     DuskHttpParser *self = parser_of(parser);
+    if (self->is_head_complete) {
+        return 0;
+    }
     if (append_header(self) != 0) {
         self->has_failed_allocation = 1;
         return -1;
@@ -154,7 +163,7 @@ static int on_message_complete(llhttp_t *parser) {
         return 0;
     }
     self->is_message_complete = 1;
-    self->can_keep_alive = llhttp_should_keep_alive(parser);
+    self->can_keep_alive = !parser->upgrade && llhttp_get_status_code(parser) != 101 && llhttp_should_keep_alive(parser);
     return HPE_PAUSED;
 }
 

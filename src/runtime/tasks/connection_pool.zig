@@ -16,9 +16,16 @@ pub const ConnectionPool = struct {
         self.idle.deinit(allocator);
     }
 
-    pub fn takeNewest(self: *Self, key: []const u8) ?i64 {
-        const handles = self.idle.getPtr(key) orelse return null;
-        return handles.pop();
+    pub fn takeNewest(self: *Self, allocator: std.mem.Allocator, key: []const u8) ?i64 {
+        const entry = self.idle.getEntry(key) orelse return null;
+        const handle = entry.value_ptr.pop();
+        if (entry.value_ptr.items.len == 0) {
+            const owned_key = entry.key_ptr.*;
+            entry.value_ptr.deinit(allocator);
+            _ = self.idle.swapRemove(key);
+            allocator.free(owned_key);
+        }
+        return handle;
     }
 
     pub fn add(self: *Self, allocator: std.mem.Allocator, key: []const u8, handle: i64) !?i64 {
@@ -33,9 +40,15 @@ pub const ConnectionPool = struct {
         return evicted;
     }
 
-    pub fn remove(self: *Self, key: []const u8, handle: i64) void {
-        const handles = self.idle.getPtr(key) orelse return;
-        const index = std.mem.indexOfScalar(i64, handles.items, handle) orelse return;
-        _ = handles.orderedRemove(index);
+    pub fn remove(self: *Self, allocator: std.mem.Allocator, key: []const u8, handle: i64) void {
+        const entry = self.idle.getEntry(key) orelse return;
+        const index = std.mem.indexOfScalar(i64, entry.value_ptr.items, handle) orelse return;
+        _ = entry.value_ptr.orderedRemove(index);
+        if (entry.value_ptr.items.len == 0) {
+            const owned_key = entry.key_ptr.*;
+            entry.value_ptr.deinit(allocator);
+            _ = self.idle.swapRemove(key);
+            allocator.free(owned_key);
+        }
     }
 };
