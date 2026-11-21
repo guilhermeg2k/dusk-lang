@@ -1,0 +1,10 @@
+func a(x: int = b()) -> int
+    return x
+end
+
+func b(y: int = a()) -> int
+    return y
+end
+
+func main() -> void
+end

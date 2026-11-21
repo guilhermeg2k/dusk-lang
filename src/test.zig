@@ -4422,3 +4422,10 @@ test "http request parser: smuggling shapes, unknown methods and malformed heads
         try testing.expectError(error.InvalidRequest, feedRequest(allocator, &.{message}));
     }
 }
+
+test "cr phase 1: defer re-emission, return try errdefer, when gc, anonymous null aliasing, cyclic defaults" {
+    try runCase("defer-reemit-and-tail-call.dsk");
+    try runCaseError("sema/anonymous-null-aliasing.dsk", error.ReadOnlyIntoMutable);
+    try runCaseError("sema/cyclic-struct-default.dsk", error.CyclicDefault);
+    try runCaseError("sema/cyclic-param-default.dsk", error.CyclicDefault);
+}

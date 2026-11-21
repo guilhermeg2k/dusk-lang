@@ -243,6 +243,11 @@ pub const BytecodeGen = struct {
                     try self.genWhen(when);
                 },
                 .block => |instructions| {
+                    const saved_variables = try self.var_register_id_by_uid.clone();
+                    defer {
+                        self.var_register_id_by_uid.deinit();
+                        self.var_register_id_by_uid = saved_variables;
+                    }
                     const saved_next_free = self.next_free_register;
                     try self.genInstructionBlock(instructions);
                     self.freeRegisterN(self.next_free_register - saved_next_free);
@@ -1518,8 +1523,10 @@ pub const BytecodeGen = struct {
             }
         }
 
+        const default_next_free = self.next_free_register;
         const default_position = try self.currentPosition();
         try self.genInstructionBlock(when.default_block);
+        self.freeRegisterN(self.next_free_register - default_next_free);
         if (when.table) |table| {
             const target_offsets = try self.allocator.alloc(u16, table.case_by_offset.len);
             for (table.case_by_offset, target_offsets) |case_index, *target| {
@@ -1632,8 +1639,16 @@ pub const BytecodeGen = struct {
     }
 
     fn tailCallOf(self: *Self, value: *const ir.Value) ?*const ir.Value {
-        if (value.data == .try_call) return if (value.data.try_call.is_top_level) null else value.data.try_call.call;
-        if (self.type_table.isErrorUnion(value.type_id)) return null;
+        if (value.data == .try_call) {
+            const tc = value.data.try_call;
+            if (tc.is_top_level or tc.cleanup.len > 0) {
+                return null;
+            }
+            return tc.call;
+        }
+        if (self.type_table.isErrorUnion(value.type_id)) {
+            return null;
+        }
         return value;
     }
 

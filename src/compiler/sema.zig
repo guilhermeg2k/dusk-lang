@@ -717,7 +717,7 @@ pub const SemaAnalyzer = struct {
                     symbol.is_file_only = ss.is_file_only;
                     try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(ss.identifier, stmt.loc);
-                    try self.pending_structs.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .symbol = symbol, .def = &stmt.data.@"struct".def, .module = self.module });
+                    try self.pending_structs.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{ .symbol = symbol, .def = &stmt.data.@"struct".def, .loc = stmt.loc, .module = self.module });
                 },
                 .@"enum" => |es| {
                     var symbol = try self.createEmptyEnumSymbol(es.identifier);
@@ -829,7 +829,10 @@ pub const SemaAnalyzer = struct {
 
     fn ensureSignature(self: *Self, type_id: tt.TypeId) CompileError!void {
         const entry = self.pending_signatures.getPtr(type_id) orelse return;
-        if (entry.state != .pending) return;
+        if (entry.state == .filled) return;
+        if (entry.state == .filling) {
+            return self.err_reporter.cyclicDefault(entry.symbol.identifier, entry.loc);
+        }
         entry.state = .filling;
         const pending = entry.*;
         const saved_module = self.enterModuleContext(pending.module);
@@ -844,7 +847,10 @@ pub const SemaAnalyzer = struct {
     fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
         const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
         const entry = self.pending_structs.getPtr(base_id) orelse return;
-        if (entry.state != .pending) return;
+        if (entry.state == .filled) return;
+        if (entry.state == .filling) {
+            return self.err_reporter.cyclicDefault(entry.symbol.identifier, entry.loc);
+        }
         entry.state = .filling;
         const pending = entry.*;
         const saved_module = self.enterModuleContext(pending.module);
@@ -5672,6 +5678,9 @@ pub const SemaAnalyzer = struct {
             .identifier, .indexed => {
                 const type_id = self.exp_types.get(exp) orelse return null;
                 if (!self.isChangeableType(type_id)) return null;
+                if (self.type_table.containsUnknownType(type_id)) {
+                    return exp;
+                }
                 if (self.findImmutablePlace(exp) == null) return null;
                 return exp;
             },
@@ -6667,6 +6676,7 @@ const ExitQuery = enum { returns, leaves_block };
 const PendingStruct = struct {
     symbol: Symbol,
     def: *const ast.Struct,
+    loc: err.Loc,
     module: *ModuleScope,
     state: enum { pending, filling, filled } = .pending,
 };

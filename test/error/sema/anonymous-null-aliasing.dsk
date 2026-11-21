@@ -1,0 +1,9 @@
+struct Box
+    x: ?int
+end
+
+func main() -> void
+    let mut a = @(x = null)
+    let mut b: Box = a
+    b.x = 42
+end

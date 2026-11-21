@@ -89,6 +89,11 @@ pub const CompileErrorReporter = struct {
         return CompileError.ParserError;
     }
 
+    pub fn cyclicDefault(self: *Self, name: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Default value for '{s}' depends on itself", .{name}), loc);
+        return error.CyclicDefault;
+    }
+
     pub fn anonymousStructLayoutDiffers(self: *Self, expected: []const u8, field_names: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(
             self.allocator,
@@ -1215,6 +1220,7 @@ pub const CompileError = error{
     DuplicateMapKey,
     ReservedTypeName,
     CantAssignThroughOptionalChain,
+    CyclicDefault,
 };
 
 const std = @import("std");
