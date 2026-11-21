@@ -54,9 +54,9 @@ pub const LocalJob = struct {
         allocator.destroy(self);
     }
 
-    pub fn start(event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState) !void {
+    pub fn start(event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, environment: ?*const std.process.Environ.Map) !void {
         var buffer: [4096]u8 = undefined;
-        const timezone_override = try readEnvironment(&buffer);
+        const timezone_override = if (environment) |env| env.get("TZ") else try readEnvironment(&buffer);
         _ = try event_loop.ensureLoopStarted();
         const job = try create(event_loop, timezone_override, "/etc/localtime");
         errdefer job.destroy();

@@ -287,7 +287,7 @@ fn localTimezoneId(vm: *VM, _: []v.Value) anyerror!NativeResult {
         return native.ok(.{ .int64 = identifier });
     }
     const current = vm.running_task.?;
-    LocalJob.start(&vm.event_loop, &vm.scheduler, current) catch |failure| {
+    LocalJob.start(&vm.event_loop, &vm.scheduler, current, vm.environment) catch |failure| {
         if (failure == error.OutOfMemory) {
             return failure;
         }

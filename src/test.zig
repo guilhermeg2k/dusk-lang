@@ -651,6 +651,27 @@ test "time: local discovery parks cold callers, shares first snapshot and caches
     try runCase("time-local.dsk");
 }
 
+test "time: local discovery reads TZ from VM.environment when provided" {
+    var process_tz = try TestTimezoneEnvironment.init("Missing/LocalZone");
+    defer process_tz.deinit();
+    var host_env = std.process.Environ.Map.init(testing.allocator);
+    defer host_env.deinit();
+    try host_env.put("TZ", "Asia/Tokyo");
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io, .environment = &host_env };
+    const source =
+        \\import std/os
+        \\import std/time
+        \\func main() -> !void
+        \\    assert((try os::env("TZ")) == "Asia/Tokyo")
+        \\    let zone = try time::local_timezone()
+        \\    assert(zone.name() == "Asia/Tokyo")
+        \\end
+    ;
+    try dusk.compileAndRun(source);
+}
+
 test "time: local failures are catchable through native calls and await without UTC fallback" {
     var environment = try TestTimezoneEnvironment.init("Missing/LocalZone");
     defer environment.deinit();
