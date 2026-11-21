@@ -1,6 +1,6 @@
 # Standard Library Reference
 
-This is the reference for the standard library of **v0.16 - Shigeo** (in development). The language itself, including the prelude (the builtins every program has without an import), is in [language-ref.md](language-ref.md).
+This is the reference for the standard library of **v0.16 - Shigeo**. The language itself, including the prelude (the builtins every program has without an import), is in [language-ref.md](language-ref.md).
 
 Each module is imported with `import std/<name>` and used through its name (`io::println`, `fs::read`), or with the names it exports listed in the import (`import std/array: append, len`). See [Modules](language-ref.md#14-modules).
 

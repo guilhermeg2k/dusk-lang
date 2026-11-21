@@ -1,6 +1,6 @@
 # Standard library internals
 
-How the standard library's modules work inside the runtime: fs jobs on libuv's thread pool, streams (stdin, TCP connections and opened files), TCP, TLS, the HTTP client and server, and compression. It describes the code as of v0.16 (in development). The VM underneath (values, the interpreter, natives, the garbage collector, tasks and the event loop) is in [vm-internals.md](vm-internals.md), and the modules' Dusk API is in [std-ref.md](std-ref.md).
+How the standard library's modules work inside the runtime: fs jobs on libuv's thread pool, streams (stdin, TCP connections and opened files), TCP, TLS, the HTTP client and server, and compression. It describes the code as of v0.16. The VM underneath (values, the interpreter, natives, the garbage collector, tasks and the event loop) is in [vm-internals.md](vm-internals.md), and the modules' Dusk API is in [std-ref.md](std-ref.md).
 
 ## 1. Source files
 

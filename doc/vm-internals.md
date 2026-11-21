@@ -1,6 +1,6 @@
 # VM internals
 
-How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, the garbage collector and tasks. It describes the code as of v0.16 (in development). The language itself is described in [language-ref.md](language-ref.md); how the standard library's modules work inside the runtime (files, streams, TCP, TLS, HTTP, compression) is in [std-internals.md](std-internals.md).
+How Dusk programs run: the compiled program format, values and heap objects, the register machine, calls and errors, the garbage collector and tasks. It describes the code as of v0.16. The language itself is described in [language-ref.md](language-ref.md); how the standard library's modules work inside the runtime (files, streams, TCP, TLS, HTTP, compression) is in [std-internals.md](std-internals.md).
 
 The source files involved:
 
