@@ -21,7 +21,7 @@ end
 func expect_failure(db: sqlite::Database, sql: string, expected: sqlite::SqliteError, needle: string) -> void
     let mut diagnostic = sqlite::Diagnostic()
     let mut has_failed = false
-    db.execute_with(sql, @(name = "x", age = 1), diagnostic) catch e then
+    db.execute_with(sql, @(name = "x", age = 1), diagnostic = diagnostic) catch e then
         assert(e == expected)
         has_failed = true
     end
@@ -57,7 +57,7 @@ func main() -> !void
 
     let mut diagnostic = sqlite::Diagnostic()
     let mut has_failed = false
-    db.execute_with("insert into users (name) values (:name)", @(name = "x", inner = @(a = 1)), diagnostic) catch e then
+    db.execute_with("insert into users (name) values (:name)", @(name = "x", inner = @(a = 1)), diagnostic = diagnostic) catch e then
         assert(e == sqlite::SqliteError.TypeMismatch)
         has_failed = true
     end

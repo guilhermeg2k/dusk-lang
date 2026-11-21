@@ -28,6 +28,7 @@ const TerminalSize = @import("terminal.zig").TerminalSize;
 const WorkerDispatch = @import("worker_dispatch.zig").WorkerDispatch;
 const WorkerPool = @import("worker_pool.zig").WorkerPool;
 const Databases = @import("sqlite.zig").Databases;
+const SqliteTimer = @import("sqlite.zig").OperationTimer;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -68,6 +69,7 @@ pub const EventLoop = struct {
             _ = uv.uv_run(self.loop.?, .once);
         }
         defer self.processes.deinit(self.allocator);
+        self.sqlite.interruptAll();
         for (self.worker_dispatches.items) |dispatch| {
             dispatch.shutDown();
         }
@@ -463,7 +465,7 @@ pub const EventLoop = struct {
 pub const HandleOwner = struct {
     kind: Kind,
 
-    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output, worker_async };
+    pub const Kind = enum { process, process_timer, process_pipe, signal, timer, stream, stream_timer, stream_handshake_timer, stream_write_timer, listener, listener_timer, open_timer, slot_timer, terminal_output, worker_async, sqlite_timer };
 
     pub fn of(handle: *uv.Handle) *HandleOwner {
         return @ptrCast(@alignCast(uv.uv_handle_get_data(handle).?));
@@ -537,6 +539,10 @@ pub fn onHandleClosed(handle: *uv.Handle) callconv(.c) void {
             const waiter: *SlotWaiter = @alignCast(@fieldParentPtr("owner", owner));
             waiter.event_loop.host_slots.removeWaiter(waiter.event_loop.allocator, waiter.key, waiter);
             waiter.destroy();
+        },
+        .sqlite_timer => {
+            const timer: *SqliteTimer = @alignCast(@fieldParentPtr("owner", owner));
+            timer.destroy();
         },
     }
 }

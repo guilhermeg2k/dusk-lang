@@ -32,7 +32,7 @@ func main() -> !void
 
     let mut diagnostic = sqlite::Diagnostic()
     let mut has_failed = false
-    db.execute("select * from nope", diagnostic) catch e then
+    db.execute("select * from nope", diagnostic = diagnostic) catch e then
         assert(e == sqlite::SqliteError.InvalidSql)
         has_failed = true
     end
@@ -40,18 +40,18 @@ func main() -> !void
     assert(string::contains(diagnostic.message, "no such table"))
     assert(diagnostic.offset == null)
 
-    db.execute("select * frm items", diagnostic) catch e then
+    db.execute("select * frm items", diagnostic = diagnostic) catch e then
         assert(e == sqlite::SqliteError.InvalidSql)
     end
     assert(string::contains(diagnostic.message, "syntax error"))
     assert(diagnostic.offset == 9)
-    db.execute("select 1; selec 2", diagnostic) catch e then
+    db.execute("select 1; selec 2", diagnostic = diagnostic) catch e then
         assert(e == sqlite::SqliteError.InvalidSql)
     end
     assert(diagnostic.offset == 10)
 
     has_failed = false
-    db.execute("insert into items (name) values ('a')", diagnostic) catch e then
+    db.execute("insert into items (name) values ('a')", diagnostic = diagnostic) catch e then
         assert(e == sqlite::SqliteError.Constraint)
         has_failed = true
     end

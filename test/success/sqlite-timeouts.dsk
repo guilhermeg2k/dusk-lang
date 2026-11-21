@@ -1,0 +1,99 @@
+import std/sqlite
+import std/string
+import std/task
+import std/time
+
+func main() -> !void
+    let path = "DIR/timeouts.db"
+    let db = try sqlite::open(path)
+    defer db.close()
+
+    try db.execute("create table items (id integer primary key, value integer not null)")
+    try db.execute("insert into items (value) values (10)")
+
+    let slow_query = "with recursive c(n) as (select 1 union all select n + 1 from c where n < 100000000) select count(*) from c"
+
+    let mut diagnostic = sqlite::Diagnostic()
+    let mut has_timed_out = false
+    db.query_one[int](slow_query, timeout_ms = 20, diagnostic = diagnostic) catch e then
+        assert(e == sqlite::SqliteError.TimedOut)
+        has_timed_out = true
+    end
+    assert(has_timed_out)
+    assert(string::len(diagnostic.message) > 0)
+    assert((try db.query_one[int]("select 42")) == 42)
+
+    has_timed_out = false
+    db.execute(slow_query, timeout_ms = 20) catch e then
+        assert(e == sqlite::SqliteError.TimedOut)
+        has_timed_out = true
+    end
+    assert(has_timed_out)
+
+    has_timed_out = false
+    db.execute_with("with recursive c(n) as (select 1 union all select n + 1 from c where n < :limit) select count(*) from c", @(limit = 100000000), timeout_ms = 20) catch e then
+        assert(e == sqlite::SqliteError.TimedOut)
+        has_timed_out = true
+    end
+    assert(has_timed_out)
+
+    let mut queued_timed_out = false
+    let mut queued_diagnostic = sqlite::Diagnostic()
+    let mut queued_reader = spawn(func() -> void
+        task::sleep(time::milliseconds(10))
+        db.query_one[int]("select value from items where id = 1", timeout_ms = 20, diagnostic = queued_diagnostic) catch e then
+            assert(e == sqlite::SqliteError.TimedOut)
+            queued_timed_out = true
+        end
+    end)
+    try db.transaction(func(tx)
+        try tx.execute_with("update items set value = :value where id = 1", @(value = 20))
+        task::sleep(time::milliseconds(80))
+    end)
+    await(queued_reader)
+    assert(queued_timed_out)
+    assert(string::contains(queued_diagnostic.message, "timed out"))
+    assert((try db.query_one[int]("select value from items where id = 1")) == 20)
+
+    has_timed_out = false
+    db.transaction(func(tx)
+        try tx.execute_with("update items set value = :value where id = 1", @(value = 999))
+        let _ = try tx.query_one[int](slow_query, timeout_ms = 20)
+    end) catch e then
+        assert(e == sqlite::SqliteError.TimedOut)
+        has_timed_out = true
+    end
+    assert(has_timed_out)
+    assert((try db.query_one[int]("select value from items where id = 1")) == 20)
+
+    let patient = try sqlite::open(path, busy_timeout_ms = 1000)
+    defer patient.close()
+    let mut waiter = spawn(func() -> sqlite::SqliteError!void
+        task::sleep(time::milliseconds(15))
+        try patient.execute("update items set value = value + 5 where id = 1")
+    end)
+    try db.transaction(func(tx)
+        try tx.execute("update items set value = 30 where id = 1")
+        task::sleep(time::milliseconds(60))
+    end)
+    try await(waiter)
+    assert((try db.query_one[int]("select value from items where id = 1")) == 35)
+
+    let impatient = try sqlite::open(path, busy_timeout_ms = 20)
+    defer impatient.close()
+    let mut was_busy = false
+    let mut busy_task = spawn(func() -> void
+        task::sleep(time::milliseconds(15))
+        impatient.execute("update items set value = 0 where id = 1") catch e then
+            assert(e == sqlite::SqliteError.Busy)
+            was_busy = true
+        end
+    end)
+    try db.transaction(func(tx)
+        try tx.execute("update items set value = 40 where id = 1")
+        task::sleep(time::milliseconds(100))
+    end)
+    await(busy_task)
+    assert(was_busy)
+    assert((try db.query_one[int]("select value from items where id = 1")) == 40)
+end

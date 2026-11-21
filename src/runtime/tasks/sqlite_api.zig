@@ -62,6 +62,7 @@ pub extern fn sqlite3_column_blob(statement: *Statement, column: c_int) ?*const 
 pub extern fn sqlite3_column_bytes(statement: *Statement, column: c_int) c_int;
 pub extern fn sqlite3_finalize(statement: ?*Statement) c_int;
 pub extern fn sqlite3_busy_timeout(database: *Database, milliseconds: c_int) c_int;
+pub extern fn sqlite3_interrupt(database: *Database) void;
 pub extern fn sqlite3_errmsg(database: ?*Database) [*:0]const u8;
 pub extern fn sqlite3_error_offset(database: *Database) c_int;
 pub extern fn sqlite3_total_changes64(database: *Database) i64;

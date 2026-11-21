@@ -1,8 +1,11 @@
 const std = @import("std");
 const api = @import("sqlite_api.zig");
+const uv = @import("uv.zig");
 const v = @import("../value.zig");
 const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 const EventLoop = @import("event_loop.zig").EventLoop;
+const HandleOwner = @import("event_loop.zig").HandleOwner;
+const onHandleClosed = @import("event_loop.zig").onHandleClosed;
 const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
 const WakeResult = @import("scheduler.zig").WakeResult;
@@ -10,6 +13,8 @@ const HandleTable = @import("handle_table.zig").HandleTable;
 const WorkerDispatch = @import("worker_dispatch.zig").WorkerDispatch;
 const Job = @import("worker_pool.zig").Job;
 const WorkerPool = @import("worker_pool.zig").WorkerPool;
+
+const handle_alignment = std.mem.Alignment.@"16";
 
 pub const SqliteError = enum { CantOpen, ReadOnly, Busy, Constraint, InvalidSql, MissingParameter, UnknownParameter, TypeMismatch, MissingColumn, TooLarge, TimedOut, Full, Corrupt, Closed, Other };
 
@@ -122,6 +127,18 @@ pub const Databases = struct {
         self.failures.deinit(allocator);
     }
 
+    pub fn interruptAll(self: *Self) void {
+        for (self.connections.entries.items) |entry| {
+            const connection = entry orelse continue;
+            const operation = connection.running_operation orelse continue;
+            operation.is_interrupted.store(true, .release);
+            operation.stopTimer();
+            if (connection.database) |database| {
+                api.sqlite3_interrupt(database);
+            }
+        }
+    }
+
     pub fn open(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, path: []const u8, settings: OpenSettings) !void {
         try self.ensureDispatch(event_loop);
         const allocator = event_loop.allocator;
@@ -136,24 +153,30 @@ pub const Databases = struct {
         self.enqueue(connection, operation);
     }
 
-    pub fn execute(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, is_in_transaction: bool) !bool {
+    pub fn execute(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, is_in_transaction: bool, timeout_ms: i64) !bool {
         const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .execute, sql);
+        errdefer operation.destroy();
+        try operation.startTimeout(timeout_ms);
         self.enqueue(connection, operation);
         return true;
     }
 
-    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, is_in_transaction: bool) !bool {
+    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, is_in_transaction: bool, timeout_ms: i64) !bool {
         const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .execute_one, sql);
+        errdefer operation.destroy();
+        try operation.startTimeout(timeout_ms);
         operation.params = params;
         self.enqueue(connection, operation);
         return true;
     }
 
-    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, max_bytes: i64, is_in_transaction: bool) !bool {
+    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, max_bytes: i64, is_in_transaction: bool, timeout_ms: i64) !bool {
         const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .query, sql);
+        errdefer operation.destroy();
+        try operation.startTimeout(timeout_ms);
         operation.params = params;
         operation.max_bytes = max_bytes;
         self.enqueue(connection, operation);
@@ -258,7 +281,7 @@ pub const Databases = struct {
     }
 
     fn submitNext(self: *Self, connection: *Connection) void {
-        if (connection.is_running) return;
+        if (connection.running_operation != null) return;
         const operation = connection.queued.peekReady(connection.transaction_owner) orelse return;
         operation.database = connection.database;
         operation.cache = &connection.cache;
@@ -267,7 +290,7 @@ pub const Databases = struct {
             return;
         };
         connection.queued.remove(operation);
-        connection.is_running = true;
+        connection.running_operation = operation;
     }
 
     fn markBlocked(self: *Self, connection: *Connection) void {
@@ -282,7 +305,7 @@ pub const Databases = struct {
         while (index < self.blocked.items.len) {
             const connection = self.blocked.items[index];
             self.submitNext(connection);
-            if (connection.is_running) {
+            if (connection.running_operation != null) {
                 _ = self.blocked.swapRemove(index);
                 continue;
             }
@@ -321,12 +344,13 @@ pub const Connection = struct {
     handle: i64 = 0,
     queued: OperationQueue = .{},
     transaction_owner: ?*TaskState = null,
-    is_running: bool = false,
+    running_operation: ?*Operation = null,
     is_closing: bool = false,
     cache: StatementCache = .{},
 
     fn closeNow(self: *Connection, allocator: std.mem.Allocator) void {
         while (self.queued.pop()) |operation| {
+            operation.stopTimer();
             operation.destroy();
         }
         self.cache.finalizeAll();
@@ -336,6 +360,77 @@ pub const Connection = struct {
         allocator.destroy(self);
     }
 };
+
+pub const OperationTimer = struct {
+    owner: HandleOwner = .{ .kind = .sqlite_timer },
+    event_loop: *EventLoop,
+    operation: ?*Operation,
+    timer_memory: []align(16) u8,
+
+    fn start(event_loop: *EventLoop, operation: *Operation, timeout_ms: i64) !*OperationTimer {
+        const loop = try event_loop.ensureLoopStarted();
+        const allocator = event_loop.allocator;
+        const entry = try allocator.create(OperationTimer);
+        const timer_memory = allocator.alignedAlloc(u8, handle_alignment, uv.uv_handle_size(.timer)) catch |failure| {
+            allocator.destroy(entry);
+            return failure;
+        };
+        entry.* = .{ .event_loop = event_loop, .operation = operation, .timer_memory = timer_memory };
+        const handle = entry.timer();
+        if (uv.uv_timer_init(loop, handle) != 0) {
+            allocator.free(timer_memory);
+            allocator.destroy(entry);
+            return error.TimerFailed;
+        }
+        uv.uv_handle_set_data(handle, &entry.owner);
+        uv.uv_update_time(loop);
+        if (uv.uv_timer_start(handle, onOperationTimeout, @intCast(timeout_ms), 0) != 0) {
+            uv.uv_close(handle, onHandleClosed);
+            return error.TimerFailed;
+        }
+        event_loop.pending_operations += 1;
+        return entry;
+    }
+
+    fn timer(self: *OperationTimer) *uv.Handle {
+        return @ptrCast(self.timer_memory.ptr);
+    }
+
+    pub fn destroy(self: *OperationTimer) void {
+        const allocator = self.event_loop.allocator;
+        allocator.free(self.timer_memory);
+        allocator.destroy(self);
+    }
+};
+
+fn onOperationTimeout(handle: *uv.Handle) callconv(.c) void {
+    const entry: *OperationTimer = @alignCast(@fieldParentPtr("owner", HandleOwner.of(handle)));
+    const event_loop = entry.event_loop;
+    event_loop.pending_operations -= 1;
+    uv.uv_close(handle, onHandleClosed);
+    const operation = entry.operation orelse return;
+    entry.operation = null;
+    operation.timer = null;
+    if (event_loop.is_shutting_down) return;
+    const connection = operation.connection;
+    if (connection.running_operation == operation) {
+        operation.is_interrupted.store(true, .release);
+        if (connection.database) |database| {
+            api.sqlite3_interrupt(database);
+        }
+        return;
+    }
+    connection.queued.remove(operation);
+    operation.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{operation.timeout_ms});
+    defer operation.destroy();
+    const task = operation.task orelse return;
+    const databases = &event_loop.sqlite;
+    databases.recordFailure(event_loop.allocator, task, .{ .message = operation.message, .offset = operation.offset });
+    operation.message = null;
+    operation.scheduler.?.wake(task, failed(.TimedOut)) catch |failure| {
+        event_loop.callback_failure = failure;
+    };
+}
 
 const Operation = struct {
     const Kind = enum { open, execute, execute_one, query, begin, commit, rollback, close };
@@ -353,6 +448,9 @@ const Operation = struct {
     cache: ?*StatementCache = null,
     fixed_error: ?SqliteError = null,
     max_bytes: i64 = 0,
+    timeout_ms: i64 = -1,
+    timer: ?*OperationTimer = null,
+    is_interrupted: std.atomic.Value(bool) = .init(false),
     result: ?*ResultSet = null,
     next: ?*Operation = null,
     code: c_int = 0,
@@ -367,6 +465,21 @@ const Operation = struct {
         errdefer allocator.destroy(operation);
         operation.* = .{ .kind = kind, .event_loop = event_loop, .scheduler = scheduler, .task = task, .connection = connection, .text = try allocator.dupeZ(u8, text) };
         return operation;
+    }
+
+    fn startTimeout(self: *Operation, timeout_ms: i64) !void {
+        if (timeout_ms < 0) return;
+        self.timeout_ms = timeout_ms;
+        self.timer = try OperationTimer.start(self.event_loop, self, timeout_ms);
+    }
+
+    fn stopTimer(self: *Operation) void {
+        const entry = self.timer orelse return;
+        self.timer = null;
+        entry.operation = null;
+        _ = uv.uv_timer_stop(entry.timer());
+        self.event_loop.pending_operations -= 1;
+        uv.uv_close(entry.timer(), onHandleClosed);
     }
 
     fn destroy(self: *Operation) void {
@@ -439,6 +552,10 @@ const Operation = struct {
         const text = self.text;
         var position: usize = 0;
         while (position < text.len) {
+            if (self.is_interrupted.load(.acquire)) {
+                self.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{self.timeout_ms});
+                return;
+            }
             var statement: ?*api.Statement = null;
             var tail: ?[*]const u8 = null;
             const remaining = text[position..];
@@ -468,6 +585,10 @@ const Operation = struct {
     }
 
     fn executeOneOnWorker(self: *Operation) void {
+        if (self.is_interrupted.load(.acquire)) {
+            self.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{self.timeout_ms});
+            return;
+        }
         const database = self.database.?;
         const statement = self.preparedWithParams(database) orelse return;
         defer resetStatement(statement);
@@ -481,6 +602,10 @@ const Operation = struct {
     }
 
     fn queryOnWorker(self: *Operation) void {
+        if (self.is_interrupted.load(.acquire)) {
+            self.recordFixedFailure(.TimedOut, "operation timed out after {d} ms", .{self.timeout_ms});
+            return;
+        }
         const database = self.database.?;
         const statement = self.preparedWithParams(database) orelse return;
         defer resetStatement(statement);
@@ -617,9 +742,10 @@ const Operation = struct {
     fn finishOnLoop(job: *Job, delivery: Job.Delivery) anyerror!void {
         const self: *Operation = @alignCast(@fieldParentPtr("job", job));
         defer self.destroy();
+        self.stopTimer();
         const databases = &self.event_loop.sqlite;
         const connection = self.connection;
-        connection.is_running = false;
+        connection.running_operation = null;
         const is_connection_gone = self.releaseConnection(databases, connection);
         if (delivery == .discard) return;
         defer databases.submitBlocked();

@@ -43,33 +43,33 @@ end
 struct Tx
     ~handle: int
 
-    func execute(self: @, sql: string, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        return try run_execute(self.handle, sql, true, diagnostic)
+    func execute(self: @, sql: string, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute(self.handle, sql, true, timeout_ms, diagnostic)
     end
 
-    func execute_with[P, S: schema](self: @, sql: string, params: P, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        return try run_execute_with[P, S](self.handle, sql, params, true, diagnostic)
+    func execute_with[P, S: schema](self: @, sql: string, params: P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute_with[P, S](self.handle, sql, params, true, timeout_ms, diagnostic)
     end
 
-    func query[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
-        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, diagnostic)
+    func query[T, S: schema](self: @, sql: string, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, timeout_ms, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
     end
 
-    func query_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+    func query_with[T, S: schema, P](self: @, sql: string, params: P, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
         let writer = try params_of[P, S](params, diagnostic)
-        let result = try run_query(self.handle, sql, writer, max_bytes, true, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, true, timeout_ms, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
     end
 
-    func query_one[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
-        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, diagnostic)
+    func query_one[T, S: schema](self: @, sql: string, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, timeout_ms, diagnostic)
         return try decode_first_row[T, S](result, diagnostic)
     end
 
-    func query_one_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+    func query_one_with[T, S: schema, P](self: @, sql: string, params: P, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
         let writer = try params_of[P, S](params, diagnostic)
-        let result = try run_query(self.handle, sql, writer, max_bytes, true, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, true, timeout_ms, diagnostic)
         return try decode_first_row[T, S](result, diagnostic)
     end
 end
@@ -78,33 +78,33 @@ struct Database
     ~handle: int
     ~owner: resource
 
-    func execute(self: @, sql: string, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        return try run_execute(self.handle, sql, false, diagnostic)
+    func execute(self: @, sql: string, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute(self.handle, sql, false, timeout_ms, diagnostic)
     end
 
-    func execute_with[P, S: schema](self: @, sql: string, params: P, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        return try run_execute_with[P, S](self.handle, sql, params, false, diagnostic)
+    func execute_with[P, S: schema](self: @, sql: string, params: P, timeout_ms: int = -1, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute_with[P, S](self.handle, sql, params, false, timeout_ms, diagnostic)
     end
 
-    func query[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
-        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, false, diagnostic)
+    func query[T, S: schema](self: @, sql: string, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, false, timeout_ms, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
     end
 
-    func query_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+    func query_with[T, S: schema, P](self: @, sql: string, params: P, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
         let writer = try params_of[P, S](params, diagnostic)
-        let result = try run_query(self.handle, sql, writer, max_bytes, false, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, false, timeout_ms, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
     end
 
-    func query_one[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
-        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, false, diagnostic)
+    func query_one[T, S: schema](self: @, sql: string, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, false, timeout_ms, diagnostic)
         return try decode_first_row[T, S](result, diagnostic)
     end
 
-    func query_one_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+    func query_one_with[T, S: schema, P](self: @, sql: string, params: P, timeout_ms: int = -1, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
         let writer = try params_of[P, S](params, diagnostic)
-        let result = try run_query(self.handle, sql, writer, max_bytes, false, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, false, timeout_ms, diagnostic)
         return try decode_first_row[T, S](result, diagnostic)
     end
 
@@ -346,17 +346,17 @@ struct ~Rows
     end
 end
 
-func ~run_execute(handle: int, sql: string, is_in_transaction: bool, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
-    let numbers = execute_handle(handle, sql, is_in_transaction) catch e then
+func ~run_execute(handle: int, sql: string, is_in_transaction: bool, timeout_ms: int, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
+    let numbers = execute_handle(handle, sql, is_in_transaction, timeout_ms) catch e then
         describe_failure(diagnostic)
         return e
     end
     return Changes(rows = numbers[0], last_id = numbers[1])
 end
 
-func ~run_execute_with[P, S: schema](handle: int, sql: string, params: P, is_in_transaction: bool, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
+func ~run_execute_with[P, S: schema](handle: int, sql: string, params: P, is_in_transaction: bool, timeout_ms: int, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
     let writer = try params_of[P, S](params, diagnostic)
-    let numbers = execute_with_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, is_in_transaction) catch e then
+    let numbers = execute_with_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, is_in_transaction, timeout_ms) catch e then
         describe_failure(diagnostic)
         return e
     end
@@ -372,8 +372,8 @@ func ~params_of[P, S: schema](params: P, mut diagnostic: ?Diagnostic) -> SqliteE
     return writer
 end
 
-func ~run_query(handle: int, sql: string, writer: ParamWriter, max_bytes: int, is_in_transaction: bool, mut diagnostic: ?Diagnostic) -> SqliteError!int
-    let result = query_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, max_bytes, is_in_transaction) catch e then
+func ~run_query(handle: int, sql: string, writer: ParamWriter, max_bytes: int, is_in_transaction: bool, timeout_ms: int, mut diagnostic: ?Diagnostic) -> SqliteError!int
+    let result = query_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, max_bytes, is_in_transaction, timeout_ms) catch e then
         describe_failure(diagnostic)
         return e
     end
@@ -437,9 +437,9 @@ end
 
 extern func version() -> string
 extern func ~open_handle(path: string, journal: Journal, foreign_keys: bool, busy_timeout_ms: int, read_only: bool, create: bool) -> SqliteError!int
-extern func ~execute_handle(handle: int, sql: string, is_in_transaction: bool) -> SqliteError![]int
-extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, is_in_transaction: bool) -> SqliteError![]int
-extern func ~query_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, max_bytes: int, is_in_transaction: bool) -> SqliteError!int
+extern func ~execute_handle(handle: int, sql: string, is_in_transaction: bool, timeout_ms: int) -> SqliteError![]int
+extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, is_in_transaction: bool, timeout_ms: int) -> SqliteError![]int
+extern func ~query_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, max_bytes: int, is_in_transaction: bool, timeout_ms: int) -> SqliteError!int
 extern func ~begin_handle(handle: int) -> SqliteError!void
 extern func ~commit_handle(handle: int) -> SqliteError!void
 extern func ~rollback_handle(handle: int) -> void

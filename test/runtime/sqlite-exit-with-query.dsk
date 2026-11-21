@@ -1,0 +1,12 @@
+import std/sqlite
+import std/task
+import std/time
+
+func main() -> !void
+    let db = try sqlite::open(":memory:")
+    let _ = spawn(func() -> void
+        db.query_one[int]("with recursive c(n) as (select 1 union all select n + 1 from c) select count(*) from c") catch _ then end
+    end)
+    task::sleep(time::milliseconds(15))
+    assert(false)
+end

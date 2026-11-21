@@ -57,6 +57,11 @@ test "sqlite: transactions commit, roll back on error, return values, queue othe
     try runCaseRuntimeError("sqlite-tx-after-transaction.dsk", error.SqliteTransactionClosed);
 }
 
+test "sqlite: per-call timeouts interrupt queries and queued calls, busy_timeout_ms waits or fails, exit interrupts running queries" {
+    try runCaseInTmpDir("sqlite-timeouts.dsk");
+    try runCaseRuntimeError("sqlite-exit-with-query.dsk", error.AssertionFailed);
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");
