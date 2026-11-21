@@ -1,7 +1,7 @@
-func pair[T, U](first: T, second: U) -> U
-    return second
+func convert[T, U](value: T) -> ?U
+    return null
 end
 
 func main() -> !void
-    let x = pair[int](1, "a")
+    let x = convert[int](1)
 end

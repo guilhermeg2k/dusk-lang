@@ -2008,8 +2008,7 @@ pub const SemaAnalyzer = struct {
 
     fn bindExplicitTypeArguments(self: *Self, identifier: []const u8, slots: []const ast.Slot, arguments: []const *ast.TypeAnnotation, bindings: []?tt.TypeId, loc: err.Loc) CompileError!void {
         if (arguments.len == 0) return;
-        const can_leave_out_rest = arguments.len < slots.len and areSchemaSlots(slots[arguments.len..]);
-        if (arguments.len != slots.len and !can_leave_out_rest) {
+        if (arguments.len > slots.len) {
             return self.err_reporter.wrongSlotCount(identifier, slots.len, arguments.len, loc);
         }
         const could_resolve_schema = self.can_resolve_schema;
@@ -2989,15 +2988,6 @@ pub const SemaAnalyzer = struct {
             } else isErrorSetBound(func.error_set, slots, bindings) and areMentionedSlotsBound(func.return_type, slots, bindings),
             else => true,
         };
-    }
-
-    fn areSchemaSlots(slots: []const ast.Slot) bool {
-        for (slots) |slot| {
-            if (!slot.is_schema) {
-                return false;
-            }
-        }
-        return true;
     }
 
     fn mentionsSlot(annotation: *const ast.TypeAnnotation, slots: []const ast.Slot) bool {

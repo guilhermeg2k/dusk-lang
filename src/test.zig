@@ -4852,7 +4852,7 @@ test "generics: explicit call types and indexed function calls" {
     try runCaseError("sema/generic-call-wrong-result-constraint.dsk", error.TypeDoesntFitSlot);
     try runCaseError("sema/generic-call-explicit-try-plain.dsk", error.NotAFailingCall);
     try runCaseError("sema/generic-call-too-many-types.dsk", error.WrongSlotCount);
-    try runCaseError("sema/generic-call-too-few-types.dsk", error.WrongSlotCount);
+    try runCaseError("sema/generic-call-too-few-types.dsk", error.CantInferSlot);
     try runCaseError("sema/generic-call-plain-function-types.dsk", error.WrongSlotCount);
     try runCaseError("sema/generic-call-plain-function-named-type.dsk", error.WrongSlotCount);
     try runCaseError("sema/generic-call-wrong-argument.dsk", error.InvalidType);

@@ -1255,7 +1255,7 @@ io::println("${first(["a", "b"])}")     # first[string]
 
 ### Filling slots
 
-A call can name its type arguments explicitly, in declaration order: `first[int]([1, 2])`, `empty[string]()`. When a list is written, it must fill every slot, including error slots; the usual constraints apply, and value arguments must convert to the selected types. For example, `first[float]([1.0, 2.0])` selects `float` directly. Explicit type arguments work on module-qualified calls too (`util::empty[int]()`).
+A call can name its type arguments explicitly, in declaration order: `first[int]([1, 2])`, `empty[string]()`. A list fills the first slots and can stop early: the slots after it are worked out from the arguments and the expected type as usual (`pair[int](1, "a")` picks `int` for the first slot and takes the second from `"a"`), so a call can name the type it wants back while the others come from its arguments, even an anonymous struct's type that has no name to write. The usual constraints apply, and value arguments must convert to the selected types. For example, `first[float]([1.0, 2.0])` selects `float` directly. Explicit type arguments work on module-qualified calls too (`util::empty[int]()`).
 
 Without an explicit type list, a call fills its slots from the arguments. The first argument that mentions a slot fills it, and the others must convert to that type: `both(2.5, 1)` makes `T` a `float`, while `both(1, 2.5)` is an error at `2.5`.
 

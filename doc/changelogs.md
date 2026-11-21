@@ -19,6 +19,7 @@
 - `http::file` serves files about 20% faster (64 KiB files, one core): it reuses the size found when opening the file and stops reading at that size, two fewer trips to the thread pool per response
 - `json::encode` is about 28% faster: it writes the JSON bytes directly instead of going through a general-purpose writer. The output is unchanged
 - `task::sleep(duration)` takes a `time::Duration` (`task::sleep(time::milliseconds(10))`), rounded up to whole milliseconds. The `Duration` factories (`time::milliseconds`, `seconds`, ...) return a plain `Duration`; a value past about 292 years is a runtime error
+- Explicit type arguments can stop early: `pair[int](1, "a")` names the first slot and the rest are worked out from the arguments and the expected type, as when no list is written. This lets a call name the type it returns while another slot comes from an argument, such as an anonymous struct (`db.query_with[User](sql, @(age = 18))`). A slot that still can't be worked out is the usual `Can't work out 'U'` error
 
 ### Fixes
 
