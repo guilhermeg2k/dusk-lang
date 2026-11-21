@@ -1,0 +1,146 @@
+import std/array: append, len
+import std/sqlite
+import std/string
+import std/task
+import std/time
+
+schema Db end
+
+struct Account
+    id: int
+    holder: string
+    balance: int
+end
+
+struct RenamedAccount
+    account_holder: string
+    balance: int
+
+    schema Db
+        account_holder: "holder"
+    end
+end
+
+func main() -> !void
+    let path = "DIR/bank.db"
+    let db = try sqlite::open(path)
+    defer db.close()
+
+    try db.execute("create table accounts (id integer primary key, holder text not null unique, balance integer not null check (balance >= 0))")
+    try db.execute("insert into accounts (holder, balance) values ('Ana', 100), ('Bo', 50)")
+
+    let transferred = try db.transaction(func(tx)
+        let moved = try tx.execute_with("update accounts set balance = balance - :amount where holder = :from", @(amount = 30, from = "Ana"))
+        assert(moved.rows == 1)
+        try tx.execute_with("update accounts set balance = balance + :amount where holder = :to", @(amount = 30, to = "Bo"))
+        try tx.execute("insert into accounts (holder, balance) values ('Cy', 10)")
+        let cy = try tx.query_one_with[Account]("select id, holder, balance from accounts where holder = :holder", @(holder = "Cy"))
+        assert(cy != null)
+        let accounts = try tx.query[Account]("select id, holder, balance from accounts order by id")
+        assert(len(accounts) == 3)
+        let rich = try tx.query_with[Account]("select id, holder, balance from accounts where balance >= :min order by id", @(min = 70))
+        assert(len(rich) == 2)
+        let renamed = try tx.query[RenamedAccount, Db]("select holder, balance from accounts order by id")
+        assert(renamed[0].account_holder == "Ana" and renamed[0].balance == 70)
+        return (try tx.query_one[int]("select sum(balance) from accounts")) orelse 0
+    end)
+    assert(transferred == 160)
+    assert((try db.query_one[int]("select sum(balance) from accounts")) == 160)
+
+    let mut diagnostic = sqlite::Diagnostic()
+    let mut has_failed = false
+    db.transaction(func(tx)
+        try tx.execute_with("update accounts set balance = :balance where holder = :holder", @(balance = 999, holder = "Ana"))
+        assert((try tx.query_one_with[int]("select balance from accounts where holder = :holder", @(holder = "Ana"))) == 999)
+        try tx.execute_with("update accounts set balance = :balance where holder = :holder", @(balance = -1, holder = "Bo"))
+    end, diagnostic) catch e then
+        assert(e == sqlite::SqliteError.Constraint)
+        has_failed = true
+    end
+    assert(has_failed)
+    assert(string::contains(diagnostic.message, "CHECK"))
+    assert((try db.query_one_with[int]("select balance from accounts where holder = :holder", @(holder = "Ana"))) == 70)
+    assert((try db.query_one_with[int]("select balance from accounts where holder = :holder", @(holder = "Bo"))) == 80)
+
+    let mut steps: []string = []
+    let mut waiting_writer = spawn(func() -> sqlite::SqliteError!void
+        task::sleep(time::milliseconds(10))
+        append(steps, "writer queued")
+        try db.execute_with("update accounts set balance = balance + 5 where holder = :holder", @(holder = "Ana"))
+        append(steps, "writer done")
+    end)
+    let mut waiting_reader = spawn(func() -> sqlite::SqliteError!int
+        task::sleep(time::milliseconds(30))
+        append(steps, "reader queued")
+        let balance = try db.query_one_with[int]("select balance from accounts where holder = :holder", @(holder = "Ana"))
+        append(steps, "reader done")
+        return balance orelse 0
+    end)
+
+    try db.transaction(func(tx)
+        append(steps, "tx began")
+        try tx.execute_with("update accounts set balance = :balance where holder = :holder", @(balance = 150, holder = "Ana"))
+        task::sleep(time::milliseconds(70))
+        try tx.execute_with("update accounts set balance = :balance where holder = :holder", @(balance = 200, holder = "Ana"))
+        append(steps, "tx finishing")
+    end)
+    append(steps, "tx committed")
+    try await(waiting_writer)
+    assert((try await(waiting_reader)) == 205)
+    assert(len(steps) == 7)
+    assert(steps[0] == "tx began")
+    assert(steps[1] == "writer queued")
+    assert(steps[2] == "reader queued")
+    assert(steps[3] == "tx finishing")
+    let mut saw_writer_after_finish = false
+    let mut saw_reader_after_finish = false
+    for 4..6: index do
+        if steps[index] == "writer done" then
+            saw_writer_after_finish = true
+        end
+        if steps[index] == "reader done" then
+            saw_reader_after_finish = true
+        end
+    end
+    assert(saw_writer_after_finish and saw_reader_after_finish)
+
+    let mut rolled_back_reader = spawn(func() -> sqlite::SqliteError!int
+        task::sleep(time::milliseconds(10))
+        let balance = try db.query_one_with[int]("select balance from accounts where holder = :holder", @(holder = "Ana"))
+        return balance orelse 0
+    end)
+    db.transaction(func(tx)
+        try tx.execute_with("update accounts set balance = :balance where holder = :holder", @(balance = 500, holder = "Ana"))
+        task::sleep(time::milliseconds(50))
+        return sqlite::SqliteError.Constraint
+    end) catch _ then end
+    assert((try await(rolled_back_reader)) == 205)
+
+    let second = try sqlite::open(path, busy_timeout_ms = 20)
+    defer second.close()
+    let mut busy_failure = false
+    let mut busy_diagnostic = sqlite::Diagnostic()
+    try db.transaction(func(tx)
+        try tx.execute_with("update accounts set balance = :balance where holder = :holder", @(balance = 210, holder = "Ana"))
+        second.transaction(func(other_tx)
+            try other_tx.execute("update accounts set balance = 0")
+        end, busy_diagnostic) catch e then
+            assert(e == sqlite::SqliteError.Busy)
+            busy_failure = true
+        end
+    end)
+    assert(busy_failure)
+    assert(string::len(busy_diagnostic.message) > 0)
+    assert((try second.query_one_with[int]("select balance from accounts where holder = :holder", @(holder = "Ana"))) == 210)
+
+    let closed_db = try sqlite::open(":memory:")
+    closed_db.close()
+    has_failed = false
+    closed_db.transaction(func(tx)
+        try tx.execute("select 1")
+    end) catch e then
+        assert(e == sqlite::SqliteError.Closed)
+        has_failed = true
+    end
+    assert(has_failed)
+end

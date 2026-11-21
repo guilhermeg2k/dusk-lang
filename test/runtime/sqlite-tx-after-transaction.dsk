@@ -1,0 +1,8 @@
+import std/sqlite
+
+func main() -> !void
+    let db = try sqlite::open(":memory:")
+    try db.execute("create table items (id integer primary key)")
+    let escaped = try db.transaction(func(tx) -> return tx)
+    try escaped.execute("insert into items default values")
+end

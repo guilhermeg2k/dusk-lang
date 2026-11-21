@@ -2054,9 +2054,19 @@ pub const SemaAnalyzer = struct {
             if (!areMentionedSlotsBound(param.type, slots, bindings)) continue;
             hint.* = .{ .type_id = try self.resolveTypeAnnotation(param.type, owner_type_id), .is_mut = param.is_mut };
         }
-        const is_return_known = isErrorSetBound(func.error_set, slots, bindings) and areMentionedSlotsBound(func.return_type, slots, bindings);
-        const return_type_id = if (is_return_known) try self.resolveFuncReturnType(func, owner_type_id, loc) else null;
-        return .{ .params = hints, .return_type_id = return_type_id };
+        const error_set = if (func.error_set) |set_name| blk: {
+            if (!isErrorSetBound(set_name, slots, bindings)) {
+                break :blk null;
+            }
+            break :blk try self.resolveFnErrorSet(.{ .named = .{ .identifier = set_name, .loc = loc } }, "");
+        } else null;
+        const return_type_id = if (error_set != null and areMentionedSlotsBound(func.return_type, slots, bindings))
+            try self.errorUnionType(error_set.?, try self.resolveTypeAnnotation(func.return_type, owner_type_id))
+        else if (func.error_set == null and areMentionedSlotsBound(func.return_type, slots, bindings))
+            try self.resolveTypeAnnotation(func.return_type, owner_type_id)
+        else
+            null;
+        return .{ .params = hints, .return_type_id = return_type_id, .error_set_id = error_set };
     }
 
     fn enterBoundSlotScope(self: *Self, slots: []const ast.Slot, bindings: []const ?tt.TypeId) CompileError!*SymbolTable {
@@ -2186,6 +2196,9 @@ pub const SemaAnalyzer = struct {
                 }
                 const are_both_failing = func.error_set != null and is_arg_failing;
                 const arg_return = if (are_both_failing) return_type.kind.error_union.payload else kind.func_type.return_type_id;
+                const could_bind_void_slots = self.can_bind_void_slots;
+                self.can_bind_void_slots = true;
+                defer self.can_bind_void_slots = could_bind_void_slots;
                 try self.inferSlots(func.return_type, arg_return, slots, bindings, loc);
             },
             else => {},
@@ -4248,11 +4261,21 @@ pub const SemaAnalyzer = struct {
             return ir.Instruction{ .return_stmt = .{ .value = value } };
         }
 
-        const error_set = try self.lambdaErrorSet(self.activeReturnInference().?);
+        const context_index = self.activeReturnInference().?;
+        const target_set_id = try self.lambdaErrorSet(context_index);
+        const target_set = self.errorSetOf(target_set_id);
         if (value.data == .i_int) {
-            try self.errorSetOf(error_set).ids.put(self.allocator, value.data.i_int, {});
+            if (target_set.kind == .inferred) {
+                try target_set.ids.put(self.allocator, value.data.i_int, {});
+            } else if (!target_set.has(value.data.i_int)) {
+                return self.err_reporter.errorNotInSet(
+                    self.type_table.error_names.items[@intCast(value.data.i_int)],
+                    try self.type_table.name(target_set_id, self.allocator),
+                    exp.loc,
+                );
+            }
         } else {
-            try self.addErrorEdge(value.type_id, error_set, exp.loc);
+            try self.addErrorEdge(value.type_id, target_set_id, exp.loc);
         }
         return ir.Instruction{ .return_error = .{ .value = value } };
     }
@@ -4781,6 +4804,7 @@ pub const SemaAnalyzer = struct {
             .floor = self.scope.next_uid,
             .body_depth = self.fn_depth + 1,
             .is_return_inferred = typed.is_return_inferred,
+            .error_set = if (typed.is_return_inferred and hints != null) hints.?.error_set_id else null,
         });
         const context_index = self.lambda_contexts.items.len - 1;
         defer _ = self.lambda_contexts.pop();
@@ -8236,6 +8260,7 @@ const LambdaContext = struct {
 const LambdaHints = struct {
     params: []const ?tt.FuncTypeParam,
     return_type_id: ?tt.TypeId,
+    error_set_id: ?tt.TypeId = null,
 };
 
 const TypedLambda = struct {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const api = @import("sqlite_api.zig");
 const v = @import("../value.zig");
+const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 const EventLoop = @import("event_loop.zig").EventLoop;
 const Scheduler = @import("scheduler.zig").Scheduler;
 const TaskState = @import("scheduler.zig").TaskState;
@@ -135,26 +136,53 @@ pub const Databases = struct {
         self.enqueue(connection, operation);
     }
 
-    pub fn execute(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8) !bool {
-        const connection = self.openConnection(handle) orelse return false;
+    pub fn execute(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, is_in_transaction: bool) !bool {
+        const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .execute, sql);
         self.enqueue(connection, operation);
         return true;
     }
 
-    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param) !bool {
-        const connection = self.openConnection(handle) orelse return false;
+    pub fn executeWith(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, is_in_transaction: bool) !bool {
+        const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .execute_one, sql);
         operation.params = params;
         self.enqueue(connection, operation);
         return true;
     }
 
-    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, max_bytes: i64) !bool {
-        const connection = self.openConnection(handle) orelse return false;
+    pub fn query(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64, sql: []const u8, params: []Param, max_bytes: i64, is_in_transaction: bool) !bool {
+        const connection = try self.usableConnection(handle, task, is_in_transaction) orelse return false;
         const operation = try Operation.create(event_loop, scheduler, task, connection, .query, sql);
         operation.params = params;
         operation.max_bytes = max_bytes;
+        self.enqueue(connection, operation);
+        return true;
+    }
+
+    pub fn begin(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64) !bool {
+        self.clearFailure(task);
+        const connection = try self.usableConnection(handle, task, false) orelse return false;
+        const operation = try Operation.create(event_loop, scheduler, task, connection, .begin, "BEGIN IMMEDIATE");
+        self.enqueue(connection, operation);
+        return true;
+    }
+
+    pub fn commit(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64) !bool {
+        const connection = try self.usableConnection(handle, task, true) orelse return false;
+        const operation = try Operation.create(event_loop, scheduler, task, connection, .commit, "COMMIT");
+        self.enqueue(connection, operation);
+        return true;
+    }
+
+    pub fn rollback(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, handle: i64) !bool {
+        const connection = self.openConnection(handle) orelse {
+            return false;
+        };
+        if (connection.transaction_owner != task) {
+            return false;
+        }
+        const operation = try Operation.create(event_loop, scheduler, task, connection, .rollback, "ROLLBACK");
         self.enqueue(connection, operation);
         return true;
     }
@@ -170,10 +198,17 @@ pub const Databases = struct {
 
     pub fn close(self: *Self, event_loop: *EventLoop, scheduler: ?*Scheduler, task: ?*TaskState, handle: i64) !bool {
         const connection = self.openConnection(handle) orelse return false;
+        if (task != null and connection.transaction_owner == task) {
+            return RuntimeErrorReporter.sqliteDatabaseInTransaction();
+        }
         const operation = try Operation.create(event_loop, scheduler, task, connection, .close, "");
         connection.is_closing = true;
         self.enqueue(connection, operation);
         return true;
+    }
+
+    pub fn hasFailure(self: *Self, task: *TaskState) bool {
+        return self.failures.contains(task);
     }
 
     pub fn takeFailure(self: *Self, task: *TaskState) ?Failure {
@@ -199,6 +234,24 @@ pub const Databases = struct {
         return connection;
     }
 
+    fn usableConnection(self: *Self, handle: i64, task: *TaskState, is_in_transaction: bool) !?*Connection {
+        if (!is_in_transaction) {
+            const connection = self.openConnection(handle) orelse return null;
+            if (connection.transaction_owner == task) {
+                return RuntimeErrorReporter.sqliteDatabaseInTransaction();
+            }
+            return connection;
+        }
+        const connection = self.connections.get(handle) orelse return RuntimeErrorReporter.sqliteTransactionClosed();
+        if (connection.transaction_owner != task) {
+            return RuntimeErrorReporter.sqliteTransactionClosed();
+        }
+        if (connection.is_closing) {
+            return null;
+        }
+        return connection;
+    }
+
     fn enqueue(self: *Self, connection: *Connection, operation: *Operation) void {
         connection.queued.push(operation);
         self.submitNext(connection);
@@ -206,14 +259,14 @@ pub const Databases = struct {
 
     fn submitNext(self: *Self, connection: *Connection) void {
         if (connection.is_running) return;
-        const operation = connection.queued.peek() orelse return;
+        const operation = connection.queued.peekReady(connection.transaction_owner) orelse return;
         operation.database = connection.database;
         operation.cache = &connection.cache;
         self.dispatch.?.submit(&operation.job) catch {
             self.markBlocked(connection);
             return;
         };
-        _ = connection.queued.pop();
+        connection.queued.remove(operation);
         connection.is_running = true;
     }
 
@@ -256,12 +309,18 @@ pub const Databases = struct {
         }
         entry.value_ptr.* = failure;
     }
+
+    fn clearFailure(self: *Self, task: *TaskState) void {
+        const failure = self.takeFailure(task) orelse return;
+        freeMessage(failure.message);
+    }
 };
 
 pub const Connection = struct {
     database: ?*api.Database = null,
     handle: i64 = 0,
     queued: OperationQueue = .{},
+    transaction_owner: ?*TaskState = null,
     is_running: bool = false,
     is_closing: bool = false,
     cache: StatementCache = .{},
@@ -279,7 +338,7 @@ pub const Connection = struct {
 };
 
 const Operation = struct {
-    const Kind = enum { open, execute, execute_one, query, close };
+    const Kind = enum { open, execute, execute_one, query, begin, commit, rollback, close };
 
     job: Job = .{ .execute = runOnWorker, .finish = finishOnLoop },
     kind: Kind,
@@ -326,7 +385,7 @@ const Operation = struct {
         switch (self.kind) {
             .open => self.openOnWorker(),
             .execute => self.executeOnWorker(),
-            .execute_one => self.executeOneOnWorker(),
+            .execute_one, .begin, .commit, .rollback => self.executeOneOnWorker(),
             .query => self.queryOnWorker(),
             .close => {
                 self.cache.?.finalizeAll();
@@ -577,8 +636,27 @@ const Operation = struct {
 
     fn releaseConnection(self: *Operation, databases: *Databases, connection: *Connection) bool {
         const has_run = self.job.outcome == .executed;
+        const has_failed = self.code != 0 or self.fixed_error != null;
         switch (self.kind) {
             .execute, .execute_one, .query => return false,
+            .begin => {
+                if (has_run and !has_failed) {
+                    connection.transaction_owner = self.task;
+                }
+                return false;
+            },
+            .commit => {
+                if (has_run and !has_failed) {
+                    connection.transaction_owner = null;
+                } else if (has_run) {
+                    self.syncAutocommit(connection);
+                }
+                return false;
+            },
+            .rollback => {
+                connection.transaction_owner = null;
+                return false;
+            },
             .open => {
                 if (has_run and self.code == 0) {
                     connection.database = self.database;
@@ -599,9 +677,17 @@ const Operation = struct {
         }
     }
 
+    fn syncAutocommit(self: *Operation, connection: *Connection) void {
+        if (connection.transaction_owner != self.task) return;
+        const database = connection.database orelse return;
+        if (api.sqlite3_get_autocommit(database) != 0) {
+            connection.transaction_owner = null;
+        }
+    }
+
     fn wakeResult(self: *Operation, databases: *Databases, task: *TaskState) !WakeResult {
         const has_failed = self.code != 0 or self.fixed_error != null;
-        if (has_failed) {
+        if (has_failed and self.kind != .rollback) {
             databases.recordFailure(self.event_loop.allocator, task, .{ .message = self.message, .offset = self.offset });
             self.message = null;
             return failed(self.fixed_error orelse errorOf(self.code));
@@ -620,7 +706,7 @@ const Operation = struct {
                 self.result = null;
                 break :result .{ .value = .{ .int64 = databases.results.addAssumeCapacity(result) }, .kind = .int64 };
             },
-            .close => .{ .value = v.NULL_VALUE, .kind = .null },
+            .begin, .commit, .rollback, .close => .{ .value = v.NULL_VALUE, .kind = .null },
         };
     }
 };
@@ -768,8 +854,36 @@ const OperationQueue = struct {
         self.tail = operation;
     }
 
-    fn peek(self: *const OperationQueue) ?*Operation {
-        return self.head;
+    fn peekReady(self: *const OperationQueue, owner: ?*TaskState) ?*Operation {
+        const required_task = owner orelse return self.head;
+        var current = self.head;
+        while (current) |operation| : (current = operation.next) {
+            if (operation.task == required_task) {
+                return operation;
+            }
+        }
+        return null;
+    }
+
+    fn remove(self: *OperationQueue, target: *Operation) void {
+        var previous: ?*Operation = null;
+        var current = self.head;
+        while (current) |operation| : (current = operation.next) {
+            if (operation != target) {
+                previous = operation;
+                continue;
+            }
+            if (previous) |found| {
+                found.next = operation.next;
+            } else {
+                self.head = operation.next;
+            }
+            if (self.tail == operation) {
+                self.tail = previous;
+            }
+            operation.next = null;
+            return;
+        }
     }
 
     fn pop(self: *OperationQueue) ?*Operation {

@@ -40,55 +40,90 @@ struct Diagnostic
     offset: ?int = null
 end
 
-struct Database
+struct Tx
     ~handle: int
-    ~owner: resource
 
     func execute(self: @, sql: string, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        let numbers = execute_handle(self.handle, sql) catch e then
-            describe_failure(diagnostic)
-            return e
-        end
-        return Changes(rows = numbers[0], last_id = numbers[1])
+        return try run_execute(self.handle, sql, true, diagnostic)
     end
 
     func execute_with[P, S: schema](self: @, sql: string, params: P, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
-        let writer = try params_of[P, S](params, diagnostic)
-        let numbers = execute_with_handle(self.handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts) catch e then
-            describe_failure(diagnostic)
-            return e
-        end
-        return Changes(rows = numbers[0], last_id = numbers[1])
+        return try run_execute_with[P, S](self.handle, sql, params, true, diagnostic)
     end
 
     func query[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
-        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, diagnostic)
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
     end
 
     func query_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
         let writer = try params_of[P, S](params, diagnostic)
-        let result = try run_query(self.handle, sql, writer, max_bytes, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, true, diagnostic)
         return try decode_rows[T, S](result, -1, diagnostic)
     end
 
     func query_one[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
-        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, diagnostic)
-        let items = try decode_rows[T, S](result, 1, diagnostic)
-        if len(items) == 0 then
-            return null
-        end
-        return items[0]
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, true, diagnostic)
+        return try decode_first_row[T, S](result, diagnostic)
     end
 
     func query_one_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
         let writer = try params_of[P, S](params, diagnostic)
-        let result = try run_query(self.handle, sql, writer, max_bytes, diagnostic)
-        let items = try decode_rows[T, S](result, 1, diagnostic)
-        if len(items) == 0 then
-            return null
+        let result = try run_query(self.handle, sql, writer, max_bytes, true, diagnostic)
+        return try decode_first_row[T, S](result, diagnostic)
+    end
+end
+
+struct Database
+    ~handle: int
+    ~owner: resource
+
+    func execute(self: @, sql: string, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute(self.handle, sql, false, diagnostic)
+    end
+
+    func execute_with[P, S: schema](self: @, sql: string, params: P, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        return try run_execute_with[P, S](self.handle, sql, params, false, diagnostic)
+    end
+
+    func query[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, false, diagnostic)
+        return try decode_rows[T, S](result, -1, diagnostic)
+    end
+
+    func query_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError![]T
+        let writer = try params_of[P, S](params, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, false, diagnostic)
+        return try decode_rows[T, S](result, -1, diagnostic)
+    end
+
+    func query_one[T, S: schema](self: @, sql: string, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+        let result = try run_query(self.handle, sql, ParamWriter(), max_bytes, false, diagnostic)
+        return try decode_first_row[T, S](result, diagnostic)
+    end
+
+    func query_one_with[T, S: schema, P](self: @, sql: string, params: P, max_bytes: int = DEFAULT_MAX_BYTES, mut diagnostic: ?Diagnostic = null) -> SqliteError!?T
+        let writer = try params_of[P, S](params, diagnostic)
+        let result = try run_query(self.handle, sql, writer, max_bytes, false, diagnostic)
+        return try decode_first_row[T, S](result, diagnostic)
+    end
+
+    func transaction[T](self: @, body: func(Tx) -> SqliteError!T, mut diagnostic: ?Diagnostic = null) -> SqliteError!T
+        begin_handle(self.handle) catch e then
+            describe_failure(diagnostic)
+            return e
         end
-        return items[0]
+        let value = body(Tx(handle = self.handle)) catch e then
+            rollback_handle(self.handle)
+            describe_failure(diagnostic)
+            return e
+        end
+        commit_handle(self.handle) catch e then
+            rollback_handle(self.handle)
+            describe_failure(diagnostic)
+            return e
+        end
+        return value
     end
 
     func close(self: @) -> void
@@ -311,6 +346,23 @@ struct ~Rows
     end
 end
 
+func ~run_execute(handle: int, sql: string, is_in_transaction: bool, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
+    let numbers = execute_handle(handle, sql, is_in_transaction) catch e then
+        describe_failure(diagnostic)
+        return e
+    end
+    return Changes(rows = numbers[0], last_id = numbers[1])
+end
+
+func ~run_execute_with[P, S: schema](handle: int, sql: string, params: P, is_in_transaction: bool, mut diagnostic: ?Diagnostic) -> SqliteError!Changes
+    let writer = try params_of[P, S](params, diagnostic)
+    let numbers = execute_with_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, is_in_transaction) catch e then
+        describe_failure(diagnostic)
+        return e
+    end
+    return Changes(rows = numbers[0], last_id = numbers[1])
+end
+
 func ~params_of[P, S: schema](params: P, mut diagnostic: ?Diagnostic) -> SqliteError!ParamWriter
     let mut writer = ParamWriter()
     serialization::encode[P, ParamWriter, S](params, writer) catch e then
@@ -320,12 +372,20 @@ func ~params_of[P, S: schema](params: P, mut diagnostic: ?Diagnostic) -> SqliteE
     return writer
 end
 
-func ~run_query(handle: int, sql: string, writer: ParamWriter, max_bytes: int, mut diagnostic: ?Diagnostic) -> SqliteError!int
-    let result = query_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, max_bytes) catch e then
+func ~run_query(handle: int, sql: string, writer: ParamWriter, max_bytes: int, is_in_transaction: bool, mut diagnostic: ?Diagnostic) -> SqliteError!int
+    let result = query_handle(handle, sql, writer.names, writer.kinds, writer.ints, writer.floats, writer.texts, max_bytes, is_in_transaction) catch e then
         describe_failure(diagnostic)
         return e
     end
     return result
+end
+
+func ~decode_first_row[T, S: schema](result: int, mut diagnostic: ?Diagnostic) -> SqliteError!?T
+    let items = try decode_rows[T, S](result, 1, diagnostic)
+    if len(items) == 0 then
+        return null
+    end
+    return items[0]
 end
 
 func ~decode_rows[T, S: schema](result: int, limit: int, mut diagnostic: ?Diagnostic) -> SqliteError![]T
@@ -361,9 +421,12 @@ func ~describe_message(mut diagnostic: ?Diagnostic, message: string) -> void
 end
 
 func ~describe_failure(mut diagnostic: ?Diagnostic) -> void
-    let offset = error_offset()
-    let message = take_error_message()
     if diagnostic: mut found then
+        if !has_failure() then
+            return
+        end
+        let offset = error_offset()
+        let message = take_error_message()
         found.message = message
         found.offset = null
         if offset >= 0 then
@@ -374,9 +437,12 @@ end
 
 extern func version() -> string
 extern func ~open_handle(path: string, journal: Journal, foreign_keys: bool, busy_timeout_ms: int, read_only: bool, create: bool) -> SqliteError!int
-extern func ~execute_handle(handle: int, sql: string) -> SqliteError![]int
-extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string) -> SqliteError![]int
-extern func ~query_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, max_bytes: int) -> SqliteError!int
+extern func ~execute_handle(handle: int, sql: string, is_in_transaction: bool) -> SqliteError![]int
+extern func ~execute_with_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, is_in_transaction: bool) -> SqliteError![]int
+extern func ~query_handle(handle: int, sql: string, names: []string, kinds: []int, ints: []int, floats: []float, texts: []string, max_bytes: int, is_in_transaction: bool) -> SqliteError!int
+extern func ~begin_handle(handle: int) -> SqliteError!void
+extern func ~commit_handle(handle: int) -> SqliteError!void
+extern func ~rollback_handle(handle: int) -> void
 extern func ~result_rows(result: int) -> int
 extern func ~result_columns(result: int) -> []string
 extern func ~result_free(result: int) -> void
@@ -385,6 +451,7 @@ extern func ~cell_int(result: int, row: int, column: int) -> int
 extern func ~cell_float(result: int, row: int, column: int) -> float
 extern func ~cell_text(result: int, row: int, column: int) -> ?string
 extern func ~close_handle(handle: int) -> void
+extern func ~has_failure() -> bool
 extern func ~error_offset() -> int
 extern func ~take_error_message() -> string
 extern func ~own(kind: int, handle: int) -> resource

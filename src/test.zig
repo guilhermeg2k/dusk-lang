@@ -50,6 +50,13 @@ test "sqlite: typed queries into structs and scalars, query_one, schemas, decodi
     try runCaseError("sema/sqlite-array-column.dsk", error.FormatLacksMethod);
 }
 
+test "sqlite: transactions commit, roll back on error, return values, queue other tasks, reject direct db or stale tx use, report busy conflicts" {
+    try runCaseInTmpDir("sqlite-transactions.dsk");
+    try runCaseRuntimeError("sqlite-db-in-transaction.dsk", error.SqliteDatabaseInTransaction);
+    try runCaseRuntimeError("sqlite-nested-transaction.dsk", error.SqliteDatabaseInTransaction);
+    try runCaseRuntimeError("sqlite-tx-after-transaction.dsk", error.SqliteTransactionClosed);
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");

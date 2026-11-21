@@ -24,6 +24,8 @@ pub const RuntimeError = error{
     HttpBodyGivenTwice,
     HttpInvalidCompressionLevel,
     DurationOutOfRange,
+    SqliteDatabaseInTransaction,
+    SqliteTransactionClosed,
 };
 
 pub const RuntimeErrorReporter = struct {
@@ -53,6 +55,16 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.HttpInvalidCompressionLevel, "http server compression_level must be from 0 to 9: {d}", .{level});
+    }
+
+    pub noinline fn sqliteDatabaseInTransaction() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.SqliteDatabaseInTransaction, "can't use Database directly inside its own transaction; use the Tx argument", .{});
+    }
+
+    pub noinline fn sqliteTransactionClosed() RuntimeError {
+        @branchHint(.cold);
+        return report(RuntimeError.SqliteTransactionClosed, "can't use a Tx after its transaction has ended", .{});
     }
 
     pub noinline fn invalidReadSize(max: i64) RuntimeError {

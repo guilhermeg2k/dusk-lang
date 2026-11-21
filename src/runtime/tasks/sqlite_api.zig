@@ -66,3 +66,4 @@ pub extern fn sqlite3_errmsg(database: ?*Database) [*:0]const u8;
 pub extern fn sqlite3_error_offset(database: *Database) c_int;
 pub extern fn sqlite3_total_changes64(database: *Database) i64;
 pub extern fn sqlite3_last_insert_rowid(database: *Database) i64;
+pub extern fn sqlite3_get_autocommit(database: *Database) c_int;
