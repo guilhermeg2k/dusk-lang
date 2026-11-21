@@ -30,7 +30,5 @@ zig build test --summary all
 zig build test -Doptimize=ReleaseFast --summary all
 ```
 
-Run the time example with `./zig-out/bin/dusk examples/time.dsk`. Named-zone examples use bundled rules and do not depend on the host's timezone setting.
-
 Cross-builds check compilation and linking; runtime behavior, particularly system-local discovery, must also be tested on the target operating system.
 

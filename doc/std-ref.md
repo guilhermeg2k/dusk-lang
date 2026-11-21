@@ -495,7 +495,7 @@ io::println("Shutting down...")
 
 ## std/time
 
-Clocks, timestamps, durations and time zones. A [complete example](../examples/time.dsk) uses most of the module. Functions that can fail return an error union with the module's error set `TimeError`:
+Clocks, timestamps, durations and time zones. Functions that can fail return an error union with the module's error set `TimeError`:
 
 | Variant | When |
 | :------ | :--- |
