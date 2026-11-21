@@ -36,6 +36,10 @@ test "sqlite: the bundled library links and reports its version" {
     try runCase("sqlite-version.dsk");
 }
 
+test "sqlite: open, execute, errors with diagnostics, ordering on one connection, read-only, close and dropped databases" {
+    try runCaseInTmpDir("sqlite-connections.dsk");
+}
+
 test "json: typed values, containers, enums, unions, defaults and recursion" {
     try runCase("json.dsk");
     try runCase("json-imports.dsk");

@@ -1,1 +1,79 @@
+error SqliteError
+    CantOpen
+    ReadOnly
+    Busy
+    Constraint
+    InvalidSql
+    MissingParameter
+    UnknownParameter
+    TypeMismatch
+    MissingColumn
+    TooLarge
+    TimedOut
+    Full
+    Corrupt
+    Closed
+    Other
+end
+
+enum Journal
+    Wal
+    Delete
+end
+
+struct Changes
+    rows: int
+    last_id: int
+end
+
+struct Diagnostic
+    message: string = ""
+    offset: ?int = null
+end
+
+struct Database
+    ~handle: int
+    ~owner: resource
+
+    func execute(self: @, sql: string, mut diagnostic: ?Diagnostic = null) -> SqliteError!Changes
+        let numbers = execute_handle(self.handle, sql) catch e then
+            describe_failure(diagnostic)
+            return e
+        end
+        return Changes(rows = numbers[0], last_id = numbers[1])
+    end
+
+    func close(self: @) -> void
+        close_handle(self.handle)
+        release(self.owner)
+    end
+end
+
+func open(path: string, journal: Journal = Journal.Wal, foreign_keys: bool = true, busy_timeout_ms: int = 5000, read_only: bool = false, create: bool = true, mut diagnostic: ?Diagnostic = null) -> SqliteError!Database
+    let handle = open_handle(path, journal, foreign_keys, busy_timeout_ms, read_only, create) catch e then
+        describe_failure(diagnostic)
+        return e
+    end
+    return Database(handle = handle, owner = own(6, handle))
+end
+
+func ~describe_failure(mut diagnostic: ?Diagnostic) -> void
+    let offset = error_offset()
+    let message = take_error_message()
+    if diagnostic: mut found then
+        found.message = message
+        found.offset = null
+        if offset >= 0 then
+            found.offset = offset
+        end
+    end
+end
+
 extern func version() -> string
+extern func ~open_handle(path: string, journal: Journal, foreign_keys: bool, busy_timeout_ms: int, read_only: bool, create: bool) -> SqliteError!int
+extern func ~execute_handle(handle: int, sql: string) -> SqliteError![]int
+extern func ~close_handle(handle: int) -> void
+extern func ~error_offset() -> int
+extern func ~take_error_message() -> string
+extern func ~own(kind: int, handle: int) -> resource
+extern func ~release(owner: ?resource) -> void

@@ -27,6 +27,7 @@ const TerminalOutput = @import("terminal.zig").TerminalOutput;
 const TerminalSize = @import("terminal.zig").TerminalSize;
 const WorkerDispatch = @import("worker_dispatch.zig").WorkerDispatch;
 const WorkerPool = @import("worker_pool.zig").WorkerPool;
+const Databases = @import("sqlite.zig").Databases;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -54,6 +55,7 @@ pub const EventLoop = struct {
     terminal_outputs: [2]?*TerminalOutput = .{ null, null },
     has_used_raw_terminal: bool = false,
     worker_dispatches: std.ArrayList(*WorkerDispatch) = .empty,
+    sqlite: Databases = .{},
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
@@ -69,6 +71,7 @@ pub const EventLoop = struct {
         for (self.worker_dispatches.items) |dispatch| {
             dispatch.shutDown();
         }
+        self.sqlite.deinit(self.allocator);
         defer self.worker_dispatches.deinit(self.allocator);
         for (self.signal_subscriptions.entries.items) |entry| {
             const subscription = entry orelse continue;
@@ -259,6 +262,9 @@ pub const EventLoop = struct {
             },
             .signal => self.closeSignal(slot.handle),
             .certificate => self.closeCertificate(slot.handle),
+            .database => {
+                _ = self.sqlite.close(self, null, null, slot.handle) catch false;
+            },
         }
     }
 

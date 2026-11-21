@@ -38,7 +38,8 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 | `src/runtime/path.zig` | Path rules for each system, over Zig's `std.fs.path` |
 | `src/runtime/tasks/process.zig` | `Process` records, captured runs and the `PATH` lookup job (section 12) |
 | `src/runtime/tasks/process_glue.c` | Filling libuv's spawn options (section 12) |
-| `src/runtime/tasks/sqlite_api.zig` | The only code that declares SQLite's C API, by hand (no `@cImport`). SQLite 3.54.1 comes from the `dusqlang/sqlite` fork like the other C libraries: its `dusk/v3.54.1` branch holds the official amalgamation and a `build.zig` (`SQLITE_THREADSAFE=2`, extension loading, deprecated APIs and shared cache left out). `std/sqlite` only has `version()` so far |
+| `src/runtime/tasks/sqlite_api.zig` | SQLite's C API, declared by hand (no `@cImport`) (section 15) |
+| `src/runtime/tasks/sqlite.zig` | `Databases` (the connection table on the event loop), `Connection` and its queue of `Operation`s run on a worker pool (section 15) |
 | `src/runtime/builtins/std/*.dsk`, `std/*.zig` | Each module's Dusk code and natives |
 
 Every module is a `.dsk` file with the Dusk side (structs, methods, functions written in Dusk) and a `.zig` file with its natives and `bindings` (see [vm-internals.md](vm-internals.md) section 7.3). Natives that wait park the calling task and are woken from libuv callbacks ([vm-internals.md](vm-internals.md) section 11.3).
@@ -240,5 +241,21 @@ The mechanism (a `Resource` heap object holding an id into `EventLoop.resources`
 | `process::Child`, and the `PipeReader` / `PipeWriter` it returns (same owner) | `process` | `process::start` | `Child.close` |
 | `os::SignalStream` | `signal` | `os::watch_signal` | `close` |
 | `net::Certificate` | `certificate` | `net::certificate` | GC sweep (freed once no listener or TLS session holds a reference) |
+| `sqlite::Database` | `database` | `sqlite::open` | `close` (queued after the connection's pending operations) |
 
 Each module declares `~own(kind, handle)` and `~release(owner)` externs bound to the shared natives in `native.zig`. A file stream closed by the sweep starts its pending write job first (`Stream.flushOutputBeforeClose`), so buffered writes still reach the disk. A dropped child that has exited is released at once. One still running has its pipes closed (nothing can reach them, and the child then sees the end of its input or a broken pipe) and is released by its exit callback (`Process.releaseOnceExited`, `should_release_on_exit`): the program still waits for it, as for any running child.
+
+## 15. SQLite
+
+SQLite 3.54.1 comes from the `dusqlang/sqlite` fork like the other C libraries. The git tree has no amalgamation (SQLite's build generates it with Tcl), so the fork's `dusk/v3.54.1` branch adds the official release's `sqlite3.c` / `sqlite3.h` / `sqlite3ext.h` and a `build.zig` with `SQLITE_THREADSAFE=2` (a connection is never used by two threads at once, so SQLite skips its connection mutexes), `SQLITE_DQS=0`, `SQLITE_DEFAULT_MEMSTATUS=0`, extension loading, deprecated APIs and shared cache left out, and `HAVE_USLEEP=1` off Windows (otherwise busy waits sleep in whole seconds). `sqlite_api.zig` declares the functions Dusk calls; only `sqlite.zig` and the `version` native call them.
+
+**Connections.** `EventLoop.sqlite` is a `Databases`: a `HandleTable(Connection)`, the SQLite `WorkerDispatch` (created on the first `open`, 4 threads, 64 outstanding jobs; vm-internals 11.5), the connections waiting for room in the pool, and the last failure of each task. A `Connection` holds the `sqlite3*` and a FIFO of `Operation`s, and runs at most one at a time: `submitNext` submits the head when nothing is running, and when the pool answers `QueueFull` the connection waits in `blocked` (room reserved when the connection is created) until any SQLite job finishes. So operations on one connection never overlap and run in call order, while different connections run in parallel. An `Operation` embeds the pool's `Job`; it copies its SQL (or path) as NUL-terminated text and the connection's `sqlite3*` when submitted, so the worker touches nothing else.
+
+- `open` creates the connection record first (its handle is the result), then a worker runs `sqlite3_open_v2` with extended result codes (read-only, or read-write with create unless `create = false`), `sqlite3_busy_timeout`, and `PRAGMA journal_mode=WAL` (not for read-only connections) and `PRAGMA foreign_keys=ON` as asked. A failed open frees the record.
+- `execute` prepares each statement of the text in turn (`sqlite3_prepare_v2` with its tail), steps it to the end ignoring rows, and finalizes it. The result is `[changes, last insert id]` as an `ints` wake payload: `sqlite3_total_changes64` before and after, so the count covers every statement.
+- `close` marks the connection closing (later calls fail with `Closed` without parking) and queues a close operation behind the pending ones; the worker runs `sqlite3_close_v2`, and finishing it frees the record. A `Database` the program dropped is closed the same way, with no task to wake (`EventLoop.closeResource`, kind `database`).
+
+**Errors.** A failing step records the extended result code, a copy of `sqlite3_errmsg` (C allocator, made on the worker) and `sqlite3_error_offset`, shifted to count from the start of the whole text. Finishing maps the primary code to `SqliteError` (`errorOf`) and keeps the message and offset in `Databases.failures` under the woken task; the Dusk wrapper reads them right away with `~error_offset` and `~take_error_message` (which removes the entry) and fills the optional `Diagnostic`. Keying by task means tasks sharing a connection never see each other's messages. SQLite only reports an offset for some errors (syntax errors, "already exists"), not for a missing table.
+
+**Shutdown.** `EventLoop.deinit` shuts the worker dispatches down first (running operations finish, queued ones are discarded without waking anything), then `Databases.deinit` closes every connection still open on the loop thread and frees operations that never reached the pool.
+
