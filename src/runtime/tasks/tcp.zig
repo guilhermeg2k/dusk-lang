@@ -50,9 +50,14 @@ const net_errors_by_name = std.StaticStringMap(NetError).initComptime(.{
     .{ "EAI_ADDRFAMILY", .HostNotFound },
 });
 
+pub const ListenOptions = struct {
+    backlog: c_int,
+    reuse_port: bool = false,
+};
+
 pub const Purpose = union(enum) {
     connect,
-    listen: c_int,
+    listen: ListenOptions,
 };
 
 pub const OpenProgress = union(enum) {
@@ -169,7 +174,7 @@ pub const OpenRequest = struct {
             self.next_address += 1;
             const progress = switch (self.purpose) {
                 .connect => self.startConnecting(address),
-                .listen => |backlog| self.listenOn(address, backlog),
+                .listen => |options| self.listenOn(address, options),
             };
             switch (progress) {
                 .failed => |failure| self.last_failure = failure,
@@ -196,10 +201,10 @@ pub const OpenRequest = struct {
         return .waiting;
     }
 
-    fn listenOn(self: *Self, address: *const uv.SocketAddress, backlog: c_int) OpenProgress {
+    fn listenOn(self: *Self, address: *const uv.SocketAddress, options: ListenOptions) OpenProgress {
         const handle = self.event_loop.openListener(self.scheduler) catch return .{ .failed = .Other };
         const listener = self.event_loop.listenerAt(handle).?;
-        if (listener.bindAndListen(address, backlog)) |failure| {
+        if (listener.bindAndListen(address, options)) |failure| {
             self.event_loop.closeListener(handle);
             return .{ .failed = failure };
         }
@@ -392,12 +397,13 @@ pub const Listener = struct {
         self.tls_certificate = certificate;
     }
 
-    pub fn bindAndListen(self: *Self, address: *const uv.SocketAddress, backlog: c_int) ?NetError {
-        const bind_status = uv.uv_tcp_bind(self.uvHandle(), address, 0);
+    pub fn bindAndListen(self: *Self, address: *const uv.SocketAddress, options: ListenOptions) ?NetError {
+        const flags: c_uint = if (options.reuse_port) uv.tcp_reuseport else 0;
+        const bind_status = uv.uv_tcp_bind(self.uvHandle(), address, flags);
         if (bind_status != 0) {
             return netErrorFromStatus(bind_status);
         }
-        const listen_status = uv.uv_listen(self.uvHandle(), backlog, onConnection);
+        const listen_status = uv.uv_listen(self.uvHandle(), options.backlog, onConnection);
         if (listen_status != 0) {
             return netErrorFromStatus(listen_status);
         }

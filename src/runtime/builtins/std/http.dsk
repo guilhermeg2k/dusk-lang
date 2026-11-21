@@ -1363,21 +1363,21 @@ func ~response_with(code: int, content_type: string, body: buffer) -> Response
     return Response(status = code, reason = "", headers = Headers(items = [Header(name = "Content-Type", value = content_type)], lowered = ["content-type"]), body = body, url = "")
 end
 
-func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000) -> HttpError!Server
+func listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false) -> HttpError!Server
     if compression_level < 0 or compression_level > 9 then
         invalid_compression_level(compression_level)
     end
-    let listener = open_listener(host, port, cert, backlog) catch e then
+    let listener = open_listener(host, port, cert, backlog, reuse_port) catch e then
         return from_net(e)
     end
     return Server(listener = listener, state = server_state_new(), max_body = max_body, head_timeout_ms = head_timeout_ms, idle_timeout_ms = idle_timeout_ms, write_timeout_ms = write_timeout_ms, max_connections = max_connections, compress = compress, compression_level = compression_level, stop_on_signal = stop_on_signal, shutdown_timeout_ms = shutdown_timeout_ms)
 end
 
-func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int) -> net::NetError!net::TcpListener
+func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: int, reuse_port: bool) -> net::NetError!net::TcpListener
     if cert: certificate then
-        return try net::tls_listen(host, port, certificate, backlog)
+        return try net::tls_listen(host, port, certificate, backlog, reuse_port)
     end
-    return try net::tcp_listen(host, port, backlog)
+    return try net::tcp_listen(host, port, backlog, reuse_port)
 end
 
 func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response) -> void

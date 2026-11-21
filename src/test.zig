@@ -3004,6 +3004,14 @@ test "missing struct fields report the field name and untyped null literals are 
     try runCaseError("sema/untyped-null-array.dsk", error.CantInferArrayLiteralType);
 }
 
+test "net and http listeners support reuse_port on Linux and FreeBSD" {
+    const os_tag = @import("builtin").os.tag;
+    if (os_tag != .linux and os_tag != .freebsd) {
+        return error.SkipZigTest;
+    }
+    try runCase("net-reuse-port.dsk");
+}
+
 test "fibonacci" {
     try runCase("fibonnaci.dsk");
 }

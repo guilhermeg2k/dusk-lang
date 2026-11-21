@@ -22,6 +22,7 @@
 - `task::sleep(duration)` takes a `time::Duration` (`task::sleep(time::milliseconds(10))`), rounded up to whole milliseconds. The `Duration` factories (`time::milliseconds`, `seconds`, ...) return a plain `Duration`; a value past about 292 years is a runtime error
 - Explicit type arguments can stop early: `pair[int](1, "a")` names the first slot and the rest are worked out from the arguments and the expected type, as when no list is written. This lets a call name the type it returns while another slot comes from an argument, such as an anonymous struct (`db.query_with[User](sql, @(age = 18))`). A slot that still can't be worked out is the usual `Can't work out 'U'` error
 - Definite assignment for local variables: a local `let x: T` or `let mut x: T` can be declared without an initial value and assigned later before its first read. The compiler tracks initialization across `if`, `when`, loops, `catch` and early exits, rejects reads, captures or `defer` uses that may run before initialization (`VariableNotInitialized`), and allows immutable `let` bindings to be assigned at most once per path
+- `reuse_port = true` on `net::tcp_listen`, `net::tls_listen` and `http::listen` enables `SO_REUSEPORT` (`UV_TCP_REUSEPORT`), allowing multiple processes or listeners to bind and share the same port on Linux and FreeBSD
 
 ### Fixes
 

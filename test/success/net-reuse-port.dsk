@@ -1,0 +1,29 @@
+import std/http
+import std/net
+
+func main() -> !void
+    let first = try net::tcp_listen("127.0.0.1", 0, reuse_port = true)
+    defer first.close()
+    let port = first.port()
+    assert(port > 0)
+
+    let second = try net::tcp_listen("127.0.0.1", port, reuse_port = true)
+    defer second.close()
+    assert(second.port() == port)
+
+    let mut failed_without_reuse = false
+    net::tcp_listen("127.0.0.1", port) catch e then
+        assert(e == net::NetError.AddressInUse)
+        failed_without_reuse = true
+    end
+    assert(failed_without_reuse)
+
+    let http_first = try http::listen("127.0.0.1", 0, reuse_port = true)
+    defer http_first.close()
+    let http_port = http_first.port()
+    assert(http_port > 0)
+
+    let http_second = try http::listen("127.0.0.1", http_port, reuse_port = true)
+    defer http_second.close()
+    assert(http_second.port() == http_port)
+end

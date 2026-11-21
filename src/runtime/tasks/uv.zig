@@ -159,6 +159,8 @@ pub extern fn uv_write(request: *Request, stream: *Handle, buffers: [*]const Buf
 
 // ---- TCP ----
 
+pub const tcp_reuseport: c_uint = 2;
+
 pub extern fn uv_tcp_init(loop: *Loop, tcp: *Handle) c_int;
 pub extern fn uv_tcp_open(tcp: *Handle, socket: OsSocket) c_int;
 pub extern fn uv_tcp_nodelay(tcp: *Handle, enable: c_int) c_int;

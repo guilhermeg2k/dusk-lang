@@ -18,7 +18,7 @@ error NetError
 end
 
 extern func ~tcp_connect_handle(host: string, port: int, timeout_ms: int) -> NetError!int
-extern func ~tcp_listen_handle(host: string, port: int, backlog: int) -> NetError!int
+extern func ~tcp_listen_handle(host: string, port: int, backlog: int, reuse_port: bool) -> NetError!int
 extern func ~listener_accept(handle: int, timeout_ms: int) -> io::IoError!int
 extern func ~listener_port(handle: int) -> int
 extern func ~listener_close(handle: int) -> void
@@ -144,8 +144,8 @@ func tcp_connect(host: string, port: int, timeout_ms: int = -1) -> NetError!TcpC
     return open_conn(try tcp_connect_handle(host, port, timeout_ms))
 end
 
-func tcp_listen(host: string, port: int, backlog: int = 128) -> NetError!TcpListener
-    let handle = try tcp_listen_handle(host, port, backlog)
+func tcp_listen(host: string, port: int, backlog: int = 128, reuse_port: bool = false) -> NetError!TcpListener
+    let handle = try tcp_listen_handle(host, port, backlog, reuse_port)
     return TcpListener(handle = handle, bound_port = listener_port(handle), owner = own(1, handle))
 end
 
@@ -168,8 +168,8 @@ func tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = nu
     return conn
 end
 
-func tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128) -> NetError!TcpListener
-    let listener = try tcp_listen(host, port, backlog)
+func tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128, reuse_port: bool = false) -> NetError!TcpListener
+    let listener = try tcp_listen(host, port, backlog, reuse_port)
     listener_use_tls(listener.handle, cert.handle)
     return listener
 end
