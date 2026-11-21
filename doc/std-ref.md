@@ -25,6 +25,7 @@ Each module is imported with `import std/<name>` and used through its name (`io:
 - [std/http](#stdhttp)
 - [std/serialization](#stdserialization)
 - [std/json](#stdjson)
+- [std/sqlite](#stdsqlite)
 - [Shared error sets](#shared-error-sets)
 - [Known limitations](#known-limitations)
 
@@ -1808,6 +1809,133 @@ Paths use forms such as `users[2].age`; map keys and field names containing punc
 
 `JsonError` contains `InvalidJson`, `TypeMismatch`, `MissingField`, `UnknownField`, `DuplicateKey`, `NumberOutOfRange`, `UnknownVariant`, `InvalidUnion`, `NonFiniteNumber`, `DepthExceeded`, `CycleDetected`, `InvalidOptions` and `InvalidValue`. Errors have no payload; diagnostics are separate. Pretty printing and streaming are not supported.
 
+## std/sqlite
+
+Embedded SQL databases using a bundled SQLite. Import with `import std/sqlite`. Database work runs on a dedicated worker pool so a slow query or busy wait pauses only the calling task, while other tasks keep running.
+
+### Opening and closing
+
+| Function / method | Returns | Description |
+| :---------------- | :------ | :---------- |
+| `open(path, journal = Journal.Wal, foreign_keys = true, busy_timeout_ms = 5000, read_only = false, create = true, mut diagnostic = null)` | `SqliteError!Database` | Opens a database file or `":memory:"`. |
+| `db.close()` | `void` | Closes the connection after pending operations finish. Safe to call more than once. |
+| `version()` | `string` | The bundled SQLite version string. |
+
+By default, `open` enables WAL journaling (`Journal.Wal`, ignored for `":memory:"` and read-only connections), turns foreign-key checks on, sets a 5-second busy timeout (`busy_timeout_ms`), and creates missing files. Pass `journal = sqlite::Journal.Delete` for classic rollback journaling, `read_only = true` to prevent writes, or `create = false` to fail with `CantOpen` when the file does not exist.
+
+Close connections with `defer db.close()` when finished. A `Database` dropped without closing is closed after a garbage collection and when the program ends.
+
+### Executing statements and parameters
+
+| Method (`Database` and `Tx`) | Returns | Description |
+| :--------------------------- | :------ | :---------- |
+| `execute(sql, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one or more statements separated by `;` (no parameters). |
+| `execute_with[P, S: schema](sql, params, timeout_ms = -1, mut diagnostic = null)` | `SqliteError!Changes` | Runs one statement, binding `:name` parameters from a struct. |
+
+`Changes` has `rows: int` (total rows changed) and `last_id: int` (the last inserted rowid). `execute_with` takes exactly one statement and caches prepared statements per connection.
+
+**Always pass values through `_with` parameters rather than string interpolation.** Interpolating user input into SQL strings (`"where name = '$name'"`) allows SQL injection; use `:name` placeholders and pass a named or anonymous struct instead:
+
+```nim
+try db.execute("create table users (id integer primary key, name text not null, age integer)")
+let added = try db.execute_with(
+    "insert into users (name, age) values (:name, :age)",
+    @(name = "Ana", age = 30),
+)
+```
+
+Parameters are encoded through `std/serialization`, so schema renames (`S: schema`) and proxies (`via`) apply. Every `:name` in the SQL must have a field in `params` (`MissingParameter` otherwise), and every field in `params` must appear in the SQL (`UnknownParameter` otherwise). Unnamed `?` placeholders fail with `MissingParameter`.
+
+### Queries
+
+| Method (`Database` and `Tx`) | Returns | Description |
+| :--------------------------- | :------ | :---------- |
+| `query[T, S: schema](sql, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError![]T` | Returns every row decoded into `T`. |
+| `query_with[T, S: schema, P](sql, params, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError![]T` | Same, with `:name` parameters from `params`. |
+| `query_one[T, S: schema](sql, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError!?T` | Returns the first row, or `null` when no rows match. |
+| `query_one_with[T, S: schema, P](sql, params, timeout_ms = -1, max_bytes = 67108864, mut diagnostic = null)` | `SqliteError!?T` | Same, with `:name` parameters from `params`. |
+
+For `_with` queries, name the row type (and optional schema) in brackets and let the compiler infer the parameter struct's type:
+
+```nim
+struct User
+    id: int
+    name: string
+    email: ?string
+end
+
+let users = try db.query_with[User](
+    "select id, name, email from users where age >= :min order by id",
+    @(min = 18),
+)
+let count = try db.query_one[int]("select count(*) from users")
+```
+
+Rows decode through `std/serialization`: column names match struct field names (or a schema's renamed names), extra columns are ignored, missing required columns fail with `MissingColumn`, and duplicate column names for the same field fail with `TypeMismatch`. Scalar root types such as `query_one[int]` read the first column. `query_one` returns the first row when a query yields several; add `LIMIT 1` in SQL when only one row is needed.
+
+`max_bytes` caps the raw result size collected before decoding (64 MiB by default; `-1` disables the limit) and fails with `TooLarge` when exceeded.
+
+### Type mapping
+
+| Dusk type | Bound as | Read back from |
+| :-------- | :------- | :------------- |
+| `int` | `INTEGER` | `INTEGER` |
+| `float` | `REAL` | `REAL` or `INTEGER` |
+| `bool` | `INTEGER` (`0` or `1`) | `INTEGER` (`0` or `1`) |
+| `string` | `TEXT` | Valid UTF-8 `TEXT` |
+| `?T` | `NULL` or `T` | `NULL` or `T` |
+| Enum | `TEXT` (variant name) | `TEXT` (variant name or schema alias) |
+| Proxied type (`via`) | The proxy's target type | The proxy's target type |
+
+A column whose storage class does not match the field fails with `TypeMismatch`. Arrays, maps, unions and nested structs cannot be bound as parameters or decoded as columns.
+
+### Transactions
+
+```nim
+let total = try db.transaction(func(tx)
+    try tx.execute_with("update accounts set balance = balance - :n where holder = :h", @(n = 30, h = "Ana"))
+    try tx.execute_with("update accounts set balance = balance + :n where holder = :h", @(n = 30, h = "Bo"))
+    return (try tx.query_one[int]("select sum(balance) from accounts")) orelse 0
+end)
+```
+
+`db.transaction[T](body: func(Tx) -> SqliteError!T, mut diagnostic: ?Diagnostic = null) -> SqliteError!T` starts a `BEGIN IMMEDIATE` transaction, runs `body` with a `sqlite::Tx` handle (which has the same six execute and query methods as `Database`), commits when `body` returns, and rolls back if `body` or `COMMIT` fails.
+
+While a transaction is open, operations from other tasks on the same `Database` wait in order until it ends. Inside `body`, always use `tx`: calling `db` methods, `db.close()` or a nested `db.transaction` from the task that owns the transaction is a runtime error, and using a `Tx` after its transaction has ended (or from another task) is also a runtime error.
+
+### Timeouts and diagnostics
+
+Every execute and query method accepts `timeout_ms` (default `-1`, no timeout). When a non-negative timeout expires, a running statement is interrupted and fails with `TimedOut`, and an operation waiting in the connection's queue is removed and fails with `TimedOut` immediately. The connection remains usable afterward. `busy_timeout_ms` on `open` controls how long SQLite waits for another connection's lock before failing with `Busy`.
+
+Pass a mutable `sqlite::Diagnostic()` to any call to inspect SQLite's error text (`message: string`) and statement byte offset (`offset: ?int`, `null` when SQLite does not report one):
+
+```nim
+let mut diagnostic = sqlite::Diagnostic()
+db.execute("select * frm users", diagnostic = diagnostic) catch e then
+    io::eprintln("${diagnostic.message} (offset ${diagnostic.offset})")
+end
+```
+
+### Errors
+
+| `SqliteError` | When |
+| :------------ | :--- |
+| `CantOpen` | The database file could not be opened or created. |
+| `ReadOnly` | A write was attempted on a read-only connection or file. |
+| `Busy` | Another connection held a lock past `busy_timeout_ms`. |
+| `Constraint` | A `UNIQUE`, `NOT NULL`, `CHECK` or `FOREIGN KEY` constraint failed. |
+| `InvalidSql` | Syntax error, unknown table or column, empty SQL, or multiple statements in a single-statement call. |
+| `MissingParameter` | A `:name` parameter was missing from `params`, or an unnamed `?` placeholder was used. |
+| `UnknownParameter` | `params` contained a field not present in the SQL statement. |
+| `TypeMismatch` | A column's value did not match the target Dusk type, or `params` had an unsupported shape. |
+| `MissingColumn` | A required struct field had no matching column in the query result. |
+| `TooLarge` | A query result exceeded `max_bytes`. |
+| `TimedOut` | The call exceeded `timeout_ms`. |
+| `Full` | The disk or database is full. |
+| `Corrupt` | The database file is corrupt or not a SQLite database. |
+| `Closed` | The connection was already closed. |
+| `Other` | Any other SQLite error (check `Diagnostic.message`). |
+
 ## Shared error sets
 
 Functions that can fail return an error union, handled with `try` or `catch` like any failing call. Error sets from the standard library are written with their module (`string::StringError.OutOfRange`) unless they're imported by name. Each module's section lists its own error set; these are the small ones shared by the collection modules:
@@ -1832,3 +1960,4 @@ These are known gaps in v0.17. Most are planned in the [roadmap](roadmap.md).
 - **Network**: TCP and TLS only: no UDP, no half-closing a connection and no socket options. Only one task at a time can wait in `accept` on a listener. TLS has no client certificates, no choosing a server certificate by host name, and no revocation checks.
 - **HTTP**: HTTP/1.1 only: no HTTP/2 and no WebSocket. The client uses only `http://` and `https://` proxies (no SOCKS, and `HTTP_PROXY` and similar variables aren't read on their own), doesn't store cookies between requests, has no client certificates, and decompresses only gzip and deflate (not `br` or `zstd`). The server has no router (handlers match `req.path` themselves) and compresses only with gzip. Stopping a server on a signal (Ctrl+C, `SIGTERM`) isn't possible yet: another task has to call `server.close()`.
 - **Serialization**: map keys must be strings, and schemas have no flattening of nested structs and no unions written without their variant name. `via` takes named, non-generic functions. Values written through `std/serialization` are read field by field into the type, never into a general tree of values.
+- **SQLite**: `buffer` parameters and `BLOB` columns are not supported yet, and queries load their rows (up to `max_bytes`) rather than streaming a cursor.
