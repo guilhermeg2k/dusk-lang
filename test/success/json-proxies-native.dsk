@@ -1,7 +1,7 @@
-import std/serialization
-import std/json
-import std/time
-import std/array
+import "std/serialization"
+import "std/json"
+import "std/time"
+import "std/array"
 
 struct Stamp
     at: time::Timestamp

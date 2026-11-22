@@ -1,5 +1,5 @@
-import std/json
-import std/buffer
+import "std/json"
+import "std/buffer"
 func main() -> !void
     let text = try json::encode(buffer::from_string("a"))
 end

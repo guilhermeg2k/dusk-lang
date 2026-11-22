@@ -82,7 +82,29 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn stdNeedsModule(self: *Self, loc: Loc) CompileError {
-        self.log("'std' is the standard library, not a module: import one of its modules, like 'std/string'", loc);
+        self.log("'std' is the standard library, not a module: import one of its modules, like \"std/string\"", loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn importPathInterpolation(self: *Self, loc: Loc) CompileError {
+        self.log("Import path must be a plain string literal without interpolation", loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn invalidImportPath(self: *Self, reason: []const u8, loc: Loc) CompileError {
+        self.log(reason, loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn importNeedsAlias(self: *Self, segment: []const u8, loc: Loc) CompileError {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Module name '{s}' isn't a valid Dusk identifier: add 'as <name>' or select names with ': ...'",
+                .{segment},
+            ),
+            loc,
+        );
         return CompileError.ParserError;
     }
 
@@ -115,6 +137,11 @@ pub const CompileErrorReporter = struct {
             loc,
         );
         return error.InvalidType;
+    }
+
+    pub fn selfTypeOutsideType(self: *Self, loc: Loc) CompileError {
+        self.log("'@' can only be used inside a struct, enum, union, or trait", loc);
+        return error.SelfTypeOutsideType;
     }
 
     pub fn textExpected(self: *Self, found: []const u8, loc: Loc) CompileError {
@@ -259,7 +286,7 @@ pub const CompileErrorReporter = struct {
     pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         try self.checkModuleImported(identifier, loc);
         if (std.mem.eql(u8, identifier, "echo")) {
-            self.log("Cannot find name 'echo': printing moved to std/io, use io::println(\"${value}\") after `import std/io`", loc);
+            self.log("Cannot find name 'echo': printing moved to std/io, use io::println(\"${value}\") after `import \"std/io\"`", loc);
             return error.NotDefined;
         }
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);
@@ -505,6 +532,11 @@ pub const CompileErrorReporter = struct {
     pub fn tryInsideDefer(self: *Self, loc: Loc) CompileError {
         self.log("try can't be used in deferred code: it runs while the function is already leaving, so handle errors with catch", loc);
         return error.TryInsideDefer;
+    }
+
+    pub fn tryInsideDefault(self: *Self, loc: Loc) CompileError {
+        self.log("try can't be used in a default value: callers don't see its errors, so handle them with catch", loc);
+        return error.TryInsideDefault;
     }
 
     pub fn exitInsideDefer(self: *Self, keyword: []const u8, loc: Loc) CompileError {
@@ -1187,6 +1219,7 @@ pub const CompileError = error{
     UnhandledError,
     TryOutsideFailingFunction,
     TryInsideDefer,
+    TryInsideDefault,
     ExitInsideDefer,
     ErrdeferOutsideFailingFunction,
     NotAFailingCall,
@@ -1262,6 +1295,7 @@ pub const CompileError = error{
     CyclicDefault,
     VariableNotInitialized,
     CantInferNullType,
+    SelfTypeOutsideType,
 };
 
 const std = @import("std");

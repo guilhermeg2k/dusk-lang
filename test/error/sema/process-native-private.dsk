@@ -1,4 +1,4 @@
-import std/process
+import "std/process"
 func main() -> void
     let status = process::child_status(0)
 end

@@ -1,6 +1,6 @@
-import std/task: sleep
-import std/array: len, append
-import std/time
+import "std/task": sleep
+import "std/array": len, append
+import "std/time"
 
 struct Point
     x: int

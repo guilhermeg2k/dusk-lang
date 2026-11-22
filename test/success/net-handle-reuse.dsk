@@ -1,5 +1,5 @@
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func write_error(conn: net::TcpConn, text: string) -> ?io::IoError
     conn.write(text) catch e then

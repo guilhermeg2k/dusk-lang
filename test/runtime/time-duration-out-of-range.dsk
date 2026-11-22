@@ -1,4 +1,4 @@
-import std/time
+import "std/time"
 
 func main() -> void
     let fine = time::hours(2562047)

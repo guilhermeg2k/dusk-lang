@@ -1,5 +1,5 @@
-import std/array
-import std/string
+import "std/array"
+import "std/string"
 
 func main() -> void
     array::filter(["1"], func(s) -> return (try string::to_int(s)) > 0)

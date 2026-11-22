@@ -1,6 +1,6 @@
-import std/time
-import std/string
-import std/array
+import "std/time"
+import "std/string"
+import "std/array"
 
 func check(timestamp: time::Timestamp, pattern: string, expected: string, zone: time::TimeZone = time::utc_timezone()) -> !void
     assert((try timestamp.format(pattern, zone)) == expected)

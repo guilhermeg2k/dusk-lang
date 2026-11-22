@@ -1,7 +1,7 @@
-import std/array: len, append
-import std/string
-import std/buffer
-import std/io
+import "std/array": len, append
+import "std/string"
+import "std/buffer"
+import "std/io"
 
 func main() -> !void
     let mut kept: []buffer = []

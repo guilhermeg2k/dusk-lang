@@ -1,8 +1,8 @@
-import std/process
-import std/os
-import std/task
-import std/fs
-import std/time
+import "std/process"
+import "std/os"
+import "std/task"
+import "std/fs"
+import "std/time"
 
 func main() -> !void
     let helper = (try os::args())[0]

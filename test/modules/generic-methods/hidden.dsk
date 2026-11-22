@@ -1,4 +1,4 @@
-import @/lib
+import "@/lib"
 
 func main() -> void
     let s = lib::store([1])

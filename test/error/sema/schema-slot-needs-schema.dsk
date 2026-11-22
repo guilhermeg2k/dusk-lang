@@ -1,4 +1,4 @@
-import std/json
+import "std/json"
 
 struct User
     name: string

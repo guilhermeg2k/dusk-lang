@@ -1,6 +1,6 @@
-import std/array: append
-import std/sqlite
-import std/string
+import "std/array": append
+import "std/sqlite"
+import "std/string"
 
 schema Db end
 

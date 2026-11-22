@@ -1,0 +1,10 @@
+import "std/string"
+
+struct Box[T]
+    value: T
+    count: int = try string::to_int("bad")
+end
+
+func main() -> !void
+    let b = Box[int](value = 1)
+end

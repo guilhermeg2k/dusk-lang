@@ -1,6 +1,6 @@
-import std/task
-import std/io
-import std/time
+import "std/task"
+import "std/io"
+import "std/time"
 
 func main() -> void
     spawn(func()

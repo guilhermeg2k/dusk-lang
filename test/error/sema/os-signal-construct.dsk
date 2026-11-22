@@ -1,4 +1,4 @@
-import std/os
+import "std/os"
 func main() -> void
     let subscription = os::SignalStream(0)
 end

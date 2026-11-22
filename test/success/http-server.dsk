@@ -1,13 +1,13 @@
-import std/array: append, len
-import std/buffer
-import std/fs
-import std/http
-import std/io
-import std/net
-import std/string
-import std/task
-import std/url
-import std/time
+import "std/array": append, len
+import "std/buffer"
+import "std/fs"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
+import "std/url"
+import "std/time"
 
 error AppError
     Broken

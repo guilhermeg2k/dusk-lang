@@ -1,4 +1,4 @@
-import std/array
+import "std/array"
 
 func main() -> void
     let mut numbers = [2, 1]

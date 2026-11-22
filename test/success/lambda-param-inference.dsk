@@ -1,5 +1,5 @@
-import std/array: len, append
-import std/string
+import "std/array": len, append
+import "std/string"
 
 struct Button
     on_click: func(int) -> string

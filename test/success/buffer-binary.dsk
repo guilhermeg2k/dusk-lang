@@ -1,5 +1,5 @@
-import std/buffer
-import std/string
+import "std/buffer"
+import "std/string"
 
 func write_error(mut data: buffer, at: int, value: int) -> ?buffer::BufferError
     let next = buffer::write_u16(data, at, value, buffer::Order.Big) catch e then

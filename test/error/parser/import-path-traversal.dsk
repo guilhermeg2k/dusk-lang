@@ -1,0 +1,4 @@
+import "@/../secret"
+
+func main() -> void
+end

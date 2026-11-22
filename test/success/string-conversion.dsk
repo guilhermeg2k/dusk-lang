@@ -1,5 +1,5 @@
-import std/string
-import std/io
+import "std/string"
+import "std/io"
 
 func describe(text: string) -> string
     let n = string::to_int(text) catch e then

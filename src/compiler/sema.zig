@@ -39,6 +39,7 @@ pub const SemaAnalyzer = struct {
     loop_starts: std.ArrayList(usize) = .empty,
     deferred_depth: usize = 0,
     deferred_loop_floor: usize = 0,
+    is_in_default: bool = false,
     is_in_prelude: bool = false,
     module: *ModuleScope = undefined,
     prelude_module: *ModuleScope = undefined,
@@ -58,6 +59,7 @@ pub const SemaAnalyzer = struct {
     generic_types: std.ArrayList(GenericType) = .empty,
     traits: std.ArrayList(Trait) = .empty,
     trait_self_type: ?tt.TypeId = null,
+    enclosing_type_id: ?tt.TypeId = null,
     is_hoisting: bool = false,
     pending_trait_checks: std.ArrayList(PendingTraitCheck) = .empty,
     copied_types: std.AutoHashMapUnmanaged(tt.TypeId, TypeCopy) = .empty,
@@ -214,15 +216,17 @@ pub const SemaAnalyzer = struct {
     fn bindImports(self: *Self, module: *const modules.Module, module_scopes: []const *ModuleScope) !void {
         for (module.imports) |import| {
             const target = module_scopes[import.module_index];
-            if (self.module.imports.contains(import.stmt.name)) {
-                return self.err_reporter.alreadyDefined(import.stmt.name, import.stmt.path_loc);
-            }
-            try self.module.imports.put(self.allocator, import.stmt.name, target);
-            var target_symbols = target.root.symbols.iterator();
-            while (target_symbols.next()) |entry| {
-                if (!entry.value_ptr.is_file_only) continue;
-                const hidden_name = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ import.stmt.name, entry.key_ptr.* });
-                try self.module.hidden_names.put(self.allocator, hidden_name, {});
+            if (import.stmt.name) |module_name| {
+                if (self.module.imports.contains(module_name)) {
+                    return self.err_reporter.alreadyDefined(module_name, import.stmt.path_loc);
+                }
+                try self.module.imports.put(self.allocator, module_name, target);
+                var target_symbols = target.root.symbols.iterator();
+                while (target_symbols.next()) |entry| {
+                    if (!entry.value_ptr.is_file_only) continue;
+                    const hidden_name = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_name, entry.key_ptr.* });
+                    try self.module.hidden_names.put(self.allocator, hidden_name, {});
+                }
             }
             for (import.stmt.selected) |selected| {
                 const symbol = target.root.symbols.get(selected.identifier) orelse {
@@ -880,6 +884,9 @@ pub const SemaAnalyzer = struct {
         const saved_table = self.scope.symbol_table;
         self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = null;
+        defer self.enclosing_type_id = saved_enclosing_type;
         try self.fulfillFuncType(pending.symbol, pending.def, null, pending.loc);
         self.pending_signatures.getPtr(type_id).?.state = .filled;
     }
@@ -913,6 +920,9 @@ pub const SemaAnalyzer = struct {
         const saved_table = self.scope.symbol_table;
         self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = null;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         const annotated_type_id = if (constant.let_stmt.type_annotation) |annotation| try self.resolveTypeAnnotation(annotation, null) else null;
         const value_exp = constant.let_stmt.value.?;
@@ -1143,6 +1153,9 @@ pub const SemaAnalyzer = struct {
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
         try self.recordSchemaSections(blueprint_type_id, enum_def.schema_sections);
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         var variants: std.StringHashMap(i64) = .init(self.allocator);
 
@@ -1167,6 +1180,9 @@ pub const SemaAnalyzer = struct {
     fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef, loc: err.Loc) !void {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
         try self.recordSchemaSections(blueprint_type_id, union_def.schema_sections);
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         if (union_def.variants.len > tt.Union.MAX_VARIANTS) {
             return self.err_reporter.tooManyUnionVariants(union_symbol.identifier, tt.Union.MAX_VARIANTS, loc);
@@ -1193,6 +1209,9 @@ pub const SemaAnalyzer = struct {
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
         try self.recordSchemaSections(blueprint_type_id, struct_def.schema_sections);
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
         const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
@@ -1306,7 +1325,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (field.default_value) |initial_value| {
-            const value = try self.evalExpExpecting(initial_value, if (field.type != null) field_type_id else null);
+            const value = try self.evalDefaultExp(initial_value, if (field.type != null) field_type_id else null);
             const value_type_id = value.type_id;
             field_default_value = value;
 
@@ -1339,13 +1358,19 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(self.type_table.getPrimitive(.void));
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
+        const saved_is_in_default = self.is_in_default;
+        self.is_in_default = false;
+        defer self.is_in_default = saved_is_in_default;
+        const owner_type_id = if (fn_owner_symbol) |symbol| symbol.kind.defined_type.blueprint_type_id else self.enclosing_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = owner_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         for (fn_def.params) |param| {
             var param_default_value: ?*ir.Value = null;
             var param_type_id: tt.TypeId = undefined;
 
             if (param.type_annotation) |annotation| {
-                const owner_type_id = if (fn_owner_symbol) |symbol| symbol.kind.defined_type.blueprint_type_id else null;
                 param_type_id = self.resolveTypeAnnotation(annotation, owner_type_id) catch |failure| {
                     if (failure != error.SemaError) {
                         return failure;
@@ -1357,12 +1382,12 @@ pub const SemaAnalyzer = struct {
                 };
 
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExpExpecting(default_value, param_type_id);
+                    const value = try self.evalDefaultExp(default_value, param_type_id);
                     param_default_value = try self.coerceValue(value, param_type_id, default_value.loc);
                 }
             } else {
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExpExpecting(default_value, null);
+                    const value = try self.evalDefaultExp(default_value, null);
                     param_default_value = value;
                     param_type_id = value.type_id;
                 } else {
@@ -1390,7 +1415,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (fn_def.return_type) |r_type| {
-            return_type_id = self.resolveTypeAnnotation(r_type, null) catch |failure| {
+            return_type_id = self.resolveTypeAnnotation(r_type, owner_type_id) catch |failure| {
                 if (failure != error.SemaError) {
                     return failure;
                 }
@@ -1722,7 +1747,17 @@ pub const SemaAnalyzer = struct {
         return call;
     }
 
+    fn evalDefaultExp(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        const saved_is_in_default = self.is_in_default;
+        self.is_in_default = true;
+        defer self.is_in_default = saved_is_in_default;
+        return self.evalExpExpecting(exp, expected_type);
+    }
+
     fn evalTry(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        if (self.is_in_default) {
+            return self.err_reporter.tryInsideDefault(exp.loc);
+        }
         if (self.deferred_depth > 0) {
             return self.err_reporter.tryInsideDefer(exp.loc);
         }
@@ -1857,7 +1892,7 @@ pub const SemaAnalyzer = struct {
         }
 
         const annotated_type_id = if (let_stmt.type_annotation) |type_annotation|
-            try self.resolveTypeAnnotation(type_annotation, null)
+            try self.resolveTypeAnnotation(type_annotation, self.enclosing_type_id)
         else
             null;
 
@@ -1956,6 +1991,9 @@ pub const SemaAnalyzer = struct {
         const old_return_type = self.scope.return_type_id;
         try self.scope.enter(old_return_type);
         defer self.scope.exit(old_return_type);
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = if (generic.owner) |owner| owner.kind.defined_type.blueprint_type_id else null;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         for (func_stmt.slots) |slot| {
             const slot_type_id = try self.addSlotType(slot);
@@ -2055,7 +2093,7 @@ pub const SemaAnalyzer = struct {
         self.can_resolve_schema = true;
         defer self.can_resolve_schema = could_resolve_schema;
         for (arguments, 0..) |argument, i| {
-            const type_id = try self.resolveTypeAnnotation(argument, null);
+            const type_id = try self.resolveTypeAnnotation(argument, self.enclosing_type_id);
             try self.bindSlot(slots, bindings, i, type_id, argument.loc);
         }
     }
@@ -2311,6 +2349,9 @@ pub const SemaAnalyzer = struct {
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;
         defer self.scope.return_type_id = saved_return_type;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = if (generic.owner) |owner| owner.kind.defined_type.blueprint_type_id else null;
+        defer self.enclosing_type_id = saved_enclosing_type;
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, generic.owner, generic.loc);
 
         if (generic.extern_uid) |extern_uid| {
@@ -2508,6 +2549,9 @@ pub const SemaAnalyzer = struct {
             defer self.exitCopyLowering(saved_lowering);
             const saved_table = try self.enterGenericScope(generic, copy.args);
             defer self.scope.symbol_table = saved_table;
+            const saved_enclosing_type = self.enclosing_type_id;
+            self.enclosing_type_id = if (generic.owner) |owner| owner.kind.defined_type.blueprint_type_id else null;
+            defer self.enclosing_type_id = saved_enclosing_type;
 
             const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
             const func = try self.visitFnDef(&generic.func_stmt.def, metadata.uid, metadata, null, generic.loc);
@@ -3079,6 +3123,9 @@ pub const SemaAnalyzer = struct {
         const enum_stmt = stmt.data.@"enum";
         const enum_symbol = try self.scope.symbol_table.getOrError(enum_stmt.identifier);
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         const enum_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum";
         const funcs = try self.lowerMethods(enum_stmt.def.funcs, enum_def.methods, blueprint_type_id);
 
@@ -3109,6 +3156,9 @@ pub const SemaAnalyzer = struct {
 
     fn visitUnionDef(self: *Self, union_ast: *const ast.UnionDef, union_symbol: Symbol) CompileError!ir.DefinedType {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
         const funcs = try self.lowerMethods(union_ast.funcs, union_def.methods, blueprint_type_id);
 
@@ -4168,6 +4218,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.Struct) !tt.Struct {
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = null;
+        defer self.enclosing_type_id = saved_enclosing_type;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
@@ -4198,6 +4251,9 @@ pub const SemaAnalyzer = struct {
     fn visitStructDef(self: *Self, struct_def: *const ast.Struct, struct_symbol: Symbol) CompileError!ir.Struct {
         const identifier = struct_symbol.identifier;
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         const prev_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
         defer self.scope.exit(prev_return_type);
@@ -4205,7 +4261,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultExp(value, annotated_type) else null;
             const field_type = annotated_type orelse default_value.?.type_id;
 
             try fields.append(
@@ -4246,11 +4302,14 @@ pub const SemaAnalyzer = struct {
         defer self.fn_depth -= 1;
         const saved_defer_base = self.defer_base;
         const saved_deferred_depth = self.deferred_depth;
+        const saved_is_in_default = self.is_in_default;
         self.defer_base = self.defer_scopes.items.len;
         self.deferred_depth = 0;
+        self.is_in_default = false;
         defer {
             self.defer_base = saved_defer_base;
             self.deferred_depth = saved_deferred_depth;
+            self.is_in_default = saved_is_in_default;
         }
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();
@@ -8010,7 +8069,7 @@ pub const SemaAnalyzer = struct {
                 if (current_defined_type_type_id) |type_type_id| {
                     return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(type_type_id) else type_type_id;
                 }
-                return self.err_reporter.invalidType("a type", "@", type_annotation.loc);
+                return self.err_reporter.selfTypeOutsideType(type_annotation.loc);
             },
             .function => |func| {
                 const type_id = try self.resolveFuncTypeAnnotation(func, current_defined_type_type_id, type_annotation.loc);

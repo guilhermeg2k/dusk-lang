@@ -1,6 +1,6 @@
-import std/os
-import std/task
-import std/time
+import "std/os"
+import "std/task"
+import "std/time"
 
 func await_close(subscription: os::SignalStream) -> !bool
     subscription.wait() catch e then

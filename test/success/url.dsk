@@ -1,5 +1,5 @@
-import std/array: len
-import std/url
+import "std/array": len
+import "std/url"
 
 func expect_parse_error(text: string, expected: url::UrlError) -> void
     url::parse(text) catch e then

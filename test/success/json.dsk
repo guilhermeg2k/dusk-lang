@@ -1,6 +1,6 @@
-import std/json
-import std/array
-import std/map
+import "std/json"
+import "std/array"
+import "std/map"
 
 struct User
     name: string

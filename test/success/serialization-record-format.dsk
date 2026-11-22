@@ -1,7 +1,7 @@
-import std/serialization
-import std/string
-import std/buffer
-import std/array
+import "std/serialization"
+import "std/string"
+import "std/buffer"
+import "std/array"
 
 struct RecordReader
     text: string

@@ -1,5 +1,5 @@
-import std/time
-import std/string
+import "std/time"
+import "std/string"
 
 func check(text: string, milliseconds: int) -> !void
     let timestamp = try time::from_iso_string(text)

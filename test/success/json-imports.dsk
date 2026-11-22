@@ -1,5 +1,5 @@
-import std/json as codec
-import std/json: encode as write_json, decode as read_json
+import "std/json" as codec
+import "std/json": encode as write_json, decode as read_json
 
 struct Item
     number: int

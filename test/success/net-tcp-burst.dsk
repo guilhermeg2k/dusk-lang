@@ -1,7 +1,7 @@
-import std/net
-import std/string
-import std/task
-import std/time
+import "std/net"
+import "std/string"
+import "std/task"
+import "std/time"
 
 func send_number(port: int, number: int) -> !void
     let conn = try net::tcp_connect("127.0.0.1", port)

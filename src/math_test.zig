@@ -48,7 +48,7 @@ test "math: numeric functions, constants and special values" {
 
 test "math: extrema remain correct across garbage collection" {
     try runMathSource(
-        \\import std/math
+        \\import "std/math"
         \\func main() -> math::MathError!void
         \\    let values = [9, -7, 3]
         \\    let floats = [9.5, -7.5, 3.5]
@@ -69,8 +69,8 @@ test "math: extrema remain correct across garbage collection" {
 
 test "math: extrema read arrays after growth" {
     try runMathSource(
-        \\import std/math
-        \\import std/array
+        \\import "std/math"
+        \\import "std/array"
         \\func main() -> math::MathError!void
         \\    let mut integers = [0]
         \\    let mut floats = [0.0]
@@ -87,7 +87,7 @@ test "math: extrema read arrays after growth" {
 }
 
 test "math: abs rejects the minimum integer" {
-    try testing.expectError(error.IntegerOverflow, runMathSource("import std/math\nfunc main() -> void let result = math::abs((-9223372036854775807 - 1)) end"));
+    try testing.expectError(error.IntegerOverflow, runMathSource("import \"std/math\"\nfunc main() -> void let result = math::abs((-9223372036854775807 - 1)) end"));
 }
 
 test "math: integer rounding rejects nonfinite and out of range results" {
@@ -95,7 +95,7 @@ test "math: integer rounding rejects nonfinite and out of range results" {
         for ([_][]const u8{ "math::inf", "-math::inf", "math::nan", "9223372036854775808.0", "-9223372036854777856.0" }) |value| {
             var arena = std.heap.ArenaAllocator.init(testing.allocator);
             defer arena.deinit();
-            const source = try std.fmt.allocPrint(arena.allocator(), "import std/math\nfunc main() -> void let result = math::{s}({s}) end", .{ function, value });
+            const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, value });
             try testing.expectError(error.FloatOutOfIntRange, runMathSource(source));
         }
     }
@@ -106,7 +106,7 @@ test "math: min and max reject nonnumeric element types" {
         for ([_][]const u8{ "[true]", "[\"text\"]", "[null]", "[[1]]" }) |values| {
             var arena = std.heap.ArenaAllocator.init(testing.allocator);
             defer arena.deinit();
-            const source = try std.fmt.allocPrint(arena.allocator(), "import std/math\nfunc main() -> void let result = math::{s}({s}) end", .{ function, values });
+            const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, values });
             const expected_error = if (std.mem.eql(u8, values, "[null]")) error.CantInferSlot else error.TypeDoesntFitSlot;
             try testing.expectError(expected_error, compileMathSource(arena.allocator(), source));
         }
@@ -115,7 +115,7 @@ test "math: min and max reject nonnumeric element types" {
 
 test "math: empty extrema return the declared error and propagate through try" {
     try runMathSource(
-        \\import std/math
+        \\import "std/math"
         \\func smallest(values: []int) -> math::MathError!int
         \\    return try math::min(values)
         \\end

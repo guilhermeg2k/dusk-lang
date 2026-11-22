@@ -1,6 +1,6 @@
-import std/array: len, append
-import std/string
-import std/io
+import "std/array": len, append
+import "std/string"
+import "std/io"
 
 func make_counter() -> Task[int]
     return spawn(func() -> return 3)

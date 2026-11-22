@@ -1,5 +1,5 @@
-import std/path
-import std/os
+import "std/path"
+import "std/os"
 
 func main() -> !void
     assert(path::join([]) == "")

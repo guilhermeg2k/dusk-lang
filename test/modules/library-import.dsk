@@ -1,4 +1,4 @@
-import jsonc
+import "jsonc"
 
 func main() -> void
 end

@@ -1,4 +1,4 @@
-import std/serialization
+import "std/serialization"
 
 struct Plain
     func read_int(mut self: @) -> serialization::SerializationError!int

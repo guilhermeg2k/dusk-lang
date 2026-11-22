@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 trait Number = int | float
 trait Scalar = Number | string | bool

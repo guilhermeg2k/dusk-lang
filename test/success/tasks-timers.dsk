@@ -1,7 +1,7 @@
-import std/task
-import std/array: len, append
-import std/io
-import std/time
+import "std/task"
+import "std/array": len, append
+import "std/io"
+import "std/time"
 
 func pause_then(ms: int, label: string) -> string
     task::sleep(time::milliseconds(ms))

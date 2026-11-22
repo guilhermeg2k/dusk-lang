@@ -1,4 +1,4 @@
-import std/serialization
+import "std/serialization"
 
 struct Point
     x: int

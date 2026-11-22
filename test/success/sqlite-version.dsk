@@ -1,5 +1,5 @@
-import std/sqlite
-import std/string
+import "std/sqlite"
+import "std/string"
 
 func main() -> void
     let version = sqlite::version()

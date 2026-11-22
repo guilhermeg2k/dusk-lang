@@ -1,8 +1,8 @@
-import std/process
-import std/os
-import std/path
-import std/buffer
-import std/string
+import "std/process"
+import "std/os"
+import "std/path"
+import "std/buffer"
+import "std/string"
 
 func main() -> !void
     let parameters = try os::args()

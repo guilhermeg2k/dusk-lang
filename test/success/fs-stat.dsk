@@ -1,4 +1,4 @@
-import std/fs
+import "std/fs"
 
 func error_name(e: fs::FsError) -> string
     return when e

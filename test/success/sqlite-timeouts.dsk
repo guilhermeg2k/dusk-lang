@@ -1,7 +1,7 @@
-import std/sqlite
-import std/string
-import std/task
-import std/time
+import "std/sqlite"
+import "std/string"
+import "std/task"
+import "std/time"
 
 func main() -> !void
     let path = "DIR/timeouts.db"

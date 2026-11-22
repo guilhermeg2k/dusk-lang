@@ -1,4 +1,4 @@
-import @/lib
+import "@/lib"
 
 func main() -> !void
     let doubled = try lib::run(func(item: lib::Item) -> lib::Fault!int

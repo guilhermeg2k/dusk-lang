@@ -1,0 +1,6 @@
+func bad(x: @) -> @
+    return x
+end
+
+func main() -> void
+end

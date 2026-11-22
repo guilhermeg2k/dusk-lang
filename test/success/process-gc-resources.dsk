@@ -1,10 +1,10 @@
-import std/array: append
-import std/fs
-import std/os
-import std/process
-import std/string
-import std/task
-import std/time
+import "std/array": append
+import "std/fs"
+import "std/os"
+import "std/process"
+import "std/string"
+import "std/task"
+import "std/time"
 
 func churn() -> void
     let mut kept: []string = []

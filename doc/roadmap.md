@@ -2,13 +2,6 @@
 
 > This is a moving target and can change anytime
 
-## Version 0.16 - Shigeo
-- std::io
-- std::fs
-- std::net
-- std::math
-- std::time
-
 ## Version 0.17 - Fujiwara
 - Expand std::time
 - Expand std::buffer

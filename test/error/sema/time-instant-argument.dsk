@@ -1,4 +1,4 @@
-import std/time
+import "std/time"
 
 func main() -> !void
     let value = time::instant().since(time::from_unix_ms(0))

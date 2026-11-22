@@ -1,4 +1,4 @@
-import std/random
+import "std/random"
 func main() -> void
     let rng = random::Generator(0, 0, 0, 0)
 end

@@ -1,5 +1,5 @@
-import std/array: append
-import std/io
+import "std/array": append
+import "std/io"
 
 func add(a: int, b: int) -> return a + b
 func id[T](x: T) -> T

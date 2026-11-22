@@ -1,6 +1,6 @@
-import std/array: append, len
-import std/sqlite
-import std/string
+import "std/array": append, len
+import "std/sqlite"
+import "std/string"
 
 func insert_named(db: sqlite::Database, name: string) -> sqlite::SqliteError!int
     let changes = try db.execute("insert into items (name) values ('$name')")

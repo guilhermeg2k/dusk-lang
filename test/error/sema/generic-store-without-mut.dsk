@@ -1,4 +1,4 @@
-import std/array: append
+import "std/array": append
 
 func push[T](mut array: []T, value: T) -> void
     append(array, value)

@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 func choose(is_ready: bool) -> int
     return if is_ready then 10 else 20 end

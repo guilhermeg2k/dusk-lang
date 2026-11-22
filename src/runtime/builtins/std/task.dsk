@@ -1,4 +1,4 @@
-import std/time
+import "std/time"
 
 func sleep(duration: time::Duration) -> void
     let nanoseconds = duration.nanoseconds()

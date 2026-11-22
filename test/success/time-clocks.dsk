@@ -1,6 +1,6 @@
-import std/time
-import std/task
-import std/array
+import "std/time"
+import "std/task"
+import "std/array"
 
 func read_clock() -> int
     task::sleep(time::milliseconds(0))

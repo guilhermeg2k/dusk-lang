@@ -1,0 +1,19 @@
+trait Equatable
+    func equals(self: @, other: @) -> bool
+end
+
+struct Bad
+    x: int
+
+    func equals(self: @, other: int) -> bool
+        return self.x == other
+    end
+end
+
+func same[T: Equatable](a: T, b: T) -> bool
+    return a.equals(b)
+end
+
+func main() -> void
+    let _ = same(Bad(x = 1), Bad(x = 2))
+end

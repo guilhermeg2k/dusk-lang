@@ -1,5 +1,5 @@
-import std/string
-import std/io
+import "std/string"
+import "std/io"
 
 let text = "olá, mundo"
 func slice_or_reason(text: string, start: int, stop: int) -> string

@@ -1,5 +1,5 @@
-import std/http
-import std/net
+import "std/http"
+import "std/net"
 
 func main() -> !void
     let first = try net::tcp_listen("127.0.0.1", 0, reuse_port = true)

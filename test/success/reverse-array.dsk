@@ -1,5 +1,5 @@
-import std/array: len, append
-import std/io
+import "std/array": len, append
+import "std/io"
 
 func reverse_list(mut arr: []string) -> []string
     let n: int = len(arr)

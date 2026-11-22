@@ -1,4 +1,4 @@
-import std/buffer
+import "std/buffer"
 
 let n = 3
 

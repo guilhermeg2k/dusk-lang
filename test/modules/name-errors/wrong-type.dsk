@@ -1,4 +1,4 @@
-import @/shapes
+import "@/shapes"
 
 func main() -> void
     let s: int = shapes::Square(size = 1.0)

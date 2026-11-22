@@ -1,4 +1,4 @@
-import std/time
+import "std/time"
 
 func main() -> !void
     let zone = try time::local_timezone_id()

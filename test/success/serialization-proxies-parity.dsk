@@ -1,9 +1,9 @@
-import std/serialization
-import std/json
-import std/time
-import std/array
-import std/map
-import std/string
+import "std/serialization"
+import "std/json"
+import "std/time"
+import "std/array"
+import "std/map"
+import "std/string"
 
 struct Span
     label: string

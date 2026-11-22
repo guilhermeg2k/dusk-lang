@@ -1,5 +1,5 @@
-import @/lib
-import std/array
+import "@/lib"
+import "std/array"
 
 struct Handlers
     map: []func(int) -> int

@@ -1,4 +1,4 @@
-import std/array: contains
+import "std/array": contains
 
 struct Point
     x: int

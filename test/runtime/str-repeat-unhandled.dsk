@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> !void
     let x = try string::repeat("a", -1)

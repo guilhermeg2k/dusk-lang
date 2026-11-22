@@ -1,6 +1,6 @@
-import std/fs
-import std/string
-import std/buffer
+import "std/fs"
+import "std/string"
+import "std/buffer"
 
 func error_name(e: fs::FsError) -> string
     return when e

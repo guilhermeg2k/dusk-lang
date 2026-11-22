@@ -1,7 +1,7 @@
-import std/fs
-import std/io
-import std/string
-import std/buffer
+import "std/fs"
+import "std/io"
+import "std/string"
+import "std/buffer"
 
 func seek_error(file: fs::File, offset: int, from: fs::SeekFrom = fs::SeekFrom.Start) -> ?io::IoError
     let position = file.seek(offset, from) catch e then

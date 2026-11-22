@@ -1,9 +1,9 @@
-import std/serialization
-import std/json
-import std/string
-import std/buffer
-import std/array
-import std/task
+import "std/serialization"
+import "std/json"
+import "std/string"
+import "std/buffer"
+import "std/array"
+import "std/task"
 
 struct JsonReader
     text: string

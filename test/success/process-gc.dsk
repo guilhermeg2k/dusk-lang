@@ -1,6 +1,6 @@
-import std/process
-import std/os
-import std/array
+import "std/process"
+import "std/os"
+import "std/array"
 
 func main() -> !void
     let helper = (try os::args())[0]

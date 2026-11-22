@@ -1,0 +1,8 @@
+struct Outer
+    inner: struct
+        next: ?@ = null
+    end
+end
+
+func main() -> void
+end

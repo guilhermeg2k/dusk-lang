@@ -1,5 +1,5 @@
-import std/array: append, len
-import std/serialization
+import "std/array": append, len
+import "std/serialization"
 
 let ~DEFAULT_MAX_BYTES = 67108864
 let ~CELL_NULL = 0

@@ -43,6 +43,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "slice", Binding{ .native = &strSlice } },
     .{ "repeat", Binding{ .native = &strRepeat } },
     .{ "from_bytes", Binding{ .native = &stringFrom } },
+    .{ "from_codepoint", Binding{ .native = &strFromCodepoint } },
 });
 
 fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -50,6 +51,21 @@ fn stringFrom(vm: *VM, args: []v.Value) anyerror!NativeResult {
     if (!std.unicode.utf8ValidateSlice(text)) return fail(StringError.InvalidUtf8);
     const result = try vm.allocString(text.len);
     @memcpy(result.mutableSlice(), bytesArg(args, 0));
+    return stringResult(result);
+}
+
+fn strFromCodepoint(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const codepoint = args[0].int64;
+    const is_invalid_scalar = codepoint < 0 or codepoint > 0x10FFFF or (codepoint >= 0xD800 and codepoint <= 0xDFFF);
+    if (is_invalid_scalar) {
+        return fail(StringError.InvalidUtf8);
+    }
+    var encoded: [4]u8 = undefined;
+    const len = std.unicode.utf8Encode(@intCast(codepoint), &encoded) catch {
+        return fail(StringError.InvalidUtf8);
+    };
+    const result = try vm.allocString(len);
+    @memcpy(result.mutableSlice(), encoded[0..len]);
     return stringResult(result);
 }
 

@@ -1,5 +1,5 @@
-import std/array: len
-import std/io
+import "std/array": len
+import "std/io"
 
 func find_max(arr: []int) -> int
     let n: int = len(arr)

@@ -1,5 +1,5 @@
-import std/array
-import std/string
+import "std/array"
+import "std/string"
 
 func check(parts: []string, expected: []string) -> void
     assert(array::len(parts) == array::len(expected))

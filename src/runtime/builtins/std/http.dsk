@@ -1,15 +1,15 @@
-import std/array: append, contains, len
-import std/buffer
-import std/compression
-import std/fs
-import std/io
-import std/map
-import std/net
-import std/os
-import std/string
-import std/task
-import std/time
-import std/url
+import "std/array": append, contains, len
+import "std/buffer"
+import "std/compression"
+import "std/fs"
+import "std/io"
+import "std/map"
+import "std/net"
+import "std/os"
+import "std/string"
+import "std/task"
+import "std/time"
+import "std/url"
 
 error HttpError
     InvalidUrl

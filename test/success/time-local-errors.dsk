@@ -1,5 +1,5 @@
-import std/time
-import std/string
+import "std/time"
+import "std/string"
 
 func read_local() -> time::TimeError!time::TimeZone
     return try time::local_timezone()

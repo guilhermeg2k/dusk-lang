@@ -1,0 +1,4 @@
+import "@/error"
+
+func main() -> void
+end

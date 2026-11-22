@@ -1,5 +1,5 @@
-import std/json
-import @/models
+import "std/json"
+import "@/models"
 
 schema Api(case = "snake")
     struct models::Address

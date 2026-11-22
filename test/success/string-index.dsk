@@ -1,5 +1,5 @@
-import std/string
-import std/io
+import "std/string"
+import "std/io"
 
 let word = "olá!"
 func byte_or_reason(text: string, index: int) -> string

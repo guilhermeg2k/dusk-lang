@@ -1,4 +1,4 @@
-import std/random
+import "std/random"
 func main() -> void
     let rng = random::seeded(42)
     let value = rng.s0

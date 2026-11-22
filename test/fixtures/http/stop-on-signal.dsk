@@ -1,8 +1,8 @@
-import std/http
-import std/io
-import std/os
-import std/task
-import std/time
+import "std/http"
+import "std/io"
+import "std/os"
+import "std/task"
+import "std/time"
 
 func say(line: string) -> void
     io::println(line)

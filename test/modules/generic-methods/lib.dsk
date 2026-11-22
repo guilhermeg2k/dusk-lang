@@ -1,4 +1,4 @@
-import std/array: append
+import "std/array": append
 struct Store
     ~items: []int
 

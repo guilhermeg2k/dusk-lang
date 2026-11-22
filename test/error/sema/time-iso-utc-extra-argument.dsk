@@ -1,4 +1,4 @@
-import std/time
+import "std/time"
 
 func main() -> !void
     let text = time::to_utc_iso_string(time::from_unix_ms(0), time::utc_timezone())

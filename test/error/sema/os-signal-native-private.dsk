@@ -1,4 +1,4 @@
-import std/os
+import "std/os"
 func main() -> !void
     try os::signal_wait(0)
 end

@@ -1,5 +1,5 @@
-import @/shapes
-import @/wrapper as shapes
+import "@/shapes"
+import "@/wrapper" as shapes
 
 func main() -> void
 

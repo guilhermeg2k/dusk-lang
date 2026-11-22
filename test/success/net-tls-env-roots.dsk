@@ -1,6 +1,6 @@
-import std/io
-import std/net
-import std/fs
+import "std/io"
+import "std/net"
+import "std/fs"
 
 func echo_once(conn: net::TcpConn) -> io::IoError!void
     let line = try conn.read_line() orelse "none"

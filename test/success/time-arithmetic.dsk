@@ -1,5 +1,5 @@
-import std/time
-import std/array
+import "std/time"
+import "std/array"
 
 func expect_error[T](expected: time::TimeError, call: func() -> time::TimeError!T) -> void
     call() catch e then

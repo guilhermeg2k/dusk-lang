@@ -1,5 +1,5 @@
-import std/time
-import std/array
+import "std/time"
+import "std/array"
 
 func check(milliseconds: int, zone: time::TimeZone, expected: string) -> !void
     let timestamp = time::from_unix_ms(milliseconds)

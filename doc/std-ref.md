@@ -2,7 +2,7 @@
 
 This is the reference for the standard library of **v0.17 - Fujiwara** (in development). The language itself, including the prelude (the builtins every program has without an import), is in [language-ref.md](language-ref.md).
 
-Each module is imported with `import std/<name>` and used through its name (`io::println`, `fs::read`), or with the names it exports listed in the import (`import std/array: append, len`). See [Modules](language-ref.md#14-modules).
+Each module is imported with `import "std/<name>"` and used through its name (`io::println`, `fs::read`), or with the names it exports listed in the import (`import "std/array": append, len`). See [Modules](language-ref.md#14-modules).
 
 ## Contents
 
@@ -61,8 +61,8 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 `index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content. Floats compare like `==`, so `nan` is never found and `-0.0` matches `0.0`.
 
 ```nim
-import std/array: pop
-import std/io
+import "std/array": pop
+import "std/io"
 
 func main() -> void
     let mut stack = [1, 2, 3]
@@ -87,8 +87,8 @@ Reading and writing entries uses indexing (`m[k]`, `m[k] = v`, see [Maps](langua
 | `clear(mut m)` | `void` | Removes every entry. |
 
 ```nim
-import std/map
-import std/io
+import "std/map"
+import "std/io"
 
 func count_words(words: []string) -> map[string, int]
     let mut counts: map[string, int] = {}
@@ -139,14 +139,15 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 | `to_int(text)`              | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `to_float(text)`            | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 | `from_bytes(data)`          | `StringError!string`    | Copies a buffer into a new string; fails with `StringError.InvalidUtf8` if it isn't valid UTF-8.                                                                  |
+| `from_codepoint(codepoint)` | `StringError!string`    | Encodes a Unicode scalar value (`0`..`0x10FFFF`, excluding surrogates `0xD800`..`0xDFFF`) as a 1-to-4-byte UTF-8 string; fails with `StringError.InvalidUtf8` otherwise. |
 
 Use `string::compare` for string fields in custom sorting: `array::sort_by(players, func(a, b) -> return string::compare(a.name, b.name) < 0)`. It compares bytes without case folding or locale rules.
 
-`to_int` and `to_float` share their names with the prelude's conversions, so `import std/string: to_int` is an `AlreadyDefined` error: call them as `string::to_int`, or rename them (`import std/string: to_int as parse_int`).
+`to_int` and `to_float` share their names with the prelude's conversions, so `import "std/string": to_int` is an `AlreadyDefined` error: call them as `string::to_int`, or rename them (`import "std/string": to_int as parse_int`).
 
 ```nim
-import std/string
-import std/io
+import "std/string"
+import "std/io"
 
 func describe_age(text: string) -> string
     let age = string::to_int(text) catch e then
@@ -237,7 +238,7 @@ The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`, `
 
 ## std/compression
 
-Compressing and decompressing bytes. Import with `import std/compression`.
+Compressing and decompressing bytes. Import with `import "std/compression"`.
 
 | Function                                | Returns                         | Description                                                                 |
 | :-------------------------------------- | :------------------------------ | :-------------------------------------------------------------------------- |
@@ -304,8 +305,8 @@ The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`,
 Runs other programs. `run` starts one, collects its output and waits for it to finish; `start` gives back a `Child` to talk to while it runs. Waiting parks only the running task: other tasks, timers and I/O keep going (see [Tasks](language-ref.md#13-tasks)).
 
 ```nim
-import std/process
-import std/io
+import "std/process"
+import "std/io"
 
 func main() -> !void
     let result = try process::run(["git", "--version"])
@@ -646,7 +647,7 @@ assert((try timestamp.format("YYYY-MM-DD[T]HH:mm:ss.SSSZ")) == (try time::to_iso
 
 ## std/math
 
-Numbers. Import with `import std/math`.
+Numbers. Import with `import "std/math"`.
 
 | Name | Returns | Description |
 | :--- | :------ | :---------- |
@@ -683,7 +684,7 @@ Writes text to the standard output (stdout) and the standard error output (stder
 | `eprintln(text)` | `void`  | Writes `text` and a newline to stderr.  |
 
 ```nim
-import std/io
+import "std/io"
 
 func main() -> void
     let scores = [10, 20]
@@ -717,7 +718,7 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
 
 ```nim
-import std/io
+import "std/io"
 
 func main() -> !void
     let input = io::stdin()
@@ -787,8 +788,8 @@ end
 **Output.** Terminal output shows at the end of each line, so call `io::stdout().flush()` after drawing a screen. On Windows, escape sequences in the output are turned on when the program starts.
 
 ```nim
-import std/io
-import std/os
+import "std/io"
+import "std/os"
 
 func main() -> !void
     let input = io::stdin()
@@ -850,9 +851,9 @@ end
 `io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr`, files (`fs::File`, see [std/fs](#files)) and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
 
 ```nim
-import std/io
-import std/buffer
-import std/array: len
+import "std/io"
+import "std/buffer"
+import "std/array": len
 
 struct Greetings
     names: []string
@@ -924,8 +925,8 @@ end
 - Each call reads or writes the whole file at once. `read_bytes` returns a new `buffer`: changing it doesn't change the file until it's written back. To read or write a file piece by piece, open it (below).
 
 ```nim
-import std/io
-import std/fs
+import "std/io"
+import "std/fs"
 
 func main() -> !void
     try fs::make_dir("out/logs", recursive = true)
@@ -979,8 +980,8 @@ end
 - `File` fits `io::Reader` and `io::Writer`, so `io::copy(file, conn)` sends a file to a connection and `io::copy(conn, file)` saves one.
 
 ```nim
-import std/fs
-import std/io
+import "std/fs"
+import "std/io"
 
 func main() -> !void
     let log = try fs::open("app.log", fs::Mode.Append)
@@ -1056,8 +1057,8 @@ end
 A server accepts connections in a loop and serves each one in its own task:
 
 ```nim
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func serve(conn: net::TcpConn) -> io::IoError!void
     for true do
@@ -1084,8 +1085,8 @@ end
 ```
 
 ```nim
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func main() -> !void
     let conn = try net::tcp_connect("localhost", 8080, timeout_ms = 5000)
@@ -1107,8 +1108,8 @@ end
 A TLS connection is a `TcpConn` like any other: it has the same methods and rules, fits `io::Reader` and `io::Writer`, and a function that takes a `net::TcpConn` serves plain and encrypted connections alike. Encryption and decryption happen inside the runtime. TLS 1.3 is used when the other side supports it, TLS 1.2 otherwise.
 
 ```nim
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func main() -> !void
     let conn = try net::tls_connect("example.com", 443, timeout_ms = 10000)
@@ -1129,8 +1130,8 @@ end
 **Serving TLS.** `net::certificate(cert_pem, key_pem)` reads a certificate and its private key once, failing with `InvalidCertificate` when either isn't valid PEM or the key doesn't belong to the certificate. `cert_pem` can hold the whole chain (the server's certificate followed by the intermediate ones, like a `fullchain.pem`), and all of it is sent to clients. Keys can be RSA or ECDSA (P-256, P-384); password-protected keys and Ed25519 certificates aren't supported. One `Certificate` can serve several listeners.
 
 ```nim
-import std/fs
-import std/net
+import "std/fs"
+import "std/net"
 
 func main() -> !void
     let cert = try net::certificate(try fs::read("fullchain.pem"), try fs::read("privkey.pem"))
@@ -1195,8 +1196,8 @@ end
 ```
 
 ```nim
-import std/io
-import std/url
+import "std/io"
+import "std/url"
 
 func main() -> !void
     let page = try url::parse("https://example.com/docs/guide/intro?lang=en")
@@ -1222,8 +1223,8 @@ end
 HTTP/1.1 clients and servers. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. `http::listen` and `server.serve` answer requests (see Serving HTTP below). Like every network call, they only make the calling task wait (see [Tasks](language-ref.md#13-tasks)).
 
 ```nim
-import std/http
-import std/io
+import "std/http"
+import "std/io"
 
 func main() -> !void
     let resp = try http::request("https://api.example.com/users/1", timeout_ms = 5000)
@@ -1296,8 +1297,8 @@ A status code is never an error: a `404` or a `500` is a normal `Response`. Call
 | `close()` | `void` | Done with the response. Reads after it fail with `Closed`. |
 
 ```nim
-import std/http
-import std/io
+import "std/http"
+import "std/io"
 
 func main() -> !void
     let mut events = try http::open("https://example.com/log", timeout_ms = 5000)
@@ -1370,8 +1371,8 @@ let page = try corporate.request("https://example.com/")
 **Serving HTTP.** `http::listen` opens a server and `server.serve(handler)` answers its requests with a handler function, a `func(http::Request) -> E!http::Response`. Each connection runs in its own task, so a slow handler only holds up its own client.
 
 ```nim
-import std/http
-import std/io
+import "std/http"
+import "std/io"
 
 func main() -> !void
     let server = try http::listen("0.0.0.0", 8080)
@@ -1552,7 +1553,7 @@ Every response that could be compressed gets `Vary: Accept-Encoding` (added to a
 
 ## std/serialization
 
-Turns values into an outside format and back, through code the compiler writes for each type. A format (JSON, rows from a database, a config file syntax) is an ordinary struct with methods; `std/json` is one, and any module can add its own. Import with `import std/serialization`.
+Turns values into an outside format and back, through code the compiler writes for each type. A format (JSON, rows from a database, a config file syntax) is an ordinary struct with methods; `std/json` is one, and any module can add its own. Import with `import "std/serialization"`.
 
 ```nim
 let mut writer = QueryWriter()
@@ -1688,10 +1689,10 @@ Every method takes `mut self: @` and returns `SerializationError!` its result. `
 `fields` and `variants` are plan ids. Read names with `field_count(fields)`, `field_name(fields, index)`, `variant_count(variants)` and `variant_name(variants, index)`, and match input with `find_field(fields, name)` and `find_variant(variants, name)`, which accept every outside name, aliases included, and return an index or `-1`. `find_field_in(fields, text, start, stop)` and `find_variant_in` match a slice of the input without copying it. `next_field` returns the index of the next known field, or `-1` when the struct ends; unknown names are the format's choice to skip or reject. A format reading rows can match column names once per result and then answer `next_field` by position.
 
 ```nim
-import std/serialization
-import std/array
-import std/string
-import std/url
+import "std/serialization"
+import "std/array"
+import "std/string"
+import "std/url"
 
 struct QueryWriter
     parts: []string = []
@@ -1743,7 +1744,7 @@ end
 `json::encode[T, S: schema](value, options = @()) -> JsonError!string` writes compact JSON. `json::decode[T, S: schema](text, mut diagnostic = null, options = @()) -> JsonError!T` reads one complete JSON value; trailing whitespace is allowed. The target type can be explicit or come from the expected result type, and the schema is optional (see [Schemas](#schemas)):
 
 ```dusk
-import std/json
+import "std/json"
 
 struct User
     name: string
@@ -1811,7 +1812,7 @@ Paths use forms such as `users[2].age`; map keys and field names containing punc
 
 ## std/sqlite
 
-Embedded SQL databases using a bundled SQLite. Import with `import std/sqlite`. Database work runs on a dedicated worker pool so a slow query or busy wait pauses only the calling task, while other tasks keep running.
+Embedded SQL databases using a bundled SQLite. Import with `import "std/sqlite"`. Database work runs on a dedicated worker pool so a slow query or busy wait pauses only the calling task, while other tasks keep running.
 
 ### Opening and closing
 
@@ -1947,7 +1948,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `ArrayError.OutOfRange` | `insert`, `remove` or `slice` outside the array. |
 | `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character; `string::byte_at` / `string::char_at` with an index outside the string. |
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
-| `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
+| `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8, or `string::from_codepoint` with a value outside `0`..`0x10FFFF` or in the surrogate range `0xD800`..`0xDFFF`. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
 | `BufferError.OutOfRange` | `buffer::put`, `buffer::put_bytes` or `buffer::slice` with bounds outside the buffer (or `start > stop`). |
 

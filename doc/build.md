@@ -8,7 +8,7 @@
 
 - Clone the project: `git clone https://github.com/guilhermeg2k/dusk-lang.git <dir>`
 - Navigate to the cloned directory: `cd <dir>`
-- If you want most stable version checkout on the `release` branch
+- If you want the latest stable version, check out the `release` branch
 - Run the build command: `zig build -Doptimize=ReleaseFast`
 - A binary file should be generated at `./zig-out/bin`
 - Execute a Dusk file using the generated binary: `./zig-out/bin/dusk <your-file.dsk>`
@@ -17,9 +17,9 @@ Named timezone rules are included in the local `vendor/timezone-data` dependency
 
 ## Running
 
-After cloning the project you can also direct running it
+After cloning the project you can also run a file directly:
 
-- Run the command: `zig build run -- <.dsk file-dir>`
+- Run the command: `zig build run -- <file.dsk>`
 
 ## Tests
 

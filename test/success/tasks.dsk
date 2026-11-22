@@ -1,8 +1,8 @@
-import std/task
-import std/array: len, append
-import std/string
-import std/io
-import std/time
+import "std/task"
+import "std/array": len, append
+import "std/string"
+import "std/io"
+import "std/time"
 
 error FetchError
     NotFound

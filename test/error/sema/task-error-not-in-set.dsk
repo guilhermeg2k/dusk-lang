@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> void
     let t = spawn(func() -> return try string::slice("abc", 0, 9))

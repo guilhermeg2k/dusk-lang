@@ -1,4 +1,4 @@
-import std/nope
+import "std/nope"
 
 func main() -> void
 end

@@ -1,5 +1,5 @@
-import std/array: len
-import std/io
+import "std/array": len
+import "std/io"
 
 func bubble_sort(mut arr: []int) -> void
     let n: int = len(arr)

@@ -1,5 +1,5 @@
-import std/random
-import std/buffer
+import "std/random"
+import "std/buffer"
 
 func assert_bytes(left: buffer, right: buffer) -> void
     assert(buffer::len(left) == buffer::len(right))

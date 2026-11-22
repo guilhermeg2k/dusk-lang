@@ -1,6 +1,6 @@
-import std/sqlite
-import std/task
-import std/time
+import "std/sqlite"
+import "std/task"
+import "std/time"
 
 func main() -> !void
     let db = try sqlite::open(":memory:")

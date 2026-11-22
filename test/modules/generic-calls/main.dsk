@@ -1,6 +1,6 @@
-import @/codec as json
-import @/codec: keep as same, User
-import std/array
+import "@/codec" as json
+import "@/codec": keep as same, User
+import "std/array"
 
 func decode_user() -> json::Fault!User
     return try json::decode("")

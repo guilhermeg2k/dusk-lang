@@ -1,7 +1,7 @@
-import std/array: append, contains, len
-import std/http
-import std/task
-import std/time
+import "std/array": append, contains, len
+import "std/http"
+import "std/task"
+import "std/time"
 
 struct Stats
     active: int = 0

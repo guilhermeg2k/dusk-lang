@@ -73,9 +73,9 @@ test "os CLI: arguments after the script, environment, directory, streams and ex
     const cwd = try std.process.currentPathAlloc(testing.io, cli.arena.allocator());
     const map = try cli.environment(&.{ .{ "DUSK_OS_VALUE", "héllo" }, .{ "DUSK_OS_EMPTY", "" }, .{ "DUSK_OS_EXPECTED_CWD", cwd } });
     const result = try cli.run(
-        \\import std/os
-        \\import std/array
-        \\import std/io
+        \\import "std/os"
+        \\import "std/array"
+        \\import "std/io"
         \\func main() -> !void
         \\    let args = try os::args()
         \\    assert(array::len(args) == 3)
@@ -94,11 +94,11 @@ test "os CLI: arguments after the script, environment, directory, streams and ex
     try testing.expectEqualStrings("stderr ok\n", result.stderr);
 
     for ([_]u8{ 0, 1, 255 }) |code| {
-        const source = try std.fmt.allocPrint(cli.arena.allocator(), "import std/os func main() -> !void try os::set_exit_code({d}) end", .{code});
+        const source = try std.fmt.allocPrint(cli.arena.allocator(), "import \"std/os\" func main() -> !void try os::set_exit_code({d}) end", .{code});
         try expectExit(try cli.run(source, &.{}, null), code);
     }
     try expectExit(try cli.run(
-        \\import std/os
+        \\import "std/os"
         \\func main() -> !void
         \\    try os::set_exit_code(42)
         \\    let mut has_invalid_code = false
@@ -109,7 +109,7 @@ test "os CLI: arguments after the script, environment, directory, streams and ex
         \\    assert(has_invalid_code)
         \\end
     , &.{}, null), 42);
-    try expectExit(try cli.run("import std/os func main() -> !void try os::set_exit_code(0) assert(false) end", &.{}, null), 1);
+    try expectExit(try cli.run("import \"std/os\" func main() -> !void try os::set_exit_code(0) assert(false) end", &.{}, null), 1);
 }
 
 test "os CLI: an argument that isn't UTF-8" {
@@ -118,7 +118,7 @@ test "os CLI: an argument that isn't UTF-8" {
     try cli.init();
     defer cli.deinit();
     try expectExit(try cli.run(
-        \\import std/os
+        \\import "std/os"
         \\func main() -> !void
         \\    os::args() catch e then
         \\        assert(e == os::OsError.InvalidUtf8)
@@ -136,10 +136,10 @@ test "os CLI: signal streams receive signals, and closing them restores the defa
         try cli.init();
         defer cli.deinit();
         const source = try std.mem.replaceOwned(u8, cli.arena.allocator(),
-            \\import std/os
-            \\import std/io
-            \\import std/task
-            \\import std/time
+            \\import "std/os"
+            \\import "std/io"
+            \\import "std/task"
+            \\import "std/time"
             \\func main() -> !void
             \\    let first = try os::watch_signal(os::Signal.NAME)
             \\    let second = try os::watch_signal(os::Signal.NAME)
@@ -211,8 +211,8 @@ test "process CLI: the program waits for children, keeps output order, and kills
     const map = try cli.environment(&.{ .{ "PATH", std.fs.path.dirname(cli.helper).? }, .{ "DUSK_PROCESS_PARENT", "parent" } });
     const marker = try cli.pathOf("finished");
     try expectExit(try cli.run(
-        \\import std/process
-        \\import std/os
+        \\import "std/process"
+        \\import "std/os"
         \\func main() -> !void
         \\    let args = try os::args()
         \\    let child = try process::start([args[0], "finish_file", args[1]], stdout_mode = process::Stdio.Ignore, stderr_mode = process::Stdio.Ignore)
@@ -221,8 +221,8 @@ test "process CLI: the program waits for children, keeps output order, and kills
     try testing.expectEqualStrings("finished", try cli.temporary.dir.readFileAlloc(testing.io, "finished", cli.arena.allocator(), .unlimited));
 
     try expectExit(try cli.run(
-        \\import std/process
-        \\import std/os
+        \\import "std/process"
+        \\import "std/os"
         \\func main() -> !void
         \\    let helper = (try os::args())[0]
         \\    let reader = try process::start([helper, "copy"], stdin_mode = process::Stdio.Pipe, stdout_mode = process::Stdio.Ignore, stderr_mode = process::Stdio.Ignore)
@@ -231,9 +231,9 @@ test "process CLI: the program waits for children, keeps output order, and kills
     , &.{cli.helper}, map), 0);
 
     const ordered = try cli.run(
-        \\import std/process
-        \\import std/os
-        \\import std/io
+        \\import "std/process"
+        \\import "std/os"
+        \\import "std/io"
         \\func main() -> !void
         \\    io::print("before:")
         \\    let child = try process::start([(try os::args())[0], "args", "x"])
@@ -246,9 +246,9 @@ test "process CLI: the program waits for children, keeps output order, and kills
     try testing.expectEqualStrings("before:1:x\nafter\n", ordered.stdout);
 
     const failed = try cli.run(
-        \\import std/process
-        \\import std/os
-        \\import std/io
+        \\import "std/process"
+        \\import "std/os"
+        \\import "std/io"
         \\func main() -> !void
         \\    let helper = (try os::args())[0]
         \\    let child = try process::start([helper, "pid_ready"], stdout_mode = process::Stdio.Pipe, stderr_mode = process::Stdio.Ignore)
@@ -269,8 +269,8 @@ test "process CLI: a child that inherits stdin gets the input that arrives after
     try cli.init();
     defer cli.deinit();
     const program = try cli.write("inherit.dsk",
-        \\import std/io
-        \\import std/process
+        \\import "std/io"
+        \\import "std/process"
         \\func main() -> !void
         \\    let first = try io::stdin().read_line()
         \\    let child = try process::start(["sh", "-c", "sleep 0.3; exec cat"], stdin_mode = process::Stdio.Inherit)
@@ -293,8 +293,8 @@ test "process CLI: a child that inherits stdin gets the input that arrives after
 }
 
 const local_zone_source =
-    \\import std/time
-    \\import std/io
+    \\import "std/time"
+    \\import "std/io"
     \\func main() -> !void
     \\    let zone = time::local_timezone() catch e then
     \\        assert(e == time::TimeError.LocalTimeUnavailable)
@@ -403,8 +403,8 @@ test "time CLI: the local zone is cached after it loads, retried after it fails,
 
     const snapshot = try cli.write("snapshot.tzif", payload);
     const cached = try std.mem.replaceOwned(u8, allocator,
-        \\import std/time
-        \\import std/fs
+        \\import "std/time"
+        \\import "std/fs"
         \\func main() -> !void
         \\    let first = try time::local_timezone()
         \\    try fs::delete("PATH")
@@ -419,9 +419,9 @@ test "time CLI: the local zone is cached after it loads, retried after it fails,
 
     const retry = try cli.write("retry.tzif", "bad");
     const retried = try std.mem.replaceOwned(u8, allocator, try std.mem.replaceOwned(u8, allocator,
-        \\import std/time
-        \\import std/fs
-        \\import std/buffer
+        \\import "std/time"
+        \\import "std/fs"
+        \\import "std/buffer"
         \\func main() -> !void
         \\    let mut has_failed = false
         \\    time::local_timezone() catch e then
@@ -439,8 +439,8 @@ test "time CLI: the local zone is cached after it loads, retried after it fails,
     const map = try cli.environment(&.{ .{ "TZ", snapshot }, .{ "UV_THREADPOOL_SIZE", "1" } });
     _ = try cli.write("snapshot.tzif", payload);
     const pending = try cli.run(
-        \\import std/time
-        \\import std/task
+        \\import "std/time"
+        \\import "std/task"
         \\func main() -> void
         \\    for 0..15: i do
         \\        let request = spawn(func() -> time::TimeError!time::TimeZone
@@ -552,9 +552,9 @@ const Terminal = struct {
 };
 
 const terminal_source =
-    \\import std/io
-    \\import std/os
-    \\import std/buffer
+    \\import "std/io"
+    \\import "std/os"
+    \\import "std/buffer"
     \\func main() -> !void
     \\    let input = io::stdin()
     \\    let size = io::stdout().size() orelse io::TerminalSize(columns = 0, rows = 0)
