@@ -34,6 +34,8 @@
 - Schema-level `omit_null` option (`schema Api(omit_null = true)` so nullable fields don't need individual `omit_null` rules)
 - Reject using functions with inferred error sets (`-> !T`) as function values (require an explicit error set `E!T` instead of leaking unresolved placeholder error sets)
 - Show concrete error set names in function-type mismatch diagnostics instead of printing `!T` (avoids confusing `expected 'func(...) -> !void' found 'func(...) -> !void'` errors)
+- Allow `json::decode[T]` and `json::decode[ApiResponse[T]]` inside generic functions by checking serializability when the concrete type is known
+- Support `orelse return`, `orelse break`, and `orelse continue` to unwrap nullable values and exit early when they are `null`
 
 ## Backlog
 
