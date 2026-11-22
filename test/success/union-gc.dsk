@@ -1,5 +1,5 @@
-import std/array: len, append
-import std/io
+import "std/array": len, append
+import "std/io"
 
 union Item
     count: int

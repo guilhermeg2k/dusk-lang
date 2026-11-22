@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> void
     spawn(func() -> return try string::to_int("x"))

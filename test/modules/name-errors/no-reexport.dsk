@@ -1,4 +1,4 @@
-import @/wrapper
+import "@/wrapper"
 
 func main() -> void
     wrapper::area(1.0)

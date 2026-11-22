@@ -1,4 +1,4 @@
-import std/array
+import "std/array"
 
 error Bad
     Odd

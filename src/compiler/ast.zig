@@ -33,7 +33,7 @@ pub const ImportStmt = struct {
     source: ImportSource,
     path: []const u8,
     path_loc: err.Loc,
-    name: []const u8,
+    name: ?[]const u8,
     selected: []const ImportedName,
 };
 

@@ -1,9 +1,9 @@
-import std/io
-import std/net
-import std/fs
-import std/string
-import std/buffer
-import std/task
+import "std/io"
+import "std/net"
+import "std/fs"
+import "std/string"
+import "std/buffer"
+import "std/task"
 
 func fixture(name: string) -> fs::FsError!string
     return try fs::read("test/fixtures/tls/${name}")

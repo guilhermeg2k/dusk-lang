@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 func main() -> void
     let n = len(5)

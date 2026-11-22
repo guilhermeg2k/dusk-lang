@@ -1,4 +1,4 @@
-import std/fs
+import "std/fs"
 
 func main() -> void
     let found = fs::exists(5)

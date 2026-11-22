@@ -49,32 +49,24 @@ pub const Parser = struct {
         const import_tk = self.peekCurrent();
         self.walk();
 
-        const path_start = self.peekCurrent();
-        var source: ast.ImportSource = .library;
-        if (self.match(.at)) {
-            _ = try self.expect(.slash);
-            source = .project;
+        const path_tk = self.peekCurrent();
+        if (path_tk.tag != .string_literal) {
+            return self.err_reporter.invalidSyntax("a string literal import path", path_tk);
+        }
+        self.walk();
+
+        if (self.hasStringInterpolation(path_tk.loc.start + 1, path_tk.loc.end)) {
+            return self.err_reporter.importPathInterpolation(path_tk.loc);
         }
 
-        var parts: std.ArrayList([]const u8) = .empty;
-        try parts.append(self.allocator, try self.parseImportPathPart());
-        while (self.match(.slash)) {
-            try parts.append(self.allocator, try self.parseImportPathPart());
-        }
-        const path_loc = err.Loc{ .start = path_start.loc.start, .end = self.tokens[self.cur_index - 1].loc.end };
+        const raw_path = try self.decodeStringLiteral(path_tk.loc.start + 1, path_tk.loc.end, null);
+        const parsed_path = try self.parseImportPath(raw_path, path_tk.loc);
 
-        const is_std = source == .library and std.mem.eql(u8, parts.items[0], "std");
-        if (is_std) {
-            if (parts.items.len == 1) {
-                return self.err_reporter.stdNeedsModule(path_loc);
-            }
-            source = .std;
-            _ = parts.orderedRemove(0);
-        }
-
-        var name = parts.items[parts.items.len - 1];
+        var name: ?[]const u8 = null;
         if (self.match(.as_kw)) {
             name = (try self.expect(.identifier)).value(self.src);
+        } else if (lexer.Lexer.isValidModuleName(parsed_path.last_segment)) {
+            name = parsed_path.last_segment;
         }
 
         var selected: std.ArrayList(ast.ImportedName) = .empty;
@@ -85,14 +77,19 @@ pub const Parser = struct {
                 const local_name = if (self.match(.as_kw)) (try self.expect(.identifier)).value(self.src) else identifier;
                 try selected.append(self.allocator, .{ .identifier = identifier, .name = local_name, .loc = identifier_tk.loc });
                 if (!self.match(.comma)) break;
+                if (self.peekCurrent().tag != .identifier) break;
             }
+        }
+
+        if (name == null and selected.items.len == 0) {
+            return self.err_reporter.importNeedsAlias(parsed_path.last_segment, path_tk.loc);
         }
 
         return ast.StatementNode{
             .data = .{ .import = .{
-                .source = source,
-                .path = try std.mem.join(self.allocator, "/", parts.items),
-                .path_loc = path_loc,
+                .source = parsed_path.source,
+                .path = parsed_path.path,
+                .path_loc = path_tk.loc,
                 .name = name,
                 .selected = try selected.toOwnedSlice(self.allocator),
             } },
@@ -100,15 +97,77 @@ pub const Parser = struct {
         };
     }
 
-    fn parseImportPathPart(self: *Self) CompileError![]const u8 {
-        const tk = self.peekCurrent();
-        switch (tk.tag) {
-            .identifier, .string_kw, .buffer_kw => {
-                self.walk();
-                return tk.value(self.src);
-            },
-            else => return self.err_reporter.invalidSyntax("a module name", tk),
+    const ParsedImportPath = struct {
+        source: ast.ImportSource,
+        path: []const u8,
+        last_segment: []const u8,
+    };
+
+    fn parseImportPath(self: *Self, raw_path: []const u8, loc: err.Loc) CompileError!ParsedImportPath {
+        if (raw_path.len == 0) {
+            return self.err_reporter.invalidImportPath("Import path cannot be empty", loc);
         }
+        if (std.mem.eql(u8, raw_path, "@")) {
+            return self.err_reporter.invalidImportPath("Project import path needs a module name after '@/', like \"@/physics\"", loc);
+        }
+
+        var source: ast.ImportSource = .library;
+        var module_path = raw_path;
+        if (std.mem.startsWith(u8, raw_path, "@/")) {
+            source = .project;
+            module_path = raw_path[2..];
+        } else if (std.mem.eql(u8, raw_path, "std")) {
+            return self.err_reporter.stdNeedsModule(loc);
+        } else if (std.mem.startsWith(u8, raw_path, "std/")) {
+            source = .std;
+            module_path = raw_path[4..];
+        }
+
+        if (module_path.len == 0 or module_path[module_path.len - 1] == '/') {
+            return self.err_reporter.invalidImportPath("Import path cannot end with '/'", loc);
+        }
+        if (module_path[0] == '/') {
+            return self.err_reporter.invalidImportPath("Import path cannot contain empty segments", loc);
+        }
+
+        var last_segment: []const u8 = "";
+        var segments = std.mem.splitScalar(u8, module_path, '/');
+        while (segments.next()) |segment| {
+            if (segment.len == 0) {
+                return self.err_reporter.invalidImportPath("Import path cannot contain empty segments", loc);
+            }
+            if (std.mem.eql(u8, segment, "..")) {
+                return self.err_reporter.invalidImportPath("Import path cannot contain '..'", loc);
+            }
+            last_segment = segment;
+        }
+
+        return .{
+            .source = source,
+            .path = module_path,
+            .last_segment = last_segment,
+        };
+    }
+
+    fn hasStringInterpolation(self: *const Self, start: usize, end: usize) bool {
+        var index = start;
+        while (index < end) {
+            if (self.src[index] == '\\') {
+                index += 2;
+                continue;
+            }
+            if (self.src[index] != '$' or index + 1 >= end) {
+                index += 1;
+                continue;
+            }
+            const next = self.src[index + 1];
+            const is_interpolation = next == '{' or std.ascii.isAlphabetic(next) or next == '_';
+            if (is_interpolation) {
+                return true;
+            }
+            index += 1;
+        }
+        return false;
     }
 
     pub fn parseBlock(self: *Self, extra_stop_tags: []const Tag) CompileError!ast.Block {

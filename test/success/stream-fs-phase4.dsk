@@ -1,9 +1,9 @@
-import std/buffer
-import std/fs
-import std/io
-import std/net
-import std/string
-import std/task
+import "std/buffer"
+import "std/fs"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
 
 func main() -> !void
     let path = "/tmp/dusk-cr-phase4-file.txt"

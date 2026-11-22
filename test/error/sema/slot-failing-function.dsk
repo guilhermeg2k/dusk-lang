@@ -1,5 +1,5 @@
-import std/array: append
-import std/string
+import "std/array": append
+import "std/string"
 
 func map[T, U](items: []T, f: func(T) -> U) -> []U
     let mut out: []U = []

@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 func main() -> void
     let smallest = 0 - 9223372036854775807 - 1

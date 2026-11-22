@@ -1,6 +1,6 @@
-import std/array: len
-import std/string
-import std/io
+import "std/array": len
+import "std/string"
+import "std/io"
 
 func repeat_reason(count: int) -> string
     let repeated = string::repeat("ab", count) catch e then

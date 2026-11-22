@@ -1,4 +1,4 @@
-import std/array
+import "std/array"
 
 struct Item
     values: []int

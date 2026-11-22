@@ -1,5 +1,5 @@
-import std/array: len
-import std/io
+import "std/array": len
+import "std/io"
 
 union Response
     success: string

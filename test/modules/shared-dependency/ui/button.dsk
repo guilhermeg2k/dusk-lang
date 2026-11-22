@@ -1,4 +1,4 @@
-import @/physics
+import "@/physics"
 
 func draw() -> void
 end

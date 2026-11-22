@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> void
     let b = string::byte_at("abc", 0)

@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 func grow(n: int) -> int
     return n + 1

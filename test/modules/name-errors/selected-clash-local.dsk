@@ -1,4 +1,4 @@
-import @/shapes: area
+import "@/shapes": area
 
 func area() -> void
 end

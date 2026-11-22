@@ -145,7 +145,7 @@ test "stdout: a pipe is flushed when the program ends" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("import std/io\nfunc main() -> void io::println(\"1\") io::println(\"2\") end", &recorder.interface);
+    try runSourceWithStdout("import \"std/io\"\nfunc main() -> void io::println(\"1\") io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(1, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -154,7 +154,7 @@ test "stdout: flushed before the scheduler waits for events" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runSourceWithStdout("import std/io\nimport std/task\nfunc main() -> void io::println(\"1\") task::sleep(20) io::println(\"2\") end", &recorder.interface);
+    try runSourceWithStdout("import \"std/io\"\nimport \"std/task\"\nfunc main() -> void io::println(\"1\") task::sleep(20) io::println(\"2\") end", &recorder.interface);
     try testing.expectEqual(2, recorder.drain_count);
     try testing.expectEqualStrings("1\n2\n", recorder.flushed.items);
 }
@@ -163,7 +163,7 @@ test "stdout: flushed before a runtime error" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try testing.expectError(error.AssertionFailed, runSourceWithStdout("import std/io\nfunc main() -> void io::println(\"1\") assert(false) end", &recorder.interface));
+    try testing.expectError(error.AssertionFailed, runSourceWithStdout("import \"std/io\"\nfunc main() -> void io::println(\"1\") assert(false) end", &recorder.interface));
     try testing.expectEqualStrings("1\n", recorder.flushed.items);
 }
 
@@ -199,12 +199,12 @@ test "stdout: a closed pipe stops the program with BrokenPipe" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .stdio = .{ .stdout = .{ .file = &file_writer } }, .io = testing.io };
-    try testing.expectError(error.BrokenPipe, dusk.compileAndRun("import std/io\nfunc main() -> void io::println(\"1\") end"));
+    try testing.expectError(error.BrokenPipe, dusk.compileAndRun("import \"std/io\"\nfunc main() -> void io::println(\"1\") end"));
 }
 
 test "stdout: any other failed write is a runtime error" {
     var failing: std.Io.Writer = .{ .vtable = &.{ .drain = failDrain }, .buffer = &.{} };
-    try testing.expectError(error.OutputFailed, runSourceWithStdout("import std/io\nfunc main() -> void io::println(\"1\") end", &failing));
+    try testing.expectError(error.OutputFailed, runSourceWithStdout("import \"std/io\"\nfunc main() -> void io::println(\"1\") end", &failing));
 }
 
 fn runSourceWithStdout(source: []const u8, stdout: *std.Io.Writer) !void {
@@ -488,9 +488,9 @@ test "fs: read reads big files and files that report size 0" {
     const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     const is_linux = @import("builtin").os.tag == .linux;
     const template =
-        \\import std/io
-        \\import std/fs
-        \\import std/string
+        \\import "std/io"
+        \\import "std/fs"
+        \\import "std/string"
         \\func main() -> !void
         \\    let big = try fs::read("DIR/big.txt")
         \\    io::println("${string::len(big)} ${try string::char_at(big, 26)}")
@@ -519,9 +519,9 @@ test "fs: write, write_bytes and append, checked on disk" {
     const allocator = arena.allocator();
     const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     const template =
-        \\import std/io
-        \\import std/fs
-        \\import std/buffer
+        \\import "std/io"
+        \\import "std/fs"
+        \\import "std/buffer"
         \\func main() -> !void
         \\    try fs::write("DIR/text.txt", "a longer first version\n")
         \\    try fs::write("DIR/text.txt", "olá 🌙\n")
@@ -580,7 +580,7 @@ test "fs: data still buffered in a file reaches the disk when the program ends" 
     const allocator = arena.allocator();
     const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     const template =
-        \\import std/fs
+        \\import "std/fs"
         \\func main() -> !void
         \\    let big = try fs::open("DIR/big.txt", fs::Mode.Write)
         \\    for 1..20000: i do
@@ -630,9 +630,9 @@ test "fs: read_dir, make_dir, remove and rename, checked on disk" {
     const allocator = arena.allocator();
     const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     const template =
-        \\import std/io
-        \\import std/fs
-        \\import std/array: len, contains
+        \\import "std/io"
+        \\import "std/fs"
+        \\import "std/array": len, contains
         \\func name(e: fs::FsError) -> string
         \\    return when e
         \\        fs::FsError.NotFound then "NotFound" end
@@ -692,8 +692,8 @@ test "fs: stat follows symlinks and reports permissions and times like the OS" {
     const allocator = arena.allocator();
     const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
     const template =
-        \\import std/io
-        \\import std/fs
+        \\import "std/io"
+        \\import "std/fs"
         \\func main() -> !void
         \\    let link = try fs::stat("DIR/link")
         \\    io::println("${link.size} ${link.is_file} ${link.is_dir} ${link.is_symlink} ${link.permissions} ${link.modified_ms}")
@@ -727,9 +727,9 @@ test "io: stdin read_bytes over a pipe, in chunks, then null" {
     _ = std.c.write(fds[1], "hello world!", 12);
     closeFd(fds[1]);
     const source =
-        \\import std/io
-        \\import std/buffer
-        \\import std/string
+        \\import "std/io"
+        \\import "std/buffer"
+        \\import "std/string"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    io::println("${input.is_terminal()}")
@@ -756,9 +756,9 @@ test "io: a stdin read parks until data arrives while other tasks run" {
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
     const source =
-        \\import std/io
-        \\import std/task
-        \\import std/string
+        \\import "std/io"
+        \\import "std/task"
+        \\import "std/string"
         \\func main() -> !void
         \\    let mut is_done = false
         \\    let mut ticks = 0
@@ -790,9 +790,9 @@ test "io: a second task reading stdin at the same time gets Busy" {
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
     const source =
-        \\import std/io
-        \\import std/task
-        \\import std/string
+        \\import "std/io"
+        \\import "std/task"
+        \\import "std/string"
         \\func main() -> !void
         \\    let reader = spawn(func() -> !string
         \\        let next = try io::stdin().read_bytes(8)
@@ -817,7 +817,7 @@ test "io: read_bytes needs a size of at least 1" {
     closeFd(fds[1]);
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    try testing.expectError(error.InvalidReadSize, runWithStdin("import std/io\nfunc main() -> !void\n    let data = try io::stdin().read_bytes(0)\nend\n", fds[0], &output.writer));
+    try testing.expectError(error.InvalidReadSize, runWithStdin("import \"std/io\"\nfunc main() -> !void\n    let data = try io::stdin().read_bytes(0)\nend\n", fds[0], &output.writer));
 }
 
 test "io: read_exact on stdin waits for the count, fails with UnexpectedEnd partway, keeps the rest" {
@@ -826,8 +826,8 @@ test "io: read_exact on stdin waits for the count, fails with UnexpectedEnd part
     _ = std.c.write(fds[1], "hello world", 11);
     closeFd(fds[1]);
     const source =
-        \\import std/io
-        \\import std/string
+        \\import "std/io"
+        \\import "std/string"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    let first = try input.read_exact(5)
@@ -854,7 +854,7 @@ test "io: read_exact needs a count of at least 1" {
     closeFd(fds[1]);
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    try testing.expectError(error.InvalidReadSize, runWithStdin("import std/io\nfunc main() -> !void\n    let data = try io::stdin().read_exact(0)\nend\n", fds[0], &output.writer));
+    try testing.expectError(error.InvalidReadSize, runWithStdin("import \"std/io\"\nfunc main() -> !void\n    let data = try io::stdin().read_exact(0)\nend\n", fds[0], &output.writer));
 }
 
 test "io: read_line splits lines, strips \r\n, returns the last line, then null" {
@@ -875,8 +875,8 @@ test "io: read_line waits for a line split across writes" {
 test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const too_long =
-        \\import std/io
-        \\import std/string
+        \\import "std/io"
+        \\import "std/string"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    input.read_line(max = 3) catch e then
@@ -892,7 +892,7 @@ test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
     try expectStdinOutput(too_long, (try pipeWithInput("abcdef\nok\n"))[0], "true\nabcdef\nok\nnull\n");
 
     const invalid =
-        \\import std/io
+        \\import "std/io"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    input.read_line() catch e then
@@ -904,8 +904,8 @@ test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
     try expectStdinOutput(invalid, (try pipeWithInput("\xff\nok\n"))[0], "true\nok\n");
 
     const all =
-        \\import std/io
-        \\import std/string
+        \\import "std/io"
+        \\import "std/string"
         \\func main() -> !void
         \\    let text = try io::stdin().read_all()
         \\    io::println("${string::char_count(text)} [$text]")
@@ -915,8 +915,8 @@ test "io: read_line limits, invalid UTF-8, read_all and read_all_bytes" {
     try expectStdinOutput(all, (try pipeWithInput(""))[0], "0 []\n");
 
     const all_bytes =
-        \\import std/io
-        \\import std/buffer
+        \\import "std/io"
+        \\import "std/buffer"
         \\func main() -> !void
         \\    let data = try io::stdin().read_all_bytes()
         \\    io::println("${buffer::len(data)} ${data[0]}")
@@ -935,8 +935,8 @@ test "io: read_all collects 10 MB written while the program waits" {
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
     const source =
-        \\import std/io
-        \\import std/string
+        \\import "std/io"
+        \\import "std/string"
         \\func main() -> !void
         \\    let text = try io::stdin().read_all()
         \\    io::println("${string::len(text)}")
@@ -954,7 +954,7 @@ test "io: reading stdin flushes stdout before waiting" {
     var buffer: [1024]u8 = undefined;
     var recorder = FlushRecorder.init(&buffer);
     defer recorder.deinit();
-    try runWithStdin("import std/io\nfunc main() -> !void\n    io::print(\"Name: \")\n    let name = try io::stdin().read_line()\n    io::println(\"Hi ${name}\")\nend\n", fds[0], &recorder.interface);
+    try runWithStdin("import \"std/io\"\nfunc main() -> !void\n    io::print(\"Name: \")\n    let name = try io::stdin().read_line()\n    io::println(\"Hi ${name}\")\nend\n", fds[0], &recorder.interface);
     try testing.expectEqual(2, recorder.drain_count);
     try testing.expectEqualStrings("Name: Hi Ana\n", recorder.flushed.items);
 }
@@ -974,8 +974,8 @@ test "io: stdin redirected from a file, across chunks, and from /dev/null" {
     }
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.txt", .data = big });
     const count_lines =
-        \\import std/io
-        \\import std/string
+        \\import "std/io"
+        \\import "std/string"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    let mut count = 0
@@ -1002,7 +1002,7 @@ test "io: stdin redirected from a file, across chunks, and from /dev/null" {
 test "io: close, reading after close, and a parked reader woken by close" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const after_close =
-        \\import std/io
+        \\import "std/io"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    io::println("${try input.read_line()}")
@@ -1023,8 +1023,8 @@ test "io: close, reading after close, and a parked reader woken by close" {
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
     const woken =
-        \\import std/io
-        \\import std/task
+        \\import "std/io"
+        \\import "std/task"
         \\func main() -> !void
         \\    let reader = spawn(func() -> bool
         \\        io::stdin().read_line() catch e then
@@ -1047,7 +1047,7 @@ test "io: a read that times out loses nothing and the stream stays usable" {
     const late_thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&late_writer});
     defer late_thread.join();
     const late =
-        \\import std/io
+        \\import "std/io"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    input.read_line(timeout_ms = 15) catch e then
@@ -1063,7 +1063,7 @@ test "io: a read that times out loses nothing and the stream stays usable" {
     const split_thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&split_writer});
     defer split_thread.join();
     const partial =
-        \\import std/io
+        \\import "std/io"
         \\func main() -> !void
         \\    let input = io::stdin()
         \\    input.read_line(timeout_ms = 60) catch e then
@@ -1082,13 +1082,13 @@ test "io: a timer that doesn't fire doesn't delay the program, and close beats i
     var writer = DelayedWriter{ .fd = in_time[1], .parts = &.{"quick\n"} };
     const thread = try std.Thread.spawn(.{}, DelayedWriter.run, .{&writer});
     defer thread.join();
-    try expectStdinOutput("import std/io\nfunc main() -> !void\n    io::println(\"${try io::stdin().read_line(timeout_ms = 5000)}\")\nend\n", in_time[0], "quick\n");
+    try expectStdinOutput("import \"std/io\"\nfunc main() -> !void\n    io::println(\"${try io::stdin().read_line(timeout_ms = 5000)}\")\nend\n", in_time[0], "quick\n");
 
     const silent = try std.Io.Threaded.pipe2(.{});
     defer closeFd(silent[1]);
     const closed =
-        \\import std/io
-        \\import std/task
+        \\import "std/io"
+        \\import "std/task"
         \\func main() -> !void
         \\    let reader = spawn(func() -> bool
         \\        io::stdin().read_all(timeout_ms = 5000) catch e then
@@ -1116,8 +1116,8 @@ test "io: stdout and stderr writers, flush, and errors returned instead of endin
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const writers =
-        \\import std/io
-        \\import std/buffer
+        \\import "std/io"
+        \\import "std/buffer"
         \\func main() -> !void
         \\    let out = io::stdout()
         \\    try out.write("no newline")
@@ -1140,7 +1140,7 @@ test "io: stdout and stderr writers, flush, and errors returned instead of endin
     var file_writer = write_end.writerStreaming(testing.io, &pipe_buffer);
     errors.clearRetainingCapacity();
     const broken =
-        \\import std/io
+        \\import "std/io"
         \\func main() -> void
         \\    let out = io::stdout()
         \\    out.write("lost") catch e then
@@ -1160,7 +1160,7 @@ test "io: stdout and stderr writers, flush, and errors returned instead of endin
 test "io: copy works with std streams and with user structs fitting Reader and Writer" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const piped =
-        \\import std/io
+        \\import "std/io"
         \\func main() -> !void
         \\    let mut out = io::stdout()
         \\    let copied = try io::copy(io::stdin(), out)
@@ -1170,9 +1170,9 @@ test "io: copy works with std streams and with user structs fitting Reader and W
     try expectStdinOutput(piped, (try pipeWithInput("piped data"))[0], "piped data 10\n");
 
     const custom =
-        \\import std/io
-        \\import std/buffer
-        \\import std/array: len, append
+        \\import "std/io"
+        \\import "std/buffer"
+        \\import "std/array": len, append
         \\struct Chunks
         \\    parts: []string
         \\    position: int = 0
@@ -1212,7 +1212,7 @@ test "io: copy works with std streams and with user structs fitting Reader and W
 }
 
 const read_lines_source =
-    \\import std/io
+    \\import "std/io"
     \\func main() -> !void
     \\    let input = io::stdin()
     \\    for true do
@@ -1343,7 +1343,7 @@ test "when: dense cases compile to a jump table, sparse ones to compares" {
 }
 
 test "when: a nullable subject without a null case lowers else once" {
-    const source = "import std/io\nfunc f(n: ?int) -> void when n 1 then end 2 then end else then io::println(\"7\") end end end func main() -> void end";
+    const source = "import \"std/io\"\nfunc f(n: ?int) -> void when n 1 then end 2 then end else then io::println(\"7\") end end end func main() -> void end";
     try testing.expectEqual(@as(usize, 1), try countOps(source, "f", .CALL));
 }
 
@@ -1357,7 +1357,7 @@ fn runLongWhen(step: usize, expected: []const u8) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
     var source: std.ArrayList(u8) = .empty;
-    try source.appendSlice(allocator, "import std/io\nfunc f(x: int) -> int\n    when x\n");
+    try source.appendSlice(allocator, "import \"std/io\"\nfunc f(x: int) -> int\n    when x\n");
     for (0..300) |i| try source.print(allocator, "        {d} then return {d} end\n", .{ i * step, i });
     try source.print(allocator, "        else then return -1 end\n    end\nend\nfunc main() -> void\n    io::println(\"${{[f(0), f({d}), f(5)]}}\")\nend\n", .{299 * step});
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
@@ -1704,7 +1704,7 @@ test "more than 65536 distinct string literals are rejected" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var source: std.ArrayList(u8) = .empty;
-    try source.appendSlice(arena.allocator(), "import std/io\nfunc main() -> void\nend\n");
+    try source.appendSlice(arena.allocator(), "import \"std/io\"\nfunc main() -> void\nend\n");
     for (0..65536) |i| {
         if (i % 1000 == 0) try source.print(arena.allocator(), "func f{d}() -> void\n", .{i});
         try source.print(arena.allocator(), "io::println(\"s{d}\")\n", .{i});
@@ -3591,6 +3591,8 @@ fn runModuleCaseError(entry_file: []const u8, expected: anytype) !void {
 test "modules: qualified names, selective imports and aliases across files" {
     try runModuleCase("shared-dependency/main.dsk");
     try runModuleCase("qualified-access/main.dsk");
+    try runModuleCase("non-ident-names/main.dsk");
+    try runModuleCase("non-ident-names/selective-only.dsk");
 }
 
 fn runModuleCase(entry_file: []const u8) !void {
@@ -3686,6 +3688,18 @@ test "modules: imports come first in the file" {
     try runCaseError("parser/import-after-declaration.dsk", error.ParserError);
     try runCaseError("parser/import-inside-function.dsk", error.ParserError);
     try runCaseError("parser/import-std-alone.dsk", error.ParserError);
+}
+
+test "modules: string import path rules" {
+    try runCaseError("parser/import-non-ident-without-alias.dsk", error.ParserError);
+    try runCaseError("parser/import-keyword-without-alias.dsk", error.ParserError);
+    try runCaseError("parser/import-interpolated-path.dsk", error.ParserError);
+    try runCaseError("parser/import-interpolated-ident.dsk", error.ParserError);
+    try runCaseError("parser/import-unquoted-path.dsk", error.ParserError);
+    try runCaseError("parser/import-empty-path.dsk", error.ParserError);
+    try runCaseError("parser/import-empty-segment.dsk", error.ParserError);
+    try runCaseError("parser/import-trailing-slash.dsk", error.ParserError);
+    try runCaseError("parser/import-path-traversal.dsk", error.ParserError);
 }
 
 test "visibility: ~ marks top-level declarations, fields and methods as file-only" {

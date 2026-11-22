@@ -1,4 +1,4 @@
-import @/a
+import "@/a"
 
 func main() -> void
 end

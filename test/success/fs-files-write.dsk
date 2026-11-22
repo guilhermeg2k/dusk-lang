@@ -1,8 +1,8 @@
-import std/fs
-import std/io
-import std/string
-import std/array
-import std/buffer
+import "std/fs"
+import "std/io"
+import "std/string"
+import "std/array"
+import "std/buffer"
 
 func write_error(file: fs::File, text: string) -> ?io::IoError
     file.write(text) catch e then

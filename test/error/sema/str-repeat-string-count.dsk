@@ -1,5 +1,5 @@
-import std/string
-import std/io
+import "std/string"
+import "std/io"
 
 func main() -> void
     io::println("${string::repeat("a", "b") catch ""}")

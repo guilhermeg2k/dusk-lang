@@ -1,4 +1,4 @@
-import std/http
+import "std/http"
 
 func route(req: http::Request) -> !http::Response
     let path = "test/fixtures/compression${req.path}"

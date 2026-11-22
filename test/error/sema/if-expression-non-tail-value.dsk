@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 func main() -> void
     let value = if true then 1 io::println("${2}") 3 else 4 end

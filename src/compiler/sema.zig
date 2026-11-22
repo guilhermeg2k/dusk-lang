@@ -189,15 +189,17 @@ pub const SemaAnalyzer = struct {
     fn bindImports(self: *Self, module: *const modules.Module, module_scopes: []const *ModuleScope) !void {
         for (module.imports) |import| {
             const target = module_scopes[import.module_index];
-            if (self.module.imports.contains(import.stmt.name)) {
-                return self.err_reporter.alreadyDefined(import.stmt.name, import.stmt.path_loc);
-            }
-            try self.module.imports.put(self.allocator, import.stmt.name, target);
-            var target_symbols = target.root.symbols.iterator();
-            while (target_symbols.next()) |entry| {
-                if (!entry.value_ptr.is_file_only) continue;
-                const hidden_name = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ import.stmt.name, entry.key_ptr.* });
-                try self.module.hidden_names.put(self.allocator, hidden_name, {});
+            if (import.stmt.name) |module_name| {
+                if (self.module.imports.contains(module_name)) {
+                    return self.err_reporter.alreadyDefined(module_name, import.stmt.path_loc);
+                }
+                try self.module.imports.put(self.allocator, module_name, target);
+                var target_symbols = target.root.symbols.iterator();
+                while (target_symbols.next()) |entry| {
+                    if (!entry.value_ptr.is_file_only) continue;
+                    const hidden_name = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ module_name, entry.key_ptr.* });
+                    try self.module.hidden_names.put(self.allocator, hidden_name, {});
+                }
             }
             for (import.stmt.selected) |selected| {
                 const symbol = target.root.symbols.get(selected.identifier) orelse {

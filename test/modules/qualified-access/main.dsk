@@ -1,5 +1,5 @@
-import @/util as u
-import @/geo/shapes: Square, Color as Paint, scale
+import "@/util" as u
+import "@/geo/shapes": Square, Color as Paint, scale
 
 struct Circle
     radius: float

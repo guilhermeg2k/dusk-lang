@@ -1,4 +1,4 @@
-import @/counter
+import "@/counter"
 
 func main() -> void
     let c = counter::Counter(count = 1, history = [1])

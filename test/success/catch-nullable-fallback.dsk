@@ -1,4 +1,4 @@
-import std/array: pop
+import "std/array": pop
 
 error E
     Bad

@@ -80,7 +80,29 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn stdNeedsModule(self: *Self, loc: Loc) CompileError {
-        self.log("'std' is the standard library, not a module: import one of its modules, like 'std/string'", loc);
+        self.log("'std' is the standard library, not a module: import one of its modules, like \"std/string\"", loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn importPathInterpolation(self: *Self, loc: Loc) CompileError {
+        self.log("Import path must be a plain string literal without interpolation", loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn invalidImportPath(self: *Self, reason: []const u8, loc: Loc) CompileError {
+        self.log(reason, loc);
+        return CompileError.ParserError;
+    }
+
+    pub fn importNeedsAlias(self: *Self, segment: []const u8, loc: Loc) CompileError {
+        self.log(
+            try allocPrint(
+                self.allocator,
+                "Module name '{s}' isn't a valid Dusk identifier: add 'as <name>' or select names with ': ...'",
+                .{segment},
+            ),
+            loc,
+        );
         return CompileError.ParserError;
     }
 
@@ -262,7 +284,7 @@ pub const CompileErrorReporter = struct {
     pub fn notDefined(self: *Self, identifier: []const u8, loc: Loc) CompileError {
         try self.checkModuleImported(identifier, loc);
         if (std.mem.eql(u8, identifier, "echo")) {
-            self.log("Cannot find name 'echo': printing moved to std/io, use io::println(\"${value}\") after `import std/io`", loc);
+            self.log("Cannot find name 'echo': printing moved to std/io, use io::println(\"${value}\") after `import \"std/io\"`", loc);
             return error.NotDefined;
         }
         self.log(try allocPrint(self.allocator, "Cannot find name '{s}'", .{identifier}), loc);

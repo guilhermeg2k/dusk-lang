@@ -1,4 +1,4 @@
-import std/buffer
+import "std/buffer"
 
 func f(mut b: buffer) -> void
     b[0] = 1

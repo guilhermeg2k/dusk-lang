@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 let n = 1
 when n

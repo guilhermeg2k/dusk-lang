@@ -1,8 +1,8 @@
-import std/fs
-import std/io
-import std/string
-import std/array
-import std/buffer
+import "std/fs"
+import "std/io"
+import "std/string"
+import "std/array"
+import "std/buffer"
 
 struct Collector
     total: int = 0

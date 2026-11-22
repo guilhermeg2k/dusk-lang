@@ -1,6 +1,6 @@
-import std/array: len, append
-import std/buffer
-import std/io
+import "std/array": len, append
+import "std/buffer"
+import "std/io"
 
 func greeting() -> string
     return "hello"

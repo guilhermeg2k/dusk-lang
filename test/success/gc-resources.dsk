@@ -1,12 +1,12 @@
-import std/array: append, len
-import std/buffer
-import std/compression
-import std/fs
-import std/http
-import std/io
-import std/net
-import std/string
-import std/task
+import "std/array": append, len
+import "std/buffer"
+import "std/compression"
+import "std/fs"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
 
 struct Counter
     closed: int = 0

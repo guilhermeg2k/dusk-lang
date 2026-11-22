@@ -1,4 +1,4 @@
-import @/counter
+import "@/counter"
 
 func helper() -> int
     return 1

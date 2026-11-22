@@ -1,5 +1,5 @@
-import std/buffer
-import std/string
+import "std/buffer"
+import "std/string"
 
 func put_error(mut data: buffer, at: int, text: string) -> ?buffer::BufferError
     let next = buffer::put(data, at, text) catch e then

@@ -1,11 +1,11 @@
-import std/array: len
-import std/buffer
-import std/fs
-import std/http
-import std/io
-import std/net
-import std/string
-import std/task
+import "std/array": len
+import "std/buffer"
+import "std/fs"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
 
 func pieces(mut writer: http::BodyWriter, words: []string) -> io::IoError!void
     for words: word do

@@ -1,5 +1,5 @@
-import std/array: len
-import std/string
+import "std/array": len
+import "std/string"
 
 func id[T](x: T) -> T
     return x

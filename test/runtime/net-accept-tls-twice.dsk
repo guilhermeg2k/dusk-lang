@@ -1,5 +1,5 @@
-import std/net
-import std/fs
+import "std/net"
+import "std/fs"
 
 func main() -> !void
     let cert = try net::certificate(try fs::read("test/fixtures/tls/server.pem"), try fs::read("test/fixtures/tls/server.key"))

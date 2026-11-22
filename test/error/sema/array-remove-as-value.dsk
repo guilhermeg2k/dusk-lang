@@ -1,4 +1,4 @@
-import std/array
+import "std/array"
 
 func main() -> void
     let f: func(mut []int, int) -> array::ArrayError!int = array::remove

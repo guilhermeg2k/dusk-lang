@@ -1,4 +1,4 @@
-import std/array
+import "std/array"
 
 func remove_first[T](mut items: []T) -> array::ArrayError!T
     return try array::remove(items, 0)

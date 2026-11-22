@@ -1,0 +1,3 @@
+func make_code() -> int
+    return 404
+end

@@ -1,5 +1,5 @@
-import std/array: len, append, remove
-import std/string
+import "std/array": len, append, remove
+import "std/string"
 
 let ~LIMIT = 3
 

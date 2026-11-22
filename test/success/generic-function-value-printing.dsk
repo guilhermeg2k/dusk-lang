@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 func first[T](items: []T) -> T
     return items[0]

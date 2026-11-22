@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 let x: 42 = 1
 io::println("${x}")

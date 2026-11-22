@@ -63,6 +63,25 @@ pub const Lexer = struct {
         };
     }
 
+    pub fn isValidModuleName(name: []const u8) bool {
+        if (name.len == 0) {
+            return false;
+        }
+        const first = name[0];
+        const is_valid_start = std.ascii.isAlphabetic(first) or first == '_';
+        if (!is_valid_start) {
+            return false;
+        }
+        for (name[1..]) |ch| {
+            const is_valid_char = std.ascii.isAlphanumeric(ch) or ch == '_';
+            if (!is_valid_char) {
+                return false;
+            }
+        }
+        const keyword_tag = keywords.get(name) orelse return true;
+        return keyword_tag == .string_kw or keyword_tag == .buffer_kw;
+    }
+
     pub fn list(self: *Self) err.CompileError!std.ArrayList(Token) {
         var tokens: std.ArrayList(Token) = .empty;
 

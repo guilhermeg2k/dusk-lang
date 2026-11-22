@@ -2,7 +2,7 @@
 
 This is the reference for the standard library of **v0.16 - Shigeo**. The language itself, including the prelude (the builtins every program has without an import), is in [language-ref.md](language-ref.md).
 
-Each module is imported with `import std/<name>` and used through its name (`io::println`, `fs::read`), or with the names it exports listed in the import (`import std/array: append, len`). See [Modules](language-ref.md#14-modules).
+Each module is imported with `import "std/<name>"` and used through its name (`io::println`, `fs::read`), or with the names it exports listed in the import (`import "std/array": append, len`). See [Modules](language-ref.md#14-modules).
 
 ## Contents
 
@@ -54,8 +54,8 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 `index_of` and `contains` take arrays of `int`, `float`, `byte`, `bool` or `string`, and compare strings by content. Floats compare like `==`, so `nan` is never found and `-0.0` matches `0.0`.
 
 ```nim
-import std/array: pop
-import std/io
+import "std/array": pop
+import "std/io"
 
 func main() -> void
     let mut stack = [1, 2, 3]
@@ -80,8 +80,8 @@ Reading and writing entries uses indexing (`m[k]`, `m[k] = v`, see [Maps](langua
 | `clear(mut m)` | `void` | Removes every entry. |
 
 ```nim
-import std/map
-import std/io
+import "std/map"
+import "std/io"
 
 func count_words(words: []string) -> map[string, int]
     let mut counts: map[string, int] = {}
@@ -136,11 +136,11 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 
 Use `string::compare` for string fields in custom sorting: `array::sort_by(players, func(a, b) -> return string::compare(a.name, b.name) < 0)`. It compares bytes without case folding or locale rules.
 
-`to_int` and `to_float` share their names with the prelude's conversions, so `import std/string: to_int` is an `AlreadyDefined` error: call them as `string::to_int`, or rename them (`import std/string: to_int as parse_int`).
+`to_int` and `to_float` share their names with the prelude's conversions, so `import "std/string": to_int` is an `AlreadyDefined` error: call them as `string::to_int`, or rename them (`import "std/string": to_int as parse_int`).
 
 ```nim
-import std/string
-import std/io
+import "std/string"
+import "std/io"
 
 func describe_age(text: string) -> string
     let age = string::to_int(text) catch e then
@@ -187,7 +187,7 @@ The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`). 
 
 ## std/compression
 
-Compressing and decompressing bytes. Import with `import std/compression`.
+Compressing and decompressing bytes. Import with `import "std/compression"`.
 
 | Function                                | Returns                         | Description                                                                 |
 | :-------------------------------------- | :------------------------------ | :-------------------------------------------------------------------------- |
@@ -251,7 +251,7 @@ The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`,
 
 ## std/time
 
-Clocks and timestamp values. Import with `import std/time`.
+Clocks and timestamp values. Import with `import "std/time"`.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
@@ -267,9 +267,9 @@ Clocks and timestamp values. Import with `import std/time`.
 The raw clock calls return immediately, without allocating or yielding to another task. Neither needs `try`. A platform clock failure or a reading outside `int` range is a runtime error. Waiting remains `task::sleep` in `std/task`.
 
 ```dusk
-import std/time
-import std/array
-import std/io
+import "std/time"
+import "std/array"
+import "std/io"
 
 func main() -> void
     let mut numbers = [3, 1, 2]
@@ -304,7 +304,7 @@ The raw clock functions above do not allocate; timestamp factories allocate an o
 
 ## std/math
 
-Numbers. Import with `import std/math`.
+Numbers. Import with `import "std/math"`.
 
 | Name | Returns | Description |
 | :--- | :------ | :---------- |
@@ -341,7 +341,7 @@ Writes text to the standard output (stdout) and the standard error output (stder
 | `eprintln(text)` | `void`  | Writes `text` and a newline to stderr.  |
 
 ```nim
-import std/io
+import "std/io"
 
 func main() -> void
     let scores = [10, 20]
@@ -374,7 +374,7 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
 
 ```nim
-import std/io
+import "std/io"
 
 func main() -> !void
     let input = io::stdin()
@@ -450,9 +450,9 @@ end
 `io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr`, files (`fs::File`, see [std/fs](#files)) and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
 
 ```nim
-import std/io
-import std/buffer
-import std/array: len
+import "std/io"
+import "std/buffer"
+import "std/array": len
 
 struct Greetings
     names: []string
@@ -524,8 +524,8 @@ end
 - Each call reads or writes the whole file at once. `read_bytes` returns a new `buffer`: changing it doesn't change the file until it's written back. To read or write a file piece by piece, open it (below).
 
 ```nim
-import std/io
-import std/fs
+import "std/io"
+import "std/fs"
 
 func main() -> !void
     try fs::make_dir("out/logs", recursive = true)
@@ -579,8 +579,8 @@ end
 - `File` fits `io::Reader` and `io::Writer`, so `io::copy(file, conn)` sends a file to a connection and `io::copy(conn, file)` saves one.
 
 ```nim
-import std/fs
-import std/io
+import "std/fs"
+import "std/io"
 
 func main() -> !void
     let log = try fs::open("app.log", fs::Mode.Append)
@@ -656,8 +656,8 @@ end
 A server accepts connections in a loop and serves each one in its own task:
 
 ```nim
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func serve(conn: net::TcpConn) -> io::IoError!void
     for true do
@@ -684,8 +684,8 @@ end
 ```
 
 ```nim
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func main() -> !void
     let conn = try net::tcp_connect("localhost", 8080, timeout_ms = 5000)
@@ -707,8 +707,8 @@ end
 A TLS connection is a `TcpConn` like any other: it has the same methods and rules, fits `io::Reader` and `io::Writer`, and a function that takes a `net::TcpConn` serves plain and encrypted connections alike. Encryption and decryption happen inside the runtime. TLS 1.3 is used when the other side supports it, TLS 1.2 otherwise.
 
 ```nim
-import std/io
-import std/net
+import "std/io"
+import "std/net"
 
 func main() -> !void
     let conn = try net::tls_connect("example.com", 443, timeout_ms = 10000)
@@ -729,8 +729,8 @@ end
 **Serving TLS.** `net::certificate(cert_pem, key_pem)` reads a certificate and its private key once, failing with `InvalidCertificate` when either isn't valid PEM or the key doesn't belong to the certificate. `cert_pem` can hold the whole chain (the server's certificate followed by the intermediate ones, like a `fullchain.pem`), and all of it is sent to clients. Keys can be RSA or ECDSA (P-256, P-384); password-protected keys and Ed25519 certificates aren't supported. One `Certificate` can serve several listeners.
 
 ```nim
-import std/fs
-import std/net
+import "std/fs"
+import "std/net"
 
 func main() -> !void
     let cert = try net::certificate(try fs::read("fullchain.pem"), try fs::read("privkey.pem"))
@@ -795,8 +795,8 @@ end
 ```
 
 ```nim
-import std/io
-import std/url
+import "std/io"
+import "std/url"
 
 func main() -> !void
     let page = try url::parse("https://example.com/docs/guide/intro?lang=en")
@@ -822,8 +822,8 @@ end
 HTTP/1.1 clients and servers. `http::request` sends a request and reads the whole response; `http::open` sends one and returns as soon as the response's head arrives, so its body can be read piece by piece. Both take a `http://` or `https://` URL, follow redirects, and reuse connections. `http::listen` and `server.serve` answer requests (see Serving HTTP below). Like every network call, they only make the calling task wait (see [Tasks](language-ref.md#13-tasks)).
 
 ```nim
-import std/http
-import std/io
+import "std/http"
+import "std/io"
 
 func main() -> !void
     let resp = try http::request("https://api.example.com/users/1", timeout_ms = 5000)
@@ -896,8 +896,8 @@ A status code is never an error: a `404` or a `500` is a normal `Response`. Call
 | `close()` | `void` | Done with the response. Reads after it fail with `Closed`. |
 
 ```nim
-import std/http
-import std/io
+import "std/http"
+import "std/io"
 
 func main() -> !void
     let mut events = try http::open("https://example.com/log", timeout_ms = 5000)
@@ -970,8 +970,8 @@ let page = try corporate.request("https://example.com/")
 **Serving HTTP.** `http::listen` opens a server and `server.serve(handler)` answers its requests with a handler function, a `func(http::Request) -> E!http::Response`. Each connection runs in its own task, so a slow handler only holds up its own client.
 
 ```nim
-import std/http
-import std/io
+import "std/http"
+import "std/io"
 
 func main() -> !void
     let server = try http::listen("0.0.0.0", 8080)

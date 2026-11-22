@@ -1,4 +1,4 @@
-import std/buffer
+import "std/buffer"
 
 func main() -> void
     let failed = buffer::new(-3) catch e then

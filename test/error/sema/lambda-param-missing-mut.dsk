@@ -1,4 +1,4 @@
-import std/array: append
+import "std/array": append
 
 func apply(f: func(int, int) -> int) -> int
     return f(3, 4)

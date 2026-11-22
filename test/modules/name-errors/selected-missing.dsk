@@ -1,4 +1,4 @@
-import @/shapes: nope
+import "@/shapes": nope
 
 func main() -> void
 

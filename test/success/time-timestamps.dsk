@@ -1,6 +1,6 @@
-import std/time
-import std/fs
-import std/array
+import "std/time"
+import "std/fs"
+import "std/array"
 
 func check(milliseconds: int, expected: string) -> void
     let timestamp = time::from_unix_ms(milliseconds)

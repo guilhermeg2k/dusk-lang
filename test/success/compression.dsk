@@ -1,8 +1,8 @@
-import std/compression
-import std/buffer
-import std/string
-import std/fs
-import std/array
+import "std/compression"
+import "std/buffer"
+import "std/string"
+import "std/fs"
+import "std/array"
 
 func same_bytes(a: buffer, b: buffer) -> bool
     if buffer::len(a) != buffer::len(b) then

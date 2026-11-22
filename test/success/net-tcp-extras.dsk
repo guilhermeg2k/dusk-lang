@@ -1,8 +1,8 @@
-import std/io
-import std/net
-import std/string
-import std/buffer
-import std/task
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/buffer"
+import "std/task"
 
 func text_of(data: ?buffer) -> !string
     if data: bytes then

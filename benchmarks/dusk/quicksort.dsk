@@ -1,5 +1,5 @@
-import std/array: len, append
-import std/io
+import "std/array": len, append
+import "std/io"
 
 func swap(mut arr: []int, i: int, j: int) -> void
     let t: int = arr[i]

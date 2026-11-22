@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 func main() -> void
     let number: ?int = 1

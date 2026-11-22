@@ -1,5 +1,5 @@
-import std/string
-import std/buffer
+import "std/string"
+import "std/buffer"
 
 func main() -> !void
     let s = string::from_bytes(try buffer::new(1))

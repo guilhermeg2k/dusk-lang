@@ -1,4 +1,4 @@
-import std/array: len
+import "std/array": len
 
 # `@(variant = value)` builds a union wherever a union type is expected
 

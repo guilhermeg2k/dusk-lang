@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func choose(should_make_array: bool) -> !int
     if true then

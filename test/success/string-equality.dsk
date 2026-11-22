@@ -1,6 +1,6 @@
-import std/string
-import std/buffer
-import std/io
+import "std/string"
+import "std/buffer"
+import "std/io"
 
 let name = "Dusk"
 

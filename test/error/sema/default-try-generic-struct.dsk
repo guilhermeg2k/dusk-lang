@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 struct Box[T]
     value: T

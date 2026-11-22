@@ -29,7 +29,7 @@ Code blocks use Nim highlighting, which is close enough to Dusk's syntax.
 A program starts at its `main` function. Every program must declare one, taking no parameters and returning `void`, or an error union of `void` (`-> !void`) when it uses `try` (see [try](#try)).
 
 ```nim
-import std/io
+import "std/io"
 
 func main() -> void
     io::println("Hello, Dusk")
@@ -38,7 +38,7 @@ end
 
 The top level only holds declarations: functions, structs, enums, unions, error sets and [constants](#constants). Any other statement, a `let mut` or a `let` that isn't a constant at the top level is a compile error (`StatementOutsideMain`, `TopLevelLetNotConstant`). Functions and types are declared at the top level only, not inside a function (`DeclarationInsideFunction`).
 
-To keep them short, the examples in this reference show statements without the `main` around them. Examples that use the standard library (`io::println`, `len`, `append`, `string::split`, `task::sleep`, ...) leave out its imports too: `import std/io`, `import std/array: len, append`, `import std/string` and so on (see [Modules](#14-modules)).
+To keep them short, the examples in this reference show statements without the `main` around them. Examples that use the standard library (`io::println`, `len`, `append`, `string::split`, `task::sleep`, ...) leave out its imports too: `import "std/io"`, `import "std/array": len, append`, `import "std/string"` and so on (see [Modules](#14-modules)).
 
 **Comments** start with `#` and run to the end of the line.
 
@@ -1616,7 +1616,7 @@ There are no line numbers yet.
 
 ## 13. Tasks
 
-A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import std/task`) pauses the running task:
+A task runs a function alongside the rest of the program. `spawn` starts one and returns a `Task`, `await` waits for its result, and `task::sleep` (from `import "std/task"`) pauses the running task:
 
 ```nim
 func main() -> void
@@ -1743,18 +1743,21 @@ A runtime error in any task stops the whole program.
 Each file is a module. A file uses other modules by importing them at the top, before any other declaration:
 
 ```nim
-import @/physics                    # physics.dsk in this project
-import @/ui/button as btn           # ui/button.dsk, used as btn
-import @/ui/theme: dark, light      # also brings dark and light in as plain names
-import std/string                   # a standard library module
-import std/array: len, append
-import std/string: split as split_text,
+import "@/physics"                     # physics.dsk in this project
+import "@/ui/button" as btn            # ui/button.dsk, used as btn
+import "@/ui/theme": dark, light       # also brings dark and light in as plain names
+import "@/rss/rss-item-cache" as cache # non-identifier filename needs `as` or `: ...`
+import "@/rss/rss-item-cache": Cache   # selective import without binding a module name
+import "std/string"                    # a standard library module
+import "std/array": len, append
+import "std/string": split as split_text,
     trim
 ```
 
-- `@/` is the project: the folder of the file passed to `dusk`. `@/ui/button` is the file `ui/button.dsk` in that folder. Paths use `/` and have no quotes or `.dsk` extension.
-- `std/` is the [standard library](#15-prelude): `std/array`, `std/string`, `std/buffer`, `std/compression`, `std/math`, `std/task`, `std/io`, `std/fs`, `std/net`, `std/time`.
-- Any other first part (`import jsonc`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
+- Import paths are plain double-quoted string literals without interpolation. Paths use `/` without a `.dsk` extension, and cannot be empty, contain empty segments (`"@/a//b"`), end with `/`, or use `..`.
+- `"@/"` is the project: the folder of the file passed to `dusk`. `"@/ui/button"` is the file `ui/button.dsk` in that folder.
+- `"std/"` is the [standard library](#15-prelude): `"std/array"`, `"std/string"`, `"std/buffer"`, `"std/compression"`, `"std/math"`, `"std/task"`, `"std/io"`, `"std/fs"`, `"std/net"`, `"std/time"`.
+- Any other first part (`import "jsonc"`) names a library. Libraries aren't supported yet (`LibrariesNotSupported`).
 - A missing file is a `ModuleNotFound` error and an unknown `std/` module an `UnknownStdModule` error, both at the import.
 
 ### Using a module
@@ -1771,9 +1774,9 @@ let color = physics::Color.Red
 let limit = physics::MAX_BODIES
 ```
 
-The name before `::` is the last part of the path, or the name after `as`. It's only a module name: it never clashes with variables, functions or types, so a variable can be called `physics` in a file that imports `@/physics`. Using a module that isn't imported is a `ModuleNotImported` error.
+The name before `::` is the name after `as`, or otherwise the last `/`-separated segment of the path when it is a valid Dusk identifier (not a keyword, except `string` and `buffer`). When the last segment is not a valid identifier — such as a hyphenated filename (`"@/rss/rss-item-cache"`) or a keyword (`"@/error"`) — you must either give it an alias with `as <name>` or import specific names with `: ...` (which brings only the selected names into scope without binding a module name). A module name never clashes with variables, functions or types, so a variable can be called `physics` in a file that imports `"@/physics"`. Using a module that isn't imported is a `ModuleNotImported` error.
 
-`: names` after the path also brings those names in as plain names, and `as` renames one. The module name still works, so `len(xs)` and `array::len(xs)` are the same after `import std/array: len`. A long list continues on the next line after a trailing comma.
+`: names` after the path also brings those names in as plain names, and `as` renames one. When the import binds a module name, the module name still works, so `len(xs)` and `array::len(xs)` are the same after `import "std/array": len`. A long list continues on the next line after a trailing comma.
 
 In a file, a name means one thing: a declaration, a selected name and a prelude builtin can't share a name, and two imports can't use the same module name (`AlreadyDefined`). Use `as` to rename one of them.
 
@@ -1877,7 +1880,7 @@ These are known gaps in v0.16. Most are planned in the [roadmap](roadmap.md).
 - **Union size**: a union can have at most 256 variants.
 - **Maps**: keys can't be floats, nullables, arrays, maps, buffers, unions or functions, and struct keys match by identity only. There's no content comparison for maps (`==` is identity).
 - **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`assert`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
-- **Modules**: libraries (`import jsonc`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
+- **Modules**: libraries (`import "jsonc"`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
 - **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.

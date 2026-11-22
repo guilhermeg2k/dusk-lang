@@ -1,4 +1,4 @@
-import std/task
+import "std/task"
 
 func main() -> void
     let mut order = ""

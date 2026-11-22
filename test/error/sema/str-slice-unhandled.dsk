@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> void
     let s = string::slice("abc", 0, 1)

@@ -1,5 +1,5 @@
-import std/array: len
-import std/io
+import "std/array": len
+import "std/io"
 
 func bin_search(arr: []int, target: int) -> int
     let mut low = 0

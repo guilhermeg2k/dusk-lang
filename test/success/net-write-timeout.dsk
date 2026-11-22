@@ -1,9 +1,9 @@
-import std/buffer
-import std/http
-import std/io
-import std/net
-import std/string
-import std/task
+import "std/buffer"
+import "std/http"
+import "std/io"
+import "std/net"
+import "std/string"
+import "std/task"
 
 func fill_until_failure(conn: net::TcpConn) -> io::IoError!void
     let piece = string::repeat("x", 65536) catch ""

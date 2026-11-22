@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 struct Parser
     fallback: int = string::to_int("bad") catch 42

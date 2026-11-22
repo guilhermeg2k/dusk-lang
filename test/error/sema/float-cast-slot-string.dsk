@@ -1,4 +1,4 @@
-import std/io
+import "std/io"
 
 func convert[T: int | string](x: T) -> float
     return to_float(x)

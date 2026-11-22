@@ -1,4 +1,4 @@
-import std/array: append, len
+import "std/array": append, len
 
 error BuildError
     Negative

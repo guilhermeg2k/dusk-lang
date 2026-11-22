@@ -1,4 +1,4 @@
-import std/math
+import "std/math"
 
 func assert_close(actual: float, expected: float) -> void
     assert(math::f_abs(actual - expected) < 0.000000000001)

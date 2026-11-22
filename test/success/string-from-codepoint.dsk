@@ -1,4 +1,4 @@
-import std/string: from_codepoint
+import "std/string": from_codepoint
 
 func codepoint_reason(codepoint: int) -> string
     let text = string::from_codepoint(codepoint) catch e then

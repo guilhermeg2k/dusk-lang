@@ -1,4 +1,4 @@
-import std/string
+import "std/string"
 
 func main() -> void
     let result = string::find("abc", "a", "bad")
