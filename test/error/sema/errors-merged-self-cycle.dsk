@@ -1,0 +1,4 @@
+error A = A
+
+func main() -> void
+end

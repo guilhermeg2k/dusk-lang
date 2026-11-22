@@ -1,0 +1,42 @@
+import "@/lib"
+
+error LocalError
+    BadInput
+end
+
+error Combined = LocalError | lib::RemoteError
+
+func run(mode: int) -> Combined!int
+    if mode == 0 then
+        return LocalError.BadInput
+    end
+    if mode == 1 then
+        return try lib::fail_remote(false)
+    end
+    if mode == 2 then
+        return lib::RemoteError.Timeout
+    end
+    return 7
+end
+
+func classify(e: Combined) -> int
+    when e
+        LocalError.BadInput then return 10 end
+        lib::RemoteError.Lost then return 20 end
+        lib::RemoteError.Timeout then return 30 end
+    end
+end
+
+func run_and_classify(mode: int) -> int
+    let _ = run(mode) catch e then
+        return classify(e)
+    end
+    return 0
+end
+
+func main() -> void
+    assert(run_and_classify(0) == 10)
+    assert(run_and_classify(1) == 20)
+    assert(run_and_classify(2) == 30)
+    assert((run(3) catch -1) == 7)
+end

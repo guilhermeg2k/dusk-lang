@@ -4802,6 +4802,7 @@ test "modules: public declarations can't mention '~' types" {
     try runModuleCaseError("visibility/private-return.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-field.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-error-set.dsk", error.PrivateTypeInPublicSignature);
+    try runModuleCaseError("visibility/private-merged-error-set.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-variant.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-method.dsk", error.PrivateTypeInPublicSignature);
     try runModuleCaseError("visibility/private-function-type.dsk", error.PrivateTypeInPublicSignature);
@@ -5635,4 +5636,17 @@ test "cr phase 5: compression reader overflow and close, decompressor too large 
 
 test "cr phase 6: http pool double-close, response splitting, empty location, trailers, head keep-alive, nul path, url dot-segments" {
     try runCase("http-url-phase6.dsk");
+}
+
+test "errors-merged" {
+    try runCase("errors-merged.dsk");
+    try runModuleCase("merged-errors/main.dsk");
+    try runModuleCaseError("merged-errors/private-remote.dsk", error.NotVisible);
+    try runCaseError("sema/errors-merged-non-error-primitive.dsk", error.NotAnErrorSet);
+    try runCaseError("sema/errors-merged-non-error-struct.dsk", error.NotAnErrorSet);
+    try runCaseError("sema/errors-merged-unknown.dsk", error.UnknownType);
+    try runCaseError("sema/errors-merged-cycle.dsk", error.ErrorSetRefersToItself);
+    try runCaseError("sema/errors-merged-self-cycle.dsk", error.ErrorSetRefersToItself);
+    try runCaseError("sema/errors-merged-not-in-set.dsk", error.ErrorNotInSet);
+    try runCaseError("sema/errors-merged-when-not-exhaustive.dsk", error.WhenNotExhaustive);
 }

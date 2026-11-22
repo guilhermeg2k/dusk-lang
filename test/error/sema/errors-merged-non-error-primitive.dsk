@@ -1,0 +1,8 @@
+error A
+    Foo
+end
+
+error Bad = int | A
+
+func main() -> void
+end

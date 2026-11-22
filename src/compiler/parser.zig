@@ -627,6 +627,15 @@ pub const Parser = struct {
         self.walk();
         const is_file_only = try self.matchFileOnly(null);
         const identifier_token = try self.expect(.identifier);
+        const identifier = identifier_token.value(self.src);
+        if (self.match(.eq)) {
+            return ast.ErrorSetStmt{
+                .identifier = identifier,
+                .members = try self.parseTypeList(),
+                .is_file_only = is_file_only,
+            };
+        }
+
         var variants: std.ArrayList(ast.ErrorVariant) = .empty;
 
         while (true) {
@@ -646,7 +655,7 @@ pub const Parser = struct {
         }
 
         return ast.ErrorSetStmt{
-            .identifier = identifier_token.value(self.src),
+            .identifier = identifier,
             .variants = try variants.toOwnedSlice(self.allocator),
             .is_file_only = is_file_only,
         };

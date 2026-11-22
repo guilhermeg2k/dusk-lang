@@ -1,0 +1,15 @@
+error RemoteError
+    Lost
+    Timeout
+end
+
+error ~HiddenError
+    Secret
+end
+
+func fail_remote(timeout: bool) -> RemoteError!int
+    if timeout then
+        return RemoteError.Timeout
+    end
+    return RemoteError.Lost
+end

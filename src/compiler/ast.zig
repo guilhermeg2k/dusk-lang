@@ -88,7 +88,8 @@ pub const UnionStmt = struct {
 
 pub const ErrorSetStmt = struct {
     identifier: []const u8,
-    variants: []const ErrorVariant,
+    variants: []const ErrorVariant = &.{},
+    members: []const *TypeAnnotation = &.{},
     is_file_only: bool = false,
 };
 

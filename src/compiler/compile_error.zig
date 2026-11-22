@@ -907,6 +907,11 @@ pub const CompileErrorReporter = struct {
         return error.NotAnErrorSet;
     }
 
+    pub fn errorSetRefersToItself(self: *Self, identifier: []const u8, loc: Loc) CompileError {
+        self.log(try allocPrint(self.allocator, "Error set '{s}' refers to itself", .{identifier}), loc);
+        return error.ErrorSetRefersToItself;
+    }
+
     pub fn cantInferAnonymousStruct(self: *Self, loc: Loc) CompileError {
         self.log(
             "Can't infer anonymous struct type",
@@ -1287,6 +1292,7 @@ pub const CompileError = error{
     InvalidConstantType,
     CatchBlockMustLeave,
     NotAnErrorSet,
+    ErrorSetRefersToItself,
     CantInferMapLiteralType,
     InvalidMapKey,
     DuplicateMapKey,

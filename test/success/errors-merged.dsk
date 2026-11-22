@@ -1,0 +1,279 @@
+import "std/url"
+
+error LocalA
+    Alpha
+    Beta
+end
+
+error LocalB
+    Gamma
+end
+
+error LocalC
+    Delta
+end
+
+error ~SecretError
+    Hidden
+end
+
+error ~InternalError = SecretError | LocalA
+
+error Combined =
+    LocalA
+    | LocalB |
+    url::UrlError
+
+error All = Combined | LocalC
+error Dup = LocalA | LocalA
+error Diamond = Combined | All
+
+func use_hoisted(flag: bool) -> Hoisted!int
+    if flag then
+        return LocalA.Alpha
+    end
+    return LocalB.Gamma
+end
+
+error Hoisted = LocalA | LocalB
+
+func fail_a() -> LocalA!int
+    return LocalA.Beta
+end
+
+func fail_b() -> LocalB!int
+    return LocalB.Gamma
+end
+
+func fail_inferred(which: int) -> !int
+    if which == 0 then
+        return try fail_a()
+    end
+    return try fail_b()
+end
+
+func combined_work(step: int) -> Combined!int
+    if step == 0 then
+        return try fail_a()
+    end
+    if step == 1 then
+        return try fail_b()
+    end
+    if step == 2 then
+        let _ = try url::parse("not a url")
+        return 0
+    end
+    if step == 3 then
+        return try fail_inferred(0)
+    end
+    if step == 4 then
+        return LocalA.Alpha
+    end
+    return 42
+end
+
+func all_work(step: int) -> All!int
+    if step == 0 then
+        return try combined_work(1)
+    end
+    return LocalC.Delta
+end
+
+func dup_work() -> Dup!int
+    return try fail_a()
+end
+
+func diamond_work() -> Diamond!int
+    return try all_work(1)
+end
+
+func ~internal_work() -> InternalError!int
+    return SecretError.Hidden
+end
+
+func take_combined(e: Combined) -> int
+    when e
+        LocalA.Alpha then return 1 end
+        LocalA.Beta then return 2 end
+        LocalB.Gamma then return 3 end
+        url::UrlError.Invalid then return 4 end
+        url::UrlError.InvalidPort then return 5 end
+        url::UrlError.InvalidEncoding then return 6 end
+    end
+end
+
+func classify_step(step: int) -> int
+    let _ = combined_work(step) catch e then
+        return take_combined(e)
+    end
+    return 0
+end
+
+func classify_all(step: int) -> int
+    let _ = all_work(step) catch e then
+        when e
+            LocalA.Alpha then return 1 end
+            LocalA.Beta then return 2 end
+            LocalB.Gamma then return 3 end
+            LocalC.Delta then return 7 end
+            url::UrlError.Invalid then return 4 end
+            url::UrlError.InvalidPort then return 5 end
+            url::UrlError.InvalidEncoding then return 6 end
+        end
+    end
+    return 0
+end
+
+func take_optional(e: ?Combined) -> bool
+    return e != null
+end
+
+func run_with_slot[T, E: error](f: func() -> E!T) -> E!T
+    return try f()
+end
+
+func call_slot_combined() -> int
+    let _ = run_with_slot[int, Combined](func() -> Combined!int
+        return try fail_b()
+    end) catch e then
+        return take_combined(e)
+    end
+    return 0
+end
+
+struct Bot
+    prefix: string
+end
+
+struct Message
+    text: string
+end
+
+struct ErrorHolder
+    last: ?Combined = null
+end
+
+func cmd_ping(bot: Bot, msg: Message) -> Combined!void
+    if msg.text == "bad" then
+        return LocalA.Alpha
+    end
+    if msg.text == "url" then
+        let _ = try url::parse("://bad")
+    end
+end
+
+func cmd_fail(bot: Bot, msg: Message) -> Combined!void
+    let _ = try fail_b()
+end
+
+func run_command(table: map[string, func(Bot, Message) -> Combined!void], name: string, bot: Bot, msg: Message) -> int
+    if table[name]: handler then
+        handler(bot, msg) catch e then
+            return take_combined(e)
+        end
+        return 0
+    end
+    return -1
+end
+
+func coerce_subset() -> int
+    let _ = fail_a() catch e then
+        let widened: Combined = e
+        return take_combined(widened)
+    end
+    return 0
+end
+
+func test_task() -> int
+    let t: Task[int, Combined] = spawn(func() -> Combined!int
+        return try fail_b()
+    end)
+    let _ = await(t) catch e then
+        return take_combined(e)
+    end
+    return 0
+end
+
+func test_hoisted(flag: bool) -> int
+    let _ = use_hoisted(flag) catch e then
+        when e
+            LocalA.Alpha then return 10 end
+            LocalA.Beta then return 20 end
+            LocalB.Gamma then return 30 end
+        end
+    end
+    return 0
+end
+
+func test_dup() -> int
+    let _ = dup_work() catch e then
+        when e
+            LocalA.Alpha then return 1 end
+            LocalA.Beta then return 2 end
+        end
+    end
+    return 0
+end
+
+func test_diamond() -> int
+    let _ = diamond_work() catch e then
+        when e
+            LocalC.Delta then return 99 end
+            else then return 0 end
+        end
+    end
+    return 0
+end
+
+func test_internal() -> int
+    let _ = internal_work() catch e then
+        when e
+            SecretError.Hidden then return 77 end
+            LocalA.Alpha then return 1 end
+            LocalA.Beta then return 2 end
+        end
+    end
+    return 0
+end
+
+func main() -> void
+    assert((combined_work(5) catch -1) == 42)
+    assert(classify_step(0) == 2)
+    assert(classify_step(1) == 3)
+    assert(classify_step(2) == 4)
+    assert(classify_step(3) == 2)
+    assert(classify_step(4) == 1)
+    assert(classify_step(5) == 0)
+
+    assert(classify_all(0) == 3)
+    assert(classify_all(1) == 7)
+    assert(test_dup() == 2)
+    assert(test_diamond() == 99)
+    assert(test_internal() == 77)
+    assert(test_hoisted(true) == 10)
+    assert(test_hoisted(false) == 30)
+
+    assert(coerce_subset() == 2)
+    assert(call_slot_combined() == 3)
+    assert(test_task() == 3)
+
+    let errs: []Combined = [LocalA.Alpha, LocalB.Gamma, url::UrlError.InvalidPort]
+    assert(take_combined(errs[0]) == 1)
+    assert(take_combined(errs[1]) == 3)
+    assert(take_combined(errs[2]) == 5)
+
+    let mut holder = ErrorHolder()
+    assert(!take_optional(holder.last))
+    holder.last = LocalB.Gamma
+    assert(take_optional(holder.last))
+
+    let commands: map[string, func(Bot, Message) -> Combined!void] = {
+        "ping": cmd_ping,
+        "fail": cmd_fail,
+    }
+    let bot = Bot(prefix = "!")
+    assert(run_command(commands, "ping", bot, Message(text = "ok")) == 0)
+    assert(run_command(commands, "ping", bot, Message(text = "bad")) == 1)
+    assert(run_command(commands, "ping", bot, Message(text = "url")) == 4)
+    assert(run_command(commands, "fail", bot, Message(text = "x")) == 3)
+end

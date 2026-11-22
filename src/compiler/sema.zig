@@ -34,6 +34,7 @@ pub const SemaAnalyzer = struct {
     fn_depth: usize = 0,
     pending_signatures: std.AutoHashMapUnmanaged(tt.TypeId, PendingSignature) = .empty,
     pending_structs: std.AutoHashMapUnmanaged(tt.TypeId, PendingStruct) = .empty,
+    pending_error_sets: std.AutoHashMapUnmanaged(tt.TypeId, PendingErrorSet) = .empty,
     defer_scopes: std.ArrayList(DeferScope) = .empty,
     defer_base: usize = 0,
     loop_starts: std.ArrayList(usize) = .empty,
@@ -285,7 +286,7 @@ pub const SemaAnalyzer = struct {
         const return_type = self.type_table.getTypePtrById(return_type_id);
         if (return_type.kind != .error_union) return 0;
         const set = self.errorSetOf(return_type.kind.error_union.error_set);
-        if (set.kind != .declared) return 0;
+        if (set.kind != .declared or set.ids.count() == 0) return 0;
         return std.mem.min(i64, set.ids.keys());
     }
 
@@ -343,6 +344,12 @@ pub const SemaAnalyzer = struct {
                 .trait => |ts| {
                     if (ts.is_file_only) continue;
                     try self.checkPublicMethods(ts.methods);
+                },
+                .error_set => |es| {
+                    if (es.is_file_only) continue;
+                    for (es.members) |member| {
+                        try self.checkPublicAnnotation(es.identifier, member);
+                    }
                 },
                 .let => |ls| {
                     if (ls.is_file_only) continue;
@@ -716,6 +723,13 @@ pub const SemaAnalyzer = struct {
                     symbol.is_file_only = es.is_file_only;
                     try self.recordTypeModule(symbol, self.module);
                     self.scope.symbol_table.put(symbol) catch return self.err_reporter.alreadyDefined(es.identifier, stmt.loc);
+                    if (es.members.len > 0) {
+                        try self.pending_error_sets.put(self.allocator, symbol.kind.defined_type.blueprint_type_id, .{
+                            .stmt = &stmt.data.error_set,
+                            .loc = stmt.loc,
+                            .module = self.module,
+                        });
+                    }
                 },
                 .schema => try self.declareSchema(&stmt.data.schema, stmt.loc),
                 .trait => |ts| {
@@ -782,6 +796,14 @@ pub const SemaAnalyzer = struct {
         }
 
         for (root.statements.items) |stmt| {
+            if (stmt.data != .error_set) continue;
+            const es = stmt.data.error_set;
+            if (es.members.len == 0) continue;
+            const symbol = try self.scope.symbol_table.getOrError(es.identifier);
+            try self.resolveMergedErrorSet(symbol.kind.defined_type.blueprint_type_id);
+        }
+
+        for (root.statements.items) |stmt| {
             if (stmt.data != .let) continue;
             const let_stmt = stmt.data.let;
             if (!self.isConstantCandidate(let_stmt)) continue;
@@ -837,6 +859,45 @@ pub const SemaAnalyzer = struct {
                 else => {},
             }
         }
+    }
+
+    fn resolveMergedErrorSet(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const entry = self.pending_error_sets.getPtr(type_id) orelse return;
+        if (entry.is_resolved) return;
+        const saved_module = self.enterModuleContext(entry.module);
+        defer self.exitModuleContext(saved_module);
+        if (entry.is_resolving) {
+            return self.err_reporter.errorSetRefersToItself(entry.stmt.identifier, entry.loc);
+        }
+        entry.is_resolving = true;
+
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = entry.module.root;
+        defer self.scope.symbol_table = saved_table;
+
+        const target_set = self.errorSetOf(type_id);
+        for (entry.stmt.members) |member| {
+            const is_plain_name = member.type == .@"struct" and !member.is_nullable and member.args.len == 0;
+            if (!is_plain_name) {
+                return self.err_reporter.notAnErrorSet(try member.value(self.allocator), member.loc);
+            }
+            const name = member.type.@"struct";
+            const symbol = self.scope.symbol_table.getOrError(name) catch {
+                return self.err_reporter.typeNotDefined(name, member.loc);
+            };
+            const is_error_set = symbol.kind == .defined_type and self.type_table.isErrorSet(symbol.kind.defined_type.blueprint_type_id);
+            if (!is_error_set) {
+                return self.err_reporter.notAnErrorSet(name, member.loc);
+            }
+            const member_type_id = symbol.kind.defined_type.blueprint_type_id;
+            try self.resolveMergedErrorSet(member_type_id);
+            for (self.errorSetOf(member_type_id).ids.keys()) |id| {
+                try target_set.ids.put(self.allocator, id, {});
+            }
+        }
+
+        entry.is_resolving = false;
+        entry.is_resolved = true;
     }
 
     fn isConstantCandidate(self: *Self, let_stmt: ast.LetStmt) bool {
@@ -3650,8 +3711,18 @@ pub const SemaAnalyzer = struct {
 
         var missing: std.ArrayList(u8) = .empty;
         switch (subject.base_kind) {
-            .@"enum" => |enum_def| for (enum_def.variants_in_order) |name| {
-                if (!prongs.seen_values.contains(enum_def.variants.get(name).?)) try appendMissing(self.allocator, &missing, name);
+            .@"enum" => |enum_def| if (enum_def.error_set) |set| {
+                for (set.ids.keys()) |id| {
+                    if (!prongs.seen_values.contains(id)) {
+                        try appendMissing(self.allocator, &missing, self.type_table.error_names.items[@intCast(id)]);
+                    }
+                }
+            } else {
+                for (enum_def.variants_in_order) |name| {
+                    if (!prongs.seen_values.contains(enum_def.variants.get(name).?)) {
+                        try appendMissing(self.allocator, &missing, name);
+                    }
+                }
             },
             .@"union" => |union_def| for (union_def.variants_in_order) |name| {
                 if (!prongs.seen_variants.contains(name)) try appendMissing(self.allocator, &missing, name);
@@ -8784,6 +8855,14 @@ const PendingSignature = struct {
     loc: err.Loc,
     module: *ModuleScope,
     state: enum { pending, filling, filled } = .pending,
+};
+
+const PendingErrorSet = struct {
+    stmt: *const ast.ErrorSetStmt,
+    loc: err.Loc,
+    module: *ModuleScope,
+    is_resolving: bool = false,
+    is_resolved: bool = false,
 };
 
 const Constant = struct {

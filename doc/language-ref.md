@@ -1522,6 +1522,19 @@ end
 
 An error is written like an enum variant (`ParseError.Empty`). It can be stored in variables, fields, arrays and nullables (`?ParseError`), passed around, and compared with `==` and `!=`, also against errors from other sets. Interpolating an error gives its number.
 
+An error set can also be declared as the union of existing error sets with `= ... | ...` (no `end`), including module-qualified names and other merged error sets:
+
+```nim
+error AppError =
+    ParseError
+    | fs::FsError
+    | http::HttpError
+
+error ~InternalError = AppError | SecretError
+```
+
+A merged error set contains every variant from its members, flattened and deduplicated. It works anywhere an error set is expected: return types (`AppError!void`), function types (`func(Request) -> AppError!void`), `Task[T, AppError]`, error slots (`[E: error]`), variables, fields and `when`. Inside a `-> AppError!T` function, `try` accepts any call whose errors are a subset of `AppError`, and `return ParseError.Empty` succeeds directly. An error value from a constituent set can be assigned or passed where `AppError` is expected. In an exhaustive `when` on a merged error, each case names its defining set (`fs::FsError.NotFound`, `ParseError.Empty`). A public merged error set can't include a file-only (`~`) error set, and merged error sets can't refer to themselves directly or indirectly.
+
 ### Functions that can fail
 
 `E!T` means "returns a `T`, or fails with an error from `E`". `return` with a `T` succeeds, `return` with an error fails.
