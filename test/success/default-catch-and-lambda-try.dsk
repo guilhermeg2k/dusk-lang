@@ -1,0 +1,27 @@
+import std/string
+
+struct Parser
+    fallback: int = string::to_int("bad") catch 42
+    run: func(string) -> ConversionError!int = func(s: string) -> ConversionError!int
+        return try string::to_int(s)
+    end
+    run_inferred = func(s: string) -> return try string::to_int(s)
+end
+
+func read_value(
+    x: int = string::to_int("bad") catch 7,
+    parse: func(string) -> ConversionError!int = func(s: string) -> ConversionError!int
+        return try string::to_int(s)
+    end
+) -> !int
+    return x + try parse("3")
+end
+
+func main() -> !void
+    let p = Parser()
+    assert(p.fallback == 42)
+    assert(try p.run("12") == 12)
+    assert(try p.run_inferred("34") == 34)
+    assert(try read_value() == 10)
+    assert(try read_value(5) == 8)
+end

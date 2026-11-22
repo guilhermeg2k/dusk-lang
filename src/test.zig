@@ -2599,6 +2599,17 @@ test "field and parameter defaults can call functions and use structs declared f
     try runCase("defaults-call-later-functions.dsk");
 }
 
+test "default values allow catch and failing lambdas using try" {
+    try runCase("default-catch-and-lambda-try.dsk");
+}
+
+test "sema error: try inside struct field or parameter default" {
+    try runCaseError("sema/default-try-struct-failing-caller.dsk", error.TryInsideDefault);
+    try runCaseError("sema/default-try-struct-non-failing-caller.dsk", error.TryInsideDefault);
+    try runCaseError("sema/default-try-param.dsk", error.TryInsideDefault);
+    try runCaseError("sema/default-try-generic-struct.dsk", error.TryInsideDefault);
+}
+
 test "sema error: try in non-failing function" {
     try runCaseError("sema/errors-try-in-non-failing-fn.dsk", error.TryOutsideFailingFunction);
 }

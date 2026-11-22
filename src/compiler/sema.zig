@@ -39,6 +39,7 @@ pub const SemaAnalyzer = struct {
     loop_starts: std.ArrayList(usize) = .empty,
     deferred_depth: usize = 0,
     deferred_loop_floor: usize = 0,
+    is_in_default: bool = false,
     is_in_prelude: bool = false,
     module: *ModuleScope = undefined,
     prelude_module: *ModuleScope = undefined,
@@ -1261,7 +1262,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (field.default_value) |initial_value| {
-            const value = try self.evalExpExpecting(initial_value, if (field.type != null) field_type_id else null);
+            const value = try self.evalDefaultExp(initial_value, if (field.type != null) field_type_id else null);
             const value_type_id = value.type_id;
             field_default_value = value;
 
@@ -1294,6 +1295,9 @@ pub const SemaAnalyzer = struct {
         try self.scope.enter(self.type_table.getPrimitive(.void));
         self.fn_depth += 1;
         defer self.fn_depth -= 1;
+        const saved_is_in_default = self.is_in_default;
+        self.is_in_default = false;
+        defer self.is_in_default = saved_is_in_default;
 
         for (fn_def.params) |param| {
             var param_default_value: ?*ir.Value = null;
@@ -1312,12 +1316,12 @@ pub const SemaAnalyzer = struct {
                 };
 
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExpExpecting(default_value, param_type_id);
+                    const value = try self.evalDefaultExp(default_value, param_type_id);
                     param_default_value = try self.coerceValue(value, param_type_id, default_value.loc);
                 }
             } else {
                 if (param.default_value) |default_value| {
-                    const value = try self.evalExpExpecting(default_value, null);
+                    const value = try self.evalDefaultExp(default_value, null);
                     param_default_value = value;
                     param_type_id = value.type_id;
                 } else {
@@ -1675,7 +1679,17 @@ pub const SemaAnalyzer = struct {
         return call;
     }
 
+    fn evalDefaultExp(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        const saved_is_in_default = self.is_in_default;
+        self.is_in_default = true;
+        defer self.is_in_default = saved_is_in_default;
+        return self.evalExpExpecting(exp, expected_type);
+    }
+
     fn evalTry(self: *Self, exp: *const ast.ExpNode, expected_type: ?tt.TypeId) CompileError!*ir.Value {
+        if (self.is_in_default) {
+            return self.err_reporter.tryInsideDefault(exp.loc);
+        }
         if (self.deferred_depth > 0) {
             return self.err_reporter.tryInsideDefer(exp.loc);
         }
@@ -4018,7 +4032,7 @@ pub const SemaAnalyzer = struct {
 
         for (struct_def.fields) |field| {
             const annotated_type = if (field.type) |annotation| try self.resolveTypeAnnotation(annotation, blueprint_type_id) else null;
-            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalExpExpecting(value, annotated_type) else null;
+            const default_value: ?*ir.Value = if (field.default_value) |value| try self.evalDefaultExp(value, annotated_type) else null;
             const field_type = annotated_type orelse default_value.?.type_id;
 
             try fields.append(
@@ -4059,11 +4073,14 @@ pub const SemaAnalyzer = struct {
         defer self.fn_depth -= 1;
         const saved_defer_base = self.defer_base;
         const saved_deferred_depth = self.deferred_depth;
+        const saved_is_in_default = self.is_in_default;
         self.defer_base = self.defer_scopes.items.len;
         self.deferred_depth = 0;
+        self.is_in_default = false;
         defer {
             self.defer_base = saved_defer_base;
             self.deferred_depth = saved_deferred_depth;
+            self.is_in_default = saved_is_in_default;
         }
         for (metadata.params) |param| {
             const arg_uid = self.scope.genUid();

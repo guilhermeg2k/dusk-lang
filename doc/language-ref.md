@@ -1534,6 +1534,7 @@ end
 - The current function must be able to fail. With an explicit set (`ParseError!int`), every error the call can return must be in it.
 - In `main`, which must then return `!void` (or `E!void`), an error that reaches the end of `main` stops the program: `error: unhandled error ParseError.BadDigit`.
 - `try` applies to the call right after it, including `.` and `[]` (`try a.b(c)`).
+- Default values (struct fields and function parameters) can't use `try` (`TryInsideDefault`): callers don't see those errors, so handle them with `catch`. A failing lambda defined inside a default value can still use `try` in its own body.
 
 ### catch
 

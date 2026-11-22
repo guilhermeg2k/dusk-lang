@@ -495,6 +495,11 @@ pub const CompileErrorReporter = struct {
         return error.TryInsideDefer;
     }
 
+    pub fn tryInsideDefault(self: *Self, loc: Loc) CompileError {
+        self.log("try can't be used in a default value: callers don't see its errors, so handle them with catch", loc);
+        return error.TryInsideDefault;
+    }
+
     pub fn exitInsideDefer(self: *Self, keyword: []const u8, loc: Loc) CompileError {
         self.log(try allocPrint(self.allocator, "{s} can't leave deferred code: it runs while its block is already leaving", .{keyword}), loc);
         return error.ExitInsideDefer;
@@ -1158,6 +1163,7 @@ pub const CompileError = error{
     UnhandledError,
     TryOutsideFailingFunction,
     TryInsideDefer,
+    TryInsideDefault,
     ExitInsideDefer,
     ErrdeferOutsideFailingFunction,
     NotAFailingCall,
