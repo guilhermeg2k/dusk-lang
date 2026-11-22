@@ -41,6 +41,10 @@ pub const Parser = struct {
             try statements.append(self.allocator, try self.parseImportStmt());
         }
         const root = try self.parseBlock(&.{});
+        const trailing = self.peekCurrent();
+        if (trailing.tag != .eof) {
+            return self.err_reporter.invalidSyntax("end of file", trailing);
+        }
         try statements.appendSlice(self.allocator, root.statements.items);
         return .{ .statements = statements };
     }

@@ -4460,3 +4460,10 @@ test "cr phase 5: compression reader overflow and close, decompressor too large 
 test "cr phase 6: http pool double-close, response splitting, empty location, trailers, head keep-alive, nul path, url dot-segments" {
     try runCase("http-url-phase6.dsk");
 }
+
+test "parser error: stray top-level block keywords" {
+    try runCaseError("parser/stray-end-at-eof.dsk", error.ParserError);
+    try runCaseError("parser/stray-end-mid-file.dsk", error.ParserError);
+    try runCaseError("parser/stray-else-top-level.dsk", error.ParserError);
+    try runCaseError("parser/stray-elif-top-level.dsk", error.ParserError);
+}
