@@ -5650,3 +5650,10 @@ test "errors-merged" {
     try runCaseError("sema/errors-merged-not-in-set.dsk", error.ErrorNotInSet);
     try runCaseError("sema/errors-merged-when-not-exhaustive.dsk", error.WhenNotExhaustive);
 }
+
+test "parser error: stray top-level block keywords" {
+    try runCaseError("parser/stray-end-at-eof.dsk", error.ParserError);
+    try runCaseError("parser/stray-end-mid-file.dsk", error.ParserError);
+    try runCaseError("parser/stray-else-top-level.dsk", error.ParserError);
+    try runCaseError("parser/stray-elif-top-level.dsk", error.ParserError);
+}

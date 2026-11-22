@@ -90,6 +90,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 
 - `std/time`: long fractional timestamps no longer overflow while parsing; invalid calendar fields and truncated input return `InvalidTimestamp` safely
 - `try` in a struct field default or a function parameter default is now rejected at compile time (`TryInsideDefault`) instead of letting unhandled errors escape at call sites (`catch` and failing lambdas defined inside defaults remain allowed)
+- A stray top-level `end` (and any code after it) was silently ignored by the parser instead of failing with a syntax error
 - A struct field or parameter default calling a function declared further down in the file (`port: int = default_port()`) failed with a wrong argument count or type, or crashed the compiler; reading a field, method or static field of a struct declared further down (`x: int = origin().x`) failed with "does not exists": function signatures and struct fields are now filled in when a default first needs them
 - A long-running program kept a little memory for every connection, listener and opened file it ever had: closed ones are now reused, and a closed connection's old value can't reach a new one (it fails with `Closed`)
 - Method calls through `?.` work: `p?.get()` used to fail with "Invalid number of arguments" because `self` wasn't passed; it now calls the method when `p` isn't null and gives `null` otherwise (`mut self` and void methods included)
