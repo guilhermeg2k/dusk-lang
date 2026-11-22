@@ -32,6 +32,8 @@
 - Source line numbers in runtime errors (instruction-to-line map in bytecode)
 - More unboxed map reads (`m[k] == null`, `m[k] == val`, `when m[k]`)
 - Schema-level `omit_null` option (`schema Api(omit_null = true)` so nullable fields don't need individual `omit_null` rules)
+- Reject using functions with inferred error sets (`-> !T`) as function values (require an explicit error set `E!T` instead of leaking unresolved placeholder error sets)
+- Show concrete error set names in function-type mismatch diagnostics instead of printing `!T` (avoids confusing `expected 'func(...) -> !void' found 'func(...) -> !void'` errors)
 
 ## Backlog
 
