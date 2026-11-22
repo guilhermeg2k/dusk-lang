@@ -4444,7 +4444,7 @@ pub const SemaAnalyzer = struct {
         if (!self.needsNullBox(subject.type_id, payload_type)) return null;
         const found_uid = self.scope.genUid();
         const value_uid = self.scope.genUid();
-        try instructions.append(self.allocator, .{ .map_find = .{
+        try instructions.append(self.allocator, .{ .map_get_unboxed = .{
             .map = target,
             .key = subject.data.indexed.index,
             .found_uid = found_uid,
