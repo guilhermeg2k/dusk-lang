@@ -5,19 +5,19 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .libuv = .{
-            .url = "https://github.com/dusqlang/libuv/archive/refs/tags/v1.53.0-dusk.tar.gz",
+            .url = "https://github.com/duskilang/libuv/archive/refs/tags/v1.53.0-dusk.tar.gz",
             .hash = "libuv-1.53.0-QDiZxwLiGwA6a2ix6PbZDYBFPIkzrogxPaagys6M1KV9",
         },
         .mbedtls = .{
-            .url = "https://github.com/dusqlang/mbedtls/archive/refs/tags/v4.1.1-dusk.tar.gz",
+            .url = "https://github.com/duskilang/mbedtls/archive/refs/tags/v4.1.1-dusk.tar.gz",
             .hash = "mbedtls-4.1.1-RluRKQiIbQDfocMXv4cMObkWlweVIMs3s98Ko-iC0JwE",
         },
         .llhttp = .{
-            .url = "https://github.com/dusqlang/llhttp/archive/refs/tags/v9.4.3-dusk.tar.gz",
+            .url = "https://github.com/duskilang/llhttp/archive/refs/tags/v9.4.3-dusk.tar.gz",
             .hash = "llhttp-9.4.3-PXnmywK8BQA9CMSCWW8dRGE6ThGTbo7k6wIqGIMRR4ON",
         },
         .zlib_ng = .{
-            .url = "https://github.com/dusqlang/zlib-ng/archive/refs/tags/v2.3.3-dusk.tar.gz",
+            .url = "https://github.com/duskilang/zlib-ng/archive/refs/tags/v2.3.3-dusk.tar.gz",
             .hash = "zlib_ng-2.3.3-hIW1UEDOcACH4VXxmhLLqXhJLZeHBu1NEhTsT2icMaqg",
         },
     },
