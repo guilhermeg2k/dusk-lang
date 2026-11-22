@@ -1,0 +1,4 @@
+func main() -> void
+    let p: @ = @(x = 1)
+    let _ = p
+end

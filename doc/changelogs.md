@@ -47,6 +47,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - Write timeouts: `conn.set_write_timeout(ms)` on `net::TcpConn`, and `http::listen(..., write_timeout_ms = 30000)` for servers, close a connection whose other side stops reading, so a stuck client no longer holds a response (or a streamed one) forever. The clock restarts after each write that finishes, so slow but steady readers are fine. `http::request` and `http::open` apply their `timeout_ms` to sending too
 - Passing a number, bool, byte or enum where text is expected (`io::println(count)`) now suggests interpolation in the error: `use interpolation to turn it into text, "${count}"`
 - `task::sleep` with a negative time (a deadline already passed) no longer stops the program: it acts like `task::sleep(0)`
+- `@` ("the current enclosing type") now works in any type position inside structs, enums, unions and traits: method return types (`-> @`, `-> ?@`, `-> !@`, `-> SomeError!@`), non-`self` parameters, local variable annotations inside methods (`let p: @ = @(...)`), compound types (`[]@`, `map[string, @]`, `func(@) -> @`, `Task[@]`), generic types, and recursive fields (`next: ?@`). Using `@` as a type outside a type or trait declaration is a `SelfTypeOutsideType` error
 
 ### Fixes
 

@@ -1,0 +1,19 @@
+trait Clone
+    func clone(self: @) -> @
+end
+
+struct Bad
+    x: int
+
+    func clone(self: @) -> int
+        return self.x
+    end
+end
+
+func dup[T: Clone](x: T) -> T
+    return x.clone()
+end
+
+func main() -> void
+    let _ = dup(Bad(x = 1))
+end

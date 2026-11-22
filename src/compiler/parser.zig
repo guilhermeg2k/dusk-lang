@@ -1792,6 +1792,7 @@ pub const Parser = struct {
             .at => ast.TypeAnnotation.init(self.allocator, .{
                 .type = .{ .type_self = {} },
                 .is_nullable = is_nullable,
+                .loc = tk.loc,
             }),
             .l_bracket => {
                 _ = try self.expect(.r_bracket);

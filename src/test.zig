@@ -23,6 +23,15 @@ test "gc: else branches do not retain roots from the skipped then branch" {
     try runCase("gc-if-branches.dsk");
 }
 
+test "sema: @ works in any type position inside structs, enums, unions and traits" {
+    try runCase("self-type.dsk");
+    try runCaseError("sema/self-type-outside-top-level-func.dsk", error.SelfTypeOutsideType);
+    try runCaseError("sema/self-type-outside-main.dsk", error.SelfTypeOutsideType);
+    try runCaseError("sema/self-type-in-nested-struct.dsk", error.SelfTypeOutsideType);
+    try runCaseError("sema/self-type-trait-return-mismatch.dsk", error.DoesntFitTrait);
+    try runCaseError("sema/self-type-trait-param-mismatch.dsk", error.DoesntFitTrait);
+}
+
 test "sema: anonymous coercions preserve private-field visibility" {
     try runCase("anonymous-private-same-module.dsk");
     try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);

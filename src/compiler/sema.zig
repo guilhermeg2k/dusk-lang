@@ -59,6 +59,7 @@ pub const SemaAnalyzer = struct {
     generic_types: std.ArrayList(GenericType) = .empty,
     traits: std.ArrayList(Trait) = .empty,
     trait_self_type: ?tt.TypeId = null,
+    enclosing_type_id: ?tt.TypeId = null,
     is_hoisting: bool = false,
     pending_trait_checks: std.ArrayList(PendingTraitCheck) = .empty,
     copied_types: std.AutoHashMapUnmanaged(tt.TypeId, TypeCopy) = .empty,
@@ -843,6 +844,9 @@ pub const SemaAnalyzer = struct {
         const saved_table = self.scope.symbol_table;
         self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = null;
+        defer self.enclosing_type_id = saved_enclosing_type;
         try self.fulfillFuncType(pending.symbol, pending.def, null, pending.loc);
         self.pending_signatures.getPtr(type_id).?.state = .filled;
     }
@@ -876,6 +880,9 @@ pub const SemaAnalyzer = struct {
         const saved_table = self.scope.symbol_table;
         self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = null;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         const annotated_type_id = if (constant.let_stmt.type_annotation) |annotation| try self.resolveTypeAnnotation(annotation, null) else null;
         var value = try self.evalExpExpecting(constant.let_stmt.value, annotated_type_id);
@@ -1101,6 +1108,9 @@ pub const SemaAnalyzer = struct {
 
     fn fulfillEnumType(self: *Self, enum_symbol: Symbol, enum_def: *const ast.EnumDef) !void {
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         var variants: std.StringHashMap(i64) = .init(self.allocator);
 
@@ -1124,6 +1134,9 @@ pub const SemaAnalyzer = struct {
 
     fn fulfillUnionType(self: *Self, union_symbol: Symbol, union_def: *const ast.UnionDef, loc: err.Loc) !void {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         if (union_def.variants.len > tt.Union.MAX_VARIANTS) {
             return self.err_reporter.tooManyUnionVariants(union_symbol.identifier, tt.Union.MAX_VARIANTS, loc);
@@ -1149,6 +1162,9 @@ pub const SemaAnalyzer = struct {
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
         const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
@@ -1298,13 +1314,16 @@ pub const SemaAnalyzer = struct {
         const saved_is_in_default = self.is_in_default;
         self.is_in_default = false;
         defer self.is_in_default = saved_is_in_default;
+        const owner_type_id = if (fn_owner_symbol) |symbol| symbol.kind.defined_type.blueprint_type_id else self.enclosing_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = owner_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         for (fn_def.params) |param| {
             var param_default_value: ?*ir.Value = null;
             var param_type_id: tt.TypeId = undefined;
 
             if (param.type_annotation) |annotation| {
-                const owner_type_id = if (fn_owner_symbol) |symbol| symbol.kind.defined_type.blueprint_type_id else null;
                 param_type_id = self.resolveTypeAnnotation(annotation, owner_type_id) catch |failure| {
                     if (failure != error.SemaError) {
                         return failure;
@@ -1349,7 +1368,7 @@ pub const SemaAnalyzer = struct {
         }
 
         if (fn_def.return_type) |r_type| {
-            return_type_id = self.resolveTypeAnnotation(r_type, null) catch |failure| {
+            return_type_id = self.resolveTypeAnnotation(r_type, owner_type_id) catch |failure| {
                 if (failure != error.SemaError) {
                     return failure;
                 }
@@ -1815,7 +1834,7 @@ pub const SemaAnalyzer = struct {
         }
 
         const annotated_type_id = if (let_stmt.type_annotation) |type_annotation|
-            try self.resolveTypeAnnotation(type_annotation, null)
+            try self.resolveTypeAnnotation(type_annotation, self.enclosing_type_id)
         else
             null;
 
@@ -1890,6 +1909,9 @@ pub const SemaAnalyzer = struct {
         const old_return_type = self.scope.return_type_id;
         try self.scope.enter(old_return_type);
         defer self.scope.exit(old_return_type);
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = if (generic.owner) |owner| owner.kind.defined_type.blueprint_type_id else null;
+        defer self.enclosing_type_id = saved_enclosing_type;
 
         for (func_stmt.slots) |slot| {
             const slot_type_id = try self.addSlotType(slot);
@@ -1977,7 +1999,7 @@ pub const SemaAnalyzer = struct {
             return self.err_reporter.wrongSlotCount(identifier, slots.len, arguments.len, loc);
         }
         for (arguments, 0..) |argument, i| {
-            const type_id = try self.resolveTypeAnnotation(argument, null);
+            const type_id = try self.resolveTypeAnnotation(argument, self.enclosing_type_id);
             try self.bindSlot(slots, bindings, i, type_id, argument.loc);
         }
     }
@@ -2220,6 +2242,9 @@ pub const SemaAnalyzer = struct {
         defer self.scope.symbol_table = saved_table;
         const saved_return_type = self.scope.return_type_id;
         defer self.scope.return_type_id = saved_return_type;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = if (generic.owner) |owner| owner.kind.defined_type.blueprint_type_id else null;
+        defer self.enclosing_type_id = saved_enclosing_type;
         try self.fulfillFuncType(symbol, &generic.func_stmt.def, generic.owner, generic.loc);
 
         if (generic.extern_uid) |extern_uid| {
@@ -2417,6 +2442,9 @@ pub const SemaAnalyzer = struct {
             defer self.exitCopyLowering(saved_lowering);
             const saved_table = try self.enterGenericScope(generic, copy.args);
             defer self.scope.symbol_table = saved_table;
+            const saved_enclosing_type = self.enclosing_type_id;
+            self.enclosing_type_id = if (generic.owner) |owner| owner.kind.defined_type.blueprint_type_id else null;
+            defer self.enclosing_type_id = saved_enclosing_type;
 
             const metadata = self.type_table.getTypePtrById(copy.symbol.type_id).kind.function;
             const func = try self.visitFnDef(&generic.func_stmt.def, metadata.uid, metadata, null, generic.loc);
@@ -2979,6 +3007,9 @@ pub const SemaAnalyzer = struct {
         const enum_stmt = stmt.data.@"enum";
         const enum_symbol = try self.scope.symbol_table.getOrError(enum_stmt.identifier);
         const blueprint_type_id = enum_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         const enum_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"enum";
         const funcs = try self.lowerMethods(enum_stmt.def.funcs, enum_def.methods, blueprint_type_id);
 
@@ -3009,6 +3040,9 @@ pub const SemaAnalyzer = struct {
 
     fn visitUnionDef(self: *Self, union_ast: *const ast.UnionDef, union_symbol: Symbol) CompileError!ir.DefinedType {
         const blueprint_type_id = union_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         const union_def = self.type_table.getTypePtrById(blueprint_type_id).kind.@"union";
         const funcs = try self.lowerMethods(union_ast.funcs, union_def.methods, blueprint_type_id);
 
@@ -3995,6 +4029,9 @@ pub const SemaAnalyzer = struct {
     }
 
     fn visitAnonymousStructDef(self: *Self, struct_def: *const ast.Struct) !tt.Struct {
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = null;
+        defer self.enclosing_type_id = saved_enclosing_type;
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
 
@@ -4025,6 +4062,9 @@ pub const SemaAnalyzer = struct {
     fn visitStructDef(self: *Self, struct_def: *const ast.Struct, struct_symbol: Symbol) CompileError!ir.Struct {
         const identifier = struct_symbol.identifier;
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
         const prev_return_type = self.scope.return_type_id;
         try self.scope.enter(self.type_table.getPrimitive(.void));
         defer self.scope.exit(prev_return_type);
@@ -6460,7 +6500,7 @@ pub const SemaAnalyzer = struct {
                 if (current_defined_type_type_id) |type_type_id| {
                     return if (type_annotation.is_nullable) try self.type_table.getOrAddNullable(type_type_id) else type_type_id;
                 }
-                return self.err_reporter.invalidType("a type", "@", type_annotation.loc);
+                return self.err_reporter.selfTypeOutsideType(type_annotation.loc);
             },
             .function => |func| {
                 const type_id = try self.resolveFuncTypeAnnotation(func, current_defined_type_type_id, type_annotation.loc);

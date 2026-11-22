@@ -343,7 +343,7 @@ end
 ```
 
 - A field needs a type, a default value, or both (`auth_method = "DUSK"` infers `string`).
-- `@` means "the type being defined". A method takes `self: @` as its first parameter, or `mut self: @` to change the instance.
+- `@` means "the type being defined" and works in any type position inside a struct, enum, union or trait: method parameters (`self: @`, `mut self: @`, `other: @`), return types (`-> @`, `-> ?@`, `-> !@`, `-> SomeError!@`), local annotations (`let p: @ = @(...)`), compound types (`?@`, `[]@`, `map[string, @]`, `func(@) -> @`, `Task[@]`), and recursive fields or union payloads (`next: ?@`). Inside a generic type (`struct Stack[T]`), `@` refers to the parameterized type (`Stack[T]`). Using `@` as a type outside a struct, enum, union or trait (including inside a nested inline struct) is an error.
 
 ### Creating and using structs
 
@@ -1418,7 +1418,7 @@ io::println("${ready.go()}")                                    # 1
 
 ### Traits
 
-A trait lists methods a type must have. Its methods are signatures without a body, take `self: @` or `mut self: @` first, and `@` stands for the type that fits the trait. `[T: Shape]` lets the generic code call them.
+A trait lists methods a type must have. Its methods are signatures without a body, take `self: @` or `mut self: @` first, and `@` stands for the type that fits the trait anywhere in the signature (other parameters, return types, and compound types like `?@`, `[]@`, or `SomeError!@`). `[T: Shape]` lets the generic code call them.
 
 ```nim
 trait Shape

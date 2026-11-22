@@ -115,6 +115,11 @@ pub const CompileErrorReporter = struct {
         return error.InvalidType;
     }
 
+    pub fn selfTypeOutsideType(self: *Self, loc: Loc) CompileError {
+        self.log("'@' can only be used inside a struct, enum, union, or trait", loc);
+        return error.SelfTypeOutsideType;
+    }
+
     pub fn textExpected(self: *Self, found: []const u8, loc: Loc) CompileError {
         const start = @min(loc.start, self.src.len);
         const end = @min(loc.end + 1, self.src.len);
@@ -1235,6 +1240,7 @@ pub const CompileError = error{
     ReservedTypeName,
     CantAssignThroughOptionalChain,
     CyclicDefault,
+    SelfTypeOutsideType,
 };
 
 const std = @import("std");
