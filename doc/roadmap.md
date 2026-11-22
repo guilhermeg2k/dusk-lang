@@ -14,6 +14,7 @@
 - std::sqlite
 
 ## Version 0.18 - Toji
+- Change imports path to strings
 - Type lists take any type (`[T: int | Color]`, structs, arrays, unions; unlocks `array::index_of` / `array::contains` on enums)
 - Payload-less union variants (`union Token eof; number: int end`)
 - Bitwise operators (`&`, `|`, `^`, `<<`, `>>`)
