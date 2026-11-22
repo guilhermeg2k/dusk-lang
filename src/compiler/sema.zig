@@ -891,21 +891,44 @@ pub const SemaAnalyzer = struct {
         self.pending_signatures.getPtr(type_id).?.state = .filled;
     }
 
-    fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
+    fn ensureStructMembers(self: *Self, type_id: tt.TypeId) CompileError!void {
         const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
         const entry = self.pending_structs.getPtr(base_id) orelse return;
-        if (entry.state == .filled) return;
-        if (entry.state == .filling) {
+        const has_members = entry.state == .members_filled or entry.state == .filling_defaults or entry.state == .filled;
+        if (has_members) return;
+        if (entry.state == .filling_members) {
             return self.err_reporter.cyclicDefault(entry.symbol.identifier, entry.loc);
         }
-        entry.state = .filling;
+        entry.state = .filling_members;
         const pending = entry.*;
         const saved_module = self.enterModuleContext(pending.module);
         defer self.exitModuleContext(saved_module);
         const saved_table = self.scope.symbol_table;
         self.scope.symbol_table = self.module.root;
         defer self.scope.symbol_table = saved_table;
-        try self.fulfillStructType(pending.symbol, pending.def);
+        try self.fulfillStructMembers(pending.symbol, pending.def);
+        self.pending_structs.getPtr(base_id).?.state = .members_filled;
+    }
+
+    fn ensureStructFields(self: *Self, type_id: tt.TypeId) CompileError!void {
+        const base_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        const entry = self.pending_structs.getPtr(base_id) orelse return;
+        if (entry.state == .filled) return;
+        if (entry.state == .filling_members or entry.state == .filling_defaults) {
+            return self.err_reporter.cyclicDefault(entry.symbol.identifier, entry.loc);
+        }
+        if (entry.state == .pending) {
+            try self.ensureStructMembers(base_id);
+        }
+        const pending_entry = self.pending_structs.getPtr(base_id).?;
+        pending_entry.state = .filling_defaults;
+        const pending = pending_entry.*;
+        const saved_module = self.enterModuleContext(pending.module);
+        defer self.exitModuleContext(saved_module);
+        const saved_table = self.scope.symbol_table;
+        self.scope.symbol_table = self.module.root;
+        defer self.scope.symbol_table = saved_table;
+        try self.fulfillStructFields(pending.symbol, pending.def);
         self.pending_structs.getPtr(base_id).?.state = .filled;
     }
 
@@ -1207,15 +1230,34 @@ pub const SemaAnalyzer = struct {
     }
 
     fn fulfillStructType(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
+        try self.fulfillStructMembers(struct_symbol, struct_def);
+        try self.fulfillStructFields(struct_symbol, struct_def);
+    }
+
+    fn fulfillStructMembers(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
         const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
         try self.recordSchemaSections(blueprint_type_id, struct_def.schema_sections);
         const saved_enclosing_type = self.enclosing_type_id;
         self.enclosing_type_id = blueprint_type_id;
         defer self.enclosing_type_id = saved_enclosing_type;
+
+        const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
+        const methods = try self.createMethodSignatures(struct_def.funcs, struct_symbol);
+
+        const struct_type_ptr = self.type_table.getTypePtrById(blueprint_type_id);
+        struct_type_ptr.kind.@"struct".static_fields = static_fields;
+        struct_type_ptr.kind.@"struct".methods = methods;
+        self.type_table.syncNullableCopy(blueprint_type_id);
+    }
+
+    fn fulfillStructFields(self: *Self, struct_symbol: Symbol, struct_def: *const ast.Struct) !void {
+        const blueprint_type_id = struct_symbol.kind.defined_type.blueprint_type_id;
+        const saved_enclosing_type = self.enclosing_type_id;
+        self.enclosing_type_id = blueprint_type_id;
+        defer self.enclosing_type_id = saved_enclosing_type;
+
         var fields_in_order: std.ArrayList(tt.TypedIdentifier) = .empty;
         var fields: std.StringHashMap(tt.TypedIdentifier) = .init(self.allocator);
-        const static_fields = try self.createStaticFields(struct_def.static_fields, blueprint_type_id);
-
         for (struct_def.fields) |field| {
             const struct_field = try self.createField(field, blueprint_type_id);
             try fields_in_order.append(
@@ -1225,7 +1267,6 @@ pub const SemaAnalyzer = struct {
             try fields.put(field.identifier, struct_field);
         }
 
-        const methods = try self.createMethodSignatures(struct_def.funcs, struct_symbol);
         for (struct_def.funcs) |func_node| {
             const name = func_node.data.func.identifier;
             if (!fields.contains(name)) continue;
@@ -1241,8 +1282,6 @@ pub const SemaAnalyzer = struct {
         struct_type_ptr.kind.@"struct".fields_in_order = try fields_in_order.toOwnedSlice(self.allocator);
         struct_type_ptr.kind.@"struct".field_index_by_name = field_index_by_name;
         struct_type_ptr.kind.@"struct".fields = fields;
-        struct_type_ptr.kind.@"struct".static_fields = static_fields;
-        struct_type_ptr.kind.@"struct".methods = methods;
         self.type_table.syncNullableCopy(blueprint_type_id);
     }
 
@@ -5270,7 +5309,7 @@ pub const SemaAnalyzer = struct {
                 callee = try self.evalCallee(fn_call.target);
             } else {
                 const target = try self.evalExp(indexed.target);
-                try self.ensureStructFields(target.type_id);
+                try self.ensureStructMembers(target.type_id);
                 const fn_name = indexed.index.data.identifier;
                 if (self.genericMethodOf(target.type_id, fn_name)) |index| {
                     const generic = self.generic_functions.items[index];
@@ -5298,9 +5337,12 @@ pub const SemaAnalyzer = struct {
                     }
                     return self.err_reporter.wrongSlotCount(fn_name, 0, fn_call.type_arguments.len, exp.loc);
                 }
-                if (try self.fieldCallee(fn_call.target, target)) |field| {
-                    callee = field;
-                    break :resolve;
+                if (self.methodTypeOf(target.type_id, fn_name) == null) {
+                    try self.ensureStructFields(target.type_id);
+                    if (try self.fieldCallee(fn_call.target, target)) |field| {
+                        callee = field;
+                        break :resolve;
+                    }
                 }
                 const fn_type_id = try self.methodOrError(target.type_id, fn_name, exp.loc);
                 try self.checkMemberVisible(target.type_id, fn_name, self.file_only_methods.contains(fn_type_id), exp.loc);
@@ -7057,7 +7099,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalStaticTypeMember(self: *Self, owner_type_id: tt.TypeId, member_name: []const u8, loc: err.Loc) CompileError!*ir.Value {
-        try self.ensureStructFields(owner_type_id);
+        try self.ensureStructMembers(owner_type_id);
         const type_kind = self.type_table.getTypePtrById(owner_type_id).kind;
         switch (type_kind) {
             .@"struct" => |struct_def| {
@@ -7126,7 +7168,7 @@ pub const SemaAnalyzer = struct {
     }
 
     fn resolveExpectedMethodOnType(self: *Self, exp: *const ast.ExpNode, owner_type_id: tt.TypeId, member_name: []const u8, func_type: tt.FuncType) CompileError!?*ir.Value {
-        try self.ensureStructFields(owner_type_id);
+        try self.ensureStructMembers(owner_type_id);
         if (self.genericMethodOf(owner_type_id, member_name)) |generic_method_index| {
             const generic = self.generic_functions.items[generic_method_index];
             try self.checkMemberVisible(owner_type_id, member_name, generic.func_stmt.is_file_only, exp.loc);
@@ -7142,7 +7184,7 @@ pub const SemaAnalyzer = struct {
         }
         const indexed = target.data.indexed;
         const owner_type_id = try self.resolveStaticTypeTarget(indexed.target) orelse return null;
-        try self.ensureStructFields(owner_type_id);
+        try self.ensureStructMembers(owner_type_id);
         const member_name = indexed.index.data.identifier;
         const generic_method_index = self.genericMethodOf(owner_type_id, member_name) orelse return null;
         const generic = self.generic_functions.items[generic_method_index];
@@ -7286,8 +7328,13 @@ pub const SemaAnalyzer = struct {
     }
 
     fn indexInto(self: *Self, exp: *const ast.ExpNode, target: *ir.Value) !*ir.Value {
-        try self.ensureStructFields(target.type_id);
         const indexed_exp = exp.data.indexed;
+        const is_static_access = !indexed_exp.is_bracket and !indexed_exp.is_nullable and self.definedTypeOf(indexed_exp.target) != null;
+        if (is_static_access) {
+            try self.ensureStructMembers(target.type_id);
+        } else {
+            try self.ensureStructFields(target.type_id);
+        }
         const is_nullable = indexed_exp.is_nullable;
         const target_type = target.type_id;
 
@@ -8728,7 +8775,7 @@ const PendingStruct = struct {
     def: *const ast.Struct,
     loc: err.Loc,
     module: *ModuleScope,
-    state: enum { pending, filling, filled } = .pending,
+    state: enum { pending, filling_members, members_filled, filling_defaults, filled } = .pending,
 };
 
 const PendingSignature = struct {

@@ -32,6 +32,7 @@
 - `string::repeat` with a result too large to fit in memory (`string::repeat("ab", 9223372036854775807)`) crashed, or wrote past its memory in release builds, instead of stopping with an out-of-memory error
 - Running out of memory while waking a task that waited for a file, a stream, a network call or a child process could free that call's result twice
 - Missing required fields in struct construction (`Point()`) now report `Missing argument '<field>'` instead of `Invalid number of arguments`, and untyped `let x = null` / `let xs = [null]` now fail to compile instead of inferring an internal `null` type
+- A struct's field default values can now reference the struct's own static fields (`Config.DEFAULT`) and methods (`Bot.list_commands`, or method calls inside a default lambda) without triggering `CyclicDefault`, while genuine default-construction cycles (`x: A = A()` or mutual A/B defaults) still fail with `CyclicDefault`
 
 ## v0.16 - Shigeo
 
