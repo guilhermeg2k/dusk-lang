@@ -3847,8 +3847,8 @@ test "sema error: constant assign" {
 }
 
 test "sema error: method as a constant" {
-    try runCaseError("sema/method-as-value-constant.dsk", error.MethodAsValue);
-    try runCaseError("sema/enum-method-as-value-constant.dsk", error.MethodAsValue);
+    try runCaseError("sema/method-as-value-constant.dsk", error.InvalidConstantType);
+    try runCaseError("sema/enum-method-as-value-constant.dsk", error.InvalidConstantType);
 }
 
 test "sema error: static field not constant" {
@@ -4634,6 +4634,7 @@ test "generics: generic functions are checked where they are written" {
 
 test "function values: named functions as values, function types and calls through values" {
     try runCaseOutput("function-values.dsk", "null\n<func add>\nvalue: <func add>\n[<func add>, <func sub>]\n");
+    try runCaseOutput("unbound-method-values.dsk", "<func Counter.get>\n<func Direction.label>\n<func Value.describe>\n<func Stack[int].push>\n");
     try runCase("gc-function-values.dsk");
     try runCaseError("parser/function-type-inferred-error.dsk", error.ParserError);
     try runCaseError("sema/function-value-compare.dsk", error.CantCompare);
@@ -4644,12 +4645,16 @@ test "function values: named functions as values, function types and calls throu
     try runCaseError("sema/function-value-nullable-call.dsk", error.NullableMustBeUnwrapped);
     try runCaseError("sema/function-value-arg-count.dsk", error.InvalidNumberOfArgs);
     try runCaseError("sema/function-value-mut-arg.dsk", error.NotMutable);
+    try runCaseError("sema/unbound-method-mut-arg.dsk", error.NotMutable);
+    try runCaseError("sema/unbound-generic-method-no-type.dsk", error.GenericNeedsCall);
     try runCaseError("sema/function-value-top-level.dsk", error.TopLevelLetNotConstant);
     try runCaseError("sema/method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/enum-method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/union-method-as-value.dsk", error.MethodAsValue);
     try runCaseError("sema/struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
     try runCaseError("sema/generic-struct-field-and-method-same-name.dsk", error.FieldAndMethodSameName);
+    try runModuleCaseOutput("visibility/unbound-method-ok.dsk", "<func counter::Counter.remembered>\n");
+    try runModuleCaseError("visibility/unbound-method-private.dsk", error.NotVisible);
 }
 
 test "lambdas: func(...) expressions" {

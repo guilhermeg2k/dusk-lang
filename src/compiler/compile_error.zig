@@ -764,7 +764,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn methodAsValue(self: *Self, identifier: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Method '{s}' can't be used as a value yet: wrap the call in a lambda instead, like 'func() -> return x.{s}()'", .{ identifier, identifier }), loc);
+        self.log(try allocPrint(self.allocator, "Bound method '{s}' can't be used as a value: use 'Type.{s}' or wrap the call in a lambda like 'func() -> return x.{s}()'", .{ identifier, identifier, identifier }), loc);
         return error.MethodAsValue;
     }
 

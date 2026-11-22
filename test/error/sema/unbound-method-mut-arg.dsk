@@ -1,0 +1,13 @@
+struct Counter
+    value: int = 0
+
+    func inc(mut self: @) -> void
+        self.value = self.value + 1
+    end
+end
+
+func main() -> void
+    let c = Counter(value = 0)
+    let inc = Counter.inc
+    inc(c)
+end

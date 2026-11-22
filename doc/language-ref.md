@@ -1112,9 +1112,11 @@ A call through a value passes every argument, in order: default values and named
 
 A struct field that holds a function is called like a method: `button.on_click()`. A struct can't have a field and a method with the same name, so `x.name()` always has one meaning.
 
+A type's method without parentheses (`Type.method` or `mod::Type.method`, on structs, enums and unions) is also a function value with the method's full signature — taking the receiver first when the method has `self: @` or `mut self: @` (`Counter.add` has type `func(mut Counter, int) -> void`), or just its parameters when it has no `self`. File-only `~` methods stay `NotVisible` outside their file. Generic types and methods take their slots from the expected function type (`let push: func(mut Stack[int], int) -> void = Stack.push`) or explicit type arguments (`Stack[int].push`, `Stack[int].map_first[string]`). Bound methods on an instance (`counter.add`) still can't be used as values: use `Type.method` or wrap the call in a lambda.
+
 A generic function becomes a value when a function type fills its slots: `let same: func(int) -> int = id` makes `id[int]`. Without one, `let f = id` is an error. Builtins can't be used as values: call the builtin from a lambda or a function and use that instead.
 
-Functions can't be compared with `==` or `!=`. Interpolating a named function gives `<func add>`, and a lambda gives `<func>`.
+Functions can't be compared with `==` or `!=`. Interpolating a named function gives `<func add>`, a type method gives `<func Counter.get>`, and a lambda gives `<func>`.
 
 ### Function types
 
@@ -1908,7 +1910,7 @@ These are known gaps in v0.17. Most are planned in the [roadmap](roadmap.md).
 - **Maps**: keys can't be floats, nullables, arrays, maps, buffers, unions or functions, and struct keys match by identity only. There's no content comparison for maps (`==` is identity).
 - **Prelude names**: a top-level declaration can't use the name of a prelude builtin (`assert`, `copy`, `to_int`, ...). Standard library functions don't have this problem: they're only visible after an import, and `as` renames them.
 - **Modules**: libraries (`import "jsonc"`) and package manifests aren't supported yet, a folder can't be a module, and a module can't re-export what it imports.
-- **Function values**: builtins and methods can't be used as values (`let f = string::len`, `let f = point.length`): wrap them in a lambda. A lambda can use at most 255 variables from the functions around it.
+- **Function values**: builtins and bound instance methods can't be used as values (`let f = string::len`, `let f = point.length`): use `Type.method` for unbound methods or wrap the call in a lambda. A lambda can use at most 255 variables from the functions around it.
 - **Lambda parameter types**: in a generic call, a slot that only the expected result type fills (`let xs: []string = make(func(x) -> ...)`) doesn't reach a lambda's parameters, so that lambda needs its parameter types written.
 - **Tasks**: all tasks share one thread, and a task only gives way when it waits (`await`, `task::sleep`, or a file, stdin or network call). A running task can't be stopped from outside.
 - **Generics**: traits can't require static methods, methods with their own slots or fields, and type lists hold primitives only. A generic copy calling itself with a bigger type (`f([x])` inside `f[T]`) stops after 64 nested copies.

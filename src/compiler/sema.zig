@@ -3177,6 +3177,7 @@ pub const SemaAnalyzer = struct {
 
     fn lowerMethods(self: *Self, funcs: []const ast.StatementNode, methods: std.StringHashMap(tt.TypeId), owner_type_id: tt.TypeId) CompileError![]ir.Func {
         var lowered: std.ArrayList(ir.Func) = .empty;
+        const owner_name = try self.type_table.syntaxName(owner_type_id, self.allocator);
         for (funcs) |func_node| {
             const func_stmt = func_node.data.func;
             if (func_stmt.slots.len > 0) {
@@ -3184,7 +3185,8 @@ pub const SemaAnalyzer = struct {
                 continue;
             }
             const fn_metadata = self.type_table.getTypePtrById(methods.get(func_stmt.identifier).?).kind.function;
-            try lowered.append(self.allocator, try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, func_stmt.identifier, func_node.loc));
+            const full_name = try allocPrint(self.allocator, "{s}.{s}", .{ owner_name, func_stmt.identifier });
+            try lowered.append(self.allocator, try self.visitFnDef(&func_stmt.def, fn_metadata.uid, fn_metadata, full_name, func_node.loc));
         }
         return lowered.toOwnedSlice(self.allocator);
     }
@@ -4793,6 +4795,12 @@ pub const SemaAnalyzer = struct {
                     }
                 }
             }
+            const is_member_for_function_type = isAnyMemberAccess(exp) and base_kind == .func_type;
+            if (is_member_for_function_type) {
+                if (try self.evalExpectedMethodRef(exp, base_kind.func_type)) |method_ref| {
+                    return method_ref;
+                }
+            }
             if (base_kind == .byte) {
                 if (intConstant(exp)) |number| {
                     return self.evalByteConstant(number, exp.loc);
@@ -4928,7 +4936,12 @@ pub const SemaAnalyzer = struct {
                 return self.evalIdentifier(exp);
             },
             .fn_call => return self.evalHandledCall(exp, null),
-            .type_application => return self.err_reporter.invalidExpression("a call after type arguments", "type arguments without a call", exp.loc),
+            .type_application => |application| {
+                if (try self.evalExplicitMethodRef(application.target, application.arguments, exp.loc)) |method_ref| {
+                    return method_ref;
+                }
+                return self.err_reporter.invalidExpression("a call after type arguments", "type arguments without a call", exp.loc);
+            },
             .try_exp => {
                 return self.evalTry(exp, null);
             },
@@ -7010,7 +7023,266 @@ pub const SemaAnalyzer = struct {
     }
 
     fn evalIndexedExp(self: *Self, exp: *const ast.ExpNode) !*ir.Value {
-        return self.indexInto(exp, try self.evalExp(exp.data.indexed.target));
+        const indexed = exp.data.indexed;
+        const is_member_access = !indexed.is_bracket and !indexed.is_nullable and indexed.index.data == .identifier;
+        if (is_member_access) {
+            const member_name = indexed.index.data.identifier;
+            if (self.genericTypeIndexOf(indexed.target)) |generic_index| {
+                const opaque_copy = self.generic_types.items[generic_index].opaque_copy orelse @panic("evalIndexedExp: generic type has no opaque copy");
+                const opaque_type_id = opaque_copy.kind.defined_type.blueprint_type_id;
+                if (self.methodTypeOf(opaque_type_id, member_name) != null or self.genericMethodOf(opaque_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                }
+            }
+            if (indexed.target.data != .identifier) {
+                if (try self.resolveStaticTypeTarget(indexed.target)) |owner_type_id| {
+                    return self.evalStaticTypeMember(owner_type_id, member_name, exp.loc);
+                }
+            }
+        }
+        const is_single_generic_method_arg = indexed.is_bracket and !indexed.is_nullable and isAnyMemberAccess(indexed.target);
+        if (is_single_generic_method_arg) {
+            if (try self.resolveStaticTypeTarget(indexed.target.data.indexed.target)) |owner_type_id| {
+                const member_name = indexed.target.data.indexed.index.data.identifier;
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    const arg = try self.typeArgumentFromExpression(indexed.index);
+                    const args = [_]*ast.TypeAnnotation{arg};
+                    if (try self.evalExplicitMethodRef(indexed.target, &args, exp.loc)) |method_ref| {
+                        return method_ref;
+                    }
+                }
+            }
+        }
+        return self.indexInto(exp, try self.evalExp(indexed.target));
+    }
+
+    fn evalStaticTypeMember(self: *Self, owner_type_id: tt.TypeId, member_name: []const u8, loc: err.Loc) CompileError!*ir.Value {
+        try self.ensureStructFields(owner_type_id);
+        const type_kind = self.type_table.getTypePtrById(owner_type_id).kind;
+        switch (type_kind) {
+            .@"struct" => |struct_def| {
+                if (struct_def.static_fields.get(member_name)) |constant| {
+                    return constant.default_value.?;
+                }
+                if (struct_def.methods.get(member_name)) |fn_type_id| {
+                    return self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, loc);
+                }
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, loc);
+                }
+                if (struct_def.fields.contains(member_name)) {
+                    return self.err_reporter.invalidStaticStructField(struct_def.identifier, member_name, loc);
+                }
+                return self.err_reporter.invalidStructField(struct_def.identifier, member_name, loc);
+            },
+            .@"enum" => |enum_def| {
+                if (enum_def.variants.get(member_name)) |value| {
+                    return ir.Value.init(self.allocator, .{
+                        .data = .{ .i_int = value },
+                        .type_id = owner_type_id,
+                    });
+                }
+                if (enum_def.static_fields.get(member_name)) |constant| {
+                    return constant.default_value.?;
+                }
+                if (enum_def.methods.get(member_name)) |fn_type_id| {
+                    return self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, loc);
+                }
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, loc);
+                }
+                return self.err_reporter.invalidEnumVariant(enum_def.identifier, member_name, loc);
+            },
+            .@"union" => |union_def| {
+                if (union_def.static_fields.get(member_name)) |constant| {
+                    return constant.default_value.?;
+                }
+                if (union_def.methods.get(member_name)) |fn_type_id| {
+                    return self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, loc);
+                }
+                if (self.genericMethodOf(owner_type_id, member_name) != null) {
+                    return self.err_reporter.genericNeedsCall(member_name, loc);
+                }
+                return self.err_reporter.invalidStaticUnionField(union_def.identifier, member_name, loc);
+            },
+            else => @panic("evalStaticTypeMember: owner isn't a struct, enum or union"),
+        }
+    }
+
+    fn evalUnboundMethodRef(self: *Self, owner_type_id: tt.TypeId, member_name: []const u8, fn_type_id: tt.TypeId, loc: err.Loc) CompileError!*ir.Value {
+        try self.checkMemberVisible(owner_type_id, member_name, self.file_only_methods.contains(fn_type_id), loc);
+        return self.evalFuncRef(fn_type_id, loc);
+    }
+
+    fn evalExpectedMethodRef(self: *Self, exp: *const ast.ExpNode, func_type: tt.FuncType) CompileError!?*ir.Value {
+        const indexed = exp.data.indexed;
+        const member_name = indexed.index.data.identifier;
+        if (self.genericTypeIndexOf(indexed.target)) |generic_type_index| {
+            const owner_type_id = try self.inferGenericTypeForMethod(generic_type_index, member_name, func_type, exp.loc) orelse return null;
+            return try self.resolveExpectedMethodOnType(exp, owner_type_id, member_name, func_type);
+        }
+        const owner_type_id = try self.resolveStaticTypeTarget(indexed.target) orelse return null;
+        return try self.resolveExpectedMethodOnType(exp, owner_type_id, member_name, func_type);
+    }
+
+    fn resolveExpectedMethodOnType(self: *Self, exp: *const ast.ExpNode, owner_type_id: tt.TypeId, member_name: []const u8, func_type: tt.FuncType) CompileError!?*ir.Value {
+        try self.ensureStructFields(owner_type_id);
+        if (self.genericMethodOf(owner_type_id, member_name)) |generic_method_index| {
+            const generic = self.generic_functions.items[generic_method_index];
+            try self.checkMemberVisible(owner_type_id, member_name, generic.func_stmt.is_file_only, exp.loc);
+            return try self.evalGenericFuncRef(exp, generic_method_index, func_type);
+        }
+        const fn_type_id = self.methodTypeOf(owner_type_id, member_name) orelse return null;
+        return try self.evalUnboundMethodRef(owner_type_id, member_name, fn_type_id, exp.loc);
+    }
+
+    fn evalExplicitMethodRef(self: *Self, target: *const ast.ExpNode, type_arguments: []const *ast.TypeAnnotation, loc: err.Loc) CompileError!?*ir.Value {
+        if (!isAnyMemberAccess(target)) {
+            return null;
+        }
+        const indexed = target.data.indexed;
+        const owner_type_id = try self.resolveStaticTypeTarget(indexed.target) orelse return null;
+        try self.ensureStructFields(owner_type_id);
+        const member_name = indexed.index.data.identifier;
+        const generic_method_index = self.genericMethodOf(owner_type_id, member_name) orelse return null;
+        const generic = self.generic_functions.items[generic_method_index];
+        try self.checkMemberVisible(owner_type_id, member_name, generic.func_stmt.is_file_only, loc);
+        if (type_arguments.len != generic.func_stmt.slots.len) {
+            return self.err_reporter.wrongSlotCount(member_name, generic.func_stmt.slots.len, type_arguments.len, loc);
+        }
+        const args = try self.allocator.alloc(tt.TypeId, type_arguments.len);
+        for (type_arguments, args) |annotation, *arg| {
+            arg.* = try self.resolveTypeAnnotation(annotation, self.enclosing_type_id);
+        }
+        const copy_symbol = try self.instantiateGenericFunction(generic_method_index, args, loc);
+        return try self.evalFuncRef(copy_symbol.type_id, loc);
+    }
+
+    fn inferGenericTypeForMethod(self: *Self, generic_type_index: usize, member_name: []const u8, func_type: tt.FuncType, loc: err.Loc) CompileError!?tt.TypeId {
+        const generic = self.generic_types.items[generic_type_index];
+        const funcs = switch (generic.def) {
+            .@"struct" => |s| s.funcs,
+            .@"union" => |u| u.funcs,
+        };
+        const method_stmt: ast.FuncStmt = for (funcs) |func_node| {
+            if (std.mem.eql(u8, func_node.data.func.identifier, member_name)) {
+                break func_node.data.func;
+            }
+        } else return null;
+
+        const bindings = try self.allocator.alloc(?tt.TypeId, generic.slots.len);
+        @memset(bindings, null);
+        if (method_stmt.def.params.len == func_type.params.len) {
+            for (method_stmt.def.params, func_type.params) |param, expected_param| {
+                const annotation = param.type_annotation orelse continue;
+                try self.inferGenericTypeMethodSlots(annotation, expected_param.type_id, generic_type_index, generic.slots, bindings, loc);
+            }
+        }
+        if (method_stmt.def.return_type) |return_annotation| {
+            const return_type = self.type_table.getTypePtrById(func_type.return_type_id);
+            const expected_return = if (return_type.kind == .error_union) return_type.kind.error_union.payload else func_type.return_type_id;
+            try self.inferGenericTypeMethodSlots(return_annotation, expected_return, generic_type_index, generic.slots, bindings, loc);
+        }
+
+        const args = try self.allocator.alloc(tt.TypeId, bindings.len);
+        for (bindings, generic.slots, 0..) |binding, slot, slot_index| {
+            args[slot_index] = binding orelse return self.err_reporter.cantInferSlot(slot.identifier, member_name, loc);
+        }
+        const copy_symbol = try self.instantiateGenericType(generic_type_index, args, loc);
+        return copy_symbol.kind.defined_type.blueprint_type_id;
+    }
+
+    fn inferGenericTypeMethodSlots(
+        self: *Self,
+        annotation: *const ast.TypeAnnotation,
+        expected_type_id: tt.TypeId,
+        generic_type_index: usize,
+        slots: []const ast.Slot,
+        bindings: []?tt.TypeId,
+        loc: err.Loc,
+    ) CompileError!void {
+        var type_id = expected_type_id;
+        if (annotation.is_nullable) {
+            if (self.type_table.getTypePtrById(type_id).kind == .null) return;
+            type_id = self.type_table.typeIdByNullableTypeId.get(type_id) orelse type_id;
+        }
+        switch (annotation.type) {
+            .type_self => {
+                const copy = self.copied_types.get(type_id) orelse return;
+                if (copy.generic != generic_type_index or copy.args.len != slots.len) return;
+                for (copy.args, 0..) |copied_arg, i| {
+                    try self.bindSlot(slots, bindings, i, copied_arg, loc);
+                }
+            },
+            .array => |inner| {
+                const kind = self.type_table.getTypePtrById(type_id).kind;
+                if (kind != .array) return;
+                try self.inferGenericTypeMethodSlots(inner, kind.array, generic_type_index, slots, bindings, loc);
+            },
+            .function => |fn_annotation| {
+                const kind = self.type_table.getTypePtrById(type_id).kind;
+                if (kind != .func_type or fn_annotation.params.len != kind.func_type.params.len) return;
+                for (fn_annotation.params, kind.func_type.params) |param, expected_param| {
+                    try self.inferGenericTypeMethodSlots(param.type, expected_param.type_id, generic_type_index, slots, bindings, loc);
+                }
+                const return_type = self.type_table.getTypePtrById(kind.func_type.return_type_id);
+                const expected_return = if (return_type.kind == .error_union) return_type.kind.error_union.payload else kind.func_type.return_type_id;
+                try self.inferGenericTypeMethodSlots(fn_annotation.return_type, expected_return, generic_type_index, slots, bindings, loc);
+            },
+            else => try self.inferSlots(annotation, expected_type_id, slots, bindings, loc),
+        }
+    }
+
+    fn genericTypeIndexOf(self: *Self, exp: *const ast.ExpNode) ?usize {
+        if (exp.data != .identifier) return null;
+        const sym = self.scope.symbol_table.get(exp.data.identifier) orelse return null;
+        if (sym.kind != .generic_type) return null;
+        return sym.kind.generic_type;
+    }
+
+    fn resolveStaticTypeTarget(self: *Self, exp: *const ast.ExpNode) CompileError!?tt.TypeId {
+        switch (exp.data) {
+            .identifier => |name| {
+                const sym = self.scope.symbol_table.get(name) orelse return null;
+                if (sym.kind != .defined_type) return null;
+                return sym.kind.defined_type.blueprint_type_id;
+            },
+            .type_application => |application| {
+                const generic_index = self.genericTypeIndexOf(application.target) orelse return null;
+                return try self.instantiateGenericTypeFromAnnotations(generic_index, application.arguments, exp.loc);
+            },
+            .indexed => |indexed| {
+                const is_single_type_arg = indexed.is_bracket and !indexed.is_nullable;
+                if (!is_single_type_arg) return null;
+                const generic_index = self.genericTypeIndexOf(indexed.target) orelse return null;
+                const arg = try self.typeArgumentFromExpression(indexed.index);
+                const args = [_]*ast.TypeAnnotation{arg};
+                return try self.instantiateGenericTypeFromAnnotations(generic_index, &args, exp.loc);
+            },
+            else => return null,
+        }
+    }
+
+    fn instantiateGenericTypeFromAnnotations(self: *Self, generic_index: usize, annotations: []const *ast.TypeAnnotation, loc: err.Loc) CompileError!tt.TypeId {
+        const generic = self.generic_types.items[generic_index];
+        if (annotations.len != generic.slots.len) {
+            return self.err_reporter.wrongSlotCount(generic.identifier, generic.slots.len, annotations.len, loc);
+        }
+        const args = try self.allocator.alloc(tt.TypeId, annotations.len);
+        for (annotations, args) |annotation, *arg| {
+            arg.* = try self.resolveTypeAnnotation(annotation, self.enclosing_type_id);
+        }
+        const symbol = try self.instantiateGenericType(generic_index, args, loc);
+        return symbol.kind.defined_type.blueprint_type_id;
+    }
+
+    fn methodTypeOf(self: *Self, type_id: tt.TypeId, name: []const u8) ?tt.TypeId {
+        return switch (self.type_table.getTypePtrById(type_id).kind) {
+            .@"struct" => |s| s.methods.get(name),
+            .@"enum" => |e| e.methods.get(name),
+            .@"union" => |u| u.methods.get(name),
+            else => null,
+        };
     }
 
     fn indexInto(self: *Self, exp: *const ast.ExpNode, target: *ir.Value) !*ir.Value {
@@ -7073,8 +7345,9 @@ pub const SemaAnalyzer = struct {
                         const field_member = struct_def.fields.get(member_name);
                         const static_field_member = struct_def.static_fields.get(member_name);
                         const method_member = struct_def.methods.get(member_name);
+                        const has_generic_method = self.genericMethodOf(target_type, member_name) != null;
 
-                        if (field_member == null and static_field_member == null and method_member == null) {
+                        if (field_member == null and static_field_member == null and method_member == null and !has_generic_method) {
                             return self.err_reporter.invalidStructField(struct_def.identifier, member_name, exp.loc);
                         }
                         if (field_member) |field| {
@@ -7082,6 +7355,12 @@ pub const SemaAnalyzer = struct {
                         }
                         if (field_member == null) {
                             if (static_field_member) |constant| return constant.default_value.?;
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                if (method_member) |fn_type_id| {
+                                    return self.evalUnboundMethodRef(target_type, member_name, fn_type_id, exp.loc);
+                                }
+                                return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                            }
                             return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
                         if (self.definedTypeOf(indexed_exp.target) != null) {
@@ -7121,7 +7400,16 @@ pub const SemaAnalyzer = struct {
 
                         if (enum_def.static_fields.get(member_name)) |constant| return constant.default_value.?;
 
-                        if (enum_def.methods.contains(member_name)) {
+                        if (enum_def.methods.get(member_name)) |fn_type_id| {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.evalUnboundMethodRef(target_type, member_name, fn_type_id, exp.loc);
+                            }
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
+                        if (self.genericMethodOf(target_type, member_name) != null) {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                            }
                             return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
 
@@ -7136,12 +7424,20 @@ pub const SemaAnalyzer = struct {
                 return switch (indexed_exp.index.data) {
                     .identifier => |member_name| {
                         if (union_def.static_fields.get(member_name)) |constant| return constant.default_value.?;
+                        if (union_def.methods.get(member_name)) |fn_type_id| {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.evalUnboundMethodRef(target_type, member_name, fn_type_id, exp.loc);
+                            }
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
+                        if (self.genericMethodOf(target_type, member_name) != null) {
+                            if (self.definedTypeOf(indexed_exp.target) != null) {
+                                return self.err_reporter.genericNeedsCall(member_name, exp.loc);
+                            }
+                            return self.err_reporter.methodAsValue(member_name, exp.loc);
+                        }
                         if (self.definedTypeOf(indexed_exp.target) != null) {
                             return self.err_reporter.invalidStaticUnionField(union_def.identifier, member_name, exp.loc);
-                        }
-                        // reading a variant is always ?T: null when it isn't the active one
-                        if (union_def.methods.contains(member_name)) {
-                            return self.err_reporter.methodAsValue(member_name, exp.loc);
                         }
                         const variant_type_id = union_def.variants.get(member_name) orelse {
                             return self.err_reporter.invalidUnionMember(union_def.identifier, member_name, exp.loc);
