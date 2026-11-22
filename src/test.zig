@@ -32,6 +32,10 @@ test "sema: @ works in any type position inside structs, enums, unions and trait
     try runCaseError("sema/self-type-trait-param-mismatch.dsk", error.DoesntFitTrait);
 }
 
+test "string: from_codepoint encodes valid Unicode scalars and rejects invalid ones" {
+    try runCase("string-from-codepoint.dsk");
+}
+
 test "sema: anonymous coercions preserve private-field visibility" {
     try runCase("anonymous-private-same-module.dsk");
     try runCaseError("sema/time-timestamp-anonymous-forge.dsk", error.NotVisible);

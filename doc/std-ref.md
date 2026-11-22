@@ -132,6 +132,7 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 | `to_int(text)`              | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
 | `to_float(text)`            | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
 | `from_bytes(data)`          | `StringError!string`    | Copies a buffer into a new string; fails with `StringError.InvalidUtf8` if it isn't valid UTF-8.                                                                  |
+| `from_codepoint(codepoint)` | `StringError!string`    | Encodes a Unicode scalar value (`0`..`0x10FFFF`, excluding surrogates `0xD800`..`0xDFFF`) as a 1-to-4-byte UTF-8 string; fails with `StringError.InvalidUtf8` otherwise. |
 
 Use `string::compare` for string fields in custom sorting: `array::sort_by(players, func(a, b) -> return string::compare(a.name, b.name) < 0)`. It compares bytes without case folding or locale rules.
 
@@ -1138,7 +1139,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | `ArrayError.OutOfRange` | `insert`, `remove` or `slice` outside the array. |
 | `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character; `string::byte_at` / `string::char_at` with an index outside the string. |
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
-| `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8. |
+| `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8, or `string::from_codepoint` with a value outside `0`..`0x10FFFF` or in the surrogate range `0xD800`..`0xDFFF`. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |
 | `BufferError.OutOfRange` | `buffer::put`, `buffer::put_bytes` or `buffer::slice` with bounds outside the buffer (or `start > stop`). |
 
