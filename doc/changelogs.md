@@ -49,6 +49,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - `task::sleep` with a negative time (a deadline already passed) no longer stops the program: it acts like `task::sleep(0)`
 - `@` ("the current enclosing type") now works in any type position inside structs, enums, unions and traits: method return types (`-> @`, `-> ?@`, `-> !@`, `-> SomeError!@`), non-`self` parameters, local variable annotations inside methods (`let p: @ = @(...)`), compound types (`[]@`, `map[string, @]`, `func(@) -> @`, `Task[@]`), generic types, and recursive fields (`next: ?@`). Using `@` as a type outside a type or trait declaration is a `SelfTypeOutsideType` error
 - `std/string` adds `string::from_codepoint(codepoint)` to encode a Unicode scalar value (`0`..`0x10FFFF`, excluding surrogates `0xD800`..`0xDFFF`) into a 1-to-4-byte UTF-8 string, failing with `StringError.InvalidUtf8` for invalid code points
+- `string::byte_at` returns `?byte` and `string::char_at` returns `?string`. Both return `null` for an out-of-range index
 - Breaking: `import` paths are now plain double-quoted string literals (`import "std/io"`, `import "@/rss/rss-item-cache" as cache`), allowing hyphens, keywords and other filesystem characters in module filenames and folders. When the last path segment isn't a valid Dusk identifier, give it an alias with `as <name>` or select names directly with `: ...` (which skips binding a module namespace). Interpolated strings, empty paths, empty segments, trailing slashes and `..` are rejected at compile time
 
 ### Fixes

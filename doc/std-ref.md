@@ -112,8 +112,8 @@ Positions are **byte offsets**, the same unit as `string::len(s)` and `string::b
 | `char_count(text: string)` | `int` | Number of characters (Unicode code points). |
 | `concat(a: string, b: string)` | `string` | `b` after `a`. |
 | `join(parts: []string, sep: string = "")` | `string` | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array. |
-| `byte_at(text: string, index: int)` | `StringError!byte` | The byte at byte offset `index`. |
-| `char_at(text: string, index: int)` | `StringError!string` | The `index`-th character, as a one-character string (`string::char_at("olá", 2)` is `"á"`). Scans from the start. |
+| `byte_at(text: string, index: int)` | `?byte` | The byte at byte offset `index`, or `null` if the index is out of range. |
+| `char_at(text: string, index: int)` | `?string` | The `index`-th character as a one-character string (`string::char_at("olá", 2)` gives `"á"`), or `null` if the index is out of range. Scans from the start. |
 | `find(text: string, needle: string, start: int = 0)` | `?int` | Byte offset of the first match at or after `start`, or `null` for no match, an empty needle, or a start outside the string. Negative starts return `null`. |
 | `find_reverse(text: string, needle: string, start: ?int = null)` | `?int` | Byte offset of the rightmost match starting at or before `start`. Omitted/null starts search from the end; past-end starts search from the end too. Negative starts, no match, or an empty needle return `null`. Overlapping matches count. |
 | `compare(a: string, b: string)` | `int` | Lexicographic UTF-8 byte ordering: exactly `-1` if `a` comes before `b`, `0` if equal, or `1` if it comes after. Case-sensitive, matching `array::sort` on strings. |
@@ -1137,7 +1137,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | :---- | :--- |
 | `ArrayError.Empty` | `pop` on an empty array. |
 | `ArrayError.OutOfRange` | `insert`, `remove` or `slice` outside the array. |
-| `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character; `string::byte_at` / `string::char_at` with an index outside the string. |
+| `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character. |
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8, or `string::from_codepoint` with a value outside `0`..`0x10FFFF` or in the surrogate range `0xD800`..`0xDFFF`. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |

@@ -19,8 +19,8 @@ extern func contains(text: string, needle: string) -> bool
 extern func starts_with(text: string, prefix: string) -> bool
 extern func ends_with(text: string, suffix: string) -> bool
 extern func count(text: string, needle: string) -> int
-extern func byte_at(text: string, index: int) -> StringError!byte
-extern func char_at(text: string, index: int) -> StringError!string
+extern func byte_at(text: string, index: int) -> ?byte
+extern func char_at(text: string, index: int) -> ?string
 extern func trim(text: string) -> string
 extern func trim_start(text: string) -> string
 extern func trim_end(text: string) -> string

@@ -184,17 +184,23 @@ fn strCount(_: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .int64 = @intCast(std.mem.count(u8, bytesArg(args, 0), needle)) });
 }
 
-fn strByteAt(_: *VM, args: []v.Value) anyerror!NativeResult {
+fn strByteAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const index = args[1].int64;
-    if (index < 0 or index >= text.len) return fail(StringError.OutOfRange);
-    return ok(.{ .int64 = text[@intCast(index)] });
+    const is_out_of_range = index < 0 or index >= text.len;
+    if (is_out_of_range) {
+        return ok(v.NULL_VALUE);
+    }
+    const byte = text[@intCast(index)];
+    return ok(try vm.allocNullBox(.{ .int64 = byte }, .int64));
 }
 
 fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const wanted = args[1].int64;
-    if (wanted < 0) return fail(StringError.OutOfRange);
+    if (wanted < 0) {
+        return ok(v.NULL_VALUE);
+    }
     var characters = Pieces{ .text = text, .separator = "" };
     var position: i64 = 0;
     while (characters.next()) |character| : (position += 1) {
@@ -204,7 +210,7 @@ fn strCharAt(vm: *VM, args: []v.Value) anyerror!NativeResult {
         @memcpy(result.mutableSlice(), bytesArg(args, 0)[start..][0..character.len]);
         return stringResult(result);
     }
-    return fail(StringError.OutOfRange);
+    return ok(v.NULL_VALUE);
 }
 
 fn strTrim(vm: *VM, args: []v.Value) anyerror!NativeResult {

@@ -180,12 +180,14 @@ io::println("Moon: \u{1F319}")
 io::println("A literal backslash: \\")
 ```
 
-Strings can't be indexed with `s[i]`. Use `string::byte_at(s, i)` for the byte at a byte offset, or `string::char_at(s, i)` for the `i`-th character (see [std/string](std-ref.md#stdstring)). `for s: b, i do` loops over a string's bytes. Strings are immutable; use a buffer to change bytes.
+Strings can't be indexed with `s[i]`. Use `string::byte_at(s, i)` for the byte at a byte offset, or `string::char_at(s, i)` for the `i`-th character. Both return `null` if the index is out of range. See [std/string](std-ref.md#stdstring). `for s: b, i do` loops over a string's bytes. Strings are immutable; use a buffer to change bytes.
 
 ```nim
 let word = "olá"
-io::println("${try string::byte_at(word, 0)}")   # 111 ('o')
-io::println(try string::char_at(word, 2))   # á
+if string::byte_at(word, 0): b then
+    io::println("$b")            # 111 ('o')
+end
+io::println(string::char_at(word, 2) orelse "")   # á
 for word: b, i do                # 4 bytes: "á" is two bytes in UTF-8
     io::println("$i: $b")
 end
