@@ -127,7 +127,7 @@ func check_get(listener: net::TcpListener) -> !void
     assert(has_line(received, "Accept: text/plain"))
     assert(has_line(received, "X-Trace: abc"))
     assert(has_line(received, "Host: 127.0.0.1:${listener.port()}"))
-    assert(has_line(received, "User-Agent: dusk/0.16"))
+    assert(has_line(received, "User-Agent: dusk-http-client"))
     assert(!has_header_named(received, "connection"))
     assert(!has_line(received, "Content-Length: 0"))
     assert(resp.status == 200)

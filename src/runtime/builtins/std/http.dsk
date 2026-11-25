@@ -449,6 +449,7 @@ extern func ~is_header_name(text: string) -> bool
 extern func ~is_header_value(text: string) -> bool
 extern func ~stream_start_tunneled_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~base64(text: string) -> string
+extern func ~user_agent() -> string
 extern func ~encoded_url(text: string) -> string
 extern func ~is_loopback_host(host: string) -> bool
 extern func ~stream_forbid_reuse(handle: int) -> void
@@ -461,7 +462,6 @@ extern func ~own(kind: int, handle: int) -> resource
 extern func ~release(owner: ?resource) -> void
 extern func ~invalid_compression_level(level: int) -> void
 
-let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
 let ~REQUEST_DRAIN_LIMIT = 65536
 let ~JOINED_BODY_LIMIT = 65536
@@ -1083,7 +1083,7 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
         append(lines, "Host: ${host_header(target)}")
     end
     if !map::has(given, "user-agent") then
-        append(lines, "User-Agent: $USER_AGENT")
+        append(lines, "User-Agent: ${user_agent()}")
     end
     if asks_for_encoding(exchange) then
         append(lines, "Accept-Encoding: gzip, deflate")
