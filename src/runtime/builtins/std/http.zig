@@ -65,7 +65,6 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "is_method", Binding{ .native = &isMethod } },
     .{ "is_header_name", Binding{ .native = &isHeaderName } },
     .{ "is_header_value", Binding{ .native = &isHeaderValue } },
-    .{ "body_given_twice", Binding{ .native = &bodyGivenTwice } },
     .{ "invalid_compression_level", Binding{ .native = &invalidCompressionLevel } },
 });
 
@@ -421,10 +420,6 @@ fn isHeaderValue(_: *VM, args: []v.Value) anyerror!NativeResult {
         }
     }
     return ok(.{ .bool = true });
-}
-
-fn bodyGivenTwice(_: *VM, _: []v.Value) anyerror!NativeResult {
-    return RuntimeErrorReporter.httpBodyGivenTwice();
 }
 
 fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {

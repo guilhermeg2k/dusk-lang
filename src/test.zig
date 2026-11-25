@@ -424,7 +424,6 @@ test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_q
 
 test "http: requests, response streams and the connection pool over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https, reuse and retry, gzip)" {
     try runCase("http-client.dsk");
-    try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
 test "http: max_connections_per_host caps connections in use per host (waiting in line, reuse counted, timeouts while waiting)" {

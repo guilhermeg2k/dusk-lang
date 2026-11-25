@@ -834,7 +834,7 @@ func main() -> !void
     let user = try resp.text()
 
     let created = try http::request("https://api.example.com/users", method = "POST",
-        body = user,
+        body = @(text = user),
         headers = {"Content-Type": "application/json", "Authorization": "Bearer secret"})
     io::println("${created.status} ${created.headers.get("location") orelse "-"}")
 end
@@ -842,22 +842,30 @@ end
 
 | Function | Returns |
 | :------- | :------ |
-| `request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1)` | `HttpError!Response` |
-| `open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1)` | `HttpError!ResponseStream` |
+| `request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true)` | `HttpError!Response` |
+| `open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true)` | `HttpError!ResponseStream` |
 
 | Parameter | Description |
 | :-------- | :---------- |
 | `url` | An absolute `http://` or `https://` URL. Spaces, non-ASCII characters and other characters a URL can't hold (`"`, `<`, `>`, `{`...) in the path, query and fragment are percent-encoded for you (`/my files/café` is sent as `/my%20files/caf%C3%A9`); `%XX` already there is kept. Credentials in it (`https://user:pass@host/`, percent-encoded) are sent as `Authorization: Basic ...` unless `headers` has an `Authorization`, and dropped when a redirect goes to another host, like that header. |
 | `method` | Any HTTP method, in uppercase: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"`... Lowercase letters, spaces and other characters fail with `InvalidMethod`. |
 | `headers` | Request headers, as a `map[string, string]`. Names and values are checked before anything is sent: a name with spaces or other characters a header name can't have, or a value with a line break or another control character, fails with `InvalidHeader`. |
-| `body` | Text to send. |
-| `body_bytes` | Bytes to send. |
-| `body_stream`, `body_length` | A body written piece by piece, for uploads too big to hold in memory or made as they go: a `func(mut http::BodyWriter) -> io::IoError!void`, called after the head is sent, with the same writer a server's `http::stream` gets (`write`, `write_bytes`, `flush`, fits `io::Writer`). With `body_length = -1` the body is sent chunked; with a length it's sent with `Content-Length`, and writing more or less fails the request with `Other`. An error the function returns fails the request too (mapped like a connection error). Giving more than one of `body`, `body_bytes` and `body_stream` is a runtime error. |
+| `body` | What to send, as an `http::Body` (see below). `null` sends no body. |
 | `query` | Entries to add to the URL's query, encoded with `url::encode`: `query = {"q": "dusk lang"}` on `https://example.com/search?lang=en` asks for `/search?lang=en&q=dusk%20lang`. |
 | `timeout_ms` | The time the whole call may take: looking up the name, connecting, the TLS handshake, sending the request, every redirect, and for `request`, reading the whole body. `-1` waits forever. |
 | `max_redirects` | How many redirects to follow (see below). |
 | `max_body` | The largest body `request` reads, in bytes, after decompression (64 MiB by default). A larger one fails with `BodyTooLarge`. |
 | `ca`, `verify` | How `https` servers are checked, as for `net::tls_connect` (see [TLS](#tls)): `ca` trusts only the authorities in that PEM text, `verify = false` skips the check. |
+
+**`Body`** is a union with one variant per kind of body, named like the server's response builders. Where a `Body` is expected, `@(...)` builds one: `body = @(text = json)`.
+
+| Variant | Payload | Sends |
+| :------ | :------ | :---- |
+| `text` | `string` | The text's bytes. |
+| `bytes` | `buffer` | The buffer's bytes: images, archives, any binary data. |
+| `stream` | `http::BodyStream` | A body written piece by piece, for uploads too big to hold in memory or made as they go. |
+
+A `BodyStream` has two fields. `write` is a `func(mut http::BodyWriter) -> io::IoError!void`, called after the head is sent, with the same writer a server's `http::stream` gets (`write`, `write_bytes`, `flush`, fits `io::Writer`). `length` defaults to `-1`, which sends the body chunked; with a length it's sent with `Content-Length`, and writing more or less fails the request with `Other`. An error `write` returns fails the request too (mapped like a connection error).
 
 The request gets `Host`, `User-Agent: dusk/0.16` and `Content-Length` (when there's a body, and `0` for a `POST`, `PUT` or `PATCH` without one) unless `headers` has them, plus `Accept-Encoding: gzip, deflate` (see Compression). A `Content-Length` in `headers` is replaced by the real length, and `Transfer-Encoding` isn't allowed (`InvalidHeader`). The URL's `#fragment` is never sent. `Content-Type` is never guessed: set it for the body you send.
 
@@ -929,21 +937,21 @@ A body that ends before its announced length, or that breaks the chunked format,
 
 ```nim
 let mut file = try fs::open("backup.tar")
-let resp = try http::request("https://example.com/backups", method = "PUT", body_length = try file.size(),
-    body_stream = func(mut out: http::BodyWriter) -> io::IoError!void
+let resp = try http::request("https://example.com/backups", method = "PUT",
+    body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
         let sent = try io::copy(file, out)
-    end)
+    end, length = try file.size())))
 file.close()
 ```
 
-A request with a `body_stream`, or a body of 1 MiB or more, asks the server first with `Expect: 100-continue` and waits up to a second for its go-ahead (servers that never answer it get the body after that second). A server that answers right away with a final status (`401`, `413`...) gets no body: the function isn't called, the response is returned as usual and the connection isn't reused. Setting `Expect` in `headers` turns this off. A streamed body can't be sent twice, so a `307` or `308` redirect is returned instead of followed, and a stale kept connection isn't retried.
+A request with a `stream` body, or a body of 1 MiB or more, asks the server first with `Expect: 100-continue` and waits up to a second for its go-ahead (servers that never answer it get the body after that second). A server that answers right away with a final status (`401`, `413`...) gets no body: the function isn't called, the response is returned as usual and the connection isn't reused. Setting `Expect` in `headers` turns this off. A streamed body can't be sent twice, so a `307` or `308` redirect is returned instead of followed, and a stale kept connection isn't retried.
 
 **Clients.** An `http::Client` keeps settings for many requests to the same service: a base URL, headers sent with every request, and the defaults for the other settings. Build one with the fields you need; the others keep the defaults of `http::request`.
 
 ```nim
 let mut api = http::Client(base_url = "https://api.example.com/v1", headers = {"Authorization": "Bearer $token"}, timeout_ms = 5000)
 let user = try api.request("/users/7")
-let created = try api.request("/users", method = "POST", body = json, headers = {"Content-Type": http::ContentType.JSON})
+let created = try api.request("/users", method = "POST", body = @(text = json), headers = {"Content-Type": http::ContentType.JSON})
 let mut export = try api.open("/export.csv")
 api.headers["X-Trace"] = trace_id
 ```

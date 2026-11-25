@@ -51,6 +51,7 @@ Started v0.16 development: updated the CLI version to `0.16.0-devel`.
 - `std/string` adds `string::from_codepoint(codepoint)` to encode a Unicode scalar value (`0`..`0x10FFFF`, excluding surrogates `0xD800`..`0xDFFF`) into a 1-to-4-byte UTF-8 string, failing with `StringError.InvalidUtf8` for invalid code points
 - `string::byte_at` returns `?byte` and `string::char_at` returns `?string`. Both return `null` for an out-of-range index
 - Breaking: `import` paths are now plain double-quoted string literals (`import "std/io"`, `import "@/rss/rss-item-cache" as cache`), allowing hyphens, keywords and other filesystem characters in module filenames and folders. When the last path segment isn't a valid Dusk identifier, give it an alias with `as <name>` or select names directly with `: ...` (which skips binding a module namespace). Interpolated strings, empty paths, empty segments, trailing slashes and `..` are rejected at compile time
+- Breaking: `http::request`, `http::open` and `http::Client`'s `request` / `open` take the body as one `body: ?http::Body` union instead of `body`, `body_bytes`, `body_stream` and `body_length`: `body = @(text = json)`, `body = @(bytes = data)` or `body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void ... end, length = size))` (`http::BodyStream`, `length` defaults to `-1` for chunked). Giving two bodies at once is now a compile error instead of a runtime error
 
 ### Fixes
 
