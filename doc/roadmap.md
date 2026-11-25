@@ -29,6 +29,7 @@
 - Dead code check after `return`
 - `std/time` calendar fields (year/month/day/hour/minute/second/weekday, date-only ISO parsing, building timestamps from fields)
 - Small missing helpers (`string::from_byte`, `string::to_bool`, `math::sum`, `buffer?[i]` optional indexing)
+- Zero-copy views over byte ranges in strings and buffers (`string::view` and `buffer::view`)
 - Source line numbers in runtime errors (instruction-to-line map in bytecode)
 - More unboxed map reads (`m[k] == null`, `m[k] == val`, `when m[k]`)
 - Schema-level `omit_null` option (`schema Api(omit_null = true)` so nullable fields don't need individual `omit_null` rules)
