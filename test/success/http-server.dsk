@@ -172,6 +172,59 @@ func check_failures(base: string) -> !void
     assert(after.status == 200)
 end
 
+func status_or_failure(url: string) -> int
+    let response = http::request(url) catch e then
+        return -1
+    end
+    return response.status
+end
+
+func check_on_error() -> !void
+    let server = try http::listen("127.0.0.1", 0)
+    let mut seen: []string = []
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> AppError!http::Response
+            when req.path
+                "/fail" then return AppError.Broken end
+                "/bad-status" then return http::text("never", status = 700) end
+                "/stream-fail" then
+                    return http::stream(func(mut out: http::BodyWriter) -> io::IoError!void
+                        try out.write("partial")
+                        try out.flush()
+                        return io::IoError.BrokenPipe
+                    end)
+                end
+                else then return http::text("ok") end
+            end
+        end, on_error = func(req, failure) -> void
+            when failure
+                handler: e then
+                    if e == AppError.Broken then
+                        append(seen, "handler ${req.path}")
+                    end
+                end
+                invalid_response: why then append(seen, "invalid ${req.path} $why") end
+                streaming: e then
+                    if e == io::IoError.BrokenPipe then
+                        append(seen, "streaming ${req.path}")
+                    end
+                end
+            end
+        end)
+    end)
+    let base = "http://127.0.0.1:${server.port()}"
+    assert(status_or_failure("$base/fail") == 500)
+    assert(status_or_failure("$base/bad-status") == 500)
+    let streamed = status_or_failure("$base/stream-fail")
+    assert(status_or_failure("$base/") == 200)
+    assert(len(seen) == 3)
+    assert(seen[0] == "handler /fail")
+    assert(seen[1] == "invalid /bad-status invalid response status '700'")
+    assert(seen[2] == "streaming /stream-fail")
+    server.close()
+    await(running)
+end
+
 func check_head_and_keep_alive(base: string) -> !void
     let head = try http::request("$base/?name=x", method = "HEAD")
     assert(head.status == 200)
@@ -431,4 +484,5 @@ func main() -> !void
     try check_shutdown_in_flight()
     try check_https()
     try check_listen_errors()
+    try check_on_error()
 end

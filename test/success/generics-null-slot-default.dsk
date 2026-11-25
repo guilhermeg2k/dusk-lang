@@ -1,0 +1,38 @@
+error Problem
+    Bad
+end
+
+func pick[T](value: T, fallback: ?T = null) -> T
+    if fallback: chosen then
+        return chosen
+    end
+    return value
+end
+
+func run[E: error](work: func() -> E!int, on_failure: ?func(E) -> void = null) -> int
+    let result = work() catch e then
+        if on_failure: report then
+            report(e)
+        end
+        return -1
+    end
+    return result
+end
+
+func main() -> void
+    assert(pick(1) == 1)
+    assert(pick(1, fallback = 2) == 2)
+    assert(pick("a") == "a")
+    assert(run(func() -> Problem!int
+        return 5
+    end) == 5)
+    let mut failures = 0
+    assert(run(func() -> Problem!int
+        return Problem.Bad
+    end, on_failure = func(e) -> void
+        if e == Problem.Bad then
+            failures = failures + 1
+        end
+    end) == -1)
+    assert(failures == 1)
+end

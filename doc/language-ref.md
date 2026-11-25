@@ -1326,7 +1326,7 @@ A method with its own slots doesn't fill a trait's method.
 
 ### Checked where written
 
-A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A `T` param can't have a default value; it can be `mut` (see [Mutable parameters](#mutable-parameters)).
+A generic body is checked once, where it's written, with `T` standing for any type. Only what works for every type is allowed: `T` can be stored, passed, returned, put in arrays, interpolated and given to `copy` and `append`. Arithmetic, comparisons and method calls on `T` need a constraint (below). A param whose type uses a slot can't have a default value, except `null` when its type is nullable (`fallback: ?T = null`, `on_failure: ?func(E) -> void = null`); it can be `mut` (see [Mutable parameters](#mutable-parameters)).
 
 Each copy is checked again with its real types. An error there names the copy and the call that made it:
 

@@ -77,9 +77,11 @@ pub const VM = struct {
                 for (0..ready_task_count) |_| {
                     try self.runTask(self.scheduler.popReady().?);
                 }
+
                 if (self.event_loop.hasPendingOperations()) {
                     try self.event_loop.poll();
                 }
+
                 continue;
             }
 

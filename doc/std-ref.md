@@ -1007,7 +1007,7 @@ end
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `serve(handler: func(Request) -> E!Response)` | `void` | Accepts connections until `close()`, calls `handler` for each request, and returns once every connection is done. |
+| `serve(handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null)` | `void` | Accepts connections until `close()`, calls `handler` for each request, and returns once every connection is done. `on_error` receives each failure instead of the line on stderr (see below). |
 | `port()` | `int` | The port it listens on. |
 | `close()` | `void` | Stops the server (see below). |
 
@@ -1095,9 +1095,27 @@ end
 
 Server-sent events are a stream with `content_type = "text/event-stream"` and a `flush()` after each event. An endless stream ends when the client leaves or the server closes.
 
+**Failures.** Pass `on_error` to `serve` to handle the failures that would write a line on stderr: log them your way, count them, add a request id. It gets the `Request` and an `http::Failure[E]` union, with `E` the handler's error set. The server still answers the same way (`500`, or the cut-off stream); `on_error` only replaces the line.
+
+| Variant | Payload | When |
+| :------ | :------ | :--- |
+| `handler` | `E` | The handler returned an error. |
+| `invalid_response` | `string` | The handler's response can't be sent; the text says why (`invalid response status '700'`). |
+| `streaming` | `io::IoError` | A streamed response's function failed after the head went out (not when the client left: `Closed`). |
+
+```nim
+server.serve(handler, on_error = func(req, failure) -> void
+    when failure
+        handler: e then io::eprintln("${req.method} ${req.path}: handler failed: $e") end
+        invalid_response: why then io::eprintln("${req.method} ${req.path}: $why") end
+        streaming: e then io::eprintln("${req.method} ${req.path}: stream failed: $e") end
+    end
+end)
+```
+
 **What the server does on its own:**
 
-- An error that escapes the handler becomes a `500` with an empty body, and a line on stderr: `http: GET /path failed: <error>`. A `BodyTooLarge` that escapes becomes a `413`, and a broken body a `400`. A response header that can't be sent (a line break in a value, a bad name) also becomes a `500`.
+- An error that escapes the handler becomes a `500` with an empty body, and a line on stderr: `http: GET /path failed: <error>`. A `BodyTooLarge` that escapes becomes a `413`, and a broken body a `400`, without a line. A response the server can't send (a status outside `100..599`, a line break in the reason or a header value, a bad header name) also becomes a `500`, and a streamed response whose function fails midway is cut off; both write a line too.
 - A request that isn't valid HTTP/1.1 (bad framing, `Content-Length` together with `Transfer-Encoding`, bad characters, an unknown method, a path whose `%` escapes don't decode) gets `400`, a head over 64 KiB gets `431`, and the handler isn't called. The connection then closes.
 - A client that stops reading a response (a big body, a stream) for `write_timeout_ms` is disconnected, like `TcpConn.set_write_timeout`: a streamed response's next write fails with `TimedOut`. A client that reads slowly but steadily isn't.
 - A client has `head_timeout_ms` to start sending a request on a new connection and `head_timeout_ms` to finish its head (`408` otherwise). Between requests on a kept connection, it may stay quiet for `idle_timeout_ms` before the server closes it.

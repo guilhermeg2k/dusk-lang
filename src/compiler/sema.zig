@@ -1927,8 +1927,11 @@ pub const SemaAnalyzer = struct {
 
         for (func_stmt.def.params) |param| {
             const annotation = param.type_annotation orelse continue;
-            if (param.default_value == null or !mentionsSlot(annotation, func_stmt.slots)) continue;
-            return self.err_reporter.slotParamCantHaveDefault(param.identifier, param.default_value.?.loc);
+            const default_value = param.default_value orelse continue;
+            if (!mentionsSlot(annotation, func_stmt.slots)) continue;
+            const is_null_default = annotation.is_nullable and default_value.data == .null_literal;
+            if (is_null_default) continue;
+            return self.err_reporter.slotParamCantHaveDefault(param.identifier, default_value.loc);
         }
 
         const symbol = try self.createEmptyFuncSymbol(func_stmt.identifier);

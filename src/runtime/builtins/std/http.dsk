@@ -198,7 +198,10 @@ struct Server
         self.listener.close()
     end
 
-    func serve[E: error](self: @, handler: func(Request) -> E!Response) -> void
+    func serve[E: error](self: @, handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null) -> void
+        let report = on_error orelse func(request: Request, failure: Failure[E]) -> void
+            print_failure(request, failure)
+        end
         let mut active = 0
         for true do
             let is_full = self.max_connections > 0 and active >= self.max_connections
@@ -218,7 +221,7 @@ struct Server
             end
             active = active + 1
             spawn(func() -> void
-                serve_connection(self, conn, handler)
+                serve_connection(self, conn, handler, report)
                 active = active - 1
             end)
         end
@@ -226,6 +229,12 @@ struct Server
             task::sleep(10)
         end
     end
+end
+
+union Failure[E: error]
+    handler: E
+    invalid_response: string
+    streaming: io::IoError
 end
 
 struct BodyWriter
@@ -1332,17 +1341,25 @@ func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: i
     return try net::tcp_listen(host, port, backlog)
 end
 
-func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response) -> void
+func ~print_failure[E: error](request: Request, failure: Failure[E]) -> void
+    when failure
+        handler: e then io::eprintln("http: ${request.method} ${request.path} failed: $e") end
+        invalid_response: why then io::eprintln("http: ${request.method} ${request.path} failed: $why") end
+        streaming: e then io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e") end
+    end
+end
+
+func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response, report: func(Request, Failure[E]) -> void) -> void
     let handle = conn_handle(conn)
     stream_set_write_timeout(handle, server.write_timeout_ms)
     let mut is_first = true
-    for serve_request(server, conn, handle, handler, is_first) do
+    for serve_request(server, conn, handle, handler, report, is_first) do
         is_first = false
     end
     conn.close()
 end
 
-func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, handler: func(Request) -> E!Response, is_first: bool) -> bool
+func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, handler: func(Request) -> E!Response, report: func(Request, Failure[E]) -> void, is_first: bool) -> bool
     let received = next_head(server, handle, is_first) catch e then
         reject(handle, e)
         return false
@@ -1355,15 +1372,15 @@ func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, h
         let response = handler(request) catch e then
             let body_failure = request_body_failure(handle)
             if body_failure == BODY_TOO_LARGE then
-                return finish(server, request, status(413))
+                return finish(server, request, status(413), report)
             end
             if body_failure == BODY_INVALID then
-                return finish(server, request, status(400))
+                return finish(server, request, status(400), report)
             end
-            io::eprintln("http: ${request.method} ${request.path} failed: $e")
-            return finish(server, request, status(500))
+            report(request, @(handler = e))
+            return finish(server, request, status(500), report)
         end
-        return finish(server, request, response)
+        return finish(server, request, response, report)
     end
     return false
 end
@@ -1435,15 +1452,15 @@ func ~request_of(head: buffer, conn: net::TcpConn, handle: int, server: Server) 
     return Request(method = parts[0], target = target, path = path, query = query, headers = headers, remote_address = conn.remote_address(), handle = handle, keeps_alive = parts[3] == "1", max_body = server.max_body, expects_continue = expects_continue)
 end
 
-func ~finish(server: Server, request: Request, response: Response) -> bool
+func ~finish[E: error](server: Server, request: Request, response: Response, report: func(Request, Failure[E]) -> void) -> bool
     let body_state = request_body_state(request.handle, request.expects_continue)
     let is_body_done = body_state == BODY_COMPLETE or (body_state == BODY_UNREAD and drain_request(server, request))
     if !is_body_done then
-        return write_response(server, request, checked_response(request, response), false) and false
+        return write_response(server, request, checked_response(request, response, report), report, false) and false
     end
     let wants_close = has_connection_token(response.headers, "close")
     let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.state)
-    return write_response(server, request, checked_response(request, response), keeps_alive) and keeps_alive
+    return write_response(server, request, checked_response(request, response, report), report, keeps_alive) and keeps_alive
 end
 
 func ~has_connection_token(headers: Headers, token: string) -> bool
@@ -1464,27 +1481,27 @@ func ~drain_request(server: Server, request: Request) -> bool
     return true
 end
 
-func ~checked_response(request: Request, response: Response) -> Response
+func ~checked_response[E: error](request: Request, response: Response, report: func(Request, Failure[E]) -> void) -> Response
     let is_valid_status = response.status >= 100 and response.status <= 599
     if !is_valid_status then
-        io::eprintln("http: ${request.method} ${request.path} failed: invalid response status '${response.status}'")
+        report(request, @(invalid_response = "invalid response status '${response.status}'"))
         return status(500)
     end
     if response.reason != "" and !is_header_value(response.reason) then
-        io::eprintln("http: ${request.method} ${request.path} failed: invalid response reason")
+        report(request, @(invalid_response = "invalid response reason"))
         return status(500)
     end
     for response.headers.items: header do
         let is_valid = is_header_name(header.name) and is_header_value(header.value)
         if !is_valid then
-            io::eprintln("http: ${request.method} ${request.path} failed: invalid response header '${header.name}'")
+            report(request, @(invalid_response = "invalid response header '${header.name}'"))
             return status(500)
         end
     end
     return response
 end
 
-func ~write_response(server: Server, request: Request, response: Response, keeps_alive: bool) -> bool
+func ~write_response[E: error](server: Server, request: Request, response: Response, report: func(Request, Failure[E]) -> void, keeps_alive: bool) -> bool
     let code = response.status
     let reason = if response.reason == "" then reason_phrase(code) else response.reason end
     let has_body = !(code < 200 or code == 204 or code == 304)
@@ -1539,7 +1556,7 @@ func ~write_response(server: Server, request: Request, response: Response, keeps
         stream_write(request.handle, head) catch e then
             return false
         end
-        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length, is_stream_compressed)
+        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length, is_stream_compressed, report)
     end
     let sends_body = has_body and request.method != "HEAD" and buffer::len(body) > 0
     if !sends_body then
@@ -1625,26 +1642,26 @@ func ~gzipped(server: Server, body: buffer) -> ?buffer
     return packed
 end
 
-func ~write_stream_body(server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int, is_compressing: bool) -> bool
+func ~write_stream_body[E: error](server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int, is_compressing: bool, report: func(Request, Failure[E]) -> void) -> bool
     let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
         return false
     end
     let mut compressor = compression::Compressor(compression::Format.Gzip, level = server.compression_level)
     let is_chunked = sends_body and (length < 0 or is_compressing)
     let mut writer = BodyWriter(handle = request.handle, state = server.state, is_chunked = is_chunked, is_discarding = !sends_body, remaining = length, pending = pending, used = 0, compressor = compressor, is_compressing = is_compressing)
-    let is_sent = send_stream_body(request, write, writer, sends_body)
+    let is_sent = send_stream_body(request, write, writer, sends_body, report)
     writer.compressor.close()
     return is_sent
 end
 
-func ~send_stream_body(request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool) -> bool
+func ~send_stream_body[E: error](request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool, report: func(Request, Failure[E]) -> void) -> bool
     write(writer) catch e then
         if !sends_body and e == io::IoError.Closed then
             return true
         end
         let is_expected = !sends_body or e == io::IoError.Closed
         if !is_expected then
-            io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e")
+            report(request, @(streaming = e))
         end
         return false
     end

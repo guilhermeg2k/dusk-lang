@@ -3465,6 +3465,8 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
     try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
+    try runCaseError("sema/generic-slot-nullable-default.dsk", error.SlotParamCantHaveDefault);
+    try runCase("generics-null-slot-default.dsk");
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);

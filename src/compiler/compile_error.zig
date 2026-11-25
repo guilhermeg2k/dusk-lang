@@ -587,7 +587,7 @@ pub const CompileErrorReporter = struct {
     }
 
     pub fn slotParamCantHaveDefault(self: *Self, param: []const u8, loc: Loc) CompileError {
-        self.log(try allocPrint(self.allocator, "Parameter '{s}' uses a type slot, so it can't have a default value", .{param}), loc);
+        self.log(try allocPrint(self.allocator, "Parameter '{s}' uses a type slot, so its only allowed default is `null` on a nullable type", .{param}), loc);
         return error.SlotParamCantHaveDefault;
     }
 
