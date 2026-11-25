@@ -66,6 +66,8 @@ A `Stream` lives in C memory: the bytes read so far (a byte array and a read off
 
 **Missing stdio fds.** libuv asserts that it never closes fds 0 to 2. If the program starts with one of them closed, the loop's own fds would get those numbers, so `main.zig` opens `/dev/null` in their place first; closed stdin then reads as the end of the input.
 
+**Open-file limit.** Every connection, listener and opened file holds one fd, and many systems start processes with a soft limit of 1024 open files, well below the hard limit. On POSIX, `main.zig` raises the soft `RLIMIT_NOFILE` to the hard limit before anything opens (on macOS to at most `OPEN_MAX`, which `setrlimit` refuses to exceed). A failure leaves the limit unchanged. Child processes inherit the raised limit.
+
 **Writers.** `io::stdout()` and `io::stderr()` don't use libuv: their methods go through `Stdio` like `io::print`, but `Stdio.tryWriteBytes` / `tryFlush` return the error (`BrokenPipe` becomes `IoError.BrokenPipe`) instead of ending the program, and drop the bytes that couldn't be sent so the exit flush doesn't fail again.
 
 ## 4. TCP

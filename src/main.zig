@@ -9,6 +9,7 @@ const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
 
 pub fn main(init: std.process.Init) !void {
     openMissingStandardFiles();
+    raiseOpenFileLimit();
     const allocator = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(allocator);
@@ -63,6 +64,15 @@ fn openMissingStandardFiles() void {
             _ = std.c.open("/dev/null", .{ .ACCMODE = .RDWR });
         }
     }
+}
+
+fn raiseOpenFileLimit() void {
+    if (builtin.os.tag == .windows) return;
+    var limits = std.posix.getrlimit(.NOFILE) catch return;
+    const wanted = if (builtin.os.tag.isDarwin()) @min(limits.max, std.c.OPEN_MAX) else limits.max;
+    if (limits.cur >= wanted) return;
+    limits.cur = wanted;
+    std.posix.setrlimit(.NOFILE, limits) catch return;
 }
 
 fn exitAfterBrokenPipe() noreturn {
