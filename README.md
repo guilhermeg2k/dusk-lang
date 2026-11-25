@@ -24,6 +24,6 @@ A general-purpose, statically typed language with its own runtime: a bytecode VM
 
 [Contributing](https://github.com/guilhermeg2k/dusk-lang/blob/dev/doc/contributing.md)
 
-[License](https://github.com/guilhermeg2k/dusk-lang/blob/dev/LICENSE)
+[License](https://github.com/guilhermeg2k/dusk-lang/blob/dev/LICENSE.md)
 
 Made by Guilherme (~\_^)
