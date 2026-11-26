@@ -146,7 +146,7 @@ fn runMathSource(source: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const program = try compileMathSource(arena.allocator(), source);
-    var vm = VM.init(&program, .{});
+    var vm = VM.init(&program, .{}, testing.io);
     defer vm.deinit();
     try vm.run();
 }

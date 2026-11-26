@@ -18,8 +18,6 @@ const WakeResult = @import("scheduler.zig").WakeResult;
 const TrustStore = @import("../io/net/trust_store.zig").TrustStore;
 const ConnectionPool = @import("../io/http/connection_pool.zig").ConnectionPool;
 const ServerState = @import("../io/http/http_server.zig").ServerState;
-const RuntimeError = @import("../runtime_error.zig").RuntimeError;
-const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
 const handle_alignment = std.mem.Alignment.@"16";
 
@@ -318,28 +316,6 @@ pub const EventLoop = struct {
 
     pub fn hasPendingOperations(self: *const Self) bool {
         return self.pending_operations > 0;
-    }
-
-    pub fn wallTimeMilliseconds() RuntimeError!i64 {
-        var time: uv.Timeval64 = undefined;
-        const status = uv.uv_gettimeofday(&time);
-        if (status != 0) {
-            return RuntimeErrorReporter.clockFailed("wall", std.mem.span(uv.uv_err_name(status)));
-        }
-        return wallMillisecondsFromTimeval(time);
-    }
-
-    pub fn wallMillisecondsFromTimeval(time: uv.Timeval64) RuntimeError!i64 {
-        const milliseconds = @as(i128, time.tv_sec) * 1000 + @divFloor(@as(i128, time.tv_usec), 1000);
-        return std.math.cast(i64, milliseconds) orelse RuntimeErrorReporter.clockOutOfRange("wall");
-    }
-
-    pub fn monotonicTimeNanoseconds() RuntimeError!i64 {
-        return monotonicNanosecondsFromReading(uv.uv_hrtime());
-    }
-
-    pub fn monotonicNanosecondsFromReading(nanoseconds: u64) RuntimeError!i64 {
-        return std.math.cast(i64, nanoseconds) orelse RuntimeErrorReporter.clockOutOfRange("monotonic");
     }
 };
 

@@ -161,7 +161,7 @@ Each module declares `~own(kind, handle)` and `~release(owner)` externs bound to
 
 ## 10. Time
 
-The two raw `std/time` clock natives return unboxed integers without parking. Static `EventLoop` clock helpers call `uv_gettimeofday` for Unix-epoch milliseconds and `uv_hrtime` for monotonic nanoseconds; they do not initialize a loop or allocate GC objects. Wall-clock conversion uses a wide intermediate and floors fractional milliseconds. Both conversions check the final signed integer range. Platform failures and unrepresentable readings go through `RuntimeErrorReporter`. The cached `uv_now` reading is not used.
+The two raw `std/time` clock natives return unboxed integers without parking. They read `std.Io.Clock.real` for Unix-epoch milliseconds and `std.Io.Clock.awake` for monotonic nanoseconds through `vm.io`, without initializing the event loop or allocating GC objects. Wall-clock conversion floors fractional milliseconds from the `i96` nanosecond reading, and both conversions check the signed `i64` range via `RuntimeErrorReporter.clockOutOfRange`.
 
 `time::Timestamp` is an ordinary Dusk struct with a private millisecond field. Its Dusk factories wrap `now_ms` or an explicit integer; methods read the field or call the file-only `format_timestamp` native. Formatting uses floor division, nonnegative day remainders and Gregorian 400-year cycles, supporting the full signed millisecond range. A fixed 32-byte local buffer holds UTC text with a signed expanded year where necessary. The native finishes formatting before allocating one result string, so no moving heap references survive the allocation.
 

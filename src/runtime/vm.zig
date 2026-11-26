@@ -23,6 +23,7 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     scratch: std.Io.Writer.Allocating,
     stdio: Stdio,
+    io: std.Io,
     stdin_fd: c_int = 0,
     stack: []v.Value,
     heap: Heap,
@@ -32,7 +33,7 @@ pub const VM = struct {
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
 
-    pub fn init(program: *const bc.Program, stdio: Stdio) VM {
+    pub fn init(program: *const bc.Program, stdio: Stdio, io: std.Io) VM {
         return .{
             .allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
@@ -44,6 +45,7 @@ pub const VM = struct {
             .heap = Heap.init(std.heap.page_allocator),
             .scratch = .init(std.heap.page_allocator),
             .stdio = stdio,
+            .io = io,
         };
     }
 
