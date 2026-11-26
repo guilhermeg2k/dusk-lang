@@ -1529,14 +1529,14 @@ pub const SemaAnalyzer = struct {
         const value: ?*ir.Value = switch (exit) {
             .return_stmt => |ret| ret.value,
             .return_error => |ret| ret.value,
-            else => unreachable,
+            else => @panic("withReturnCleanup: instruction isn't a return"),
         };
         const kept: ?*ir.Value = if (value) |returned| try self.storeTemporaryValue(&instructions, "returned value", returned) else null;
         try instructions.appendSlice(self.allocator, cleanup);
         try instructions.append(self.allocator, switch (exit) {
             .return_stmt => .{ .return_stmt = .{ .value = kept } },
             .return_error => .{ .return_error = .{ .value = kept.? } },
-            else => unreachable,
+            else => @panic("withReturnCleanup: instruction isn't a return"),
         });
         return .{ .block = try instructions.toOwnedSlice(self.allocator) };
     }

@@ -75,7 +75,7 @@ fn arrayExtremum(args: []v.Value, comptime operation: enum { min, max }) !Native
                 result.float64 = if (operation == .min) @min(result.float64, item.float64) else @max(result.float64, item.float64);
             }
         },
-        else => unreachable,
+        else => @panic("arrayExtremum: array element type isn't numeric"),
     }
     return ok(result);
 }

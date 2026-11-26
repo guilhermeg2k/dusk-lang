@@ -70,7 +70,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) std.I
                 .task => try printValue(writer, value, .task),
                 .map => try printValue(writer, value, .map),
                 .resource => try printValue(writer, value, .resource),
-                .cell, .map_storage => unreachable,
+                .cell, .map_storage => @panic("printValue: internal heap object isn't printable"),
             }
         },
         .@"struct" => {
@@ -97,7 +97,7 @@ pub fn printValue(writer: *std.Io.Writer, value: v.Value, ty: v.ValueType) std.I
                 try writer.print("<union>", .{});
             }
         },
-        .cell => unreachable,
+        .cell => @panic("printValue: cell isn't printable"),
         .map => {
             const raw: u64 = @bitCast(value);
             const text = if (raw == 0) "null" else "<map>";

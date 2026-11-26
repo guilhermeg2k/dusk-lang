@@ -119,7 +119,7 @@ pub const Chunk = struct {
                 .function => std.debug.print("<func>", .{}),
                 .cell => std.debug.print("<cell>", .{}),
                 .task => std.debug.print("<task>", .{}),
-                .string, .buffer => unreachable,
+                .string, .buffer => @panic("disassemble: strings and buffers don't live in the constant pool"),
             }
             std.debug.print("\n", .{});
         }
