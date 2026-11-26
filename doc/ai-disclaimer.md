@@ -10,10 +10,7 @@ Up to commit [`5107f82`](https://github.com/guilhermeg2k/dusk-lang/commit/5107f8
 
 - AI is a tool, not an author. I'm responsible for every line that lands in
   the repository, whoever (or whatever) typed it.
-- I review and understand every AI-assisted change before it's committed.
-  If I can't explain it, it doesn't get merged.
-  history shows where AI was involved.
-- Design decisions (syntax, semantics, roadmap) stay mine.
+- Design decisions (syntax, semantics, roadmap) are all mine.
 
 This approach is inspired by how Mitchell Hashimoto handles AI in
 Ghostty ([AI policy](https://github.com/ghostty-org/ghostty/blob/main/AI_POLICY.md)): be open about it,

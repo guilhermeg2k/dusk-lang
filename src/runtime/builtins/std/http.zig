@@ -2,6 +2,7 @@ const std = @import("std");
 const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
 const native = @import("../native.zig");
+const build_zon = @import("build_zon");
 const io = @import("io.zig");
 const net = @import("net.zig");
 const fs = @import("fs.zig");
@@ -20,6 +21,7 @@ pub const HttpError = http.HttpError;
 pub const error_sets = .{HttpError};
 
 const replacement_character = "\u{FFFD}";
+const user_agent = @tagName(build_zon.name) ++ "-http-client";
 
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "own", Binding{ .native = &native.ownResource } },
@@ -28,6 +30,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
     .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
     .{ "base64", Binding{ .native = &base64 } },
+    .{ "user_agent", Binding{ .native = &userAgent } },
     .{ "encoded_url", Binding{ .native = &encodedUrl } },
     .{ "is_loopback_host", Binding{ .native = &isLoopbackHost } },
     .{ "stream_forbid_reuse", Binding{ .native = &streamForbidReuse } },
@@ -69,7 +72,6 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "is_method", Binding{ .native = &isMethod } },
     .{ "is_header_name", Binding{ .native = &isHeaderName } },
     .{ "is_header_value", Binding{ .native = &isHeaderValue } },
-    .{ "body_given_twice", Binding{ .native = &bodyGivenTwice } },
     .{ "invalid_compression_level", Binding{ .native = &invalidCompressionLevel } },
 });
 
@@ -427,10 +429,6 @@ fn isHeaderValue(_: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .bool = true });
 }
 
-fn bodyGivenTwice(_: *VM, _: []v.Value) anyerror!NativeResult {
-    return RuntimeErrorReporter.httpBodyGivenTwice();
-}
-
 fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const text = bytesArg(args, 0);
     const encoder = std.base64.standard.Encoder;
@@ -438,6 +436,10 @@ fn base64(vm: *VM, args: []v.Value) anyerror!NativeResult {
     defer std.heap.smp_allocator.free(encoded);
     _ = encoder.encode(encoded, text);
     return ok(try vm.allocBytesValue(encoded, .string));
+}
+
+fn userAgent(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    return ok(try vm.allocBytesValue(user_agent, .string));
 }
 
 fn hostSlotTake(vm: *VM, args: []v.Value) anyerror!NativeResult {

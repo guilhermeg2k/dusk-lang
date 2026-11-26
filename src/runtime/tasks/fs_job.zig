@@ -29,7 +29,24 @@ const chunk_size = 64 * 1024;
 pub const FsJob = struct {
     const Self = @This();
 
-    pub const Kind = enum { exists, stat, read_text, read_bytes, write, append, read_dir, make_dir, make_dir_recursive, delete, delete_recursive, rename, read_chunk, write_chunk, open_file, file_size };
+    pub const Kind = enum {
+        exists,
+        stat,
+        read_text,
+        read_bytes,
+        write,
+        append,
+        read_dir,
+        make_dir,
+        make_dir_recursive,
+        delete,
+        delete_recursive,
+        rename,
+        read_chunk,
+        write_chunk,
+        open_file,
+        file_size,
+    };
 
     pub const OpenMode = enum(i64) { read, write, append };
 

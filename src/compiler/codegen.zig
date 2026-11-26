@@ -274,8 +274,8 @@ pub const BytecodeGen = struct {
                 .unwrap_null_box => |stmt| {
                     _ = try self.genUnwrapNullBox(stmt, try self.consumeRegister());
                 },
-                .map_find => |stmt| {
-                    try self.genMapFind(stmt);
+                .map_get_unboxed => |stmt| {
+                    try self.genMapGetUnboxed(stmt);
                 },
                 .update_capture => |stmt| {
                     try self.genUpdateCapture(stmt);
@@ -1750,13 +1750,13 @@ pub const BytecodeGen = struct {
         return target_reg;
     }
 
-    fn genMapFind(self: *Self, stmt: ir.MapFind) !void {
+    fn genMapGetUnboxed(self: *Self, stmt: ir.MapGetUnboxed) !void {
         const found_reg = try self.consumeRegister();
         const value_reg = try self.consumeRegister();
         const map_reg = try self.genValue(stmt.map, try self.consumeRegister());
         const key_reg = try self.genValue(stmt.key, try self.consumeRegister());
         self.freeRegisterN(2);
-        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_FIND, .a = found_reg, .b = map_reg, .c = key_reg });
+        try self.chunk_instructions.append(self.allocator, .{ .op = .MAP_GET_UNBOXED, .a = found_reg, .b = map_reg, .c = key_reg });
         self.register_types[found_reg] = self.type_table.getPrimitive(.boolean);
         self.register_types[value_reg] = stmt.value_type;
         try self.bindVariable(stmt.found_uid, found_reg);

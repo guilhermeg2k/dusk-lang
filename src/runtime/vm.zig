@@ -87,9 +87,11 @@ pub const VM = struct {
                 for (0..ready_task_count) |_| {
                     try self.runTask(self.scheduler.popReady().?);
                 }
+
                 if (self.event_loop.hasPendingOperations()) {
                     try self.event_loop.poll();
                 }
+
                 continue;
             }
 
@@ -292,7 +294,7 @@ pub const VM = struct {
                     try self.setMapEntry(&stack[stack_base + inst.a], &stack[stack_base + inst.b], &stack[stack_base + inst.c]);
                 },
 
-                .MAP_FIND => {
+                .MAP_GET_UNBOXED => {
                     const value = mapInSlot(&stack[stack_base + inst.b]).get(stack[stack_base + inst.c]);
                     stack[stack_base + inst.a] = if (value != null) v.TRUE_VALUE else v.FALSE_VALUE;
                     stack[stack_base + inst.a + 1] = value orelse v.NULL_VALUE;

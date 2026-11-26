@@ -38,13 +38,16 @@
 - Allow `json::decode[T]` and `json::decode[ApiResponse[T]]` inside generic functions by checking serializability when the concrete type is known
 - Support `orelse return`, `orelse break`, and `orelse continue` to unwrap nullable values and exit early when they are `null`
 
+## Version 0.19
+- std::dusk (compiler front-end expose read-only apis)
+- Code Formatter
+- Building a single binary
+- Package Manager
+
 ## Backlog
 
 - Bytecode file generation + caching (Each compilation step)
-- Code Formatter
 - Language Server
-- Package Manager
-- Building a single binary
 - Fuzz testing
 - Improve memory usage
 - Improve VM Performance

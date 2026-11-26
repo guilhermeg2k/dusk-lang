@@ -201,7 +201,10 @@ struct Server
         self.listener.close()
     end
 
-    func serve[E: error](self: @, handler: func(Request) -> E!Response) -> void
+    func serve[E: error](self: @, handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null) -> void
+        let report = on_error orelse func(request: Request, failure: Failure[E]) -> void
+            print_failure(request, failure)
+        end
         let stop_signals = if self.stop_on_signal then watch_stop_signals(self) else [] end
         let mut open_connections: map[int, bool] = {}
         let mut active = 0
@@ -225,7 +228,7 @@ struct Server
             open_connections[handle] = true
             active = active + 1
             spawn(func() -> void
-                serve_connection(self, conn, handler)
+                serve_connection(self, conn, handler, report)
                 map::remove(open_connections, handle)
                 active = active - 1
             end)
@@ -274,6 +277,12 @@ func ~close_all(streams: []os::SignalStream) -> void
     for streams: stream do
         stream.close()
     end
+end
+
+union Failure[E: error]
+    handler: E
+    invalid_response: string
+    streaming: io::IoError
 end
 
 struct BodyWriter
@@ -498,9 +507,9 @@ extern func ~server_is_closing(state: int) -> bool
 extern func ~is_method(text: string) -> bool
 extern func ~is_header_name(text: string) -> bool
 extern func ~is_header_value(text: string) -> bool
-extern func ~body_given_twice() -> void
 extern func ~stream_start_tunneled_tls(handle: int, host: string, ca: ?string, verify: bool, timeout_ms: int) -> net::NetError!void
 extern func ~base64(text: string) -> string
+extern func ~user_agent() -> string
 extern func ~encoded_url(text: string) -> string
 extern func ~is_loopback_host(host: string) -> bool
 extern func ~stream_forbid_reuse(handle: int) -> void
@@ -513,7 +522,6 @@ extern func ~own(kind: int, handle: int) -> resource
 extern func ~release(owner: ?resource) -> void
 extern func ~invalid_compression_level(level: int) -> void
 
-let ~USER_AGENT = "dusk/0.16"
 let ~REDIRECT_DRAIN_LIMIT = 65536
 let ~REQUEST_DRAIN_LIMIT = 65536
 let ~JOINED_BODY_LIMIT = 65536
@@ -527,11 +535,21 @@ let ~BODY_UNREAD = 1
 let ~BODY_TOO_LARGE = 1
 let ~BODY_INVALID = 2
 
+union Body
+    text: string
+    bytes: buffer
+    stream: BodyStream
+end
+
+struct BodyStream
+    write: func(mut BodyWriter) -> io::IoError!void
+    length: int = -1
+end
+
 struct ~Exchange
     method: string
     headers: map[string, string]
-    body: ?string
-    body_bytes: ?buffer
+    body: ?Body
     max_body: int
     timeout_ms: int
     started_ns: int
@@ -540,8 +558,6 @@ struct ~Exchange
     follows_redirects: bool
     reads_body: bool
     proxy: ?Proxy
-    body_stream: ?func(mut BodyWriter) -> io::IoError!void = null
-    body_length: int = -1
     max_connections_per_host: int = -1
 end
 
@@ -572,16 +588,16 @@ struct Client
     proxy: ?string = null
     max_connections_per_host: int = -1
 
-    func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!Response
+    func request(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, max_body: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!Response
         let redirects = max_redirects orelse self.max_redirects
-        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length, max_connections_per_host = self.max_connections_per_host)
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, max_body = max_body orelse self.max_body, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = true, proxy = try proxy_of(self.proxy), max_connections_per_host = self.max_connections_per_host)
         let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
         return opened.response
     end
 
-    func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!ResponseStream
+    func open(self: @, url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: ?int = null, max_redirects: ?int = null, ca: ?string = null, verify: ?bool = null) -> HttpError!ResponseStream
         let redirects = max_redirects orelse self.max_redirects
-        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, body_bytes = body_bytes, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy), body_stream = body_stream, body_length = body_length, max_connections_per_host = self.max_connections_per_host)
+        let exchange = Exchange(method = method, headers = merged_headers(self.headers, headers), body = body, max_body = 0, timeout_ms = timeout_ms orelse self.timeout_ms, started_ns = time::monotonic_ns(), ca = ca orelse self.ca, verify = verify orelse self.verify, follows_redirects = redirects > 0, reads_body = false, proxy = try proxy_of(self.proxy), max_connections_per_host = self.max_connections_per_host)
         let opened = try start(joined_url(self.base_url, url), query, exchange, redirects)
         let response = opened.response
         if body_format(response.status, response.headers, exchange): format then
@@ -591,14 +607,14 @@ struct Client
     end
 end
 
-func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!Response
+func request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true) -> HttpError!Response
     let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, max_body = max_body, ca = ca, verify = verify)
-    return try client.request(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query, body_stream = body_stream, body_length = body_length)
+    return try client.request(url, method = method, headers = headers, body = body, query = query)
 end
 
-func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?string = null, body_bytes: ?buffer = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true, body_stream: ?func(mut BodyWriter) -> io::IoError!void = null, body_length: int = -1) -> HttpError!ResponseStream
+func open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true) -> HttpError!ResponseStream
     let client = Client(timeout_ms = timeout_ms, max_redirects = max_redirects, ca = ca, verify = verify)
-    return try client.open(url, method = method, headers = headers, body = body, body_bytes = body_bytes, query = query, body_stream = body_stream, body_length = body_length)
+    return try client.open(url, method = method, headers = headers, body = body, query = query)
 end
 
 func ~proxy_of(text: ?string) -> HttpError!?Proxy
@@ -716,10 +732,6 @@ func ~has_scheme(target: string) -> bool
 end
 
 func ~start(url: string, query: map[string, string], exchange: Exchange, max_redirects: int) -> HttpError!Opened
-    let body_count = (if exchange.body != null then 1 else 0 end) + (if exchange.body_bytes != null then 1 else 0 end) + (if exchange.body_stream != null then 1 else 0 end)
-    if body_count > 1 then
-        body_given_twice()
-    end
     let split = try without_user_info(url)
     let target = try parse_target(encoded_url(split.url), query)
     if !is_method(exchange.method) then
@@ -737,7 +749,7 @@ end
 func ~with_authorization(exchange: Exchange, credentials: string) -> Exchange
     let mut headers = copy(exchange.headers)
     headers["Authorization"] = credentials
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length, max_connections_per_host = exchange.max_connections_per_host)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = exchange.follows_redirects, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
 end
 
 func ~follow(target: url::Url, exchange: Exchange, redirects_left: int) -> HttpError!Opened
@@ -788,9 +800,9 @@ func ~redirected(exchange: Exchange, status: int, is_same_origin: bool) -> Excha
     end
     let headers = without_headers(exchange.headers, dropped)
     if becomes_get then
-        return Exchange(method = "GET", headers = headers, body = null, body_bytes = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
+        return Exchange(method = "GET", headers = headers, body = null, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
     end
-    return Exchange(method = exchange.method, headers = headers, body = exchange.body, body_bytes = exchange.body_bytes, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, body_stream = exchange.body_stream, body_length = exchange.body_length, max_connections_per_host = exchange.max_connections_per_host)
+    return Exchange(method = exchange.method, headers = headers, body = exchange.body, max_body = exchange.max_body, timeout_ms = exchange.timeout_ms, started_ns = exchange.started_ns, ca = exchange.ca, verify = exchange.verify, follows_redirects = true, reads_body = exchange.reads_body, proxy = exchange.proxy, max_connections_per_host = exchange.max_connections_per_host)
 end
 
 func ~without_headers(headers: map[string, string], dropped: []string) -> map[string, string]
@@ -875,7 +887,7 @@ end
 
 func ~exchange_on_reused(handle: int, target: url::Url, exchange: Exchange, key: string) -> HttpError!?Opened
     let opened = exchange_on(handle, target, exchange, key) catch e then
-        let can_retry = e == HttpError.ConnectionReset and is_idempotent(exchange.method) and exchange.body_stream == null
+        let can_retry = e == HttpError.ConnectionReset and is_idempotent(exchange.method) and !has_stream_body(exchange)
         if can_retry then
             return null
         end
@@ -920,7 +932,7 @@ func ~is_followed(status: int, headers: Headers, exchange: Exchange) -> bool
 end
 
 func ~can_follow(status: int, exchange: Exchange) -> bool
-    let would_resend_stream = exchange.body_stream != null and (status == 307 or status == 308)
+    let would_resend_stream = has_stream_body(exchange) and (status == 307 or status == 308)
     return exchange.follows_redirects and is_redirect_status(status) and !would_resend_stream
 end
 
@@ -1003,7 +1015,9 @@ func ~receive(handle: int, target: url::Url, exchange: Exchange) -> HttpError!Re
         return from_io(e)
     end
     if try should_send_body(handle, exchange) then
-        try send_body(handle, exchange)
+        if exchange.body: body then
+            try send_body(handle, body)
+        end
     else
         stream_forbid_reuse(handle)
     end
@@ -1044,27 +1058,34 @@ func ~expects_continue(exchange: Exchange) -> bool
     if has_header_name(exchange.headers, "expect") then
         return false
     end
-    if exchange.body_stream != null then
+    if has_stream_body(exchange) then
         return true
     end
     return body_length(exchange) >= EXPECT_CONTINUE_SIZE
 end
 
-func ~send_body(handle: int, exchange: Exchange) -> HttpError!void
-    if exchange.body: text then
-        stream_write(handle, text) catch e then
-            return from_io(e)
-        end
-        return
+func ~has_stream_body(exchange: Exchange) -> bool
+    if exchange.body: body then
+        return body.stream != null
     end
-    if exchange.body_bytes: data then
-        stream_write_bytes(handle, data) catch e then
-            return from_io(e)
+    return false
+end
+
+func ~send_body(handle: int, body: Body) -> HttpError!void
+    when body
+        text: text then
+            stream_write(handle, text) catch e then
+                return from_io(e)
+            end
         end
-        return
-    end
-    if exchange.body_stream: write then
-        try send_body_stream(handle, write, exchange.body_length)
+        bytes: data then
+            stream_write_bytes(handle, data) catch e then
+                return from_io(e)
+            end
+        end
+        stream: streamed then
+            try send_body_stream(handle, streamed.write, streamed.length)
+        end
     end
 end
 
@@ -1122,7 +1143,7 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
         append(lines, "Host: ${host_header(target)}")
     end
     if !map::has(given, "user-agent") then
-        append(lines, "User-Agent: $USER_AGENT")
+        append(lines, "User-Agent: ${user_agent()}")
     end
     if asks_for_encoding(exchange) then
         append(lines, "Accept-Encoding: gzip, deflate")
@@ -1130,7 +1151,7 @@ func ~request_head(target: url::Url, exchange: Exchange) -> string
     let length = body_length(exchange)
     if length >= 0 then
         append(lines, "Content-Length: $length")
-    elif exchange.body_stream != null then
+    elif has_stream_body(exchange) then
         append(lines, "Transfer-Encoding: chunked")
     end
     if expects_continue(exchange) then
@@ -1192,14 +1213,12 @@ func ~host_header(target: url::Url) -> string
 end
 
 func ~body_length(exchange: Exchange) -> int
-    if exchange.body: text then
-        return string::len(text)
-    end
-    if exchange.body_bytes: data then
-        return buffer::len(data)
-    end
-    if exchange.body_stream != null then
-        return exchange.body_length
+    if exchange.body: body then
+        when body
+            text: text then return string::len(text) end
+            bytes: data then return buffer::len(data) end
+            stream: streamed then return streamed.length end
+        end
     end
     let needs_length = exchange.method == "POST" or exchange.method == "PUT" or exchange.method == "PATCH"
     return if needs_length then 0 else -1 end
@@ -1380,17 +1399,25 @@ func ~open_listener(host: string, port: int, cert: ?net::Certificate, backlog: i
     return try net::tcp_listen(host, port, backlog, reuse_port)
 end
 
-func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response) -> void
+func ~print_failure[E: error](request: Request, failure: Failure[E]) -> void
+    when failure
+        handler: e then io::eprintln("http: ${request.method} ${request.path} failed: $e") end
+        invalid_response: why then io::eprintln("http: ${request.method} ${request.path} failed: $why") end
+        streaming: e then io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e") end
+    end
+end
+
+func ~serve_connection[E: error](server: Server, conn: net::TcpConn, handler: func(Request) -> E!Response, report: func(Request, Failure[E]) -> void) -> void
     let handle = conn_handle(conn)
     stream_set_write_timeout(handle, server.write_timeout_ms)
     let mut is_first = true
-    for serve_request(server, conn, handle, handler, is_first) do
+    for serve_request(server, conn, handle, handler, report, is_first) do
         is_first = false
     end
     conn.close()
 end
 
-func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, handler: func(Request) -> E!Response, is_first: bool) -> bool
+func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, handler: func(Request) -> E!Response, report: func(Request, Failure[E]) -> void, is_first: bool) -> bool
     let received = next_head(server, handle, is_first) catch e then
         reject(handle, e)
         return false
@@ -1403,15 +1430,15 @@ func ~serve_request[E: error](server: Server, conn: net::TcpConn, handle: int, h
         let response = handler(request) catch e then
             let body_failure = request_body_failure(handle)
             if body_failure == BODY_TOO_LARGE then
-                return finish(server, request, status(413))
+                return finish(server, request, status(413), report)
             end
             if body_failure == BODY_INVALID then
-                return finish(server, request, status(400))
+                return finish(server, request, status(400), report)
             end
-            io::eprintln("http: ${request.method} ${request.path} failed: $e")
-            return finish(server, request, status(500))
+            report(request, @(handler = e))
+            return finish(server, request, status(500), report)
         end
-        return finish(server, request, response)
+        return finish(server, request, response, report)
     end
     return false
 end
@@ -1483,15 +1510,15 @@ func ~request_of(head: buffer, conn: net::TcpConn, handle: int, server: Server) 
     return Request(method = parts[0], target = target, path = path, query = query, headers = headers, remote_address = conn.remote_address(), handle = handle, keeps_alive = parts[3] == "1", max_body = server.max_body, expects_continue = expects_continue)
 end
 
-func ~finish(server: Server, request: Request, response: Response) -> bool
+func ~finish[E: error](server: Server, request: Request, response: Response, report: func(Request, Failure[E]) -> void) -> bool
     let body_state = request_body_state(request.handle, request.expects_continue)
     let is_body_done = body_state == BODY_COMPLETE or (body_state == BODY_UNREAD and drain_request(server, request))
     if !is_body_done then
-        return write_response(server, request, checked_response(request, response), false) and false
+        return write_response(server, request, checked_response(request, response, report), report, false) and false
     end
     let wants_close = has_connection_token(response.headers, "close")
     let keeps_alive = request.keeps_alive and !wants_close and !server_is_closing(server.state)
-    return write_response(server, request, checked_response(request, response), keeps_alive) and keeps_alive
+    return write_response(server, request, checked_response(request, response, report), report, keeps_alive) and keeps_alive
 end
 
 func ~has_connection_token(headers: Headers, token: string) -> bool
@@ -1512,27 +1539,27 @@ func ~drain_request(server: Server, request: Request) -> bool
     return true
 end
 
-func ~checked_response(request: Request, response: Response) -> Response
+func ~checked_response[E: error](request: Request, response: Response, report: func(Request, Failure[E]) -> void) -> Response
     let is_valid_status = response.status >= 100 and response.status <= 599
     if !is_valid_status then
-        io::eprintln("http: ${request.method} ${request.path} failed: invalid response status '${response.status}'")
+        report(request, @(invalid_response = "invalid response status '${response.status}'"))
         return status(500)
     end
     if response.reason != "" and !is_header_value(response.reason) then
-        io::eprintln("http: ${request.method} ${request.path} failed: invalid response reason")
+        report(request, @(invalid_response = "invalid response reason"))
         return status(500)
     end
     for response.headers.items: header do
         let is_valid = is_header_name(header.name) and is_header_value(header.value)
         if !is_valid then
-            io::eprintln("http: ${request.method} ${request.path} failed: invalid response header '${header.name}'")
+            report(request, @(invalid_response = "invalid response header '${header.name}'"))
             return status(500)
         end
     end
     return response
 end
 
-func ~write_response(server: Server, request: Request, response: Response, keeps_alive: bool) -> bool
+func ~write_response[E: error](server: Server, request: Request, response: Response, report: func(Request, Failure[E]) -> void, keeps_alive: bool) -> bool
     let code = response.status
     let reason = if response.reason == "" then reason_phrase(code) else response.reason end
     let has_body = !(code < 200 or code == 204 or code == 304)
@@ -1587,7 +1614,7 @@ func ~write_response(server: Server, request: Request, response: Response, keeps
         stream_write(request.handle, head) catch e then
             return false
         end
-        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length, is_stream_compressed)
+        return write_stream_body(server, request, write, has_body and request.method != "HEAD", response.stream_length, is_stream_compressed, report)
     end
     let sends_body = has_body and request.method != "HEAD" and buffer::len(body) > 0
     if !sends_body then
@@ -1673,26 +1700,26 @@ func ~gzipped(server: Server, body: buffer) -> ?buffer
     return packed
 end
 
-func ~write_stream_body(server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int, is_compressing: bool) -> bool
+func ~write_stream_body[E: error](server: Server, request: Request, write: func(mut BodyWriter) -> io::IoError!void, sends_body: bool, length: int, is_compressing: bool, report: func(Request, Failure[E]) -> void) -> bool
     let mut pending = buffer::new(BODY_WRITER_SIZE) catch e then
         return false
     end
     let mut compressor = compression::Compressor(compression::Format.Gzip, level = server.compression_level)
     let is_chunked = sends_body and (length < 0 or is_compressing)
     let mut writer = BodyWriter(handle = request.handle, state = server.state, is_chunked = is_chunked, is_discarding = !sends_body, remaining = length, pending = pending, used = 0, compressor = compressor, is_compressing = is_compressing)
-    let is_sent = send_stream_body(request, write, writer, sends_body)
+    let is_sent = send_stream_body(request, write, writer, sends_body, report)
     writer.compressor.close()
     return is_sent
 end
 
-func ~send_stream_body(request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool) -> bool
+func ~send_stream_body[E: error](request: Request, write: func(mut BodyWriter) -> io::IoError!void, mut writer: BodyWriter, sends_body: bool, report: func(Request, Failure[E]) -> void) -> bool
     write(writer) catch e then
         if !sends_body and e == io::IoError.Closed then
             return true
         end
         let is_expected = !sends_body or e == io::IoError.Closed
         if !is_expected then
-            io::eprintln("http: ${request.method} ${request.path} failed while streaming: $e")
+            report(request, @(streaming = e))
         end
         return false
     end

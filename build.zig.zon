@@ -31,7 +31,7 @@
         "build.zig.zon",
         "src",
         "vendor/timezone-data",
-        "LICENSE",
+        "LICENSE.md",
         "README.md",
     },
 }

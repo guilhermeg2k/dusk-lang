@@ -35,22 +35,22 @@ Functions that change an array take it as `mut`, and the ones that can fail retu
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `len(list)` | `int` | The number of items. |
-| `append(mut list, mut item)` | `[]T` | Adds an item to the end. |
-| `extend(mut list, items)` | `[]T` | Appends all items, retaining references to nested values. Extending an array with itself appends its original contents once. |
-| `sort(mut list)` | `[]T` | Sorts numbers or strings in ascending order and returns the same array reference. |
-| `sort_by(mut list, is_before)` | `[]T` | Sorts in place using `func(T, T) -> bool`, and returns the same array reference. The callback returns whether its first item comes before its second. |
-| `map(list, transform)` | `E![]U` | A new array containing each callback result, in input order. `transform` is `func(T) -> E!U`. |
-| `filter(list, is_kept)` | `E![]T` | A new array containing the items for which `func(T) -> E!bool` returns true, preserving order and references to nested values. |
-| `pop(mut list)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
-| `pop_or_null(mut list)` | `?T` | Removes the last item and returns it, or `null` on an empty array. |
-| `insert(mut list, index, mut item)` | `ArrayError![]T` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
-| `remove(mut list, index)` | `ArrayError!T` | Removes the item at `index`, moving the later items down, and returns it. Fails with `ArrayError.OutOfRange` outside the array. |
-| `clear(mut list)` | `[]T` | Removes every item. |
-| `reverse(mut list)` | `[]T` | Reverses the items in place. |
-| `slice(list, start, stop)` | `ArrayError![]T` | A new array with the items from `start` up to, not including, `stop`. The items are copies, so changing the slice never changes `list`. Fails with `ArrayError.OutOfRange` for a negative bound, `start > stop` or `stop > len(list)`. |
-| `index_of(list, item)` | `?int` | The position of the first item equal to `item`, or `null`. |
-| `contains(list, item)` | `bool` | Whether some item equals `item`. |
+| `len(list: []T)` | `int` | The number of items. |
+| `append(mut list: []T, mut item: T)` | `[]T` | Adds an item to the end. |
+| `extend(mut list: []T, items: []T)` | `[]T` | Appends all items, retaining references to nested values. Extending an array with itself appends its original contents once. |
+| `sort(mut list: []T)` | `[]T` | Sorts numbers or strings in ascending order and returns the same array reference. |
+| `sort_by(mut list: []T, is_before: func(T, T) -> bool)` | `[]T` | Sorts in place using `func(T, T) -> bool`, and returns the same array reference. The callback returns whether its first item comes before its second. |
+| `map(list: []T, transform: func(T) -> E!U)` | `E![]U` | A new array containing each callback result, in input order. `transform` is `func(T) -> E!U`. |
+| `filter(list: []T, is_kept: func(T) -> E!bool)` | `E![]T` | A new array containing the items for which `func(T) -> E!bool` returns true, preserving order and references to nested values. |
+| `pop(mut list: []T)` | `ArrayError!T` | Removes the last item and returns it. Fails with `ArrayError.Empty` on an empty array. |
+| `pop_or_null(mut list: []T)` | `?T` | Removes the last item and returns it, or `null` on an empty array. |
+| `insert(mut list: []T, index: int, mut item: T)` | `ArrayError![]T` | Puts `item` at `index`, moving the later items up. `index` can be `len(list)` (the end). Fails with `ArrayError.OutOfRange` outside `0..len(list)`. |
+| `remove(mut list: []T, index: int)` | `ArrayError!T` | Removes the item at `index`, moving the later items down, and returns it. Fails with `ArrayError.OutOfRange` outside the array. |
+| `clear(mut list: []T)` | `[]T` | Removes every item. |
+| `reverse(mut list: []T)` | `[]T` | Reverses the items in place. |
+| `slice(list: []T, start: int, stop: int)` | `ArrayError![]T` | A new array with the items from `start` up to, not including, `stop`. The items are copies, so changing the slice never changes `list`. Fails with `ArrayError.OutOfRange` for a negative bound, `start > stop` or `stop > len(list)`. |
+| `index_of(list: []T, item: T)` | `?int` | The position of the first item equal to `item`, or `null`. |
+| `contains(list: []T, item: T)` | `bool` | Whether some item equals `item`. |
 
 `append`, `extend`, `clear`, `insert`, `reverse`, `sort` and `sort_by` mutate the input and return the same array reference. Pass a copy to preserve the original: `let extended = array::extend(copy(numbers), [4, 5])`, `let reversed = array::reverse(copy(numbers))` or `let cleared = array::clear(copy(numbers))`. Results can be chained, for example `array::sort(array::extend(copy(numbers), [4, 5]))`. `insert` still requires `try` or `catch`. `pop`, `pop_or_null` and `remove` return the removed item instead.
 
@@ -79,12 +79,12 @@ Reading and writing entries uses indexing (`m[k]`, `m[k] = v`, see [Maps](langua
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `len(m)` | `int` | The number of entries. |
-| `has(m, key)` | `bool` | Whether `key` has an entry, also when its value is `null`. |
-| `remove(mut m, key)` | `bool` | Removes the entry for `key`. Returns whether there was one. |
-| `keys(m)` | `[]K` | A new array with the keys, in insertion order. |
-| `values(m)` | `[]V` | A new array with the values, in insertion order. |
-| `clear(mut m)` | `void` | Removes every entry. |
+| `len(m: map[K, V])` | `int` | The number of entries. |
+| `has(m: map[K, V], key: K)` | `bool` | Whether `key` has an entry, also when its value is `null`. |
+| `remove(mut m: map[K, V], key: K)` | `bool` | Removes the entry for `key`. Returns whether there was one. |
+| `keys(m: map[K, V])` | `[]K` | A new array with the keys, in insertion order. |
+| `values(m: map[K, V])` | `[]V` | A new array with the values, in insertion order. |
+| `clear(mut m: map[K, V])` | `void` | Removes every entry. |
 
 ```nim
 import "std/map"
@@ -113,33 +113,33 @@ String functions never change their argument: a function that produces text retu
 
 Positions are **byte offsets**, the same unit as `string::len(s)` and `string::byte_at`, so a position from `string::find` can be passed straight to `string::slice`. `char_count` and `char_at` are the only functions that count characters. The `start` argument of `find` is inclusive; a byte offset inside a multi-byte character searches forward from that byte. `find_reverse` searches backward from an inclusive starting byte offset and returns a match start usable with `slice`. A match may extend beyond the starting offset: `find_reverse("abcdef", "bcd", 1)` returns `1`.
 
-| Function                    | Returns                 | Description                                                                                                                                                       |
-| :-------------------------- | :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `len(text)`                 | `int`                   | Number of bytes (UTF-8).                                                                                                                                          |
-| `char_count(text)`          | `int`                   | Number of characters (Unicode code points).                                                                                                                       |
-| `concat(a, b)`              | `string`                | `b` after `a`.                                                                                                                                                    |
-| `join(parts, sep = "")`     | `string`                | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array.                                                                       |
-| `byte_at(text, index)`      | `StringError!byte`      | The byte at byte offset `index`.                                                                                                                                  |
-| `char_at(text, index)`      | `StringError!string`    | The `index`-th character, as a one-character string (`string::char_at("olá", 2)` is `"á"`). Scans from the start.                                                 |
-| `find(text, needle, start = 0)` | `?int` | Byte offset of the first match at or after `start`, or `null` for no match, an empty needle, or a start outside the string. Negative starts return `null`. |
-| `find_reverse(text, needle, start = null)` | `?int` | Byte offset of the rightmost match starting at or before `start`. Omitted/null starts search from the end; past-end starts search from the end too. Negative starts, no match, or an empty needle return `null`. Overlapping matches count. |
-| `compare(a, b)` | `int` | Lexicographic UTF-8 byte ordering: exactly `-1` if `a` comes before `b`, `0` if equal, or `1` if it comes after. Case-sensitive, matching `array::sort` on strings. |
-| `contains(text, needle)`    | `bool`                  | Whether `needle` appears in `text`; `false` for an empty `needle`.                                                                                                |
-| `starts_with(text, prefix)` | `bool`                  | Whether `text` starts with `prefix`; `false` for an empty `prefix`.                                                                                               |
-| `ends_with(text, suffix)`   | `bool`                  | Whether `text` ends with `suffix`; `false` for an empty `suffix`.                                                                                                 |
-| `count(text, needle)`       | `int`                   | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`.                                                                             |
-| `trim(text)`                | `string`                | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends.                                                                               |
-| `trim_start(text)` | `string` | Removes the same whitespace as `trim`, from the start only. |
-| `trim_end(text)` | `string` | Removes the same whitespace as `trim`, from the end only. |
-| `upper(text)` / `lower(text)` | `string`              | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged.                                                              |
-| `split(text, separator, limit = -1)`    | `[]string`              | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. A positive `limit` caps the number of parts, preserving the remainder in the last part: `split("a=b=c", "=", 2)` gives `["a", "b=c"]`. A negative limit means unlimited; `0` returns an empty array. |
-| `replace(text, old, new)`   | `string`                | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged.                                             |
-| `repeat(text, count)`       | `StringError!string`    | `text` repeated `count` times; `0` gives `""`.                                                                                                                    |
-| `slice(text, start, stop)`  | `StringError!string`    | The bytes from `start` up to, not including, `stop`: `string::slice(s, 0, string::len(s))` is all of `s`.                                                         |
-| `to_int(text)`              | `ConversionError!int`   | Reads an int written like a Dusk literal.                                                                                                                         |
-| `to_float(text)`            | `ConversionError!float` | Reads a float (or int) written like a Dusk literal.                                                                                                               |
-| `from_bytes(data)`          | `StringError!string`    | Copies a buffer into a new string; fails with `StringError.InvalidUtf8` if it isn't valid UTF-8.                                                                  |
-| `from_codepoint(codepoint)` | `StringError!string`    | Encodes a Unicode scalar value (`0`..`0x10FFFF`, excluding surrogates `0xD800`..`0xDFFF`) as a 1-to-4-byte UTF-8 string; fails with `StringError.InvalidUtf8` otherwise. |
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `len(text: string)` | `int` | Number of bytes (UTF-8). |
+| `char_count(text: string)` | `int` | Number of characters (Unicode code points). |
+| `concat(a: string, b: string)` | `string` | `b` after `a`. |
+| `join(parts: []string, sep: string = "")` | `string` | The `[]string` parts with `sep` between them (nothing by default); `""` for an empty array. |
+| `byte_at(text: string, index: int)` | `?byte` | The byte at byte offset `index`, or `null` if the index is out of range. |
+| `char_at(text: string, index: int)` | `?string` | The `index`-th character as a one-character string (`string::char_at("olá", 2)` gives `"á"`), or `null` if the index is out of range. Scans from the start. |
+| `find(text: string, needle: string, start: int = 0)` | `?int` | Byte offset of the first match at or after `start`, or `null` for no match, an empty needle, or a start outside the string. Negative starts return `null`. |
+| `find_reverse(text: string, needle: string, start: ?int = null)` | `?int` | Byte offset of the rightmost match starting at or before `start`. Omitted/null starts search from the end; past-end starts search from the end too. Negative starts, no match, or an empty needle return `null`. Overlapping matches count. |
+| `compare(a: string, b: string)` | `int` | Lexicographic UTF-8 byte ordering: exactly `-1` if `a` comes before `b`, `0` if equal, or `1` if it comes after. Case-sensitive, matching `array::sort` on strings. |
+| `contains(text: string, needle: string)` | `bool` | Whether `needle` appears in `text`; `false` for an empty `needle`. |
+| `starts_with(text: string, prefix: string)` | `bool` | Whether `text` starts with `prefix`; `false` for an empty `prefix`. |
+| `ends_with(text: string, suffix: string)` | `bool` | Whether `text` ends with `suffix`; `false` for an empty `suffix`. |
+| `count(text: string, needle: string)` | `int` | Number of non-overlapping matches (`"aaaa"`, `"aa"` is 2); `0` for an empty `needle`. |
+| `trim(text: string)` | `string` | Removes spaces, tabs and line breaks (`\t`, `\n`, `\r`, `\v`, `\f`) from both ends. |
+| `trim_start(text: string)` | `string` | Removes the same whitespace as `trim`, from the start only. |
+| `trim_end(text: string)` | `string` | Removes the same whitespace as `trim`, from the end only. |
+| `upper(text: string)` / `lower(text: string)` | `string` | Changes the case of ASCII and Latin-1 letters (`"ação"` ↔ `"AÇÃO"`). Other characters are unchanged. |
+| `split(text: string, separator: string, limit: int = -1)` | `[]string` | The pieces between separators, keeping empty ones: `"a,,b"` gives `["a", "", "b"]`. An empty `separator` splits into characters: `"olá"` gives `["o", "l", "á"]`. A positive `limit` caps the number of parts, preserving the remainder in the last part: `split("a=b=c", "=", 2)` gives `["a", "b=c"]`. A negative limit means unlimited; `0` returns an empty array. |
+| `replace(text: string, old: string, new: string)` | `string` | Replaces every non-overlapping `old`, left to right. An empty `new` deletes; an empty `old` returns `text` unchanged. |
+| `repeat(text: string, count: int)` | `StringError!string` | `text` repeated `count` times; `0` gives `""`. |
+| `slice(text: string, start: int, stop: int)` | `StringError!string` | The bytes from `start` up to, not including, `stop`: `string::slice(s, 0, string::len(s))` is all of `s`. |
+| `to_int(text: string)` | `ConversionError!int` | Reads an int written like a Dusk literal. |
+| `to_float(text: string)` | `ConversionError!float` | Reads a float (or int) written like a Dusk literal. |
+| `from_bytes(data: buffer)` | `StringError!string` | Copies a buffer into a new string; fails with `StringError.InvalidUtf8` if it isn't valid UTF-8. |
+| `from_codepoint(codepoint: int)` | `StringError!string` | Encodes a Unicode scalar value (`0`..`0x10FFFF`, excluding surrogates `0xD800`..`0xDFFF`) as a 1-to-4-byte UTF-8 string; fails with `StringError.InvalidUtf8` otherwise. |
 
 Use `string::compare` for string fields in custom sorting: `array::sort_by(players, func(a, b) -> return string::compare(a.name, b.name) < 0)`. It compares bytes without case folding or locale rules.
 
@@ -172,20 +172,20 @@ end
 
 ## std/buffer
 
-| Function            | Returns              | Description                                                                                       |
-| :------------------ | :------------------- | :------------------------------------------------------------------------------------------------ |
-| `len(data)`         | `int`                | Number of bytes.                                                                                  |
-| `new(size)`         | `BufferError!buffer` | A new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size.     |
-| `from_string(text)` | `buffer`             | Copies a string's bytes into a new buffer.                                                        |
-| `put(mut data, at, text)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
-| `put_bytes(mut data, at, source)` | `BufferError!int` | Same, copying another buffer. |
-| `slice(data, start, stop)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
-| `equal(a, b)` | `bool` | Whether both buffers hold the same bytes. |
-| `starts_with(data, prefix)` | `bool` | Whether `data` begins with the bytes of `prefix`. |
-| `index_of(data, needle, from = 0)` | `?int` | Position of the first copy of `needle` at or after `from`, or `null` for no match, an empty needle, or a `from` outside the buffer. |
-| `fill(data, value, start, stop)` | `BufferError!void` | Sets bytes `start` to `stop` (not included) to `value`. |
-| `copy_within(data, from, to, count)` | `BufferError!void` | Copies `count` bytes from position `from` to position `to` of the same buffer; the two parts may overlap. |
-| `parse_int(data, start, stop)` | `BufferError!int` | Reads the decimal number written in bytes `start` to `stop`, without making a string. |
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `len(data: buffer)` | `int` | Number of bytes. |
+| `new(size: int)` | `BufferError!buffer` | A new buffer of `size` zero bytes; fails with `BufferError.NegativeSize` for a negative size. |
+| `from_string(text: string)` | `buffer` | Copies a string's bytes into a new buffer. |
+| `put(mut data: buffer, at: int, text: string)` | `BufferError!int` | Writes the text's bytes into `data` starting at `at` and returns the position after them. |
+| `put_bytes(mut data: buffer, at: int, source: buffer)` | `BufferError!int` | Same, copying another buffer. |
+| `slice(data: buffer, start: int, stop: int)` | `BufferError!buffer` | A new buffer with a copy of bytes `start` to `stop` (not included). |
+| `equal(a: buffer, b: buffer)` | `bool` | Whether both buffers hold the same bytes. |
+| `starts_with(data: buffer, prefix: buffer)` | `bool` | Whether `data` begins with the bytes of `prefix`. |
+| `index_of(data: buffer, needle: buffer, from: int = 0)` | `?int` | Position of the first copy of `needle` at or after `from`, or `null` for no match, an empty needle, or a `from` outside the buffer. |
+| `fill(mut data: buffer, value: byte, start: int, stop: int)` | `BufferError!void` | Sets bytes `start` to `stop` (not included) to `value`. |
+| `copy_within(mut data: buffer, from: int, to: int, count: int)` | `BufferError!void` | Copies `count` bytes from position `from` to position `to` of the same buffer; the two parts may overlap. |
+| `parse_int(data: buffer, start: int, stop: int)` | `BufferError!int` | Reads the decimal number written in bytes `start` to `stop`, without making a string. |
 
 `put`, `put_bytes`, `fill` and `copy_within` take `data` as `mut` and change it in place. When what they write doesn't fit between `at` and the end of the buffer, or a position is outside it, they fail with `BufferError.OutOfRange` and write nothing; `slice` and `parse_int` fail the same way for bounds outside the buffer or `start > stop`. A buffer never grows: size it with `buffer::new(n)` and reuse it, writing frames, lines or messages into it and sending the part used with `slice`. Numbers go in as text through interpolation:
 
@@ -240,10 +240,10 @@ The module declares the error set `BufferError` (`NegativeSize`, `OutOfRange`, `
 
 Compressing and decompressing bytes. Import with `import "std/compression"`.
 
-| Function                                | Returns                         | Description                                                                 |
-| :-------------------------------------- | :------------------------------ | :-------------------------------------------------------------------------- |
-| `compress(data, format, level = 6)`     | `CompressionError!buffer`       | Compresses `data` in the given format.                                      |
-| `decompress(data, format, max = -1)`    | `CompressionError!buffer`       | Decompresses `data`; fails with `TooLarge` past `max` bytes (`-1`: no limit). |
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `compress(data: buffer, format: Format, level: int = 6)` | `CompressionError!buffer` | Compresses `data` in the given format. |
+| `decompress(data: buffer, format: Format, max: int = -1)` | `CompressionError!buffer` | Decompresses `data`; fails with `TooLarge` past `max` bytes (`-1`: no limit). |
 
 `format` is a `compression::Format`: `Gzip` (what `.gz` files and HTTP's `gzip` use), `Zlib` (HTTP's `deflate`) or `Deflate` (raw deflate data, no header). `level` goes from `0` (stored, no compression) to `9` (smallest output, slowest); `6` is a good default, and `1` is much faster for a slightly bigger result. A level outside `0..9` fails with `InvalidLevel`.
 
@@ -258,17 +258,17 @@ let text = try string::from_bytes(try compression::decompress(try fs::read_bytes
 
 Inputs over 256 KiB are compressed or decompressed on a background thread: only the calling task waits, and other tasks keep running. Smaller ones are done right away.
 
-**Streams.** For data that arrives or leaves in pieces (a file read in chunks, a response sent as it's produced), `compression::Compressor(format, level = 6)` and `compression::Decompressor(format, max = -1)` take bytes in and give bytes out, keeping their state between calls. They do no I/O themselves, so their output can go anywhere: a file, a connection, a buffer.
+**Streams.** For data that arrives or leaves in pieces (a file read in chunks, a response sent as it's produced), `compression::Compressor(format: Format, level: int = 6)` and `compression::Decompressor(format: Format, max: int = -1)` take bytes in and give bytes out, keeping their state between calls. They do no I/O themselves, so their output can go anywhere: a file, a connection, a buffer.
 
-| Method                          | Returns                    | Description                                                                                       |
-| :------------------------------ | :------------------------- | :------------------------------------------------------------------------------------------------ |
-| `Compressor.write_bytes(data)`  | `CompressionError!buffer`  | Compresses more input; returns the compressed bytes ready so far, often none for small inputs.   |
-| `Compressor.flush()`            | `CompressionError!buffer`  | Returns everything still held back, so what was sent so far can be decompressed on the other side. |
-| `Compressor.finish()`           | `CompressionError!buffer`  | Ends the stream (the rest plus the format's trailer).                                             |
-| `Decompressor.write_bytes(data)`| `CompressionError!buffer`  | Decompresses more input; returns the bytes ready so far.                                          |
-| `Decompressor.finish()`         | `CompressionError!void`    | Ends the stream; fails with `InvalidData` if it was cut short.                                    |
-| `Decompressor.is_done()`        | `bool`                     | Whether the input seen so far is a whole stream.                                                  |
-| `close()` (both)                | `void`                     | Drops a stream without finishing it.                                                              |
+| Method | Returns | Description |
+| :----- | :------ | :---------- |
+| `Compressor.write_bytes(data: buffer)` | `CompressionError!buffer` | Compresses more input; returns the compressed bytes ready so far, often none for small inputs. |
+| `Compressor.flush()` | `CompressionError!buffer` | Returns everything still held back, so what was sent so far can be decompressed on the other side. |
+| `Compressor.finish()` | `CompressionError!buffer` | Ends the stream (the rest plus the format's trailer). |
+| `Decompressor.write_bytes(data: buffer)` | `CompressionError!buffer` | Decompresses more input; returns the bytes ready so far. |
+| `Decompressor.finish()` | `CompressionError!void` | Ends the stream; fails with `InvalidData` if it was cut short. |
+| `Decompressor.is_done()` | `bool` | Whether the input seen so far is a whole stream. |
+| `close()` (both) | `void` | Drops a stream without finishing it. |
 
 ```nim
 let mut compressor = compression::Compressor(compression::Format.Gzip, level = 1)
@@ -282,7 +282,7 @@ out.close()
 
 A level outside `0..9` fails with `InvalidLevel` on the first call. Once `finish()` or `close()` ran, every call fails with `Finished`. `flush()` costs a few bytes of output each time, so call it when the other side needs what was sent (a message, an event), not after every write. A `Decompressor` follows the same rules as `decompress`: a gzip stream may hold several members, other bytes after the end fail with `InvalidData`, and `max` counts all its output across calls. After a failure, `close()` the stream. A stream that's neither finished nor closed keeps its memory (about 300 KB for a compressor) until the garbage collector finds it unreachable, or the program ends.
 
-**Wrapping readers and writers.** `compression::writer(inner, format, level = 6)` returns a `compression::Writer` that compresses what's written to it into `inner`, any [`io::Writer`](#stdio) (a file, a connection, your own struct), and `compression::reader(inner, format, max = -1)` returns a `compression::Reader` that decompresses what it reads from `inner`, any `io::Reader`. Both fit the same traits, so they work with `io::copy` and anywhere else a reader or writer goes. `writer` fails with `InvalidLevel` right away for a bad level.
+**Wrapping readers and writers.** `compression::writer(mut inner: W, format: Format, level: int = 6)` returns a `compression::Writer` that compresses what's written to it into `inner`, any [`io::Writer`](#stdio) (a file, a connection, your own struct), and `compression::reader(mut inner: R, format: Format, max: int = -1)` returns a `compression::Reader` that decompresses what it reads from `inner`, any `io::Reader`. Both fit the same traits, so they work with `io::copy` and anywhere else a reader or writer goes. `writer` fails with `InvalidLevel` right away for a bad level.
 
 ```nim
 let mut file = try fs::open("data.json.gz", fs::Mode.Write)
@@ -296,7 +296,7 @@ let mut plain = try compression::reader(source, compression::Format.Gzip, max = 
 let copied = try io::copy(plain, io::stdout())
 ```
 
-A `Writer` has `write`, `write_bytes`, `flush` (also flushes `inner`) and `finish`, which ends the compressed stream and must be called last; it doesn't close `inner`. A `Reader` has `read_bytes(max, timeout_ms = -1)`, returning `null` after the end of the compressed stream, and `close()`. Errors are `io::IoError`: input that ends before the compressed stream does is `UnexpectedEnd`, bad data or going past `max` is `Other`, and writing after `finish` is `Closed`. `timeout_ms` applies to each read from `inner`.
+A `Writer` has `write(text: string)`, `write_bytes(data: buffer)`, `flush()` (also flushes `inner`) and `finish()`, which ends the compressed stream and must be called last; it doesn't close `inner`. A `Reader` has `read_bytes(max: int, timeout_ms: int = -1)`, returning `null` after the end of the compressed stream, and `close()`. Errors are `io::IoError`: input that ends before the compressed stream does is `UnexpectedEnd`, bad data or going past `max` is `Other`, and writing after `finish` is `Closed`. `timeout_ms` applies to each read from `inner`.
 
 The module declares the error set `CompressionError` (`InvalidData`, `TooLarge`, `InvalidLevel`, `Finished`, `Other`). It uses a bundled zlib-ng.
 
@@ -653,14 +653,14 @@ Numbers. Import with `import "std/math"`.
 | :--- | :------ | :---------- |
 | `pi`, `tau`, `e` | `float` | The constants π, 2π and e. |
 | `inf`, `nan` | `float` | Positive infinity and not-a-number. |
-| `min(values)`, `max(values)` | `MathError!T` | The smallest or largest item of an `[]int` or `[]float`; fails with `MathError.Empty` for an empty array. |
-| `abs(value)` | `int` | Absolute value of an `int`. `abs` of the smallest `int` doesn't fit and stops the program, like any integer overflow. |
-| `f_abs(value)` | `float` | Absolute value of a `float`. |
-| `clamp(value, lower, upper)`, `f_clamp(...)` | `MathError!int` / `MathError!float` | `value` limited to `lower..upper`; fails with `MathError.InvalidBounds` when `lower > upper` (or a bound is `nan`). `f_clamp` keeps a `nan` value as it is. |
-| `floor(value)`, `ceil(value)`, `round(value)`, `trunc(value)` | `int` | A `float` rounded down, up, to the nearest (halves away from zero: `round(2.5)` is `3`, `round(-2.5)` is `-3`) or toward zero, as an `int`. |
-| `sqrt`, `pow(base, exponent)`, `exp`, `log`, `log2`, `log10` | `float` | Roots, powers and logarithms. Out-of-domain inputs give `nan` (`sqrt(-1.0)`, `log(-1.0)`), not an error. |
-| `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)` | `float` | Trigonometry, in radians. |
-| `is_nan`, `is_inf`, `is_finite` | `bool` | Checks for `nan`, infinities, and neither. |
+| `min(values: []T)`, `max(values: []T)` | `MathError!T` | The smallest or largest item of an `[]int` or `[]float`; fails with `MathError.Empty` for an empty array. |
+| `abs(value: int)` | `int` | Absolute value of an `int`. `abs` of the smallest `int` doesn't fit and stops the program, like any integer overflow. |
+| `f_abs(value: float)` | `float` | Absolute value of a `float`. |
+| `clamp(value: int, lower: int, upper: int)`, `f_clamp(value: float, lower: float, upper: float)` | `MathError!int` / `MathError!float` | `value` limited to `lower..upper`; fails with `MathError.InvalidBounds` when `lower > upper` (or a bound is `nan`). `f_clamp` keeps a `nan` value as it is. |
+| `floor(value: float)`, `ceil(value: float)`, `round(value: float)`, `trunc(value: float)` | `int` | A `float` rounded down, up, to the nearest (halves away from zero: `round(2.5)` is `3`, `round(-2.5)` is `-3`) or toward zero, as an `int`. |
+| `sqrt(value: float)`, `pow(base: float, exponent: float)`, `exp(value: float)`, `log(value: float)`, `log2(value: float)`, `log10(value: float)` | `float` | Roots, powers and logarithms. Out-of-domain inputs give `nan` (`sqrt(-1.0)`, `log(-1.0)`), not an error. |
+| `sin(value: float)`, `cos(value: float)`, `tan(value: float)`, `asin(value: float)`, `acos(value: float)`, `atan(value: float)`, `atan2(y: float, x: float)` | `float` | Trigonometry, in radians. |
+| `is_nan(value: float)`, `is_inf(value: float)`, `is_finite(value: float)` | `bool` | Checks for `nan`, infinities, and neither. |
 
 `floor`, `ceil`, `round` and `trunc` return an `int`, so a `float` that isn't a finite number in the `int` range (`nan`, an infinity, `1e300`) stops the program. When the value comes from outside (parsed text, a computation that can overflow), check it with `math::is_finite` first, or use the prelude's `to_int`, which truncates toward zero and fails with `ConversionError.Overflow` instead of stopping.
 
@@ -668,20 +668,20 @@ The module declares the error set `MathError` (`InvalidBounds`, `Empty`).
 
 ## std/task
 
-| Function    | Returns | Description                                                     |
-| :---------- | :------ | :-------------------------------------------------------------- |
-| `sleep(duration: time::Duration)` | `void`  | Pauses the running task for `duration`, rounded up to whole milliseconds; zero or a negative duration (a deadline already passed) just gives other ready tasks a turn (see [Tasks](language-ref.md#13-tasks)). |
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `sleep(duration: time::Duration)` | `void` | Pauses the running task for `duration`, rounded up to whole milliseconds; zero or a negative duration (a deadline already passed) just gives other ready tasks a turn (see [Tasks](language-ref.md#13-tasks)). |
 
 ## std/io
 
 Writes text to the standard output (stdout) and the standard error output (stderr). The functions take a `string`: use [interpolation](language-ref.md#string-interpolation) for any other value.
 
-| Function         | Returns | Description                             |
-| :--------------- | :------ | :-------------------------------------- |
-| `print(text)`    | `void`  | Writes `text` to stdout.                |
-| `println(text)`  | `void`  | Writes `text` and a newline to stdout.  |
-| `eprint(text)`   | `void`  | Writes `text` to stderr.                |
-| `eprintln(text)` | `void`  | Writes `text` and a newline to stderr.  |
+| Function | Returns | Description |
+| :------- | :------ | :---------- |
+| `print(text: string)` | `void` | Writes `text` to stdout. |
+| `println(text: string)` | `void` | Writes `text` and a newline to stdout. |
+| `eprint(text: string)` | `void` | Writes `text` to stderr. |
+| `eprintln(text: string)` | `void` | Writes `text` and a newline to stderr. |
 
 ```nim
 import "std/io"
@@ -708,11 +708,11 @@ Interpolation formats primitives, arrays and nullables as their values. It forma
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `read_line(max = -1, timeout_ms = -1)` | `IoError!?string` | The next line, without its `\n` or `\r\n`; the last line is returned even without a newline. `null` at the end of the input. |
-| `read_bytes(max, timeout_ms = -1)` | `IoError!?buffer` | Up to `max` bytes (at least 1), as soon as some are there: it doesn't wait for `max` of them. `null` at the end of the input. |
-| `read_exact(count, timeout_ms = -1)` | `IoError!?buffer` | Exactly `count` bytes (at least 1), waiting until they're all there. `null` at the end of the input; `UnexpectedEnd` when the input ends partway, and the bytes that did arrive stay for the next read. |
-| `read_all(timeout_ms = -1)` | `IoError!string` | Everything until the end of the input, as text. |
-| `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes. |
+| `read_line(max: int = -1, timeout_ms: int = -1)` | `IoError!?string` | The next line, without its `\n` or `\r\n`; the last line is returned even without a newline. `null` at the end of the input. |
+| `read_bytes(max: int, timeout_ms: int = -1)` | `IoError!?buffer` | Up to `max` bytes (at least 1), as soon as some are there: it doesn't wait for `max` of them. `null` at the end of the input. |
+| `read_exact(count: int, timeout_ms: int = -1)` | `IoError!?buffer` | Exactly `count` bytes (at least 1), waiting until they're all there. `null` at the end of the input; `UnexpectedEnd` when the input ends partway, and the bytes that did arrive stay for the next read. |
+| `read_all(timeout_ms: int = -1)` | `IoError!string` | Everything until the end of the input, as text. |
+| `read_all_bytes(timeout_ms: int = -1)` | `IoError!buffer` | Everything until the end of the input, as bytes. |
 | `is_terminal()` | `bool` | Whether the input is a terminal (a person typing) rather than a pipe or a file. |
 | `set_raw(is_raw)` | `IoError!void` | Turns the terminal's raw mode on or off (see [Terminal programs](#terminal-programs)). |
 | `close()` | `void` | Stops reading. Reading afterwards fails with `Closed`; closing twice does nothing. |
@@ -753,8 +753,8 @@ end
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `write(text)` | `IoError!void` | Writes `text`. |
-| `write_bytes(data)` | `IoError!void` | Writes the bytes of a `buffer`. |
+| `write(text: string)` | `IoError!void` | Writes `text`. |
+| `write_bytes(data: buffer)` | `IoError!void` | Writes the bytes of a `buffer`. |
 | `flush()` | `IoError!void` | Sends what's buffered now. |
 | `is_terminal()` | `bool` | Whether the output is a terminal. |
 | `size()` | `?io::TerminalSize` | The terminal's size in characters (`columns`, `rows`), or `null` when the output isn't a terminal or its size is unknown. |
@@ -848,7 +848,7 @@ trait Writer
 end
 ```
 
-`io::copy(from, to)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr`, files (`fs::File`, see [std/fs](#files)) and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
+`io::copy(mut from: R, mut to: W)` reads from a `Reader` until its end and writes everything to a `Writer`, then flushes it, and returns the number of bytes copied. `io::Stdin`, `io::Stdout`, `io::Stderr`, files (`fs::File`, see [std/fs](#files)) and network connections (`net::TcpConn`, see [std/net](#stdnet)) fit these traits, and so does any struct with the same methods, so your own types work with `io::copy` too:
 
 ```nim
 import "std/io"
@@ -895,17 +895,17 @@ Reads and writes files and folders. Every call waits for the disk without blocki
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `read(path)` | `FsError!string` | The whole file as text. |
-| `read_bytes(path)` | `FsError!buffer` | The whole file as bytes, for anything that isn't text. |
-| `write(path, text)` | `FsError!void` | Creates the file, or replaces its contents. |
-| `write_bytes(path, data)` | `FsError!void` | Same, from a `buffer`. |
-| `append(path, text)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
-| `read_dir(path)` | `FsError![]string` | The names of the entries in a folder (not `.` and `..`), in the order the system gives them. |
-| `exists(path)` | `bool` | Whether the path exists. Never fails: any problem gives `false`. |
-| `stat(path)` | `FsError!FileInfo` | Information about a file or folder (below). |
-| `make_dir(path, recursive = false)` | `FsError!void` | Creates a folder. With `recursive = true`, also creates missing parent folders, and a folder that already exists is fine. |
-| `delete(path, recursive = false)` | `FsError!void` | Deletes a file or an empty folder. With `recursive = true`, deletes a folder with everything inside. |
-| `rename(from, to)` | `FsError!void` | Renames or moves a file or folder. |
+| `read(path: string)` | `FsError!string` | The whole file as text. |
+| `read_bytes(path: string)` | `FsError!buffer` | The whole file as bytes, for anything that isn't text. |
+| `write(path: string, text: string)` | `FsError!void` | Creates the file, or replaces its contents. |
+| `write_bytes(path: string, data: buffer)` | `FsError!void` | Same, from a `buffer`. |
+| `append(path: string, text: string)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
+| `read_dir(path: string)` | `FsError![]string` | The names of the entries in a folder (not `.` and `..`), in the order the system gives them. |
+| `exists(path: string)` | `bool` | Whether the path exists. Never fails: any problem gives `false`. |
+| `stat(path: string)` | `FsError!FileInfo` | Information about a file or folder (below). |
+| `make_dir(path: string, recursive: bool = false)` | `FsError!void` | Creates a folder. With `recursive = true`, also creates missing parent folders, and a folder that already exists is fine. |
+| `delete(path: string, recursive: bool = false)` | `FsError!void` | Deletes a file or an empty folder. With `recursive = true`, deletes a folder with everything inside. |
+| `rename(from: string, to: string)` | `FsError!void` | Renames or moves a file or folder. |
 
 ```nim
 struct FileInfo
@@ -951,7 +951,7 @@ end
 
 #### Files
 
-`fs::open(path, mode = fs::Mode.Read)` opens a file once and returns an `fs::File` to read or write it piece by piece: big files, a log written line by line, a file read line by line, or a file sent to a connection with `io::copy`. Opening fails with `FsError` (`NotFound`, `IsDirectory` for a folder, `PermissionDenied`...); using a `File` fails with `io::IoError`, like any stream.
+`fs::open(path: string, mode: Mode = fs::Mode.Read)` opens a file once and returns an `fs::File` to read or write it piece by piece: big files, a log written line by line, a file read line by line, or a file sent to a connection with `io::copy`. Opening fails with `FsError` (`NotFound`, `IsDirectory` for a folder, `PermissionDenied`...); using a `File` fails with `io::IoError`, like any stream.
 
 | Mode | Opens for | |
 | :--- | :-------- | :- |
@@ -961,14 +961,14 @@ end
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `read_line(max = -1, timeout_ms = -1)` | `IoError!?string` | The next line, without `\n` or `\r\n`; `null` at the end of the file. With `max`, a longer line fails with `LineTooLong`. |
-| `read_bytes(max, timeout_ms = -1)` | `IoError!?buffer` | Up to `max` bytes; `null` at the end. |
-| `read_exact(count, timeout_ms = -1)` | `IoError!?buffer` | Exactly `count` bytes, `null` at the end of the file (`UnexpectedEnd` if fewer than `count` bytes remain). |
-| `read_all(timeout_ms = -1)` | `IoError!string` | The rest of the file as text (`InvalidUtf8` if it isn't). |
-| `read_all_bytes(timeout_ms = -1)` | `IoError!buffer` | The rest of the file as bytes. |
-| `write(text)` / `write_bytes(data)` | `IoError!void` | Adds text or bytes at the current position. |
+| `read_line(max: int = -1, timeout_ms: int = -1)` | `IoError!?string` | The next line, without `\n` or `\r\n`; `null` at the end of the file. With `max`, a longer line fails with `LineTooLong`. |
+| `read_bytes(max: int, timeout_ms: int = -1)` | `IoError!?buffer` | Up to `max` bytes; `null` at the end. |
+| `read_exact(count: int, timeout_ms: int = -1)` | `IoError!?buffer` | Exactly `count` bytes, `null` at the end of the file (`UnexpectedEnd` if fewer than `count` bytes remain). |
+| `read_all(timeout_ms: int = -1)` | `IoError!string` | The rest of the file as text (`InvalidUtf8` if it isn't). |
+| `read_all_bytes(timeout_ms: int = -1)` | `IoError!buffer` | The rest of the file as bytes. |
+| `write(text: string)` / `write_bytes(data: buffer)` | `IoError!void` | Adds text or bytes at the current position. |
 | `flush()` | `IoError!void` | Sends buffered writes to the file now and waits for them. |
-| `seek(offset, from = fs::SeekFrom.Start)` | `IoError!int` | Moves to `offset` bytes from `Start`, `Current` or `End` and returns the new position. |
+| `seek(offset: int, from: SeekFrom = fs::SeekFrom.Start)` | `IoError!int` | Moves to `offset` bytes from `Start`, `Current` or `End` and returns the new position. |
 | `position()` | `int` | The current position, counting buffered writes. |
 | `size()` | `IoError!int` | The file's size, counting buffered writes. |
 | `close()` | `void` | Sends buffered writes, then closes. Closing twice does nothing. |
@@ -1011,11 +1011,11 @@ TCP connections over the network, plain or encrypted with TLS (see [TLS](#tls) b
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `tcp_connect(host, port, timeout_ms = -1)` | `NetError!TcpConn` | Connects to `host` (a name like `"example.com"` or `"localhost"`, or an IP address like `"127.0.0.1"` or `"::1"`) on `port`. |
-| `tcp_listen(host, port, backlog = 128, reuse_port = false)` | `NetError!TcpListener` | Listens on a local address: `"0.0.0.0"` for every IPv4 interface, `"::"` for IPv6, `"127.0.0.1"` or `"localhost"` for this machine only. Port `0` picks a free port. `backlog` is how many connections can wait for `accept`. With `reuse_port = true`, several listeners or processes can bind the same address and port (supported on Linux and FreeBSD; fails with `Other` on unsupported systems). |
-| `tls_connect(host, port, timeout_ms = -1, ca = null, verify = true)` | `NetError!TcpConn` | Like `tcp_connect`, then a TLS handshake that checks the server's certificate against `host`. `timeout_ms` covers both. |
-| `tls_listen(host, port, cert, backlog = 128, reuse_port = false)` | `NetError!TcpListener` | Like `tcp_listen`, but every accepted connection uses TLS with the `Certificate` `cert`. |
-| `certificate(cert_pem, key_pem)` | `NetError!Certificate` | A server certificate and its private key, from PEM text. |
+| `tcp_connect(host: string, port: int, timeout_ms: int = -1)` | `NetError!TcpConn` | Connects to `host` (a name like `"example.com"` or `"localhost"`, or an IP address like `"127.0.0.1"` or `"::1"`) on `port`. |
+| `tcp_listen(host: string, port: int, backlog: int = 128, reuse_port: bool = false)` | `NetError!TcpListener` | Listens on a local address: `"0.0.0.0"` for every IPv4 interface, `"::"` for IPv6, `"127.0.0.1"` or `"localhost"` for this machine only. Port `0` picks a free port. `backlog` is how many connections can wait for `accept`. With `reuse_port = true`, several listeners or processes can bind the same address and port (supported on Linux and FreeBSD; fails with `Other` on unsupported systems). |
+| `tls_connect(host: string, port: int, timeout_ms: int = -1, ca: ?string = null, verify: bool = true)` | `NetError!TcpConn` | Like `tcp_connect`, then a TLS handshake that checks the server's certificate against `host`. `timeout_ms` covers both. |
+| `tls_listen(host: string, port: int, cert: Certificate, backlog: int = 128, reuse_port: bool = false)` | `NetError!TcpListener` | Like `tcp_listen`, but every accepted connection uses TLS with the `Certificate` `cert`. |
+| `certificate(cert_pem: string, key_pem: string)` | `NetError!Certificate` | A server certificate and its private key, from PEM text. |
 
 A name is looked up first, and each of its addresses is tried in order until one works (`"localhost"` is usually `::1` and then `127.0.0.1`); IP addresses skip the lookup. `timeout_ms` on `tcp_connect` covers the lookup and every attempt.
 
@@ -1023,7 +1023,7 @@ A name is looked up first, and each of its addresses is tried in order until one
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `accept(timeout_ms = -1)` | `io::IoError!TcpConn` | Waits for the next connection. |
+| `accept(timeout_ms: int = -1)` | `io::IoError!TcpConn` | Waits for the next connection. |
 | `port()` | `int` | The port it listens on, useful after listening on port `0`. Still returns it after `close()`. |
 | `close()` | `void` | Stops listening. A task waiting in `accept` fails with `Closed`; closing twice does nothing. |
 
@@ -1031,19 +1031,19 @@ A name is looked up first, and each of its addresses is tried in order until one
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `read_line(max = -1, timeout_ms = -1)` | `io::IoError!?string` | The next line, without its `\n` or `\r\n`. `null` when the other side closed the connection. |
-| `read_bytes(max, timeout_ms = -1)` | `io::IoError!?buffer` | Up to `max` bytes, as soon as some are there. |
-| `read_exact(count, timeout_ms = -1)` | `io::IoError!?buffer` | Exactly `count` bytes. |
-| `read_all(timeout_ms = -1)` | `io::IoError!string` | Everything until the other side closes the connection, as text. |
-| `read_all_bytes(timeout_ms = -1)` | `io::IoError!buffer` | Same, as bytes. |
-| `write(text)` | `io::IoError!void` | Sends `text`. |
-| `write_bytes(data)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
+| `read_line(max: int = -1, timeout_ms: int = -1)` | `io::IoError!?string` | The next line, without its `\n` or `\r\n`. `null` when the other side closed the connection. |
+| `read_bytes(max: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | Up to `max` bytes, as soon as some are there. |
+| `read_exact(count: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | Exactly `count` bytes. |
+| `read_all(timeout_ms: int = -1)` | `io::IoError!string` | Everything until the other side closes the connection, as text. |
+| `read_all_bytes(timeout_ms: int = -1)` | `io::IoError!buffer` | Same, as bytes. |
+| `write(text: string)` | `io::IoError!void` | Sends `text`. |
+| `write_bytes(data: buffer)` | `io::IoError!void` | Sends the bytes of a `buffer`. |
 | `flush()` | `io::IoError!void` | Writes on a connection are never buffered, so there's nothing to send: it only fails with `Closed` after `close()`, like `write`. It's there so a connection fits `io::Writer`. |
-| `set_write_timeout(timeout_ms)` | `void` | How long a write may wait for the other side to take its bytes (`-1`, the default: forever). A write only waits when the other side reads slower than it's written to; when it waits past `timeout_ms`, it fails with `TimedOut`, every other waiting write too, and the connection closes, since part of the bytes may have been sent. Each write that finishes restarts the clock, so a slow but steady reader never hits it. |
+| `set_write_timeout(timeout_ms: int)` | `void` | How long a write may wait for the other side to take its bytes (`-1`, the default: forever). A write only waits when the other side reads slower than it's written to; when it waits past `timeout_ms`, it fails with `TimedOut`, every other waiting write too, and the connection closes, since part of the bytes may have been sent. Each write that finishes restarts the clock, so a slow but steady reader never hits it. |
 | `remote_address()` | `Address` | The other side's address, saved when the connection opened. |
-| `start_tls(host, timeout_ms = -1, ca = null, verify = true)` | `NetError!void` | Switches a plain connection to TLS as a client, for protocols that start in plain text. Calling it on a connection that already uses TLS is a runtime error. |
-| `accept_tls(cert, timeout_ms = -1)` | `NetError!void` | The server side of the same switch: turns an accepted plain connection into a TLS connection with `cert` (a `net::Certificate`) and waits for the handshake, for protocols with a `STARTTLS` command. Bytes the client already sent for the handshake aren't lost. Fails like a TLS listener's handshake (`HandshakeFailed`, `TimedOut`); on a connection that already uses TLS it's a runtime error. |
-| `handshake(timeout_ms = -1)` | `NetError!void` | Waits for the TLS handshake to finish. Does nothing on a plain connection or one whose handshake is done. |
+| `start_tls(host: string, timeout_ms: int = -1, ca: ?string = null, verify: bool = true)` | `NetError!void` | Switches a plain connection to TLS as a client, for protocols that start in plain text. Calling it on a connection that already uses TLS is a runtime error. |
+| `accept_tls(cert: Certificate, timeout_ms: int = -1)` | `NetError!void` | The server side of the same switch: turns an accepted plain connection into a TLS connection with `cert` (a `net::Certificate`) and waits for the handshake, for protocols with a `STARTTLS` command. Bytes the client already sent for the handshake aren't lost. Fails like a TLS listener's handshake (`HandshakeFailed`, `TimedOut`); on a connection that already uses TLS it's a runtime error. |
+| `handshake(timeout_ms: int = -1)` | `NetError!void` | Waits for the TLS handshake to finish. Does nothing on a plain connection or one whose handshake is done. |
 | `is_tls()` | `bool` | Whether the connection uses TLS. |
 | `close()` | `void` | Closes the connection. On a TLS connection, it first tells the other side it's closing. |
 
@@ -1175,12 +1175,12 @@ Reads and builds URLs.
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `parse(text)` | `UrlError!Url` | Reads an absolute URL like `https://example.com:8443/docs?page=2#intro`. |
-| `resolve(base, reference)` | `UrlError!Url` | The URL that `reference` points to when read from `base`: a full URL, `//host/path`, `/path`, `path`, `../path`, `?query` or `#fragment`. `.` and `..` segments are removed. |
-| `encode(text)` | `string` | Percent-encodes every byte except letters, digits and `- . _ ~`, for one path segment or one query value: `url::encode("a b/c")` is `a%20b%2Fc`. |
-| `decode(text)` | `UrlError!string` | Reverses `encode`. `+` stays `+`. |
-| `query(params)` | `string` | Builds a query string from a `map[string, string]`, in the map's order, encoding keys and values: `url::query({"q": "dusk lang", "page": "2"})` is `q=dusk%20lang&page=2`. |
-| `parse_query(text)` | `UrlError!map[string, []string]` | Reads a query string or a form body (`a=1&tag=x&tag=y`): every value of each key, in order, decoded, with `+` read as a space. |
+| `parse(text: string)` | `UrlError!Url` | Reads an absolute URL like `https://example.com:8443/docs?page=2#intro`. |
+| `resolve(base: Url, reference: string)` | `UrlError!Url` | The URL that `reference` points to when read from `base`: a full URL, `//host/path`, `/path`, `path`, `../path`, `?query` or `#fragment`. `.` and `..` segments are removed. |
+| `encode(text: string)` | `string` | Percent-encodes every byte except letters, digits and `- . _ ~`, for one path segment or one query value: `url::encode("a b/c")` is `a%20b%2Fc`. |
+| `decode(text: string)` | `UrlError!string` | Reverses `encode`. `+` stays `+`. |
+| `query(params: map[string, string])` | `string` | Builds a query string from a `map[string, string]`, in the map's order, encoding keys and values: `url::query({"q": "dusk lang", "page": "2"})` is `q=dusk%20lang&page=2`. |
+| `parse_query(text: string)` | `UrlError!map[string, []string]` | Reads a query string or a form body (`a=1&tag=x&tag=y`): every value of each key, in order, decoded, with `+` read as a space. |
 
 ```nim
 struct Url
@@ -1235,7 +1235,7 @@ func main() -> !void
     let user = try resp.text()
 
     let created = try http::request("https://api.example.com/users", method = "POST",
-        body = user,
+        body = @(text = user),
         headers = {"Content-Type": "application/json", "Authorization": "Bearer secret"})
     io::println("${created.status} ${created.headers.get("location") orelse "-"}")
 end
@@ -1243,24 +1243,32 @@ end
 
 | Function | Returns |
 | :------- | :------ |
-| `request(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, max_body = 67108864, ca = null, verify = true, body_stream = null, body_length = -1)` | `HttpError!Response` |
-| `open(url, method = "GET", headers = {}, body = null, body_bytes = null, query = {}, timeout_ms = -1, max_redirects = 10, ca = null, verify = true, body_stream = null, body_length = -1)` | `HttpError!ResponseStream` |
+| `request(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, max_body: int = 67108864, ca: ?string = null, verify: bool = true)` | `HttpError!Response` |
+| `open(url: string, method: string = "GET", headers: map[string, string] = {}, body: ?Body = null, query: map[string, string] = {}, timeout_ms: int = -1, max_redirects: int = 10, ca: ?string = null, verify: bool = true)` | `HttpError!ResponseStream` |
 
 | Parameter | Description |
 | :-------- | :---------- |
 | `url` | An absolute `http://` or `https://` URL. Spaces, non-ASCII characters and other characters a URL can't hold (`"`, `<`, `>`, `{`...) in the path, query and fragment are percent-encoded for you (`/my files/café` is sent as `/my%20files/caf%C3%A9`); `%XX` already there is kept. Credentials in it (`https://user:pass@host/`, percent-encoded) are sent as `Authorization: Basic ...` unless `headers` has an `Authorization`, and dropped when a redirect goes to another host, like that header. |
 | `method` | Any HTTP method, in uppercase: `"GET"`, `"POST"`, `"PUT"`, `"PATCH"`, `"DELETE"`, `"HEAD"`, `"OPTIONS"`... Lowercase letters, spaces and other characters fail with `InvalidMethod`. |
 | `headers` | Request headers, as a `map[string, string]`. Names and values are checked before anything is sent: a name with spaces or other characters a header name can't have, or a value with a line break or another control character, fails with `InvalidHeader`. |
-| `body` | Text to send. |
-| `body_bytes` | Bytes to send. |
-| `body_stream`, `body_length` | A body written piece by piece, for uploads too big to hold in memory or made as they go: a `func(mut http::BodyWriter) -> io::IoError!void`, called after the head is sent, with the same writer a server's `http::stream` gets (`write`, `write_bytes`, `flush`, fits `io::Writer`). With `body_length = -1` the body is sent chunked; with a length it's sent with `Content-Length`, and writing more or less fails the request with `Other`. An error the function returns fails the request too (mapped like a connection error). Giving more than one of `body`, `body_bytes` and `body_stream` is a runtime error. |
+| `body` | What to send, as an `http::Body` (see below). `null` sends no body. |
 | `query` | Entries to add to the URL's query, encoded with `url::encode`: `query = {"q": "dusk lang"}` on `https://example.com/search?lang=en` asks for `/search?lang=en&q=dusk%20lang`. |
 | `timeout_ms` | The time the whole call may take: looking up the name, connecting, the TLS handshake, sending the request, every redirect, and for `request`, reading the whole body. `-1` waits forever. |
 | `max_redirects` | How many redirects to follow (see below). |
 | `max_body` | The largest body `request` reads, in bytes, after decompression (64 MiB by default). A larger one fails with `BodyTooLarge`. |
 | `ca`, `verify` | How `https` servers are checked, as for `net::tls_connect` (see [TLS](#tls)): `ca` trusts only the authorities in that PEM text, `verify = false` skips the check. |
 
-The request gets `Host`, `User-Agent: dusk/0.16` and `Content-Length` (when there's a body, and `0` for a `POST`, `PUT` or `PATCH` without one) unless `headers` has them, plus `Accept-Encoding: gzip, deflate` (see Compression). A `Content-Length` in `headers` is replaced by the real length, and `Transfer-Encoding` isn't allowed (`InvalidHeader`). The URL's `#fragment` is never sent. `Content-Type` is never guessed: set it for the body you send.
+**`Body`** is a union with one variant per kind of body, named like the server's response builders. Where a `Body` is expected, `@(...)` builds one: `body = @(text = json)`.
+
+| Variant | Payload | Sends |
+| :------ | :------ | :---- |
+| `text` | `string` | The text's bytes. |
+| `bytes` | `buffer` | The buffer's bytes: images, archives, any binary data. |
+| `stream` | `http::BodyStream` | A body written piece by piece, for uploads too big to hold in memory or made as they go. |
+
+A `BodyStream` has two fields. `write` is a `func(mut http::BodyWriter) -> io::IoError!void`, called after the head is sent, with the same writer a server's `http::stream` gets (`write`, `write_bytes`, `flush`, fits `io::Writer`). `length` defaults to `-1`, which sends the body chunked; with a length it's sent with `Content-Length`, and writing more or less fails the request with `Other`. An error `write` returns fails the request too (mapped like a connection error).
+
+The request gets `Host`, `User-Agent: dusk-http-client` and `Content-Length` (when there's a body, and `0` for a `POST`, `PUT` or `PATCH` without one) unless `headers` has them, plus `Accept-Encoding: gzip, deflate` (see Compression). A `Content-Length` in `headers` is replaced by the real length, and `Transfer-Encoding` isn't allowed (`InvalidHeader`). The URL's `#fragment` is never sent. `Content-Type` is never guessed: set it for the body you send.
 
 **`Response`**
 
@@ -1280,20 +1288,20 @@ A status code is never an error: a `404` or a `500` is a normal `Response`. Call
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `get(name)` | `?string` | The first value of that header, or `null`. |
-| `get_all(name)` | `[]string` | Every value of that header, in order (`Set-Cookie` can come several times). |
-| `has(name)` | `bool` | Whether the header is there. |
+| `get(name: string)` | `?string` | The first value of that header, or `null`. |
+| `get_all(name: string)` | `[]string` | Every value of that header, in order (`Set-Cookie` can come several times). |
+| `has(name: string)` | `bool` | Whether the header is there. |
 | `entries()` | `[]Header` | Every header, as `Header(name, value)`, in order. |
-| `set(name, value)`, `add(name, value)`, `remove(name)` | `void` | Change the headers (see Building responses). |
+| `set(name: string, value: string)`, `add(name: string, value: string)`, `remove(name: string)` | `void` | Change the headers (see Building responses). |
 
 **`ResponseStream`**, from `http::open`, has `status`, `reason`, `headers` and `url` like a `Response`, and reads its body like a `TcpConn`. Each read takes its own `timeout_ms`, and reading fails with `io::IoError` like any connection, so a `ResponseStream` fits `io::Reader` and works with `io::copy`.
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `read_bytes(max, timeout_ms = -1)` | `io::IoError!?buffer` | Up to `max` bytes of the body; `null` once the body is over. |
-| `read_line(max = -1, timeout_ms = -1)` | `io::IoError!?string` | The next line of the body, without its `\n` or `\r\n`; `null` once the body is over. |
-| `read_all(timeout_ms = -1)` | `io::IoError!string` | The rest of the body, as text. |
-| `read_all_bytes(timeout_ms = -1)` | `io::IoError!buffer` | The rest of the body, as bytes. |
+| `read_bytes(max: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | Up to `max` bytes of the body; `null` once the body is over. |
+| `read_line(max: int = -1, timeout_ms: int = -1)` | `io::IoError!?string` | The next line of the body, without its `\n` or `\r\n`; `null` once the body is over. |
+| `read_all(timeout_ms: int = -1)` | `io::IoError!string` | The rest of the body, as text. |
+| `read_all_bytes(timeout_ms: int = -1)` | `io::IoError!buffer` | The rest of the body, as bytes. |
 | `close()` | `void` | Done with the response. Reads after it fail with `Closed`. |
 
 ```nim
@@ -1330,21 +1338,21 @@ A body that ends before its announced length, or that breaks the chunked format,
 
 ```nim
 let mut file = try fs::open("backup.tar")
-let resp = try http::request("https://example.com/backups", method = "PUT", body_length = try file.size(),
-    body_stream = func(mut out: http::BodyWriter) -> io::IoError!void
+let resp = try http::request("https://example.com/backups", method = "PUT",
+    body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
         let sent = try io::copy(file, out)
-    end)
+    end, length = try file.size())))
 file.close()
 ```
 
-A request with a `body_stream`, or a body of 1 MiB or more, asks the server first with `Expect: 100-continue` and waits up to a second for its go-ahead (servers that never answer it get the body after that second). A server that answers right away with a final status (`401`, `413`...) gets no body: the function isn't called, the response is returned as usual and the connection isn't reused. Setting `Expect` in `headers` turns this off. A streamed body can't be sent twice, so a `307` or `308` redirect is returned instead of followed, and a stale kept connection isn't retried.
+A request with a `stream` body, or a body of 1 MiB or more, asks the server first with `Expect: 100-continue` and waits up to a second for its go-ahead (servers that never answer it get the body after that second). A server that answers right away with a final status (`401`, `413`...) gets no body: the function isn't called, the response is returned as usual and the connection isn't reused. Setting `Expect` in `headers` turns this off. A streamed body can't be sent twice, so a `307` or `308` redirect is returned instead of followed, and a stale kept connection isn't retried.
 
 **Clients.** An `http::Client` keeps settings for many requests to the same service: a base URL, headers sent with every request, and the defaults for the other settings. Build one with the fields you need; the others keep the defaults of `http::request`.
 
 ```nim
 let mut api = http::Client(base_url = "https://api.example.com/v1", headers = {"Authorization": "Bearer $token"}, timeout_ms = 5000)
 let user = try api.request("/users/7")
-let created = try api.request("/users", method = "POST", body = json, headers = {"Content-Type": http::ContentType.JSON})
+let created = try api.request("/users", method = "POST", body = @(text = json), headers = {"Content-Type": http::ContentType.JSON})
 let mut export = try api.open("/export.csv")
 api.headers["X-Trace"] = trace_id
 ```
@@ -1394,13 +1402,13 @@ end
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `listen(host, port, cert = null, max_body = 1048576, head_timeout_ms = 10000, idle_timeout_ms = 30000, backlog = 1024, max_connections = -1, write_timeout_ms = 30000, compress = true, compression_level = 6, stop_on_signal = true, shutdown_timeout_ms = 10000, reuse_port = false)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one; `reuse_port = true` allows several processes to share the port on Linux and FreeBSD). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. `stop_on_signal` and `shutdown_timeout_ms` control how the server stops (see Stopping). |
+| `listen(host: string, port: int, cert: ?net::Certificate = null, max_body: int = 1048576, head_timeout_ms: int = 10000, idle_timeout_ms: int = 30000, backlog: int = 1024, max_connections: int = -1, write_timeout_ms: int = 30000, compress: bool = true, compression_level: int = 6, stop_on_signal: bool = true, shutdown_timeout_ms: int = 10000, reuse_port: bool = false)` | `HttpError!Server` | Listens on `host` and `port` like `net::tcp_listen` (port `0` picks a free one; `reuse_port = true` allows several processes to share the port on Linux and FreeBSD). With a `net::Certificate` as `cert`, it serves `https`. With `max_connections` above 0, at most that many connections are open at once: the server stops accepting at the limit, so new clients wait in the system's queue (`backlog`) until a connection closes. `compress` and `compression_level` control response compression (see below); a level outside `0..9` is a runtime error. `stop_on_signal` and `shutdown_timeout_ms` control how the server stops (see Stopping). |
 
 **`Server`**
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `serve(handler)` | `void` | Accepts connections until `close()` or a stop signal, calls `handler` for each request, and returns once every connection is done (see Stopping). |
+| `serve(handler: func(Request) -> E!Response, on_error: ?func(Request, Failure[E]) -> void = null)` | `void` | Accepts connections until `close()` or a stop signal, calls `handler` for each request, and returns once every connection is done (see Stopping). `on_error` receives each failure instead of the line on stderr (see below). |
 | `port()` | `int` | The port it listens on. |
 | `close()` | `void` | Stops the server (see below). |
 
@@ -1437,10 +1445,10 @@ Here Ctrl+C lets the requests in flight finish, then `log.close()` writes what's
 | `query` | `?string` | The query as sent, without the `?`: `"full=1"`; `null` when there's none. |
 | `headers` | `Headers` | The request headers. |
 | `remote_address` | `net::Address` | The client's address. |
-| `query_param(name)` | `?string` | The first value of a query parameter, decoded, with `+` read as a space. |
-| `text(timeout_ms = -1)` | `HttpError!string` | The body as text (`InvalidUtf8` when it isn't valid UTF-8). |
-| `bytes(timeout_ms = -1)` | `HttpError!buffer` | The body as bytes. |
-| `read_bytes(max, timeout_ms = -1)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. |
+| `query_param(name: string)` | `?string` | The first value of a query parameter, decoded, with `+` read as a space. |
+| `text(timeout_ms: int = -1)` | `HttpError!string` | The body as text (`InvalidUtf8` when it isn't valid UTF-8). |
+| `bytes(timeout_ms: int = -1)` | `HttpError!buffer` | The body as bytes. |
+| `read_bytes(max: int, timeout_ms: int = -1)` | `io::IoError!?buffer` | The next piece of the body, up to `max` bytes; `null` at its end. For bodies too big to hold at once: it isn't limited by `max_body`. |
 
 The body is read only when the handler asks for it. `text` and `bytes` fail with `BodyTooLarge` past `max_body` bytes, and with `InvalidRequest` when the client sends a broken body.
 
@@ -1448,16 +1456,16 @@ The body is read only when the handler asks for it. `text` and `bytes` fail with
 
 | Function | Response |
 | :------- | :------- |
-| `text(body, status = 200)` | `body` with `Content-Type: text/plain; charset=utf-8` |
-| `json_text(body, status = 200)` | `body` with `Content-Type: application/json` |
-| `html(body, status = 200)` | `body` with `Content-Type: text/html; charset=utf-8` |
-| `bytes(data, content_type = ContentType.BINARY, status = 200)` | the bytes of a `buffer` |
-| `status(code)` | an empty body |
-| `redirect(location, status = 302)` | an empty body with `Location` |
-| `stream(write, content_type = ContentType.BINARY, status = 200, length = -1)` | a body written by `write` after the head is sent (see Streamed responses) |
-| `file(path, content_type, status = 200)` | the file's contents, sent in pieces with its size as `Content-Length`; fails with `fs::FsError` when the file can't be opened |
+| `text(body: string, status: int = 200)` | `body` with `Content-Type: text/plain; charset=utf-8` |
+| `json_text(body: string, status: int = 200)` | `body` with `Content-Type: application/json` |
+| `html(body: string, status: int = 200)` | `body` with `Content-Type: text/html; charset=utf-8` |
+| `bytes(data: buffer, content_type: string = ContentType.BINARY, status: int = 200)` | the bytes of a `buffer` |
+| `status(code: int)` | an empty body |
+| `redirect(location: string, status: int = 302)` | an empty body with `Location` |
+| `stream(write: func(mut BodyWriter) -> io::IoError!void, content_type: string = ContentType.BINARY, status: int = 200, length: int = -1)` | a body written by `write` after the head is sent (see Streamed responses) |
+| `file(path: string, content_type: string, status: int = 200)` | the file's contents, sent in pieces with its size as `Content-Length`; fails with `fs::FsError` when the file can't be opened |
 
-**Content types.** `content_type` is a string, so any type works (`"application/vnd.api+json"`). `http::ContentType` names the common ones: `HTML`, `CSS`, `JS`, `TEXT`, `CSV` (all with `; charset=utf-8`), `JSON`, `XML`, `SVG`, `PNG`, `JPEG`, `GIF`, `WEBP`, `ICO`, `WASM`, `PDF`, `EVENT_STREAM`, `FORM` and `BINARY` (`application/octet-stream`). `http::content_type_of(path)` picks one from a file name's extension, ignoring case: those types plus `.htm`, `.mjs`, `.map`, `.md`, `.avif`, fonts (`.woff`, `.woff2`, `.ttf`, `.otf`), `.mp4`, `.webm`, `.mp3`, `.ogg`, `.wav`, `.zip` and `.gz`. Anything else, including names without an extension and dotfiles like `.env`, gives `BINARY`.
+**Content types.** `content_type` is a string, so any type works (`"application/vnd.api+json"`). `http::ContentType` names the common ones: `HTML`, `CSS`, `JS`, `TEXT`, `CSV` (all with `; charset=utf-8`), `JSON`, `XML`, `SVG`, `PNG`, `JPEG`, `GIF`, `WEBP`, `ICO`, `WASM`, `PDF`, `EVENT_STREAM`, `FORM` and `BINARY` (`application/octet-stream`). `http::content_type_of(path: string)` picks one from a file name's extension, ignoring case: those types plus `.htm`, `.mjs`, `.map`, `.md`, `.avif`, fonts (`.woff`, `.woff2`, `.ttf`, `.otf`), `.mp4`, `.webm`, `.mp3`, `.ogg`, `.wav`, `.zip` and `.gz`. Anything else, including names without an extension and dotfiles like `.env`, gives `BINARY`.
 
 ```nim
 "/logo" then return try http::file("assets/logo.svg", http::ContentType.SVG) end
@@ -1471,7 +1479,7 @@ end
 
 `http::file` opens the path it's given, like `fs::open`. `req.path` always starts with `/`, so `path::normalize` can't take `..` above that root (`/../secret.env` becomes `/secret.env`), and joining the result to `public` keeps the file inside it. Gluing `req.path` to the folder directly (`"public${req.path}"`) would let `/../secret.env` read a file outside it.
 
-Headers change through `Headers` methods on a `let mut` response: `set(name, value)` replaces every value of that header, `add(name, value)` adds one more, and `remove(name)` drops them all.
+Headers change through `Headers` methods on a `let mut` response: `set(name: string, value: string)` replaces every value of that header, `add(name: string, value: string)` adds one more, and `remove(name: string)` drops them all.
 
 ```nim
 let mut response = http::text("created", status = 201)
@@ -1482,7 +1490,7 @@ return response
 
 A `reason` left empty is filled from the status code (`"Not Found"`). The server adds `Date` (unless set), `Content-Length` (except for `1xx`, `204` and `304`) and `Connection: close` when the connection is closing; `Content-Length`, `Transfer-Encoding`, `Connection` and `Keep-Alive` set by the handler are replaced. A `Response` from `http::request` can be returned as it is (a proxy), but its body is already decompressed: remove its `Content-Encoding` header first.
 
-**Streamed responses.** `stream` takes a `func(mut http::BodyWriter) -> io::IoError!void`. The server sends the head, then calls it with a writer for the body, so the body doesn't have to fit in memory and can be sent as it's produced. `BodyWriter` has `write(text)`, `write_bytes(data)` and `flush()`, so it fits `io::Writer`. Writes are collected and sent in pieces of up to 16 KiB, when the writer fills up, on `flush()` and at the end; a slow client makes the writes wait instead of filling memory.
+**Streamed responses.** `stream` takes a `func(mut http::BodyWriter) -> io::IoError!void`. The server sends the head, then calls it with a writer for the body, so the body doesn't have to fit in memory and can be sent as it's produced. `BodyWriter` has `write(text: string)`, `write_bytes(data: buffer)` and `flush()`, so it fits `io::Writer`. Writes are collected and sent in pieces of up to 16 KiB, when the writer fills up, on `flush()` and at the end; a slow client makes the writes wait instead of filling memory.
 
 - With `length = -1`, the body is sent with `Transfer-Encoding: chunked`. With a length, it's sent with `Content-Length`: a write past it fails with `io::IoError.Other`, and a function that writes less closes the connection.
 - Writes fail with `io::IoError.Closed` when the client is gone, once `server.close()` was called, and for a `HEAD` request (only the head is sent, but the function still runs so it can release what it holds). Return the error and the connection closes.
@@ -1509,9 +1517,27 @@ end
 
 Server-sent events are a stream with `content_type = "text/event-stream"` and a `flush()` after each event. An endless stream ends when the client leaves or the server closes.
 
+**Failures.** Pass `on_error` to `serve` to handle the failures that would write a line on stderr: log them your way, count them, add a request id. It gets the `Request` and an `http::Failure[E]` union, with `E` the handler's error set. The server still answers the same way (`500`, or the cut-off stream); `on_error` only replaces the line.
+
+| Variant | Payload | When |
+| :------ | :------ | :--- |
+| `handler` | `E` | The handler returned an error. |
+| `invalid_response` | `string` | The handler's response can't be sent; the text says why (`invalid response status '700'`). |
+| `streaming` | `io::IoError` | A streamed response's function failed after the head went out (not when the client left: `Closed`). |
+
+```nim
+server.serve(handler, on_error = func(req, failure) -> void
+    when failure
+        handler: e then io::eprintln("${req.method} ${req.path}: handler failed: $e") end
+        invalid_response: why then io::eprintln("${req.method} ${req.path}: $why") end
+        streaming: e then io::eprintln("${req.method} ${req.path}: stream failed: $e") end
+    end
+end)
+```
+
 **What the server does on its own:**
 
-- An error that escapes the handler becomes a `500` with an empty body, and a line on stderr: `http: GET /path failed: <error>`. A `BodyTooLarge` that escapes becomes a `413`, and a broken body a `400`. A response header that can't be sent (a line break in a value, a bad name) also becomes a `500`.
+- An error that escapes the handler becomes a `500` with an empty body, and a line on stderr: `http: GET /path failed: <error>`. A `BodyTooLarge` that escapes becomes a `413`, and a broken body a `400`, without a line. A response the server can't send (a status outside `100..599`, a line break in the reason or a header value, a bad header name) also becomes a `500`, and a streamed response whose function fails midway is cut off; both write a line too.
 - A request that isn't valid HTTP/1.1 (bad framing, `Content-Length` together with `Transfer-Encoding`, bad characters, an unknown method, a path whose `%` escapes don't decode) gets `400`, a head over 64 KiB gets `431`, and the handler isn't called. The connection then closes.
 - A client that stops reading a response (a big body, a stream) for `write_timeout_ms` is disconnected, like `TcpConn.set_write_timeout`: a streamed response's next write fails with `TimedOut`. A client that reads slowly but steadily isn't.
 - A client has `head_timeout_ms` to start sending a request on a new connection and `head_timeout_ms` to finish its head (`408` otherwise). Between requests on a kept connection, it may stay quiet for `idle_timeout_ms` before the server closes it.
@@ -1946,7 +1972,7 @@ Functions that can fail return an error union, handled with `try` or `catch` lik
 | :---- | :--- |
 | `ArrayError.Empty` | `pop` on an empty array. |
 | `ArrayError.OutOfRange` | `insert`, `remove` or `slice` outside the array. |
-| `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character; `string::byte_at` / `string::char_at` with an index outside the string. |
+| `StringError.OutOfRange` | `string::slice` with a negative bound, `start > stop`, `stop > string::len(text)`, or a bound inside a multi-byte character. |
 | `StringError.NegativeCount` | `string::repeat` with a negative `count`. |
 | `StringError.InvalidUtf8` | `string::from_bytes` with bytes that aren't valid UTF-8, or `string::from_codepoint` with a value outside `0`..`0x10FFFF` or in the surrogate range `0xD800`..`0xDFFF`. |
 | `BufferError.NegativeSize` | `buffer::new` with a negative size. |

@@ -1153,7 +1153,6 @@ test "url: parse, resolve (RFC 3986 examples), encode, decode, query and parse_q
 
 test "http: requests, response streams and the connection pool over loopback (headers, bodies, framing, limits, bad responses, request checks, timeouts, redirects, https, reuse and retry, gzip)" {
     try runCase("http-client.dsk");
-    try runCaseRuntimeError("http-body-twice.dsk", error.HttpBodyGivenTwice);
 }
 
 test "http: max_connections_per_host caps connections in use per host (waiting in line, reuse counted, timeouts while waiting)" {
@@ -1598,7 +1597,7 @@ test "fs: read reads big files and files that report size 0" {
         \\import "std/string"
         \\func main() -> !void
         \\    let big = try fs::read("DIR/big.txt")
-        \\    io::println("${string::len(big)} ${try string::char_at(big, 26)}")
+        \\    io::println("${string::len(big)} ${string::char_at(big, 26) orelse "missing"}")
         \\    if CHECK_PROC then
         \\        let proc = try fs::read("/proc/self/stat")
         \\        io::println("${string::len(proc) > 0}")
@@ -2759,11 +2758,9 @@ test "string conversion" {
 }
 
 test "string indexing and loops" {
-    try runCaseOutput("string-index.dsk", "out of range\nout of range\n108\nout of range\nout of range\n\u{E1}\nout of range\n" ++
-        "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
+    try runCaseOutput("string-index.dsk", "0: 111\n1: 108\n2: 195\n3: 161\n4: 33\n");
     try runCaseError("sema/string-index-read.dsk", error.InvalidIndexing);
     try runCaseError("sema/string-index-assign.dsk", error.InvalidIndexing);
-    try runCaseError("sema/str-byte-at-unhandled.dsk", error.UnhandledError);
 }
 
 test "string core additions" {
@@ -4627,6 +4624,8 @@ test "generics: generic functions are checked where they are written" {
     try runCaseError("sema/generic-slot-equality.dsk", error.SlotOperatorNotAllowed);
     try runCaseError("sema/generic-slot-from-int.dsk", error.InvalidType);
     try runCaseError("sema/generic-slot-default.dsk", error.SlotParamCantHaveDefault);
+    try runCaseError("sema/generic-slot-nullable-default.dsk", error.SlotParamCantHaveDefault);
+    try runCase("generics-null-slot-default.dsk");
     try runCaseError("sema/generic-duplicate-slot.dsk", error.AlreadyDefined);
     try runCaseError("sema/generic-slot-as-value.dsk", error.SlotUsedAsValue);
     try runCaseError("sema/generic-as-value.dsk", error.GenericNeedsCall);

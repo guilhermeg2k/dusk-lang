@@ -305,7 +305,7 @@ Mixed int/float arithmetic is lowered with `I_TO_F` on the int operand first (`g
 | `MAP_INIT R[a] T[b] T[c]` | new empty map with key kind `b` and value kind `c` (the storage comes with the first entry) |
 | `MAP_GET R[a] R[b] R[c]` | `R[b][R[c]]` as `?V`: `0` when missing; a primitive value is put in a new `NullBox` |
 | `MAP_SET R[a] R[b] R[c]` | `R[a][R[b]] = R[c]`, growing the storage first if it is full |
-| `MAP_FIND R[a] R[b] R[c]` | `R[a]` = whether `R[c]` has an entry, `R[a+1]` = its raw value (`if m[k]: v` and `m[k] orelse d` with primitive values) |
+| `MAP_GET_UNBOXED R[a] R[b] R[c]` | `R[a]` = whether `R[c]` has an entry, `R[a+1]` = its raw value (`if m[k]: v` and `m[k] orelse d` with primitive values) |
 | `MAP_NEXT R[a] R[b] R[c]` | moves the loop cursor `R[c]` to the next live entry of `R[b]`; `R[a]` = whether there was one |
 | `MAP_KEY_AT R[a] R[b] R[c]`, `MAP_VALUE_AT R[a] R[b] R[c]` | key or value of the entry under cursor `R[c]` |
 
@@ -412,7 +412,7 @@ MapEntry = extern struct { key: Value, value: Value, hash: u32, seq: u32 }  // 2
 - **Removal** sets the top bit of `hash`, clears the key and value (so the GC frees what they held), and leaves the index slot pointing at the dead entry so probe chains stay intact. It never allocates.
 - **Growth.** When `len == capacity`, `VM.ensureRoomForMapEntry` allocates a new storage and copies the live entries in order, rebuilding the index: the same capacity when at least a quarter of the entries are removed (compaction), otherwise twice it. The first storage has 8 entries.
 - **Loops.** Each entry has a `seq` (insertion number, increasing along the entry array; `Map.next_seq` starts at 1). The loop cursor is one int register: the position after the visited entry (low 32 bits) and that entry's `seq` (high 32 bits). The handlers unpack it into a `MapCursor` (`vm.zig`), call `advance(map)` or `entryIn(map)`, and pack it back. The cursor relies on `value.zig` keeping seqs increasing along the entries and never reused: `Map.append` stamps them, `copyLiveEntriesFrom` keeps their order, and `clear` doesn't reset `next_seq`. `MAP_NEXT` checks the visited entry is still at its position; if a compaction moved entries, it binary searches the first entry with a larger `seq`. Removed entries are skipped and appended ones are reached at the end. `seq` wraps after 4 billion inserts into one map; a loop running at that point could revisit entries.
-- **Reads without boxes.** `MAP_GET` boxes a primitive value because `m[k]` is a `?V`. Sema lowers `if m[k]: v` and `m[k] orelse d` (non-nullable map, primitive non-nullable `V`) to `ir.map_find`, which codegen turns into `MAP_FIND` with two consecutive registers bound to the found flag and the raw value.
+- **Reads without boxes.** `MAP_GET` boxes a primitive value because `m[k]` is a `?V`. Sema lowers `if m[k]: v` and `m[k] orelse d` (non-nullable map, primitive non-nullable `V`) to `ir.map_get_unboxed`, which codegen turns into `MAP_GET_UNBOXED` with two consecutive registers bound to the found flag and the raw value.
 
 ## 7. Calls, returns and errors
 

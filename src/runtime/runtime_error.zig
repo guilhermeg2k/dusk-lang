@@ -21,7 +21,6 @@ pub const RuntimeError = error{
     ClockFailed,
     ClockOutOfRange,
     TlsAlreadyStarted,
-    HttpBodyGivenTwice,
     HttpInvalidCompressionLevel,
     DurationOutOfRange,
     SqliteDatabaseInTransaction,
@@ -45,11 +44,6 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn tlsAlreadyStarted() RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.TlsAlreadyStarted, "start_tls or accept_tls on a connection that already uses TLS", .{});
-    }
-
-    pub noinline fn httpBodyGivenTwice() RuntimeError {
-        @branchHint(.cold);
-        return report(RuntimeError.HttpBodyGivenTwice, "http request with more than one of body, body_bytes and body_stream", .{});
     }
 
     pub noinline fn httpInvalidCompressionLevel(level: i64) RuntimeError {

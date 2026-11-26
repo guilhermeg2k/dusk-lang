@@ -128,7 +128,7 @@ func check_get(listener: net::TcpListener) -> !void
     assert(has_line(received, "Accept: text/plain"))
     assert(has_line(received, "X-Trace: abc"))
     assert(has_line(received, "Host: 127.0.0.1:${listener.port()}"))
-    assert(has_line(received, "User-Agent: dusk/0.16"))
+    assert(has_line(received, "User-Agent: dusk-http-client"))
     assert(!has_header_named(received, "connection"))
     assert(!has_line(received, "Content-Length: 0"))
     assert(resp.status == 200)
@@ -153,7 +153,7 @@ end
 func check_request_bodies(listener: net::TcpListener) -> !void
     let created = "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n"
     let text_server = serve_once(listener, created)
-    let text_response = try http::request(base(listener), method = "POST", body = "{\"name\":\"ada\"}", headers = {"Content-Type": "application/json", "Content-Length": "999"})
+    let text_response = try http::request(base(listener), method = "POST", body = @(text = "{\"name\":\"ada\"}"), headers = {"Content-Type": "application/json", "Content-Length": "999"})
     let text_request = await(text_server)
     assert(text_response.status == 201)
     assert(text_request.lines[0] == "POST / HTTP/1.1")
@@ -163,7 +163,7 @@ func check_request_bodies(listener: net::TcpListener) -> !void
     assert(text_request.body == "{\"name\":\"ada\"}")
 
     let bytes_server = serve_once(listener, created)
-    let bytes_response = try http::request(base(listener), method = "PUT", body_bytes = buffer::from_string("raw"))
+    let bytes_response = try http::request(base(listener), method = "PUT", body = http::Body(bytes = buffer::from_string("raw")))
     let bytes_request = await(bytes_server)
     assert(bytes_response.status == 201)
     assert(has_line(bytes_request, "Content-Length: 3"))
@@ -346,7 +346,7 @@ func check_redirects(listener: net::TcpListener) -> !void
     assert(followed.url == "${base(listener)}/new/place?x=1")
 
     let see_other = serve_sequence(listener, [redirect_to(303, "/result"), done])
-    let posted = try http::request("${base(listener)}/form", method = "POST", body = "a=1", headers = {"Content-Type": "application/x-www-form-urlencoded", "X-Keep": "yes"})
+    let posted = try http::request("${base(listener)}/form", method = "POST", body = @(text = "a=1"), headers = {"Content-Type": "application/x-www-form-urlencoded", "X-Keep": "yes"})
     let see_other_requests = await(see_other)
     assert(posted.status == 200)
     assert(see_other_requests[0].body == "a=1")
@@ -362,14 +362,14 @@ func check_redirects(listener: net::TcpListener) -> !void
     assert(await(moved)[1].lines[0] == "GET /moved HTTP/1.1")
 
     let temporary = serve_sequence(listener, [redirect_to(307, "/again"), done])
-    let temporary_response = try http::request(base(listener), method = "POST", body = "keep me")
+    let temporary_response = try http::request(base(listener), method = "POST", body = @(text = "keep me"))
     let temporary_requests = await(temporary)
     assert(temporary_response.status == 200)
     assert(temporary_requests[1].lines[0] == "POST /again HTTP/1.1")
     assert(temporary_requests[1].body == "keep me")
 
     let permanent = serve_sequence(listener, [redirect_to(308, "/forever"), done])
-    let permanent_response = try http::request(base(listener), method = "PUT", body_bytes = buffer::from_string("bytes"))
+    let permanent_response = try http::request(base(listener), method = "PUT", body = @(bytes = buffer::from_string("bytes")))
     let permanent_requests = await(permanent)
     assert(permanent_response.status == 200)
     assert(permanent_requests[1].lines[0] == "PUT /forever HTTP/1.1")
@@ -455,7 +455,7 @@ func check_client(listener: net::TcpListener) -> !void
     assert(await(absolute_server).lines[0] == "GET /direct HTTP/1.1")
 
     let override_server = serve_once(listener, ok)
-    let overridden = try api.request("/me", method = "POST", body = "x", headers = {"x-token": "xyz", "X-Extra": "1"})
+    let overridden = try api.request("/me", method = "POST", body = @(text = "x"), headers = {"x-token": "xyz", "X-Extra": "1"})
     let override_request = await(override_server)
     assert(override_request.lines[0] == "POST /v1/me HTTP/1.1")
     assert(has_line(override_request, "x-token: xyz"))
@@ -939,7 +939,7 @@ func check_pool(listener: net::TcpListener) -> !void
     let no_retry = serve_connection(listener, [kept], true)
     let before_post = try http::request(base(listener), timeout_ms = 2000)
     assert(try before_post.text() == "kept")
-    expect_error(http::HttpError.ConnectionReset, func() -> return try http::request(base(listener), method = "POST", body = "once", timeout_ms = 2000))
+    expect_error(http::HttpError.ConnectionReset, func() -> return try http::request(base(listener), method = "POST", body = @(text = "once"), timeout_ms = 2000))
     let no_retry_requests = await(no_retry)
     assert(len(no_retry_requests) == 2)
     assert(no_retry_requests[1].body == "once")

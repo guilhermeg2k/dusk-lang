@@ -93,7 +93,7 @@ pub const Instruction = union(enum) {
     expression_stmt: ExpressionStmt,
     update_indexed: UpdateIndexed,
     unwrap_null_box: UnwrapNullBox,
-    map_find: MapFind,
+    map_get_unboxed: MapGetUnboxed,
     update_capture: UpdateCapture,
     break_stmt: void,
     continue_stmt: void,
@@ -342,7 +342,7 @@ pub const MapCursor = struct {
     cursor: *Value,
 };
 
-pub const MapFind = struct {
+pub const MapGetUnboxed = struct {
     map: *Value,
     key: *Value,
     found_uid: usize,

@@ -173,6 +173,59 @@ func check_failures(base: string) -> !void
     assert(after.status == 200)
 end
 
+func status_or_failure(url: string) -> int
+    let response = http::request(url) catch e then
+        return -1
+    end
+    return response.status
+end
+
+func check_on_error() -> !void
+    let server = try http::listen("127.0.0.1", 0)
+    let mut seen: []string = []
+    let running = spawn(func() -> void
+        server.serve(func(req: http::Request) -> AppError!http::Response
+            when req.path
+                "/fail" then return AppError.Broken end
+                "/bad-status" then return http::text("never", status = 700) end
+                "/stream-fail" then
+                    return http::stream(func(mut out: http::BodyWriter) -> io::IoError!void
+                        try out.write("partial")
+                        try out.flush()
+                        return io::IoError.BrokenPipe
+                    end)
+                end
+                else then return http::text("ok") end
+            end
+        end, on_error = func(req, failure) -> void
+            when failure
+                handler: e then
+                    if e == AppError.Broken then
+                        append(seen, "handler ${req.path}")
+                    end
+                end
+                invalid_response: why then append(seen, "invalid ${req.path} $why") end
+                streaming: e then
+                    if e == io::IoError.BrokenPipe then
+                        append(seen, "streaming ${req.path}")
+                    end
+                end
+            end
+        end)
+    end)
+    let base = "http://127.0.0.1:${server.port()}"
+    assert(status_or_failure("$base/fail") == 500)
+    assert(status_or_failure("$base/bad-status") == 500)
+    let streamed = status_or_failure("$base/stream-fail")
+    assert(status_or_failure("$base/") == 200)
+    assert(len(seen) == 3)
+    assert(seen[0] == "handler /fail")
+    assert(seen[1] == "invalid /bad-status invalid response status '700'")
+    assert(seen[2] == "streaming /stream-fail")
+    server.close()
+    await(running)
+end
+
 func check_head_and_keep_alive(base: string) -> !void
     let head = try http::request("$base/?name=x", method = "HEAD")
     assert(head.status == 200)
@@ -183,7 +236,7 @@ func check_head_and_keep_alive(base: string) -> !void
     let second = try http::request("$base/peer")
     assert(try first.text() == try second.text())
 
-    let posted = try http::request("$base/echo", method = "POST", body = "ignored body")
+    let posted = try http::request("$base/echo", method = "POST", body = @(text = "ignored body"))
     assert(try posted.text() == "POST /echo -")
     let after_post = try http::request("$base/peer")
     assert(try after_post.text() == try first.text())
@@ -227,14 +280,14 @@ func check_raw(port: int) -> !void
 end
 
 func check_bodies(base: string, port: int) -> !void
-    let posted = try http::request("$base/upload", method = "POST", body = "hello server")
+    let posted = try http::request("$base/upload", method = "POST", body = @(text = "hello server"))
     assert(try posted.text() == "got 12: hello server")
-    let bytes = try http::request("$base/upload-bytes", method = "PUT", body_bytes = buffer::from_string("abcdef"))
+    let bytes = try http::request("$base/upload-bytes", method = "PUT", body = @(bytes = buffer::from_string("abcdef")))
     assert(try bytes.text() == "bytes 6")
     let empty = try http::request("$base/upload", method = "POST")
     assert(try empty.text() == "got 0: ")
     let big = string::repeat("x", 300000) catch ""
-    let streamed = try http::request("$base/stream", method = "POST", body = big)
+    let streamed = try http::request("$base/stream", method = "POST", body = @(text = big))
     assert(try streamed.text() == "streamed 300000")
 
     let chunked = try raw_exchange(port, "POST /upload HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n")
@@ -244,10 +297,10 @@ func check_bodies(base: string, port: int) -> !void
     assert(string::starts_with(broken, "HTTP/1.1 400 Bad Request\r\n"))
     assert(string::contains(broken, "Connection: close"))
 
-    let unread_small = try http::request("$base/peer", method = "POST", body = "small and ignored")
+    let unread_small = try http::request("$base/peer", method = "POST", body = @(text = "small and ignored"))
     let after_small = try http::request("$base/peer")
     assert(try unread_small.text() == try after_small.text())
-    let unread_big = try http::request("$base/peer", method = "POST", body = big)
+    let unread_big = try http::request("$base/peer", method = "POST", body = @(text = big))
     assert(unread_big.headers.get("connection") == "close")
 
     let conn = try net::tcp_connect("127.0.0.1", port)
@@ -268,9 +321,9 @@ func check_body_limits() -> !void
     let server = try http::listen("127.0.0.1", 0, max_body = 10)
     let running = start(server)
     let base = "http://127.0.0.1:${server.port()}"
-    let fits = try http::request("$base/upload", method = "POST", body = "0123456789")
+    let fits = try http::request("$base/upload", method = "POST", body = @(text = "0123456789"))
     assert(try fits.text() == "got 10: 0123456789")
-    let custom = try http::request("$base/upload?custom=1", method = "POST", body = "01234567890")
+    let custom = try http::request("$base/upload?custom=1", method = "POST", body = @(text = "01234567890"))
     assert(custom.status == 400)
     assert(try custom.text() == "custom too large")
     let partial = try net::tcp_connect("127.0.0.1", server.port())
@@ -285,10 +338,10 @@ func check_body_limits() -> !void
     let strict = try http::listen("127.0.0.1", 0, max_body = 10)
     let strict_running = start_strict(strict)
     let strict_base = "http://127.0.0.1:${strict.port()}"
-    let too_large = try http::request(strict_base, method = "POST", body = "01234567890")
+    let too_large = try http::request(strict_base, method = "POST", body = @(text = "01234567890"))
     assert(too_large.status == 413)
     assert(too_large.reason == "Content Too Large")
-    let ok = try http::request(strict_base, method = "POST", body = "0123")
+    let ok = try http::request(strict_base, method = "POST", body = @(text = "0123"))
     assert(try ok.text() == "4")
     strict.close()
     await(strict_running)
@@ -378,7 +431,7 @@ func check_https() -> !void
     let ca = try fixture("ca.pem")
     let hello = try http::request("$base/?name=tls", ca = ca)
     assert(try hello.text() == "hello tls")
-    let posted = try http::request("$base/upload", method = "POST", body = "secret", ca = ca)
+    let posted = try http::request("$base/upload", method = "POST", body = @(text = "secret"), ca = ca)
     assert(try posted.text() == "got 6: secret")
     let first = try http::request("$base/peer", ca = ca)
     let second = try http::request("$base/peer", ca = ca)
@@ -432,4 +485,5 @@ func main() -> !void
     try check_shutdown_in_flight()
     try check_https()
     try check_listen_errors()
+    try check_on_error()
 end

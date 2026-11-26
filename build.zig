@@ -48,6 +48,9 @@ pub fn build(b: *std.Build) void {
     });
     linkRuntimeLibraries(b, tests.root_module, libraries);
     tests.root_module.addImport("timezone_data", timezone_data);
+    tests.root_module.addAnonymousImport("build_zon", .{
+        .root_source_file = b.path("build.zig.zon"),
+    });
 
     const process_fixture = b.addExecutable(.{
         .name = "dusk-process-fixture",
