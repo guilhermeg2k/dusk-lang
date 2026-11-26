@@ -1,14 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const uv = @import("uv.zig");
-const v = @import("../value.zig");
-const EventLoop = @import("event_loop.zig").EventLoop;
-const Scheduler = @import("scheduler.zig").Scheduler;
-const TaskState = @import("scheduler.zig").TaskState;
-const WakeResult = @import("scheduler.zig").WakeResult;
-const WakePayload = @import("scheduler.zig").WakePayload;
-const Stream = @import("stream.zig").Stream;
-const IoError = @import("stream.zig").IoError;
+const uv = @import("../../tasks/loop/uv.zig");
+const v = @import("../../value.zig");
+const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
+const Scheduler = @import("../../tasks/scheduler.zig").Scheduler;
+const TaskState = @import("../../tasks/scheduler.zig").TaskState;
+const WakeResult = @import("../../tasks/scheduler.zig").WakeResult;
+const WakePayload = @import("../../tasks/scheduler.zig").WakePayload;
+const Stream = @import("../stream.zig").Stream;
+const IoError = @import("../stream.zig").IoError;
 
 const request_alignment = std.mem.Alignment.@"16";
 

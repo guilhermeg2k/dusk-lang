@@ -1,6 +1,6 @@
 const std = @import("std");
 const tls = @import("tls.zig");
-const TaskState = @import("scheduler.zig").TaskState;
+const TaskState = @import("../../tasks/scheduler.zig").TaskState;
 const NetError = @import("tcp.zig").NetError;
 
 pub const cipher_chunk_size = 64 * 1024;

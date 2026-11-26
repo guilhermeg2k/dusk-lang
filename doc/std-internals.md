@@ -6,29 +6,29 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 
 | File | What it holds |
 |---|---|
-| `src/runtime/tasks/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 2) |
-| `src/runtime/tasks/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timer, libuv read callbacks and the write path (section 3) |
-| `src/runtime/tasks/tcp.zig` | `OpenRequest` (name lookup, connect and listen attempts, timeout) and `Listener` (accepting connections) for `std/net` (section 4) |
-| `src/runtime/tasks/tls_glue.c` | The only code that calls mbedTLS: owns its sessions, configs, certificates and keys, behind a few `dusk_tls_*` functions (section 5) |
-| `src/runtime/tasks/tls.zig` | The `dusk_tls_*` functions and their `Status` codes, declared by hand |
-| `src/runtime/tasks/tls_layer.zig` | `TlsLayer` (a stream's TLS state), `ServerCertificate`, client configs (section 5) |
-| `src/runtime/tasks/trust_store.zig` | `TrustStore`: the system's root certificates, loaded once on libuv's thread pool (section 5) |
-| `src/runtime/tasks/http_glue.c` | The only code that calls llhttp: a response parser that records the head as offsets and copies decoded body bytes out, behind a few `dusk_http_*` functions (section 6) |
-| `src/runtime/tasks/http.zig` | The `dusk_http_*` functions and their `Status` codes, declared by hand, and the Zig mirror of `http::HttpError` |
-| `src/runtime/tasks/http_reader.zig` | `HttpReader` (a stream's current response: its parser and decoded body) (section 6) |
-| `src/runtime/tasks/connection_pool.zig` | `ConnectionPool`: idle HTTP connections by server, for reuse (section 6) |
-| `src/runtime/tasks/http_server.zig` | `ServerState`: an HTTP server's closing flag and the connections waiting for their next request (section 6) |
-| `src/runtime/tasks/compression_job.zig` | `CompressionJob`: one big `compress` / `decompress` call on libuv's thread pool (section 8) |
-| `src/runtime/tasks/host_slots.zig` | `HostSlots`: connections in use per HTTP server, and the requests waiting for one (section 6) |
-| `src/runtime/compression_glue.c` | The only code that calls zlib-ng (section 8) |
-| `src/runtime/compression.zig` | The `dusk_zip_*` functions declared by hand, whole-buffer helpers and the compression stream table (section 8) |
+| `src/runtime/io/fs/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 2) |
+| `src/runtime/io/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timer, libuv read callbacks and the write path (section 3) |
+| `src/runtime/io/net/tcp.zig` | `OpenRequest` (name lookup, connect and listen attempts, timeout) and `Listener` (accepting connections) for `std/net` (section 4) |
+| `src/runtime/io/net/tls_glue.c` | The only code that calls mbedTLS: owns its sessions, configs, certificates and keys, behind a few `dusk_tls_*` functions (section 5) |
+| `src/runtime/io/net/tls.zig` | The `dusk_tls_*` functions and their `Status` codes, declared by hand |
+| `src/runtime/io/net/tls_layer.zig` | `TlsLayer` (a stream's TLS state), `ServerCertificate`, client configs (section 5) |
+| `src/runtime/io/net/trust_store.zig` | `TrustStore`: the system's root certificates, loaded once on libuv's thread pool (section 5) |
+| `src/runtime/io/http/http_glue.c` | The only code that calls llhttp: a response parser that records the head as offsets and copies decoded body bytes out, behind a few `dusk_http_*` functions (section 6) |
+| `src/runtime/io/http/http.zig` | The `dusk_http_*` functions and their `Status` codes, declared by hand, and the Zig mirror of `http::HttpError` |
+| `src/runtime/io/http/http_reader.zig` | `HttpReader` (a stream's current response: its parser and decoded body) (section 6) |
+| `src/runtime/io/http/connection_pool.zig` | `ConnectionPool`: idle HTTP connections by server, for reuse (section 6) |
+| `src/runtime/io/http/http_server.zig` | `ServerState`: an HTTP server's closing flag and the connections waiting for their next request (section 6) |
+| `src/runtime/io/compression/compression_job.zig` | `CompressionJob`: one big `compress` / `decompress` call on libuv's thread pool (section 8) |
+| `src/runtime/io/http/host_slots.zig` | `HostSlots`: connections in use per HTTP server, and the requests waiting for one (section 6) |
+| `src/runtime/io/compression/compression_glue.c` | The only code that calls zlib-ng (section 8) |
+| `src/runtime/io/compression/compression.zig` | The `dusk_zip_*` functions declared by hand, whole-buffer helpers and the compression stream table (section 8) |
 | `src/runtime/builtins/std/*.dsk`, `std/*.zig` | Each module's Dusk code and natives |
 
 Every module is a `.dsk` file with the Dusk side (structs, methods, functions written in Dusk) and a `.zig` file with its natives and `bindings` (see [vm-internals.md](vm-internals.md) section 7.3). Natives that wait park the calling task and are woken from libuv callbacks ([vm-internals.md](vm-internals.md) section 11.3).
 
 ## 2. fs jobs
 
-Every `std/fs` call is one `FsJob` (`src/runtime/tasks/fs_job.zig`), run with `uv_queue_work` on libuv's thread pool:
+Every `std/fs` call is one `FsJob` (`src/runtime/io/fs/fs_job.zig`), run with `uv_queue_work` on libuv's thread pool:
 
 1. The native copies its paths (NUL-terminated) and, for writes, the bytes out of the GC heap into the job, since the GC moves objects. `EventLoop.startFsJob` queues the job, counts it in `pending_operations`, and the native parks.
 2. `onFsJobWork` runs on a pool thread. It calls `FsJob.runOnPoolThread`, which makes the blocking calls back to back as **synchronous** `uv_fs_*` calls (no callback), so libuv still handles the platform differences. `fs::read` is one job doing open, fstat (a size hint), read until EOF, close and the UTF-8 check. Recursive `make_dir` and `delete` loop inside the same job. One job means one round trip through the pool per Dusk call, where the usual chain of async libuv requests would take one per step. libuv's sync fs calls don't register with the loop, so they're safe from a pool thread.
@@ -42,7 +42,7 @@ Every `std/fs` call is one `FsJob` (`src/runtime/tasks/fs_job.zig`), run with `u
 
 ## 3. Streams (stdin, TCP connections and files)
 
-`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/tasks/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
+`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/io/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/loop/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
 
 | Kind | Opened as | Reads with |
 |---|---|---|
@@ -138,7 +138,7 @@ Writes go to `Stream.pending_output` (`writeFile`); when it reaches 64 KiB, or o
 
 **zlib-ng through a C glue file.** zlib-ng 2.3.3 comes from the `duskilang/zlib-ng` fork like the other C libraries. Its `build.zig` builds the native API (`zng_` names, so nothing clashes with a system zlib) with runtime CPU detection: each SIMD source (SSE2 to AVX-512 and VPCLMULQDQ on x86_64, NEON and the CRC32 instructions on aarch64) is its own object compiled with those CPU features added to the target, and zlib-ng picks the fastest version on first use. `compression_glue.c` is the only file that calls it: a `DuskZip` wraps one `zng_stream` (compressor or decompressor), and `dusk_zip_compress` / `dusk_zip_decompress` take any input and output sizes (they feed zlib-ng 1 GiB at a time, since its counters are 32-bit) and return `DUSK_ZIP_OK` (more to do), `DUSK_ZIP_DONE` (end of stream), `DUSK_ZIP_INVALID` or `DUSK_ZIP_OUT_OF_MEMORY`. The format picks zlib-ng's `windowBits`: 31 for gzip, 15 for zlib, -15 for raw deflate. zlib-ng checks the gzip CRC-32 and the zlib Adler-32 itself. `compression.zig` declares the glue by hand, plus `compressAll` / `decompressAll`.
 
-**Whole buffers.** `compression::compress` compresses into C memory sized by `zng_deflateBound` in one call, then allocates the Dusk buffer once with the result; `decompress` grows a C buffer (4x the input, at least 64 KiB, doubling) and stops one byte past `max` with `TooLarge`, so a small input can't make it allocate without limit. Input left after the end of a gzip stream must be another gzip member (decoded too, as gzip allows); any other leftover, or input that ends before the stream does, is `InvalidData`. Inputs up to 256 KiB run inline on the loop thread and touch `args` only before allocating. Bigger ones run as a `CompressionJob` (`tasks/compression_job.zig`) on libuv's thread pool: `EventLoop.startCompressionJob` copies the input into the job, queues it with `uv_queue_work` and the calling task parks; the pool thread runs the same `compressAll` / `decompressAll` on the job's own memory, and the done callback wakes the task with the result as a `bytes` payload (a buffer) or a relative `CompressionError` id (`OutOfMemory` on the pool becomes `Other`). A job finishing while the program shuts down is freed without waking anyone. The job file makes no libuv calls; `event_loop.zig` does the queueing.
+**Whole buffers.** `compression::compress` compresses into C memory sized by `zng_deflateBound` in one call, then allocates the Dusk buffer once with the result; `decompress` grows a C buffer (4x the input, at least 64 KiB, doubling) and stops one byte past `max` with `TooLarge`, so a small input can't make it allocate without limit. Input left after the end of a gzip stream must be another gzip member (decoded too, as gzip allows); any other leftover, or input that ends before the stream does, is `InvalidData`. Inputs up to 256 KiB run inline on the loop thread and touch `args` only before allocating. Bigger ones run as a `CompressionJob` (`io/compression/compression_job.zig`) on libuv's thread pool: `EventLoop.startCompressionJob` copies the input into the job, queues it with `uv_queue_work` and the calling task parks; the pool thread runs the same `compressAll` / `decompressAll` on the job's own memory, and the done callback wakes the task with the result as a `bytes` payload (a buffer) or a relative `CompressionError` id (`OutOfMemory` on the pool becomes `Other`). A job finishing while the program shuts down is freed without waking anyone. The job file makes no libuv calls; `event_loop.zig` does the queueing.
 
 **Streams.** `Compressor` and `Decompressor` are Dusk structs holding a handle into `EventLoop.compression_streams` (`StreamTable` in `compression.zig`), created on their first call so the struct can be built directly (`~handle` is `-1` until then). A handle is the slot index in the low 32 bits and the slot's generation above, bumped when the slot is freed, so a finished or closed stream's handle never reaches a stream that later reuses its slot: it fails with `Finished` instead. Freed slots go on a free list. `finish` (both kinds) and `close` free the zlib-ng stream at once; anything left is freed in `EventLoop.deinit`. Each `write_bytes`, `flush` and `finish` produces into a growing C buffer (`compressPart`, `decompressPart`) and then allocates one Dusk buffer. A slot also keeps the decompressor's `max`, how much it produced so far, and whether the input ended exactly at the end of a stream (`is_at_end`, which `is_done` and `finish` read; more gzip input after it restarts the inflater for the next member).
 

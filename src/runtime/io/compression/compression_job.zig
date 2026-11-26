@@ -1,10 +1,10 @@
 const std = @import("std");
-const v = @import("../value.zig");
-const compression = @import("../compression.zig");
-const EventLoop = @import("event_loop.zig").EventLoop;
-const Scheduler = @import("scheduler.zig").Scheduler;
-const TaskState = @import("scheduler.zig").TaskState;
-const WakeResult = @import("scheduler.zig").WakeResult;
+const v = @import("../../value.zig");
+const compression = @import("compression.zig");
+const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
+const Scheduler = @import("../../tasks/scheduler.zig").Scheduler;
+const TaskState = @import("../../tasks/scheduler.zig").TaskState;
+const WakeResult = @import("../../tasks/scheduler.zig").WakeResult;
 
 const request_alignment = std.mem.Alignment.@"16";
 
