@@ -55,11 +55,6 @@ pub const Timespec = extern struct {
     tv_nsec: c_long,
 };
 
-pub const Timeval64 = extern struct {
-    tv_sec: i64,
-    tv_usec: i32,
-};
-
 pub const Stat = extern struct {
     st_dev: u64,
     st_mode: u64,
@@ -181,11 +176,6 @@ pub extern fn uv_freeaddrinfo(result: ?*AddressInfo) void;
 pub extern fn uv_ip4_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
 pub extern fn uv_ip6_addr(ip: [*:0]const u8, port: c_int, address: *SocketAddress) c_int;
 pub extern fn uv_ip_name(address: *const SocketAddress, text: [*]u8, size: usize) c_int;
-
-// ---- Clocks ----
-
-pub extern fn uv_gettimeofday(time: *Timeval64) c_int;
-pub extern fn uv_hrtime() u64;
 
 // ---- Environment ----
 

@@ -14,6 +14,7 @@ const mode_type_mask = 0o170000;
 const mode_regular_file = 0o100000;
 
 pub const Launch = struct {
+    io: std.Io,
     file: [*:0]const u8,
     args: [*:null]const ?[*:0]const u8,
     env: [*:null]const ?[*:0]const u8,
@@ -22,7 +23,7 @@ pub const Launch = struct {
     is_captured: bool = false,
     timeout_ms: ?u64 = null,
     max_output: usize = 0,
-    started_ns: u64,
+    started: std.Io.Timestamp,
 };
 
 pub const Process = struct {
@@ -88,7 +89,8 @@ pub const Process = struct {
                 }
             }
             if (options.timeout_ms) |ms| {
-                const elapsed = (uv.uv_hrtime() -| options.started_ns) / std.time.ns_per_ms;
+                const elapsed_ns = options.started.durationTo(std.Io.Clock.awake.now(options.io)).nanoseconds;
+                const elapsed: u64 = if (elapsed_ns > 0) @intCast(@divTrunc(elapsed_ns, std.time.ns_per_ms)) else 0;
                 try self.startTimer(ms -| elapsed);
             }
         }

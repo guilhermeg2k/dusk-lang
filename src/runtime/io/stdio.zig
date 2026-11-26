@@ -1,5 +1,5 @@
 const std = @import("std");
-const RuntimeErrorReporter = @import("runtime_error.zig").RuntimeErrorReporter;
+const RuntimeErrorReporter = @import("../runtime_error.zig").RuntimeErrorReporter;
 
 pub const Stream = enum { stdout, stderr };
 

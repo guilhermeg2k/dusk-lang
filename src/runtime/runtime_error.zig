@@ -18,7 +18,6 @@ pub const RuntimeError = error{
     AllTasksWaiting,
     UnhandledTaskError,
     OutputFailed,
-    ClockFailed,
     ClockOutOfRange,
     TlsAlreadyStarted,
     HttpInvalidCompressionLevel,
@@ -155,11 +154,6 @@ pub const RuntimeErrorReporter = struct {
     pub noinline fn cantWriteOutput(stream_name: []const u8, failure: anyerror) RuntimeError {
         @branchHint(.cold);
         return report(RuntimeError.OutputFailed, "can't write to {s}: {s}", .{ stream_name, @errorName(failure) });
-    }
-
-    pub noinline fn clockFailed(clock_name: []const u8, failure_name: []const u8) RuntimeError {
-        @branchHint(.cold);
-        return report(RuntimeError.ClockFailed, "can't read {s} clock: {s}", .{ clock_name, failure_name });
     }
 
     pub noinline fn clockOutOfRange(clock_name: []const u8) RuntimeError {

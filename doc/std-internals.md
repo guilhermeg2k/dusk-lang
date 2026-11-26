@@ -7,7 +7,7 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 | File | What it holds |
 |---|---|
 | `src/runtime/io/fs/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 2) |
-| `src/runtime/io/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timer, libuv read callbacks and the write path (section 3) |
+| `src/runtime/io/stream/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timers, libuv callbacks and write path; read rules in `stream_read.zig`, file buffering in `stream_file.zig`, TLS in `stream_tls.zig`, HTTP framing and pool hooks in `stream_http.zig` (section 3) |
 | `src/runtime/io/terminal.zig` | `TerminalOutput`: an output-only terminal handle that answers the window size for `Stdout.size` / `Stderr.size` (section 3) |
 | `src/runtime/io/net/tcp.zig` | `OpenRequest` (name lookup, connect and listen attempts, timeout) and `Listener` (accepting connections) for `std/net` (section 4) |
 | `src/runtime/io/net/tls_glue.c` | The only code that calls mbedTLS: owns its sessions, configs, certificates and keys, behind a few `dusk_tls_*` functions (section 5) |
@@ -60,7 +60,7 @@ Every `std/fs` call is one `FsJob` (`src/runtime/io/fs/fs_job.zig`), run with `u
 
 ## 3. Streams (stdin, TCP connections and files)
 
-`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/io/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/loop/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
+`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/io/stream/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/loop/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
 
 | Kind | Opened as | Reads with |
 |---|---|---|
@@ -168,7 +168,7 @@ Writes go to `Stream.pending_output` (`writeFile`); when it reaches 64 KiB, or o
 
 ## 9. Time and time zones
 
-**Clocks.** `now_ms` and `monotonic_ns` are natives that return a plain `int` without parking. They call static `EventLoop` helpers (`uv_gettimeofday` for Unix milliseconds, `uv_hrtime` for the monotonic clock), which don't need a started loop and don't allocate. Wall-clock milliseconds are computed in a wide integer and rounded down. A clock failure, or a reading that doesn't fit in an `int`, is a runtime error. The loop's cached `uv_now` isn't used.
+**Clocks.** `now_ms` and `monotonic_ns` are natives that return a plain `int` without parking. They read `std.Io.Clock.real` for Unix-epoch milliseconds and `std.Io.Clock.awake` for monotonic nanoseconds through `vm.io`, without starting the event loop or allocating. Wall-clock milliseconds floor fractional milliseconds from the `i96` nanosecond reading, and both conversions check the signed `i64` range via `RuntimeErrorReporter.clockOutOfRange`.
 
 **Values.** `Timestamp` (epoch milliseconds), `Duration` (nanoseconds), `Instant` (a monotonic reading) and `TimeZone` (a zone id) are ordinary structs with a private `int` field. The arithmetic natives compute in `i128` and fail with relative `TimeError` variants. The Duration factories call `~scale_nanoseconds`, which reports a runtime error (`DurationOutOfRange`) instead of an error value.
 

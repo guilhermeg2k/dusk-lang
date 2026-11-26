@@ -1,11 +1,11 @@
 const std = @import("std");
 const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
-const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
 const Civil = @import("../../calendar.zig").Civil;
 const formatIsoMilliseconds = @import("../../time_format.zig").formatIsoMilliseconds;
 const PatternFormatter = @import("../../time_format.zig").PatternFormatter;
 const LocalJob = @import("../../io/time/timezone_job.zig").LocalJob;
+const RuntimeError = @import("../../runtime_error.zig").RuntimeError;
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const native = @import("../native.zig");
 const Binding = native.Binding;
@@ -33,12 +33,29 @@ pub const bindings = native.BindingMap.initComptime(.{
 pub const TimeError = @import("../../time_error.zig").TimeError;
 pub const error_sets = .{TimeError};
 
-fn nowMilliseconds(_: *VM, _: []v.Value) anyerror!NativeResult {
-    return native.ok(.{ .int64 = try EventLoop.wallTimeMilliseconds() });
+pub fn wallTimeMilliseconds(io: std.Io) RuntimeError!i64 {
+    return wallMillisecondsFromNanoseconds(std.Io.Clock.real.now(io).nanoseconds);
 }
 
-fn monotonicNanoseconds(_: *VM, _: []v.Value) anyerror!NativeResult {
-    return native.ok(.{ .int64 = try EventLoop.monotonicTimeNanoseconds() });
+pub fn wallMillisecondsFromNanoseconds(nanoseconds: i96) RuntimeError!i64 {
+    const milliseconds = @divFloor(nanoseconds, std.time.ns_per_ms);
+    return std.math.cast(i64, milliseconds) orelse RuntimeErrorReporter.clockOutOfRange("wall");
+}
+
+pub fn monotonicTimeNanoseconds(io: std.Io) RuntimeError!i64 {
+    return monotonicNanosecondsFromReading(std.Io.Clock.awake.now(io).nanoseconds);
+}
+
+pub fn monotonicNanosecondsFromReading(nanoseconds: i96) RuntimeError!i64 {
+    return std.math.cast(i64, nanoseconds) orelse RuntimeErrorReporter.clockOutOfRange("monotonic");
+}
+
+fn nowMilliseconds(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    return native.ok(.{ .int64 = try wallTimeMilliseconds(vm.io.?) });
+}
+
+fn monotonicNanoseconds(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    return native.ok(.{ .int64 = try monotonicTimeNanoseconds(vm.io.?) });
 }
 
 fn formatTimestamp(vm: *VM, args: []v.Value) anyerror!NativeResult {

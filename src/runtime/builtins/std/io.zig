@@ -9,9 +9,9 @@ const fail = native.fail;
 const uv = @import("../../tasks/loop/uv.zig");
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 
-pub const IoError = @import("../../io/stream.zig").IoError;
-const ReadMode = @import("../../io/stream.zig").ReadMode;
-const Stream = @import("../../stdio.zig").Stream;
+pub const IoError = @import("../../io/stream/stream.zig").IoError;
+const ReadMode = @import("../../io/stream/stream.zig").ReadMode;
+const Stream = @import("../../io/stdio.zig").Stream;
 pub const error_sets = .{IoError};
 
 pub const bindings = native.BindingMap.initComptime(.{

@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const v = @import("../../value.zig");
 const VM = @import("../../vm.zig").VM;
 const process = @import("../../io/process/process.zig");
-const uv = @import("../../tasks/loop/uv.zig");
 const paths = @import("../../path.zig").NativePaths;
 const native = @import("../native.zig");
 const io = @import("io.zig");
@@ -38,7 +37,8 @@ pub const bindings = native.BindingMap.initComptime(.{
 pub const error_sets = .{ProcessError};
 
 fn runHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const started = uv.uv_hrtime();
+    const host_io = vm.io orelse return native.fail(ProcessError.Unsupported);
+    const started = std.Io.Clock.awake.now(host_io);
     const timeout_ms = args[3].int64;
     const max_output = args[4].int64;
     const are_invalid_options = timeout_ms < -1 or max_output < 0;
@@ -58,7 +58,7 @@ fn runHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
     prepared.launch.is_captured = true;
     prepared.launch.max_output = std.math.cast(usize, max_output) orelse return native.fail(ProcessError.InvalidArgument);
     prepared.launch.timeout_ms = if (timeout_ms < 0) null else @intCast(timeout_ms);
-    prepared.launch.started_ns = started;
+    prepared.launch.started = started;
     if (prepared.candidates) |candidates| {
         const task = vm.running_task.?;
         process.ExecutableLookup.start(&vm.event_loop, &vm.scheduler, task, arena, candidates, prepared.launch) catch |failure| return launchFailure(failure);
@@ -145,7 +145,7 @@ fn prepareLaunch(vm: *VM, args: []v.Value, allocator: std.mem.Allocator) !Prepar
     }
     const env = try allocator.allocSentinel(?[*:0]const u8, entries.items.len, null);
     @memcpy(env, entries.items);
-    var prepared: PreparedLaunch = .{ .launch = .{ .file = argv[0].?, .args = argv.ptr, .env = env.ptr, .cwd = cwd.ptr, .modes = .{ 1, 0, 0 }, .started_ns = uv.uv_hrtime() } };
+    var prepared: PreparedLaunch = .{ .launch = .{ .io = host_io, .file = argv[0].?, .args = argv.ptr, .env = env.ptr, .cwd = cwd.ptr, .modes = .{ 1, 0, 0 }, .started = std.Io.Clock.awake.now(host_io) } };
     try checkInterpreterScript(program);
     if (hasPathSeparator(program)) {
         prepared.launch.file = (try allocator.dupeZ(u8, try paths.resolve(allocator, cwd, program))).ptr;

@@ -9,7 +9,7 @@ const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
 const Map = @import("runtime/value.zig").Map;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
-pub const Stdio = @import("runtime/stdio.zig").Stdio;
+pub const Stdio = @import("runtime/io/stdio.zig").Stdio;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
@@ -84,9 +84,8 @@ pub const Dusk = struct {
     pub fn runProgram(self: *Self, program: *const bc.Program) !void {
         self.exit_code = 1;
         Map.randomizeSeeds(self.io);
-        var v = VM.init(program, self.stdio);
+        var v = VM.init(program, self.stdio, self.io);
         v.stdin_fd = self.stdin_fd;
-        v.io = self.io;
         v.program_args = self.program_args;
         v.environment = self.environment;
         defer v.deinit();

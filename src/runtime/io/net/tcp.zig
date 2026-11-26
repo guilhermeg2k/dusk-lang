@@ -7,8 +7,8 @@ const onHandleClosed = @import("../../tasks/event_loop.zig").onHandleClosed;
 const Scheduler = @import("../../tasks/scheduler.zig").Scheduler;
 const TaskState = @import("../../tasks/scheduler.zig").TaskState;
 const WakeResult = @import("../../tasks/scheduler.zig").WakeResult;
-const Stream = @import("../stream.zig").Stream;
-const IoError = @import("../stream.zig").IoError;
+const Stream = @import("../stream/stream.zig").Stream;
+const IoError = @import("../stream/stream.zig").IoError;
 const ServerCertificate = @import("tls_layer.zig").ServerCertificate;
 
 const handle_alignment = std.mem.Alignment.@"16";

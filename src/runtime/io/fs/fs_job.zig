@@ -7,8 +7,8 @@ const Scheduler = @import("../../tasks/scheduler.zig").Scheduler;
 const TaskState = @import("../../tasks/scheduler.zig").TaskState;
 const WakeResult = @import("../../tasks/scheduler.zig").WakeResult;
 const WakePayload = @import("../../tasks/scheduler.zig").WakePayload;
-const Stream = @import("../stream.zig").Stream;
-const IoError = @import("../stream.zig").IoError;
+const Stream = @import("../stream/stream.zig").Stream;
+const IoError = @import("../stream/stream.zig").IoError;
 
 const request_alignment = std.mem.Alignment.@"16";
 

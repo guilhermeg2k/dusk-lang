@@ -8,7 +8,7 @@ const CallFrame = @import("tasks/scheduler.zig").CallFrame;
 const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
-const Stdio = @import("stdio.zig").Stdio;
+const Stdio = @import("io/stdio.zig").Stdio;
 const RandomEngine = @import("random.zig").Engine;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
@@ -40,7 +40,7 @@ pub const VM = struct {
     frame_count: usize,
     failed_builtin: ?[]const u8 = null,
 
-    pub fn init(program: *const bc.Program, stdio: Stdio) VM {
+    pub fn init(program: *const bc.Program, stdio: Stdio, io: ?std.Io) VM {
         return .{
             .allocator = std.heap.c_allocator,
             .scheduler = .{ .allocator = std.heap.c_allocator },
@@ -52,6 +52,7 @@ pub const VM = struct {
             .heap = Heap.init(std.heap.page_allocator),
             .scratch = .init(std.heap.page_allocator),
             .stdio = stdio,
+            .io = io,
         };
     }
 

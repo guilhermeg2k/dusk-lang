@@ -13,7 +13,7 @@ benchmarks/.venv_bench/
 
 # IA
 AGENTS.md
-.claude/
+.agents/
 .antigravitycli/
 
 # obsidian

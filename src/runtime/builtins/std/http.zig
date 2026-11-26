@@ -7,8 +7,8 @@ const io = @import("io.zig");
 const net = @import("net.zig");
 const fs = @import("fs.zig");
 const http = @import("../../io/http/http.zig");
-const ReadMode = @import("../../io/stream.zig").ReadMode;
-const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
+const ReadMode = @import("../../io/stream/stream.zig").ReadMode;
+const time = @import("time.zig");
 const httpErrorFromIo = @import("../../io/http/http_reader.zig").httpErrorFromIo;
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 const Binding = native.Binding;
@@ -348,7 +348,7 @@ fn serverIsClosing(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn httpDate(vm: *VM, _: []v.Value) anyerror!NativeResult {
-    const seconds: u64 = @intCast(@max(@divFloor(try EventLoop.wallTimeMilliseconds(), 1000), 0));
+    const seconds: u64 = @intCast(@max(@divFloor(try time.wallTimeMilliseconds(vm.io.?), 1000), 0));
     var text: [29]u8 = undefined;
     return ok(try vm.allocBytesValue(formatHttpDate(seconds, &text), .string));
 }
