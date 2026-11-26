@@ -7,7 +7,7 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 | File | What it holds |
 |---|---|
 | `src/runtime/io/fs/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 2) |
-| `src/runtime/io/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timers, libuv callbacks and write path; read rules in `stream_read.zig`, file buffering in `stream_file.zig`, TLS in `stream_tls.zig`, HTTP framing and pool hooks in `stream_http.zig` (section 3) |
+| `src/runtime/io/stream/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timers, libuv callbacks and write path; read rules in `stream_read.zig`, file buffering in `stream_file.zig`, TLS in `stream_tls.zig`, HTTP framing and pool hooks in `stream_http.zig` (section 3) |
 | `src/runtime/io/net/tcp.zig` | `OpenRequest` (name lookup, connect and listen attempts, timeout) and `Listener` (accepting connections) for `std/net` (section 4) |
 | `src/runtime/io/net/tls_glue.c` | The only code that calls mbedTLS: owns its sessions, configs, certificates and keys, behind a few `dusk_tls_*` functions (section 5) |
 | `src/runtime/io/net/tls.zig` | The `dusk_tls_*` functions and their `Status` codes, declared by hand |
@@ -42,7 +42,7 @@ Every `std/fs` call is one `FsJob` (`src/runtime/io/fs/fs_job.zig`), run with `u
 
 ## 3. Streams (stdin, TCP connections and files)
 
-`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/io/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/loop/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
+`io::stdin()` calls `EventLoop.openStdin`, which opens a `Stream` (`src/runtime/io/stream/stream.zig`) on the first call and keeps its handle in `EventLoop.streams`. Streams and listeners live in `HandleTable`s (`tasks/loop/handle_table.zig`): a handle is the slot index in its low 32 bits and the slot's generation above, bumped when the slot is freed, so closed slots are reused without an old handle ever reaching the new occupant (it finds nothing and fails with `Closed`). The Dusk value (`io::Stdin`) only holds that handle in a file-only field, and the `io::Stdin` methods are Dusk code calling file-only natives with it. The fd is `VM.stdin_fd` (0 unless a test passes a pipe or a file). `uv_guess_handle` picks the kind:
 
 | Kind | Opened as | Reads with |
 |---|---|---|

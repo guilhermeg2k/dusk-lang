@@ -1,16 +1,16 @@
 const std = @import("std");
-const uv = @import("../tasks/loop/uv.zig");
-const HandleOwner = @import("../tasks/event_loop.zig").HandleOwner;
+const uv = @import("../../tasks/loop/uv.zig");
+const HandleOwner = @import("../../tasks/event_loop.zig").HandleOwner;
 const Stream = @import("stream.zig").Stream;
 const stream_read = @import("stream_read.zig");
 const BodyRead = stream_read.BodyRead;
 const ReadOutcome = stream_read.ReadOutcome;
 const ReadSource = stream_read.ReadSource;
-const HttpReader = @import("http/http_reader.zig").HttpReader;
-const MessageKind = @import("http/http_reader.zig").MessageKind;
-const HttpError = @import("http/http.zig").HttpError;
-const max_http_head_size = @import("http/http_reader.zig").max_head_size;
-const idle_timeout_ms = @import("http/connection_pool.zig").idle_timeout_ms;
+const HttpReader = @import("../http/http_reader.zig").HttpReader;
+const MessageKind = @import("../http/http_reader.zig").MessageKind;
+const HttpError = @import("../http/http.zig").HttpError;
+const max_http_head_size = @import("../http/http_reader.zig").max_head_size;
+const idle_timeout_ms = @import("../http/connection_pool.zig").idle_timeout_ms;
 
 pub fn startHttpMessage(stream: *Stream, kind: MessageKind) !void {
     if (stream.http_reader) |reader| {

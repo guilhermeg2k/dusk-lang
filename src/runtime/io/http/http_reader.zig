@@ -1,7 +1,7 @@
 const std = @import("std");
 const http = @import("http.zig");
 const compression = @import("../compression/compression.zig");
-const IoError = @import("../stream.zig").IoError;
+const IoError = @import("../stream/stream.zig").IoError;
 const HttpError = http.HttpError;
 
 pub const max_head_size = 64 * 1024;

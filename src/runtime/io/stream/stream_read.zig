@@ -1,10 +1,10 @@
 const std = @import("std");
-const uv = @import("../tasks/loop/uv.zig");
-const v = @import("../value.zig");
-const WakeResult = @import("../tasks/scheduler.zig").WakeResult;
-const NetError = @import("net/tcp.zig").NetError;
-const HttpError = @import("http/http.zig").HttpError;
-const httpErrorFromIo = @import("http/http_reader.zig").httpErrorFromIo;
+const uv = @import("../../tasks/loop/uv.zig");
+const v = @import("../../value.zig");
+const WakeResult = @import("../../tasks/scheduler.zig").WakeResult;
+const NetError = @import("../net/tcp.zig").NetError;
+const HttpError = @import("../http/http.zig").HttpError;
+const httpErrorFromIo = @import("../http/http_reader.zig").httpErrorFromIo;
 
 const min_decoded_bytes = 64 * 1024;
 

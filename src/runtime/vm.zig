@@ -8,7 +8,7 @@ const CallFrame = @import("tasks/scheduler.zig").CallFrame;
 const WakeResult = @import("tasks/scheduler.zig").WakeResult;
 const Scheduler = @import("tasks/scheduler.zig").Scheduler;
 const EventLoop = @import("tasks/event_loop.zig").EventLoop;
-const Stdio = @import("stdio.zig").Stdio;
+const Stdio = @import("io/stdio.zig").Stdio;
 const gc = @import("gc.zig");
 const Heap = gc.Heap;
 

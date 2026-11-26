@@ -9,7 +9,7 @@ const SemaAnalyzer = sema.SemaAnalyzer;
 const VM = vm.VM;
 const Map = @import("runtime/value.zig").Map;
 const CliErrorReporter = @import("cli_error.zig").CliErrorReporter;
-pub const Stdio = @import("runtime/stdio.zig").Stdio;
+pub const Stdio = @import("runtime/io/stdio.zig").Stdio;
 
 pub const prelude_src = @embedFile("runtime/builtins/prelude.dsk");
 
