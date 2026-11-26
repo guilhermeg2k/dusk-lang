@@ -7,7 +7,7 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 | File | What it holds |
 |---|---|
 | `src/runtime/io/fs/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 2) |
-| `src/runtime/io/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timer, libuv read callbacks and the write path (section 3) |
+| `src/runtime/io/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timers, libuv callbacks and write path; read rules in `stream_read.zig`, file buffering in `stream_file.zig`, TLS in `stream_tls.zig`, HTTP framing and pool hooks in `stream_http.zig` (section 3) |
 | `src/runtime/io/net/tcp.zig` | `OpenRequest` (name lookup, connect and listen attempts, timeout) and `Listener` (accepting connections) for `std/net` (section 4) |
 | `src/runtime/io/net/tls_glue.c` | The only code that calls mbedTLS: owns its sessions, configs, certificates and keys, behind a few `dusk_tls_*` functions (section 5) |
 | `src/runtime/io/net/tls.zig` | The `dusk_tls_*` functions and their `Status` codes, declared by hand |
