@@ -3,12 +3,12 @@ const v = @import("../../value.zig");
 const io = @import("io.zig");
 const VM = @import("../../vm.zig").VM;
 const native = @import("../native.zig");
-const FsJob = @import("../../tasks/fs_job.zig").FsJob;
+const FsJob = @import("../../io/fs/fs_job.zig").FsJob;
 const Binding = native.Binding;
 const NativeResult = native.NativeResult;
 const bytesArg = native.bytesArg;
 
-pub const FsError = @import("../../tasks/fs_job.zig").FsError;
+pub const FsError = @import("../../io/fs/fs_job.zig").FsError;
 pub const error_sets = .{FsError};
 
 pub const bindings = native.BindingMap.initComptime(.{

@@ -1,14 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bundle = @import("timezone_data");
-const uv = @import("uv.zig");
-const EventLoop = @import("event_loop.zig").EventLoop;
-const Scheduler = @import("scheduler.zig").Scheduler;
-const TaskState = @import("scheduler.zig").TaskState;
-const WakeResult = @import("scheduler.zig").WakeResult;
-const timezone = @import("../timezone.zig");
-const Recurrence = @import("../timezone_recurrence.zig").Recurrence;
-const TimeError = @import("../time_error.zig").TimeError;
+const uv = @import("../../tasks/loop/uv.zig");
+const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
+const Scheduler = @import("../../tasks/scheduler.zig").Scheduler;
+const TaskState = @import("../../tasks/scheduler.zig").TaskState;
+const WakeResult = @import("../../tasks/scheduler.zig").WakeResult;
+const timezone = @import("../../timezone.zig");
+const Recurrence = @import("../../timezone_recurrence.zig").Recurrence;
+const TimeError = @import("../../time_error.zig").TimeError;
 const maximum_file_size = 4 * 1024 * 1024;
 
 pub const LocalJob = struct {

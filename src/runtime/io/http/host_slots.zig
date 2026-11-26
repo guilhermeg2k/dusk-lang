@@ -1,5 +1,5 @@
 const std = @import("std");
-const SlotWaiter = @import("event_loop.zig").SlotWaiter;
+const SlotWaiter = @import("../../tasks/event_loop.zig").SlotWaiter;
 
 pub const HostSlots = struct {
     const Self = @This();

@@ -1,13 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const uv = @import("uv.zig");
-const EventLoop = @import("event_loop.zig").EventLoop;
-const HandleOwner = @import("event_loop.zig").HandleOwner;
-const onHandleClosed = @import("event_loop.zig").onHandleClosed;
-const Scheduler = @import("scheduler.zig").Scheduler;
-const TaskState = @import("scheduler.zig").TaskState;
-const v = @import("../value.zig");
-const OsError = @import("../os.zig").OsError;
+const uv = @import("../../tasks/loop/uv.zig");
+const EventLoop = @import("../../tasks/event_loop.zig").EventLoop;
+const HandleOwner = @import("../../tasks/event_loop.zig").HandleOwner;
+const onHandleClosed = @import("../../tasks/event_loop.zig").onHandleClosed;
+const Scheduler = @import("../../tasks/scheduler.zig").Scheduler;
+const TaskState = @import("../../tasks/scheduler.zig").TaskState;
+const v = @import("../../value.zig");
+const OsError = @import("../../os.zig").OsError;
 
 pub const Subscription = struct {
     owner: HandleOwner = .{ .kind = .signal },

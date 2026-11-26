@@ -1,7 +1,7 @@
 const std = @import("std");
-const uv = @import("uv.zig");
-const HandleOwner = @import("event_loop.zig").HandleOwner;
-const onHandleClosed = @import("event_loop.zig").onHandleClosed;
+const uv = @import("../tasks/loop/uv.zig");
+const HandleOwner = @import("../tasks/event_loop.zig").HandleOwner;
+const onHandleClosed = @import("../tasks/event_loop.zig").onHandleClosed;
 
 const handle_alignment = std.mem.Alignment.@"16";
 

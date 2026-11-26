@@ -6,11 +6,11 @@ const NativeResult = native.NativeResult;
 const ok = native.ok;
 const bytesArg = native.bytesArg;
 const fail = native.fail;
-const uv = @import("../../tasks/uv.zig");
+const uv = @import("../../tasks/loop/uv.zig");
 const RuntimeErrorReporter = @import("../../runtime_error.zig").RuntimeErrorReporter;
 
-pub const IoError = @import("../../tasks/stream.zig").IoError;
-const ReadMode = @import("../../tasks/stream.zig").ReadMode;
+pub const IoError = @import("../../io/stream.zig").IoError;
+const ReadMode = @import("../../io/stream.zig").ReadMode;
 const Stream = @import("../../stdio.zig").Stream;
 pub const error_sets = .{IoError};
 

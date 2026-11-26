@@ -5,9 +5,9 @@ const EntryFile = @import("dusk.zig").EntryFile;
 const Stdio = @import("dusk.zig").Stdio;
 const ModuleLoader = @import("compiler/modules.zig").ModuleLoader;
 const Lexer = @import("compiler/lexer.zig").Lexer;
-const uv = @import("runtime/tasks/uv.zig");
-const WorkerPool = @import("runtime/tasks/worker_pool.zig").WorkerPool;
-const PoolJob = @import("runtime/tasks/worker_pool.zig").Job;
+const uv = @import("runtime/tasks/loop/uv.zig");
+const WorkerPool = @import("runtime/tasks/loop/worker_pool.zig").WorkerPool;
+const PoolJob = @import("runtime/tasks/loop/worker_pool.zig").Job;
 
 fn runCaseOutput(src_file: []const u8, expected: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -217,7 +217,7 @@ test "process: failed launches release native records before returning" {
     const VM = @import("runtime/vm.zig").VM;
     const value = @import("runtime/value.zig");
     const native = @import("runtime/builtins/std/process.zig");
-    const ProcessError = @import("runtime/tasks/process.zig").ProcessError;
+    const ProcessError = @import("runtime/io/process/process.zig").ProcessError;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
@@ -1057,7 +1057,7 @@ test "resources: the GC closes connections, listeners, files, response streams a
 }
 
 test "handles: the stream and listener tables reuse slots and reject stale handles" {
-    const HandleTable = @import("runtime/tasks/handle_table.zig").HandleTable;
+    const HandleTable = @import("runtime/tasks/loop/handle_table.zig").HandleTable;
     const allocator = testing.allocator;
     var table: HandleTable(u8) = .{};
     defer table.deinit(allocator);
@@ -1084,7 +1084,7 @@ test "net: a closed connection's handle can't reach a new connection that reuses
 }
 
 test "resources: the registry hands out ids, rejects stale ones and keeps released slots until taken" {
-    const ResourceRegistry = @import("runtime/tasks/resource_registry.zig").ResourceRegistry;
+    const ResourceRegistry = @import("runtime/tasks/loop/resource_registry.zig").ResourceRegistry;
     const allocator = testing.allocator;
     var registry: ResourceRegistry = .{};
     defer registry.deinit(allocator);
@@ -1125,7 +1125,7 @@ test "resources: a collection keeps moved owners and reports the ones nobody cop
 }
 
 test "compression: the stream table reuses slots and rejects stale handles" {
-    const compression = @import("runtime/compression.zig");
+    const compression = @import("runtime/io/compression/compression.zig");
     const allocator = testing.allocator;
     var table: compression.StreamTable = .{};
     defer table.deinit(allocator);
@@ -5134,7 +5134,7 @@ test "array index out of bounds is a runtime error" {
     try runCaseRuntimeError("array-store-negative-index.dsk", error.ArrayOutOfBounds);
 }
 
-const tls = @import("runtime/tasks/tls.zig");
+const tls = @import("runtime/io/net/tls.zig");
 
 fn readTlsFixture(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     const path = try std.fmt.allocPrint(allocator, "test/fixtures/tls/{s}", .{name});
@@ -5268,7 +5268,7 @@ test "tls: a certificate whose key doesn't match, or that isn't PEM, is invalid"
     try testing.expectEqual(tls.Status.invalid, status);
 }
 
-const http = @import("runtime/tasks/http.zig");
+const http = @import("runtime/io/http/http.zig");
 
 const ParsedResponse = struct {
     status: c_int,

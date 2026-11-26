@@ -1,6 +1,6 @@
 const std = @import("std");
 const uv = @import("uv.zig");
-const event_loop_module = @import("event_loop.zig");
+const event_loop_module = @import("../event_loop.zig");
 const EventLoop = event_loop_module.EventLoop;
 const HandleOwner = event_loop_module.HandleOwner;
 const onHandleClosed = event_loop_module.onHandleClosed;

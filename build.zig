@@ -90,12 +90,12 @@ fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: Run
     module.linkLibrary(libraries.zlib_ng);
     module.linkLibrary(libraries.sqlite);
     const flags = &[_][]const u8{ "-std=c99", "-fno-strict-aliasing" };
-    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/tls_glue.c"), .flags = flags });
-    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/http_glue.c"), .flags = flags });
-    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/timezone_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/net/tls_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/http/http_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/time/timezone_glue.c"), .flags = flags });
     if (module.resolved_target.?.result.os.tag == .windows) {
         module.linkSystemLibrary("advapi32", .{});
     }
-    module.addCSourceFile(.{ .file = b.path("src/runtime/tasks/process_glue.c"), .flags = flags });
-    module.addCSourceFile(.{ .file = b.path("src/runtime/compression_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/process/process_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/compression/compression_glue.c"), .flags = flags });
 }
