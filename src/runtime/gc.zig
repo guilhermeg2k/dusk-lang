@@ -121,9 +121,8 @@ const Collector = struct {
             if (frame.cur_inst == 0) continue;
             const chunk = frame.function.kind.dusk;
             const cur_pc: u16 = @intCast(frame.cur_inst - 1);
-            const heap_map = binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc);
-            std.debug.assert(heap_map != null);
-            const bitmap = heap_map.?.bitmap;
+            const heap_map = binarySearch(bc.HeapMap, "pc", chunk.heap_maps, cur_pc) orelse @panic("GC: missing heap map");
+            const bitmap = heap_map.bitmap;
             const base = frame.stack_offset;
             const is_top_frame = frame_index + 1 == active_frames.len;
             const owned_registers = if (is_top_frame) chunk.num_registers else active_frames[frame_index + 1].stack_offset - base;
