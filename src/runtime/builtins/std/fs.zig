@@ -25,6 +25,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "make_dir", Binding{ .native = &makeDir } },
     .{ "delete", Binding{ .native = &delete } },
     .{ "rename", Binding{ .native = &rename } },
+    .{ "chmod", Binding{ .native = &chmod } },
     .{ "open_descriptor", Binding{ .native = &openDescriptor } },
     .{ "file_stream", Binding{ .native = &fileStream } },
     .{ "stream_read_bytes", Binding{ .native = &io.streamReadBytes } },
@@ -44,11 +45,14 @@ pub const bindings = native.BindingMap.initComptime(.{
 fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const path = bytesArg(args, 0);
     if (std.mem.indexOfScalar(u8, path, 0) != null) {
-        return native.fail(FsError.Other);
+        return native.fail(FsError.InvalidPath);
     }
+    const permissions = parsePermissions(args[2].int64) orelse return native.fail(FsError.InvalidPath);
     const job = try FsJob.create(vm.event_loop.allocator, .open_file, path, "");
     errdefer job.destroy();
     job.open_mode = @enumFromInt(args[1].int64);
+    job.permissions = permissions;
+    job.should_follow_symlinks = args[3].bool;
     const current = vm.running_task.?;
     try vm.event_loop.startFsJob(&vm.scheduler, current, job);
     current.park();
@@ -96,19 +100,19 @@ fn statNumbers(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn readText(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return startFsJob(vm, .read_text, bytesArg(args, 0), "");
+    return startReadJob(vm, .read_text, bytesArg(args, 0), args[1].int64);
 }
 
 fn readBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return startFsJob(vm, .read_bytes, bytesArg(args, 0), "");
+    return startReadJob(vm, .read_bytes, bytesArg(args, 0), args[1].int64);
 }
 
 fn writeFile(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return startFsJob(vm, .write, bytesArg(args, 0), bytesArg(args, 1));
+    return startWriteJob(vm, .write, bytesArg(args, 0), bytesArg(args, 1), args[2].int64, args[3].bool);
 }
 
 fn appendText(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return startFsJob(vm, .append, bytesArg(args, 0), bytesArg(args, 1));
+    return startWriteJob(vm, .append, bytesArg(args, 0), bytesArg(args, 1), args[2].int64, args[3].bool);
 }
 
 fn readDir(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -116,8 +120,19 @@ fn readDir(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn makeDir(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const path = bytesArg(args, 0);
+    if (std.mem.indexOfScalar(u8, path, 0) != null) {
+        return native.fail(FsError.InvalidPath);
+    }
+    const permissions = parsePermissions(args[2].int64) orelse return native.fail(FsError.InvalidPath);
     const kind: FsJob.Kind = if (args[1].bool) .make_dir_recursive else .make_dir;
-    return startFsJob(vm, kind, bytesArg(args, 0), "");
+    const job = try FsJob.create(vm.event_loop.allocator, kind, path, "");
+    errdefer job.destroy();
+    job.permissions = permissions;
+    const current = vm.running_task.?;
+    try vm.event_loop.startFsJob(&vm.scheduler, current, job);
+    current.park();
+    return native.parked();
 }
 
 fn delete(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -129,13 +144,63 @@ fn rename(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startFsJob(vm, .rename, bytesArg(args, 0), bytesArg(args, 1));
 }
 
+fn chmod(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const path = bytesArg(args, 0);
+    if (std.mem.indexOfScalar(u8, path, 0) != null) {
+        return native.fail(FsError.InvalidPath);
+    }
+    const permissions = parsePermissions(args[1].int64) orelse return native.fail(FsError.InvalidPath);
+    const job = try FsJob.create(vm.event_loop.allocator, .chmod, path, "");
+    errdefer job.destroy();
+    job.permissions = permissions;
+    const current = vm.running_task.?;
+    try vm.event_loop.startFsJob(&vm.scheduler, current, job);
+    current.park();
+    return native.parked();
+}
+
+fn startReadJob(vm: *VM, kind: FsJob.Kind, path: []const u8, max_bytes: i64) anyerror!NativeResult {
+    if (std.mem.indexOfScalar(u8, path, 0) != null) {
+        return native.fail(FsError.InvalidPath);
+    }
+    const job = try FsJob.create(vm.event_loop.allocator, kind, path, "");
+    errdefer job.destroy();
+    job.max_bytes = if (max_bytes < 0) null else @intCast(max_bytes);
+    const current = vm.running_task.?;
+    try vm.event_loop.startFsJob(&vm.scheduler, current, job);
+    current.park();
+    return native.parked();
+}
+
+fn startWriteJob(vm: *VM, kind: FsJob.Kind, path: []const u8, input: []const u8, raw_permissions: i64, should_follow_symlinks: bool) anyerror!NativeResult {
+    if (std.mem.indexOfScalar(u8, path, 0) != null) {
+        return native.fail(FsError.InvalidPath);
+    }
+    const permissions = parsePermissions(raw_permissions) orelse return native.fail(FsError.InvalidPath);
+    const job = try FsJob.create(vm.event_loop.allocator, kind, path, input);
+    errdefer job.destroy();
+    job.permissions = permissions;
+    job.should_follow_symlinks = should_follow_symlinks;
+    const current = vm.running_task.?;
+    try vm.event_loop.startFsJob(&vm.scheduler, current, job);
+    current.park();
+    return native.parked();
+}
+
+fn parsePermissions(raw: i64) ?c_int {
+    if (raw < 0 or raw > 0o7777) {
+        return null;
+    }
+    return @intCast(raw);
+}
+
 fn startFsJob(vm: *VM, kind: FsJob.Kind, path: []const u8, input: []const u8) anyerror!NativeResult {
     const has_nul_path = std.mem.indexOfScalar(u8, path, 0) != null or (kind == .rename and std.mem.indexOfScalar(u8, input, 0) != null);
     if (has_nul_path) {
         if (kind == .exists) {
             return native.ok(.{ .bool = false });
         }
-        return native.fail(FsError.Other);
+        return native.fail(FsError.InvalidPath);
     }
     const job = try FsJob.create(vm.event_loop.allocator, kind, path, input);
     errdefer job.destroy();

@@ -26,8 +26,6 @@ const mode_regular_file = 0o100000;
 const mode_symlink = 0o120000;
 const mode_permission_mask = 0o7777;
 const open_read_only = 0;
-const open_to_replace = writeOpenFlags(.{ .should_truncate = true });
-const open_to_append = writeOpenFlags(.{ .should_append = true });
 const new_file_mode = 0o666;
 const min_read_capacity = 4096;
 const max_initial_read_capacity = 16 * 1024 * 1024;
@@ -51,13 +49,14 @@ pub const FsJob = struct {
         delete,
         delete_recursive,
         rename,
+        chmod,
         read_chunk,
         write_chunk,
         open_file,
         file_size,
     };
 
-    pub const OpenMode = enum(i64) { read, write, append };
+    pub const OpenMode = enum(i64) { read, write, append, create_new };
 
     allocator: std.mem.Allocator,
     kind: Kind,
@@ -73,6 +72,9 @@ pub const FsJob = struct {
     offset: i64 = -1,
     file_size: i64 = 0,
     open_mode: OpenMode = .read,
+    permissions: c_int = new_file_mode,
+    should_follow_symlinks: bool = true,
+    max_bytes: ?usize = null,
     loop: *uv.Loop = undefined,
     failure: ?FsError = null,
     is_found: bool = false,
@@ -123,14 +125,15 @@ pub const FsJob = struct {
             .stat => self.statPath(),
             .read_text => self.readWholeFile(true),
             .read_bytes => self.readWholeFile(false),
-            .write => self.writeWholeFile(open_to_replace),
-            .append => self.writeWholeFile(open_to_append),
+            .write => self.writeWholeFile(.write),
+            .append => self.writeWholeFile(.append),
             .read_dir => self.readDir(),
             .make_dir => self.makeDir(),
             .make_dir_recursive => self.makeDirWithParents(),
             .delete => self.deletePath(),
             .delete_recursive => self.deleteTree(),
             .rename => self.renamePath(),
+            .chmod => self.chmodPath(),
             .read_chunk => self.readChunk(),
             .write_chunk => self.writeChunk(),
             .open_file => self.openFile(),
@@ -182,13 +185,9 @@ pub const FsJob = struct {
     }
 
     fn openFile(self: *Self) void {
-        const flags: c_int = switch (self.open_mode) {
-            .read => open_read_only,
-            .write => open_to_replace,
-            .append => open_to_append,
-        };
+        const flags = openFlags(self.open_mode, self.should_follow_symlinks);
         const request = self.fsRequest();
-        const status = uv.uv_fs_open(self.loop, request, self.path.ptr, flags, new_file_mode, null);
+        const status = uv.uv_fs_open(self.loop, request, self.path.ptr, flags, self.permissions, null);
         uv.uv_fs_req_cleanup(request);
         if (status < 0) {
             self.failure = failureFromStatus(status);
@@ -272,11 +271,20 @@ pub const FsJob = struct {
 
     fn readUntilEnd(self: *Self, file: c_int) ?[]u8 {
         const request = self.fsRequest();
-        var data = self.allocator.alloc(u8, self.fileSizeHint(file) + 1) catch return self.failWith(.Other);
+        const hint = self.fileSizeHint(file);
+        const initial_cap: usize = if (self.max_bytes) |limit| blk: {
+            const capped = @min(hint, limit);
+            break :blk capped +| 1;
+        } else hint + 1;
+        var data = self.allocator.alloc(u8, initial_cap) catch return self.failWith(.Other);
         var len: usize = 0;
         while (true) {
             if (len == data.len) {
-                data = self.allocator.realloc(data, data.len * 2) catch {
+                const next_len: usize = if (self.max_bytes) |limit| blk: {
+                    const max_alloc = limit +| 1;
+                    break :blk @min(data.len *| 2, max_alloc);
+                } else data.len * 2;
+                data = self.allocator.realloc(data, next_len) catch {
                     self.allocator.free(data);
                     return self.failWith(.Other);
                 };
@@ -292,6 +300,12 @@ pub const FsJob = struct {
             }
             if (status == 0) break;
             len += @intCast(status);
+            if (self.max_bytes) |limit| {
+                if (len > limit) {
+                    self.allocator.free(data);
+                    return self.failWith(.TooLarge);
+                }
+            }
         }
         return self.allocator.realloc(data, len) catch {
             self.allocator.free(data);
@@ -299,9 +313,10 @@ pub const FsJob = struct {
         };
     }
 
-    fn writeWholeFile(self: *Self, open_flags: c_int) void {
+    fn writeWholeFile(self: *Self, open_mode: OpenMode) void {
         const request = self.fsRequest();
-        const file = uv.uv_fs_open(self.loop, request, self.path.ptr, open_flags, new_file_mode, null);
+        const flags = openFlags(open_mode, self.should_follow_symlinks);
+        const file = uv.uv_fs_open(self.loop, request, self.path.ptr, flags, self.permissions, null);
         uv.uv_fs_req_cleanup(request);
         if (file < 0) {
             self.failure = failureFromStatus(file);
@@ -431,7 +446,7 @@ pub const FsJob = struct {
     fn createDir(self: *Self, path: [*:0]const u8) c_int {
         const request = self.fsRequest();
         defer uv.uv_fs_req_cleanup(request);
-        return uv.uv_fs_mkdir(self.loop, request, path, new_dir_mode, null);
+        return uv.uv_fs_mkdir(self.loop, request, path, self.permissions, null);
     }
 
     fn isDirectory(self: *Self, path: [*:0]const u8) bool {
@@ -591,6 +606,15 @@ pub const FsJob = struct {
         }
     }
 
+    fn chmodPath(self: *Self) void {
+        const request = self.fsRequest();
+        defer uv.uv_fs_req_cleanup(request);
+        const status = uv.uv_fs_chmod(self.loop, request, self.path.ptr, self.permissions, null);
+        if (status < 0) {
+            self.failure = failureFromStatus(status);
+        }
+    }
+
     fn readChunk(self: *Self) void {
         const data = self.allocator.alloc(u8, chunk_size) catch {
             self.failure = .Other;
@@ -652,7 +676,7 @@ pub const FsJob = struct {
         }
         return switch (self.kind) {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
-            .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename => .{ .value = v.NULL_VALUE, .kind = .null },
+            .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename, .chmod => .{ .value = v.NULL_VALUE, .kind = .null },
             .read_chunk, .write_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
             .open_file => result: {
                 const numbers = self.allocator.alloc(i64, 2) catch {
@@ -696,6 +720,8 @@ pub const FsError = enum {
     NotDirectory,
     NotEmpty,
     InvalidUtf8,
+    TooLarge,
+    InvalidPath,
     Other,
 };
 
@@ -719,20 +745,26 @@ fn freeDirEntries(allocator: std.mem.Allocator, entries: *std.ArrayList(DirEntry
     entries.deinit(allocator);
 }
 
-const WriteMode = struct {
-    should_truncate: bool = false,
-    should_append: bool = false,
-};
-
-fn writeOpenFlags(comptime mode: WriteMode) c_int {
+fn openFlags(mode: FsJob.OpenMode, should_follow_symlinks: bool) c_int {
     if (builtin.os.tag == .windows) {
         const write_only = 0x0001;
         const append = 0x0008;
         const create = 0x0100;
         const truncate = 0x0200;
-        return write_only | create | (if (mode.should_truncate) truncate else 0) | (if (mode.should_append) append else 0);
+        const excl = 0x0400;
+        return switch (mode) {
+            .read => open_read_only,
+            .write => write_only | create | truncate,
+            .append => write_only | create | append,
+            .create_new => write_only | create | excl,
+        };
     } else {
-        const flags: std.posix.O = .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = mode.should_truncate, .APPEND = mode.should_append };
+        const flags: std.posix.O = switch (mode) {
+            .read => .{ .ACCMODE = .RDONLY, .NOFOLLOW = !should_follow_symlinks },
+            .write => .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true, .NOFOLLOW = !should_follow_symlinks },
+            .append => .{ .ACCMODE = .WRONLY, .CREAT = true, .APPEND = true, .NOFOLLOW = !should_follow_symlinks },
+            .create_new => .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .NOFOLLOW = !should_follow_symlinks },
+        };
         return @bitCast(@as(u32, @bitCast(flags)));
     }
 }

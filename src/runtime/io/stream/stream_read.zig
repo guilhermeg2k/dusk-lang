@@ -18,6 +18,7 @@ pub const IoError = enum {
     TimedOut,
     UnexpectedEnd,
     HandshakeFailed,
+    TooLarge,
     Other,
 };
 
@@ -25,8 +26,8 @@ pub const ReadMode = union(enum) {
     bytes: usize,
     exact: usize,
     line: ?usize,
-    all_text,
-    all_bytes,
+    all_text: ?usize,
+    all_bytes: ?usize,
     any_data,
     http_head,
     http_body: BodyRead,
@@ -119,9 +120,14 @@ pub const ReadSource = struct {
         return self.endOutcome();
     }
 
-    pub fn allOutcome(self: ReadSource, needs_utf8: bool) ?ReadOutcome {
+    pub fn allOutcome(self: ReadSource, needs_utf8: bool, max_bytes: ?usize) ?ReadOutcome {
         if (self.failure) |failure| {
             return .{ .result = .{ .failure = failure } };
+        }
+        if (max_bytes) |limit| {
+            if (self.available.len > limit) {
+                return .{ .result = .{ .failure = .TooLarge } };
+            }
         }
         if (!self.has_ended) return null;
         const available = self.available;

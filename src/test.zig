@@ -713,6 +713,87 @@ test "fs: recursive delete handles deep directory trees without exhausting fds" 
     try dusk.compileAndRun(source);
 }
 
+test "fs: CreateNew, permissions, chmod, follow_symlinks and max_bytes" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.symLink(testing.io, "missing-target.txt", "dangling-link", .{});
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "real.txt", .data = "original" });
+    try tmp.dir.symLink(testing.io, "real.txt", "live-link", .{});
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const script =
+        \\import "std/fs"
+        \\import "std/io"
+        \\import "std/buffer"
+        \\func open_err(path: string, mode: fs::Mode, permissions: int = 438, follow_symlinks: bool = true) -> ?fs::FsError
+        \\    let f = fs::open(path, mode, permissions = permissions, follow_symlinks = follow_symlinks) catch e then
+        \\        return e
+        \\    end
+        \\    f.close()
+        \\    return null
+        \\end
+        \\func read_err(path: string, max_bytes: int) -> ?fs::FsError
+        \\    let _ = fs::read(path, max_bytes = max_bytes) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func read_bytes_err(path: string, max_bytes: int) -> ?fs::FsError
+        \\    let _ = fs::read_bytes(path, max_bytes = max_bytes) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func write_err(path: string, text: string, permissions: int = 438, follow_symlinks: bool = true) -> ?fs::FsError
+        \\    fs::write(path, text, permissions = permissions, follow_symlinks = follow_symlinks) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func read_all_err(f: fs::File, max_bytes: int) -> ?io::IoError
+        \\    let _ = f.read_all(max_bytes = max_bytes) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func main() -> !void
+        \\    let f1 = try fs::open("DIR/unique.txt", fs::Mode.CreateNew, permissions = 384)
+        \\    try f1.write("secret")
+        \\    f1.close()
+        \\    assert((try fs::stat("DIR/unique.txt")).permissions == 384)
+        \\    assert(open_err("DIR/unique.txt", fs::Mode.CreateNew) == fs::FsError.AlreadyExists)
+        \\    assert(open_err("DIR/dangling-link", fs::Mode.CreateNew) == fs::FsError.AlreadyExists)
+        \\    assert(!fs::exists("DIR/missing-target.txt"))
+        \\
+        \\    try fs::chmod("DIR/unique.txt", 420)
+        \\    assert((try fs::stat("DIR/unique.txt")).permissions == 420)
+        \\
+        \\    assert(write_err("DIR/bad-mode.txt", "x", permissions = -1) == fs::FsError.InvalidPath)
+        \\    assert(write_err("DIR/bad-mode.txt", "x", permissions = 5000) == fs::FsError.InvalidPath)
+        \\    assert(write_err("DIR/live-link", "nope", follow_symlinks = false) != null)
+        \\    assert((try fs::read("DIR/real.txt")) == "original")
+        \\
+        \\    assert((try fs::read("DIR/real.txt", max_bytes = 8)) == "original")
+        \\    assert(read_err("DIR/real.txt", 7) == fs::FsError.TooLarge)
+        \\    assert(read_bytes_err("DIR/real.txt", 4) == fs::FsError.TooLarge)
+        \\
+        \\    try fs::write("DIR/empty.txt", "")
+        \\    assert((try fs::read("DIR/empty.txt", max_bytes = 0)) == "")
+        \\    assert(read_err("DIR/real.txt", 0) == fs::FsError.TooLarge)
+        \\
+        \\    let r = try fs::open("DIR/real.txt")
+        \\    assert(read_all_err(r, 4) == io::IoError.TooLarge)
+        \\    r.close()
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, script, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
 fn runCaseInTmpDir(src_file: []const u8) !void {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1394,7 +1475,7 @@ test "string interpolation" {
         "Escaped: $name ${a + b} $name $ $5\n" ++
         "Backslash: \\Dusk; Unicode: 🌙 🌙\n#= } =#\n" ++
         "Controls: a\x00b\n\t\nold!\n1 2 3\n[1, 2] 7 [9, 2]\nHello, World!\ndefault\n" ++
-        "true 1.5 null 7 1.5 true text null\n3 15 [1, 2] { 9 }\n<union>\n");
+        "true 1.5 null 7 1.5 true text null\n3 16 [1, 2] { 9 }\n<union>\n");
 }
 
 test "string interpolation in batches" {

@@ -80,11 +80,15 @@ pub fn streamReadLine(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 pub fn streamReadAll(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return readStream(vm, args[0].int64, .all_text, args[1].int64);
+    const max = args[1].int64;
+    const limit: ?usize = if (max < 0) null else @intCast(max);
+    return readStream(vm, args[0].int64, .{ .all_text = limit }, args[2].int64);
 }
 
 pub fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    return readStream(vm, args[0].int64, .all_bytes, args[1].int64);
+    const max = args[1].int64;
+    const limit: ?usize = if (max < 0) null else @intCast(max);
+    return readStream(vm, args[0].int64, .{ .all_bytes = limit }, args[2].int64);
 }
 
 pub fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {

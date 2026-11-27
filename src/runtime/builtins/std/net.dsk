@@ -25,8 +25,8 @@ extern func ~listener_close(handle: int) -> void
 extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> io::IoError!?buffer
 extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
-extern func ~stream_read_all(handle: int, timeout_ms: int) -> io::IoError!string
-extern func ~stream_read_all_bytes(handle: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_read_all(handle: int, max_bytes: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_read_all_bytes(handle: int, max_bytes: int, timeout_ms: int) -> io::IoError!buffer
 extern func ~stream_write(handle: int, text: string) -> io::IoError!void
 extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
 extern func ~stream_set_write_timeout(handle: int, timeout_ms: int) -> void
@@ -90,12 +90,12 @@ struct TcpConn
         return try stream_read_exact(self.handle, count, timeout_ms)
     end
 
-    func read_all(self: @, timeout_ms: int = -1) -> io::IoError!string
-        return try stream_read_all(self.handle, timeout_ms)
+    func read_all(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!string
+        return try stream_read_all(self.handle, max_bytes, timeout_ms)
     end
 
-    func read_all_bytes(self: @, timeout_ms: int = -1) -> io::IoError!buffer
-        return try stream_read_all_bytes(self.handle, timeout_ms)
+    func read_all_bytes(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!buffer
+        return try stream_read_all_bytes(self.handle, max_bytes, timeout_ms)
     end
 
     func write(self: @, text: string) -> io::IoError!void
