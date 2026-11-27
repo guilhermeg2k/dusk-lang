@@ -442,7 +442,7 @@ test "net: a closed connection's handle can't reach a new connection that reuses
     try runCase("net-handle-reuse.dsk");
 }
 
-test "resources: the registry hands out ids, rejects stale ones and keeps released slots until taken" {
+test "resources: the registry hands out ids, frees released slots and rejects stale ones" {
     const ResourceRegistry = @import("runtime/tasks/loop/resource_registry.zig").ResourceRegistry;
     const allocator = testing.allocator;
     var registry: ResourceRegistry = .{};
@@ -451,15 +451,16 @@ test "resources: the registry hands out ids, rejects stale ones and keeps releas
     const listener = try registry.add(allocator, .listener, 0);
     try testing.expectEqual(@as(usize, 2), registry.liveCount());
     registry.release(listener);
+    try testing.expectEqual(@as(usize, 1), registry.liveCount());
+    try testing.expect(registry.take(listener) == null);
     const taken = registry.take(conn).?;
     try testing.expectEqual(@as(i64, 4), taken.handle);
-    try testing.expect(!taken.is_released);
     try testing.expect(registry.take(conn) == null);
+    try testing.expectEqual(@as(usize, 0), registry.liveCount());
     const reused = try registry.add(allocator, .compression, 99);
     try testing.expectEqual(conn.registry_slot_index, reused.registry_slot_index);
     try testing.expect(reused.registry_slot_version != conn.registry_slot_version);
     try testing.expect(registry.take(conn) == null);
-    try testing.expect(registry.take(listener).?.is_released);
     try testing.expectEqual(@as(usize, 1), registry.liveCount());
 }
 

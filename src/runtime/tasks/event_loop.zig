@@ -184,7 +184,6 @@ pub const EventLoop = struct {
 
     pub fn closeResource(self: *Self, id: v.ResourceId) void {
         const slot = self.resources.take(id) orelse return;
-        if (slot.is_released) return;
         switch (slot.kind) {
             .stream => {
                 if (self.streamAt(slot.handle)) |stream| {

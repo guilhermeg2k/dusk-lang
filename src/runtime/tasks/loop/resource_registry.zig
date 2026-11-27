@@ -13,7 +13,6 @@ pub const ResourceRegistry = struct {
         kind: ResourceKind = .stream,
         handle: i64 = -1,
         slot_version: u32 = 1,
-        is_released: bool = false,
         is_used: bool = false,
     };
 
@@ -34,8 +33,7 @@ pub const ResourceRegistry = struct {
     }
 
     pub fn release(self: *Self, id: ResourceId) void {
-        const slot = self.find(id) orelse return;
-        slot.is_released = true;
+        _ = self.take(id);
     }
 
     pub fn take(self: *Self, id: ResourceId) ?Slot {
