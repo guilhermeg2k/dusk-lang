@@ -78,6 +78,7 @@ pub const Stream = struct {
     http_reader: ?*HttpReader = null,
     table_index: i64 = 0,
     owns_file: bool = false,
+    has_uv_file_ownership: bool = false,
     can_write_file: bool = false,
     is_append: bool = false,
     file_offset: i64 = 0,
@@ -153,8 +154,7 @@ pub const Stream = struct {
         if (self.write_timer_memory.len > 0) {
             self.allocator.free(self.write_timer_memory);
         }
-        const is_plain_file = self.kind == .file or self.kind == .closed_input;
-        const should_close_file = is_plain_file and (self.owns_file or self.file > 2);
+        const should_close_file = !self.has_uv_file_ownership and self.file >= 0 and (self.owns_file or self.file > 2);
         if (should_close_file) {
             stream_file.closeFileNow(self.allocator, self.loop, self.file);
         }
@@ -353,9 +353,16 @@ pub const Stream = struct {
     }
 
     pub fn write(self: *Self, task: *TaskState, data: []const u8) !WriteOutcome {
+        if (self.owns_file and !self.can_write_file) {
+            return .{ .failure = .Other };
+        }
         if (data.len == 0) return .done;
         if (self.kind == .file) {
             return stream_file.write(self, task, data);
+        }
+        const is_unusable_handle = self.kind == .closed_input or self.handle_memory.len == 0 or ((self.kind == .pipe or self.kind == .tty) and !self.has_uv_file_ownership);
+        if (is_unusable_handle) {
+            return .{ .failure = .Other };
         }
         const layer = self.tls_layer orelse return self.sendBytes(task, data);
         return stream_tls.write(self, layer, task, data);
@@ -489,10 +496,15 @@ pub const Stream = struct {
         self.handle_memory = memory;
         self.open_handles += 1;
         uv.uv_handle_set_data(handle, &self.owner);
-        const has_failed_to_open = self.kind == .pipe and uv.uv_pipe_open(handle, file) != 0;
-        if (has_failed_to_open) {
-            self.failure = .Other;
+        if (self.kind == .tty) {
+            self.has_uv_file_ownership = true;
+            return;
         }
+        if (uv.uv_pipe_open(handle, file) != 0) {
+            self.failure = .Other;
+            return;
+        }
+        self.has_uv_file_ownership = true;
     }
 
     fn compactBuffer(self: *Self) void {

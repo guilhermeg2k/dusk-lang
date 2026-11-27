@@ -136,6 +136,6 @@ end
 
 func stat(path: string) -> FsError!FileInfo
     let n = try stat_numbers(path)
-    let created: ?int = if n[5] == 0 then null else n[5] end
+    let created: ?int = if n[7] == 0 then null else n[5] end
     return FileInfo(size = n[0], is_dir = n[1] == 1, is_file = n[2] == 1, is_symlink = n[3] == 1, modified_ms = n[4], created_ms = created, permissions = n[6])
 end

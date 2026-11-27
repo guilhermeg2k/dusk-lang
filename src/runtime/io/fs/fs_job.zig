@@ -16,12 +16,13 @@ const mode_type_mask = 0o170000;
 const mode_directory = 0o040000;
 const mode_regular_file = 0o100000;
 const mode_symlink = 0o120000;
-const mode_permission_mask = 0o777;
+const mode_permission_mask = 0o7777;
 const open_read_only = 0;
 const open_to_replace = writeOpenFlags(.{ .should_truncate = true });
 const open_to_append = writeOpenFlags(.{ .should_append = true });
 const new_file_mode = 0o666;
 const min_read_capacity = 4096;
+const max_initial_read_capacity = 16 * 1024 * 1024;
 const new_dir_mode = 0o777;
 const dir_batch_size = 64;
 const chunk_size = 64 * 1024;
@@ -137,7 +138,7 @@ pub const FsJob = struct {
             self.failure = failureFromStatus(status);
             return;
         }
-        self.file_size = @intCast(uv.uv_fs_get_statbuf(request).st_size);
+        self.file_size = clampFileSize(uv.uv_fs_get_statbuf(request).st_size);
         uv.uv_fs_req_cleanup(request);
     }
 
@@ -148,7 +149,18 @@ pub const FsJob = struct {
         while (written < output.len) {
             const chunk_len = @min(output.len - written, 1 << 30);
             const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(chunk_len) };
-            const offset: i64 = if (self.offset < 0) -1 else self.offset + @as(i64, @intCast(written));
+            const offset: i64 = if (self.offset < 0) -1 else blk: {
+                if (written > std.math.maxInt(i64)) {
+                    self.written_bytes = written;
+                    self.failure = .Other;
+                    return;
+                }
+                break :blk std.math.add(i64, self.offset, @intCast(written)) catch {
+                    self.written_bytes = written;
+                    self.failure = .Other;
+                    return;
+                };
+            };
             const status = uv.uv_fs_write(self.loop, request, self.file, @ptrCast(&buffer), 1, offset, null);
             uv.uv_fs_req_cleanup(request);
             if (status <= 0) {
@@ -177,7 +189,7 @@ pub const FsJob = struct {
         const stat_status = uv.uv_fs_fstat(self.loop, request, status, null);
         const is_directory = stat_status >= 0 and uv.uv_fs_get_statbuf(request).st_mode & mode_type_mask == mode_directory;
         if (stat_status >= 0) {
-            self.file_size = @intCast(uv.uv_fs_get_statbuf(request).st_size);
+            self.file_size = clampFileSize(uv.uv_fs_get_statbuf(request).st_size);
         }
         uv.uv_fs_req_cleanup(request);
         if (is_directory) {
@@ -214,19 +226,20 @@ pub const FsJob = struct {
             uv.uv_fs_req_cleanup(request);
         }
 
-        const numbers = self.allocator.alloc(i64, 7) catch {
+        const numbers = self.allocator.alloc(i64, 8) catch {
             self.failure = .Other;
             return;
         };
         const file_type = info.st_mode & mode_type_mask;
         const is_dir = file_type == mode_directory;
-        numbers[0] = if (is_dir) 0 else @intCast(info.st_size);
+        numbers[0] = if (is_dir) 0 else clampFileSize(info.st_size);
         numbers[1] = @intFromBool(is_dir);
         numbers[2] = @intFromBool(file_type == mode_regular_file);
         numbers[3] = @intFromBool(is_symlink);
         numbers[4] = millisecondsOf(info.st_mtim);
         numbers[5] = millisecondsOf(info.st_birthtim);
         numbers[6] = @intCast(info.st_mode & mode_permission_mask);
+        numbers[7] = @intFromBool(info.st_birthtim.tv_sec != 0 or info.st_birthtim.tv_nsec != 0);
         self.stat_numbers = numbers;
     }
 
@@ -261,7 +274,8 @@ pub const FsJob = struct {
                 };
             }
             const free_space = data[len..];
-            const buffer = uv.Buffer{ .base = free_space.ptr, .len = @intCast(free_space.len) };
+            const chunk_len = @min(free_space.len, 1 << 30);
+            const buffer = uv.Buffer{ .base = free_space.ptr, .len = @intCast(chunk_len) };
             const status = uv.uv_fs_read(self.loop, request, file, @ptrCast(&buffer), 1, -1, null);
             uv.uv_fs_req_cleanup(request);
             if (status < 0) {
@@ -527,7 +541,8 @@ pub const FsJob = struct {
         const request = self.fsRequest();
         defer uv.uv_fs_req_cleanup(request);
         if (uv.uv_fs_fstat(self.loop, request, file, null) < 0) return min_read_capacity;
-        const size: usize = @intCast(uv.uv_fs_get_statbuf(request).st_size);
+        const clamped = @min(uv.uv_fs_get_statbuf(request).st_size, max_initial_read_capacity);
+        const size: usize = @intCast(clamped);
         return @max(size, min_read_capacity);
     }
 
@@ -641,8 +656,14 @@ fn writeOpenFlags(comptime mode: WriteMode) c_int {
     }
 }
 
+fn clampFileSize(size: u64) i64 {
+    return @intCast(@min(size, @as(u64, std.math.maxInt(i64))));
+}
+
 fn millisecondsOf(time: uv.Timespec) i64 {
-    return @as(i64, time.tv_sec) * 1000 + @divTrunc(@as(i64, time.tv_nsec), 1_000_000);
+    const sec: i64 = @intCast(time.tv_sec);
+    const nsec_ms: i64 = @divTrunc(@as(i64, @intCast(time.tv_nsec)), 1_000_000);
+    return (sec *| 1000) +| nsec_ms;
 }
 
 fn failureFromStatus(status: c_int) FsError {

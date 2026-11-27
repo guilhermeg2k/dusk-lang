@@ -66,4 +66,13 @@ func main() -> !void
     assert(seek_error(appending, 0) == io::IoError.Other)
     appending.close()
     assert((try fs::read("DIR/letters.txt")) == "abXYefgh")
+
+    let max_pos = try fs::open("DIR/max-pos.txt", fs::Mode.Write)
+    assert((try max_pos.seek(9223372036854775807)) == 9223372036854775807)
+    let mut overflow_err: ?io::IoError = null
+    max_pos.write("x") catch e then
+        overflow_err = e
+    end
+    assert(overflow_err == io::IoError.Other)
+    max_pos.close()
 end

@@ -46,7 +46,8 @@ pub fn finishChunk(stream: *Stream, contents: ?[]u8, has_failed: bool) void {
         if (data.len == 0) {
             stream.has_ended = true;
         } else {
-            stream.file_offset += @intCast(data.len);
+            const received: i64 = @intCast(@min(data.len, @as(usize, std.math.maxInt(i64))));
+            stream.file_offset = stream.file_offset +| received;
             stream.buffered.appendSlice(stream.allocator, data) catch {
                 stream.failure = .Other;
             };
@@ -68,6 +69,13 @@ pub fn write(stream: *Stream, task: *TaskState, data: []const u8) !WriteOutcome 
     }
     if (takeOutputFailure(stream)) |failure| {
         return .{ .failure = failure };
+    }
+    if (!stream.is_append) {
+        const total_pending = std.math.add(usize, stream.pending_output.items.len, data.len) catch return .{ .failure = .Other };
+        if (total_pending > std.math.maxInt(i64)) {
+            return .{ .failure = .Other };
+        }
+        _ = std.math.add(i64, stream.file_offset, @intCast(total_pending)) catch return .{ .failure = .Other };
     }
     try stream.pending_output.appendSlice(stream.allocator, data);
     if (stream.pending_output.items.len < file_output_limit) {
@@ -101,14 +109,15 @@ pub fn flush(stream: *Stream, task: *TaskState) !WriteOutcome {
 
 pub fn filePosition(stream: *const Stream) i64 {
     if (stream.can_write_file) {
-        return stream.file_offset + @as(i64, @intCast(stream.pending_output.items.len));
+        const pending: i64 = @intCast(@min(stream.pending_output.items.len, @as(usize, std.math.maxInt(i64))));
+        return stream.file_offset +| pending;
     }
-    const unread: i64 = @intCast(stream.buffered.items.len - stream.read_offset);
-    return stream.file_offset - unread;
+    const unread: i64 = @intCast(@min(stream.buffered.items.len - stream.read_offset, @as(usize, std.math.maxInt(i64))));
+    return stream.file_offset -| unread;
 }
 
 pub fn seekFile(stream: *Stream, target: i64) ?IoError {
-    const can_seek = stream.owns_file and !stream.is_append and target >= 0;
+    const can_seek = stream.kind == .file and stream.owns_file and !stream.is_append and target >= 0;
     if (!can_seek) {
         return .Other;
     }
@@ -132,13 +141,21 @@ pub fn flushOutputBeforeClose(stream: *Stream) void {
 
 pub fn finishOutput(stream: *Stream, written_bytes: usize, has_failed: bool) void {
     stream.has_output_in_flight = false;
-    stream.file_offset += @intCast(written_bytes);
+    const written: i64 = @intCast(@min(written_bytes, @as(usize, std.math.maxInt(i64))));
+    stream.file_offset = stream.file_offset +| written;
     if (has_failed) {
         stream.output_failure = .Other;
     }
     if (stream.is_closed) {
         failOutputWaiters(stream, .Closed);
-        writeOutputNow(stream);
+        const has_remaining_output = stream.output_failure == null and stream.pending_output.items.len > 0;
+        if (has_remaining_output) {
+            if (stream.event_loop.is_shutting_down) {
+                writeOutputNow(stream);
+            } else {
+                startOutputJob(stream) catch writeOutputNow(stream);
+            }
+        }
         stream.releaseIfDone();
         return;
     }
@@ -169,13 +186,17 @@ pub fn writeOutputNow(stream: *Stream) void {
     while (written < output.len) {
         const chunk_len = @min(output.len - written, max_uv_chunk);
         const buffer = uv.Buffer{ .base = output.ptr + written, .len = @intCast(chunk_len) };
-        const offset: i64 = if (stream.is_append) -1 else stream.file_offset + @as(i64, @intCast(written));
+        const offset: i64 = if (stream.is_append) -1 else blk: {
+            if (written > std.math.maxInt(i64)) break;
+            break :blk std.math.add(i64, stream.file_offset, @intCast(written)) catch break;
+        };
         const status = uv.uv_fs_write(stream.loop, request, stream.file, @ptrCast(&buffer), 1, offset, null);
         uv.uv_fs_req_cleanup(request);
         if (status <= 0) break;
         written += @intCast(status);
     }
-    stream.file_offset += @intCast(written);
+    const written_i64: i64 = @intCast(@min(written, @as(usize, std.math.maxInt(i64))));
+    stream.file_offset = stream.file_offset +| written_i64;
     stream.pending_output.clearRetainingCapacity();
 }
 
