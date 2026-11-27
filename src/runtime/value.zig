@@ -695,20 +695,20 @@ pub const Task = extern struct {
 };
 
 pub const ResourceId = struct {
-    index: u32,
-    generation: u32,
+    slot_index: u32,
+    slot_version: u32,
 };
 
 pub const Resource = extern struct {
     const Self = @This();
 
     obj: HeapValue,
-    index: u32,
-    generation: u32,
+    slot_index: u32,
+    slot_version: u32,
 
     pub fn init(allocator: std.mem.Allocator, resource_id: ResourceId) !*Self {
         const ptr = try allocator.create(Self);
-        ptr.* = .{ .obj = .{ .kind = .resource }, .index = resource_id.index, .generation = resource_id.generation };
+        ptr.* = .{ .obj = .{ .kind = .resource }, .slot_index = resource_id.slot_index, .slot_version = resource_id.slot_version };
         return ptr;
     }
 
@@ -717,7 +717,7 @@ pub const Resource = extern struct {
     }
 
     pub fn id(self: *const Self) ResourceId {
-        return .{ .index = self.index, .generation = self.generation };
+        return .{ .slot_index = self.slot_index, .slot_version = self.slot_version };
     }
 
     pub fn calc_size() usize {

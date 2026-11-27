@@ -12,7 +12,7 @@ pub const ResourceRegistry = struct {
     pub const Slot = struct {
         kind: ResourceKind = .stream,
         handle: i64 = -1,
-        generation: u32 = 1,
+        slot_version: u32 = 1,
         is_released: bool = false,
         is_used: bool = false,
     };
@@ -24,13 +24,13 @@ pub const ResourceRegistry = struct {
 
     pub fn add(self: *Self, allocator: std.mem.Allocator, kind: ResourceKind, handle: i64) !ResourceId {
         try self.free_indexes.ensureTotalCapacity(allocator, self.slots.items.len + 1);
-        const index = self.free_indexes.pop() orelse blk: {
+        const slot_index = self.free_indexes.pop() orelse blk: {
             try self.slots.append(allocator, .{});
             break :blk @as(u32, @intCast(self.slots.items.len - 1));
         };
-        const slot = &self.slots.items[index];
-        slot.* = .{ .kind = kind, .handle = handle, .generation = slot.generation, .is_used = true };
-        return .{ .index = index, .generation = slot.generation };
+        const slot = &self.slots.items[slot_index];
+        slot.* = .{ .kind = kind, .handle = handle, .slot_version = slot.slot_version, .is_used = true };
+        return .{ .slot_index = slot_index, .slot_version = slot.slot_version };
     }
 
     pub fn release(self: *Self, id: ResourceId) void {
@@ -42,11 +42,11 @@ pub const ResourceRegistry = struct {
         const slot = self.find(id) orelse return null;
         const taken = slot.*;
         slot.is_used = false;
-        slot.generation +%= 1;
-        if (slot.generation == 0) {
-            slot.generation = 1;
+        slot.slot_version +%= 1;
+        if (slot.slot_version == 0) {
+            slot.slot_version = 1;
         }
-        self.free_indexes.appendAssumeCapacity(id.index);
+        self.free_indexes.appendAssumeCapacity(id.slot_index);
         return taken;
     }
 
@@ -55,11 +55,11 @@ pub const ResourceRegistry = struct {
     }
 
     fn find(self: *Self, id: ResourceId) ?*Slot {
-        if (id.index >= self.slots.items.len) {
+        if (id.slot_index >= self.slots.items.len) {
             return null;
         }
-        const slot = &self.slots.items[id.index];
-        const is_current = slot.is_used and slot.generation == id.generation;
+        const slot = &self.slots.items[id.slot_index];
+        const is_current = slot.is_used and slot.slot_version == id.slot_version;
         return if (is_current) slot else null;
     }
 };

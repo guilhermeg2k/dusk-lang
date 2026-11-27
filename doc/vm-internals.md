@@ -150,7 +150,7 @@ The header is 16 bytes. Each object type embeds it as its `obj` field, and code 
 | `Union` | `descriptor_id`, `active_tag` | one value (the payload) | 32 |
 | `NullBox` | `kind`, `value` | none | 32 |
 | `Closure` | `function`, `capture_count` | `capture_count` values | 32 + 8 × captures |
-| `Resource` | `index`, `generation` (an id into `EventLoop.resources`) | none | 24 |
+| `Resource` | `slot_index`, `slot_version` (an id into `EventLoop.resources`) | none | 24 |
 | `Cell` | `kind`, `value` | none | 32 |
 | `Task` | `state` (a `*TaskState`, section 11) | none | 24 |
 | `Map` | `key_type`, `value_type`, `next_seq`, `seed`, `storage` | none | 40 |
@@ -593,7 +593,7 @@ Clones are byte copies with `gc_forward` cleared (and `relocated`, for arrays).
 
 Then `Scheduler.freeUnreachableTasks` frees every done task that no `Task` handle reached, except failed tasks nobody awaited, which are kept for the report at the end. Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
 
-**Resources.** A std struct that owns a native resource (the list is in [std-internals](std-internals.md) section 9) keeps its `int` handle for the natives plus a file-only `owner` field: a `Resource` object holding only an id into `EventLoop.resources` (`ResourceRegistry`, `tasks/loop/resource_registry.zig`: kind, handle, generation, released flag). `copy()` shares it, so every copy holds one owner. `Heap.resources` lists the live owners; at the end of a collection `sweepResources` keeps the ones that were moved (`gc_forward`) and puts the others' ids in `dead_resource_ids`. `gc.zig` doesn't know the event loop: `VM.maybeCollectGarbage` hands each dead id to `EventLoop.closeResource`, which ignores stale ids (generation) and released slots (`close()` / `finish()` call `release`) and closes the rest by kind. The `resource` type exists only in std modules and the prelude.
+**Resources.** A std struct that owns a native resource (the list is in [std-internals](std-internals.md) section 9) keeps its `int` handle for the natives plus a file-only `owner` field: a `Resource` object holding only an id into `EventLoop.resources` (`ResourceRegistry`, `tasks/loop/resource_registry.zig`: kind, handle, slot version, released flag). `copy()` shares it, so every copy holds one owner. `Heap.resources` lists the live owners; at the end of a collection `sweepResources` keeps the ones that were moved (`gc_forward`) and puts the others' ids in `dead_resource_ids`. `gc.zig` doesn't know the event loop: `VM.maybeCollectGarbage` hands each dead id to `EventLoop.closeResource`, which ignores stale ids (mismatched `slot_version`) and released slots (`close()` / `finish()` call `release`) and closes the rest by kind. The `resource` type exists only in std modules and the prelude.
 
 ## 10. `copy(x)`: deep copy
 
