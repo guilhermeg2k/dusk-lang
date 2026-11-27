@@ -58,8 +58,8 @@ pub fn main(init: std.process.Init) !void {
 
 fn openMissingStandardFiles() void {
     if (builtin.os.tag == .windows) return;
-    for (0..3) |file| {
-        const is_closed = std.posix.errno(std.c.fcntl(@intCast(file), std.posix.F.GETFD)) == .BADF;
+    for (0..3) |fd| {
+        const is_closed = std.posix.errno(std.c.fcntl(@intCast(fd), std.posix.F.GETFD)) == .BADF;
         if (is_closed) {
             _ = std.c.open("/dev/null", .{ .ACCMODE = .RDWR });
         }
