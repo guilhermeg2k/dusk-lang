@@ -47,6 +47,69 @@ test "math: constants, numeric functions and errors" {
     try runCase("math.dsk");
 }
 
+test "math: extrema across GC and array growth" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(
+        \\import "std/math"
+        \\import "std/array"
+        \\func main() -> math::MathError!void
+        \\    let values = [9, -7, 3]
+        \\    let floats = [9.5, -7.5, 3.5]
+        \\    let saved_min = try math::min(values)
+        \\    let saved_max = try math::max(floats)
+        \\    for 0..10000: i do
+        \\        let garbage = [i, i + 1, i + 2]
+        \\        assert((try math::min(values)) == -7)
+        \\        assert((try math::max(values)) == 9)
+        \\        assert((try math::min(floats)) == -7.5)
+        \\        assert((try math::max(floats)) == 9.5)
+        \\    end
+        \\    assert(saved_min == -7)
+        \\    assert(saved_max == 9.5)
+        \\    let mut integers = [0]
+        \\    let mut grown_floats = [0.0]
+        \\    for 1..1000: i do
+        \\        array::append(integers, i)
+        \\        array::append(grown_floats, -to_float(i))
+        \\    end
+        \\    assert((try math::min(integers)) == 0)
+        \\    assert((try math::max(integers)) == 1000)
+        \\    assert((try math::min(grown_floats)) == -1000.0)
+        \\    assert((try math::max(grown_floats)) == 0.0)
+        \\end
+    );
+}
+
+test "math: abs overflow, rounding bounds and nonnumeric extrema" {
+    {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+        try testing.expectError(error.IntegerOverflow, dusk.compileAndRun("import \"std/math\"\nfunc main() -> void let result = math::abs((-9223372036854775807 - 1)) end"));
+    }
+    for ([_][]const u8{ "floor", "ceil", "round", "trunc" }) |function| {
+        for ([_][]const u8{ "math::inf", "-math::inf", "math::nan", "9223372036854775808.0", "-9223372036854777856.0" }) |value| {
+            var arena = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena.deinit();
+            const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, value });
+            var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+            try testing.expectError(error.FloatOutOfIntRange, dusk.compileAndRun(source));
+        }
+    }
+    for ([_][]const u8{ "min", "max" }) |function| {
+        for ([_][]const u8{ "[true]", "[\"text\"]", "[null]", "[[1]]" }) |values| {
+            var arena = std.heap.ArenaAllocator.init(testing.allocator);
+            defer arena.deinit();
+            const source = try std.fmt.allocPrint(arena.allocator(), "import \"std/math\"\nfunc main() -> void let result = math::{s}({s}) end", .{ function, values });
+            const expected_error = if (std.mem.eql(u8, values, "[null]")) error.CantInferSlot else error.TypeDoesntFitSlot;
+            var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+            try testing.expectError(expected_error, dusk.compile(source));
+        }
+    }
+}
+
 test "time: timestamps, formatting and private construction" {
     try runCase("time-timestamps.dsk");
     try runCaseError("sema/time-timestamp-construct.dsk", error.CantBuildOutsideModule);
