@@ -164,7 +164,3 @@ Each module declares `~own(kind, handle)` and `~release(owner)` externs bound to
 The two raw `std/time` clock natives return unboxed integers without parking. They read `std.Io.Clock.real` for Unix-epoch milliseconds and `std.Io.Clock.awake` for monotonic nanoseconds through `vm.io`, without initializing the event loop or allocating GC objects. Wall-clock conversion floors fractional milliseconds from the `i96` nanosecond reading, and both conversions check the signed `i64` range via `RuntimeErrorReporter.clockOutOfRange`.
 
 `time::Timestamp` is an ordinary Dusk struct with a private millisecond field. Its Dusk factories wrap `now_ms` or an explicit integer; methods read the field or call the file-only `format_timestamp` native. Formatting uses floor division, nonnegative day remainders and Gregorian 400-year cycles, supporting the full signed millisecond range. A fixed 32-byte local buffer holds UTC text with a signed expanded year where necessary. The native finishes formatting before allocating one result string, so no moving heap references survive the allocation.
-
-## 11. String lookups
-
-`strByteAt` copies the byte into a local before allocating its nullable box. `strCharAt` walks the UTF-8 characters and saves the byte offset and length before allocating the result string. It then rereads the source from the VM argument slot because the allocation can move the source. Both return the null value without allocating when the index is out of range.
