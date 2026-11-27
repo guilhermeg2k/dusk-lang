@@ -1072,6 +1072,7 @@ pub const BytecodeGen = struct {
             .f_add, .f_sub, .f_mult, .f_div, .f_mod => self.type_table.getPrimitive(.float),
             .f_cmp_eq, .f_cmp_neq, .f_cmp_lt, .f_cmp_le, .f_cmp_ge, .f_cmp_gt => self.type_table.getPrimitive(.boolean),
             .b_and, .b_or, .b_cmp_eq, .b_cmp_neq => self.type_table.getPrimitive(.boolean),
+            .arr_cmp_eq, .arr_cmp_neq => self.type_table.getPrimitive(.boolean),
         };
     }
 
@@ -1936,6 +1937,9 @@ fn opCodeFromBinaryOp(op: ir.BinaryOpKind) bc.OpCode {
         .b_or => .B_OR,
         .b_cmp_eq => .B_EQ,
         .b_cmp_neq => .B_NEQ,
+
+        .arr_cmp_eq => .ARR_EQ,
+        .arr_cmp_neq => .ARR_NEQ,
     };
 }
 

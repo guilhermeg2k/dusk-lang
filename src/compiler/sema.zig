@@ -6190,6 +6190,14 @@ pub const SemaAnalyzer = struct {
         return left_is_string and right_is_string;
     }
 
+    fn areArrayOperands(self: *Self, left_type: tt.TypeId, right_type: tt.TypeId) bool {
+        const left_base = self.type_table.typeIdByNullableTypeId.get(left_type) orelse left_type;
+        const right_base = self.type_table.typeIdByNullableTypeId.get(right_type) orelse right_type;
+        const left_is_array = self.type_table.getTypePtrById(left_base).kind == .array;
+        const right_is_array = self.type_table.getTypePtrById(right_base).kind == .array;
+        return left_is_array and right_is_array;
+    }
+
     fn checkEquality(self: *Self, op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId, loc: err.Loc) CompileError!void {
         const op_text = binaryOpText(op);
         const left_base = self.type_table.typeIdByNullableTypeId.get(left_type) orelse left_type;
@@ -6617,6 +6625,7 @@ pub const SemaAnalyzer = struct {
     fn astBinOpToIrBinOpKind(self: *Self, bin_op: ast.BinaryOp, left_type: tt.TypeId, right_type: tt.TypeId) ir.BinaryOpKind {
         const is_float = self.type_table.eql(left_type, self.type_table.getPrimitive(.float)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.float));
         const is_bool = self.type_table.eql(left_type, self.type_table.getPrimitive(.boolean)) or self.type_table.eql(right_type, self.type_table.getPrimitive(.boolean));
+        const are_arrays = self.areArrayOperands(left_type, right_type);
         return switch (bin_op) {
             .add => if (is_float) .f_add else .i_add,
             .sub => if (is_float) .f_sub else .i_sub,
@@ -6624,8 +6633,8 @@ pub const SemaAnalyzer = struct {
             .div => .f_div,
             .trunc_div => .trunc_div,
             .mod => if (is_float) .f_mod else .i_mod,
-            .eq => if (is_float) .f_cmp_eq else if (is_bool) .b_cmp_eq else .i_cmp_eq,
-            .not_eq => if (is_float) .f_cmp_neq else if (is_bool) .b_cmp_neq else .i_cmp_neq,
+            .eq => if (is_float) .f_cmp_eq else if (is_bool) .b_cmp_eq else if (are_arrays) .arr_cmp_eq else .i_cmp_eq,
+            .not_eq => if (is_float) .f_cmp_neq else if (is_bool) .b_cmp_neq else if (are_arrays) .arr_cmp_neq else .i_cmp_neq,
             .lt => if (is_float) .f_cmp_lt else .i_cmp_lt,
             .lt_or_eq => if (is_float) .f_cmp_le else .i_cmp_le,
             .gt => if (is_float) .f_cmp_gt else .i_cmp_gt,

@@ -353,6 +353,7 @@ Fields are stored in declaration order, so `STRUCT_LOAD` and `STRUCT_STORE` use 
 Growing an array can't update every reference to it: other registers, struct fields or arrays may point to the old copy. So `Array.resize` (and `array::extend`) copies the array to a bigger allocation and sets `old.relocated = new`. Only arrays have this field; every other object's address changes only in a GC. Then:
 
 - Array instructions read their register through `getArrayFromHeapValuePtr`, which follows the chain with `Array.newestCopy()` and also updates the register to the newest copy.
+- Array identity comparisons (`==` and `!=` on `[]T` and `?[]T`) emit `ARR_EQ` / `ARR_NEQ`, which compare raw bits first and otherwise follow `newestCopy()` on both sides.
 - Natives and the formatter that read an array call `newestCopy()` too.
 - Code that handles any kind of object (the GC, `copy`) calls `HeapValue.followRelocated()`, which follows the chain for an array and returns any other object unchanged.
 - The GC copies the newest version and makes every reference point to it (`copyHeapValue` follows the chain first), so after a collection no chains are left.

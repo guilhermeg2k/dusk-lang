@@ -365,4 +365,7 @@ pub const BinaryOpKind = enum {
     b_or,
     b_cmp_eq,
     b_cmp_neq,
+
+    arr_cmp_eq,
+    arr_cmp_neq,
 };

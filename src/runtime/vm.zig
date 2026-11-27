@@ -315,6 +315,14 @@ pub const VM = struct {
                     stack[stack_base + inst.a] = .{ .bool = areStringsEqual(stack[stack_base + inst.b], stack[stack_base + inst.c]) };
                 },
 
+                .ARR_EQ => {
+                    stack[stack_base + inst.a] = .{ .bool = areArraysEqual(stack[stack_base + inst.b], stack[stack_base + inst.c]) };
+                },
+
+                .ARR_NEQ => {
+                    stack[stack_base + inst.a] = .{ .bool = !areArraysEqual(stack[stack_base + inst.b], stack[stack_base + inst.c]) };
+                },
+
                 .BYTES_GET => {
                     const bytes = v.HeapValue.getParentPtr(v.Bytes, stack[stack_base + inst.b].heap_obj);
                     const index = stack[stack_base + inst.c].int64;
@@ -929,6 +937,21 @@ pub const VM = struct {
         const left_bytes = v.HeapValue.getParentPtr(v.Bytes, left.heap_obj).slice();
         const right_bytes = v.HeapValue.getParentPtr(v.Bytes, right.heap_obj).slice();
         return std.mem.eql(u8, left_bytes, right_bytes);
+    }
+
+    fn areArraysEqual(left: v.Value, right: v.Value) bool {
+        const left_bits: u64 = @bitCast(left);
+        const right_bits: u64 = @bitCast(right);
+        if (left_bits == right_bits) {
+            return true;
+        }
+        const is_either_null = left_bits == 0 or right_bits == 0;
+        if (is_either_null) {
+            return false;
+        }
+        const left_array = v.HeapValue.getParentPtr(v.Array, left.heap_obj).newestCopy();
+        const right_array = v.HeapValue.getParentPtr(v.Array, right.heap_obj).newestCopy();
+        return left_array == right_array;
     }
 
     noinline fn deepCopy(self: *Self, source_index: usize) !v.Value {

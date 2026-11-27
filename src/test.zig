@@ -23,6 +23,37 @@ test "gc: else branches do not retain roots from the skipped then branch" {
     try runCase("gc-if-branches.dsk");
 }
 
+test "array: identity equality follows relocated copies" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(
+        \\import "std/array"
+        \\func main() -> void
+        \\    let mut a = [1]
+        \\    let b = a
+        \\    let other = [1]
+        \\    for 2..100: i do
+        \\        array::append(a, i)
+        \\    end
+        \\    assert(a == b)
+        \\    assert(b == a)
+        \\    assert((a != b) == false)
+        \\    assert(a != other)
+        \\    assert(b != other)
+        \\    let opt_a: ?[]int = a
+        \\    let opt_b: ?[]int = b
+        \\    let opt_null: ?[]int = null
+        \\    assert(opt_a == opt_b)
+        \\    assert(opt_b == a)
+        \\    assert(a == opt_b)
+        \\    assert(opt_a != opt_null)
+        \\    assert(opt_null != opt_b)
+        \\    assert(opt_null == null)
+        \\end
+    );
+}
+
 test "sema: @ works in any type position inside structs, enums, unions and traits" {
     try runCase("self-type.dsk");
     try runCaseError("sema/self-type-outside-top-level-func.dsk", error.SelfTypeOutsideType);
