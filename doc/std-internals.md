@@ -7,6 +7,7 @@ How the standard library's modules work inside the runtime: fs jobs on libuv's t
 | File | What it holds |
 |---|---|
 | `src/runtime/io/fs/fs_job.zig` | `FsJob`: one `std/fs` call, run with synchronous `uv_fs_*` calls on libuv's thread pool (section 2) |
+| `src/runtime/io/fs/fs_glue.c` | Iterative POSIX `openat`/`unlinkat` (`O_NOFOLLOW`) recursive directory deletion (section 2) |
 | `src/runtime/io/stream/stream.zig` | `Stream`: stdin, a TCP connection or an opened file, with its C-side read buffer, parked reader, timers, libuv callbacks and write path; read rules in `stream_read.zig`, file buffering in `stream_file.zig`, TLS in `stream_tls.zig`, HTTP framing and pool hooks in `stream_http.zig` (section 3) |
 | `src/runtime/io/net/tcp.zig` | `OpenRequest` (name lookup, connect and listen attempts, timeout) and `Listener` (accepting connections) for `std/net` (section 4) |
 | `src/runtime/io/net/tls_glue.c` | The only code that calls mbedTLS: owns its sessions, configs, certificates and keys, behind a few `dusk_tls_*` functions (section 5) |
@@ -38,7 +39,7 @@ Every `std/fs` call is one `FsJob` (`src/runtime/io/fs/fs_job.zig`), run with `u
 
 **Errors** are mapped by name with `uv_err_name` (`ENOENT` to `NotFound`, `EACCES`/`EPERM` to `PermissionDenied`, `EEXIST`, `EISDIR`, `ENOTDIR`, `ENOTEMPTY`, anything else to `Other`), since libuv's error numbers differ per OS. The Zig enum `FsError` mirrors the error set in `std/fs.dsk` (a test checks names and order), and the wake sends its variant as a relative error id ([vm-internals](vm-internals.md) 11.3).
 
-**Details.** Writes open with `WRONLY | CREAT | TRUNC` (or `APPEND`), taken from `std.posix.O` on POSIX and from the C runtime's `_O_*` values on Windows. `read_dir` uses `uv_fs_opendir`/`uv_fs_readdir` rather than `uv_fs_scandir`, which sorts the names. Recursive `delete` reads a folder's entries before deleting them, uses the entry type `readdir` reports (an `lstat` only when it's unknown), and never follows symlinks. `stat` runs `lstat` first and `stat` only for a link, so the other fields describe the link's target.
+**Details.** Writes open with `WRONLY | CREAT | TRUNC` (or `APPEND`), taken from `std.posix.O` on POSIX and from the C runtime's `_O_*` values on Windows. `read_dir` uses `uv_fs_opendir`/`uv_fs_readdir` rather than `uv_fs_scandir`, which sorts the names. Recursive `delete` on POSIX runs in `fs_glue.c` (`dusk_fs_delete_tree`), using an iterative heap stack of open directory handles (`openat` with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`, `fstatat` with `AT_SYMLINK_NOFOLLOW`, `unlinkat`) capped at 64 open directory fds, so it never follows symlinks (even under concurrent races) and never overflows the worker stack; Windows uses an iterative heap-stack walk over libuv's `opendir`/`readdir`. `stat` runs `lstat` first and `stat` only for a link, so the other fields describe the link's target.
 
 ## 3. Streams (stdin, TCP connections and files)
 

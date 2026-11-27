@@ -10,6 +10,14 @@ const WakePayload = @import("../../tasks/scheduler.zig").WakePayload;
 const Stream = @import("../stream/stream.zig").Stream;
 const IoError = @import("../stream/stream.zig").IoError;
 
+extern fn dusk_fs_delete_tree(path: [*:0]const u8) c_int;
+
+const dusk_fs_ok: c_int = 0;
+const dusk_fs_not_found: c_int = -1;
+const dusk_fs_permission_denied: c_int = -2;
+const dusk_fs_not_empty: c_int = -3;
+const dusk_fs_not_directory: c_int = -4;
+
 const request_alignment = std.mem.Alignment.@"16";
 
 const mode_type_mask = 0o170000;
@@ -121,7 +129,7 @@ pub const FsJob = struct {
             .make_dir => self.makeDir(),
             .make_dir_recursive => self.makeDirWithParents(),
             .delete => self.deletePath(),
-            .delete_recursive => _ = self.deleteTree(self.path, .unknown),
+            .delete_recursive => self.deleteTree(),
             .rename => self.renamePath(),
             .read_chunk => self.readChunk(),
             .write_chunk => self.writeChunk(),
@@ -445,30 +453,103 @@ pub const FsJob = struct {
         _ = if (is_dir) self.deleteEmptyDir(self.path.ptr) else self.deleteFile(self.path.ptr);
     }
 
-    fn deleteTree(self: *Self, path: [*:0]const u8, entry_type: uv.DirEntryType) bool {
-        const is_dir = switch (entry_type) {
-            .dir => true,
-            .unknown => self.lstatIsDirectory(path) orelse return false,
-            else => false,
-        };
-        if (!is_dir) return self.deleteFile(path);
+    fn deleteTree(self: *Self) void {
+        if (builtin.os.tag != .windows) {
+            const status = dusk_fs_delete_tree(self.path.ptr);
+            if (status != dusk_fs_ok) {
+                self.failure = failureFromGlueStatus(status);
+            }
+            return;
+        }
+        self.deleteTreeIterative();
+    }
 
-        const entries = self.readDirEntries(path) orelse return false;
+    fn deleteTreeIterative(self: *Self) void {
+        const is_root_dir = self.lstatIsDirectory(self.path.ptr) orelse return;
+        if (!is_root_dir) {
+            _ = self.deleteFile(self.path.ptr);
+            return;
+        }
+        const Frame = struct {
+            path: [:0]u8,
+            entries: []DirEntry,
+            next_index: usize,
+        };
+        const root_copy = self.allocator.dupeZ(u8, self.path) catch {
+            self.failure = .Other;
+            return;
+        };
+        const root_entries = self.readDirEntries(root_copy.ptr) orelse {
+            self.allocator.free(root_copy);
+            return;
+        };
+        var stack: std.ArrayList(Frame) = .empty;
         defer {
-            for (entries) |entry| {
+            for (stack.items) |frame| {
+                for (frame.entries) |entry| {
+                    self.allocator.free(entry.name);
+                }
+                self.allocator.free(frame.entries);
+                self.allocator.free(frame.path);
+            }
+            stack.deinit(self.allocator);
+        }
+        stack.append(self.allocator, .{ .path = root_copy, .entries = root_entries, .next_index = 0 }) catch {
+            for (root_entries) |entry| {
                 self.allocator.free(entry.name);
             }
-            self.allocator.free(entries);
-        }
-        for (entries) |entry| {
-            const child = std.fmt.allocPrintSentinel(self.allocator, "{s}/{s}", .{ std.mem.span(path), entry.name }, 0) catch {
+            self.allocator.free(root_entries);
+            self.allocator.free(root_copy);
+            self.failure = .Other;
+            return;
+        };
+        while (stack.items.len > 0) {
+            const top = &stack.items[stack.items.len - 1];
+            if (top.next_index >= top.entries.len) {
+                const finished = stack.pop().?;
+                const removed = self.deleteEmptyDir(finished.path.ptr);
+                for (finished.entries) |entry| {
+                    self.allocator.free(entry.name);
+                }
+                self.allocator.free(finished.entries);
+                self.allocator.free(finished.path);
+                if (!removed) return;
+                continue;
+            }
+            const entry = top.entries[top.next_index];
+            top.next_index += 1;
+            const child = std.fmt.allocPrintSentinel(self.allocator, "{s}/{s}", .{ top.path, entry.name }, 0) catch {
                 self.failure = .Other;
-                return false;
+                return;
             };
-            defer self.allocator.free(child);
-            if (!self.deleteTree(child.ptr, entry.entry_type)) return false;
+            const is_dir = switch (entry.entry_type) {
+                .dir => true,
+                .unknown => self.lstatIsDirectory(child.ptr) orelse {
+                    self.allocator.free(child);
+                    return;
+                },
+                else => false,
+            };
+            if (!is_dir) {
+                const removed = self.deleteFile(child.ptr);
+                self.allocator.free(child);
+                if (!removed) return;
+                continue;
+            }
+            const child_entries = self.readDirEntries(child.ptr) orelse {
+                self.allocator.free(child);
+                return;
+            };
+            stack.append(self.allocator, .{ .path = child, .entries = child_entries, .next_index = 0 }) catch {
+                for (child_entries) |item| {
+                    self.allocator.free(item.name);
+                }
+                self.allocator.free(child_entries);
+                self.allocator.free(child);
+                self.failure = .Other;
+                return;
+            };
         }
-        return self.deleteEmptyDir(path);
     }
 
     fn lstatIsDirectory(self: *Self, path: [*:0]const u8) ?bool {
@@ -664,6 +745,16 @@ fn millisecondsOf(time: uv.Timespec) i64 {
     const sec: i64 = @intCast(time.tv_sec);
     const nsec_ms: i64 = @divTrunc(@as(i64, @intCast(time.tv_nsec)), 1_000_000);
     return (sec *| 1000) +| nsec_ms;
+}
+
+fn failureFromGlueStatus(status: c_int) FsError {
+    return switch (status) {
+        dusk_fs_not_found => .NotFound,
+        dusk_fs_permission_denied => .PermissionDenied,
+        dusk_fs_not_empty => .NotEmpty,
+        dusk_fs_not_directory => .NotDirectory,
+        else => .Other,
+    };
 }
 
 fn failureFromStatus(status: c_int) FsError {

@@ -74,4 +74,5 @@ fn linkRuntimeLibraries(b: *std.Build, module: *std.Build.Module, libraries: Run
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/net/tls_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/http/http_glue.c"), .flags = flags });
     module.addCSourceFile(.{ .file = b.path("src/runtime/io/compression/compression_glue.c"), .flags = flags });
+    module.addCSourceFile(.{ .file = b.path("src/runtime/io/fs/fs_glue.c"), .flags = flags });
 }

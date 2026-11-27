@@ -688,6 +688,31 @@ test "fs: data still buffered in a file reaches the disk when the program ends" 
     try testing.expectEqualStrings("kept", try tmp.dir.readFileAlloc(testing.io, "small.txt", allocator, .unlimited));
 }
 
+test "fs: recursive delete handles deep directory trees without exhausting fds" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const template =
+        \\import "std/fs"
+        \\func main() -> !void
+        \\    let mut path = "DIR/deep"
+        \\    for 1..120: i do
+        \\        path = "${path}/d${i}"
+        \\    end
+        \\    try fs::make_dir(path, recursive = true)
+        \\    try fs::write("${path}/leaf.txt", "ok")
+        \\    try fs::delete("DIR/deep", recursive = true)
+        \\    assert(!fs::exists("DIR/deep"))
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, template, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
 fn runCaseInTmpDir(src_file: []const u8) !void {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
