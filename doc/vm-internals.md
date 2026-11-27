@@ -21,7 +21,7 @@ The source files involved:
 | `src/runtime/tasks/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
 | `src/runtime/tasks/event_loop.zig` | `EventLoop`: the libuv loop, timers for `sleep`, queuing fs jobs, and immediate clock helpers |
 | `src/runtime/tasks/loop/uv.zig` | The few libuv functions Dusk calls, declared by hand |
-| `src/runtime/tasks/loop/handle_table.zig` | `HandleTable(T)`: the stream, listener and certificate tables, whose ids carry a slot generation so freed slots are reused safely |
+| `src/runtime/tasks/loop/slot_table.zig` | `SlotTable(T)`: the stream, listener and certificate tables, whose ids carry a slot version so freed slots are reused safely |
 | `src/runtime/tasks/loop/resource_registry.zig` | `ResourceRegistry`: what each GC-tracked native resource is (kind, table id), for the sweep after each collection (section 9.3) |
 
 Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.

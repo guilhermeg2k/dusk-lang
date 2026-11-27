@@ -415,10 +415,10 @@ test "resources: the GC closes connections, listeners, files, response streams a
     try runCaseInTmpDir("gc-resources.dsk");
 }
 
-test "handles: the stream and listener tables reuse slots and reject stale handles" {
-    const HandleTable = @import("runtime/tasks/loop/handle_table.zig").HandleTable;
+test "slot table: freed slots are reused and stale ids are rejected" {
+    const SlotTable = @import("runtime/tasks/loop/slot_table.zig").SlotTable;
     const allocator = testing.allocator;
-    var table: HandleTable(u8) = .{};
+    var table: SlotTable(u8) = .{};
     defer table.deinit(allocator);
     var a: u8 = 1;
     var b: u8 = 2;
