@@ -16,7 +16,6 @@
 
 #include <dirent.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #define DUSK_FS_MAX_OPEN_DIRS 64
@@ -213,33 +212,31 @@ int dusk_fs_delete_tree(const char *path) {
 
         if (is_dot_entry(entry->d_name)) continue;
 
-        struct stat st;
-        if (fstatat(top->fd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
-            if (errno == ENOENT) continue;
-            result = map_errno(errno);
+        if (unlinkat(top->fd, entry->d_name, 0) == 0) continue;
+        int unlink_err = errno;
+        if (unlink_err == ENOENT) continue;
+        int is_dir_err = unlink_err == EISDIR || unlink_err == EPERM;
+        if (!is_dir_err) {
+            result = map_errno(unlink_err);
             break;
-        }
-
-        if (!S_ISDIR(st.st_mode)) {
-            if (unlinkat(top->fd, entry->d_name, 0) != 0 && errno != ENOENT) {
-                result = map_errno(errno);
-                break;
-            }
-            continue;
         }
 
         int child_fd = openat(top->fd, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (child_fd < 0) {
-            int err = errno;
-            if (err == ENOENT) continue;
-            if (err == ELOOP || err == ENOTDIR) {
+            int open_err = errno;
+            if (open_err == ENOENT) continue;
+            if (unlink_err == EISDIR && (open_err == ELOOP || open_err == ENOTDIR)) {
                 if (unlinkat(top->fd, entry->d_name, 0) != 0 && errno != ENOENT) {
                     result = map_errno(errno);
                     break;
                 }
                 continue;
             }
-            result = map_errno(err);
+            if (open_err == ELOOP || open_err == ENOTDIR) {
+                result = map_errno(unlink_err);
+                break;
+            }
+            result = map_errno(open_err);
             break;
         }
 
