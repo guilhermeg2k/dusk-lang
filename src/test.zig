@@ -456,8 +456,8 @@ test "resources: the registry hands out ids, rejects stale ones and keeps releas
     try testing.expect(!taken.is_released);
     try testing.expect(registry.take(conn) == null);
     const reused = try registry.add(allocator, .compression, 99);
-    try testing.expectEqual(conn.slot_index, reused.slot_index);
-    try testing.expect(reused.slot_version != conn.slot_version);
+    try testing.expectEqual(conn.registry_slot_index, reused.registry_slot_index);
+    try testing.expect(reused.registry_slot_version != conn.registry_slot_version);
     try testing.expect(registry.take(conn) == null);
     try testing.expect(registry.take(listener).?.is_released);
     try testing.expectEqual(@as(usize, 1), registry.liveCount());
@@ -469,8 +469,8 @@ test "resources: a collection keeps moved owners and reports the ones nobody cop
     var heap = Heap.init(testing.allocator);
     defer heap.deinit();
     const allocator = heap.allocator();
-    const kept = try v.Resource.init(allocator, .{ .slot_index = 1, .slot_version = 1 });
-    const dropped = try v.Resource.init(allocator, .{ .slot_index = 2, .slot_version = 7 });
+    const kept = try v.Resource.init(allocator, .{ .registry_slot_index = 1, .registry_slot_version = 1 });
+    const dropped = try v.Resource.init(allocator, .{ .registry_slot_index = 2, .registry_slot_version = 7 });
     try heap.trackResource(&kept.obj);
     try heap.trackResource(&dropped.obj);
     const moved = try kept.clone(allocator);
@@ -479,8 +479,8 @@ test "resources: a collection keeps moved owners and reports the ones nobody cop
     try testing.expectEqual(@as(usize, 1), heap.resources.items.len);
     try testing.expectEqual(&moved.obj, heap.resources.items[0]);
     try testing.expectEqual(@as(usize, 1), heap.dead_resource_ids.items.len);
-    try testing.expectEqual(@as(u32, 2), heap.dead_resource_ids.items[0].slot_index);
-    try testing.expectEqual(@as(u32, 7), heap.dead_resource_ids.items[0].slot_version);
+    try testing.expectEqual(@as(u32, 2), heap.dead_resource_ids.items[0].registry_slot_index);
+    try testing.expectEqual(@as(u32, 7), heap.dead_resource_ids.items[0].registry_slot_version);
 }
 
 test "compression: the stream table reuses slots and rejects stale handles" {

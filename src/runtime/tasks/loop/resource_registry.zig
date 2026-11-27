@@ -30,7 +30,7 @@ pub const ResourceRegistry = struct {
         };
         const slot = &self.slots.items[slot_index];
         slot.* = .{ .kind = kind, .handle = handle, .slot_version = slot.slot_version, .is_used = true };
-        return .{ .slot_index = slot_index, .slot_version = slot.slot_version };
+        return .{ .registry_slot_index = slot_index, .registry_slot_version = slot.slot_version };
     }
 
     pub fn release(self: *Self, id: ResourceId) void {
@@ -46,7 +46,7 @@ pub const ResourceRegistry = struct {
         if (slot.slot_version == 0) {
             slot.slot_version = 1;
         }
-        self.free_indexes.appendAssumeCapacity(id.slot_index);
+        self.free_indexes.appendAssumeCapacity(id.registry_slot_index);
         return taken;
     }
 
@@ -55,11 +55,11 @@ pub const ResourceRegistry = struct {
     }
 
     fn find(self: *Self, id: ResourceId) ?*Slot {
-        if (id.slot_index >= self.slots.items.len) {
+        if (id.registry_slot_index >= self.slots.items.len) {
             return null;
         }
-        const slot = &self.slots.items[id.slot_index];
-        const is_current = slot.is_used and slot.slot_version == id.slot_version;
+        const slot = &self.slots.items[id.registry_slot_index];
+        const is_current = slot.is_used and slot.slot_version == id.registry_slot_version;
         return if (is_current) slot else null;
     }
 };

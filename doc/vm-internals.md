@@ -150,7 +150,7 @@ The header is 16 bytes. Each object type embeds it as its `obj` field, and code 
 | `Union` | `descriptor_id`, `active_tag` | one value (the payload) | 32 |
 | `NullBox` | `kind`, `value` | none | 32 |
 | `Closure` | `function`, `capture_count` | `capture_count` values | 32 + 8 × captures |
-| `Resource` | `slot_index`, `slot_version` (an id into `EventLoop.resources`) | none | 24 |
+| `Resource` | `registry_slot_index`, `registry_slot_version` (an id into `EventLoop.resources`) | none | 24 |
 | `Cell` | `kind`, `value` | none | 32 |
 | `Task` | `state` (a `*TaskState`, section 11) | none | 24 |
 | `Map` | `key_type`, `value_type`, `next_seq`, `seed`, `storage` | none | 40 |
