@@ -20,12 +20,16 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "read_bytes", Binding{ .native = &readBytes } },
     .{ "write", Binding{ .native = &writeFile } },
     .{ "write_bytes", Binding{ .native = &writeFile } },
+    .{ "write_atomic", Binding{ .native = &writeAtomic } },
+    .{ "write_bytes_atomic", Binding{ .native = &writeAtomic } },
     .{ "append", Binding{ .native = &appendText } },
     .{ "read_dir", Binding{ .native = &readDir } },
     .{ "make_dir", Binding{ .native = &makeDir } },
     .{ "delete", Binding{ .native = &delete } },
     .{ "rename", Binding{ .native = &rename } },
     .{ "chmod", Binding{ .native = &chmod } },
+    .{ "real_path", Binding{ .native = &realPath } },
+    .{ "resolve_under", Binding{ .native = &resolveUnder } },
     .{ "open_descriptor", Binding{ .native = &openDescriptor } },
     .{ "file_stream", Binding{ .native = &fileStream } },
     .{ "stream_read_bytes", Binding{ .native = &io.streamReadBytes } },
@@ -111,6 +115,10 @@ fn writeFile(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startWriteJob(vm, .write, bytesArg(args, 0), bytesArg(args, 1), args[2].int64, args[3].bool);
 }
 
+fn writeAtomic(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startWriteJob(vm, .write_atomic, bytesArg(args, 0), bytesArg(args, 1), args[2].int64, false);
+}
+
 fn appendText(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return startWriteJob(vm, .append, bytesArg(args, 0), bytesArg(args, 1), args[2].int64, args[3].bool);
 }
@@ -159,6 +167,14 @@ fn chmod(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return native.parked();
 }
 
+fn realPath(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startFsJob(vm, .real_path, bytesArg(args, 0), "");
+}
+
+fn resolveUnder(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    return startFsJob(vm, .resolve_under, bytesArg(args, 0), bytesArg(args, 1));
+}
+
 fn startReadJob(vm: *VM, kind: FsJob.Kind, path: []const u8, max_bytes: i64) anyerror!NativeResult {
     if (std.mem.indexOfScalar(u8, path, 0) != null) {
         return native.fail(FsError.InvalidPath);
@@ -195,7 +211,8 @@ fn parsePermissions(raw: i64) ?c_int {
 }
 
 fn startFsJob(vm: *VM, kind: FsJob.Kind, path: []const u8, input: []const u8) anyerror!NativeResult {
-    const has_nul_path = std.mem.indexOfScalar(u8, path, 0) != null or (kind == .rename and std.mem.indexOfScalar(u8, input, 0) != null);
+    const has_second_path = kind == .rename or kind == .resolve_under;
+    const has_nul_path = std.mem.indexOfScalar(u8, path, 0) != null or (has_second_path and std.mem.indexOfScalar(u8, input, 0) != null);
     if (has_nul_path) {
         if (kind == .exists) {
             return native.ok(.{ .bool = false });

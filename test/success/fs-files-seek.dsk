@@ -38,7 +38,7 @@ func main() -> !void
     assert((try file.read_all()) == "9")
     assert(seek_error(file, -1) == io::IoError.Other)
 
-    file.close()
+    try file.close()
 
     let busy = try fs::open("DIR/digits.txt")
     let seeker = spawn(func() -> ?io::IoError
@@ -47,7 +47,7 @@ func main() -> !void
     let first = try busy.read_line()
     assert(first == "0123456789")
     assert(await(seeker) == io::IoError.Busy)
-    busy.close()
+    try busy.close()
 
     let written = try fs::open("DIR/letters.txt", fs::Mode.Write)
     try written.write("abcdef")
@@ -56,7 +56,7 @@ func main() -> !void
     assert((try written.seek(2)) == 2)
     try written.write("XY")
     assert(written.position() == 4)
-    written.close()
+    try written.close()
     assert((try fs::read("DIR/letters.txt")) == "abXYef")
 
     let appending = try fs::open("DIR/letters.txt", fs::Mode.Append)
@@ -64,7 +64,7 @@ func main() -> !void
     try appending.write("gh")
     assert(appending.position() == 8)
     assert(seek_error(appending, 0) == io::IoError.Other)
-    appending.close()
+    try appending.close()
     assert((try fs::read("DIR/letters.txt")) == "abXYefgh")
 
     let max_pos = try fs::open("DIR/max-pos.txt", fs::Mode.Write)
@@ -74,5 +74,5 @@ func main() -> !void
         overflow_err = e
     end
     assert(overflow_err == io::IoError.Other)
-    max_pos.close()
+    try max_pos.close()
 end

@@ -21,7 +21,7 @@ func main() -> !void
         try log.write("\nline ${i}")
     end
     try log.flush()
-    log.close()
+    try log.close()
     let text = try fs::read("DIR/log.txt")
     let lines = string::split(text, "\n")
     assert(array::len(lines) == 100001)
@@ -29,7 +29,7 @@ func main() -> !void
 
     let replaced = try fs::open("DIR/log.txt", fs::Mode.Write)
     try replaced.write("short\n")
-    replaced.close()
+    try replaced.close()
     assert((try fs::read("DIR/log.txt")) == "short\n")
 
     let more = try fs::open("DIR/log.txt", fs::Mode.Append)
@@ -39,17 +39,17 @@ func main() -> !void
     data[1] = 'b'
     data[2] = '\n'
     try more.write_bytes(data)
-    more.close()
+    try more.close()
     assert((try fs::read("DIR/log.txt")) == "short\nappended\nab\n")
 
     let created = try fs::open("DIR/new.txt", fs::Mode.Append)
     try created.write("new\n")
-    created.close()
+    try created.close()
     assert((try fs::read("DIR/new.txt")) == "new\n")
 
     let reading = try fs::open("DIR/new.txt")
     assert(write_error(reading, "x") == io::IoError.Other)
-    reading.close()
+    try reading.close()
 
     let shared = try fs::open("DIR/tasks.txt", fs::Mode.Write)
     let mut tasks: []Task[void, io::IoError] = []
@@ -63,7 +63,7 @@ func main() -> !void
     for tasks: task do
         try await(task)
     end
-    shared.close()
+    try shared.close()
     let task_lines = string::split(try fs::read("DIR/tasks.txt"), "\n")
     assert(array::len(task_lines) == 4001)
     for task_lines: line, i do
@@ -75,8 +75,8 @@ func main() -> !void
     let mut source = try fs::open("DIR/log.txt")
     let mut target = try fs::open("DIR/copy.txt", fs::Mode.Write)
     let copied = try io::copy(source, target)
-    source.close()
-    target.close()
+    try source.close()
+    try target.close()
     assert(copied == 18)
     assert((try fs::read("DIR/copy.txt")) == "short\nappended\nab\n")
 
@@ -85,6 +85,6 @@ func main() -> !void
     used = try buffer::put(frame, used, "${7}")
     let framed = try fs::open("DIR/frame.txt", fs::Mode.Write)
     try framed.write_bytes(try buffer::slice(frame, 0, used))
-    framed.close()
+    try framed.close()
     assert((try fs::read("DIR/frame.txt")) == "frame 7")
 end

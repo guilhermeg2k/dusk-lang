@@ -1256,15 +1256,15 @@ end
 func file(path: string, content_type: string, status: int = 200) -> fs::FsError!Response
     let opened = try fs::open(path)
     let size = opened.size() catch e then
-        opened.close()
+        opened.close() catch ce then end
         return fs::FsError.Other
     end
     return stream(func(mut writer: BodyWriter) -> io::IoError!void
         send_file(opened, writer) catch e then
-            opened.close()
+            opened.close() catch ce then end
             return e
         end
-        opened.close()
+        try opened.close()
     end, content_type = content_type, status = status, length = size)
 end
 

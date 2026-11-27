@@ -23,7 +23,7 @@ func open_error(path: string) -> ?fs::FsError
     let file = fs::open(path) catch e then
         return e
     end
-    file.close()
+    file.close() catch ce then end
     return null
 end
 
@@ -61,7 +61,7 @@ func main() -> !void
             break
         end
     end
-    file.close()
+    try file.close()
     assert(count == 20000)
     assert(last == "line 20000")
 
@@ -76,7 +76,7 @@ func main() -> !void
             break
         end
     end
-    chunks.close()
+    try chunks.close()
     assert(total == string::len(text) + 1)
 
     let whole = try fs::open("DIR/lines.txt")
@@ -84,17 +84,17 @@ func main() -> !void
     assert(first != null)
     let rest = try string::slice(text, 6, string::len(text))
     assert((try whole.read_all()) == "${rest}\n")
-    whole.close()
+    try whole.close()
 
     let mut copied = try fs::open("DIR/lines.txt")
     let mut collector = Collector()
     let bytes = try io::copy(copied, collector)
     assert(bytes == string::len(text) + 1 and collector.total == bytes)
-    copied.close()
+    try copied.close()
 
     let closed = try fs::open("DIR/lines.txt")
-    closed.close()
-    closed.close()
+    try closed.close()
+    try closed.close()
     assert(read_error(closed) == io::IoError.Closed)
 
     let shared = try fs::open("DIR/lines.txt")
@@ -104,7 +104,7 @@ func main() -> !void
     let mine = try shared.read_line()
     assert(mine == "line 1")
     assert(await_error(reader) == io::IoError.Busy)
-    shared.close()
+    try shared.close()
 
     assert(open_error("DIR/missing.txt") == fs::FsError.NotFound)
     assert(open_error("DIR") == fs::FsError.IsDirectory)

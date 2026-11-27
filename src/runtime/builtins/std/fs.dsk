@@ -27,12 +27,16 @@ extern func read(path: string, max_bytes: int = -1) -> FsError!string
 extern func read_bytes(path: string, max_bytes: int = -1) -> FsError!buffer
 extern func write(path: string, text: string, permissions: int = 438, follow_symlinks: bool = true) -> FsError!void
 extern func write_bytes(path: string, data: buffer, permissions: int = 438, follow_symlinks: bool = true) -> FsError!void
+extern func write_atomic(path: string, text: string, permissions: int = 438) -> FsError!void
+extern func write_bytes_atomic(path: string, data: buffer, permissions: int = 438) -> FsError!void
 extern func append(path: string, text: string, permissions: int = 438, follow_symlinks: bool = true) -> FsError!void
 extern func read_dir(path: string) -> FsError![]string
 extern func make_dir(path: string, recursive: bool = false, permissions: int = 511) -> FsError!void
 extern func delete(path: string, recursive: bool = false) -> FsError!void
 extern func rename(from: string, to: string) -> FsError!void
 extern func chmod(path: string, permissions: int) -> FsError!void
+extern func real_path(path: string) -> FsError!string
+extern func resolve_under(root: string, rel: string) -> FsError!string
 extern func exists(path: string) -> bool
 extern func ~stat_numbers(path: string) -> FsError![]int
 extern func ~open_descriptor(path: string, mode: Mode, permissions: int, follow_symlinks: bool) -> FsError![]int
@@ -124,11 +128,18 @@ struct File
         return base + offset
     end
 
-    func close(self: @) -> void
+    func close(self: @) -> io::IoError!void
+        let mut flush_err: ?io::IoError = null
         stream_flush(self.handle) catch e then
+            flush_err = e
         end
         stream_close(self.handle)
         release(self.owner)
+        if flush_err: err then
+            if err != io::IoError.Closed then
+                return err
+            end
+        end
     end
 end
 

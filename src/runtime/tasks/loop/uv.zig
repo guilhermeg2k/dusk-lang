@@ -169,6 +169,7 @@ pub extern fn uv_fs_open(loop: *Loop, request: *Request, path: [*:0]const u8, fl
 pub extern fn uv_fs_read(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_write(loop: *Loop, request: *Request, file: c_int, buffers: [*]const Buffer, buffer_count: c_uint, offset: i64, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_close(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_fsync(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_fstat(loop: *Loop, request: *Request, file: c_int, callback: ?FsCallback) c_int;
 
 // ---- File system: paths ----
@@ -180,6 +181,7 @@ pub extern fn uv_fs_unlink(loop: *Loop, request: *Request, path: [*:0]const u8, 
 pub extern fn uv_fs_mkdir(loop: *Loop, request: *Request, path: [*:0]const u8, mode: c_int, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_rmdir(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 pub extern fn uv_fs_chmod(loop: *Loop, request: *Request, path: [*:0]const u8, mode: c_int, callback: ?FsCallback) c_int;
+pub extern fn uv_fs_realpath(loop: *Loop, request: *Request, path: [*:0]const u8, callback: ?FsCallback) c_int;
 
 // ---- File system: folders ----
 

@@ -118,7 +118,7 @@ func main() -> !void
     partial.close()
     try gz.write_bytes(try buffer::slice(text, 5000, buffer::len(text)))
     try gz.finish()
-    out.close()
+    try out.close()
     assert(write_error(gz, "more") == io::IoError.Closed)
     assert(same_bytes(try compression::decompress(try fs::read_bytes(path), compression::Format.Gzip), text))
 
@@ -127,7 +127,7 @@ func main() -> !void
     assert(same_bytes(try read_everything(unzipped, 100), text))
     assert((try unzipped.read_bytes(100)) == null)
     assert((try unzipped.read_bytes(100)) == null)
-    input.close()
+    try input.close()
 
     let mut source = try fs::open(path)
     let mut from = try compression::reader(source, compression::Format.Gzip)
@@ -137,7 +137,7 @@ func main() -> !void
     assert(sink.flushes == 1)
     try to.finish()
     assert(sink.flushes == 2)
-    source.close()
+    try source.close()
     let mut zlibbed = try joined(sink.parts)
     assert(same_bytes(try compression::decompress(zlibbed, compression::Format.Zlib), text))
 

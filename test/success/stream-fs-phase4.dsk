@@ -13,29 +13,29 @@ func main() -> !void
     let mut reader = try fs::open(path, fs::Mode.Read)
     let reader_copy = reader
     let closer = spawn(func() -> void
-        reader_copy.close()
+        reader_copy.close() catch e then end
     end)
     let ignored1 = reader.read_bytes(64, timeout_ms = 0) catch null
     await(closer)
-    reader.close()
+    try reader.close()
 
     let mut reader2 = try fs::open(path, fs::Mode.Read)
     let reader2_copy = reader2
     let closer2 = spawn(func() -> void
-        reader2_copy.close()
+        reader2_copy.close() catch e then end
     end)
     let ignored2 = reader2.size() catch -1
     await(closer2)
-    reader2.close()
+    try reader2.close()
 
     let mut reader3 = try fs::open(path, fs::Mode.Read)
-    defer reader3.close()
+    defer reader3.close() catch e then end
     assert((try reader3.seek(1, fs::SeekFrom.Start)) == 1)
     let overflowed = reader3.seek(9223372036854775807, fs::SeekFrom.Current) catch -1
     assert(overflowed == -1)
 
     let mut writer = try fs::open(path, fs::Mode.Write)
-    defer writer.close()
+    defer writer.close() catch e then end
     let read_on_writer = writer.read_bytes(4) catch null
     assert(read_on_writer == null)
 

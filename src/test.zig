@@ -732,7 +732,7 @@ test "fs: CreateNew, permissions, chmod, follow_symlinks and max_bytes" {
         \\    let f = fs::open(path, mode, permissions = permissions, follow_symlinks = follow_symlinks) catch e then
         \\        return e
         \\    end
-        \\    f.close()
+        \\    f.close() catch ce then end
         \\    return null
         \\end
         \\func read_err(path: string, max_bytes: int) -> ?fs::FsError
@@ -762,7 +762,7 @@ test "fs: CreateNew, permissions, chmod, follow_symlinks and max_bytes" {
         \\func main() -> !void
         \\    let f1 = try fs::open("DIR/unique.txt", fs::Mode.CreateNew, permissions = 384)
         \\    try f1.write("secret")
-        \\    f1.close()
+        \\    try f1.close()
         \\    assert((try fs::stat("DIR/unique.txt")).permissions == 384)
         \\    assert(open_err("DIR/unique.txt", fs::Mode.CreateNew) == fs::FsError.AlreadyExists)
         \\    assert(open_err("DIR/dangling-link", fs::Mode.CreateNew) == fs::FsError.AlreadyExists)
@@ -786,7 +786,49 @@ test "fs: CreateNew, permissions, chmod, follow_symlinks and max_bytes" {
         \\
         \\    let r = try fs::open("DIR/real.txt")
         \\    assert(read_all_err(r, 4) == io::IoError.TooLarge)
-        \\    r.close()
+        \\    try r.close()
+        \\end
+    ;
+    const source = try std.mem.replaceOwned(u8, allocator, script, "DIR", dir);
+    var dusk = Dusk{ .allocator = allocator, .io = testing.io };
+    try dusk.compileAndRun(source);
+}
+
+test "fs: write_atomic, real_path and resolve_under" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "root/sub");
+    try tmp.dir.createDirPath(testing.io, "root2");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "root/sub/ok.txt", .data = "inside" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "root2/secret.txt", .data = "outside" });
+    try tmp.dir.symLink(testing.io, "../../root2/secret.txt", "root/sub/escape.txt", .{});
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const dir = try std.fmt.allocPrint(allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const script =
+        \\import "std/fs"
+        \\import "std/buffer"
+        \\func resolve_err(root: string, rel: string) -> ?fs::FsError
+        \\    let _ = fs::resolve_under(root, rel) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func main() -> !void
+        \\    try fs::write_atomic("DIR/atomic.txt", "v1", permissions = 384)
+        \\    assert((try fs::read("DIR/atomic.txt")) == "v1")
+        \\    assert((try fs::stat("DIR/atomic.txt")).permissions == 384)
+        \\    try fs::write_bytes_atomic("DIR/atomic.txt", buffer::from_string("v2"))
+        \\    assert((try fs::read("DIR/atomic.txt")) == "v2")
+        \\
+        \\    let real_ok = try fs::real_path("DIR/root/sub/ok.txt")
+        \\    assert((try fs::resolve_under("DIR/root", "sub/ok.txt")) == real_ok)
+        \\    assert((try fs::resolve_under("DIR/root", "")) == (try fs::real_path("DIR/root")))
+        \\    assert(resolve_err("DIR/root", "../root2/secret.txt") == fs::FsError.InvalidPath)
+        \\    assert(resolve_err("DIR/root", "/etc/hostname") == fs::FsError.InvalidPath)
+        \\    assert(resolve_err("DIR/root", "sub/escape.txt") == fs::FsError.InvalidPath)
         \\end
     ;
     const source = try std.mem.replaceOwned(u8, allocator, script, "DIR", dir);

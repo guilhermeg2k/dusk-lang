@@ -18,6 +18,8 @@ const dusk_fs_permission_denied: c_int = -2;
 const dusk_fs_not_empty: c_int = -3;
 const dusk_fs_not_directory: c_int = -4;
 
+var atomic_temp_seq: std.atomic.Value(u64) = .init(1);
+
 const request_alignment = std.mem.Alignment.@"16";
 
 const mode_type_mask = 0o170000;
@@ -42,6 +44,7 @@ pub const FsJob = struct {
         read_text,
         read_bytes,
         write,
+        write_atomic,
         append,
         read_dir,
         make_dir,
@@ -50,6 +53,8 @@ pub const FsJob = struct {
         delete_recursive,
         rename,
         chmod,
+        real_path,
+        resolve_under,
         read_chunk,
         write_chunk,
         open_file,
@@ -126,6 +131,7 @@ pub const FsJob = struct {
             .read_text => self.readWholeFile(true),
             .read_bytes => self.readWholeFile(false),
             .write => self.writeWholeFile(.write),
+            .write_atomic => self.writeAtomicFile(),
             .append => self.writeWholeFile(.append),
             .read_dir => self.readDir(),
             .make_dir => self.makeDir(),
@@ -134,6 +140,8 @@ pub const FsJob = struct {
             .delete_recursive => self.deleteTree(),
             .rename => self.renamePath(),
             .chmod => self.chmodPath(),
+            .real_path => self.resolveRealPath(),
+            .resolve_under => self.resolvePathUnder(),
             .read_chunk => self.readChunk(),
             .write_chunk => self.writeChunk(),
             .open_file => self.openFile(),
@@ -337,6 +345,80 @@ pub const FsJob = struct {
             }
             written += @intCast(status);
         }
+    }
+
+    fn writeAtomicFile(self: *Self) void {
+        const dir = std.fs.path.dirname(self.path) orelse ".";
+        const base = std.fs.path.basename(self.path);
+        const flags = openFlags(.create_new, false);
+        const request = self.fsRequest();
+        var temp_path: ?[:0]u8 = null;
+        var file: c_int = -1;
+        var seed: u64 = @intFromPtr(self) ^ atomic_temp_seq.fetchAdd(1, .monotonic);
+        for (0..16) |attempt| {
+            seed = seed *% 6364136223846793005 +% 1442695040888963407 +% @as(u64, attempt);
+            const candidate = std.fmt.allocPrintSentinel(self.allocator, "{s}/.{s}.dusk-tmp-{x}", .{ dir, base, seed }, 0) catch {
+                self.failure = .Other;
+                return;
+            };
+            const status = uv.uv_fs_open(self.loop, request, candidate.ptr, flags, self.permissions, null);
+            uv.uv_fs_req_cleanup(request);
+            if (status >= 0) {
+                temp_path = candidate;
+                file = status;
+                break;
+            }
+            self.allocator.free(candidate);
+            if (failureFromStatus(status) == .AlreadyExists) continue;
+            self.failure = failureFromStatus(status);
+            return;
+        }
+        const owned_temp = temp_path orelse {
+            self.failure = .AlreadyExists;
+            return;
+        };
+        defer self.allocator.free(owned_temp);
+        var has_renamed = false;
+        defer {
+            if (file >= 0) {
+                self.closeFile(file);
+            }
+            if (!has_renamed) {
+                _ = self.deleteFile(owned_temp.ptr);
+            }
+        }
+
+        var written: usize = 0;
+        while (written < self.input.len) {
+            const remaining = self.input[written..];
+            const chunk_len = @min(remaining.len, 1 << 30);
+            const buffer = uv.Buffer{ .base = remaining.ptr, .len = @intCast(chunk_len) };
+            const status = uv.uv_fs_write(self.loop, request, file, @ptrCast(&buffer), 1, -1, null);
+            uv.uv_fs_req_cleanup(request);
+            if (status <= 0) {
+                self.failure = if (status < 0) failureFromStatus(status) else .Other;
+                return;
+            }
+            written += @intCast(status);
+        }
+
+        const sync_status = uv.uv_fs_fsync(self.loop, request, file, null);
+        uv.uv_fs_req_cleanup(request);
+        if (sync_status < 0) {
+            self.failure = failureFromStatus(sync_status);
+            return;
+        }
+
+        self.closeFile(file);
+        file = -1;
+
+        const rename_status = uv.uv_fs_rename(self.loop, request, owned_temp.ptr, self.path.ptr, null);
+        uv.uv_fs_req_cleanup(request);
+        if (rename_status < 0) {
+            self.failure = failureFromStatus(rename_status);
+            return;
+        }
+        has_renamed = true;
     }
 
     fn readDir(self: *Self) void {
@@ -615,6 +697,65 @@ pub const FsJob = struct {
         }
     }
 
+    fn resolveRealPath(self: *Self) void {
+        const resolved = self.realpathCopy(self.path.ptr) orelse return;
+        if (!std.unicode.utf8ValidateSlice(resolved)) {
+            self.allocator.free(resolved);
+            self.failure = .InvalidUtf8;
+            return;
+        }
+        self.contents = resolved;
+    }
+
+    fn resolvePathUnder(self: *Self) void {
+        const rel: []const u8 = self.input;
+        if (std.fs.path.isAbsolute(rel)) {
+            self.failure = .InvalidPath;
+            return;
+        }
+        const root_real = self.realpathCopy(self.path.ptr) orelse return;
+        defer self.allocator.free(root_real);
+        const joined = if (rel.len == 0)
+            self.allocator.dupeZ(u8, root_real)
+        else
+            std.fmt.allocPrintSentinel(self.allocator, "{s}/{s}", .{ root_real, rel }, 0);
+        const candidate = joined catch {
+            self.failure = .Other;
+            return;
+        };
+        defer self.allocator.free(candidate);
+        const target_real = self.realpathCopy(candidate.ptr) orelse return;
+        if (!isPathUnderRoot(root_real, target_real)) {
+            self.allocator.free(target_real);
+            self.failure = .InvalidPath;
+            return;
+        }
+        if (!std.unicode.utf8ValidateSlice(target_real)) {
+            self.allocator.free(target_real);
+            self.failure = .InvalidUtf8;
+            return;
+        }
+        self.contents = target_real;
+    }
+
+    fn realpathCopy(self: *Self, path: [*:0]const u8) ?[]u8 {
+        const request = self.fsRequest();
+        const status = uv.uv_fs_realpath(self.loop, request, path, null);
+        if (status < 0) {
+            uv.uv_fs_req_cleanup(request);
+            self.failure = failureFromStatus(status);
+            return null;
+        }
+        const raw: [*:0]const u8 = @ptrCast(uv.uv_fs_get_ptr(request).?);
+        const copy = self.allocator.dupe(u8, std.mem.span(raw)) catch {
+            uv.uv_fs_req_cleanup(request);
+            self.failure = .Other;
+            return null;
+        };
+        uv.uv_fs_req_cleanup(request);
+        return copy;
+    }
+
     fn readChunk(self: *Self) void {
         const data = self.allocator.alloc(u8, chunk_size) catch {
             self.failure = .Other;
@@ -676,7 +817,7 @@ pub const FsJob = struct {
         }
         return switch (self.kind) {
             .exists => .{ .value = .{ .bool = self.is_found }, .kind = .bool },
-            .write, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename, .chmod => .{ .value = v.NULL_VALUE, .kind = .null },
+            .write, .write_atomic, .append, .make_dir, .make_dir_recursive, .delete, .delete_recursive, .rename, .chmod => .{ .value = v.NULL_VALUE, .kind = .null },
             .read_chunk, .write_chunk => @panic("takeWakeResult: chunk jobs go to their stream"),
             .open_file => result: {
                 const numbers = self.allocator.alloc(i64, 2) catch {
@@ -698,10 +839,10 @@ pub const FsJob = struct {
                 self.stat_numbers = null;
                 break :result .{ .value = v.NULL_VALUE, .kind = .array, .payload = .{ .ints = numbers } };
             },
-            .read_text, .read_bytes => result: {
+            .read_text, .read_bytes, .real_path, .resolve_under => result: {
                 const contents = self.contents.?;
                 self.contents = null;
-                const kind: v.ValueType = if (self.kind == .read_text) .string else .buffer;
+                const kind: v.ValueType = if (self.kind == .read_bytes) .buffer else .string;
                 break :result .{ .value = v.NULL_VALUE, .kind = kind, .payload = .{ .bytes = contents } };
             },
         };
@@ -743,6 +884,17 @@ fn freeDirEntries(allocator: std.mem.Allocator, entries: *std.ArrayList(DirEntry
         allocator.free(entry.name);
     }
     entries.deinit(allocator);
+}
+
+fn isPathUnderRoot(root: []const u8, target: []const u8) bool {
+    if (!std.mem.startsWith(u8, target, root)) {
+        return false;
+    }
+    if (target.len == root.len) {
+        return true;
+    }
+    const root_ends_with_sep = root.len > 0 and std.fs.path.isSep(root[root.len - 1]);
+    return root_ends_with_sep or std.fs.path.isSep(target[root.len]);
 }
 
 fn openFlags(mode: FsJob.OpenMode, should_follow_symlinks: bool) c_int {

@@ -117,7 +117,7 @@ func main() -> !void
     let sized = try http::request("$base/echo", method = "PUT", body = @(stream = @(write = func(mut out: http::BodyWriter) -> io::IoError!void
         let sent = try io::copy(file, out)
     end, length = try file.size())))
-    file.close()
+    try file.close()
     let sized_parts = try parts_of(sized)
     assert(sized_parts[0] == "${string::len(sample)}")
     assert(sized_parts[1] == "-")
