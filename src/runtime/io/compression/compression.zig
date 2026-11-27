@@ -139,28 +139,28 @@ pub const StreamTable = struct {
         return handleOf(index, slot.generation);
     }
 
-    pub fn find(self: *StreamTable, handle: i64) ?*Slot {
-        if (handle < 0) {
+    pub fn find(self: *StreamTable, compression_id: i64) ?*Slot {
+        if (compression_id < 0) {
             return null;
         }
-        const index: usize = @intCast(handle & 0xffff_ffff);
+        const index: usize = @intCast(compression_id & 0xffff_ffff);
         if (index >= self.slots.items.len) {
             return null;
         }
         const slot = &self.slots.items[index];
-        const is_current = slot.zip != null and handleOf(@intCast(index), slot.generation) == handle;
+        const is_current = slot.zip != null and handleOf(@intCast(index), slot.generation) == compression_id;
         return if (is_current) slot else null;
     }
 
-    pub fn remove(self: *StreamTable, handle: i64) void {
-        const slot = self.find(handle) orelse return;
+    pub fn remove(self: *StreamTable, compression_id: i64) void {
+        const slot = self.find(compression_id) orelse return;
         dusk_zip_free(slot.zip);
         slot.zip = null;
         slot.generation +%= 1;
         if (slot.generation == 0) {
             slot.generation = 1;
         }
-        const index: u32 = @intCast(handle & 0xffff_ffff);
+        const index: u32 = @intCast(compression_id & 0xffff_ffff);
         self.free_indexes.appendAssumeCapacity(index);
     }
 

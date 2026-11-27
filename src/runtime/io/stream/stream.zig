@@ -77,7 +77,7 @@ pub const Stream = struct {
     is_reuse_forbidden: bool = false,
     host_key: ?[]u8 = null,
     http_reader: ?*HttpReader = null,
-    table_index: i64 = 0,
+    id: i64 = 0,
     owns_file: bool = false,
     has_uv_file_ownership: bool = false,
     can_write_file: bool = false,
@@ -627,7 +627,7 @@ fn onWriteTimeout(timer: *uv.Handle) callconv(.c) void {
     const stream: *Stream = @alignCast(@fieldParentPtr("write_timer_owner", HandleOwner.of(timer)));
     stream.is_write_timer_running = false;
     stream.has_write_timed_out = true;
-    stream.event_loop.closeStream(stream.table_index);
+    stream.event_loop.closeStream(stream.id);
 }
 
 fn streamOf(handle: *uv.Handle) *Stream {

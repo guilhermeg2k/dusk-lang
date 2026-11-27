@@ -25,7 +25,7 @@ pub const TrustStore = struct {
 
     pub const Waiter = struct {
         task: *TaskState,
-        stream_handle: i64,
+        stream_id: i64,
         host: []u8,
         timeout_ms: ?u64,
         started_at_ms: u64,
@@ -42,7 +42,7 @@ pub const TrustStore = struct {
         }
     }
 
-    pub fn parkStarter(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, stream_handle: i64, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) !void {
+    pub fn parkStarter(self: *Self, event_loop: *EventLoop, scheduler: *Scheduler, task: *TaskState, stream_id: i64, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) !void {
         const allocator = event_loop.allocator;
         self.scheduler = scheduler;
         const loop = try event_loop.ensureLoopStarted();
@@ -55,7 +55,7 @@ pub const TrustStore = struct {
         uv.uv_update_time(loop);
         try self.waiters.append(allocator, .{
             .task = task,
-            .stream_handle = stream_handle,
+            .stream_id = stream_id,
             .host = host_copy,
             .timeout_ms = timeout_ms,
             .started_at_ms = uv.uv_now(loop),
@@ -82,7 +82,7 @@ pub const TrustStore = struct {
 };
 
 fn continueStarter(event_loop: *EventLoop, config: ?*tls.Config, waiter: TrustStore.Waiter) ?WakeResult {
-    const stream = event_loop.streamAt(waiter.stream_handle) orelse return netFailure(.HandshakeFailed);
+    const stream = event_loop.streamAt(waiter.stream_id) orelse return netFailure(.HandshakeFailed);
     stream.is_starting_tls = false;
     const shared_config = config orelse return netFailure(.Other);
     const remaining_timeout: ?u64 = if (waiter.timeout_ms) |ms| blk: {

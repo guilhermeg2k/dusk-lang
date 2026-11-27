@@ -84,28 +84,28 @@ fn compressorNew(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const format: compression.Format = @enumFromInt(args[0].int64);
     const zip = compression.dusk_zip_compressor_new(format, @intCast(level)) orelse return error.OutOfMemory;
     errdefer compression.dusk_zip_free(zip);
-    const handle = try vm.event_loop.compression_streams.add(vm.event_loop.allocator, zip, format, null);
-    return ok(.{ .int64 = handle });
+    const compression_id = try vm.event_loop.compression_streams.add(vm.event_loop.allocator, zip, format, null);
+    return ok(.{ .int64 = compression_id });
 }
 
 fn decompressorNew(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const format: compression.Format = @enumFromInt(args[0].int64);
     const zip = compression.dusk_zip_decompressor_new(format) orelse return error.OutOfMemory;
     errdefer compression.dusk_zip_free(zip);
-    const handle = try vm.event_loop.compression_streams.add(vm.event_loop.allocator, zip, format, maxArg(args[1]));
-    return ok(.{ .int64 = handle });
+    const compression_id = try vm.event_loop.compression_streams.add(vm.event_loop.allocator, zip, format, maxArg(args[1]));
+    return ok(.{ .int64 = compression_id });
 }
 
 fn compressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const streams = &vm.event_loop.compression_streams;
-    const handle = args[0].int64;
-    const slot = streams.find(handle) orelse return fail(CompressionError.Finished);
+    const compression_id = args[0].int64;
+    const slot = streams.find(compression_id) orelse return fail(CompressionError.Finished);
     const mode: compression.FlushMode = @enumFromInt(args[2].int64);
     const allocator = std.heap.smp_allocator;
     const output = compression.compressPart(allocator, slot.zip.?, bytesArg(args, 1), mode) catch |err| return streamFailure(err);
     defer allocator.free(output);
     if (mode == .finish) {
-        streams.remove(handle);
+        streams.remove(compression_id);
     }
     return ok(try vm.allocBytesValue(output, .buffer));
 }
@@ -120,10 +120,10 @@ fn decompressPart(vm: *VM, args: []v.Value) anyerror!NativeResult {
 
 fn decompressFinish(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const streams = &vm.event_loop.compression_streams;
-    const handle = args[0].int64;
-    const slot = streams.find(handle) orelse return fail(CompressionError.Finished);
+    const compression_id = args[0].int64;
+    const slot = streams.find(compression_id) orelse return fail(CompressionError.Finished);
     const is_complete = slot.is_at_end;
-    streams.remove(handle);
+    streams.remove(compression_id);
     if (!is_complete) {
         return fail(CompressionError.InvalidData);
     }

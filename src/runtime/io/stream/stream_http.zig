@@ -53,9 +53,9 @@ pub fn evictIfUnusable(stream: *Stream) void {
 
 pub fn evictFromPool(stream: *Stream) void {
     const key = stream.pool_key orelse return;
-    stream.event_loop.connection_pool.remove(stream.allocator, key, stream.table_index);
+    stream.event_loop.connection_pool.remove(stream.allocator, key, stream.id);
     leavePool(stream);
-    stream.event_loop.closeStream(stream.table_index);
+    stream.event_loop.closeStream(stream.id);
 }
 
 pub fn headOutcome(stream: *Stream) ?ReadOutcome {

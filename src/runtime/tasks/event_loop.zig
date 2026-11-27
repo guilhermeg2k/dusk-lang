@@ -38,7 +38,7 @@ pub const EventLoop = struct {
     compression_streams: CompressionStreams = .{},
     host_slots: HostSlots = .{},
     resources: ResourceRegistry = .{},
-    stdin_handle: ?i64 = null,
+    stdin_stream_id: ?i64 = null,
 
     pub fn deinit(self: *Self) void {
         self.is_shutting_down = true;
@@ -186,28 +186,28 @@ pub const EventLoop = struct {
         const slot = self.resources.take(id) orelse return;
         switch (slot.kind) {
             .stream => {
-                if (self.streamAt(slot.handle)) |stream| {
+                if (self.streamAt(slot.table_id)) |stream| {
                     stream.flushOutputBeforeClose();
                 }
-                self.closeStream(slot.handle);
+                self.closeStream(slot.table_id);
             },
-            .listener => self.closeListener(slot.handle),
-            .compression => self.compression_streams.remove(slot.handle),
-            .certificate => self.closeCertificate(slot.handle),
+            .listener => self.closeListener(slot.table_id),
+            .compression => self.compression_streams.remove(slot.table_id),
+            .certificate => self.closeCertificate(slot.table_id),
         }
     }
 
     pub fn openStdin(self: *Self, scheduler: *Scheduler, file: c_int) !i64 {
-        if (self.stdin_handle) |handle| {
-            return handle;
+        if (self.stdin_stream_id) |stream_id| {
+            return stream_id;
         }
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.open(self.allocator, self, scheduler, loop, file);
-        const handle = self.streams.addAssumeCapacity(stream);
-        stream.table_index = handle;
-        self.stdin_handle = handle;
-        return handle;
+        const stream_id = self.streams.addAssumeCapacity(stream);
+        stream.id = stream_id;
+        self.stdin_stream_id = stream_id;
+        return stream_id;
     }
 
     pub fn openFileStream(self: *Self, scheduler: *Scheduler, file: c_int, size: i64, mode: FsJob.OpenMode) !i64 {
@@ -218,26 +218,26 @@ pub const EventLoop = struct {
         stream.can_write_file = mode != .read;
         stream.is_append = mode == .append;
         stream.file_offset = if (mode == .append) size else 0;
-        const handle = self.streams.addAssumeCapacity(stream);
-        stream.table_index = handle;
-        return handle;
+        const stream_id = self.streams.addAssumeCapacity(stream);
+        stream.id = stream_id;
+        return stream_id;
     }
 
     pub fn openTcpStream(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.streams.reserve(self.allocator);
         const stream = try Stream.openTcp(self.allocator, self, scheduler, loop);
-        const handle = self.streams.addAssumeCapacity(stream);
-        stream.table_index = handle;
-        return handle;
+        const stream_id = self.streams.addAssumeCapacity(stream);
+        stream.id = stream_id;
+        return stream_id;
     }
 
     pub fn openListener(self: *Self, scheduler: *Scheduler) !i64 {
         const loop = try self.ensureLoopStarted();
         try self.listeners.reserve(self.allocator);
         const listener = try Listener.create(self.allocator, self, scheduler, loop);
-        const handle = self.listeners.addAssumeCapacity(listener);
-        return handle;
+        const listener_id = self.listeners.addAssumeCapacity(listener);
+        return listener_id;
     }
 
     pub fn addCertificate(self: *Self, certificate: *ServerCertificate) !i64 {
@@ -245,12 +245,12 @@ pub const EventLoop = struct {
         return self.certificates.addAssumeCapacity(certificate);
     }
 
-    pub fn certificateAt(self: *Self, handle: i64) ?*ServerCertificate {
-        return self.certificates.get(handle);
+    pub fn certificateAt(self: *Self, certificate_id: i64) ?*ServerCertificate {
+        return self.certificates.get(certificate_id);
     }
 
-    pub fn closeCertificate(self: *Self, handle: i64) void {
-        const certificate = self.certificates.remove(handle) orelse return;
+    pub fn closeCertificate(self: *Self, certificate_id: i64) void {
+        const certificate = self.certificates.remove(certificate_id) orelse return;
         certificate.release(self.allocator);
     }
 
@@ -263,17 +263,17 @@ pub const EventLoop = struct {
         self.trust_store.deinit(self.allocator);
     }
 
-    pub fn closeListener(self: *Self, handle: i64) void {
-        const listener = self.listeners.remove(handle) orelse return;
+    pub fn closeListener(self: *Self, listener_id: i64) void {
+        const listener = self.listeners.remove(listener_id) orelse return;
         listener.close();
     }
 
-    pub fn listenerAt(self: *Self, handle: i64) ?*Listener {
-        return self.listeners.get(handle);
+    pub fn listenerAt(self: *Self, listener_id: i64) ?*Listener {
+        return self.listeners.get(listener_id);
     }
 
-    pub fn closeStream(self: *Self, handle: i64) void {
-        const stream = self.streams.remove(handle) orelse return;
+    pub fn closeStream(self: *Self, stream_id: i64) void {
+        const stream = self.streams.remove(stream_id) orelse return;
         stream.close();
     }
 
@@ -282,12 +282,12 @@ pub const EventLoop = struct {
         return self.http_servers.items.len - 1;
     }
 
-    pub fn httpServerAt(self: *Self, handle: i64) ?*ServerState {
-        const is_valid = handle >= 0 and handle < self.http_servers.items.len;
+    pub fn httpServerAt(self: *Self, server_id: i64) ?*ServerState {
+        const is_valid = server_id >= 0 and server_id < self.http_servers.items.len;
         if (!is_valid) {
             return null;
         }
-        return &self.http_servers.items[@intCast(handle)];
+        return &self.http_servers.items[@intCast(server_id)];
     }
 
     fn freeHttpServers(self: *Self) void {
@@ -297,8 +297,8 @@ pub const EventLoop = struct {
         self.http_servers.deinit(self.allocator);
     }
 
-    pub fn streamAt(self: *Self, handle: i64) ?*Stream {
-        return self.streams.get(handle);
+    pub fn streamAt(self: *Self, stream_id: i64) ?*Stream {
+        return self.streams.get(stream_id);
     }
 
     pub fn ensureLoopStarted(self: *Self) !*uv.Loop {

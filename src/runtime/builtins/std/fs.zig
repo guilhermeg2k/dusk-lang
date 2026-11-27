@@ -64,8 +64,8 @@ fn openDescriptor(vm: *VM, args: []v.Value) anyerror!NativeResult {
 }
 
 fn fileStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
-    const handle = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), args[1].int64, @enumFromInt(args[2].int64));
-    return native.ok(.{ .int64 = handle });
+    const stream_id = try vm.event_loop.openFileStream(&vm.scheduler, @intCast(args[0].int64), args[1].int64, @enumFromInt(args[2].int64));
+    return native.ok(.{ .int64 = stream_id });
 }
 
 fn streamPosition(vm: *VM, args: []v.Value) anyerror!NativeResult {

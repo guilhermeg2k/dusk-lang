@@ -23,8 +23,8 @@ pub const error_sets = .{NetError};
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "own", Binding{ .native = &native.ownResource } },
     .{ "release", Binding{ .native = &native.releaseResource } },
-    .{ "tcp_connect_handle", Binding{ .native = &tcpConnect } },
-    .{ "tcp_listen_handle", Binding{ .native = &tcpListen } },
+    .{ "open_tcp_stream", Binding{ .native = &openTcpStream } },
+    .{ "open_tcp_listener", Binding{ .native = &openTcpListener } },
     .{ "listener_accept", Binding{ .native = &listenerAccept } },
     .{ "listener_port", Binding{ .native = &listenerPort } },
     .{ "listener_close", Binding{ .native = &listenerClose } },
@@ -41,7 +41,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_close", Binding{ .native = &io.streamClose } },
     .{ "remote_host", Binding{ .native = &remoteHost } },
     .{ "remote_port", Binding{ .native = &remotePort } },
-    .{ "certificate_handle", Binding{ .native = &certificateHandle } },
+    .{ "load_certificate", Binding{ .native = &loadCertificate } },
     .{ "listener_use_tls", Binding{ .native = &listenerUseTls } },
     .{ "stream_start_tls", Binding{ .native = &streamStartTls } },
     .{ "stream_accept_tls", Binding{ .native = &streamAcceptTls } },
@@ -49,11 +49,11 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_handshake", Binding{ .native = &streamHandshake } },
 });
 
-pub fn tcpConnect(vm: *VM, args: []v.Value) anyerror!NativeResult {
+pub fn openTcpStream(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return openTcp(vm, args, .connect, timeoutArg(args[2].int64));
 }
 
-fn tcpListen(vm: *VM, args: []v.Value) anyerror!NativeResult {
+fn openTcpListener(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const backlog: c_int = @intCast(std.math.clamp(args[2].int64, 1, std.math.maxInt(u16)));
     return openTcp(vm, args, .{ .listen = backlog }, null);
 }
@@ -63,7 +63,7 @@ fn openTcp(vm: *VM, args: []v.Value, purpose: tcp.Purpose, timeout_ms: ?u64) any
     const current = vm.running_task.?;
     const progress = tcp.open(&vm.event_loop, &vm.scheduler, current, purpose, bytesArg(args, 0), port, timeout_ms) catch return fail(NetError.Other);
     switch (progress) {
-        .opened => |handle| return ok(.{ .int64 = @intCast(handle) }),
+        .opened => |id| return ok(.{ .int64 = @intCast(id) }),
         .failed => |failure| return fail(failure),
         .waiting => {
             current.park();
@@ -83,7 +83,7 @@ fn listenerAccept(vm: *VM, args: []v.Value) anyerror!NativeResult {
     }
     if (listener.takeReadyConnection()) |outcome| {
         return switch (outcome) {
-            .connection => |handle| ok(.{ .int64 = @intCast(handle) }),
+            .connection => |stream_id| ok(.{ .int64 = @intCast(stream_id) }),
             .failure => |failure| fail(failure),
         };
     }
@@ -115,21 +115,21 @@ fn remotePort(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .int64 = tcp.addressPort(&peer) });
 }
 
-fn peerOf(vm: *VM, handle: i64) ?uv.SocketAddress {
-    const stream = vm.event_loop.streamAt(handle) orelse return null;
+fn peerOf(vm: *VM, stream_id: i64) ?uv.SocketAddress {
+    const stream = vm.event_loop.streamAt(stream_id) orelse return null;
     return stream.peer;
 }
 
-fn certificateHandle(vm: *VM, args: []v.Value) anyerror!NativeResult {
+fn loadCertificate(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const allocator = vm.event_loop.allocator;
     const certificate = tls_layer.ServerCertificate.create(allocator, bytesArg(args, 0), bytesArg(args, 1)) catch |failure| {
         return fail(if (failure == error.InvalidCertificate) NetError.InvalidCertificate else NetError.Other);
     };
-    const handle = vm.event_loop.addCertificate(certificate) catch {
+    const certificate_id = vm.event_loop.addCertificate(certificate) catch {
         certificate.release(allocator);
         return fail(NetError.Other);
     };
-    return ok(.{ .int64 = handle });
+    return ok(.{ .int64 = certificate_id });
 }
 
 fn listenerUseTls(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -177,14 +177,14 @@ fn startClientTls(vm: *VM, stream: *Stream, args: []v.Value, is_tunneled: bool) 
     return handshakeResult(current, wait);
 }
 
-fn startWithSystemRoots(vm: *VM, stream: *Stream, current: *TaskState, handle: i64, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) anyerror!NativeResult {
+fn startWithSystemRoots(vm: *VM, stream: *Stream, current: *TaskState, stream_id: i64, host: []const u8, timeout_ms: ?u64, is_tunneled: bool) anyerror!NativeResult {
     const trust_store = &vm.event_loop.trust_store;
     if (trust_store.config) |config| {
         const wait = stream.startClientTls(current, config, false, host, timeout_ms, is_tunneled) catch return fail(NetError.Other);
         return handshakeResult(current, wait);
     }
     stream.beginWaitingForTrustStore();
-    trust_store.parkStarter(&vm.event_loop, &vm.scheduler, current, handle, host, timeout_ms, is_tunneled) catch {
+    trust_store.parkStarter(&vm.event_loop, &vm.scheduler, current, stream_id, host, timeout_ms, is_tunneled) catch {
         stream.is_starting_tls = false;
         return fail(NetError.Other);
     };

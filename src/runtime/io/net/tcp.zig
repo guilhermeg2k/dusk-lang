@@ -100,7 +100,7 @@ pub const OpenRequest = struct {
     is_finished: bool = false,
 
     const Attempt = struct {
-        handle: i64,
+        stream_id: i64,
         stream: *Stream,
     };
 
@@ -184,32 +184,32 @@ pub const OpenRequest = struct {
             self.connect_memory = self.allocator.alignedAlloc(u8, handle_alignment, uv.uv_req_size(.connect)) catch return .{ .failed = .Other };
             uv.uv_req_set_data(self.connectRequest(), self);
         }
-        const handle = self.event_loop.openTcpStream(self.scheduler) catch return .{ .failed = .Other };
-        const stream = self.event_loop.streamAt(handle).?;
+        const stream_id = self.event_loop.openTcpStream(self.scheduler) catch return .{ .failed = .Other };
+        const stream = self.event_loop.streamAt(stream_id).?;
         const status = uv.uv_tcp_connect(self.connectRequest(), stream.uvHandle(), address, onConnect);
         if (status != 0) {
-            self.event_loop.closeStream(handle);
+            self.event_loop.closeStream(stream_id);
             return .{ .failed = netErrorFromStatus(status) };
         }
         stream.requests_in_flight += 1;
-        self.attempt = .{ .handle = handle, .stream = stream };
+        self.attempt = .{ .stream_id = stream_id, .stream = stream };
         return .waiting;
     }
 
     fn listenOn(self: *Self, address: *const uv.SocketAddress, backlog: c_int) OpenProgress {
-        const handle = self.event_loop.openListener(self.scheduler) catch return .{ .failed = .Other };
-        const listener = self.event_loop.listenerAt(handle).?;
+        const listener_id = self.event_loop.openListener(self.scheduler) catch return .{ .failed = .Other };
+        const listener = self.event_loop.listenerAt(listener_id).?;
         if (listener.bindAndListen(address, backlog)) |failure| {
-            self.event_loop.closeListener(handle);
+            self.event_loop.closeListener(listener_id);
             return .{ .failed = failure };
         }
-        return .{ .opened = handle };
+        return .{ .opened = listener_id };
     }
 
     fn continueOpening(self: *Self) void {
         switch (self.openNextAddress()) {
             .waiting => {},
-            .opened => |handle| self.finish(handleResult(handle)),
+            .opened => |id| self.finish(idResult(id)),
             .failed => |failure| self.finish(netFailure(failure)),
         }
     }
@@ -307,17 +307,17 @@ fn onConnect(uv_request: *uv.Request, status: c_int) callconv(.c) void {
     }
     if (request.isAbandoned()) {
         if (!was_closed) {
-            request.event_loop.closeStream(@intCast(attempt.handle));
+            request.event_loop.closeStream(@intCast(attempt.stream_id));
         }
         request.abandon();
         return;
     }
     if (status == 0) {
         attempt.stream.rememberPeer();
-        request.finish(handleResult(attempt.handle));
+        request.finish(idResult(attempt.stream_id));
         return;
     }
-    request.event_loop.closeStream(@intCast(attempt.handle));
+    request.event_loop.closeStream(@intCast(attempt.stream_id));
     request.last_failure = netErrorFromStatus(status);
     request.continueOpening();
 }
@@ -329,7 +329,7 @@ fn onOpenTimeout(timer: *uv.Handle) callconv(.c) void {
         _ = uv.uv_cancel(request.lookupRequest());
     }
     if (request.attempt) |attempt| {
-        request.event_loop.closeStream(@intCast(attempt.handle));
+        request.event_loop.closeStream(@intCast(attempt.stream_id));
     }
     request.finish(netFailure(.TimedOut));
 }
@@ -436,27 +436,27 @@ pub const Listener = struct {
             };
             if (self.has_unaccepted_connection) {
                 self.has_unaccepted_connection = false;
-                const handle = self.acceptConnection() catch {
+                const stream_id = self.acceptConnection() catch {
                     self.failure = .Other;
                     return;
                 };
-                self.ready_connections.appendAssumeCapacity(handle);
+                self.ready_connections.appendAssumeCapacity(stream_id);
                 continue;
             }
-            const handle = self.acceptNextFromSocket() orelse return;
-            self.ready_connections.appendAssumeCapacity(handle);
+            const stream_id = self.acceptNextFromSocket() orelse return;
+            self.ready_connections.appendAssumeCapacity(stream_id);
         }
     }
 
     fn acceptConnection(self: *Self) !i64 {
-        const handle = try self.event_loop.openTcpStream(self.scheduler);
-        const stream = self.event_loop.streamAt(handle).?;
+        const stream_id = try self.event_loop.openTcpStream(self.scheduler);
+        const stream = self.event_loop.streamAt(stream_id).?;
         if (uv.uv_accept(self.uvHandle(), stream.uvHandle()) != 0) {
-            self.event_loop.closeStream(handle);
+            self.event_loop.closeStream(stream_id);
             return error.AcceptFailed;
         }
-        try self.prepareAcceptedStream(handle);
-        return handle;
+        try self.prepareAcceptedStream(stream_id);
+        return stream_id;
     }
 
     fn acceptNextFromSocket(self: *Self) ?i64 {
@@ -468,27 +468,27 @@ pub const Listener = struct {
             return null;
         }
         const socket = acceptWaitingSocket(listener_socket) orelse return null;
-        const handle = self.event_loop.openTcpStream(self.scheduler) catch {
+        const stream_id = self.event_loop.openTcpStream(self.scheduler) catch {
             _ = std.c.close(socket);
             return null;
         };
-        const stream = self.event_loop.streamAt(handle).?;
+        const stream = self.event_loop.streamAt(stream_id).?;
         if (uv.uv_tcp_open(stream.uvHandle(), socket) != 0) {
             _ = std.c.close(socket);
-            self.event_loop.closeStream(handle);
+            self.event_loop.closeStream(stream_id);
             return null;
         }
         _ = uv.uv_tcp_nodelay(stream.uvHandle(), 1);
-        self.prepareAcceptedStream(handle) catch return null;
-        return handle;
+        self.prepareAcceptedStream(stream_id) catch return null;
+        return stream_id;
     }
 
-    fn prepareAcceptedStream(self: *Self, handle: i64) !void {
-        const stream = self.event_loop.streamAt(handle).?;
+    fn prepareAcceptedStream(self: *Self, stream_id: i64) !void {
+        const stream = self.event_loop.streamAt(stream_id).?;
         stream.rememberPeer();
         const certificate = self.tls_certificate orelse return;
         stream.useServerTls(certificate) catch {
-            self.event_loop.closeStream(handle);
+            self.event_loop.closeStream(stream_id);
             return error.AcceptFailed;
         };
     }
@@ -534,8 +534,8 @@ pub const Listener = struct {
                 self.event_loop.callback_failure = failure;
             };
         }
-        for (self.ready_connections.items) |handle| {
-            self.event_loop.closeStream(handle);
+        for (self.ready_connections.items) |stream_id| {
+            self.event_loop.closeStream(stream_id);
         }
         self.ready_connections.clearRetainingCapacity();
         self.is_closed = true;
@@ -566,7 +566,7 @@ pub const Listener = struct {
         const task = self.waiter orelse return;
         const outcome = self.takeReadyConnection() orelse return;
         const wake_result: WakeResult = switch (outcome) {
-            .connection => |handle| handleResult(handle),
+            .connection => |stream_id| idResult(stream_id),
             .failure => |failure| ioFailure(failure),
         };
         self.waiter = null;
@@ -669,8 +669,8 @@ fn netErrorFromStatus(status: c_int) NetError {
     return net_errors_by_name.get(std.mem.span(uv.uv_err_name(status))) orelse .Other;
 }
 
-fn handleResult(handle: i64) WakeResult {
-    return .{ .value = .{ .int64 = handle }, .kind = .int64 };
+fn idResult(id: i64) WakeResult {
+    return .{ .value = .{ .int64 = id }, .kind = .int64 };
 }
 
 fn netFailure(failure: NetError) WakeResult {

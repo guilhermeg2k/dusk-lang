@@ -41,20 +41,20 @@ extern func exists(path: string) -> bool
 extern func ~stat_numbers(path: string) -> FsError![]int
 extern func ~open_descriptor(path: string, mode: Mode, permissions: int, follow_symlinks: bool) -> FsError![]int
 extern func ~file_stream(descriptor: int, size: int, mode: Mode) -> int
-extern func ~own(kind: int, handle: int) -> resource
+extern func ~own(kind: int, id: int) -> resource
 extern func ~release(owner: ?resource) -> void
-extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> io::IoError!?buffer
-extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> io::IoError!?buffer
-extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> io::IoError!?string
-extern func ~stream_read_all(handle: int, max_bytes: int, timeout_ms: int) -> io::IoError!string
-extern func ~stream_read_all_bytes(handle: int, max_bytes: int, timeout_ms: int) -> io::IoError!buffer
-extern func ~stream_close(handle: int) -> void
-extern func ~stream_write(handle: int, text: string) -> io::IoError!void
-extern func ~stream_write_bytes(handle: int, data: buffer) -> io::IoError!void
-extern func ~stream_flush(handle: int) -> io::IoError!void
-extern func ~stream_position(handle: int) -> int
-extern func ~stream_seek(handle: int, target: int) -> io::IoError!void
-extern func ~stream_file_size(handle: int) -> io::IoError!int
+extern func ~stream_read_bytes(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_exact(stream_id: int, count: int, timeout_ms: int) -> io::IoError!?buffer
+extern func ~stream_read_line(stream_id: int, max: int, timeout_ms: int) -> io::IoError!?string
+extern func ~stream_read_all(stream_id: int, max_bytes: int, timeout_ms: int) -> io::IoError!string
+extern func ~stream_read_all_bytes(stream_id: int, max_bytes: int, timeout_ms: int) -> io::IoError!buffer
+extern func ~stream_close(stream_id: int) -> void
+extern func ~stream_write(stream_id: int, text: string) -> io::IoError!void
+extern func ~stream_write_bytes(stream_id: int, data: buffer) -> io::IoError!void
+extern func ~stream_flush(stream_id: int) -> io::IoError!void
+extern func ~stream_position(stream_id: int) -> int
+extern func ~stream_seek(stream_id: int, target: int) -> io::IoError!void
+extern func ~stream_file_size(stream_id: int) -> io::IoError!int
 
 enum Mode
     Read
@@ -70,48 +70,48 @@ enum SeekFrom
 end
 
 struct File
-    ~handle: int
+    ~stream_id: int
     ~owner: resource
 
     func read_line(self: @, max: int = -1) -> io::IoError!?string
-        return try stream_read_line(self.handle, max, -1)
+        return try stream_read_line(self.stream_id, max, -1)
     end
 
     func read_bytes(self: @, max: int) -> io::IoError!?buffer
-        return try stream_read_bytes(self.handle, max, -1)
+        return try stream_read_bytes(self.stream_id, max, -1)
     end
 
     func read_exact(self: @, count: int) -> io::IoError!?buffer
-        return try stream_read_exact(self.handle, count, -1)
+        return try stream_read_exact(self.stream_id, count, -1)
     end
 
     func read_all(self: @, max_bytes: int = -1) -> io::IoError!string
-        return try stream_read_all(self.handle, max_bytes, -1)
+        return try stream_read_all(self.stream_id, max_bytes, -1)
     end
 
     func read_all_bytes(self: @, max_bytes: int = -1) -> io::IoError!buffer
-        return try stream_read_all_bytes(self.handle, max_bytes, -1)
+        return try stream_read_all_bytes(self.stream_id, max_bytes, -1)
     end
 
     func write(self: @, text: string) -> io::IoError!void
-        try stream_write(self.handle, text)
+        try stream_write(self.stream_id, text)
     end
 
     func write_bytes(self: @, data: buffer) -> io::IoError!void
-        try stream_write_bytes(self.handle, data)
+        try stream_write_bytes(self.stream_id, data)
     end
 
     func flush(self: @) -> io::IoError!void
-        try stream_flush(self.handle)
+        try stream_flush(self.stream_id)
     end
 
     func position(self: @) -> int
-        return stream_position(self.handle)
+        return stream_position(self.stream_id)
     end
 
     func size(self: @) -> io::IoError!int
-        try stream_flush(self.handle)
-        return try stream_file_size(self.handle)
+        try stream_flush(self.stream_id)
+        return try stream_file_size(self.stream_id)
     end
 
     func seek(self: @, offset: int, from: SeekFrom = SeekFrom.Start) -> io::IoError!int
@@ -120,20 +120,20 @@ struct File
             SeekFrom.Current then self.position() end
             SeekFrom.End then try self.size() end
         end
-        try stream_flush(self.handle)
+        try stream_flush(self.stream_id)
         if offset > 0 and base > 9223372036854775807 - offset then
             return io::IoError.Other
         end
-        try stream_seek(self.handle, base + offset)
+        try stream_seek(self.stream_id, base + offset)
         return base + offset
     end
 
     func close(self: @) -> io::IoError!void
         let mut flush_err: ?io::IoError = null
-        stream_flush(self.handle) catch e then
+        stream_flush(self.stream_id) catch e then
             flush_err = e
         end
-        stream_close(self.handle)
+        stream_close(self.stream_id)
         release(self.owner)
         if flush_err: err then
             if err != io::IoError.Closed then
@@ -145,8 +145,8 @@ end
 
 func open(path: string, mode: Mode = Mode.Read, permissions: int = 438, follow_symlinks: bool = true) -> FsError!File
     let opened = try open_descriptor(path, mode, permissions, follow_symlinks)
-    let handle = file_stream(opened[0], opened[1], mode)
-    return File(handle = handle, owner = own(0, handle))
+    let stream_id = file_stream(opened[0], opened[1], mode)
+    return File(stream_id = stream_id, owner = own(0, stream_id))
 end
 
 func stat(path: string) -> FsError!FileInfo

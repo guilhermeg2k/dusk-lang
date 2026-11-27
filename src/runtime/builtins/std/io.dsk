@@ -18,15 +18,15 @@ extern func print(text: string) -> void
 extern func println(text: string) -> void
 extern func eprint(text: string) -> void
 extern func eprintln(text: string) -> void
-extern func ~stdin_handle() -> int
-extern func ~stream_read_bytes(handle: int, max: int, timeout_ms: int) -> IoError!?buffer
-extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> IoError!?buffer
-extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> IoError!?string
-extern func ~stream_read_all(handle: int, max_bytes: int, timeout_ms: int) -> IoError!string
-extern func ~stream_read_all_bytes(handle: int, max_bytes: int, timeout_ms: int) -> IoError!buffer
-extern func ~stream_set_read_timeout(handle: int, timeout_ms: int) -> void
+extern func ~stdin_stream_id() -> int
+extern func ~stream_read_bytes(stream_id: int, max: int, timeout_ms: int) -> IoError!?buffer
+extern func ~stream_read_exact(stream_id: int, count: int, timeout_ms: int) -> IoError!?buffer
+extern func ~stream_read_line(stream_id: int, max: int, timeout_ms: int) -> IoError!?string
+extern func ~stream_read_all(stream_id: int, max_bytes: int, timeout_ms: int) -> IoError!string
+extern func ~stream_read_all_bytes(stream_id: int, max_bytes: int, timeout_ms: int) -> IoError!buffer
+extern func ~stream_set_read_timeout(stream_id: int, timeout_ms: int) -> void
 extern func ~is_terminal_fd(fd: int) -> bool
-extern func ~stream_close(handle: int) -> void
+extern func ~stream_close(stream_id: int) -> void
 extern func ~stdio_write(fd: int, text: string) -> IoError!void
 extern func ~stdio_write_bytes(fd: int, data: buffer) -> IoError!void
 extern func ~stdio_flush(fd: int) -> IoError!void
@@ -42,30 +42,30 @@ trait Writer
 end
 
 struct Stdin
-    ~handle: int
+    ~stream_id: int
 
     func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> IoError!?string
-        return try stream_read_line(self.handle, max, timeout_ms)
+        return try stream_read_line(self.stream_id, max, timeout_ms)
     end
 
     func read_bytes(self: @, max: int) -> IoError!?buffer
-        return try stream_read_bytes(self.handle, max, -1)
+        return try stream_read_bytes(self.stream_id, max, -1)
     end
 
     func read_exact(self: @, count: int, timeout_ms: int = -1) -> IoError!?buffer
-        return try stream_read_exact(self.handle, count, timeout_ms)
+        return try stream_read_exact(self.stream_id, count, timeout_ms)
     end
 
     func read_all(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> IoError!string
-        return try stream_read_all(self.handle, max_bytes, timeout_ms)
+        return try stream_read_all(self.stream_id, max_bytes, timeout_ms)
     end
 
     func read_all_bytes(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> IoError!buffer
-        return try stream_read_all_bytes(self.handle, max_bytes, timeout_ms)
+        return try stream_read_all_bytes(self.stream_id, max_bytes, timeout_ms)
     end
 
     func set_read_timeout(self: @, timeout_ms: int) -> void
-        stream_set_read_timeout(self.handle, timeout_ms)
+        stream_set_read_timeout(self.stream_id, timeout_ms)
     end
 
     func is_terminal(self: @) -> bool
@@ -73,7 +73,7 @@ struct Stdin
     end
 
     func close(self: @) -> void
-        stream_close(self.handle)
+        stream_close(self.stream_id)
     end
 end
 
@@ -118,7 +118,7 @@ struct Stderr
 end
 
 func stdin() -> Stdin
-    return Stdin(handle = stdin_handle())
+    return Stdin(stream_id = stdin_stream_id())
 end
 
 func stdout() -> Stdout

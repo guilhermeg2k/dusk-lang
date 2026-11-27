@@ -454,7 +454,7 @@ test "resources: the registry hands out ids, frees released slots and rejects st
     try testing.expectEqual(@as(usize, 1), registry.liveCount());
     try testing.expect(registry.take(listener) == null);
     const taken = registry.take(conn).?;
-    try testing.expectEqual(@as(i64, 4), taken.handle);
+    try testing.expectEqual(@as(i64, 4), taken.table_id);
     try testing.expect(registry.take(conn) == null);
     try testing.expectEqual(@as(usize, 0), registry.liveCount());
     const reused = try registry.add(allocator, .compression, 99);

@@ -25,7 +25,7 @@ const user_agent = @tagName(build_zon.name) ++ "-http-client";
 pub const bindings = native.BindingMap.initComptime(.{
     .{ "own", Binding{ .native = &native.ownResource } },
     .{ "release", Binding{ .native = &native.releaseResource } },
-    .{ "tcp_connect_handle", Binding{ .native = &net.tcpConnect } },
+    .{ "open_tcp_stream", Binding{ .native = &net.openTcpStream } },
     .{ "stream_start_tls", Binding{ .native = &net.streamStartTls } },
     .{ "stream_start_tunneled_tls", Binding{ .native = &net.streamStartTunneledTls } },
     .{ "base64", Binding{ .native = &base64 } },
@@ -49,7 +49,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_body_all", Binding{ .native = &streamBodyAll } },
     .{ "stream_body_all_bytes", Binding{ .native = &streamBodyAllBytes } },
     .{ "parse_head", Binding{ .native = &parseHead } },
-    .{ "conn_handle", Binding{ .native = &connHandle } },
+    .{ "conn_stream_id", Binding{ .native = &connStreamId } },
     .{ "stream_wait_data", Binding{ .native = &streamWaitData } },
     .{ "stream_read_request_head", Binding{ .native = &streamReadRequestHead } },
     .{ "stream_drain_request_body", Binding{ .native = &streamDrainRequestBody } },
@@ -81,7 +81,7 @@ fn streamReadHead(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return readHttp(vm, args[0].int64, .http_head, args[2].int64);
 }
 
-fn connHandle(_: *VM, args: []v.Value) anyerror!NativeResult {
+fn connStreamId(_: *VM, args: []v.Value) anyerror!NativeResult {
     const conn = v.HeapValue.getParentPtr(v.Struct, args[0].heap_obj);
     return ok(conn.get(0));
 }
@@ -124,8 +124,8 @@ fn requestBodyState(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .int64 = @intFromEnum(bodyStateOf(vm, args[0].int64, args[1].bool)) });
 }
 
-fn bodyStateOf(vm: *VM, handle: i64, expects_continue: bool) RequestBodyState {
-    const stream = vm.event_loop.streamAt(handle) orelse return .gone;
+fn bodyStateOf(vm: *VM, stream_id: i64, expects_continue: bool) RequestBodyState {
+    const stream = vm.event_loop.streamAt(stream_id) orelse return .gone;
     const reader = stream.http_reader orelse return .gone;
     if (reader.isMessageComplete()) {
         return .complete;
@@ -164,8 +164,8 @@ fn streamBodyAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return io.readStream(vm, args[0].int64, .{ .http_body = .all_bytes }, args[1].int64);
 }
 
-fn readHttp(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
-    const stream = vm.event_loop.streamAt(handle) orelse return fail(HttpError.Closed);
+fn readHttp(vm: *VM, stream_id: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(stream_id) orelse return fail(HttpError.Closed);
     if (stream.waiter != null) {
         return fail(HttpError.Other);
     }
@@ -203,37 +203,37 @@ fn poolTake(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const event_loop = &vm.event_loop;
     try event_loop.poll();
     const key = bytesArg(args, 0);
-    while (event_loop.connection_pool.takeNewest(event_loop.allocator, key)) |handle| {
-        const stream = event_loop.streamAt(handle) orelse continue;
+    while (event_loop.connection_pool.takeNewest(event_loop.allocator, key)) |stream_id| {
+        const stream = event_loop.streamAt(stream_id) orelse continue;
         stream.leavePool();
         if (!stream.isReusable()) {
-            event_loop.closeStream(handle);
+            event_loop.closeStream(stream_id);
             continue;
         }
-        return ok(.{ .int64 = handle });
+        return ok(.{ .int64 = stream_id });
     }
     return ok(.{ .int64 = -1 });
 }
 
 fn poolPut(vm: *VM, args: []v.Value) anyerror!NativeResult {
     const event_loop = &vm.event_loop;
-    const handle = args[1].int64;
-    const stream = event_loop.streamAt(handle) orelse return ok(.{ .null = {} });
+    const stream_id = args[1].int64;
+    const stream = event_loop.streamAt(stream_id) orelse return ok(.{ .null = {} });
     if (stream.pool_key != null) {
         return ok(.{ .null = {} });
     }
     if (!stream.isReusable()) {
-        event_loop.closeStream(handle);
+        event_loop.closeStream(stream_id);
         return ok(.{ .null = {} });
     }
     stream.enterPool(bytesArg(args, 0)) catch {
         stream.leavePool();
-        event_loop.closeStream(handle);
+        event_loop.closeStream(stream_id);
         return ok(.{ .null = {} });
     };
-    const evicted = event_loop.connection_pool.add(event_loop.allocator, bytesArg(args, 0), handle) catch {
+    const evicted = event_loop.connection_pool.add(event_loop.allocator, bytesArg(args, 0), stream_id) catch {
         stream.leavePool();
-        event_loop.closeStream(handle);
+        event_loop.closeStream(stream_id);
         return ok(.{ .null = {} });
     };
     const oldest = evicted orelse return ok(.{ .null = {} });
@@ -333,8 +333,8 @@ fn serverClose(vm: *VM, args: []v.Value) anyerror!NativeResult {
     server.is_closing = true;
     var idle = server.takeIdleStreams();
     defer idle.deinit(vm.event_loop.allocator);
-    for (idle.keys()) |handle| {
-        vm.event_loop.closeStream(@intCast(handle));
+    for (idle.keys()) |stream_id| {
+        vm.event_loop.closeStream(@intCast(stream_id));
     }
     return ok(.{ .null = {} });
 }

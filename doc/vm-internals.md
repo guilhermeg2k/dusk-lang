@@ -21,8 +21,8 @@ The source files involved:
 | `src/runtime/tasks/scheduler.zig` | `Scheduler` (every task, the ready queue) and `TaskState` (a task's stack, frames and result) |
 | `src/runtime/tasks/event_loop.zig` | `EventLoop`: the libuv loop, timers for `sleep`, queuing fs jobs, and immediate clock helpers |
 | `src/runtime/tasks/loop/uv.zig` | The few libuv functions Dusk calls, declared by hand |
-| `src/runtime/tasks/loop/handle_table.zig` | `HandleTable(T)`: the stream and listener tables, whose handles carry a slot generation so freed slots are reused safely |
-| `src/runtime/tasks/loop/resource_registry.zig` | `ResourceRegistry`: what each GC-tracked native resource is (kind, handle, released), for the sweep after each collection (section 9.3) |
+| `src/runtime/tasks/loop/handle_table.zig` | `HandleTable(T)`: the stream, listener and certificate tables, whose ids carry a slot generation so freed slots are reused safely |
+| `src/runtime/tasks/loop/resource_registry.zig` | `ResourceRegistry`: what each GC-tracked native resource is (kind, table id), for the sweep after each collection (section 9.3) |
 
 Code in `src/runtime/` never imports `src/compiler/`: the compiler produces the runtime's format (`codegen.zig` writes `bytecode.zig`'s `Program`), not the other way around.
 
@@ -593,7 +593,7 @@ Clones are byte copies with `gc_forward` cleared (and `relocated`, for arrays).
 
 Then `Scheduler.freeUnreachableTasks` frees every done task that no `Task` handle reached, except failed tasks nobody awaited, which are kept for the report at the end. Afterwards, the new arena becomes active and the threshold is updated. If the old arena kept more capacity than the new threshold, it is reset with that limit and `gc_queue` is shrunk, so memory goes back to the OS after a peak.
 
-**Resources.** A std struct that owns a native resource (the list is in [std-internals](std-internals.md) section 9) keeps its `int` handle for the natives plus a file-only `owner` field: a `Resource` object holding only an id into `EventLoop.resources` (`ResourceRegistry`, `tasks/loop/resource_registry.zig`: kind, handle, slot version). `copy()` shares it, so every copy holds one owner. `Heap.resources` lists the live owners; at the end of a collection `sweepResources` keeps the ones that were moved (`gc_forward`) and puts the others' ids in `dead_resource_ids`. `gc.zig` doesn't know the event loop: `VM.maybeCollectGarbage` hands each dead id to `EventLoop.closeResource`, which takes the slot (ignoring stale ids whose `slot_version` changed, including slots already freed by `close()` / `finish()` via `release`) and closes it by kind. The `resource` type exists only in std modules and the prelude.
+**Resources.** A std struct that owns a native resource (the list is in [std-internals](std-internals.md) section 9) keeps its `int` id for the natives (`~stream_id`, `~listener_id`...) plus a file-only `owner` field: a `Resource` object holding only an id into `EventLoop.resources` (`ResourceRegistry`, `tasks/loop/resource_registry.zig`: kind, table id, slot version). `copy()` shares it, so every copy holds one owner. `Heap.resources` lists the live owners; at the end of a collection `sweepResources` keeps the ones that were moved (`gc_forward`) and puts the others' ids in `dead_resource_ids`. `gc.zig` doesn't know the event loop: `VM.maybeCollectGarbage` hands each dead id to `EventLoop.closeResource`, which takes the slot (ignoring stale ids whose `slot_version` changed, including slots already freed by `close()` / `finish()` via `release`) and closes it by kind. The `resource` type exists only in std modules and the prelude.
 
 ## 10. `copy(x)`: deep copy
 

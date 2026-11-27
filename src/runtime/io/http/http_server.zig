@@ -10,15 +10,15 @@ pub const ServerState = struct {
         self.idle_streams.deinit(allocator);
     }
 
-    pub fn setIdle(self: *Self, allocator: std.mem.Allocator, handle: usize, is_idle: bool) !bool {
+    pub fn setIdle(self: *Self, allocator: std.mem.Allocator, stream_id: usize, is_idle: bool) !bool {
         if (!is_idle) {
-            _ = self.idle_streams.swapRemove(handle);
+            _ = self.idle_streams.swapRemove(stream_id);
             return true;
         }
         if (self.is_closing) {
             return false;
         }
-        try self.idle_streams.put(allocator, handle, {});
+        try self.idle_streams.put(allocator, stream_id, {});
         return true;
     }
 

@@ -19,7 +19,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "println", Binding{ .native = &println } },
     .{ "eprint", Binding{ .native = &eprint } },
     .{ "eprintln", Binding{ .native = &eprintln } },
-    .{ "stdin_handle", Binding{ .native = &stdinHandle } },
+    .{ "stdin_stream_id", Binding{ .native = &stdinStreamId } },
     .{ "stream_read_bytes", Binding{ .native = &streamReadBytes } },
     .{ "stream_read_exact", Binding{ .native = &streamReadExact } },
     .{ "stream_read_line", Binding{ .native = &streamReadLine } },
@@ -53,9 +53,9 @@ fn eprintln(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return ok(.{ .null = {} });
 }
 
-fn stdinHandle(vm: *VM, _: []v.Value) anyerror!NativeResult {
-    const handle = try vm.event_loop.openStdin(&vm.scheduler, vm.stdin_fd);
-    return ok(.{ .int64 = handle });
+fn stdinStreamId(vm: *VM, _: []v.Value) anyerror!NativeResult {
+    const stream_id = try vm.event_loop.openStdin(&vm.scheduler, vm.stdin_fd);
+    return ok(.{ .int64 = stream_id });
 }
 
 pub fn streamReadBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
@@ -92,8 +92,8 @@ pub fn streamReadAllBytes(vm: *VM, args: []v.Value) anyerror!NativeResult {
     return readStream(vm, args[0].int64, .{ .all_bytes = limit }, args[2].int64);
 }
 
-pub fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
-    const stream = vm.event_loop.streamAt(handle) orelse return fail(IoError.Closed);
+pub fn readStream(vm: *VM, stream_id: i64, mode: ReadMode, timeout_ms: i64) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(stream_id) orelse return fail(IoError.Closed);
     if (stream.waiter != null) {
         return fail(IoError.Busy);
     }
@@ -113,7 +113,7 @@ pub fn readStream(vm: *VM, handle: i64, mode: ReadMode, timeout_ms: i64) anyerro
             .http_failure => return fail(IoError.Other),
         }
     }
-    const is_stdin = vm.event_loop.stdin_handle == handle;
+    const is_stdin = vm.event_loop.stdin_stream_id == stream_id;
     if (is_stdin) {
         try vm.stdio.flushStdout();
     }

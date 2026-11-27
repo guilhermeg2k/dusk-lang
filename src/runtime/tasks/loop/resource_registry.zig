@@ -11,7 +11,7 @@ pub const ResourceRegistry = struct {
 
     pub const Slot = struct {
         kind: ResourceKind = .stream,
-        handle: i64 = -1,
+        table_id: i64 = -1,
         slot_version: u32 = 1,
         is_used: bool = false,
     };
@@ -21,14 +21,14 @@ pub const ResourceRegistry = struct {
         self.free_indexes.deinit(allocator);
     }
 
-    pub fn add(self: *Self, allocator: std.mem.Allocator, kind: ResourceKind, handle: i64) !ResourceId {
+    pub fn add(self: *Self, allocator: std.mem.Allocator, kind: ResourceKind, table_id: i64) !ResourceId {
         try self.free_indexes.ensureTotalCapacity(allocator, self.slots.items.len + 1);
         const slot_index = self.free_indexes.pop() orelse blk: {
             try self.slots.append(allocator, .{});
             break :blk @as(u32, @intCast(self.slots.items.len - 1));
         };
         const slot = &self.slots.items[slot_index];
-        slot.* = .{ .kind = kind, .handle = handle, .slot_version = slot.slot_version, .is_used = true };
+        slot.* = .{ .kind = kind, .table_id = table_id, .slot_version = slot.slot_version, .is_used = true };
         return .{ .registry_slot_index = slot_index, .registry_slot_version = slot.slot_version };
     }
 
