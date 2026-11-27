@@ -149,7 +149,7 @@ struct Reader[R: io::Reader]
     ~held_at: int = 0
     ~is_ended: bool = false
 
-    func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
         if max < 1 then
             return io::IoError.Other
         end
@@ -157,7 +157,7 @@ struct Reader[R: io::Reader]
             if self.is_ended then
                 return null
             end
-            try self.refill(timeout_ms)
+            try self.refill()
         end
         let remaining = buffer::len(self.held) - self.held_at
         let take = if max < remaining then max else remaining end
@@ -175,8 +175,8 @@ struct Reader[R: io::Reader]
         self.is_ended = true
     end
 
-    func ~refill(mut self: @, timeout_ms: int) -> io::IoError!void
-        let next = try self.inner.read_bytes(65536, timeout_ms)
+    func ~refill(mut self: @) -> io::IoError!void
+        let next = try self.inner.read_bytes(65536)
         if next: packed then
             self.held = self.decompressor.write_bytes(packed) catch e then
                 return io_error_of(e)

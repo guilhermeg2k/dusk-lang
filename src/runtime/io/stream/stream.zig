@@ -59,6 +59,7 @@ pub const Stream = struct {
     is_timer_running: bool = false,
     is_handshake_timer_running: bool = false,
     is_write_timer_running: bool = false,
+    read_timeout_ms: ?u64 = null,
     write_timeout_ms: ?u64 = null,
     queued_writes: usize = 0,
     has_write_timed_out: bool = false,
@@ -263,7 +264,7 @@ pub const Stream = struct {
     pub fn parkReader(self: *Self, task: *TaskState, mode: ReadMode, timeout_ms: ?u64) !void {
         try self.startReading();
         if (self.kind != .file) {
-            if (timeout_ms) |ms| {
+            if (timeout_ms orelse self.read_timeout_ms) |ms| {
                 try self.startTimer(ms);
             }
         }
@@ -394,6 +395,10 @@ pub const Stream = struct {
             self.startWriteTimer() catch {};
         }
         return .parked;
+    }
+
+    pub fn setReadTimeout(self: *Self, timeout_ms: ?u64) void {
+        self.read_timeout_ms = timeout_ms;
     }
 
     pub fn setWriteTimeout(self: *Self, timeout_ms: ?u64) void {

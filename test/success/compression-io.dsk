@@ -28,7 +28,7 @@ struct MemoryReader
     at: int = 0
     step: int = 7
 
-    func read_bytes(mut self: @, max: int, timeout_ms: int) -> io::IoError!?buffer
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
         if self.at == buffer::len(self.data) then
             return null
         end
@@ -70,7 +70,7 @@ end
 func read_everything[R: io::Reader](mut from: R, max: int) -> io::IoError!buffer
     let mut parts: []buffer = []
     for true do
-        let next = try from.read_bytes(max, -1)
+        let next = try from.read_bytes(max)
         if next: part then
             let mut kept = copy(part)
             array::append(parts, kept)

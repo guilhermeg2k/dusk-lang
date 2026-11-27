@@ -73,24 +73,24 @@ struct File
     ~handle: int
     ~owner: resource
 
-    func read_line(self: @, max: int = -1, timeout_ms: int = -1) -> io::IoError!?string
-        return try stream_read_line(self.handle, max, timeout_ms)
+    func read_line(self: @, max: int = -1) -> io::IoError!?string
+        return try stream_read_line(self.handle, max, -1)
     end
 
-    func read_bytes(self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
-        return try stream_read_bytes(self.handle, max, timeout_ms)
+    func read_bytes(self: @, max: int) -> io::IoError!?buffer
+        return try stream_read_bytes(self.handle, max, -1)
     end
 
-    func read_exact(self: @, count: int, timeout_ms: int = -1) -> io::IoError!?buffer
-        return try stream_read_exact(self.handle, count, timeout_ms)
+    func read_exact(self: @, count: int) -> io::IoError!?buffer
+        return try stream_read_exact(self.handle, count, -1)
     end
 
-    func read_all(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!string
-        return try stream_read_all(self.handle, max_bytes, timeout_ms)
+    func read_all(self: @, max_bytes: int = -1) -> io::IoError!string
+        return try stream_read_all(self.handle, max_bytes, -1)
     end
 
-    func read_all_bytes(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> io::IoError!buffer
-        return try stream_read_all_bytes(self.handle, max_bytes, timeout_ms)
+    func read_all_bytes(self: @, max_bytes: int = -1) -> io::IoError!buffer
+        return try stream_read_all_bytes(self.handle, max_bytes, -1)
     end
 
     func write(self: @, text: string) -> io::IoError!void

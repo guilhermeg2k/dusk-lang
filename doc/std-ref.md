@@ -429,6 +429,7 @@ When the program reading the output stopped (`dusk app.dsk | head -1`), they fai
 | `TimedOut` | A read with `timeout_ms` didn't complete in time |
 | `UnexpectedEnd` | `read_exact` reached the end of the input before `count` bytes |
 | `HandshakeFailed` | Reading or writing a TLS connection whose handshake failed |
+| `TooLarge` | `read_all` / `read_all_bytes` exceeded `max_bytes` |
 | `Other` | Any other failure |
 
 #### Readers, writers and `io::copy`
@@ -437,7 +438,7 @@ Two traits describe what reads and what writes, so generic code works with any o
 
 ```nim
 trait Reader
-    func read_bytes(mut self: @, max: int, timeout_ms: int) -> IoError!?buffer
+    func read_bytes(mut self: @, max: int) -> IoError!?buffer
 end
 
 trait Writer
@@ -458,7 +459,7 @@ struct Greetings
     names: []string
     position: int = 0
 
-    func read_bytes(mut self: @, max: int, timeout_ms: int) -> io::IoError!?buffer
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
         if self.position >= len(self.names) then
             return null
         end
@@ -485,26 +486,33 @@ Reads and writes files and folders. Every call waits for the disk without blocki
 | :------ | :--- |
 | `NotFound` | The path, or a folder on the way to it, doesn't exist |
 | `PermissionDenied` | The program isn't allowed to read, write or list it |
-| `AlreadyExists` | `make_dir` on a path that already exists |
+| `AlreadyExists` | `make_dir` or `open(..., fs::Mode.CreateNew)` on a path that already exists |
 | `IsDirectory` | A file operation on a folder |
 | `NotDirectory` | A folder operation on a file, or a file in the middle of a path |
 | `NotEmpty` | `delete` on a folder that has contents |
-| `InvalidUtf8` | `read` on a file that isn't valid UTF-8 text |
+| `InvalidUtf8` | `read`, `read_dir`, `real_path` or `resolve_under` on non-UTF-8 data |
+| `TooLarge` | `read` or `read_bytes` exceeded `max_bytes` |
+| `InvalidPath` | A path with NUL bytes, an invalid permission mode, or `resolve_under` escaping `root` |
 | `Other` | Any other failure (a full disk, too many open files...) |
 
 | Function | Returns | Description |
 | :------- | :------ | :---------- |
-| `read(path: string)` | `FsError!string` | The whole file as text. |
-| `read_bytes(path: string)` | `FsError!buffer` | The whole file as bytes, for anything that isn't text. |
-| `write(path: string, text: string)` | `FsError!void` | Creates the file, or replaces its contents. |
-| `write_bytes(path: string, data: buffer)` | `FsError!void` | Same, from a `buffer`. |
-| `append(path: string, text: string)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
+| `read(path: string, max_bytes: int = -1)` | `FsError!string` | The whole file as text. With `max_bytes >= 0`, fails with `TooLarge` past that limit. |
+| `read_bytes(path: string, max_bytes: int = -1)` | `FsError!buffer` | The whole file as bytes, for anything that isn't text. |
+| `write(path: string, text: string, permissions: int = 438, follow_symlinks: bool = true)` | `FsError!void` | Creates the file, or replaces its contents. |
+| `write_bytes(path: string, data: buffer, permissions: int = 438, follow_symlinks: bool = true)` | `FsError!void` | Same, from a `buffer`. |
+| `write_atomic(path: string, text: string, permissions: int = 438)` | `FsError!void` | Writes to a sibling temporary file, syncs it, and renames it into place. |
+| `write_bytes_atomic(path: string, data: buffer, permissions: int = 438)` | `FsError!void` | Same, from a `buffer`. |
+| `append(path: string, text: string, permissions: int = 438, follow_symlinks: bool = true)` | `FsError!void` | Adds `text` to the end of the file, creating it if needed. |
 | `read_dir(path: string)` | `FsError![]string` | The names of the entries in a folder (not `.` and `..`), in the order the system gives them. |
 | `exists(path: string)` | `bool` | Whether the path exists. Never fails: any problem gives `false`. |
 | `stat(path: string)` | `FsError!FileInfo` | Information about a file or folder (below). |
-| `make_dir(path: string, recursive: bool = false)` | `FsError!void` | Creates a folder. With `recursive = true`, also creates missing parent folders, and a folder that already exists is fine. |
+| `make_dir(path: string, recursive: bool = false, permissions: int = 511)` | `FsError!void` | Creates a folder. With `recursive = true`, also creates missing parent folders, and a folder that already exists is fine. |
 | `delete(path: string, recursive: bool = false)` | `FsError!void` | Deletes a file or an empty folder. With `recursive = true`, deletes a folder with everything inside. |
 | `rename(from: string, to: string)` | `FsError!void` | Renames or moves a file or folder. |
+| `chmod(path: string, permissions: int)` | `FsError!void` | Changes a file or folder's permission bits (`0`..`4095`). |
+| `real_path(path: string)` | `FsError!string` | Canonicalizes a path, resolving symbolic links. |
+| `resolve_under(root: string, rel: string)` | `FsError!string` | Resolves `rel` under `root` and fails with `InvalidPath` if it escapes `root` (including through symbolic links). |
 
 ```nim
 struct FileInfo
@@ -550,30 +558,31 @@ end
 
 #### Files
 
-`fs::open(path: string, mode: Mode = fs::Mode.Read)` opens a file once and returns an `fs::File` to read or write it piece by piece: big files, a log written line by line, a file read line by line, or a file sent to a connection with `io::copy`. Opening fails with `FsError` (`NotFound`, `IsDirectory` for a folder, `PermissionDenied`...); using a `File` fails with `io::IoError`, like any stream.
+`fs::open(path: string, mode: Mode = fs::Mode.Read, permissions: int = 438, follow_symlinks: bool = true)` opens a file once and returns an `fs::File` to read or write it piece by piece: big files, a log written line by line, a file read line by line, or a file sent to a connection with `io::copy`. Opening fails with `FsError` (`NotFound`, `AlreadyExists`, `IsDirectory` for a folder, `PermissionDenied`...); using a `File` fails with `io::IoError`, like any stream.
 
 | Mode | Opens for | |
 | :--- | :-------- | :- |
 | `fs::Mode.Read` | reading | The file must exist. |
 | `fs::Mode.Write` | writing | Creates the file, or empties it. |
 | `fs::Mode.Append` | writing at the end | Creates the file if needed; every write goes to the end. |
+| `fs::Mode.CreateNew` | writing (exclusive) | Creates a new file; fails with `AlreadyExists` if the path (or a symlink) already exists. |
 
 | Method | Returns | Description |
 | :----- | :------ | :---------- |
-| `read_line(max: int = -1, timeout_ms: int = -1)` | `IoError!?string` | The next line, without `\n` or `\r\n`; `null` at the end of the file. With `max`, a longer line fails with `LineTooLong`. |
-| `read_bytes(max: int, timeout_ms: int = -1)` | `IoError!?buffer` | Up to `max` bytes; `null` at the end. |
-| `read_exact(count: int, timeout_ms: int = -1)` | `IoError!?buffer` | Exactly `count` bytes, `null` at the end of the file (`UnexpectedEnd` if fewer than `count` bytes remain). |
-| `read_all(timeout_ms: int = -1)` | `IoError!string` | The rest of the file as text (`InvalidUtf8` if it isn't). |
-| `read_all_bytes(timeout_ms: int = -1)` | `IoError!buffer` | The rest of the file as bytes. |
+| `read_line(max: int = -1)` | `IoError!?string` | The next line, without `\n` or `\r\n`; `null` at the end of the file. With `max`, a longer line fails with `LineTooLong`. |
+| `read_bytes(max: int)` | `IoError!?buffer` | Up to `max` bytes; `null` at the end. |
+| `read_exact(count: int)` | `IoError!?buffer` | Exactly `count` bytes, `null` at the end of the file (`UnexpectedEnd` if fewer than `count` bytes remain). |
+| `read_all(max_bytes: int = -1)` | `IoError!string` | The rest of the file as text (`InvalidUtf8` if it isn't, `TooLarge` past `max_bytes`). |
+| `read_all_bytes(max_bytes: int = -1)` | `IoError!buffer` | The rest of the file as bytes (`TooLarge` past `max_bytes`). |
 | `write(text: string)` / `write_bytes(data: buffer)` | `IoError!void` | Adds text or bytes at the current position. |
 | `flush()` | `IoError!void` | Sends buffered writes to the file now and waits for them. |
 | `seek(offset: int, from: SeekFrom = fs::SeekFrom.Start)` | `IoError!int` | Moves to `offset` bytes from `Start`, `Current` or `End` and returns the new position. |
 | `position()` | `int` | The current position, counting buffered writes. |
 | `size()` | `IoError!int` | The file's size, counting buffered writes. |
-| `close()` | `void` | Sends buffered writes, then closes. Closing twice does nothing. |
+| `close()` | `IoError!void` | Sends buffered writes, then closes (always closing even if flushing fails). Closing twice does nothing. |
 
-- **Writes are buffered.** They collect in memory and go to the file when 64 KiB have built up, on `flush()`, on `close()` and when the program ends, so writing many small pieces is cheap. Until then another reader (`fs::read`, another process) doesn't see them. A failed write shows up at the next `write`, `flush` or `seek`; `close()` can't report it, so call `flush()` first when it matters.
-- **Reads** read ahead in pieces, without blocking other tasks. A second task reading the same file while one is waiting fails with `Busy`. `timeout_ms` is there so a `File` fits `io::Reader`; reading a file never times out.
+- **Writes are buffered.** They collect in memory and go to the file when 64 KiB have built up, on `flush()`, on `close()` and when the program ends, so writing many small pieces is cheap. Until then another reader (`fs::read`, another process) doesn't see them. A failed write shows up at the next `write`, `flush`, `seek` or `close`.
+- **Reads** read ahead in pieces, without blocking other tasks. A second task reading the same file while one is waiting fails with `Busy`.
 - **Seeking** sends buffered writes first and forgets what was read ahead. It fails with `Busy` while another task is reading, with `Other` for a negative position, and with `Other` on a file opened with `Append` (its writes always go to the end). Seeking past the end of a file opened for writing and writing there leaves a gap of zero bytes.
 - Reading a file opened for writing, or writing one opened for reading, fails with `Other`. A `File` the program no longer reaches is closed after a garbage collection finds it, after its buffered writes are sent; one still reachable at the end is closed when the program ends the same way. Close files explicitly (`defer file.close()`) when the moment matters: a collection only runs when the program allocates enough. Several tasks writing to one `File` each get their writes in whole, in call order.
 - `File` fits `io::Reader` and `io::Writer`, so `io::copy(file, conn)` sends a file to a connection and `io::copy(conn, file)` saves one.

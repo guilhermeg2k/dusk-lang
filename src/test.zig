@@ -836,6 +836,39 @@ test "fs: write_atomic, real_path and resolve_under" {
     try dusk.compileAndRun(source);
 }
 
+test "net: set_read_timeout times out read_bytes" {
+    const script =
+        \\import "std/net"
+        \\import "std/io"
+        \\func read_err(conn: net::TcpConn) -> ?io::IoError
+        \\    let _ = conn.read_bytes(64) catch e then
+        \\        return e
+        \\    end
+        \\    return null
+        \\end
+        \\func main() -> !void
+        \\    let listener = try net::tcp_listen("127.0.0.1", 0)
+        \\    defer listener.close()
+        \\    let port = listener.port()
+        \\    let server = spawn(func() -> io::IoError!void
+        \\        let peer = try listener.accept()
+        \\        defer peer.close()
+        \\        let _ = peer.read_bytes(1) catch null
+        \\    end)
+        \\    let conn = try net::tcp_connect("127.0.0.1", port)
+        \\    defer conn.close()
+        \\    conn.set_read_timeout(30)
+        \\    assert(read_err(conn) == io::IoError.TimedOut)
+        \\    conn.close()
+        \\    try await(server)
+        \\end
+    ;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var dusk = Dusk{ .allocator = arena.allocator(), .io = testing.io };
+    try dusk.compileAndRun(script);
+}
+
 fn runCaseInTmpDir(src_file: []const u8) !void {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -1413,7 +1446,7 @@ test "io: copy works with std streams and with user structs fitting Reader and W
         \\    parts: []string
         \\    position: int = 0
         \\
-        \\    func read_bytes(mut self: @, max: int, timeout_ms: int) -> io::IoError!?buffer
+        \\    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
         \\        if self.position >= len(self.parts) then
         \\            return null
         \\        end

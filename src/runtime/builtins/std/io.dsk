@@ -24,6 +24,7 @@ extern func ~stream_read_exact(handle: int, count: int, timeout_ms: int) -> IoEr
 extern func ~stream_read_line(handle: int, max: int, timeout_ms: int) -> IoError!?string
 extern func ~stream_read_all(handle: int, max_bytes: int, timeout_ms: int) -> IoError!string
 extern func ~stream_read_all_bytes(handle: int, max_bytes: int, timeout_ms: int) -> IoError!buffer
+extern func ~stream_set_read_timeout(handle: int, timeout_ms: int) -> void
 extern func ~is_terminal_fd(fd: int) -> bool
 extern func ~stream_close(handle: int) -> void
 extern func ~stdio_write(fd: int, text: string) -> IoError!void
@@ -31,7 +32,7 @@ extern func ~stdio_write_bytes(fd: int, data: buffer) -> IoError!void
 extern func ~stdio_flush(fd: int) -> IoError!void
 
 trait Reader
-    func read_bytes(mut self: @, max: int, timeout_ms: int) -> IoError!?buffer
+    func read_bytes(mut self: @, max: int) -> IoError!?buffer
 end
 
 trait Writer
@@ -47,8 +48,8 @@ struct Stdin
         return try stream_read_line(self.handle, max, timeout_ms)
     end
 
-    func read_bytes(self: @, max: int, timeout_ms: int = -1) -> IoError!?buffer
-        return try stream_read_bytes(self.handle, max, timeout_ms)
+    func read_bytes(self: @, max: int) -> IoError!?buffer
+        return try stream_read_bytes(self.handle, max, -1)
     end
 
     func read_exact(self: @, count: int, timeout_ms: int = -1) -> IoError!?buffer
@@ -61,6 +62,10 @@ struct Stdin
 
     func read_all_bytes(self: @, max_bytes: int = -1, timeout_ms: int = -1) -> IoError!buffer
         return try stream_read_all_bytes(self.handle, max_bytes, timeout_ms)
+    end
+
+    func set_read_timeout(self: @, timeout_ms: int) -> void
+        stream_set_read_timeout(self.handle, timeout_ms)
     end
 
     func is_terminal(self: @) -> bool
@@ -127,7 +132,7 @@ end
 func copy[R: Reader, W: Writer](mut from: R, mut to: W) -> IoError!int
     let mut total = 0
     for true do
-        let next = try from.read_bytes(65536, -1)
+        let next = try from.read_bytes(65536)
         if next: chunk then
             try to.write_bytes(chunk)
             total = total + buffer::len(chunk)

@@ -25,6 +25,7 @@ pub const bindings = native.BindingMap.initComptime(.{
     .{ "stream_read_line", Binding{ .native = &streamReadLine } },
     .{ "stream_read_all", Binding{ .native = &streamReadAll } },
     .{ "stream_read_all_bytes", Binding{ .native = &streamReadAllBytes } },
+    .{ "stream_set_read_timeout", Binding{ .native = &streamSetReadTimeout } },
     .{ "is_terminal_fd", Binding{ .native = &isTerminalFd } },
     .{ "stream_close", Binding{ .native = &streamClose } },
     .{ "stdio_write", Binding{ .native = &stdioWrite } },
@@ -135,6 +136,13 @@ pub fn streamWrite(vm: *VM, args: []v.Value) anyerror!NativeResult {
             return native.parked();
         },
     }
+}
+
+pub fn streamSetReadTimeout(vm: *VM, args: []v.Value) anyerror!NativeResult {
+    const stream = vm.event_loop.streamAt(args[0].int64) orelse return ok(.{ .null = {} });
+    const timeout_ms = args[1].int64;
+    stream.setReadTimeout(if (timeout_ms < 0) null else @intCast(timeout_ms));
+    return ok(.{ .null = {} });
 }
 
 pub fn streamSetWriteTimeout(vm: *VM, args: []v.Value) anyerror!NativeResult {

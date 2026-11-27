@@ -9,7 +9,7 @@ struct FakeReader
     chunks: []buffer
     index: int = 0
 
-    func read_bytes(mut self: @, max: int, timeout_ms: int = -1) -> io::IoError!?buffer
+    func read_bytes(mut self: @, max: int) -> io::IoError!?buffer
         if self.index >= 1 then
             return null
         end
