@@ -430,7 +430,7 @@ Works with paths as text: joining, splitting and cleaning them up. Nothing here 
 
 On Windows, `is_absolute` is true for a drive with a root (`C:\x`), a network share or a device path; `\x` (no drive) and `C:x` (no root) aren't absolute. `resolve` can complete `\x` from a base with a drive, and fails with `NotAbsolute` when the result still has no root. Normalized paths use `\` and uppercase drive letters. `relative` between different drives or shares returns the destination itself. Names compare by the system's path rules, not by asking the disk.
 
-These functions don't check that a name is allowed on the disk, and don't expand `~`, variables, wildcards or URL escapes. `..` is handled as text, so through a symbolic link it can lead somewhere else than on the disk, and resolving against a folder doesn't guarantee the result stays inside it.
+These functions don't check that a name is allowed on the disk, and don't expand `~`, variables, wildcards or URL escapes. `..` is handled as text, so through a symbolic link it can lead somewhere else than on the disk, and resolving against a folder doesn't guarantee the result stays inside it. To keep a path from outside (a request, a user) inside a folder, use `fs::resolve_under`, which checks on the disk.
 
 ```nim
 let base = try os::cwd()
@@ -1483,14 +1483,17 @@ The body is read only when the handler asks for it. `text` and `bytes` fail with
 ```nim
 "/logo" then return try http::file("assets/logo.svg", http::ContentType.SVG) end
 else then
-    let file = path::join(["public", path::normalize(req.path)])
+    let relative = string::slice(req.path, 1, string::len(req.path)) catch ""
+    let file = fs::resolve_under("public", relative) catch e then
+        return http::status(404)
+    end
     return http::file(file, http::content_type_of(file)) catch e then
         return http::status(404)
     end
 end
 ```
 
-`http::file` opens the path it's given, like `fs::open`. `req.path` always starts with `/`, so `path::normalize` can't take `..` above that root (`/../secret.env` becomes `/secret.env`), and joining the result to `public` keeps the file inside it. Gluing `req.path` to the folder directly (`"public${req.path}"`) would let `/../secret.env` read a file outside it.
+`http::file` opens the path it's given, like `fs::open`, and follows symbolic links, so a path built from the request must go through `fs::resolve_under` first. It asks the disk where the path leads, `..` parts and symbolic links included, and fails with `InvalidPath` when that's outside the folder and with `NotFound` when there's no such file. It refuses absolute paths, so the example drops the `/` that `req.path` always starts with. Joining `req.path` to the folder as text (`"public${req.path}"`, or `path::join` with `path::normalize`) isn't enough: `/../secret.env`, a symbolic link inside `public`, or on Windows a decoded `//../../secret.env` (read as a network share) can lead outside it.
 
 Headers change through `Headers` methods on a `let mut` response: `set(name: string, value: string)` replaces every value of that header, `add(name: string, value: string)` adds one more, and `remove(name: string)` drops them all.
 
